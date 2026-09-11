@@ -156,6 +156,8 @@ pub struct AstLowering {
     pub(super) type_info: Option<TypeCheckInfo>,
     /// Shared provider and feature projection used to rehydrate compiled dependency metadata.
     pub(super) provider_plan: Option<Arc<ProviderPlan>>,
+    /// Metadata-admission errors discovered at infallible type readers, reported by the enclosing lowering pass.
+    pub(super) metadata_errors: std::cell::RefCell<Vec<String>>,
     /// Whether this lowering pass emits one compiled SDK-provider artifact.
     ///
     /// Provider source addresses stdlib contracts through its crate-local `__incan_std` facade. Ordinary consumers
@@ -639,6 +641,7 @@ impl AstLowering {
             iterator_adopter_names: HashSet::new(),
             type_info: None,
             provider_plan: None,
+            metadata_errors: std::cell::RefCell::new(Vec::new()),
             sdk_provider_build: false,
             newtype_construction: HashMap::new(),
             current_impl_type: None,
@@ -700,22 +703,56 @@ impl AstLowering {
     ///
     /// Decorator metadata can carry a Rust generic as a display string (for example `Vec<(i64, i64)>`). That spelling
     /// is not a nominal identifier and cannot be emitted through the normal resolved-type path. The source annotation
-    /// retains its import alias and generic argument tree, so use it for a top-level direct Rust handle; all other
-    /// callable parameters continue to take their typechecker-resolved type.
+    /// retains its import alias and generic argument tree, so use it for a top-level direct Rust handle. An unchanged
+    /// source annotation also retains admitted native union carriers erased by frontend alias expansion; ordinary
+    /// inferred leaves remain authoritative.
     fn lower_callable_surface_parameter_type(
         &self,
         callable_param: &CallableParam,
         source_param: Option<&ast::Spanned<ast::Param>>,
         source_surface_is_unchanged: bool,
     ) -> IrType {
-        source_surface_is_unchanged
-            .then_some(())
-            .and(source_param)
-            .filter(|source| self.type_is_top_level_direct_rust_import(&source.node.ty.node))
-            .map_or_else(
-                || self.lower_resolved_type(&callable_param.ty),
-                |source| self.lower_type(&source.node.ty.node),
-            )
+        let inferred = self.lower_resolved_type(&callable_param.ty);
+        let Some(source) = source_param.filter(|_| source_surface_is_unchanged) else {
+            return inferred;
+        };
+        let declared = self.lower_type(&source.node.ty.node);
+        if self.type_is_top_level_direct_rust_import(&source.node.ty.node) {
+            declared
+        } else {
+            Self::retain_native_union_representation(inferred, &declared)
+        }
+    }
+
+    /// Preserve an admitted return carrier only when the checked decorator keeps the original return type.
+    ///
+    /// The source declaration identifies the carrier. A checked generic pass-through relation authorizes reusing
+    /// it; structurally equal return types alone do not identify the same native owner.
+    fn lower_callable_surface_return_type(
+        &self,
+        callable_ret: &crate::frontend::symbols::ResolvedType,
+        original_ret: Option<&crate::frontend::symbols::ResolvedType>,
+        preserves_representation: bool,
+        declared_return: &IrType,
+    ) -> IrType {
+        let inferred = self.lower_resolved_type(callable_ret);
+        if preserves_representation && original_ret == Some(callable_ret) {
+            Self::retain_native_union_representation(inferred, declared_return)
+        } else {
+            inferred
+        }
+    }
+
+    /// Read the checked generic pass-through proof for every user-defined decorator in the chain.
+    fn decorator_chain_preserves_representation(&self, function: &ast::FunctionDecl) -> bool {
+        function.decorators.iter().all(|decorator| {
+            !self.is_user_defined_decorator_candidate(&decorator.node)
+                || self.type_info.as_ref().is_some_and(|info| {
+                    info.declarations
+                        .generic_identity_decorator_applications
+                        .contains(&(decorator.span.start, decorator.span.end))
+                })
+        })
     }
 
     /// Lower one typechecker-resolved callable surface into IR parameters, attaching an already-planned default
@@ -768,43 +805,19 @@ impl AstLowering {
             .collect()
     }
 
-    /// Lower typechecker callable metadata into an IR function signature while preserving the container shape required
-    /// for rest parameters.
-    fn function_signature_from_callable_surface(
-        &mut self,
-        callable_params: &[CallableParam],
-        callable_ret: &crate::frontend::symbols::ResolvedType,
-        source_params: Option<&[ast::Spanned<ast::Param>]>,
-        original_callable_params: Option<&[CallableParam]>,
-    ) -> FunctionSignature {
-        FunctionSignature {
-            params: self.function_params_from_callable_surface(
-                callable_params,
-                &[],
-                source_params,
-                original_callable_params,
-            ),
-            return_type: self.lower_resolved_type(callable_ret),
-        }
-    }
-
     /// Lower typechecker callable metadata into an IR function type.
     fn function_type_from_callable_surface(
         &mut self,
         callable_params: &[CallableParam],
-        callable_ret: &crate::frontend::symbols::ResolvedType,
+        return_type: IrType,
         source_params: Option<&[ast::Spanned<ast::Param>]>,
         original_callable_params: Option<&[CallableParam]>,
     ) -> IrType {
-        let signature = self.function_signature_from_callable_surface(
-            callable_params,
-            callable_ret,
-            source_params,
-            original_callable_params,
-        );
+        let params =
+            self.function_params_from_callable_surface(callable_params, &[], source_params, original_callable_params);
         IrType::Function {
-            params: signature.params.into_iter().map(|param| param.ty).collect(),
-            ret: Box::new(signature.return_type),
+            params: params.into_iter().map(|param| param.ty).collect(),
+            ret: Box::new(return_type),
         }
     }
 
@@ -2293,15 +2306,14 @@ impl AstLowering {
                         continue;
                     }
                 };
-                if let Some(binding) = self
-                    .type_info
-                    .as_ref()
-                    .and_then(|info| info.declarations.decorated_function_bindings.get(&f.name).cloned())
+                if let Some(binding) = self.decorated_function_binding_for_decl(&f.name, decl.span)
                     && let crate::frontend::symbols::ResolvedType::Function(callable_params, callable_ret) = binding.ty
                 {
-                    let original_params = match &binding.original_ty {
-                        crate::frontend::symbols::ResolvedType::Function(params, _) => params.as_slice(),
-                        _ => &[],
+                    let (original_params, original_ret) = match &binding.original_ty {
+                        crate::frontend::symbols::ResolvedType::Function(params, ret) => {
+                            (params.as_slice(), Some(ret.as_ref()))
+                        }
+                        _ => (&[][..], None),
                     };
                     let defaults =
                         match self.decorated_param_defaults_for_surface(&callable_params, original_params, &f.params) {
@@ -2317,7 +2329,14 @@ impl AstLowering {
                         Some(&f.params),
                         Some(original_params),
                     );
-                    let return_type = self.lower_resolved_type(&callable_ret);
+                    let declared_return =
+                        self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names));
+                    let return_type = self.lower_callable_surface_return_type(
+                        &callable_ret,
+                        original_ret,
+                        self.decorator_chain_preserves_representation(f),
+                        &declared_return,
+                    );
                     let identity = match self.emitted_function_identity(&f.name, decl.span) {
                         Ok(identity) => identity,
                         Err(err) => {
@@ -2338,10 +2357,13 @@ impl AstLowering {
                     let original_name = Self::decorator_original_function_name(&emitted_function_name);
                     let original_return_type = function_binding
                         .as_ref()
-                        .map(|binding| self.lower_resolved_type(&binding.return_type))
-                        .unwrap_or_else(|| {
-                            self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names))
-                        });
+                        .map(|binding| {
+                            Self::retain_native_union_representation(
+                                self.lower_resolved_type(&binding.return_type),
+                                &declared_return,
+                            )
+                        })
+                        .unwrap_or(declared_return);
                     // Decorator originals are compiler-generated helpers. Only the source-facing wrapper carries the
                     // declaration's canonical projection; assigning that identity here would emit two equal Rust
                     // identifiers for one declaration.
@@ -2356,7 +2378,12 @@ impl AstLowering {
                 }
                 let return_type = function_binding
                     .as_ref()
-                    .map(|binding| self.lower_resolved_type(&binding.return_type))
+                    .map(|binding| {
+                        Self::retain_native_union_representation(
+                            self.lower_resolved_type(&binding.return_type),
+                            &self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names)),
+                        )
+                    })
                     .unwrap_or_else(|| self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names)));
                 let identity = match self.emitted_function_identity(&f.name, decl.span) {
                     Ok(identity) => identity,
@@ -2465,7 +2492,7 @@ impl AstLowering {
                                 .insert(struct_ir.name.clone(), IrType::Struct(struct_ir.name.clone()));
                             ir_program
                                 .declarations
-                                .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())));
+                                .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())).with_span(decl.span.into()));
                             match self.lower_decorated_method_statics(&struct_ir.name, &model_methods) {
                                 Ok(statics) => ir_program.declarations.extend(statics),
                                 Err(e) => errors.push(e),
@@ -2554,7 +2581,7 @@ impl AstLowering {
                                 .insert(struct_ir.name.clone(), IrType::Struct(struct_ir.name.clone()));
                             ir_program
                                 .declarations
-                                .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())));
+                                .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())).with_span(decl.span.into()));
 
                             // Collect methods from this class and all parent classes
                             let mut all_methods = Vec::new();
@@ -2686,7 +2713,7 @@ impl AstLowering {
                                 .insert(struct_ir.name.clone(), IrType::Struct(struct_ir.name.clone()));
                             ir_program
                                 .declarations
-                                .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())));
+                                .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())).with_span(decl.span.into()));
 
                             // Generate impl block for newtype methods (if any).
                             if !newtype_methods.is_empty() {
@@ -2743,7 +2770,7 @@ impl AstLowering {
                             .insert(enum_ir.name.clone(), IrType::Enum(enum_ir.name.clone()));
                         ir_program
                             .declarations
-                            .push(IrDecl::new(IrDeclKind::Enum(enum_ir.clone())));
+                            .push(IrDecl::new(IrDeclKind::Enum(enum_ir.clone())).with_span(decl.span.into()));
 
                         if !e.methods.is_empty() {
                             match self.lower_decorated_method_statics(&enum_ir.name, &e.methods) {
@@ -2857,7 +2884,7 @@ impl AstLowering {
                                     );
                                     self.update_root_function_binding(&func.name, &func.params, &func.return_type);
                                 }
-                                ir_program.declarations.push(ir_decl);
+                                ir_program.declarations.push(ir_decl.with_span(decl.span.into()));
                             }
                             Err(e) => errors.push(e),
                         },
@@ -2931,6 +2958,15 @@ impl AstLowering {
             .is_some_and(|info| info.c_abi.uses_checked_c_span_buffers);
         ir_program.member_projections = self.emitted_member_projections.clone();
 
+        errors.extend(
+            self.metadata_errors
+                .borrow_mut()
+                .drain(..)
+                .map(|message| LoweringError {
+                    message,
+                    span: super::IrSpan::default(),
+                }),
+        );
         if errors.is_empty() {
             super::borrow_inference::infer_shared_helpers(
                 &mut ir_program,
@@ -3022,7 +3058,7 @@ impl AstLowering {
                 ]);
             }
             let lowered = self.lower_function_named(f, emitted_name, self.map_callable_visibility(f.visibility))?;
-            return Ok(vec![IrDecl::new(IrDeclKind::Function(lowered))]);
+            return Ok(vec![IrDecl::new(IrDeclKind::Function(lowered)).with_span(span.into())]);
         };
         let crate::frontend::symbols::ResolvedType::Function(callable_params, callable_ret) = binding.ty else {
             return Err(LoweringError {
@@ -3033,16 +3069,22 @@ impl AstLowering {
                 span: ast::Span::default().into(),
             });
         };
-        let original_params = match binding.original_ty {
-            crate::frontend::symbols::ResolvedType::Function(params, _) => params,
-            _ => Vec::new(),
+        let (original_params, original_ret) = match binding.original_ty {
+            crate::frontend::symbols::ResolvedType::Function(params, ret) => (params, Some(ret)),
+            _ => (Vec::new(), None),
         };
 
         let original_registry_key = Self::decorator_original_function_registry_key(&emitted_name);
         let original = self.lower_function_named(f, original_registry_key.clone(), super::decl::Visibility::Private)?;
+        let return_type = self.lower_callable_surface_return_type(
+            &callable_ret,
+            original_ret.as_deref(),
+            self.decorator_chain_preserves_representation(f),
+            &original.return_type,
+        );
         let decorated_ty = self.function_type_from_callable_surface(
             &callable_params,
-            &callable_ret,
+            return_type.clone(),
             Some(&f.params),
             Some(&original_params),
         );
@@ -3054,7 +3096,7 @@ impl AstLowering {
                 &original_registry_key,
                 &callable_params,
                 &original_params,
-                callable_ret.as_ref(),
+                return_type,
                 &original.params,
                 &original.return_type,
                 original.type_params.clone(),
@@ -3062,7 +3104,7 @@ impl AstLowering {
             )?;
             return Ok(vec![
                 IrDecl::new(IrDeclKind::Function(original)),
-                IrDecl::new(IrDeclKind::Function(wrapper)),
+                IrDecl::new(IrDeclKind::Function(wrapper)).with_span(span.into()),
             ]);
         }
 
@@ -3085,7 +3127,7 @@ impl AstLowering {
             &static_name,
             &callable_params,
             &original_params,
-            callable_ret.as_ref(),
+            return_type,
         )?;
 
         Ok(vec![
@@ -3097,7 +3139,7 @@ impl AstLowering {
                 ty: decorated_ty,
                 value,
             }),
-            IrDecl::new(IrDeclKind::Function(wrapper)),
+            IrDecl::new(IrDeclKind::Function(wrapper)).with_span(span.into()),
         ])
     }
 
@@ -3306,7 +3348,7 @@ impl AstLowering {
         original_name: &str,
         callable_params: &[CallableParam],
         original_params: &[CallableParam],
-        callable_ret: &crate::frontend::symbols::ResolvedType,
+        return_type: IrType,
         original_function_params: &[FunctionParam],
         original_return_type: &IrType,
         type_params: Vec<IrTypeParam>,
@@ -3319,7 +3361,6 @@ impl AstLowering {
             Some(&f.params),
             Some(original_params),
         );
-        let return_type = self.lower_resolved_type(callable_ret);
         let type_args = type_params
             .iter()
             .map(|param| IrType::Generic(param.name.clone()))
@@ -3480,7 +3521,7 @@ impl AstLowering {
         static_name: &str,
         callable_params: &[CallableParam],
         original_params: &[CallableParam],
-        callable_ret: &crate::frontend::symbols::ResolvedType,
+        return_type: IrType,
     ) -> Result<super::decl::IrFunction, LoweringError> {
         let defaults = self.decorated_param_defaults_for_surface(callable_params, original_params, &f.params)?;
         let params = self.function_params_from_callable_surface(
@@ -3489,7 +3530,6 @@ impl AstLowering {
             Some(&f.params),
             Some(original_params),
         );
-        let return_type = self.lower_resolved_type(callable_ret);
         let static_func = TypedExpr::new(
             IrExprKind::StaticRead {
                 name: static_name.to_string(),

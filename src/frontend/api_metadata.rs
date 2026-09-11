@@ -322,6 +322,9 @@ pub struct ApiAlias {
     pub is_public: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projected_function: Option<ApiProjectedFunction>,
+    /// Checked nominal target retained by a public type re-export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projected_type: Option<TypeRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -786,12 +789,23 @@ pub fn collect_checked_api_metadata(
         }
     }
 
-    CheckedApiMetadata {
-        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
-        derivable_traits: TypeChecker::derivable_traits_from_program(program),
-        module_path,
-        declarations,
+    for declaration in &mut declarations {
+        if let ApiDeclaration::Alias(alias) = declaration
+            && let Some(CheckedExportKind::Alias(checked)) = checked_kind(&checked_by_name, &alias.name)
+        {
+            alias.projected_type = checked.projected_type.as_ref().map(type_ref_from_resolved);
+        }
     }
+
+    crate::library_manifest::with_checked_type_origins(
+        CheckedApiMetadata {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            derivable_traits: TypeChecker::derivable_traits_from_program(program),
+            module_path,
+            declarations,
+        },
+        &checker.checked_nominal_type_origins(),
+    )
 }
 
 /// Collect only the checked public alias projection for one parsed module.
@@ -824,6 +838,7 @@ pub fn collect_checked_api_alias_metadata(program: &Program, module_path: Vec<St
 /// function's decorators and checked callable shape onto facade aliases.
 pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
     let mut projections = HashMap::new();
+    let mut type_projections = HashMap::new();
     let mut aliases = Vec::new();
 
     for module in modules.iter() {
@@ -839,13 +854,34 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
                         },
                     );
                 }
-                ApiDeclaration::Alias(alias) => aliases.push(ApiAliasProjectionRequest {
-                    path: declaration_path(&module.module_path, &alias.name),
-                    target_path: normalized_api_target_path(&alias.target_path),
-                    module_path: module.module_path.clone(),
-                    name: alias.name.clone(),
-                    anchor: alias.anchor.clone(),
-                }),
+                ApiDeclaration::TypeAlias(alias) if alias.type_alias.target.has_native_union() => {
+                    type_projections.insert(
+                        declaration_path(&module.module_path, &alias.name),
+                        alias.type_alias.target.clone(),
+                    );
+                }
+                ApiDeclaration::Alias(alias) => {
+                    let path = declaration_path(&module.module_path, &alias.name);
+                    // External projections are already bound to admitted artifacts. Local aliases are refreshed
+                    // from their current declaration after native representation publication updates that target.
+                    if alias.target_path.first().is_some_and(|root| root == "pub") {
+                        if let Some(function) = &alias.projected_function {
+                            projections.insert(path.clone(), function.clone());
+                        }
+                        if let Some(ty) = &alias.projected_type
+                            && ty.has_native_union()
+                        {
+                            type_projections.insert(path.clone(), ty.clone());
+                        }
+                    }
+                    aliases.push(ApiAliasProjectionRequest {
+                        path: declaration_path(&module.module_path, &alias.name),
+                        target_path: normalized_api_target_path(&alias.target_path),
+                        module_path: module.module_path.clone(),
+                        name: alias.name.clone(),
+                        anchor: alias.anchor.clone(),
+                    });
+                }
                 _ => {}
             }
         }
@@ -855,7 +891,7 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
     while changed {
         changed = false;
         for alias in &aliases {
-            if projections.contains_key(&alias.path) {
+            if projections.contains_key(&alias.path) && type_projections.contains_key(&alias.path) {
                 continue;
             }
             // An alias whose target lives in its own module records that target unqualified, because that is how the
@@ -873,10 +909,23 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
                 .as_ref()
                 .and_then(|path| projections.get(path))
                 .or_else(|| projections.get(&alias.target_path));
-            if let Some(target) = resolved {
+            if !projections.contains_key(&alias.path)
+                && let Some(target) = resolved
+            {
                 let projection = projected_function_for_alias(alias, target);
                 projections.insert(alias.path.clone(), projection);
                 changed = true;
+            }
+            if !type_projections.contains_key(&alias.path) {
+                let target = qualified
+                    .as_ref()
+                    .and_then(|path| type_projections.get(path))
+                    .or_else(|| type_projections.get(&alias.target_path))
+                    .cloned();
+                if let Some(target) = target {
+                    type_projections.insert(alias.path.clone(), target);
+                    changed = true;
+                }
             }
         }
     }
@@ -886,6 +935,9 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
             if let ApiDeclaration::Alias(alias) = declaration {
                 let alias_path = declaration_path(&module.module_path, &alias.name);
                 alias.projected_function = projections.get(&alias_path).cloned();
+                if let Some(ty) = type_projections.get(&alias_path) {
+                    alias.projected_type = Some(ty.clone());
+                }
             }
         }
     }
@@ -1553,6 +1605,7 @@ fn checked_api_aliases_for_declaration(declaration: &Declaration, span: Span, mo
             anchor: anchor(module_path, &alias.name, span),
             target_path: alias.target.segments.clone(),
             is_public: true,
+            projected_type: None,
             projected_function: None,
         }],
         // Module-level `from ... import ...` bindings are part of a module's public surface, including facade modules
@@ -1584,6 +1637,7 @@ fn aliases_from_items(
                 name,
                 target_path,
                 is_public,
+                projected_type: None,
                 projected_function: None,
             }
         })
@@ -2726,8 +2780,8 @@ fn alias_targets_declaration(alias: &ApiAlias, module_path: &[String], name: &st
 /// Render a type reference as a docstring-facing type name.
 fn type_ref_doc_name(ty: &TypeRef) -> String {
     match ty {
-        TypeRef::Named { name } => name.clone(),
-        TypeRef::Applied { name, args } => {
+        TypeRef::Named { name, .. } => name.clone(),
+        TypeRef::Applied { name, args, .. } => {
             let args = args.iter().map(type_ref_doc_name).collect::<Vec<_>>().join(", ");
             format!("{name}[{args}]")
         }
@@ -2744,6 +2798,12 @@ fn type_ref_doc_name(ty: &TypeRef) -> String {
         TypeRef::SelfType => "Self".to_string(),
         TypeRef::Ref { inner } => format!("&{}", type_ref_doc_name(inner)),
         TypeRef::RustPath { path } => path.clone(),
+        TypeRef::NativeUnion(native) => native
+            .members
+            .iter()
+            .map(type_ref_doc_name)
+            .collect::<Vec<_>>()
+            .join(" | "),
         TypeRef::Unknown => "Unknown".to_string(),
     }
 }
@@ -3001,6 +3061,7 @@ pub def decorated(value: int) -> int:
         assert_eq!(
             function.params[0].ty,
             TypeRef::Named {
+                origin: None,
                 name: "int".to_string(),
             }
         );
@@ -3046,12 +3107,14 @@ pub def col(name: str) -> ColumnExpr:
         assert_eq!(
             function.params[0].ty,
             TypeRef::Named {
+                origin: None,
                 name: "str".to_string(),
             }
         );
         assert_eq!(
             function.return_type,
             TypeRef::Named {
+                origin: None,
                 name: "ColumnExpr".to_string(),
             }
         );
@@ -3119,12 +3182,14 @@ pub def eq(left: ColumnExpr, right: ColumnExpr) -> ColumnExpr:
                 (
                     "left",
                     &TypeRef::Named {
+                        origin: None,
                         name: "ColumnExpr".to_string(),
                     },
                 ),
                 (
                     "right",
                     &TypeRef::Named {
+                        origin: None,
                         name: "ColumnExpr".to_string(),
                     },
                 ),
@@ -3133,6 +3198,7 @@ pub def eq(left: ColumnExpr, right: ColumnExpr) -> ColumnExpr:
         assert_eq!(
             callable.return_type,
             TypeRef::Named {
+                origin: None,
                 name: "ColumnExpr".to_string(),
             }
         );
@@ -3410,6 +3476,7 @@ pub class Parser:
         assert_eq!(
             api_methods[0].return_type,
             TypeRef::Named {
+                origin: None,
                 name: "str".to_string()
             }
         );
@@ -3420,6 +3487,7 @@ pub class Parser:
         assert_eq!(
             api_methods[1].return_type,
             TypeRef::Named {
+                origin: None,
                 name: "bytes".to_string()
             }
         );
@@ -3554,6 +3622,7 @@ pub model Measurements:
         assert_eq!(
             mean.return_type,
             TypeRef::Named {
+                origin: None,
                 name: "int".to_string()
             }
         );

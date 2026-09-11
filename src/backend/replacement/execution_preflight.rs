@@ -24,12 +24,13 @@ use super::{
 /// worklist breaks recursive call cycles without omitting the rest of a body.
 pub(super) fn validate(
     module: &BodyIrModule,
-    reachable: &[BodyIrModule],
+    reachable: &[&BodyIrModule],
     entry: &Body,
     providers: Option<&ProviderRuntime>,
 ) -> Result<(), ReplacementExecutionError> {
     let mut preflight = ExecutionPreflight {
         module,
+        owner: module,
         reachable,
         providers,
         pending: vec![(module, entry)],
@@ -37,6 +38,7 @@ pub(super) fn validate(
     };
     while let Some((owner, body)) = preflight.pending.pop() {
         if preflight.visited.insert(&body.direct_call_id) {
+            preflight.owner = owner;
             // A refusal raised here carries a span measured in `owner`, which is not always the entrypoint's module
             // once a call can leave it. Recording the module keeps the reported location and the reported span
             // describing the same file.
@@ -56,12 +58,14 @@ pub(super) fn validate(
 /// Borrowed traversal state; visited declaration identities bound recursion without storing runtime evidence.
 struct ExecutionPreflight<'module, 'runtime> {
     module: &'module BodyIrModule,
+    /// Current declaration owner, including its default-evaluation and nested closure contexts.
+    owner: &'module BodyIrModule,
     /// Modules other than the entry's that a resolved call may reach.
     ///
     /// Preflight has to follow a call across a module edge for the same reason it follows one inside a module: an
     /// admitted profile is proved before any program effect runs, and a body left unvisited is a body whose refusals
     /// would surface part-way through execution instead.
-    reachable: &'module [BodyIrModule],
+    reachable: &'module [&'module BodyIrModule],
     providers: Option<&'runtime ProviderRuntime>,
     pending: Vec<(&'module BodyIrModule, &'module Body)>,
     visited: BTreeSet<&'module CompilerNodeId>,
@@ -84,7 +88,7 @@ impl<'module> ExecutionPreflight<'module, '_> {
         span: HirSourceSpan,
     ) -> Result<(&'module BodyIrModule, &'module Body), ReplacementExecutionError> {
         if target.direct_call_id.is_some() {
-            return named_callable_body(self.module, target, span).map(|body| (self.module, body));
+            return named_callable_body(self.owner, target, span).map(|body| (self.owner, body));
         }
         let canonical = target.canonical.as_ref().ok_or_else(|| {
             unsupported(
@@ -95,9 +99,8 @@ impl<'module> ExecutionPreflight<'module, '_> {
                 span,
             )
         })?;
-        let mut resolved = self
-            .reachable
-            .iter()
+        let mut resolved = std::iter::once(self.module)
+            .chain(self.reachable.iter().copied())
             .filter_map(|module| module.body_for_canonical_target(canonical).map(|body| (module, body)));
         let resolved_body = resolved.next().ok_or_else(|| {
             unsupported(

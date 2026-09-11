@@ -124,6 +124,7 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
         params: vec![ParamExport {
             name: "name".to_string(),
             ty: TypeRef::Named {
+                origin: None,
                 name: "str".to_string(),
             },
             kind: ParamKindExport::Normal,
@@ -131,6 +132,7 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
             default: None,
         }],
         return_type: TypeRef::Named {
+            origin: None,
             name: "Widget".to_string(),
         },
         is_async: false,
@@ -138,20 +140,24 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
     manifest.exports.consts.push(ConstExport {
         name: "DEFAULT_NAME".to_string(),
         ty: TypeRef::Named {
+            origin: None,
             name: "str".to_string(),
         },
     });
     manifest.exports.statics.push(StaticExport {
         name: "SHARED_COUNT".to_string(),
         ty: TypeRef::Named {
+            origin: None,
             name: "int".to_string(),
         },
     });
     manifest.exports.statics.push(StaticExport {
         name: "SHARED_ITEMS".to_string(),
         ty: TypeRef::Applied {
+            origin: None,
             name: "list".to_string(),
             args: vec![TypeRef::Named {
+                origin: None,
                 name: "int".to_string(),
             }],
         },
@@ -598,6 +604,7 @@ fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str, keyword_
         params: vec![ParamExport {
             name: "value".to_string(),
             ty: TypeRef::Named {
+                origin: None,
                 name: "int".to_string(),
             },
             kind: ParamKindExport::Normal,
@@ -605,6 +612,7 @@ fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str, keyword_
             default: None,
         }],
         return_type: TypeRef::Named {
+            origin: None,
             name: "int".to_string(),
         },
         is_async: false,
@@ -2651,9 +2659,11 @@ def main() -> None:
             module_path: Some(vec!["std".to_string(), "derives".to_string(), "collection".to_string()]),
             type_args: vec![
                 TypeRef::Named {
+                    origin: None,
                     name: "int".to_string(),
                 },
                 TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
             ],

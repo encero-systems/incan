@@ -147,6 +147,9 @@ pub struct CheckedExportIdentity {
     pub projection: CheckedExportProjection,
     /// Canonical declaration identity selected by the frontend, absent only when resolution stayed unproven.
     pub canonical: Option<CanonicalSymbolId>,
+    /// Checked foreign nominal bindings available while this export was projected; only referenced type leaves
+    /// are serialized, so unrelated implementation imports do not become artifact metadata.
+    pub(crate) type_origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
 }
 
 impl CheckedExportIdentity {
@@ -156,6 +159,7 @@ impl CheckedExportIdentity {
             source_path,
             projection: CheckedExportProjection::Direct,
             canonical: None,
+            type_origins: Default::default(),
         }
     }
 
@@ -165,6 +169,7 @@ impl CheckedExportIdentity {
             source_path,
             projection: CheckedExportProjection::Alias { target_path },
             canonical: None,
+            type_origins: Default::default(),
         }
     }
 
@@ -174,6 +179,7 @@ impl CheckedExportIdentity {
             source_path,
             projection: CheckedExportProjection::Reexport { target_path },
             canonical: None,
+            type_origins: Default::default(),
         }
     }
 
@@ -186,6 +192,7 @@ impl CheckedExportIdentity {
                 target_kind,
             },
             canonical: None,
+            type_origins: Default::default(),
         }
     }
 
@@ -309,6 +316,8 @@ pub struct CheckedAliasExport {
     pub name: String,
     pub target_path: Vec<String>,
     pub projected_function: Option<CheckedFunctionExport>,
+    /// Checked nominal target retained by a public type re-export.
+    pub projected_type: Option<ResolvedType>,
 }
 
 #[derive(Debug, Clone)]
@@ -555,6 +564,10 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
         }
     }
 
+    let type_origins = checker.checked_nominal_type_origins();
+    for export in &mut exports {
+        export.identity.type_origins.clone_from(&type_origins);
+    }
     exports.sort_by(|a, b| a.name.cmp(&b.name));
     exports
 }
@@ -608,6 +621,7 @@ fn checked_alias_exports(alias: &AliasDecl, checker: &TypeChecker) -> Vec<Checke
         kind: CheckedExportKind::Alias(CheckedAliasExport {
             name: alias.name.clone(),
             target_path,
+            projected_type: matches!(symbol.kind, SymbolKind::Type(_)).then(|| ResolvedType::Named(alias.name.clone())),
             projected_function,
         }),
     }]
@@ -665,7 +679,7 @@ fn checked_source_import_item_exports(
                         .lookup_symbol(exported_name.as_str())
                         .map(|symbol| symbol.kind.clone())
                 });
-            checked_import_export_from_symbol_kind(exported_name, target_path, symbol_kind.as_ref(), identity)
+            checked_import_export_from_symbol_kind(exported_name, target_path, symbol_kind.as_ref(), identity, checker)
         })
         .collect()
 }
@@ -685,7 +699,7 @@ fn checked_import_item_exports(
             let symbol_kind = checker.lookup_symbol(exported_name.as_str()).map(|symbol| &symbol.kind);
             let identity = CheckedExportIdentity::reexport(target_path.clone(), target_path.clone())
                 .with_canonical(checked_binding_canonical(checker, &exported_name));
-            checked_import_export_from_symbol_kind(exported_name, target_path, symbol_kind, identity)
+            checked_import_export_from_symbol_kind(exported_name, target_path, symbol_kind, identity, checker)
         })
         .collect()
 }
@@ -696,17 +710,23 @@ fn checked_import_export_from_symbol_kind(
     target_path: Vec<String>,
     symbol_kind: Option<&SymbolKind>,
     identity: CheckedExportIdentity,
+    checker: &TypeChecker,
 ) -> Vec<CheckedNamedExport> {
     if let Some(SymbolKind::FunctionOverloads(overloads)) = symbol_kind {
         return checked_overload_function_exports(exported_name, overloads, identity);
     }
     let projected_function = symbol_kind.and_then(|kind| checked_projected_function_export(&exported_name, kind));
+    let projected_type = checker
+        .checked_nominal_type_origins()
+        .contains_key(&exported_name)
+        .then(|| ResolvedType::Named(exported_name.clone()));
     vec![CheckedNamedExport {
         name: exported_name.clone(),
         identity,
         kind: CheckedExportKind::Alias(CheckedAliasExport {
             name: exported_name,
             target_path,
+            projected_type,
             projected_function,
         }),
     }]

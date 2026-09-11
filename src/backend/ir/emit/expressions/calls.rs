@@ -279,11 +279,18 @@ impl<'a> IrEmitter<'a> {
             },
             _ => None,
         }?;
-        target_ty
-            .union_members()?
-            .iter()
-            .find(|member| member.nominal_type_name() == Some(candidate_name))
-            .cloned()
+        let members = target_ty.union_members()?;
+        let index = target_ty
+            .union_variant_index_for_member(&IrType::Struct(candidate_name.to_string()))
+            .or_else(|| {
+                if matches!(target_ty, IrType::ExternalUnion { native: Some(_), .. }) {
+                    return None;
+                }
+                members
+                    .iter()
+                    .position(|member| member.nominal_type_name() == Some(candidate_name))
+            })?;
+        members.get(index).cloned()
     }
 
     /// Return whether a source anonymous union can be widened into the target anonymous union.
@@ -1632,6 +1639,7 @@ mod tests {
                 name: "secret".to_string(),
                 canonical: None,
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "int".to_string(),
                 },
                 surface_type_name: None,
@@ -1645,6 +1653,7 @@ mod tests {
                 name: "label".to_string(),
                 canonical: None,
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
                 surface_type_name: None,
@@ -1659,6 +1668,7 @@ mod tests {
             name: "unrelated".to_string(),
             canonical: None,
             ty: TypeRef::Named {
+                origin: None,
                 name: "bool".to_string(),
             },
             surface_type_name: None,
@@ -1718,6 +1728,7 @@ mod tests {
             name: "size".to_string(),
             canonical: None,
             ty: TypeRef::Named {
+                origin: None,
                 name: "int".to_string(),
             },
             surface_type_name: None,
@@ -1744,6 +1755,7 @@ mod tests {
             name: "size".to_string(),
             canonical: None,
             ty: TypeRef::Named {
+                origin: None,
                 name: "int".to_string(),
             },
             surface_type_name: None,
@@ -2302,6 +2314,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let target_ty = IrType::ExternalUnion {
             library: "widgets".to_string(),
+            native: None,
             union: Box::new(IrType::NamedGeneric(
                 IR_UNION_TYPE_NAME.to_string(),
                 vec![
@@ -2336,6 +2349,84 @@ mod tests {
             render(emitted),
             format!("widgets::{canonical_name}::V1(always_true.clone())")
         );
+        Ok(())
+    }
+
+    /// Contextual union typing must retain the selected nominal identity of a renamed constructor payload.
+    #[test]
+    fn contextual_union_payload_uses_checked_nominal_identity() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::library_manifest::{
+            CanonicalIdentityExport, CanonicalIdentityNamespaceExport, CanonicalIdentityOriginExport,
+            CanonicalIdentitySpanExport, NativeUnionExport, NativeUnionOwnerExport, NominalTypeOriginExport,
+        };
+        let origin = NominalTypeOriginExport {
+            provider: crate::provider::ProviderIdentity {
+                name: "pricing".into(),
+                version: "1.0.0".into(),
+                digest: "a".repeat(64),
+                feature_projection: Default::default(),
+            },
+            canonical: CanonicalIdentityExport {
+                namespace: CanonicalIdentityNamespaceExport::OrdinaryLexical,
+                origin: CanonicalIdentityOriginExport::Package {
+                    library: "pricing".into(),
+                    module_path: vec!["answer".into()],
+                },
+                declaration_name: "Surcharge".into(),
+                kind: "model".into(),
+                declaration_span: CanonicalIdentitySpanExport { start: 0, end: 20 },
+            },
+        };
+        let member = IrType::Struct("bridge::pricing::Surcharge".into());
+        let target = IrType::ExternalUnion {
+            library: "::bridge::pricing".into(),
+            union: Box::new(IrType::NamedGeneric(
+                IR_UNION_TYPE_NAME.into(),
+                vec![member.clone(), IrType::Int],
+            )),
+            native: Some(crate::backend::ir::types::CarriedNativeUnion(Box::new(
+                NativeUnionExport {
+                    owner: NativeUnionOwnerExport::SelectedArtifact(origin.provider.clone()),
+                    rust_name: "__IncanUnion_selected".into(),
+                    members: Vec::new(),
+                    local_nominals: Default::default(),
+                    checked_projection: Some(Box::new(crate::library_manifest::NativeUnionProjection {
+                        dependency_root: "bridge".into(),
+                        rust_owner: "::bridge::pricing".into(),
+                        members: Vec::new(),
+                        nominal_origins: std::collections::BTreeMap::from([
+                            ("Charge".into(), origin.clone()),
+                            ("bridge::pricing::Surcharge".into(), origin.clone()),
+                        ]),
+                    })),
+                },
+            ))),
+        };
+        let argument = TypedExpr::new(
+            IrExprKind::Struct {
+                name: "Charge".into(),
+                fields: Vec::new(),
+                fill_defaults: false,
+            },
+            target.clone(),
+        );
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        assert_eq!(emitter.union_payload_candidate_type(&argument, &target), Some(member));
+        let tokens = emitter
+            .emit_union_payload_arg(&argument, &target, None)?
+            .ok_or("missing union payload")?;
+        assert!(render(tokens).contains("::bridge::pricing::__IncanUnion_selected::V0(Charge{}"));
+        let mut wrong = target;
+        if let IrType::ExternalUnion {
+            native: Some(native), ..
+        } = &mut wrong
+            && let Some(projection) = &mut native.checked_projection
+            && let Some(identity) = projection.nominal_origins.get_mut("Charge")
+        {
+            identity.provider.digest = "b".repeat(64);
+        }
+        assert_eq!(emitter.union_payload_candidate_type(&argument, &wrong), None);
         Ok(())
     }
 

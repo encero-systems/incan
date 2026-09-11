@@ -228,13 +228,58 @@ impl MemberBindingKind {
 
 /// Canonical nominal identity for one type exported through a compiled public-library dependency.
 ///
-/// Local aliases and provider-qualified internal signature spellings map to this value. The dependency key prevents
-/// same-named declarations from separate providers from unifying, while the provider-local source path lets multiple
-/// public spellings of one declaration compare as the same type.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Local aliases and provider-qualified internal signature spellings map to this value. Admitted artifacts compare
+/// by their exact selected instance and canonical declaration. Legacy metadata without canonical evidence retains
+/// its provider-local source path; a consumer route is used only by metadata-only compatibility adapters.
+#[derive(Debug, Clone)]
 pub(crate) struct PublicLibraryTypeIdentity {
     dependency_key: String,
     source_path: Vec<String>,
+    /// Declaration identity retained from the admitted manifest, including provider-only signature types.
+    canonical: Option<CanonicalSymbolId>,
+    /// Exact admitted artifact instance; aliases and bridge routes do not participate in this identity.
+    selected_provider: Option<crate::provider::ProviderIdentity>,
+}
+
+impl PartialEq for PublicLibraryTypeIdentity {
+    /// Compare exact declaring instances independently of consumer aliases, retaining legacy source-path distinction.
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.selected_provider, &other.selected_provider) {
+            (Some(left), Some(right)) => {
+                left == right
+                    && match (&self.canonical, &other.canonical) {
+                        (Some(left), Some(right)) => left == right,
+                        (None, None) => self.source_path == other.source_path,
+                        _ => false,
+                    }
+            }
+            (None, None) => self.dependency_key == other.dependency_key && self.source_path == other.source_path,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for PublicLibraryTypeIdentity {}
+
+impl std::hash::Hash for PublicLibraryTypeIdentity {
+    /// Hash the same selected instance and canonical or legacy source declaration used by equality.
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if let Some(provider) = &self.selected_provider {
+            std::hash::Hash::hash(&true, state);
+            std::hash::Hash::hash(&provider.stable_key(), state);
+            if let Some(canonical) = &self.canonical {
+                std::hash::Hash::hash(&true, state);
+                std::hash::Hash::hash(canonical, state);
+            } else {
+                std::hash::Hash::hash(&false, state);
+                std::hash::Hash::hash(&self.source_path, state);
+            }
+        } else {
+            std::hash::Hash::hash(&false, state);
+            std::hash::Hash::hash(&self.dependency_key, state);
+            std::hash::Hash::hash(&self.source_path, state);
+        }
+    }
 }
 
 impl PublicLibraryTypeIdentity {
@@ -243,7 +288,15 @@ impl PublicLibraryTypeIdentity {
         Self {
             dependency_key: dependency_key.to_string(),
             source_path: source_path.to_vec(),
+            canonical: None,
+            selected_provider: None,
         }
+    }
+
+    /// Retain the declaration identity already supplied by this checked provider type binding.
+    fn with_canonical(mut self, canonical: Option<CanonicalSymbolId>) -> Self {
+        self.canonical = canonical;
+        self
     }
 }
 
@@ -538,6 +591,8 @@ pub struct TypeChecker {
     /// Tracks which `pub::` libraries have already seeded the internal transitive semantic caches for this checker
     /// run.
     pub(crate) cached_pub_libraries: HashSet<String>,
+    /// Physical type routes projected once from checked foreign leaf identities for each imported provider.
+    pub(crate) foreign_pub_type_remappings: HashMap<String, HashMap<String, String>>,
     /// Whether a manual [`Self::import_module`] call prepared dependency-only semantics for the next program check.
     dependency_semantics_pending: bool,
     /// Module path for the program being checked (if known).
@@ -706,6 +761,7 @@ impl TypeChecker {
             transitive_stdlib_stub_types: HashMap::new(),
             transitive_stdlib_stub_traits: HashMap::new(),
             cached_pub_libraries: HashSet::new(),
+            foreign_pub_type_remappings: HashMap::new(),
             dependency_semantics_pending: false,
             current_module_path: None,
             source_import_targets: HashMap::new(),
@@ -1430,6 +1486,58 @@ impl TypeChecker {
             .collect::<Vec<_>>()
             .join(", ");
         Some(format!("{base}<{rendered_args}>"))
+    }
+
+    /// Bind a nominal declaration to the exact artifact already admitted for this consumer dependency route.
+    fn admitted_public_type_identity(
+        &self,
+        library: &str,
+        source_path: &[String],
+        canonical: Option<CanonicalSymbolId>,
+    ) -> PublicLibraryTypeIdentity {
+        let mut identity = PublicLibraryTypeIdentity::new(library, source_path).with_canonical(canonical);
+        if let Some(canonical) = &identity.canonical {
+            identity.selected_provider = self.provider_plan.declaring_public_provider(library, canonical).ok();
+        } else if let Some(crate::frontend::library_manifest_index::LibraryManifestIndexEntry::Loaded {
+            metadata,
+            ..
+        }) = self.provider_plan.library_manifest_index().get(library)
+        {
+            identity.selected_provider = self
+                .provider_plan
+                .public_artifacts()
+                .find(|artifact| artifact.artifact.crate_root == metadata.crate_root)
+                .map(|artifact| artifact.identity.clone());
+        }
+        identity
+    }
+
+    /// Retain foreign nominal origins from accepted import bindings, without looking up source names again.
+    pub(crate) fn checked_nominal_type_origins(
+        &self,
+    ) -> std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport> {
+        self.public_library_type_identities
+            .iter()
+            .filter_map(|(name, identity)| {
+                let provider = identity.selected_provider.as_ref()?;
+                let canonical = identity.canonical.as_ref()?;
+                let incan_semantics_core::SymbolOrigin::Package { library, .. } = &canonical.origin else {
+                    return None;
+                };
+                if library != &provider.name {
+                    return None;
+                }
+                Some((
+                    name.clone(),
+                    crate::library_manifest::NominalTypeOriginExport {
+                        provider: provider.clone(),
+                        canonical: crate::library_manifest::CanonicalIdentityExport::from_canonical(
+                            library, canonical,
+                        )?,
+                    },
+                ))
+            })
+            .collect()
     }
 
     /// Return the canonical public-library identity and generic arguments carried by one named type spelling.
@@ -2314,7 +2422,68 @@ impl TypeChecker {
 
     /// Record the resolved type for one expression span in the lowering-facing expression artifact map.
     pub(crate) fn record_expr_type(&mut self, span: Span, ty: ResolvedType) {
+        let mut identities = std::collections::BTreeMap::new();
+        self.collect_expression_type_identities(&ty, &mut Vec::new(), &mut identities);
+        if identities.is_empty() {
+            self.type_info
+                .expressions
+                .expression_type_identities
+                .remove(&(span.start, span.end));
+        } else {
+            self.type_info
+                .expressions
+                .expression_type_identities
+                .insert((span.start, span.end), identities);
+        }
         self.type_info.expressions.expr_types.insert((span.start, span.end), ty);
+    }
+
+    /// Project named leaves through the module/provider type binding retained by the accepting compilation.
+    fn collect_expression_type_identities(
+        &self,
+        ty: &ResolvedType,
+        path: &mut Vec<usize>,
+        identities: &mut std::collections::BTreeMap<Vec<usize>, CanonicalSymbolId>,
+    ) {
+        match ty {
+            ResolvedType::Named(name) => {
+                // Resolved nominal types keep their accepted module/provider binding even when a local value
+                // shadows the source alias. Provider-only return types may have no lexical symbol at all.
+                let identity = match self.public_library_type_identities.get(name) {
+                    Some(binding) => binding.canonical.clone(),
+                    None => self.symbols.module_type_identity(name).cloned(),
+                };
+                if let Some(identity) = identity {
+                    identities.insert(path.clone(), identity);
+                }
+            }
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
+                for (index, ty) in args.iter().enumerate() {
+                    path.push(index);
+                    self.collect_expression_type_identities(ty, path, identities);
+                    path.pop();
+                }
+            }
+            ResolvedType::Ref(ty)
+            | ResolvedType::RefMut(ty)
+            | ResolvedType::TypeToken(ty)
+            | ResolvedType::FrozenList(ty)
+            | ResolvedType::FrozenSet(ty) => {
+                path.push(0);
+                self.collect_expression_type_identities(ty, path, identities);
+                path.pop();
+            }
+            ResolvedType::FrozenDict(key, value) => {
+                for (index, ty) in [key, value].into_iter().enumerate() {
+                    path.push(index);
+                    self.collect_expression_type_identities(ty, path, identities);
+                    path.pop();
+                }
+            }
+            // Function signatures and type variables require their own binder environment; this expression-value
+            // projection does not invent one after checking. Concrete source annotations retain their own facts.
+            _ => {}
+        }
     }
 
     /// Record the final checked type selected for one assignment binding.
@@ -2802,6 +2971,19 @@ impl TypeChecker {
         if let Some(info) = self.lookup_type_info(name) {
             return Some(info);
         }
+        // A value may shadow the source spelling after an annotation has already selected a nominal type. Retain
+        // that accepted type's exact artifact/declaration identity rather than resolving the value as a type again.
+        if let Some(identity) = self.public_library_type_identities.get(name)
+            && let Some(info) = self
+                .public_library_type_identities
+                .iter()
+                .filter(|(binding, candidate)| {
+                    split_canonical_public_library_type_name(binding).is_some() && *candidate == identity
+                })
+                .find_map(|(binding, _)| self.transitive_pub_types.get(binding).and_then(|infos| infos.first()))
+        {
+            return Some(info);
+        }
         // A project's own transitively-reachable type wins over a stdlib stub of the same name. Both are fallbacks
         // for a name the current module does not declare, but only one of them is a type this program actually
         // built: a user class called `Registry` resolved to `incan_stdlib_core`'s `Registry` and reported its own
@@ -3230,6 +3412,7 @@ impl TypeChecker {
     /// independently reconstructing privacy from syntax.
     fn record_model_field_visibilities_for_lowering(&mut self, program: &Program) {
         let mut model_field_visibilities = HashMap::new();
+        let mut model_field_types = HashMap::new();
         let mut model_type_private_fields = HashSet::new();
         for declaration in &program.declarations {
             let Declaration::Model(model) = &declaration.node else {
@@ -3238,6 +3421,11 @@ impl TypeChecker {
             let Some(TypeInfo::Model(info)) = self.lookup_type_info(&model.name) else {
                 continue;
             };
+            for field in &model.fields {
+                if let Some(checked) = info.fields.get(&field.node.name) {
+                    model_field_types.insert((field.span.start, field.span.end), checked.ty.clone());
+                }
+            }
             model_field_visibilities.insert(
                 model.name.clone(),
                 info.fields
@@ -3252,6 +3440,7 @@ impl TypeChecker {
                     .map(|(name, _)| (model.name.clone(), name.clone())),
             );
         }
+        self.type_info.declarations.model_field_types = model_field_types;
         self.type_info.declarations.model_field_visibilities = model_field_visibilities;
         self.type_info.declarations.model_type_private_fields = model_type_private_fields;
     }
@@ -4526,7 +4715,14 @@ impl TypeChecker {
 
     /// Record one type-like lexical binding without guessing an identity from its source spelling.
     fn record_named_type_reference_identity(&mut self, name: &str, span: Span) {
-        let identity = self.symbols.lookup(name).and_then(|symbol_id| {
+        if let Some(identity) = self.named_type_reference_identity(name) {
+            self.type_info.record_resolved_identity(span, identity);
+        }
+    }
+
+    /// Return the identity already assigned to a checked type binding; lexical names select bindings only here.
+    fn named_type_reference_identity(&self, name: &str) -> Option<CanonicalSymbolId> {
+        self.symbols.lookup(name).and_then(|symbol_id| {
             let symbol = self.symbols.get(symbol_id)?;
             let type_like = matches!(symbol.kind, SymbolKind::Type(_) | SymbolKind::Trait(_))
                 || matches!(
@@ -4537,10 +4733,7 @@ impl TypeChecker {
                 return None;
             }
             self.symbols.identity_of(symbol_id).cloned()
-        });
-        if let Some(identity) = identity {
-            self.type_info.record_resolved_identity(span, identity);
-        }
+        })
     }
 
     /// Register the resolved target for a source-level type alias.
@@ -6031,6 +6224,7 @@ impl TypeChecker {
             self.public_library_type_identities.clear();
             self.transitive_pub_traits.clear();
             self.cached_pub_libraries.clear();
+            self.foreign_pub_type_remappings.clear();
         }
         self.validate_alias_declarations(program);
 
@@ -6080,6 +6274,21 @@ impl TypeChecker {
         self.export_checked_import_bindings();
         self.record_binding_collision_diagnostics();
 
+        if self.provider_plan.public_artifacts().next().is_some() {
+            for (name, identity) in &self.public_library_type_identities {
+                if identity.selected_provider.is_none()
+                    && matches!(
+                        identity.canonical.as_ref().map(|identity| &identity.origin),
+                        Some(incan_semantics_core::SymbolOrigin::Package { .. })
+                    )
+                {
+                    self.errors.push(CompileError::type_error(
+                        format!("compiled nominal `{name}` has no unique admitted declaring artifact"),
+                        Span::default(),
+                    ));
+                }
+            }
+        }
         // Split fatal errors from non-fatal diagnostics.
         let all = std::mem::take(&mut self.errors);
         let (fatal, non_fatal): (Vec<_>, Vec<_>) = all
@@ -6087,7 +6296,65 @@ impl TypeChecker {
             .partition(|e| !matches!(e.kind, ErrorKind::Warning | ErrorKind::Lint));
         self.warnings.extend(non_fatal);
 
-        if fatal.is_empty() { Ok(()) } else { Err(fatal) }
+        if fatal.is_empty() {
+            self.record_public_type_bridge_roots(program);
+            Ok(())
+        } else {
+            Err(fatal)
+        }
+    }
+
+    /// Project native bridge roots from the same checked public API type leaves used by artifact publication.
+    fn record_public_type_bridge_roots(&mut self, program: &Program) {
+        use crate::frontend::library_exports::{CheckedExportProjection, collect_checked_public_exports};
+        use crate::library_manifest::{TypeRef, VisitTypeRefs};
+        let mut api = crate::frontend::api_metadata::collect_checked_api_metadata(
+            program,
+            self,
+            self.current_module_path.clone().unwrap_or_default(),
+        );
+        let mut roots = std::collections::BTreeSet::new();
+        api.visit_type_refs(&mut |ty| {
+            if let TypeRef::Named {
+                name, origin: Some(_), ..
+            }
+            | TypeRef::Applied {
+                name, origin: Some(_), ..
+            } = ty
+                && let Some(identity) = self.public_library_type_identities.get(name)
+            {
+                roots.insert(identity.dependency_key.clone());
+            }
+        });
+        // A forwarded callable or union alias can need its provider's native wrapper without naming a nominal leaf.
+        // The checked public binding already records the admitted direct dependency used by that facade edge.
+        for export in collect_checked_public_exports(program, self) {
+            let (CheckedExportProjection::Alias { target_path } | CheckedExportProjection::Reexport { target_path }) =
+                &export.identity.projection
+            else {
+                continue;
+            };
+            let [root, library, ..] = target_path.as_slice() else {
+                continue;
+            };
+            if root == "pub"
+                && export.identity.canonical.is_some()
+                && matches!(
+                    self.provider_plan.library_manifest_index().get(library),
+                    Some(crate::frontend::library_manifest_index::LibraryManifestIndexEntry::Loaded { .. })
+                )
+            {
+                roots.insert(library.clone());
+            }
+        }
+        self.type_info.declarations.public_type_bridge_roots = roots;
+        self.type_info.declarations.foreign_pub_type_remappings = self.foreign_pub_type_remappings.clone();
+        self.type_info.declarations.named_type_origins = self.checked_nominal_type_origins();
+        self.type_info.declarations.named_type_identities = self
+            .public_library_type_identities
+            .iter()
+            .filter_map(|(name, identity)| Some((name.clone(), identity.canonical.clone()?)))
+            .collect();
     }
 
     /// Turn collisions from the shared symbol-registration mechanism into source diagnostics.
@@ -7274,6 +7541,7 @@ impl TypeChecker {
         self.public_library_type_identities.clear();
         self.transitive_pub_traits.clear();
         self.cached_pub_libraries.clear();
+        self.foreign_pub_type_remappings.clear();
         self.dependency_exports.clear();
         self.dependency_member_symbols.clear();
         self.dependency_member_type_aliases.clear();
@@ -7323,6 +7591,7 @@ impl TypeChecker {
         self.public_library_type_identities.clear();
         self.transitive_pub_traits.clear();
         self.cached_pub_libraries.clear();
+        self.foreign_pub_type_remappings.clear();
         // Skip populating dependency exports so visibility checks are bypassed.
         self.dependency_exports.clear();
         self.dependency_member_symbols.clear();

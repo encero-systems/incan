@@ -233,6 +233,7 @@ mod tests {
             type_argument_count: 0,
             target_id: None,
             canonical_identity: None,
+            canonical_owner: None,
             stable_identity: target.map(identity),
             span: None,
             provenance: CodegraphProvenance::Checked,

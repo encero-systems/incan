@@ -687,6 +687,11 @@ pub struct DerivationArtifacts {
 pub struct ExpressionArtifacts {
     /// Map from expression span (start,end) -> resolved type.
     pub expr_types: HashMap<(usize, usize), ResolvedType>,
+    /// Canonical named-type leaves of each checked expression type, addressed by generic/tuple child indices.
+    ///
+    /// The checker selects these identities while its accepted type bindings are available. Consumers retain the
+    /// structural path and identity; an import alias is never a runtime type or layout key.
+    pub expression_type_identities: HashMap<(usize, usize), BTreeMap<Vec<usize>, CanonicalSymbolId>>,
     /// Final checked type of an assignment binding, keyed by the assignment statement span.
     ///
     /// This differs from the initializer expression type when contextual numeric typing or a validated coercion
@@ -859,6 +864,16 @@ pub struct MutableRustTypeArgumentProjection {
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
+    /// Accepted foreign nominal bindings retained before lexical checker context is discarded.
+    pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    /// Exact selected foreign origins retained from accepted bindings for native representation projection.
+    pub(crate) named_type_origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
+    /// Checked local model field types keyed by exact field declaration span.
+    pub(crate) model_field_types: HashMap<(usize, usize), ResolvedType>,
+    /// Direct dependency roots required by checked public API nominal types, including callable signatures.
+    pub public_type_bridge_roots: std::collections::BTreeSet<String>,
+    /// Admitted foreign nominal bindings mapped to checked native routes for each direct import container.
+    pub(crate) foreign_pub_type_remappings: HashMap<String, HashMap<String, String>>,
     /// Checked field visibility for local models, keyed first by model name and then canonical field name.
     ///
     /// Field modifiers and the containing model's visibility are resolved by the frontend. Lowering consumes this
@@ -966,6 +981,11 @@ pub struct DeclarationArtifacts {
     pub decorated_function_bindings: HashMap<String, DecoratedFunctionBindingInfo>,
     /// RFC 036: Decorated function bindings keyed by declaration span, preserving same-name overloads.
     pub decorated_function_bindings_by_span: HashMap<(usize, usize), DecoratedFunctionBindingInfo>,
+    /// Checked decorator applications whose sole parameter and result are the same generic type variable.
+    ///
+    /// This relation is captured before substitution, so native representation can follow the input callable
+    /// without inferring representation identity from structurally equal result types.
+    pub generic_identity_decorator_applications: HashSet<(usize, usize)>,
     /// RFC 036: Method names whose declaration was rebound through a user-defined decorator chain.
     pub decorated_method_bindings: HashMap<(String, String), DecoratedMethodBindingInfo>,
 }
@@ -1302,8 +1322,9 @@ pub struct CallArtifacts {
     /// Compiler-generated member identities observed at checked call sites.
     ///
     /// These helpers retain owner-discriminated semantic identities for tooling, but they are not source declarations
-    /// and therefore must not receive an RFC 120 recoverable source-symbol projection during lowering.
-    pub compiler_generated_member_identities: HashSet<CanonicalSymbolId>,
+    /// and therefore must not receive an RFC 120 recoverable source-symbol projection during lowering. Each entry
+    /// retains its canonical nominal owner as the context dependency used by executable admission.
+    pub compiler_generated_member_identities: HashMap<CanonicalSymbolId, CanonicalSymbolId>,
     /// Collection constructors selected from the canonical collection vocabulary.
     ///
     /// Lowering consumes this decision instead of interpreting a source spelling such as `set(...)` as an ordinary
@@ -1709,12 +1730,112 @@ impl TypeCheckInfo {
             ));
         }
 
-        for (&span, identity) in &self.references.resolved_identities {
+        // Relationship ownership is projected once beside the existing identity facts. Execution and inspection
+        // consume this shared product; neither reconstructs owners from its own syntax traversal.
+        let declarations = self
+            .declarations
+            .declaration_identities
+            .values()
+            .chain(self.declarations.member_declaration_identities.values())
+            .filter(|identity| !self.is_compiler_generated_member_identity(identity))
+            .filter(|identity| {
+                !matches!(
+                    identity.kind,
+                    SemanticSourceTargetKind::Local
+                        | SemanticSourceTargetKind::Parameter
+                        | SemanticSourceTargetKind::Receiver
+                        | SemanticSourceTargetKind::GenericBinder
+                        | SemanticSourceTargetKind::Module
+                        | SemanticSourceTargetKind::Builtin
+                        | SemanticSourceTargetKind::RustItem
+                        | SemanticSourceTargetKind::Other(_)
+                )
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        for identity in &declarations {
             facts.push(SemanticFact::new(
-                CompilerNodeId::expression_span(&module_identity, span.0, span.1),
+                CompilerNodeId::declaration_span(
+                    &module_identity,
+                    identity.declaration_span.start,
+                    identity.declaration_span.end,
+                ),
+                SemanticFactKind::DeclarationIdentity,
+                SemanticFactValue::canonical_identity((*identity).clone()),
+            ));
+            if matches!(
+                identity.kind,
+                SemanticSourceTargetKind::Field | SemanticSourceTargetKind::Variant
+            ) && let Some(owner) = incan_semantics_core::dependencies::closest_declaring_owner(
+                declarations.iter().copied().filter(|candidate| *candidate != *identity),
+                identity.declaration_span,
+            ) {
+                facts.push(SemanticFact::new(
+                    CompilerNodeId::declaration_span(
+                        &module_identity,
+                        identity.declaration_span.start,
+                        identity.declaration_span.end,
+                    ),
+                    SemanticFactKind::RequiredMemberOwner,
+                    SemanticFactValue::canonical_identity(owner.clone()),
+                ));
+            }
+        }
+        for (&span, identity) in &self.references.resolved_identities {
+            let subject = CompilerNodeId::expression_span(&module_identity, span.0, span.1);
+            facts.push(SemanticFact::new(
+                subject.clone(),
+                SemanticFactKind::ReferenceSpan,
+                SemanticFactValue::SourceSpan(incan_semantics_core::HirSourceSpan::new(span.0, span.1)),
+            ));
+            facts.push(SemanticFact::new(
+                subject.clone(),
                 SemanticFactKind::SymbolIdentity,
                 SemanticFactValue::canonical_identity(identity.clone()),
             ));
+            if let Some(owner) = self.calls.compiler_generated_member_identities.get(identity) {
+                facts.push(SemanticFact::new(
+                    subject.clone(),
+                    SemanticFactKind::RequiredReferenceTarget,
+                    SemanticFactValue::canonical_identity(owner.clone()),
+                ));
+            }
+            if let Some(owner) = incan_semantics_core::dependencies::closest_declaring_owner(
+                declarations.iter().copied(),
+                incan_semantics_core::HirSourceSpan::new(span.0, span.1),
+            ) {
+                facts.push(SemanticFact::new(
+                    subject,
+                    SemanticFactKind::ReferenceOwner,
+                    SemanticFactValue::canonical_identity(owner.clone()),
+                ));
+            }
+        }
+
+        for (&span, identities) in &self.expressions.expression_type_identities {
+            let source_span = incan_semantics_core::HirSourceSpan::new(span.0, span.1);
+            for (indices, identity) in identities {
+                let subject = CompilerNodeId::expression_type_component(&module_identity, span.0, span.1, indices);
+                facts.push(SemanticFact::new(
+                    subject.clone(),
+                    SemanticFactKind::ReferenceSpan,
+                    SemanticFactValue::SourceSpan(source_span),
+                ));
+                facts.push(SemanticFact::new(
+                    subject.clone(),
+                    SemanticFactKind::SymbolIdentity,
+                    SemanticFactValue::canonical_identity(identity.clone()),
+                ));
+                if let Some(owner) = incan_semantics_core::dependencies::closest_declaring_owner(
+                    declarations.iter().copied(),
+                    source_span,
+                ) {
+                    facts.push(SemanticFact::new(
+                        subject,
+                        SemanticFactKind::ReferenceOwner,
+                        SemanticFactValue::canonical_identity(owner.clone()),
+                    ));
+                }
+            }
         }
 
         for (name, binding) in &self.declarations.function_bindings {
@@ -2098,12 +2219,16 @@ impl TypeCheckInfo {
 
     /// Return whether `identity` names a compiler-generated member rather than a source declaration.
     pub fn is_compiler_generated_member_identity(&self, identity: &CanonicalSymbolId) -> bool {
-        self.calls.compiler_generated_member_identities.contains(identity)
+        self.calls.compiler_generated_member_identities.contains_key(identity)
     }
 
-    /// Preserve that a checked member identity belongs to compiler-generated surface.
-    pub(crate) fn record_compiler_generated_member_identity(&mut self, identity: CanonicalSymbolId) {
-        self.calls.compiler_generated_member_identities.insert(identity);
+    /// Preserve a generated member's exact declaring nominal as its executable context requirement.
+    pub(crate) fn record_compiler_generated_member_identity(
+        &mut self,
+        identity: CanonicalSymbolId,
+        owner: CanonicalSymbolId,
+    ) {
+        self.calls.compiler_generated_member_identities.insert(identity, owner);
     }
 
     /// Return the canonical collection constructor selected for one source call.

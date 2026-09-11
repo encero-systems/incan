@@ -3030,6 +3030,7 @@ mod tests {
                 },
                 target_path: target.iter().map(|segment| (*segment).to_string()).collect(),
                 is_public,
+                projected_type: None,
                 projected_function: None,
             })
         };

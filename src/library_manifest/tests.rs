@@ -112,13 +112,16 @@ fn manifest_io_round_trip_preserves_recursive_types_and_bounds() -> Result<(), B
         params: vec![ParamExport {
             name: "value".to_string(),
             ty: TypeRef::Applied {
+                origin: None,
                 name: "Result".to_string(),
                 args: vec![
                     TypeRef::Applied {
+                        origin: None,
                         name: "Option".to_string(),
                         args: vec![TypeRef::TypeParam { name: "T".to_string() }],
                     },
                     TypeRef::Named {
+                        origin: None,
                         name: "str".to_string(),
                     },
                 ],
@@ -132,11 +135,13 @@ fn manifest_io_round_trip_preserves_recursive_types_and_bounds() -> Result<(), B
                 elements: vec![
                     TypeRef::TypeParam { name: "T".to_string() },
                     TypeRef::Named {
+                        origin: None,
                         name: "int".to_string(),
                     },
                 ],
             }],
             return_type: Box::new(TypeRef::Named {
+                origin: None,
                 name: "bool".to_string(),
             }),
         },
@@ -264,6 +269,7 @@ fn legacy_manifest_fields_without_visibility_remain_public_issue883() -> Result<
             name: "value".to_string(),
             canonical: None,
             ty: TypeRef::Named {
+                origin: None,
                 name: "str".to_string(),
             },
             surface_type_name: None,
@@ -307,6 +313,7 @@ fn manifest_round_trips_private_model_field_visibility_issue884() -> Result<(), 
             name: "secret".to_string(),
             canonical: None,
             ty: TypeRef::Named {
+                origin: None,
                 name: "str".to_string(),
             },
             surface_type_name: None,
@@ -336,6 +343,7 @@ fn private_api_field_issue883() -> FieldExport {
         name: "secret".to_string(),
         canonical: None,
         ty: TypeRef::Named {
+            origin: None,
             name: "str".to_string(),
         },
         surface_type_name: None,
@@ -440,6 +448,7 @@ fn manifest_io_round_trip_preserves_partial_exports() -> Result<(), Box<dyn std:
         presets: vec![PartialPresetExport {
             name: "method".to_string(),
             ty: TypeRef::Named {
+                origin: None,
                 name: "str".to_string(),
             },
             value: PresetValueExport::String("GET".to_string()),
@@ -449,6 +458,7 @@ fn manifest_io_round_trip_preserves_partial_exports() -> Result<(), Box<dyn std:
             ParamExport {
                 name: "method".to_string(),
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
                 kind: ParamKindExport::Normal,
@@ -458,6 +468,7 @@ fn manifest_io_round_trip_preserves_partial_exports() -> Result<(), Box<dyn std:
             ParamExport {
                 name: "path".to_string(),
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
                 kind: ParamKindExport::Normal,
@@ -466,6 +477,7 @@ fn manifest_io_round_trip_preserves_partial_exports() -> Result<(), Box<dyn std:
             },
         ],
         return_type: TypeRef::Named {
+            origin: None,
             name: "str".to_string(),
         },
         is_async: false,
@@ -490,6 +502,7 @@ fn manifest_io_round_trip_preserves_parameter_defaults() -> Result<(), Box<dyn s
         params: vec![ParamExport {
             name: "value".to_string(),
             ty: TypeRef::Named {
+                origin: None,
                 name: "int".to_string(),
             },
             kind: ParamKindExport::Normal,
@@ -504,6 +517,7 @@ fn manifest_io_round_trip_preserves_parameter_defaults() -> Result<(), Box<dyn s
             }),
         }],
         return_type: TypeRef::Named {
+            origin: None,
             name: "int".to_string(),
         },
         is_async: false,
@@ -591,6 +605,7 @@ fn checked_exports_publish_semantic_identity_graph() -> Result<(), Box<dyn std::
                 crate::frontend::library_exports::CheckedAliasExport {
                     name: "safe_cast".to_string(),
                     target_path: vec!["helpers".to_string(), "cast".to_string()],
+                    projected_type: None,
                     projected_function: Some(crate::frontend::library_exports::CheckedFunctionExport {
                         name: "safe_cast".to_string(),
                         ..callable.clone()
@@ -1078,6 +1093,7 @@ fn compiled_nested_module_aliases_and_reexports_preserve_identity() -> Result<()
         kind: CheckedExportKind::Alias(CheckedAliasExport {
             name: name.to_string(),
             target_path: vec!["helpers".to_string(), "compute".to_string()],
+            projected_type: None,
             projected_function: Some(CheckedFunctionExport {
                 name: name.to_string(),
                 ..callable.clone()
@@ -1120,6 +1136,7 @@ fn compiled_nested_module_aliases_and_reexports_preserve_identity() -> Result<()
                 type_params: Vec::new(),
                 params: Vec::new(),
                 return_type: TypeRef::Named {
+                    origin: None,
                     name: "int".to_string(),
                 },
                 is_async: false,
@@ -1135,6 +1152,7 @@ fn compiled_nested_module_aliases_and_reexports_preserve_identity() -> Result<()
                     anchor: anchor("facade.safe_compute", 30, 40),
                     target_path: vec!["helpers".to_string(), "compute".to_string()],
                     is_public: true,
+                    projected_type: None,
                     projected_function: None,
                 }),
                 ApiDeclaration::Alias(ApiAlias {
@@ -1142,6 +1160,7 @@ fn compiled_nested_module_aliases_and_reexports_preserve_identity() -> Result<()
                     anchor: anchor("facade.public_compute", 50, 60),
                     target_path: vec!["helpers".to_string(), "compute".to_string()],
                     is_public: true,
+                    projected_type: None,
                     projected_function: None,
                 }),
             ],
@@ -1365,6 +1384,7 @@ fn package_identity_path_keeps_same_named_module_and_declaration_segments() -> R
                 type_params: Vec::new(),
                 params: Vec::new(),
                 return_type: TypeRef::Named {
+                    origin: None,
                     name: "int".to_string(),
                 },
                 is_async: false,
@@ -1430,6 +1450,7 @@ fn package_root_nominal_reexport_requires_binding_and_exact_target_anchor() -> R
         kind: CheckedExportKind::Alias(CheckedAliasExport {
             name: "PublicRecord".to_string(),
             target_path: vec!["domain".to_string(), "Record".to_string()],
+            projected_type: None,
             projected_function: None,
         }),
     };
@@ -1472,6 +1493,7 @@ fn package_root_nominal_reexport_requires_binding_and_exact_target_anchor() -> R
                     },
                     target_path: vec!["domain".to_string(), "Record".to_string()],
                     is_public: true,
+                    projected_type: None,
                     projected_function: None,
                 })],
             },
@@ -1915,6 +1937,7 @@ fn manifest_writer_rejects_malformed_and_duplicate_canonical_identities() -> Res
         kind: CheckedExportKind::Alias(CheckedAliasExport {
             name: "safe_parse".to_string(),
             target_path: vec!["codec".to_string(), "parse".to_string()],
+            projected_type: None,
             projected_function: Some(CheckedFunctionExport {
                 name: "safe_parse".to_string(),
                 emitted_name: None,
@@ -1977,6 +2000,7 @@ fn manifest_writer_rejects_malformed_and_duplicate_canonical_identities() -> Res
         kind: CheckedExportKind::Alias(CheckedAliasExport {
             name: "model_parse".to_string(),
             target_path: vec!["codec".to_string(), "parse".to_string()],
+            projected_type: None,
             projected_function: Some(CheckedFunctionExport {
                 name: "model_parse".to_string(),
                 emitted_name: None,
@@ -2131,6 +2155,7 @@ fn checked_newtype_rewrite_uses_source_identity_for_same_leaf_names() -> Result<
     assert_eq!(
         boxed.underlying,
         TypeRef::Named {
+            origin: None,
             name: "BId".to_string()
         }
     );
@@ -2237,6 +2262,7 @@ fn manifest_validation_rejects_invalid_partial_exports() -> Result<(), Box<dyn s
         presets: vec![PartialPresetExport {
             name: "method".to_string(),
             ty: TypeRef::Named {
+                origin: None,
                 name: "str".to_string(),
             },
             value: PresetValueExport::String("GET".to_string()),
@@ -2244,6 +2270,7 @@ fn manifest_validation_rejects_invalid_partial_exports() -> Result<(), Box<dyn s
         type_params: Vec::new(),
         params: Vec::new(),
         return_type: TypeRef::Named {
+            origin: None,
             name: "str".to_string(),
         },
         is_async: false,
@@ -2415,6 +2442,7 @@ fn manifest_io_round_trip_preserves_rest_parameter_metadata() -> Result<(), Box<
             ParamExport {
                 name: "items".to_string(),
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "int".to_string(),
                 },
                 kind: ParamKindExport::RestPositional,
@@ -2424,6 +2452,7 @@ fn manifest_io_round_trip_preserves_rest_parameter_metadata() -> Result<(), Box<
             ParamExport {
                 name: "labels".to_string(),
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
                 kind: ParamKindExport::RestKeyword,
@@ -2432,6 +2461,7 @@ fn manifest_io_round_trip_preserves_rest_parameter_metadata() -> Result<(), Box<
             },
         ],
         return_type: TypeRef::Named {
+            origin: None,
             name: "int".to_string(),
         },
         is_async: false,
@@ -2454,6 +2484,7 @@ fn manifest_io_round_trip_preserves_rest_parameter_metadata() -> Result<(), Box<
             params: vec![ParamExport {
                 name: "items".to_string(),
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "int".to_string(),
                 },
                 kind: ParamKindExport::RestPositional,
@@ -2461,6 +2492,7 @@ fn manifest_io_round_trip_preserves_rest_parameter_metadata() -> Result<(), Box<
                 default: None,
             }],
             return_type: TypeRef::Named {
+                origin: None,
                 name: "int".to_string(),
             },
             is_async: false,
@@ -2488,6 +2520,7 @@ fn manifest_validation_rejects_invalid_rest_parameter_metadata() -> Result<(), B
             ParamExport {
                 name: "labels".to_string(),
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
                 kind: ParamKindExport::RestKeyword,
@@ -2497,6 +2530,7 @@ fn manifest_validation_rejects_invalid_rest_parameter_metadata() -> Result<(), B
             ParamExport {
                 name: "value".to_string(),
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "int".to_string(),
                 },
                 kind: ParamKindExport::Normal,
@@ -2505,6 +2539,7 @@ fn manifest_validation_rejects_invalid_rest_parameter_metadata() -> Result<(), B
             },
         ],
         return_type: TypeRef::Named {
+            origin: None,
             name: "int".to_string(),
         },
         is_async: false,
@@ -2638,6 +2673,7 @@ fn manifest_io_round_trip_preserves_enum_traits_and_methods() -> Result<(), Box<
             receiver: Some(ReceiverExport::Immutable),
             params: Vec::new(),
             return_type: TypeRef::Named {
+                origin: None,
                 name: "str".to_string(),
             },
             is_async: false,
@@ -2844,6 +2880,7 @@ fn manifest_io_round_trip_preserves_type_trait_adoptions() -> Result<(), Box<dyn
         source_name: None,
         module_path: None,
         type_args: vec![TypeRef::Named {
+            origin: None,
             name: "int".to_string(),
         }],
         implementation_type_params: vec![ImplementationTypeParamExport {
@@ -2861,6 +2898,7 @@ fn manifest_io_round_trip_preserves_type_trait_adoptions() -> Result<(), Box<dyn
         source_name: None,
         module_path: None,
         type_args: vec![TypeRef::Named {
+            origin: None,
             name: "float".to_string(),
         }],
         implementation_type_params: Vec::new(),
@@ -2885,6 +2923,7 @@ fn manifest_io_round_trip_preserves_type_trait_adoptions() -> Result<(), Box<dyn
             source_name: None,
             module_path: None,
             type_args: vec![TypeRef::Named {
+                origin: None,
                 name: "str".to_string(),
             }],
             implementation_type_params: Vec::new(),
@@ -3734,6 +3773,7 @@ fn manifest_writer_rejects_a_helper_binding_through_an_alias_to_an_uncallable_ta
     manifest.exports.aliases.push(AliasExport {
         name: "Filter".to_string(),
         target_path: vec!["mylib".to_string(), "Filterable".to_string()],
+        projected_type: None,
         projected_function: None,
     });
     manifest.vocab = Some(VocabExports {
@@ -3773,6 +3813,7 @@ fn manifest_writer_accepts_a_helper_binding_to_a_public_partial() -> Result<(), 
         presets: vec![PartialPresetExport {
             name: "status".to_string(),
             ty: TypeRef::Named {
+                origin: None,
                 name: "str".to_string(),
             },
             value: PresetValueExport::String("active".to_string()),
@@ -3781,6 +3822,7 @@ fn manifest_writer_accepts_a_helper_binding_to_a_public_partial() -> Result<(), 
         params: vec![ParamExport {
             name: "status".to_string(),
             ty: TypeRef::Named {
+                origin: None,
                 name: "str".to_string(),
             },
             kind: ParamKindExport::Normal,
@@ -3788,6 +3830,7 @@ fn manifest_writer_accepts_a_helper_binding_to_a_public_partial() -> Result<(), 
             default: None,
         }],
         return_type: TypeRef::Named {
+            origin: None,
             name: "None".to_string(),
         },
         is_async: false,
@@ -3981,7 +4024,10 @@ fn reexported_model_passes_identity_graph_validation() -> Result<(), Box<dyn std
 fn every_reexportable_kind_passes_identity_graph_validation() -> Result<(), Box<dyn std::error::Error>> {
     use incan_semantics_core::SemanticSourceTargetKind;
 
-    let named = |name: &str| TypeRef::Named { name: name.to_string() };
+    let named = |name: &str| TypeRef::Named {
+        origin: None,
+        name: name.to_string(),
+    };
     let cases: Vec<(ExportIdentityKind, SemanticSourceTargetKind)> = vec![
         (ExportIdentityKind::Function, SemanticSourceTargetKind::Function),
         (ExportIdentityKind::Model, SemanticSourceTargetKind::Model),
@@ -4173,6 +4219,7 @@ fn same_module_alias_reexported_under_a_new_name_passes_identity_validation() ->
                     type_params: Vec::new(),
                     params: Vec::new(),
                     return_type: TypeRef::Named {
+                        origin: None,
                         name: "int".to_string(),
                     },
                     is_async: false,
@@ -4183,6 +4230,7 @@ fn same_module_alias_reexported_under_a_new_name_passes_identity_validation() ->
                     // Spelled the way the source wrote it, not the way it resolves.
                     target_path: vec!["helper".to_string()],
                     is_public: true,
+                    projected_type: None,
                     projected_function: None,
                 }),
             ],
@@ -4197,6 +4245,7 @@ fn same_module_alias_reexported_under_a_new_name_passes_identity_validation() ->
                 // The entrypoint spells the hop it re-exports; the projection below resolves past it.
                 target_path: vec!["provider".to_string(), "run".to_string()],
                 is_public: true,
+                projected_type: None,
                 projected_function: Some(crate::frontend::api_metadata::ApiProjectedFunction {
                     source_path: vec!["provider".to_string(), "helper".to_string()],
                     callable: crate::frontend::api_metadata::ApiCallableMetadata {
@@ -4206,6 +4255,7 @@ fn same_module_alias_reexported_under_a_new_name_passes_identity_validation() ->
                         receiver: None,
                         params: Vec::new(),
                         return_type: TypeRef::Named {
+                            origin: None,
                             name: "int".to_string(),
                         },
                         is_async: false,
@@ -4238,6 +4288,7 @@ fn same_module_alias_reexported_under_a_new_name_passes_identity_validation() ->
     manifest.exports.aliases.push(AliasExport {
         name: "public_target".to_string(),
         target_path: vec!["provider".to_string(), "helper".to_string()],
+        projected_type: None,
         projected_function: Some(FunctionExport {
             // The renamed re-export republishes the callable under its new public name.
             name: "public_target".to_string(),
@@ -4245,6 +4296,7 @@ fn same_module_alias_reexported_under_a_new_name_passes_identity_validation() ->
             type_params: Vec::new(),
             params: Vec::new(),
             return_type: TypeRef::Named {
+                origin: None,
                 name: "int".to_string(),
             },
             is_async: false,
@@ -4296,6 +4348,108 @@ fn same_module_alias_reexported_under_a_new_name_passes_identity_validation() ->
     assert_eq!(
         published.declaration_name, "helper",
         "renaming a declaration twice must still resolve to the declaration, not to either local name"
+    );
+    Ok(())
+}
+
+/// New native carriers retain the emitted wire evidence and exclude consumer-only paths; legacy unions still decode.
+#[test]
+fn native_union_wire_is_optional_and_excludes_checked_routes() -> Result<(), Box<dyn std::error::Error>> {
+    use super::{NativeUnionExport, NativeUnionOwnerExport, TypeRef};
+    let members = vec![
+        TypeRef::Named {
+            name: "int".into(),
+            origin: None,
+        },
+        TypeRef::Named {
+            name: "str".into(),
+            origin: None,
+        },
+    ];
+    let native = NativeUnionExport {
+        owner: NativeUnionOwnerExport::ContainingArtifact,
+        rust_name: "__IncanUnion0123456789abcdef".into(),
+        members: members.clone(),
+        local_nominals: Default::default(),
+        checked_projection: Some(Box::new(super::model::NativeUnionProjection {
+            dependency_root: "consumer_only".into(),
+            rust_owner: "::consumer_only::pricing".into(),
+            members: members.clone(),
+            nominal_origins: Default::default(),
+        })),
+    };
+    let wire = serde_json::to_string(&TypeRef::NativeUnion(native.clone()))?;
+    assert!(!wire.contains("consumer_only"));
+    assert!(!wire.contains("checked_projection"));
+    assert!(
+        !wire.contains("local_nominals"),
+        "empty local binding metadata remains optional"
+    );
+    assert_eq!(
+        serde_json::from_str::<TypeRef>(&wire)?,
+        TypeRef::NativeUnion(native.for_publication())
+    );
+    let legacy = serde_json::json!({"Applied": {"name": "Union", "args": [{"Named": {"name": "int"}}, {"Named": {"name": "str"}}]}});
+    assert_eq!(
+        serde_json::from_value::<TypeRef>(legacy)?,
+        TypeRef::Applied {
+            name: "Union".into(),
+            args: members,
+            origin: None
+        }
+    );
+    #[derive(serde::Deserialize)]
+    enum LegacyTypeRef {
+        Unknown,
+    }
+    let error = serde_json::from_str::<LegacyTypeRef>(&wire)
+        .err()
+        .ok_or("an older reader must reject the new variant")?;
+    assert!(error.to_string().contains("unknown variant `NativeUnion`"));
+    Ok(())
+}
+
+/// A manifest from a newer format is refused by format number, not by whatever field parsed first.
+///
+/// This is the whole reason the format gate runs before the body decode. `RawLibraryManifest` decodes every typed
+/// field, so a future manifest carrying a `TypeRef` variant this build does not know would otherwise die inside
+/// serde and report an opaque parse error for what is really a version mismatch. The unknown variant below stands
+/// in for exactly that: without the gate the message names a type-reference field, with it the message names the
+/// format.
+#[test]
+fn a_newer_manifest_format_is_refused_by_number_not_by_a_parse_error() -> Result<(), Box<dyn std::error::Error>> {
+    let future = format!(
+        r#"{{"manifest_format": {}, "incan_version": "0.6.0", "name": "future", "version": "1.0.0",
+            "exports": {{}}, "some_field_this_build_has_never_seen": {{"shape": ["anything", 1, null]}}}}"#,
+        LIBRARY_MANIFEST_FORMAT + 1
+    );
+    let error = LibraryManifest::from_json_str(&future)
+        .err()
+        .ok_or("expected a refusal")?;
+    let message = error.to_string();
+    assert!(
+        message.contains("unsupported manifest_format") && message.contains(&(LIBRARY_MANIFEST_FORMAT + 1).to_string()),
+        "a newer format must be refused by number, got: {message}"
+    );
+    Ok(())
+}
+
+/// A manifest declaring the current format still decodes through the ordinary path.
+///
+/// The gate must add a refusal without taking one over: a malformed manifest at the supported format has to keep
+/// reaching the existing validation, which produces the specific diagnostic, rather than being short-circuited.
+#[test]
+fn the_format_gate_does_not_swallow_ordinary_validation() -> Result<(), Box<dyn std::error::Error>> {
+    let malformed = format!(
+        r#"{{"manifest_format": {LIBRARY_MANIFEST_FORMAT}, "incan_version": "not-a-version", "name": "current",
+            "version": "1.0.0", "exports": {{}}}}"#
+    );
+    let error = LibraryManifest::from_json_str(&malformed)
+        .err()
+        .ok_or("expected a refusal")?;
+    assert!(
+        !error.to_string().contains("unsupported manifest_format"),
+        "the gate must not claim a format problem for a supported format, got: {error}"
     );
     Ok(())
 }

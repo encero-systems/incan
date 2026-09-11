@@ -330,14 +330,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         let ty = self.resolve_ty(span);
         // A constructor field binding proves argument slots, but not that this constructor names one of the plain
-        // source-local models this Body-IR module retained. Preserve the selected declaration's identity and layout
-        // together; imports, aliases, classes, generic models, and absent/malformed names retain neither fact, so a
-        // direct executor can refuse at this construction span rather than guessing from `name`.
+        // models admitted to this lowering context. Preserve the selected declaration's identity and layout together;
+        // imported aliases use their original canonical identity, while absent or unsupported context retains
+        // neither fact and is refused without guessing from `name`.
         let canonical = self.type_info.resolved_identity(callee_span).cloned();
         let (direct_declaration_id, canonical_field_layout) = self
             .local_nominal_declarations
-            .get(name)
-            .filter(|declaration| {
+            .values()
+            .find(|declaration| {
                 declaration.fields.len() == field_binding.field_count
                     && canonical.as_ref() == Some(&declaration.canonical)
             })
@@ -422,7 +422,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         {
             return None;
         }
-        let declaration = self.local_fieldless_enum_declarations.get(enum_name)?;
+        let declaration = self
+            .local_fieldless_enum_declarations
+            .values()
+            .find(|declaration| self.type_info.resolved_identity(base.span) == Some(&declaration.canonical))?;
         if self.type_info.resolved_identity(base.span) != Some(&declaration.canonical) {
             return None;
         }
@@ -465,7 +468,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if !matches!(self.type_info.ident_kind(base.span), Some(IdentKind::TypeName)) {
             return None;
         }
-        let declaration = self.local_value_enum_declarations.get(enum_name)?;
+        let declaration = self
+            .local_value_enum_declarations
+            .values()
+            .find(|declaration| self.type_info.resolved_identity(base.span) == Some(&declaration.canonical))?;
         if self.type_info.resolved_identity(base.span) != Some(&declaration.canonical) {
             return None;
         }
@@ -643,6 +649,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     payload,
                     ok_type: ok_type.clone(),
                     error_type: error_type.clone(),
+                    canonical_types: self
+                        .type_info
+                        .expressions
+                        .expression_type_identities
+                        .get(&(span.start, span.end))
+                        .cloned()
+                        .unwrap_or_default(),
                 }),
                 result_ty,
                 scope,

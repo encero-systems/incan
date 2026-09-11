@@ -1064,9 +1064,55 @@ impl CodegraphBuilder {
         }
         self.collect_program_records(module, &module_id, degraded);
         if !degraded {
+            self.collect_remaining_checked_references(module, &module_id);
             self.collect_checked_registry_records(module, &module_id);
             self.collect_checked_capability_records(module, &module_id);
             self.collect_checked_c_binding_records(module, &module_id);
+        }
+    }
+
+    /// Include checked type, layout and default sites that the source expression walker does not visit.
+    ///
+    /// The snapshot supplies both anchors and identities. These records do not infer a dependency from type spelling
+    /// or reconstruct a source owner; they project the same relationship query used by executable requirements.
+    fn collect_remaining_checked_references(&mut self, module: &ParsedModule, module_id: &str) {
+        let mut existing = self
+            .records
+            .iter()
+            .filter_map(|record| match record {
+                CodegraphRecord::Reference(reference) if reference.module_id == module_id => reference
+                    .span
+                    .as_ref()
+                    .map(|span| (span.start, span.end, reference.canonical_identity.clone())),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        let sites = self
+            .semantic_snapshots_by_path
+            .get(&module.file_path)
+            .into_iter()
+            .flat_map(|snapshot| snapshot.facts.checked_reference_sites())
+            .map(|(span, reference)| (span, reference.target.clone(), reference.owner.cloned()))
+            .collect::<Vec<_>>();
+        for (span, target, owner) in sites {
+            if !existing.insert((span.start, span.end, Some(codegraph_canonical_identity(&target)))) {
+                continue;
+            }
+            let name = target.declaration_name.clone();
+            // `kind` is the syntactic form a reference took -- identifier, field, `self`, surface path -- and the
+            // separate `provenance` field already records that a fact came from checked analysis. Naming this one
+            // "checked" put a provenance answer in the form axis, so a consumer filtering by form saw a value that
+            // is not one. These are references to a type at an expression's span, so they are typed as such.
+            self.push_reference_with_checked(
+                module,
+                module_id,
+                None,
+                &name,
+                "type",
+                Span::new(span.start, span.end),
+                false,
+                Some((target, owner)),
+            );
         }
     }
 
@@ -1988,8 +2034,54 @@ impl CodegraphBuilder {
         span: Span,
         degraded: bool,
     ) {
+        let checked = self
+            .source_checked_reference(module, span)
+            .map(|reference| (reference.target.clone(), reference.owner.cloned()));
+        self.push_reference_with_checked(module, module_id, owner_id, name, kind, span, degraded, checked);
+    }
+
+    /// Choose the owner id a navigation consumer should follow for one record.
+    ///
+    /// A proven checked owner supersedes the syntactic one; syntax ownership is a fallback for the case where
+    /// nothing was proven, not a second opinion to be merged with it. Reference and call records both make this
+    /// choice, and they made it with two spellings of the same condition, so it is decided here once.
+    ///
+    /// Returns an owned id because every caller pushes a record immediately afterwards, so a borrow of `self`
+    /// cannot outlive the call.
+    fn navigable_owner_id(
+        &self,
+        canonical_owner: Option<&CanonicalSymbolId>,
+        syntactic_owner_id: Option<&str>,
+        has_checked_target: bool,
+    ) -> Option<String> {
+        if !has_checked_target {
+            return syntactic_owner_id.map(str::to_string);
+        }
+        canonical_owner
+            .and_then(|identity| self.canonical_target_ids.get(identity))
+            .cloned()
+    }
+
+    /// Emit one checked reference projection, including a type component sharing an expression's source span.
+    #[allow(clippy::too_many_arguments)]
+    fn push_reference_with_checked(
+        &mut self,
+        module: &ParsedModule,
+        module_id: &str,
+        owner_id: Option<&str>,
+        name: &str,
+        kind: &str,
+        span: Span,
+        degraded: bool,
+        checked: Option<(CanonicalSymbolId, Option<CanonicalSymbolId>)>,
+    ) {
         let id = self.next_body_fact_id("reference", module, span, name);
-        let canonical_identity = self.source_canonical_identity(module, span).cloned();
+        let has_checked_target = checked.is_some();
+        let (canonical_identity, canonical_owner) = match checked {
+            Some((target, owner)) => (Some(target), owner),
+            None => (None, None),
+        };
+        let owner_id = self.navigable_owner_id(canonical_owner.as_ref(), owner_id, has_checked_target);
         let target_id = canonical_identity
             .as_ref()
             .and_then(|identity| self.canonical_target_ids.get(identity))
@@ -2000,17 +2092,18 @@ impl CodegraphBuilder {
             id: id.clone(),
             language: CodegraphLanguage::Incan,
             module_id: module_id.to_string(),
-            owner_id: owner_id.map(str::to_string),
+            owner_id: owner_id.clone(),
             name: name.to_string(),
             kind: kind.to_string(),
             target_id,
             canonical_identity: canonical_identity.as_ref().map(codegraph_canonical_identity),
             stable_identity,
+            canonical_owner: canonical_owner.as_ref().map(codegraph_canonical_identity),
             span: Some(source_span(&module.file_path, &module.source, span)),
             provenance,
             degraded,
         }));
-        if let Some(owner_id) = owner_id {
+        if let Some(owner_id) = owner_id.as_deref() {
             self.records.push(CodegraphRecord::Containment(containment_record(
                 owner_id,
                 &id,
@@ -2103,7 +2196,10 @@ impl CodegraphBuilder {
         degraded: bool,
     ) {
         let id = self.next_body_fact_id("call", module, span, callee);
-        let canonical_identity = self.source_canonical_identity(module, target_span).cloned();
+        let checked = self.source_checked_reference(module, target_span);
+        let canonical_identity = checked.map(|reference| reference.target.clone());
+        let canonical_owner = checked.and_then(|reference| reference.owner.cloned());
+        let owner_id = self.navigable_owner_id(canonical_owner.as_ref(), owner_id, checked.is_some());
         let target_id = canonical_identity
             .as_ref()
             .and_then(|identity| self.canonical_target_ids.get(identity))
@@ -2114,7 +2210,7 @@ impl CodegraphBuilder {
             id: id.clone(),
             language: CodegraphLanguage::Incan,
             module_id: module_id.to_string(),
-            owner_id: owner_id.map(str::to_string),
+            owner_id: owner_id.clone(),
             callee: callee.to_string(),
             kind: kind.to_string(),
             argument_count,
@@ -2122,11 +2218,12 @@ impl CodegraphBuilder {
             target_id,
             canonical_identity: canonical_identity.as_ref().map(codegraph_canonical_identity),
             stable_identity,
+            canonical_owner: canonical_owner.as_ref().map(codegraph_canonical_identity),
             span: Some(source_span(&module.file_path, &module.source, span)),
             provenance,
             degraded,
         }));
-        if let Some(owner_id) = owner_id {
+        if let Some(owner_id) = owner_id.as_deref() {
             self.records.push(CodegraphRecord::Containment(containment_record(
                 owner_id,
                 &id,
@@ -2304,15 +2401,18 @@ impl CodegraphBuilder {
         }
     }
 
-    /// Return the canonical identity the typechecker proved for one source reference.
-    fn source_canonical_identity(&self, module: &ParsedModule, span: Span) -> Option<&CanonicalSymbolId> {
+    /// Query the shared checked target and closest declaration owner; syntax-only records carry no authority.
+    fn source_checked_reference(
+        &self,
+        module: &ParsedModule,
+        span: Span,
+    ) -> Option<incan_semantics_core::dependencies::CheckedReference<'_>> {
         let module_identity = incan_semantics_core::module_identity_for_path(&module.path_segments);
         let subject = CompilerNodeId::expression_span(&module_identity, span.start, span.end);
         self.semantic_snapshots_by_path
             .get(&module.file_path)?
             .facts
-            .symbol_identities_for(&subject)
-            .next()
+            .checked_reference(&subject)
     }
 
     /// Return the canonical identity minted for one emitted top-level declaration.
@@ -3398,6 +3498,159 @@ mod tests {
     use crate::frontend::{lexer, parser, typechecker};
     use incan_core::lang::c_abi::ScalarTypeId;
     use std::path::PathBuf;
+
+    /// Execution requirements and inspection consume one checked consumer snapshot, including aliases and nested
+    /// owners.
+    #[test]
+    fn checked_relationships_match_execution_selection_for_aliases_defaults_closures_and_types()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::library_manifest_index::{
+            LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+        };
+        use incan_semantics_core::dependencies::CheckedDependencyGraph;
+        let producer = "pub def base() -> int:\n    return 20\n\npub model Pair:\n    pub value: int\n\npub enum Mode:\n    Ready\n    Idle\n";
+        let tokens = lexer::lex(producer).map_err(|errors| format!("{errors:?}"))?;
+        let producer_ast = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut producer_checker = typechecker::TypeChecker::new();
+        producer_checker.set_current_module_path(Some(vec!["lib".into()]));
+        producer_checker.set_current_package_identity(Some("arithmetic".into()));
+        producer_checker
+            .check_program(&producer_ast)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let exports =
+            crate::frontend::library_exports::collect_checked_public_exports(&producer_ast, &producer_checker);
+        let manifest = crate::library_manifest::LibraryManifest::from_checked_exports("arithmetic", "1.2.3", &exports);
+        let index = LibraryManifestIndex::from_entries(std::collections::HashMap::from([(
+            "renamed".into(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest),
+                metadata: LibraryArtifactMetadata::from_manifest_path(
+                    "renamed",
+                    "arithmetic",
+                    PathBuf::from("/published/arithmetic.incnlib"),
+                    PathBuf::from("/published"),
+                ),
+            },
+        )]));
+        let source = r#"from pub::renamed import base as starting, Pair as Item, Mode as State
+
+def with_default(value: int = starting()) -> int:
+    return value
+
+model Local:
+    value: int = starting()
+
+    def unused(self) -> int:
+        return starting() + 1
+
+    property read -> int:
+        return self.value
+
+def carry(item: Item) -> Result[Item, State]:
+    return Ok(item)
+
+def main() -> int:
+    callback: (int) -> int = (value) => value + starting()
+    local = Local()
+    item = Item(value=callback(with_default()))
+    carry(item)
+    if State.Ready == State.Ready:
+        return item.value + local.read
+    return 0
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let path = vec!["main".to_string()];
+        let mut checker = typechecker::TypeChecker::new();
+        checker.set_current_module_path(Some(path.clone()));
+        checker.set_library_manifest_index(index);
+        checker.check_program(&ast).map_err(|errors| format!("{errors:?}"))?;
+        let snapshot = crate::frontend::hir::build_semantic_module_snapshot_v0(&ast, &path, checker.type_info());
+        let graph = CheckedDependencyGraph::from_fact_stores([&snapshot.facts]);
+        let main = checker
+            .type_info()
+            .declarations
+            .declaration_identities
+            .values()
+            .find(|identity| identity.declaration_name == "main")
+            .ok_or("main identity absent")?
+            .clone();
+        let reachable = graph.reachable_from([main]);
+        assert!(!reachable.iter().any(|identity| identity.declaration_name == "unused"));
+        let package_requirements = reachable
+            .iter()
+            .filter(|identity| matches!(identity.origin, SymbolOrigin::Package { .. }))
+            .map(codegraph_canonical_identity)
+            .collect::<Vec<_>>();
+        for name in ["base", "Pair", "Mode"] {
+            assert!(
+                package_requirements
+                    .iter()
+                    .any(|identity| identity.declaration_name == name),
+                "missing {name}"
+            );
+        }
+        let file_path = PathBuf::from("/main.incn");
+        let module = ParsedModule {
+            name: "main".into(),
+            path_segments: path,
+            file_path: file_path.clone(),
+            source: source.into(),
+            ast,
+        };
+        let mut builder = CodegraphBuilder::new(&file_path, None, false);
+        builder.set_semantic_snapshots(BTreeMap::from([(file_path, snapshot.clone())]));
+        builder.seed_canonical_target_ids(std::slice::from_ref(&module));
+        builder.collect_parsed_module(&module, Vec::new());
+        let references = builder
+            .records
+            .iter()
+            .filter_map(|record| match record {
+                CodegraphRecord::Reference(reference) => Some(reference),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for (span, checked) in snapshot.facts.checked_reference_sites() {
+            let reference = references
+                .iter()
+                .find(|reference| {
+                    reference
+                        .span
+                        .as_ref()
+                        .is_some_and(|source| source.start == span.start && source.end == span.end)
+                        && reference.canonical_identity == Some(codegraph_canonical_identity(checked.target))
+                })
+                .ok_or("checked site missing from CodeGraph")?;
+            assert_eq!(
+                reference.canonical_identity,
+                Some(codegraph_canonical_identity(checked.target))
+            );
+            assert_eq!(
+                reference.canonical_owner,
+                checked.owner.map(codegraph_canonical_identity)
+            );
+            if let Some(owner) = checked.owner {
+                assert!(graph.dependencies(owner).any(|target| target == checked.target));
+            }
+        }
+        for name in ["main", "with_default", "value", "unused", "read"] {
+            assert!(
+                references.iter().any(|reference| reference
+                    .canonical_owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.declaration_name == name)),
+                "missing closest owner {name}"
+            );
+        }
+        assert!(references.iter().any(|reference| {
+            reference.name == "starting"
+                && reference
+                    .canonical_identity
+                    .as_ref()
+                    .is_some_and(|identity| identity.declaration_name == "base")
+        }));
+        Ok(())
+    }
 
     #[test]
     fn nested_public_imports_preserve_canonical_codegraph_paths_and_bindings_issue948() {
