@@ -23,6 +23,7 @@ mod error;
 mod extractor;
 mod generic_params;
 mod loader;
+mod mir_digest;
 mod receiver_contract;
 
 pub use cache::RustMetadataCache;
@@ -38,6 +39,7 @@ pub use loader::{
     write_oven_generated_out_dirs, write_oven_inspection_source_authority,
     write_sealed_oven_inspection_source_authority,
 };
+pub use mir_digest::{MirDigestError, function_body_digest};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// How faithfully the returned metadata matches the query path.

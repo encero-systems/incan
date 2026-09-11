@@ -124,7 +124,12 @@ fn absorb_verbatim(hasher: &mut Sha256, tree: &TokenTree) {
 ///
 /// The length is written as decimal digits followed by `:` rather than as fixed-width native-endian bytes, so a digest
 /// computed on a 32-bit host matches one computed on a 64-bit host.
-fn absorb_field(hasher: &mut Sha256, tag: u8, bytes: &[u8]) {
+///
+/// This is the crate's single delimiting primitive, shared with [`crate::mir_digest`]. A second implementation would
+/// be a second chance to get the guard wrong, and a digest whose delimiting is wrong fails silently: it maps two
+/// different inputs onto one key, which is the direction that ships a stale artifact. Tag spaces are per-digest; the
+/// encoding is not.
+pub(crate) fn absorb_field(hasher: &mut Sha256, tag: u8, bytes: &[u8]) {
     hasher.update([tag]);
     hasher.update(bytes.len().to_string().as_bytes());
     hasher.update(b":");

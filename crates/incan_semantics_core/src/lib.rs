@@ -31,6 +31,7 @@ pub mod closure_digest;
 pub mod emitted_symbol;
 mod facts;
 mod hir;
+pub mod namespace;
 pub mod receipts;
 pub mod semantic_digest;
 pub mod stable_identity;

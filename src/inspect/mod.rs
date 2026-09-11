@@ -7,4 +7,5 @@
 //!
 //! Destined for `compiler/incan_inspect` under `loaves/LAYOUT.md`, alongside `rust_inspect`.
 
+pub mod closure;
 pub mod codegraph;
