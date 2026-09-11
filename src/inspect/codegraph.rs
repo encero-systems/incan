@@ -26,9 +26,10 @@ use incan_codegraph::{
     CodegraphProviderParticipation, CodegraphProviderProjection, CodegraphProviderProvenance, CodegraphRecord,
     CodegraphReferenceRecord, CodegraphRegistryRecord, CodegraphRegistryReexportProjection,
     CodegraphSdkComponentProjection, CodegraphSdkProjection, CodegraphSemanticContext, CodegraphSourceSpan,
-    CodegraphSymbolOrigin,
+    CodegraphStableDeclarationId, CodegraphSymbolOrigin,
 };
 use incan_core::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
+use incan_semantics_core::stable_identity::{DeclarationNesting, DeclarationSignature, StableDeclarationId};
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SemanticModuleSnapshot, SymbolOrigin};
 use serde_json::{Value, json};
 
@@ -138,6 +139,7 @@ pub fn collect_codegraph_records(
         }
         if analysis.diagnostics.is_empty() {
             builder.set_semantic_snapshots(analysis.semantic_snapshots_by_path);
+            builder.set_declaration_signatures(analysis.signatures_by_identity);
             builder.set_registry_metadata(analysis.registry_metadata_by_path);
             builder.set_capabilities(analysis.capabilities_by_path);
             builder.set_c_abi_artifacts(analysis.c_abi_by_path);
@@ -196,6 +198,7 @@ pub fn collect_codegraph_records(
                     return Err(CodegraphError::failure(render_diagnostics(&analysis.diagnostics)));
                 }
                 builder.set_semantic_snapshots(analysis.semantic_snapshots_by_path);
+                builder.set_declaration_signatures(analysis.signatures_by_identity);
                 builder.set_registry_metadata(analysis.registry_metadata_by_path);
                 builder.set_capabilities(analysis.capabilities_by_path);
                 builder.set_c_abi_artifacts(analysis.c_abi_by_path);
@@ -222,6 +225,8 @@ pub fn collect_codegraph_records(
 struct CheckedCodegraphAnalysis {
     diagnostics: Vec<StableDiagnostic>,
     semantic_snapshots_by_path: BTreeMap<PathBuf, SemanticModuleSnapshot>,
+    /// Signatures derived by lowering, keyed by the identity that owns each one.
+    signatures_by_identity: BTreeMap<CanonicalSymbolId, DeclarationSignature>,
     registry_metadata_by_path: BTreeMap<PathBuf, CheckedRegistryMetadataModule>,
     capabilities_by_path: BTreeMap<PathBuf, Vec<CapabilityDeclarationInfo>>,
     c_abi_by_path: BTreeMap<PathBuf, CAbiInteropArtifacts>,
@@ -241,6 +246,7 @@ fn directory_modules_diagnostics_and_info(
     let mut diagnostics = Vec::new();
     let mut sessions = BTreeMap::new();
     let mut semantic_snapshots_by_path = BTreeMap::new();
+    let mut signatures_by_identity = BTreeMap::new();
     let mut registry_metadata_by_path = BTreeMap::new();
     let mut capabilities_by_path = BTreeMap::new();
     let mut c_abi_by_path = BTreeMap::new();
@@ -291,6 +297,17 @@ fn directory_modules_diagnostics_and_info(
                         for (path, c_abi) in checked_c_abi_by_path(&analysis, &modules) {
                             c_abi_by_path.entry(path).or_insert(c_abi);
                         }
+                        // Lowering happens here rather than in `SemanticModuleSnapshot`, so only the graph pays
+                        // for it. A module whose type info is unavailable contributes no signatures, and its
+                        // declarations export an identity a consumer must read as unproven.
+                        for module in &modules {
+                            let Some(type_info) = analysis.type_info_for_path(&module.file_path) else {
+                                continue;
+                            };
+                            for (identity, signature) in declaration_signatures(module, type_info) {
+                                signatures_by_identity.entry(identity).or_insert(signature);
+                            }
+                        }
                     }
                     Err(failure) => {
                         dedup_diagnostics(&mut diagnostics, stable_diagnostics(failure));
@@ -312,6 +329,11 @@ fn directory_modules_diagnostics_and_info(
                 BTreeMap::new()
             } else {
                 semantic_snapshots_by_path
+            },
+            signatures_by_identity: if has_diagnostics {
+                BTreeMap::new()
+            } else {
+                signatures_by_identity
             },
             registry_metadata_by_path: if has_diagnostics {
                 BTreeMap::new()
@@ -346,6 +368,14 @@ fn typecheck_diagnostics_and_info(
         Ok(analysis) => Ok(CheckedCodegraphAnalysis {
             diagnostics: Vec::new(),
             semantic_snapshots_by_path: analysis.semantic_snapshots().clone(),
+            signatures_by_identity: modules
+                .iter()
+                .filter_map(|module| {
+                    let type_info = analysis.type_info_for_path(&module.file_path)?;
+                    Some(declaration_signatures(module, type_info))
+                })
+                .flatten()
+                .collect(),
             registry_metadata_by_path: checked_registry_metadata_by_path(
                 &analysis,
                 modules,
@@ -357,6 +387,7 @@ fn typecheck_diagnostics_and_info(
         Err(failure) => Ok(CheckedCodegraphAnalysis {
             diagnostics: stable_diagnostics(failure),
             semantic_snapshots_by_path: BTreeMap::new(),
+            signatures_by_identity: BTreeMap::new(),
             registry_metadata_by_path: BTreeMap::new(),
             capabilities_by_path: BTreeMap::new(),
             c_abi_by_path: BTreeMap::new(),
@@ -763,6 +794,11 @@ struct CodegraphBuilder {
     semantic_contexts: Vec<CodegraphSemanticContext>,
     next_body_fact_index: usize,
     semantic_snapshots_by_path: BTreeMap<PathBuf, SemanticModuleSnapshot>,
+    /// Signatures for every declaration the export lowered, keyed by the identity that owns each one.
+    ///
+    /// Populated only where the modules actually lowered. A declaration with no entry exports an identity whose
+    /// `signature` is `None`, which a consumer must read as unproven rather than as a key.
+    signatures_by_identity: BTreeMap<CanonicalSymbolId, DeclarationSignature>,
     registry_metadata_by_path: BTreeMap<PathBuf, CheckedRegistryMetadataModule>,
     capabilities_by_path: BTreeMap<PathBuf, Vec<CapabilityDeclarationInfo>>,
     c_abi_by_path: BTreeMap<PathBuf, CAbiInteropArtifacts>,
@@ -784,6 +820,7 @@ impl CodegraphBuilder {
         Self {
             records: Vec::new(),
             diagnostics: Vec::new(),
+            signatures_by_identity: BTreeMap::new(),
             file_ids: BTreeMap::new(),
             module_ids: BTreeSet::new(),
             mode: if allow_errors {
@@ -802,6 +839,21 @@ impl CodegraphBuilder {
             c_abi_by_path: BTreeMap::new(),
             canonical_target_ids: BTreeMap::new(),
         }
+    }
+
+    /// Attach session-owned semantic facts for checked body target population.
+    /// Record the signatures derived from lowering, so exported identities can separate overloads.
+    fn set_declaration_signatures(&mut self, signatures: BTreeMap<CanonicalSymbolId, DeclarationSignature>) {
+        self.signatures_by_identity = signatures;
+    }
+
+    /// Project one checked identity into its exported edit-stable form, carrying a signature when one was proved.
+    fn stable_identity_for(&self, canonical: Option<&CanonicalSymbolId>) -> Option<CodegraphStableDeclarationId> {
+        let canonical = canonical?;
+        Some(codegraph_stable_identity(
+            canonical,
+            self.signatures_by_identity.get(canonical).cloned(),
+        ))
     }
 
     /// Attach session-owned semantic facts for checked body target population.
@@ -1244,10 +1296,10 @@ impl CodegraphBuilder {
                     )));
                     if import.visibility == Visibility::Public {
                         for name in import_export_names(import) {
-                            let canonical_identity = import_bindings
-                                .iter()
-                                .find(|binding| binding.local_name == name)
-                                .and_then(|binding| binding.canonical_identity.clone());
+                            let exported_binding = import_bindings.iter().find(|binding| binding.local_name == name);
+                            let canonical_identity =
+                                exported_binding.and_then(|binding| binding.canonical_identity.clone());
+                            let stable_identity = exported_binding.and_then(|binding| binding.stable_identity.clone());
                             self.records.push(CodegraphRecord::Export(export_record(
                                 module,
                                 module_id,
@@ -1256,6 +1308,7 @@ impl CodegraphBuilder {
                                 "import",
                                 declaration.span,
                                 canonical_identity,
+                                stable_identity,
                                 degraded,
                             )));
                         }
@@ -1271,6 +1324,7 @@ impl CodegraphBuilder {
                         .declaration_canonical_identity(module, declaration.span, &summary.name)
                         .cloned();
                     let wire_identity = canonical_identity.as_ref().map(codegraph_canonical_identity);
+                    let wire_stable_identity = self.stable_identity_for(canonical_identity.as_ref());
                     self.records
                         .push(CodegraphRecord::Declaration(CodegraphDeclarationRecord {
                             id: declaration_id.clone(),
@@ -1282,6 +1336,7 @@ impl CodegraphBuilder {
                             type_params: summary.type_params,
                             signature: summary.signature,
                             canonical_identity: wire_identity.clone(),
+                            stable_identity: wire_stable_identity.clone(),
                             span: Some(source_span(&module.file_path, &module.source, declaration.span)),
                             provenance: provenance_for_identity(canonical_identity.as_ref()),
                             degraded,
@@ -1304,6 +1359,7 @@ impl CodegraphBuilder {
                             "declaration",
                             declaration.span,
                             wire_identity,
+                            wire_stable_identity,
                             degraded,
                         )));
                     }
@@ -1887,6 +1943,7 @@ impl CodegraphBuilder {
             .and_then(|identity| self.canonical_target_ids.get(identity))
             .cloned();
         let provenance = provenance_for_identity(canonical_identity.as_ref());
+        let stable_identity = self.stable_identity_for(canonical_identity.as_ref());
         self.records.push(CodegraphRecord::Reference(CodegraphReferenceRecord {
             id: id.clone(),
             language: CodegraphLanguage::Incan,
@@ -1896,6 +1953,7 @@ impl CodegraphBuilder {
             kind: kind.to_string(),
             target_id,
             canonical_identity: canonical_identity.as_ref().map(codegraph_canonical_identity),
+            stable_identity,
             span: Some(source_span(&module.file_path, &module.source, span)),
             provenance,
             degraded,
@@ -1999,6 +2057,7 @@ impl CodegraphBuilder {
             .and_then(|identity| self.canonical_target_ids.get(identity))
             .cloned();
         let provenance = provenance_for_identity(canonical_identity.as_ref());
+        let stable_identity = self.stable_identity_for(canonical_identity.as_ref());
         self.records.push(CodegraphRecord::Call(CodegraphCallRecord {
             id: id.clone(),
             language: CodegraphLanguage::Incan,
@@ -2010,6 +2069,7 @@ impl CodegraphBuilder {
             type_argument_count,
             target_id,
             canonical_identity: canonical_identity.as_ref().map(codegraph_canonical_identity),
+            stable_identity,
             span: Some(source_span(&module.file_path, &module.source, span)),
             provenance,
             degraded,
@@ -2239,13 +2299,80 @@ impl CodegraphBuilder {
                 Some(CodegraphImportBinding {
                     local_name: declaration.name.clone()?,
                     canonical_identity: declaration.canonical.as_ref().map(codegraph_canonical_identity),
+                    stable_identity: self.stable_identity_for(declaration.canonical.as_ref()),
                 })
             })
             .collect()
     }
 }
 
+/// Derive the signatures a module's declarations carry, keyed by the identity that owns each one.
+///
+/// A `CanonicalSymbolId` does not carry a signature; it comes from the declaration's lowered body. Body IR is built
+/// here rather than added to `SemanticModuleSnapshot` on purpose: every consumer of that snapshot would then pay
+/// for lowering, including `build` and `check`, to satisfy a need only the graph has.
+///
+/// A module that does not lower contributes no signatures rather than failing the export. The consequence is
+/// explicit — its declarations export an identity with `signature: None`, which a consumer must treat as unproven.
+fn declaration_signatures(
+    module: &ParsedModule,
+    type_info: &crate::frontend::typechecker::TypeCheckInfo,
+) -> BTreeMap<CanonicalSymbolId, DeclarationSignature> {
+    let body_ir = crate::frontend::body_ir::build_body_ir_module_v0(&module.ast, &module.path_segments, type_info);
+    body_ir
+        .bodies
+        .iter()
+        .filter_map(|body| {
+            let canonical = body.canonical.as_ref()?;
+            Some((
+                canonical.clone(),
+                DeclarationSignature::from_callable_types(body.params.iter().map(|param| &param.ty), &body.return_type),
+            ))
+        })
+        .collect()
+}
+
+/// Project a checked identity into the edit-stable form exported beside the span-carrying one.
+///
+/// Derived from [`StableDeclarationId`] rather than rebuilt here, so the exported identity and the compiler's own
+/// cannot drift: an exported identity that keyed on spans would rebuild, one layer out, the defect that type exists
+/// to remove.
+fn codegraph_stable_identity(
+    identity: &CanonicalSymbolId,
+    signature: Option<DeclarationSignature>,
+) -> CodegraphStableDeclarationId {
+    let stable = StableDeclarationId::from_canonical(identity, signature);
+    CodegraphStableDeclarationId {
+        namespace: match stable.namespace {
+            incan_semantics_core::SymbolNamespace::OrdinaryLexical => "ordinary_lexical",
+            incan_semantics_core::SymbolNamespace::Member => "member",
+            incan_semantics_core::SymbolNamespace::ModulePath => "module_path",
+        }
+        .to_string(),
+        origin: match &stable.origin {
+            SymbolOrigin::Module(path) => CodegraphSymbolOrigin::Module { path: path.clone() },
+            SymbolOrigin::Package { library, module_path } => CodegraphSymbolOrigin::Package {
+                library: library.clone(),
+                module_path: module_path.clone(),
+            },
+            SymbolOrigin::RustCrate(path) => CodegraphSymbolOrigin::RustCrate { path: path.clone() },
+            SymbolOrigin::Builtin => CodegraphSymbolOrigin::Builtin,
+        },
+        declaration_name: stable.declaration_name.clone(),
+        declaration_kind: stable.kind.as_str().to_string(),
+        nested: matches!(stable.nesting, DeclarationNesting::Nested),
+        signature: stable
+            .signature
+            .as_ref()
+            .map(|signature| signature.as_str().to_string()),
+    }
+}
+
 /// Project the compiler identity into the storage-neutral codegraph wire shape.
+///
+/// This keeps the span, deliberately. It is the record's provenance — where the declaration sat in the compilation
+/// that produced it — and a consumer reporting a location needs it. What a consumer must not do is key on it across
+/// compilations; [`codegraph_stable_identity`] is what it keys on instead.
 fn codegraph_canonical_identity(identity: &CanonicalSymbolId) -> CodegraphCanonicalSymbolId {
     let origin = match &identity.origin {
         SymbolOrigin::Module(path) => CodegraphSymbolOrigin::Module { path: path.clone() },
@@ -2680,6 +2807,7 @@ fn export_record(
     kind: &str,
     span: Span,
     canonical_identity: Option<CodegraphCanonicalSymbolId>,
+    stable_identity: Option<CodegraphStableDeclarationId>,
     degraded: bool,
 ) -> CodegraphExportRecord {
     CodegraphExportRecord {
@@ -2690,6 +2818,7 @@ fn export_record(
         kind: kind.to_string(),
         source_id: source_id.to_string(),
         canonical_identity: canonical_identity.clone(),
+        stable_identity,
         span: Some(source_span(&module.file_path, &module.source, span)),
         provenance: if canonical_identity.is_some() {
             CodegraphProvenance::Checked
@@ -3371,5 +3500,71 @@ class Accelerate extends BindingDeclaration:
         assert_eq!(record.buffers[0].pointer_parameter, "values");
         assert_eq!(record.buffers[0].length_parameter, "value_count");
         assert_eq!(record.buffers[0].element, "c.f32");
+    }
+
+    /// Two overloads must reach the export as two identities, not one.
+    ///
+    /// This is the reason the exported identity carries a signature at all. Dropping the span makes two
+    /// module-level declarations sharing namespace, origin, name and kind indistinguishable, and an exported
+    /// identity that cannot tell them apart is worse than none: a consumer keying on it silently conflates two
+    /// declarations, which is the defect `StableDeclarationId` exists to remove, rebuilt one layer out.
+    #[test]
+    fn exported_stable_identity_separates_overloads() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+pub def pick(value: int) -> int:
+    return value
+
+
+pub def pick(value: int, fallback: int) -> int:
+    return value + fallback
+"#;
+        let source = source.to_string();
+        let signatures = crate::compiler_stack::run_on_compiler_stack(move || {
+            let tokens = lexer::lex(&source).map_err(|errors| format!("lex: {errors:?}"))?;
+            let program = parser::parse(&tokens).map_err(|errors| format!("parse: {errors:?}"))?;
+            let program =
+                crate::frontend::body_ir::apply_body_ir_input_contract(program, std::path::Path::new("overloads.incn"))
+                    .map_err(|errors| format!("contract: {errors:?}"))?;
+            let module_path = vec!["overloads".to_string()];
+            let mut checker = typechecker::TypeChecker::new();
+            checker.set_current_module_path(Some(module_path.clone()));
+            checker
+                .check_program(&program)
+                .map_err(|errors| format!("typecheck: {errors:?}"))?;
+
+            let module = ParsedModule {
+                name: "overloads".to_string(),
+                path_segments: module_path,
+                file_path: PathBuf::from("overloads.incn"),
+                source: String::new(),
+                ast: program,
+            };
+            let derived = declaration_signatures(&module, checker.type_info());
+            Ok::<_, String>(
+                derived
+                    .into_iter()
+                    .filter(|(identity, _)| identity.declaration_name == "pick")
+                    .map(|(identity, signature)| codegraph_stable_identity(&identity, Some(signature)))
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .map_err(|error| -> Box<dyn std::error::Error> { Box::new(std::io::Error::other(error)) })?;
+
+        assert_eq!(signatures.len(), 2, "both overloads should be lowered: {signatures:?}");
+        assert!(
+            signatures.iter().all(|identity| identity.signature.is_some()),
+            "an exported identity without a signature cannot separate overloads: {signatures:?}"
+        );
+        assert_ne!(
+            signatures[0].signature, signatures[1].signature,
+            "the two overloads must export distinct signatures: {signatures:?}"
+        );
+        assert!(
+            signatures
+                .iter()
+                .all(|identity| identity.declaration_name == "pick" && !identity.nested),
+            "both are module-level declarations named `pick`: {signatures:?}"
+        );
+        Ok(())
     }
 }
