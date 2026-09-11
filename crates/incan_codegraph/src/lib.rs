@@ -10,6 +10,39 @@ use serde_json::Value;
 /// Current codegraph JSONL schema version.
 pub const CODEGRAPH_SCHEMA_VERSION: u32 = 7;
 
+/// A declaration identity that survives edits.
+///
+/// [`CodegraphCanonicalSymbolId`] mirrors the compiler's own identity, span included, and that is right as
+/// *provenance*: it names where a declaration sat in the compilation that produced the record. It cannot be what a
+/// consumer keys on across edits, because the span moves whenever a line above it does — and so does the scope
+/// discriminant, which indexes a table filled in traversal order.
+///
+/// RFC 106 requires a declaration identity carry neither. This is that identity, exported *alongside* the
+/// span-carrying one rather than replacing it: a consumer caching across compilations keys on this, while one
+/// reporting a location still has the span.
+///
+/// The signature is required rather than defensive. Without it two module-level declarations sharing namespace,
+/// origin, name and kind are indistinguishable once the span is gone; overloads are the only collision class a
+/// standard library produces, and it produces two. `None` means the producer could not prove a signature, and a
+/// consumer must then treat the identity as unproven rather than as a key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CodegraphStableDeclarationId {
+    /// Namespace in which the declaration is resolved.
+    pub namespace: String,
+    /// Compiler-owned declaration origin.
+    pub origin: CodegraphSymbolOrigin,
+    /// Spelling at the original declaration site.
+    pub declaration_name: String,
+    /// Semantic declaration category.
+    pub declaration_kind: String,
+    /// Whether the declaration is nested, without the discriminant's traversal-ordered value.
+    pub nested: bool,
+    /// Canonical rendering of the signature, when the producer proved one. This is what separates overloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+}
+
 /// Storage-neutral projection of one compiler-owned canonical symbol identity.
 ///
 /// This mirrors the semantic identity fields deliberately instead of depending on compiler crates. Equality of this
@@ -401,6 +434,9 @@ pub struct CodegraphDeclarationRecord {
     /// Compiler-owned declaration identity. `None` is an explicit unproven result.
     #[serde(default)]
     pub canonical_identity: Option<CodegraphCanonicalSymbolId>,
+    /// The same declaration's edit-stable identity, for a consumer keying across compilations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_identity: Option<CodegraphStableDeclarationId>,
     /// Source span for the declaration.
     pub span: Option<CodegraphSourceSpan>,
     /// Fact provenance.
@@ -446,6 +482,9 @@ pub struct CodegraphImportBinding {
     pub local_name: String,
     /// Identity of the original declaration, unchanged through aliases and re-exports.
     pub canonical_identity: Option<CodegraphCanonicalSymbolId>,
+    /// The same declaration's edit-stable identity, for a consumer keying across compilations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_identity: Option<CodegraphStableDeclarationId>,
 }
 
 /// Public export fact.
@@ -466,6 +505,9 @@ pub struct CodegraphExportRecord {
     /// Identity exported under `name`; aliases and re-exports keep the original declaration identity.
     #[serde(default)]
     pub canonical_identity: Option<CodegraphCanonicalSymbolId>,
+    /// The same declaration's edit-stable identity, for a consumer keying across compilations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_identity: Option<CodegraphStableDeclarationId>,
     /// Source span for the export.
     pub span: Option<CodegraphSourceSpan>,
     /// Fact provenance.
@@ -494,6 +536,9 @@ pub struct CodegraphReferenceRecord {
     /// Compiler-owned identity of the resolved target, independent of source spelling and graph record availability.
     #[serde(default)]
     pub canonical_identity: Option<CodegraphCanonicalSymbolId>,
+    /// The same declaration's edit-stable identity, for a consumer keying across compilations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_identity: Option<CodegraphStableDeclarationId>,
     /// Source span for the reference.
     pub span: Option<CodegraphSourceSpan>,
     /// Fact provenance.
@@ -526,6 +571,9 @@ pub struct CodegraphCallRecord {
     /// Compiler-owned identity of the selected callable, independent of source spelling and graph record availability.
     #[serde(default)]
     pub canonical_identity: Option<CodegraphCanonicalSymbolId>,
+    /// The same declaration's edit-stable identity, for a consumer keying across compilations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_identity: Option<CodegraphStableDeclarationId>,
     /// Source span for the call expression.
     pub span: Option<CodegraphSourceSpan>,
     /// Fact provenance.
