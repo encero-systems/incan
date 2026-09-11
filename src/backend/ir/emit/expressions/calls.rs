@@ -117,7 +117,7 @@ impl<'a> IrEmitter<'a> {
     /// Generic placeholders coming from the callee signature (`Option[T]`, `Result[T, E]`) are not in scope at the
     /// caller, so they must still be treated as unresolved here even though they are perfectly valid inside the callee
     /// body or an enclosing generic impl/function.
-    pub(super) fn is_unresolved_call_seed_type(ty: &IrType) -> bool {
+    pub(in crate::backend::ir::emit) fn is_unresolved_call_seed_type(ty: &IrType) -> bool {
         match ty {
             IrType::Unknown | IrType::Generic(_) => true,
             IrType::Ref(inner) | IrType::RefMut(inner) | IrType::Option(inner) | IrType::List(inner) => {
