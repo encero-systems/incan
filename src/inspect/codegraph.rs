@@ -29,6 +29,7 @@ use incan_codegraph::{
     CodegraphStableDeclarationId, CodegraphSymbolOrigin,
 };
 use incan_core::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
+use incan_semantics_core::namespace::{enclosing_namespace, is_namespace_root};
 use incan_semantics_core::stable_identity::{DeclarationNesting, DeclarationSignature, StableDeclarationId};
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SemanticModuleSnapshot, SymbolOrigin};
 use serde_json::{Value, json};
@@ -139,7 +140,7 @@ pub fn collect_codegraph_records(
         }
         if analysis.diagnostics.is_empty() {
             builder.set_semantic_snapshots(analysis.semantic_snapshots_by_path);
-            builder.set_declaration_signatures(analysis.signatures_by_identity);
+            builder.set_lowered_declaration_facts(analysis.signatures_by_identity);
             builder.set_registry_metadata(analysis.registry_metadata_by_path);
             builder.set_capabilities(analysis.capabilities_by_path);
             builder.set_c_abi_artifacts(analysis.c_abi_by_path);
@@ -198,7 +199,7 @@ pub fn collect_codegraph_records(
                     return Err(CodegraphError::failure(render_diagnostics(&analysis.diagnostics)));
                 }
                 builder.set_semantic_snapshots(analysis.semantic_snapshots_by_path);
-                builder.set_declaration_signatures(analysis.signatures_by_identity);
+                builder.set_lowered_declaration_facts(analysis.signatures_by_identity);
                 builder.set_registry_metadata(analysis.registry_metadata_by_path);
                 builder.set_capabilities(analysis.capabilities_by_path);
                 builder.set_c_abi_artifacts(analysis.c_abi_by_path);
@@ -226,7 +227,7 @@ struct CheckedCodegraphAnalysis {
     diagnostics: Vec<StableDiagnostic>,
     semantic_snapshots_by_path: BTreeMap<PathBuf, SemanticModuleSnapshot>,
     /// Signatures derived by lowering, keyed by the identity that owns each one.
-    signatures_by_identity: BTreeMap<CanonicalSymbolId, DeclarationSignature>,
+    signatures_by_identity: BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts>,
     registry_metadata_by_path: BTreeMap<PathBuf, CheckedRegistryMetadataModule>,
     capabilities_by_path: BTreeMap<PathBuf, Vec<CapabilityDeclarationInfo>>,
     c_abi_by_path: BTreeMap<PathBuf, CAbiInteropArtifacts>,
@@ -304,7 +305,7 @@ fn directory_modules_diagnostics_and_info(
                             let Some(type_info) = analysis.type_info_for_path(&module.file_path) else {
                                 continue;
                             };
-                            for (identity, signature) in declaration_signatures(module, type_info) {
+                            for (identity, signature) in lowered_declaration_facts(module, type_info) {
                                 signatures_by_identity.entry(identity).or_insert(signature);
                             }
                         }
@@ -372,7 +373,7 @@ fn typecheck_diagnostics_and_info(
                 .iter()
                 .filter_map(|module| {
                     let type_info = analysis.type_info_for_path(&module.file_path)?;
-                    Some(declaration_signatures(module, type_info))
+                    Some(lowered_declaration_facts(module, type_info))
                 })
                 .flatten()
                 .collect(),
@@ -798,7 +799,7 @@ struct CodegraphBuilder {
     ///
     /// Populated only where the modules actually lowered. A declaration with no entry exports an identity whose
     /// `signature` is `None`, which a consumer must read as unproven rather than as a key.
-    signatures_by_identity: BTreeMap<CanonicalSymbolId, DeclarationSignature>,
+    signatures_by_identity: BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts>,
     registry_metadata_by_path: BTreeMap<PathBuf, CheckedRegistryMetadataModule>,
     capabilities_by_path: BTreeMap<PathBuf, Vec<CapabilityDeclarationInfo>>,
     c_abi_by_path: BTreeMap<PathBuf, CAbiInteropArtifacts>,
@@ -843,7 +844,7 @@ impl CodegraphBuilder {
 
     /// Attach session-owned semantic facts for checked body target population.
     /// Record the signatures derived from lowering, so exported identities can separate overloads.
-    fn set_declaration_signatures(&mut self, signatures: BTreeMap<CanonicalSymbolId, DeclarationSignature>) {
+    fn set_lowered_declaration_facts(&mut self, signatures: BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts>) {
         self.signatures_by_identity = signatures;
     }
 
@@ -852,7 +853,9 @@ impl CodegraphBuilder {
         let canonical = canonical?;
         Some(codegraph_stable_identity(
             canonical,
-            self.signatures_by_identity.get(canonical).cloned(),
+            self.signatures_by_identity
+                .get(canonical)
+                .map(|facts| facts.signature.clone()),
         ))
     }
 
@@ -998,6 +1001,8 @@ impl CodegraphBuilder {
                 language: CodegraphLanguage::Incan,
                 file_id: file_id.to_string(),
                 module_path: module.path_segments.clone(),
+                namespace_path: enclosing_namespace(&module.path_segments).to_vec(),
+                internal: !is_namespace_root(&module.path_segments),
                 name: module.name.clone(),
                 span: Some(module_span),
                 provenance: CodegraphProvenance::Syntax,
@@ -1325,6 +1330,9 @@ impl CodegraphBuilder {
                         .cloned();
                     let wire_identity = canonical_identity.as_ref().map(codegraph_canonical_identity);
                     let wire_stable_identity = self.stable_identity_for(canonical_identity.as_ref());
+                    let lowered = canonical_identity
+                        .as_ref()
+                        .and_then(|identity| self.signatures_by_identity.get(identity));
                     self.records
                         .push(CodegraphRecord::Declaration(CodegraphDeclarationRecord {
                             id: declaration_id.clone(),
@@ -1337,6 +1345,8 @@ impl CodegraphBuilder {
                             signature: summary.signature,
                             canonical_identity: wire_identity.clone(),
                             stable_identity: wire_stable_identity.clone(),
+                            semantic_digest: lowered.map(|facts| facts.semantic_digest.clone()),
+                            doc_digest: lowered.and_then(|facts| facts.doc_digest.clone()),
                             span: Some(source_span(&module.file_path, &module.source, declaration.span)),
                             provenance: provenance_for_identity(canonical_identity.as_ref()),
                             degraded,
@@ -2314,19 +2324,53 @@ impl CodegraphBuilder {
 ///
 /// A module that does not lower contributes no signatures rather than failing the export. The consequence is
 /// explicit — its declarations export an identity with `signature: None`, which a consumer must treat as unproven.
-fn declaration_signatures(
+/// What one lowered declaration contributes to the export.
+#[derive(Debug, Clone)]
+struct LoweredDeclarationFacts {
+    /// Separates overloads, which share every other identity field once the span is dropped.
+    signature: DeclarationSignature,
+    /// Digest over checked meaning, excluding position, formatting, comments and documentation.
+    semantic_digest: String,
+    /// Digest over documentation, kept apart so a consumer gating a compiled artifact can ignore it.
+    doc_digest: Option<String>,
+}
+
+/// Lower one module and collect what its declarations contribute to the export.
+///
+/// Lowering happens here rather than in `SemanticModuleSnapshot` deliberately: putting Body IR in the snapshot
+/// would make every consumer of it pay for lowering, `build` and `check` included, to satisfy a need only the
+/// graph has. One pass yields both the signature that separates overloads and the digests that say whether a
+/// declaration changed.
+///
+/// A module whose declarations do not lower contributes nothing. Its declarations then export an absent digest and
+/// an unproven signature, which a consumer must read as *changed* and *not a key* respectively — the direction that
+/// costs a rebuild rather than a wrong build.
+fn lowered_declaration_facts(
     module: &ParsedModule,
     type_info: &crate::frontend::typechecker::TypeCheckInfo,
-) -> BTreeMap<CanonicalSymbolId, DeclarationSignature> {
+) -> BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts> {
+    use incan_semantics_core::semantic_digest::{body_docstring, body_without_docstring, semantic_digest};
+
     let body_ir = crate::frontend::body_ir::build_body_ir_module_v0(&module.ast, &module.path_segments, type_info);
     body_ir
         .bodies
         .iter()
         .filter_map(|body| {
             let canonical = body.canonical.as_ref()?;
+            // A body that will not digest contributes nothing rather than contributing a wrong answer: a consumer
+            // reads the absent digest as changed, which costs a rebuild, where a wrong digest costs a wrong build.
+            let semantic = semantic_digest(&body_without_docstring(body)).ok()?;
+            let documentation = body_docstring(body).and_then(|text| semantic_digest(&text).ok());
             Some((
                 canonical.clone(),
-                DeclarationSignature::from_callable_types(body.params.iter().map(|param| &param.ty), &body.return_type),
+                LoweredDeclarationFacts {
+                    signature: DeclarationSignature::from_callable_types(
+                        body.params.iter().map(|param| &param.ty),
+                        &body.return_type,
+                    ),
+                    semantic_digest: semantic,
+                    doc_digest: documentation,
+                },
             ))
         })
         .collect()
@@ -3539,12 +3583,12 @@ pub def pick(value: int, fallback: int) -> int:
                 source: String::new(),
                 ast: program,
             };
-            let derived = declaration_signatures(&module, checker.type_info());
+            let derived = lowered_declaration_facts(&module, checker.type_info());
             Ok::<_, String>(
                 derived
                     .into_iter()
                     .filter(|(identity, _)| identity.declaration_name == "pick")
-                    .map(|(identity, signature)| codegraph_stable_identity(&identity, Some(signature)))
+                    .map(|(identity, facts)| codegraph_stable_identity(&identity, Some(facts.signature)))
                     .collect::<Vec<_>>(),
             )
         })
@@ -3564,6 +3608,83 @@ pub def pick(value: int, fallback: int) -> int:
                 .iter()
                 .all(|identity| identity.declaration_name == "pick" && !identity.nested),
             "both are module-level declarations named `pick`: {signatures:?}"
+        );
+        Ok(())
+    }
+
+    /// The exported digest must obey the same invariants as the internal one.
+    ///
+    /// An exported digest that moved on a comment would make every consumer rebuild on documentation edits, and one
+    /// that stayed put on a real change would make them skip work that matters. Both are tested here rather than
+    /// assumed to follow from the internal tests, because the export is a separate projection and could drift.
+    #[test]
+    fn exported_semantic_digest_ignores_documentation_and_tracks_meaning() -> Result<(), Box<dyn std::error::Error>> {
+        fn digests_for(source: &str) -> Result<Vec<(String, Option<String>)>, String> {
+            let source = source.to_string();
+            crate::compiler_stack::run_on_compiler_stack(move || {
+                let tokens = lexer::lex(&source).map_err(|errors| format!("lex: {errors:?}"))?;
+                let program = parser::parse(&tokens).map_err(|errors| format!("parse: {errors:?}"))?;
+                let program = crate::frontend::body_ir::apply_body_ir_input_contract(
+                    program,
+                    std::path::Path::new("digest.incn"),
+                )
+                .map_err(|errors| format!("contract: {errors:?}"))?;
+                let module_path = vec!["digest".to_string()];
+                let mut checker = typechecker::TypeChecker::new();
+                checker.set_current_module_path(Some(module_path.clone()));
+                checker
+                    .check_program(&program)
+                    .map_err(|errors| format!("typecheck: {errors:?}"))?;
+                let module = ParsedModule {
+                    name: "digest".to_string(),
+                    path_segments: module_path,
+                    file_path: PathBuf::from("digest.incn"),
+                    source: String::new(),
+                    ast: program,
+                };
+                let mut rows: Vec<(String, Option<String>)> = lowered_declaration_facts(&module, checker.type_info())
+                    .into_iter()
+                    .map(|(identity, facts)| {
+                        (
+                            format!("{}|{}", identity.declaration_name, facts.semantic_digest),
+                            facts.doc_digest,
+                        )
+                    })
+                    .collect();
+                rows.sort();
+                Ok::<_, String>(rows)
+            })
+            .map_err(|error| error.to_string())
+        }
+
+        let base = "\npub def kept(value: int) -> int:\n    return value * 2\n";
+        let documented = "\npub def kept(value: int) -> int:\n    \"\"\"\n    Added documentation.\n    \"\"\"\n    return value * 2\n";
+        let changed = "\npub def kept(value: int) -> int:\n    return value * 4\n";
+
+        let base_rows = digests_for(base)?;
+        assert_eq!(
+            base_rows.iter().map(|(digest, _)| digest).collect::<Vec<_>>(),
+            digests_for(documented)?
+                .iter()
+                .map(|(digest, _)| digest)
+                .collect::<Vec<_>>(),
+            "documentation must not move the semantic digest"
+        );
+        assert_ne!(
+            base_rows.iter().map(|(digest, _)| digest).collect::<Vec<_>>(),
+            digests_for(changed)?
+                .iter()
+                .map(|(digest, _)| digest)
+                .collect::<Vec<_>>(),
+            "a real change must move it"
+        );
+        assert!(
+            base_rows.iter().all(|(_, doc)| doc.is_none()),
+            "an undocumented declaration has no doc digest: {base_rows:?}"
+        );
+        assert!(
+            digests_for(documented)?.iter().all(|(_, doc)| doc.is_some()),
+            "a documented one does"
         );
         Ok(())
     }
