@@ -348,4 +348,54 @@ mod tests {
             |public_digest: &str| external_digest(&[declaration_with("d:api", "api", Some(public_digest), "public")]);
         assert_ne!(build("d1"), build("CHANGED"));
     }
+
+    // ---- Encoding soundness ----
+    //
+    // The tests above prove the external surface is computed from the right roots and extended along the right
+    // edges. These prove the surface is *encoded* soundly, which fails differently: not as a rebuild that did not
+    // happen, but as two different units sharing one external digest, so a dependent is not rebaked when it should
+    // be. Each was written against a mutation the tests above did not notice.
+
+    /// Two overloads are two declarations, and the surface must keep them apart.
+    ///
+    /// `identity_key` folds the signature discriminant precisely because a name and kind do not distinguish
+    /// overloads. Dropping it merges them into one key, so a change to either would move a digest the other shares
+    /// and a change to both would move one entry rather than two.
+    #[test]
+    fn two_overloads_do_not_share_one_external_entry() {
+        let overload = |signature: &str, digest: &str| {
+            let mut record = declaration("d:same", "same", Some(digest));
+            if let CodegraphRecord::Declaration(declaration) = &mut record
+                && let Some(identity) = declaration.stable_identity.as_mut()
+            {
+                identity.signature = Some(signature.to_string());
+            }
+            record
+        };
+        let records = vec![overload("(Int)->Unit", "d1"), overload("(Str)->Unit", "d2")];
+        let digests = closure_digests_for_export(&records);
+        assert_eq!(
+            digests.len(),
+            2,
+            "two overloads must hold two closure entries, got {digests:?}"
+        );
+    }
+
+    /// An edge the graph could not resolve still reaches the external digest.
+    ///
+    /// Named for what it proves. It does *not* isolate the `unwrap_or("unresolved")` fallback in `external_digest`:
+    /// replacing that with a skip leaves this passing, because introducing an unresolved edge also moves its
+    /// owner's closure digest, and the owner's entry already folds both the dependency identity and its unresolved
+    /// state. That fallback is therefore redundant rather than untested — kept because an entry absent from the
+    /// surface is the failure this whole model exists to avoid, and the cost of keeping it is one hash update.
+    #[test]
+    fn an_unresolved_edge_reaches_the_external_digest() {
+        let with_unresolved = vec![declaration("d:pub", "pub_fn", Some("d1")), call("d:pub", None)];
+        let without = vec![declaration("d:pub", "pub_fn", Some("d1"))];
+        assert_ne!(
+            external_digest(&with_unresolved),
+            external_digest(&without),
+            "an edge the graph could not resolve must reach the external digest"
+        );
+    }
 }
