@@ -437,6 +437,22 @@ pub struct CodegraphDeclarationRecord {
     /// The same declaration's edit-stable identity, for a consumer keying across compilations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stable_identity: Option<CodegraphStableDeclarationId>,
+    /// Digest over this declaration's checked meaning, excluding position, formatting, comments and documentation.
+    ///
+    /// Answers whether the declaration changed, where [`CodegraphStableDeclarationId`] answers which declaration it
+    /// is. The two are separate fields because one value cannot do both: an identity that moved with content would
+    /// make an edited declaration indistinguishable from a deletion plus an addition.
+    ///
+    /// `None` where the producer could not lower the declaration; a consumer must then treat it as changed rather
+    /// than as unchanged, since absence is not evidence of stability.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_digest: Option<String>,
+    /// Digest over this declaration's documentation, kept apart from its meaning.
+    ///
+    /// Documentation is output for a consumer publishing reference docs and invisible to one gating a compiled
+    /// artifact, so the two are digested separately rather than one policy being imposed on both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc_digest: Option<String>,
     /// Source span for the declaration.
     pub span: Option<CodegraphSourceSpan>,
     /// Fact provenance.
