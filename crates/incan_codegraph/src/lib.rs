@@ -1144,6 +1144,7 @@ mod tests {
             kind: "identifier".to_string(),
             target_id: None,
             canonical_identity: Some(identity.clone()),
+            stable_identity: None,
             span: None,
             provenance: CodegraphProvenance::Checked,
             degraded: false,
