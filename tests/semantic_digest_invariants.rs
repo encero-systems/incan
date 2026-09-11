@@ -27,6 +27,9 @@ use std::path::Path;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+/// The before-and-after digests of one fixture pair, keyed by declaration identity.
+type DigestPair = (BTreeMap<String, String>, BTreeMap<String, String>);
+
 /// Digest every declaration in one module, keyed by its edit-stable identity.
 fn digest_declarations(source: &str) -> Result<BTreeMap<String, String>, String> {
     let tokens = lexer::lex(source).map_err(|errors| format!("lex: {errors:?}"))?;
@@ -75,10 +78,7 @@ fn digest_declarations(source: &str) -> Result<BTreeMap<String, String>, String>
     Ok(digests)
 }
 
-fn digest_pair(
-    before: &str,
-    after: &str,
-) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>), Box<dyn std::error::Error>> {
+fn digest_pair(before: &str, after: &str) -> Result<DigestPair, Box<dyn std::error::Error>> {
     let before = before.to_string();
     let after = after.to_string();
     incan::compiler_stack::run_on_compiler_stack(move || {
