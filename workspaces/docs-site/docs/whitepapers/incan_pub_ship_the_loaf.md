@@ -54,7 +54,7 @@ Oven's receipt model is examined against those properties as one candidate, and 
 
 One sentence carries the whole argument: **Cargo exchanges source; what Rust still lacks is an exchangeable identity for compiled work.**
 
-Artifacts are what move. Identity is what makes moving them safe, and the chain runs source identity, to compilation identity, to artifact exchange.
+Artifacts are exchanged. Identity determines whether they may be.
 
 Everything below is evidence for that, and a proposal that follows from it.
 
@@ -106,7 +106,7 @@ Unit-seconds is the sum of the durations cargo attributes to each compilation un
 
 **Small libraries are not the problem.** tokio and axum build in seconds on both machines. Anyone who leads a conversation with a Rust developer by calling tokio expensive will lose them, correctly. crates.io's source model is entirely adequate for the long tail of small crates, and nothing in this paper proposes changing how they are consumed.
 
-**Heavy stacks are the problem, and they are common.** A program that opens a DataFusion session and prints its id costs twenty-seven CPU-minutes on the laptop and, on the consumer machine, seven minutes during which the desktop was unresponsive. The task manager during that build read 100% CPU, 69% memory, 1% disk, and 0% network, with a single `rustc` process at 95% of a core and 1.16 GB resident. The last two numbers are the argument in miniature: nothing was being downloaded and almost nothing was being read or written. The machine was purely re-deriving compiled work already performed on every other machine that has built DataFusion 55 with this toolchain, for this target, under this configuration.
+**Heavy stacks are the problem, and they are common.** A program that opens a DataFusion session and prints its id costs twenty-seven CPU-minutes on the laptop and, on the consumer machine, seven minutes during which the desktop was unresponsive. The task manager during that build read 100% CPU, 69% memory, 1% disk, and 0% network, with a single `rustc` process at 95% of a core and 1.16 GB resident. The last two numbers are the argument in miniature: nothing was being downloaded and almost nothing was being read or written. The machine was purely re-deriving compiled work already performed elsewhere, many times over, for this same dependency closure, toolchain, target, and configuration.
 
 **Consumer hardware pays most.** Wall time grew 2.7 times between the two hosts; unit-seconds grew 3.8 times. The extra growth is contention. Cargo runs one `rustc` per logical core by default, each DataFusion crate wants over a gigabyte while it compiles, and a 16 GB machine has nowhere to put twelve of them. The cost of source-only distribution lands hardest on exactly the machines that can least absorb it, and Many hosted CI runners are comparably constrained.
 
@@ -238,21 +238,32 @@ Requirements 1 and 2 are the hard ones, and the rest are unreachable without the
 
 Oven is one answer, and what follows is only the part that bears on that question. How Oven plans, bakes, seals and reuses work is the subject of its own paper, [A Cargo-free toolchain for Incan and Rust](incan_oven_positioning.md); nothing here depends on reading it first. What matters for this argument is the receipt, stated once, in full.
 
-A receipt identifies a compiled unit by a digest over its *effective compilation inputs*: the semantic content of the source it compiles; the manifest facts the compilation actually observes, such as a version string reaching code through an environment macro; the toolchain identity; the target triple and whether the unit was built for the host or the target; the profile facts that change codegen, meaning optimisation level, debug-info level, codegen units, panic strategy, LTO mode and target features; the resolved feature set; the artifact kind and edition; the identities of every unit it links against; the receipt identity of any build script or procedural macro whose output it consumed; and the digests of any native libraries or headers it links or includes.
+A receipt identifies a compiled unit by a digest over its *effective compilation inputs*:
+
+- the semantic content of the source it compiles;
+- the manifest facts the compilation actually observes, such as a version string reaching code through an environment macro;
+- the toolchain identity;
+- the target triple, and whether the unit was built for the host or the target;
+- the profile facts that change codegen — optimisation level, debug-info level, codegen units, panic strategy, LTO mode, target features;
+- the resolved feature set;
+- the artifact kind and edition;
+- the identities of every unit it links against;
+- the receipt identity of any build script or procedural macro whose output it consumed;
+- the digests of any native libraries or headers it links or includes.
 
 Equally important is what a receipt must *exclude*, because each of these breaks sharing without changing output: absolute paths, timestamps, hostnames, user names, publication signatures, and which plan requested the unit. Source paths are remapped so the same source at two locations yields the same identity.
 
 Three different questions are hiding in the word "same", and an exchange between strangers only works if they stay apart.
 
-**Derivation identity answers "was this built for my plan?"** Two units are applicable to one another when their derivation identities — the digest over effective inputs above — are equal. Same package and version with a different identity is a miss, and a miss means baking from source. Nothing is substituted on a near match, and no ownership declaration waives it.
+**Unit identity answers "was this built for my plan?"** This is the named concept the rest of the paper leans on: a *unit identity* is the digest over effective compilation inputs described above, and it is what RFC 124 calls it too, so the paper and the specification cannot drift apart. Two units are applicable to one another when their unit identities are equal. Same package and version with a different identity is a miss, and a miss means baking from source. Nothing is substituted on a near match, and no ownership declaration waives it.
 
-**Content digest answers "are these the exact bytes that were attested?"** A consumer verifies the artifact it downloaded against the digest in the attestation covering it. This is integrity, and it is independent of the first question.
+**Payload digest answers "are these the exact bytes that were attested?"** A consumer verifies what it downloaded against the digest in the attestation covering it. This is integrity, and it is independent of the first question.
 
-**Provenance answers "whose claim that these bytes follow from that source am I accepting?"** A derivation identity that matches proves the inputs were right, not that the producer was honest: a malicious builder can take correct inputs and attest malicious output. Trust is a separate judgement, and it belongs to the consuming project.
+**Publication provenance answers "whose claim that these bytes follow from that source am I accepting?"** A matching unit identity proves the inputs were right, not that the producer was honest: a malicious builder can take correct inputs and attest malicious output. Trust is a separate judgement, and it belongs to the consuming project.
 
-Keeping them apart matters because collapsing the first two would make reproducible builds a precondition for exchange, and `rustc` output is not bit-for-bit reproducible in every configuration. A consumer does not need a stranger's artifact to equal the bytes it would have produced. It needs the artifact's derivation identity to match its own plan, and the bytes it received to match the digest the builder attested. Where reproducible rebuilds *are* available they supply a stronger check on top, by letting a third party confirm the transformation rather than trust it.
+Keeping them apart matters because collapsing the first two would make reproducible builds a precondition for exchange, and `rustc` output is not bit-for-bit reproducible in every configuration. A consumer does not need a stranger's artifact to equal the bytes it would have produced. It needs the artifact's unit identity to match its own plan, and the bytes it received to match the payload digest the builder attested. Where reproducible rebuilds *are* available they supply a stronger check on top, by letting a third party confirm the transformation rather than trust it.
 
-The whole architecture follows from that separation, and it compresses to five sentences. Derivation identity determines applicability. Content identity determines integrity. Provenance determines trust. Source transparency preserves auditability. Fallback preserves sovereignty.
+The whole architecture follows from that separation, and it compresses to five sentences. Unit identity determines applicability. Payload digest determines integrity. Provenance determines trust. Source transparency preserves auditability. Fallback preserves sovereignty.
 
 What the matching rule prevents is not a slow build but a wrong one. Two ABI-incompatible instances of one library reaching a single link can yield a link error, a type incompatibility, duplicated global state, or a binary whose failure appears only at runtime — and the last of those is the one that makes "close enough" unusable as a policy.
 
@@ -309,4 +320,6 @@ RFC 124 defines unit identity, cross-plan sharing in the store, and collection; 
 
 Rust made compiled distribution possible by making its source ecosystem trustworthy, and then never built it. The cost of that omission is measurable: seven minutes of a saturated consumer machine to open a query engine session, half a terabyte of indistinguishable duplicates on a maintainer's laptop, and the same work repeated on every runner and in every image. The Rust project has been asked for this since 2015 and is now building the local half of it; the fix was never only a faster cache. It was an artifact identity precise enough to trust from a stranger, and a place to exchange artifacts that carry it. Rust already knows how to describe source, and describes it better than most. What it still lacks is a way to describe compiled work precisely enough that strangers can safely exchange it. That is the missing layer, and it is a smaller thing than a package manager and a larger thing than a cache.
 
-Oven's receipt model is built to supply that description. An exchange built on those identities distributes the result. The recipe stays on crates.io, where it belongs; what ships already baked is whatever some stranger's inputs prove to be identical to yours, and everyone else bakes exactly as they do today.
+Oven's receipt model is built to supply that description. An exchange built on those identities distributes the result.
+
+crates.io goes on exchanging recipes, because the recipe remains the source of truth and should. What changes is that the recipe stops being the only thing that can travel. Once two kitchens can show they followed the same recipe, with the same ingredients, in the same oven, there is no reason for both to bake — and every reason for the one that already did to be able to prove it.
