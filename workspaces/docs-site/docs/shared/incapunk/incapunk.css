@@ -6531,3 +6531,68 @@ html.inc-v06-roadmap-enhanced {
     transition: none;
   }
 }
+
+/* ---- Oven ecosystem map (tooling/explanation/oven_ecosystem.md) ---- */
+.md-typeset .inc-oven-map {
+  margin: 1.4rem 0 2rem;
+}
+
+.md-typeset .inc-oven-map__scroll {
+  overflow-x: auto;
+  border: 1px solid var(--inc-border);
+  border-radius: 12px;
+  background: #030304;
+}
+
+.md-typeset .inc-oven-map__svg {
+  display: block;
+  width: 100%;
+  min-width: 1200px;
+  height: auto;
+}
+
+.md-typeset .inc-oven-map__svg--anatomy {
+  min-width: 1100px;
+}
+
+.md-typeset .inc-oven-map figcaption {
+  margin: 0.7rem 0.2rem 0;
+  color: var(--inc-muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  text-align: left;
+}
+
+.md-typeset .inc-oven-map figcaption strong {
+  color: var(--inc-text);
+}
+
+.md-typeset .inc-oven-map svg text { fill: var(--inc-text); }
+.md-typeset .inc-oven-map svg .zn { font: 500 8px var(--inc-font-mono); fill: rgba(228, 235, 242, 0.62); letter-spacing: 0.14em; }
+.md-typeset .inc-oven-map svg .nm { font: 600 12px var(--inc-font-body); fill: #e4ebf2; }
+.md-typeset .inc-oven-map svg .nmm { font: 600 12px var(--inc-font-mono); fill: #e4ebf2; }
+.md-typeset .inc-oven-map svg .sub { font: 400 9px var(--inc-font-mono); fill: #c1c8d0; }
+.md-typeset .inc-oven-map svg .rfc { font: 400 8px var(--inc-font-mono); fill: rgba(228, 235, 242, 0.5); letter-spacing: 0.08em; }
+.md-typeset .inc-oven-map svg .al { font: 400 8px var(--inc-font-mono); fill: #98a2ad; letter-spacing: 0.06em; }
+.md-typeset .inc-oven-map svg .lg { font: 400 9px var(--inc-font-mono); fill: #98a2ad; }
+.md-typeset .inc-oven-map svg .nm-a { font: 600 12px var(--inc-font-body); fill: #ffc15a; }
+.md-typeset .inc-oven-map svg .nmm-a { font: 600 12px var(--inc-font-mono); fill: #ffc15a; }
+.md-typeset .inc-oven-map svg .rfc-a { font: 400 8px var(--inc-font-mono); fill: rgba(255, 193, 90, 0.7); letter-spacing: 0.08em; }
+.md-typeset .inc-oven-map svg .nmm-x { font: 600 12px var(--inc-font-mono); fill: rgba(228, 235, 242, 0.72); }
+.md-typeset .inc-oven-map svg .sub-x { font: 400 9px var(--inc-font-mono); fill: rgba(228, 235, 242, 0.55); }
+.md-typeset .inc-oven-map svg .rfc-x { font: 400 8px var(--inc-font-mono); fill: rgba(228, 235, 242, 0.4); letter-spacing: 0.08em; }
+.md-typeset .inc-oven-map svg .zone { fill: rgba(196, 126, 54, 0.07); stroke: rgba(196, 126, 54, 0.38); stroke-width: 1; }
+.md-typeset .inc-oven-map svg .lane { fill: rgba(196, 126, 54, 0.07); stroke: rgba(196, 126, 54, 0.38); stroke-width: 1; stroke-dasharray: 3 5; }
+.md-typeset .inc-oven-map svg .mask { fill: #030304; }
+.md-typeset .inc-oven-map svg .box { fill: rgba(228, 235, 242, 0.09); stroke: rgba(228, 235, 242, 0.5); stroke-width: 1; }
+.md-typeset .inc-oven-map svg .box.planned { stroke-dasharray: 4 3; }
+.md-typeset .inc-oven-map svg .box.draft { stroke-dasharray: 1 3; }
+.md-typeset .inc-oven-map svg .box.pr { fill: rgba(255, 193, 90, 0.14); stroke: #ffc15a; }
+.md-typeset .inc-oven-map svg .box.loaf { fill: rgba(255, 193, 90, 0.14); stroke: #ffc15a; stroke-width: 1.2; }
+.md-typeset .inc-oven-map svg .box.ext { fill: rgba(228, 235, 242, 0.05); stroke: rgba(228, 235, 242, 0.24); }
+.md-typeset .inc-oven-map svg .layer { fill: rgba(228, 235, 242, 0.04); stroke: rgba(228, 235, 242, 0.18); stroke-width: 1; }
+.md-typeset .inc-oven-map svg .layer.attest { fill: none; stroke-dasharray: 4 3; }
+.md-typeset .inc-oven-map svg .e { fill: none; stroke: #c1c8d0; stroke-width: 1.2; marker-end: url(#oven-map-arrow); }
+.md-typeset .inc-oven-map svg .e.dash { stroke-width: 1; stroke-dasharray: 4 3; }
+.md-typeset .inc-oven-map svg .e.ext { stroke: #48f0ef; stroke-width: 1; stroke-dasharray: 4 3; marker-end: url(#oven-map-arrow-link); }
+.md-typeset .inc-oven-map svg .e.a { stroke: #ffc15a; }

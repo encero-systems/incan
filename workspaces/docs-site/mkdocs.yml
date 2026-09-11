@@ -81,7 +81,7 @@ extra:
 
 extra_css:
   - stylesheets/pygments.css
-  - /shared/incapunk/incapunk.css?v=20260908-code-annotations-2
+  - /shared/incapunk/incapunk.css?v=20260911-oven-map-1
 
 extra_javascript:
   - _snippets/javascripts/mathjax.js
@@ -286,6 +286,7 @@ nav:
           - Inspect checked C bindings: tooling/how-to/inspect_checked_c_bindings.md
           - Testing: tooling/how-to/testing.md
       - Explanation:
+          - The Oven ecosystem: tooling/explanation/oven_ecosystem.md
           - Projects today: tooling/explanation/projects_today.md
           - Compiled SDK provider flow: tooling/explanation/compiled_sdk_provider_flow.md
           - Generated-build storage model: tooling/explanation/generated_build_storage.md
