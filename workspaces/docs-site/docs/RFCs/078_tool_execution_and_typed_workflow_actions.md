@@ -17,6 +17,7 @@
 - **Issue:** https://github.com/encero-systems/incan/issues/406
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
+- **Target scope:** v0.6, slice 5 (Oven CLI delivery, #1142); brought into scope 2026-09-10. Table root is `[actions]` per RFC 117.
 - **Shipped in:** —
 
 ## Summary
@@ -69,14 +70,14 @@ RFC 015 already has envs and scripts. RFC 075 lets capabilities advertise toolin
 A project or capability may declare typed actions:
 
 ```toml
-[[oven.actions]]
+[[actions]]
 id = "test"
 kind = "test"
 command = ["incan", "test"]
 scope = "member"
 mutates = []
 
-[[oven.actions]]
+[[actions]]
 id = "generate-client"
 kind = "generate"
 tool = "pub:openapi-client"
@@ -276,15 +277,16 @@ The recommended implementation shape is to build an action registry from built-i
 - **Agentic tooling:** agents may consume action metadata, capability requirements, dry-run plans, and receipt expectations, but action execution remains subject to policy and user approval.
 - **Documentation:** docs must distinguish scripts, actions, tools, project-context execution, and isolated execution.
 
-## Unresolved questions
+## Design decisions
 
-- Which action kinds should be standardized in v1?
-- Should `oven run` and `oven test` become aliases for typed actions, or remain separate command families? RFC 118 separately decides which, if any, Incan aliases delegate to those Oven operations.
-- What is the minimum useful dry-run contract for mutating external tools?
-- Should isolated tool execution use a global cache, per-project cache, or always temporary environment?
-- How should action inputs and outputs be represented for tools that cannot predict outputs?
-- Should action metadata support secrets or credential requests, and if so how should policy mediate them?
-- How should AI-backed actions expose model cost, privacy, and local/cloud execution constraints?
+Resolved 2026-09-10 when this RFC was brought into the v0.6 scope.
 
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- **Standard action kinds.** The ten kinds in the reference section are standardized for v1. Extension kinds use an `x-` prefix, appear in machine-readable output, and receive conservative policy handling.
+- **`oven run` and `oven test` are not actions.** `run`, `test`, `build`, `bake`, and `check` remain first-class Oven command families with their own plan identities (RFC 118). Actions are the extension mechanism for everything else and are invoked through `oven action run <id>`. A project action may declare kind `run` or `test`, but it never redefines or shadows the built-in operation, so there is no npm-scripts-style override of `oven test`.
+- **Minimum dry-run contract for mutating external tools.** The plan must show the tool's source identity, version, and content hash; execution mode; argv, working directory, and environment additions; declared mutation categories and target paths; capability requirements (RFC 104); and the policy outcome. A tool that cannot predict its outputs declares `outputs = "unpredictable"`, is non-plannable, requires approval by default, and runs in a staging directory whose post-run diff is presented as a mutation plan before anything is adopted into the project (RFC 112 for the atomic adoption).
+- **Isolated tool execution uses the Oven store.** Tools are units under RFC 124, cached globally by unit identity and shared across projects; there is no per-project tool cache. `--fresh` requests a temporary environment for one run.
+- **Inputs and outputs for unpredictable tools.** Declared as `outputs = "unpredictable"`; observed outputs are recorded in the receipt and surfaced as the post-run diff above. Tools that can predict outputs declare them and are checked against the receipt.
+- **Secrets and credentials.** Action metadata may declare named credential requirements (kind and purpose), never values. Policy mediates each request; values are resolved from Oven-controlled secure storage (the credential references RFC 117 already keeps outside the project) as RFC 103 secret values; every request is receipted under RFC 104 with redaction.
+- **AI-backed actions.** Metadata carries three fields, execution locality (`local` or `cloud`), a cost class, and a privacy label, referencing RFC 080 assets where they exist; policy may block cloud execution. The field shapes are fixed here so `[actions]` need not change when RFC 080 lands; their detailed semantics remain RFC 080's.
+
+Amendment made at the same time: the table root is `[actions]` (RFC 117), not `[oven.actions]`.
