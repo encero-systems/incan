@@ -6,8 +6,8 @@
 use crate::frontend::ast::{self, Declaration};
 use crate::frontend::typechecker::TypeCheckInfo;
 use incan_semantics_core::{
-    CompilerNodeId, HirDeclaration, HirDeclarationKind, HirModule, HirSourceSpan, SemanticFactStore,
-    SemanticModuleSnapshot,
+    CompilerNodeId, DeclarationVisibility, HirDeclaration, HirDeclarationKind, HirModule, HirSourceSpan,
+    SemanticFactStore, SemanticModuleSnapshot,
 };
 
 /// Build declaration-level HIR v0 for a typechecked module.
@@ -79,6 +79,7 @@ fn hir_declarations_for(
                 name: Some(binding.local_name.clone()),
                 span,
                 type_fact_subject: hir_type_fact_subject(facts, module_identity, &binding.local_name),
+                visibility: hir_visibility(&decl.node),
                 canonical: binding.canonical.clone(),
             })
             .collect();
@@ -105,8 +106,40 @@ fn hir_declarations_for(
         name,
         span,
         type_fact_subject,
+        visibility: hir_visibility(&decl.node),
         canonical,
     }]
+}
+
+/// Translate a syntax declaration's visibility into the semantic vocabulary.
+///
+/// `incan_semantics_core` sits below `incan_syntax` and must not depend on it, so the mapping lives here at the
+/// bridge rather than as a `From` implementation on either side. Declarations that carry no visibility of their own
+/// are private: a docstring or a vocab block exports nothing, and treating an unknown as public would make the
+/// external closure larger than the source justifies, which under-reports what a change can reach.
+fn hir_visibility(decl: &Declaration) -> DeclarationVisibility {
+    let visibility = match decl {
+        Declaration::Import(decl) => decl.visibility,
+        Declaration::Const(decl) => decl.visibility,
+        Declaration::Static(decl) => decl.visibility,
+        Declaration::Model(decl) => decl.visibility,
+        Declaration::Capability(decl) => decl.visibility,
+        Declaration::Class(decl) => decl.visibility,
+        Declaration::Trait(decl) => decl.visibility,
+        Declaration::Alias(decl) => decl.visibility,
+        Declaration::Partial(decl) => decl.visibility,
+        Declaration::TypeAlias(decl) => decl.visibility,
+        Declaration::Newtype(decl) => decl.visibility,
+        Declaration::Enum(decl) => decl.visibility,
+        Declaration::Function(decl) => decl.visibility,
+        Declaration::TestModule(_) | Declaration::VocabBlock(_) | Declaration::Docstring(_) => {
+            return DeclarationVisibility::Private;
+        }
+    };
+    match visibility {
+        ast::Visibility::Public => DeclarationVisibility::Public,
+        ast::Visibility::Private => DeclarationVisibility::Private,
+    }
 }
 
 /// Return the compatibility semantic-fact subject for one checked local spelling, when a type fact exists.

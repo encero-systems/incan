@@ -10,6 +10,39 @@ use serde_json::Value;
 /// Current codegraph JSONL schema version.
 pub const CODEGRAPH_SCHEMA_VERSION: u32 = 7;
 
+/// A declaration identity that survives edits.
+///
+/// [`CodegraphCanonicalSymbolId`] mirrors the compiler's own identity, span included, and that is right as
+/// *provenance*: it names where a declaration sat in the compilation that produced the record. It cannot be what a
+/// consumer keys on across edits, because the span moves whenever a line above it does — and so does the scope
+/// discriminant, which indexes a table filled in traversal order.
+///
+/// RFC 106 requires a declaration identity carry neither. This is that identity, exported *alongside* the
+/// span-carrying one rather than replacing it: a consumer caching across compilations keys on this, while one
+/// reporting a location still has the span.
+///
+/// The signature is required rather than defensive. Without it two module-level declarations sharing namespace,
+/// origin, name and kind are indistinguishable once the span is gone; overloads are the only collision class a
+/// standard library produces, and it produces two. `None` means the producer could not prove a signature, and a
+/// consumer must then treat the identity as unproven rather than as a key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CodegraphStableDeclarationId {
+    /// Namespace in which the declaration is resolved.
+    pub namespace: String,
+    /// Compiler-owned declaration origin.
+    pub origin: CodegraphSymbolOrigin,
+    /// Spelling at the original declaration site.
+    pub declaration_name: String,
+    /// Semantic declaration category.
+    pub declaration_kind: String,
+    /// Whether the declaration is nested, without the discriminant's traversal-ordered value.
+    pub nested: bool,
+    /// Canonical rendering of the signature, when the producer proved one. This is what separates overloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+}
+
 /// Storage-neutral projection of one compiler-owned canonical symbol identity.
 ///
 /// This mirrors the semantic identity fields deliberately instead of depending on compiler crates. Equality of this
@@ -369,6 +402,17 @@ pub struct CodegraphModuleRecord {
     pub file_id: String,
     /// Module path segments.
     pub module_path: Vec<String>,
+    /// The namespace this module belongs to, which is the module itself unless it is internal.
+    ///
+    /// A module path names where a declaration is; a namespace names where a consumer can reach it. They differ for
+    /// a module that is a detail of its parent, and the difference is what lets a consumer tell an internal
+    /// reorganisation from a change to the surface. Grouping modules by this field yields the namespace-led view:
+    /// one node per reachable namespace, with its internal modules as the subgraph beneath it.
+    #[serde(default)]
+    pub namespace_path: Vec<String>,
+    /// Whether this module is a detail of [`Self::namespace_path`] rather than a namespace a consumer can reach.
+    #[serde(default)]
+    pub internal: bool,
     /// Human-readable module name.
     pub name: String,
     /// Span covering the source file, when available.
@@ -401,6 +445,25 @@ pub struct CodegraphDeclarationRecord {
     /// Compiler-owned declaration identity. `None` is an explicit unproven result.
     #[serde(default)]
     pub canonical_identity: Option<CodegraphCanonicalSymbolId>,
+    /// The same declaration's edit-stable identity, for a consumer keying across compilations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_identity: Option<CodegraphStableDeclarationId>,
+    /// Digest over this declaration's checked meaning, excluding position, formatting, comments and documentation.
+    ///
+    /// Answers whether the declaration changed, where [`CodegraphStableDeclarationId`] answers which declaration it
+    /// is. The two are separate fields because one value cannot do both: an identity that moved with content would
+    /// make an edited declaration indistinguishable from a deletion plus an addition.
+    ///
+    /// `None` where the producer could not lower the declaration; a consumer must then treat it as changed rather
+    /// than as unchanged, since absence is not evidence of stability.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_digest: Option<String>,
+    /// Digest over this declaration's documentation, kept apart from its meaning.
+    ///
+    /// Documentation is output for a consumer publishing reference docs and invisible to one gating a compiled
+    /// artifact, so the two are digested separately rather than one policy being imposed on both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc_digest: Option<String>,
     /// Source span for the declaration.
     pub span: Option<CodegraphSourceSpan>,
     /// Fact provenance.
@@ -446,6 +509,9 @@ pub struct CodegraphImportBinding {
     pub local_name: String,
     /// Identity of the original declaration, unchanged through aliases and re-exports.
     pub canonical_identity: Option<CodegraphCanonicalSymbolId>,
+    /// The same declaration's edit-stable identity, for a consumer keying across compilations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_identity: Option<CodegraphStableDeclarationId>,
 }
 
 /// Public export fact.
@@ -466,6 +532,9 @@ pub struct CodegraphExportRecord {
     /// Identity exported under `name`; aliases and re-exports keep the original declaration identity.
     #[serde(default)]
     pub canonical_identity: Option<CodegraphCanonicalSymbolId>,
+    /// The same declaration's edit-stable identity, for a consumer keying across compilations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_identity: Option<CodegraphStableDeclarationId>,
     /// Source span for the export.
     pub span: Option<CodegraphSourceSpan>,
     /// Fact provenance.
@@ -497,6 +566,9 @@ pub struct CodegraphReferenceRecord {
     /// Closest checked declaring owner, independent of optional export-local navigation linkage.
     #[serde(default)]
     pub canonical_owner: Option<CodegraphCanonicalSymbolId>,
+    /// The same declaration's edit-stable identity, for a consumer keying across compilations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_identity: Option<CodegraphStableDeclarationId>,
     /// Source span for the reference.
     pub span: Option<CodegraphSourceSpan>,
     /// Fact provenance.
@@ -532,6 +604,9 @@ pub struct CodegraphCallRecord {
     /// Closest checked declaring owner, independent of optional export-local navigation linkage.
     #[serde(default)]
     pub canonical_owner: Option<CodegraphCanonicalSymbolId>,
+    /// The same declaration's edit-stable identity, for a consumer keying across compilations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_identity: Option<CodegraphStableDeclarationId>,
     /// Source span for the call expression.
     pub span: Option<CodegraphSourceSpan>,
     /// Fact provenance.
@@ -927,6 +1002,27 @@ pub struct CodegraphRegistryReexportProjection {
     pub span: CodegraphSourceSpan,
 }
 
+/// Reachable namespace node, grouping the modules beneath it.
+///
+/// RFC 106 makes the namespace the graph's top-level unit of reachable surface, distinct from the module that
+/// declares a thing. One record is emitted per namespace an export contains, and `contains` edges relate it to its
+/// modules — including itself, when the namespace is also a module a consumer can import.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodegraphNamespaceRecord {
+    /// Stable id unique within the export.
+    pub id: String,
+    /// Source language for this graph fact.
+    pub language: CodegraphLanguage,
+    /// Namespace path segments, as a consumer would name them.
+    pub namespace_path: Vec<String>,
+    /// Human-readable namespace name: the last path segment, or the crate root when the path is empty.
+    pub name: String,
+    /// Fact provenance.
+    pub provenance: CodegraphProvenance,
+    /// Whether this namespace is partial because a module beneath it is.
+    pub degraded: bool,
+}
+
 /// One newline-delimited codegraph record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "record", rename_all = "snake_case")]
@@ -935,6 +1031,8 @@ pub enum CodegraphRecord {
     Header(CodegraphHeaderRecord),
     /// Source file node.
     File(CodegraphFileRecord),
+    /// Reachable namespace node grouping the modules beneath it.
+    Namespace(CodegraphNamespaceRecord),
     /// Incan module node.
     Module(CodegraphModuleRecord),
     /// Top-level declaration node.
@@ -1027,8 +1125,8 @@ mod tests {
     use super::{
         CODEGRAPH_SCHEMA_VERSION, CodegraphCanonicalSymbolId, CodegraphDiagnosticRecord,
         CodegraphDiagnosticRelatedDeclaration, CodegraphFileRecord, CodegraphHeaderRecord, CodegraphIdentitySpan,
-        CodegraphLanguage, CodegraphMode, CodegraphProvenance, CodegraphRecord, CodegraphReferenceRecord,
-        CodegraphSourceSpan, CodegraphSymbolOrigin, to_jsonl,
+        CodegraphLanguage, CodegraphMode, CodegraphNamespaceRecord, CodegraphProvenance, CodegraphRecord,
+        CodegraphReferenceRecord, CodegraphSourceSpan, CodegraphSymbolOrigin, to_jsonl,
     };
 
     #[test]
@@ -1087,6 +1185,7 @@ mod tests {
             target_id: None,
             canonical_identity: Some(identity.clone()),
             canonical_owner: None,
+            stable_identity: None,
             span: None,
             provenance: CodegraphProvenance::Checked,
             degraded: false,
@@ -1170,6 +1269,28 @@ mod tests {
             diagnostic.related_declarations[0].identity.declaration_name,
             "expected_value"
         );
+        Ok(())
+    }
+
+    /// The namespace record round-trips under its own `record` tag.
+    ///
+    /// The JSONL export is a published contract, so a new variant has to be checked at the wire rather than only
+    /// through the producer that builds it: the tag is what a consumer matches on, and nothing else in the schema
+    /// would fail if it were wrong.
+    #[test]
+    fn namespace_records_round_trip_under_their_own_tag() -> Result<(), Box<dyn std::error::Error>> {
+        let record = CodegraphRecord::Namespace(CodegraphNamespaceRecord {
+            id: "namespace:std.encoding".to_string(),
+            language: CodegraphLanguage::Incan,
+            namespace_path: vec!["std".to_string(), "encoding".to_string()],
+            name: "encoding".to_string(),
+            provenance: CodegraphProvenance::Syntax,
+            degraded: false,
+        });
+        let encoded = serde_json::to_value(&record)?;
+        assert_eq!(encoded["record"], "namespace");
+        assert_eq!(encoded["namespace_path"][1], "encoding");
+        assert_eq!(serde_json::from_value::<CodegraphRecord>(encoded)?, record);
         Ok(())
     }
 }

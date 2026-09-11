@@ -29,11 +29,15 @@ pub mod dependencies;
 
 pub mod authority;
 pub mod body_ir;
+pub mod closure_digest;
 pub mod emitted_symbol;
 pub mod executable_representation;
 mod facts;
 mod hir;
+pub mod namespace;
 pub mod receipts;
+pub mod semantic_digest;
+pub mod stable_identity;
 mod types;
 
 pub use emitted_symbol::{
@@ -47,7 +51,9 @@ pub use facts::{
     SemanticRegistryValue, SemanticSourceTarget, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
     canonical_module_identity, module_identity_for_path, package_module_identity,
 };
-pub use hir::{HirDeclaration, HirDeclarationKind, HirModule, HirSourceSpan, SemanticModuleSnapshot};
+pub use hir::{
+    DeclarationVisibility, HirDeclaration, HirDeclarationKind, HirModule, HirSourceSpan, SemanticModuleSnapshot,
+};
 pub use types::{
     AbiV0Ownership, AbiV0Representation, AbiV0ReservedFacts, AbiV0RuntimeRequirement, AbiV0TypeFacts,
     AbiV0TypeIdentity, IncanCallableParam, IncanCallableParamKind, IncanPrimitiveType, IncanType, rust_tuple_arity,

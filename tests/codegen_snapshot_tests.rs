@@ -4848,6 +4848,40 @@ fn test_issue459_rust_enum_pattern_import_codegen() {
 }
 
 #[test]
+fn test_issue1491_rust_struct_variant_pattern_codegen() {
+    let source = load_test_file("issue1491_rust_struct_variant_pattern");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1491_rust_struct_variant_pattern", rust_code);
+    assert!(
+        rust_code.contains("Predicate::KeyValue"),
+        "expected the struct variant to emit as a qualified path:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("key:") && rust_code.contains("val:"),
+        "expected named field bindings rather than a positional destructure:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("Predicate::KeyValue("),
+        "a struct variant must not emit a tuple-variant pattern, which rustc rejects with E0164:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_issue1493_empty_list_comparison_codegen() {
+    let source = load_test_file("issue1493_empty_list_comparison");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1493_empty_list_comparison", rust_code);
+    assert!(
+        rust_code.contains("Vec::<String>::new()"),
+        "an empty list operand must name its element type, or rustc cannot infer the comparison:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("== vec![]"),
+        "an untyped `vec![]` operand leaves `PartialEq` ambiguous (E0283):\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_rfc041_std_rust_capability_bounds_codegen() {
     let source = load_test_file("rfc041_std_rust_capability_bounds");
     let rust_code = generate_rust(&source);
@@ -5983,6 +6017,44 @@ fn test_assert_surface_codegen() {
     assert_codegen_snapshot!("assert_surface", rust_code);
 }
 
+/// Checked inline model comparisons and their equivalent assertion forms must survive Rust parsing.
+#[test]
+fn model_constructor_comparison_assertion_forms_codegen() -> TestResult {
+    for assertion in [
+        "assert value == Pair(x=1)",
+        "assert Pair(x=1) == value",
+        "assert Pair(x=1) == Pair(x=1)",
+        "assert value != Pair(x=2)",
+        "assert Pair(x=2) != value",
+        "assert (value == Pair(x=1)) == (Pair(x=1) == value)",
+        "assert not (value != Pair(x=1))",
+        "assert_eq(value, Pair(x=1))",
+        "assert_eq(Pair(x=1), value)",
+        "assert_ne(value, Pair(x=2))",
+        "assert_ne(Pair(x=2), value)",
+        "assert_false(value != Pair(x=1))",
+        "assert value == expected",
+    ] {
+        let source = format!(
+            r#"from std.testing import assert_eq, assert_ne, assert_false
+
+@derive(Eq)
+model Pair:
+    x: int
+
+pub def main() -> None:
+    value = Pair(x=1)
+    expected = Pair(x=1)
+    {assertion}
+"#,
+        );
+        let rust = generate_rust(&source);
+        syn::parse_file(&rust)
+            .map_err(|error| std::io::Error::other(format!("{assertion} must emit a valid Rust program: {error}")))?;
+    }
+    Ok(())
+}
+
 // ============================================================================
 /// RFC 057: Targeted Rust lint suppression.
 // ============================================================================
@@ -6136,3 +6208,10 @@ fn test_generic_bounds_return_type_codegen() {
 //         assert_codegen_snapshot!(name.to_string(), rust_code);
 //     });
 // }
+
+/// Foreign trait obligations must survive source checking and remain on generated callable signatures.
+#[test]
+fn test_rust_generic_bounds() {
+    let source = include_str!("fixtures/valid/rust_generic_bounds.incn");
+    insta::assert_snapshot!("rust_generic_bounds", generate_rust(source));
+}

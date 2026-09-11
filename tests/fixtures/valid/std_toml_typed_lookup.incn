@@ -1,0 +1,145 @@
+"""Native public contract for required, optional, literal, and source-located typed TOML reads."""
+
+from std import toml
+from std.toml import TomlError, TomlErrorKind, TomlDatetime, TomlKind
+
+
+@derive(toml)
+model Project:
+    """A selected table can be decoded with the same derive used by whole-document codecs."""
+
+    name: str
+    targets: list[str]
+
+
+def assert_error[T](result: Result[T, TomlError], kind: TomlErrorKind) -> None:
+    """Require a failure of the expected category without unwrapping an error payload."""
+    match result:
+        Ok(_) =>
+            assert false, "expected a TOML failure"
+        Err(error) =>
+            assert error.kind == kind
+
+
+def run() -> Result[None, TomlError]:
+    """Exercise both successful reads and cases where absence must not hide invalid configuration."""
+    source = "\"project.name\" = \"literal\"\n\"\" = \"empty key\"\ninteger = 42\nfraction = 1.5\nflag = true\ncreated = 1979-05-27T07:32:00Z\n[project]\nname = \"café\"\ntargets = [\"linux\", \"macos\"]\n"
+    document = toml.parse(source)?
+    name = document.get[str]("project.name")?
+    targets = document.get[list[str]]("project.targets")?
+    assert name == "café"
+    assert targets == ["linux", "macos"]
+    assert document.get_key[str]("project.name")? == "literal"
+    assert document.get_key[str]("")? == "empty key"
+    assert document.get[int]("integer")? == 42
+    assert document.get[float]("fraction")? == 1.5
+    assert document.get[bool]("flag")?
+    assert document.get[TomlDatetime]("created")?.as_str() == "1979-05-27T07:32:00Z"
+    assert document.get_optional[str]("project.version")? == None
+    assert document.get_optional[str]("missing.name")? == None
+    assert document.get_optional[str]("project.name")? == Some("café")
+    project = document.get[Project]("project")?
+    assert project.name == name
+    assert project.targets == targets
+    assert_error(document.get[Dict[str, str]]("project"), TomlErrorKind.Type)
+
+    dynamic = document.get_value("project")?
+    assert dynamic.kind() == TomlKind.Table
+    assert dynamic.get[str]("name")? == name
+    assert document.get_value("project.targets")?.get_index(1)?.as_str()? == "macos"
+    assert_error(document.get_value("project.targets")?.get_index(-1), TomlErrorKind.Missing)
+    assert_error(document.get_value("project.targets")?.get_index(10), TomlErrorKind.Missing)
+    assert_error(document.get_value("integer")?.get_index(0), TomlErrorKind.Type)
+    assert document.get_value("project.targets")?.as_array()?[0].as_str()? == "linux"
+    assert document.as_table()?["project"].get[str]("name")? == name
+
+    for path in ["", ".project", "project.", "project..name", "missing..name"]:
+        match document.get_optional[str](path):
+            Ok(_) =>
+                assert false, "malformed paths must not be treated as absent"
+            Err(error) =>
+                assert error.kind == TomlErrorKind.InvalidPath
+                assert error.line == None
+    match document.get[str]("missing.name"):
+        Ok(_) =>
+            assert false, "a required path must exist"
+        Err(error) =>
+            assert error.kind == TomlErrorKind.Missing
+            assert error.path == Some("missing.name")
+            assert error.line == None
+    match document.get_optional[str]("project.name.first"):
+        Ok(_) =>
+            assert false, "an incompatible intermediate container is not absence"
+        Err(error) =>
+            assert error.kind == TomlErrorKind.Type
+            assert error.path == Some("project.name")
+            assert error.line == Some(8)
+    match document.get_optional[int]("project.name"):
+        Ok(_) =>
+            assert false, "a present optional value must have the requested type"
+        Err(error) =>
+            assert error.kind == TomlErrorKind.Type
+            assert error.path == Some("project.name")
+            assert error.line == Some(8)
+            assert error.column == Some(8)
+    assert_error(document.get[float]("integer"), TomlErrorKind.Type)
+    assert_error(document.get[int]("fraction"), TomlErrorKind.Type)
+    assert_error(document.get[str]("created"), TomlErrorKind.Type)
+    assert_error(document.get[TomlDatetime]("project.name"), TomlErrorKind.Type)
+
+    invalid_source = "[project]\nname = \"café\"\ntargets = [\"linux\", \"macos\", 42]\n"
+    invalid = toml.parse(invalid_source)?
+    match invalid.get[list[str]]("project.targets"):
+        Ok(_) =>
+            assert false, "every array element must be validated"
+        Err(error) =>
+            assert error.path == Some("project.targets[2]")
+            assert error.line == Some(3)
+            assert error.column == Some(30)
+    match invalid.get[Project]("project"):
+        Ok(_) =>
+            assert false, "selected model errors must retain the field and array index"
+        Err(error) =>
+            assert error.path == Some("project.targets[2]")
+            assert error.line == Some(3)
+    coerced = toml.parse("values = [1.5, 2]\n")?
+    match coerced.get[list[float]]("values"):
+        Ok(_) =>
+            assert false, "integer-to-float conversion inside a list must not be implicit"
+        Err(error) =>
+            assert error.path == Some("values[1]")
+            assert error.line == Some(1)
+            assert error.column == Some(16)
+    dated = toml.parse("values = [1979-05-27, 07:32:00]\n")?
+    assert len(dated.get[list[TomlDatetime]]("values")?) == 2
+    assert_error(dated.get[list[str]]("values"), TomlErrorKind.Type)
+    assert document.get[str]("project.name").map((value) => value.upper())? == "CAFÉ"
+    collection = toml.parse(
+        "empty = []\nsettings = { linux = true, macos = false }\n[[packages]]\nname = \"one\"\n[[packages]]\nname = \"two\"\n",
+    )?
+    assert len(collection.get[list[str]]("empty")?) == 0
+    assert collection.get[Dict[str, bool]]("settings")? == {"linux": true, "macos": false}
+    assert collection.get[list[Dict[str, str]]]("packages")? == [{"name": "one"}, {"name": "two"}]
+    assert collection.get_value("packages")?.get_index(1)?.get[str]("name")? == "two"
+    match document.get_key[int]("project.name"):
+        Ok(_) =>
+            assert false, "literal-key errors must identify the literal key"
+        Err(error) =>
+            assert error.path == Some("[\"project.name\"]")
+            assert error.message().startswith("[\"project.name\"]:")
+    missing_field = toml.parse("[project]\nname = \"demo\"\n")?
+    assert_error(missing_field.get[Project]("project"), TomlErrorKind.Type)
+    restored = toml.parse(document.to_toml_pretty()?)?
+    assert restored.get[str]("project.name")? == "café"
+    assert restored.get_key[str]("project.name")? == "literal"
+    assert restored.get[TomlDatetime]("created")?.as_str() == "1979-05-27T07:32:00Z"
+    println("TOML typed lookup, strict kinds, paths, and locations passed")
+    return Ok(None)
+
+
+def main() -> None:
+    """Fail the native consumer on any unexpected lookup error."""
+    match run():
+        Ok(_) => return
+        Err(error) =>
+            assert false, error.message()

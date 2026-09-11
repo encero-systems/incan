@@ -7314,7 +7314,7 @@ impl TypeChecker {
     }
 
     /// Extract RFC 024 `__derives__` trait names from an imported dependency AST.
-    fn derivable_traits_from_program(program: &Program) -> Vec<String> {
+    pub(crate) fn derivable_traits_from_program(program: &Program) -> Vec<String> {
         for decl in &program.declarations {
             let Declaration::Const(konst) = &decl.node else {
                 continue;

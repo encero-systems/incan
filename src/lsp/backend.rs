@@ -1692,6 +1692,7 @@ mod lsp_identity_tests {
             }),
             modules: vec![CheckedApiMetadata {
                 schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                derivable_traits: Vec::new(),
                 module_path: vec!["math".to_string()],
                 declarations: Vec::new(),
             }],

@@ -101,6 +101,8 @@ There is no `incan bake` alias. Baking a loaf-shaped carrier packages a `*.loaf`
 oven init
 oven add stdlib-web
 oven add --crate serde
+oven check -p oven_model -p oven_store      # plan + check-only compile of selected members, no codegen or link
+oven check --workspace --exclude incan-lsp
 oven build --target aarch64-apple-ios
 oven plan --target aarch64-apple-ios --carrier framework
 oven bake --target aarch64-apple-ios --carrier framework
@@ -110,6 +112,9 @@ oven action run generate-client --dry-run
 oven inspect receipt
 oven update
 oven publish
+oven yank widgets 0.4.0 --reason "panics on empty input"
+oven store status
+oven store gc
 ```
 
 These commands operate on a selected Loaf or workspace closure. They discover `loaf.toml`, resolve the typed dependency graph, apply inherited workspace authority, and report a plan before effects where policy requires it.
@@ -178,12 +183,28 @@ Cargo compatibility is a clearly selected mode for a directory with `Cargo.toml`
 | Parsing, checking, formatting, compiler diagnostics                                | `incan`         | `check`, `fmt`                                           |
 | Language services and semantic products                                            | `incan`         | `lsp`, `inspect`, `codegraph`, `architect`               |
 | Manifest and workspace selection                                                   | `oven`          | `init`, `new`, member selection                          |
-| Dependency, lock, and registry lifecycle                                           | `oven`          | `add` (shorthand for `dependency add`), `dependency`, `remove`, `update`, `lock`, `registry`, `publish` |
-| Target, carrier, provider, and artifact lifecycle                                  | `oven`          | `plan`, `build`, `bake`, `run`, `test`, `inspect`        |
+| Dependency, lock, and registry lifecycle                                           | `oven`          | `add` (shorthand for `dependency add`), `dependency`, `remove`, `update`, `lock`, `registry`, `login`, `publish`, `yank` |
+| Target, carrier, provider, and artifact lifecycle                                  | `oven`          | `plan`, `check`, `build`, `bake`, `run`, `test`, `inspect`, `store` (`status`, `verify`, `gc`) |
 | Environments, typed actions, project mutations                                     | `oven`          | `env`, `action`, `starter`, `mix`                        |
 | Cargo compatibility                                                                | `oven`          | `cargo`                                                  |
 
 An operation that changes dependency resolution, registry trust, a lock, generated project state, selected toolchain/provider, target output, or execution receipt belongs to Oven even when the selected sources are entirely Incan.
+
+### Member selection
+
+Every Oven operation that acts on a Loaf closure accepts one selection grammar, and the grammar is the same for `check`, `plan`, `build`, `bake`, `test`, `run`, and `publish`:
+
+- no selection flag selects the workspace's `default-members` (RFC 117), or the single project when there is no workspace;
+- `-p <member>` / `--member <member>`, repeatable, selects named members by their `loaf.toml` project name; a path is accepted where a name would be ambiguous;
+- `--workspace` selects every declared member;
+- `--exclude <member>`, repeatable, removes members from whichever set the other flags selected;
+- `--delivery <name>` selects the member list a named delivery policy declares (RFC 117), and may not be combined with `-p` or `--workspace`.
+
+Selection is resolved before planning and is recorded in the plan and the receipt, so two invocations that select the same members produce the same plan identity regardless of how the selection was spelled. A member that is not in the workspace's explicit `members` list cannot be selected; the error names the file that would have to declare it.
+
+### `oven check`
+
+`oven check` resolves and plans exactly as `oven build` does, then runs every selected unit's compiler in check-only mode: the compiler emits metadata and diagnostics and does not generate code or link. It is the operation for "does this closure compile" on a Rust-only Loaf, on a mixed Loaf, or on Oven's own workspace, and it must work in a tree that contains no Incan compiler when the selected members have no Incan facet. `incan check` remains the Incan-facet diagnostic surface and, inside a Loaf, delegates its plan diagnostics to the same machinery; `oven check` is the whole-closure operation and owns the selection grammar above. Check-only outputs are metadata-only units under RFC 124 and are reusable like any other unit, so a `check` followed by a `build` re-uses the metadata the check produced where the compiler permits.
 
 ### Delegation and API boundary
 

@@ -147,6 +147,9 @@ Each module document contains:
 | `schema_version` | number | Module metadata schema version                    |
 | `module_path`    | array  | Logical module path segments                      |
 | `declarations`   | array  | Public declarations visible from that source file |
+| `derivable_traits` | array | Optional declared module derive members, resolved within `module_path` |
+
+`derivable_traits` preserves the exact `__derives__` list for module derives such as `@derive(toml)`. It is omitted when empty; older metadata without the field declares no module derive bundle. The internal `__derives__` constant is not exported as a public declaration. Each member retains its declaring module context and the checked trait declaration carries any explicit Rust derive decorator.
 
 `declarations` uses a `kind` discriminator. Current declaration kinds are `function`, `model`, `class`, `trait`, `enum`, `newtype`, `type_alias`, `const`, `static`, `alias`, and `partial`.
 

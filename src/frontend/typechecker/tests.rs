@@ -3400,6 +3400,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
                 package: None,
                 modules: vec![CheckedApiMetadata {
                     schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                    derivable_traits: Vec::new(),
                     module_path: vec!["helpers".to_string()],
                     declarations: vec![ApiDeclaration::Function(helper_cast)],
                 }],
@@ -25156,3 +25157,6 @@ fn admitted_legacy_nominals_keep_distinct_source_paths_and_consistent_hashes() {
         2
     );
 }
+mod borrowed_rust_enum;
+
+mod sdk_module_derives;
