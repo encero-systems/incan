@@ -22,11 +22,12 @@ use incan_codegraph::{
     CodegraphDiagnosticRecord, CodegraphDiagnosticRelatedDeclaration, CodegraphDiagnosticRelatedSpan,
     CodegraphExportRecord, CodegraphFeatureActivationReason, CodegraphFeatureReasonProjection, CodegraphFileRecord,
     CodegraphHeaderRecord, CodegraphIdentitySpan, CodegraphImportBinding, CodegraphImportRecord, CodegraphLanguage,
-    CodegraphMode, CodegraphModuleRecord, CodegraphPackage, CodegraphPackageFeatureProjection, CodegraphProvenance,
-    CodegraphProviderParticipation, CodegraphProviderProjection, CodegraphProviderProvenance, CodegraphRecord,
-    CodegraphReferenceRecord, CodegraphRegistryRecord, CodegraphRegistryReexportProjection,
-    CodegraphSdkComponentProjection, CodegraphSdkProjection, CodegraphSemanticContext, CodegraphSourceSpan,
-    CodegraphStableDeclarationId, CodegraphSymbolOrigin,
+    CodegraphMode, CodegraphModuleRecord, CodegraphNamespaceRecord, CodegraphPackage,
+    CodegraphPackageFeatureProjection, CodegraphProvenance, CodegraphProviderParticipation,
+    CodegraphProviderProjection, CodegraphProviderProvenance, CodegraphRecord, CodegraphReferenceRecord,
+    CodegraphRegistryRecord, CodegraphRegistryReexportProjection, CodegraphSdkComponentProjection,
+    CodegraphSdkProjection, CodegraphSemanticContext, CodegraphSourceSpan, CodegraphStableDeclarationId,
+    CodegraphSymbolOrigin,
 };
 use incan_core::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
 use incan_semantics_core::namespace::{enclosing_namespace, is_namespace_root};
@@ -788,6 +789,8 @@ struct CodegraphBuilder {
     diagnostics: Vec<StableDiagnostic>,
     file_ids: BTreeMap<String, String>,
     module_ids: BTreeSet<String>,
+    /// Namespace ids already emitted, so one namespace yields one node however many modules sit beneath it.
+    namespace_ids: BTreeSet<String>,
     mode: CodegraphMode,
     root_path: String,
     root_path_buf: PathBuf,
@@ -815,6 +818,18 @@ struct DeclarationSummary {
     signature: Option<String>,
 }
 
+/// Stable record id for one namespace.
+///
+/// The crate root is a real namespace with an empty path, so it needs a spelling of its own rather than an empty
+/// suffix that would collide with a malformed id.
+fn namespace_id(namespace_path: &[String]) -> String {
+    if namespace_path.is_empty() {
+        "namespace:<root>".to_string()
+    } else {
+        format!("namespace:{}", namespace_path.join("."))
+    }
+}
+
 impl CodegraphBuilder {
     /// Create a record builder for one strict or tolerant export.
     fn new(root_path: &Path, package: Option<CodegraphPackage>, allow_errors: bool) -> Self {
@@ -824,6 +839,7 @@ impl CodegraphBuilder {
             signatures_by_identity: BTreeMap::new(),
             file_ids: BTreeMap::new(),
             module_ids: BTreeSet::new(),
+            namespace_ids: BTreeSet::new(),
             mode: if allow_errors {
                 CodegraphMode::AllowErrors
             } else {
@@ -1008,6 +1024,32 @@ impl CodegraphBuilder {
                 provenance: CodegraphProvenance::Syntax,
                 degraded,
             }));
+            // RFC 106: the namespace is the graph's unit of reachable surface, and a module is a detail of it
+            // unless it is one itself. Emitted once per namespace, with a `contains` edge per module beneath it,
+            // so a consumer can read the surface without reconstructing it from `namespace_path`.
+            let namespace_path = enclosing_namespace(&module.path_segments).to_vec();
+            let namespace_id = namespace_id(&namespace_path);
+            if self.namespace_ids.insert(namespace_id.clone()) {
+                self.records.push(CodegraphRecord::Namespace(CodegraphNamespaceRecord {
+                    id: namespace_id.clone(),
+                    language: CodegraphLanguage::Incan,
+                    name: namespace_path.last().cloned().unwrap_or_else(|| "crate".to_string()),
+                    namespace_path,
+                    provenance: CodegraphProvenance::Syntax,
+                    degraded,
+                }));
+            }
+            self.records
+                .push(CodegraphRecord::Containment(CodegraphContainmentRecord {
+                    id: format!("contains:{namespace_id}:{module_id}"),
+                    language: CodegraphLanguage::Incan,
+                    parent_id: namespace_id,
+                    child_id: module_id.clone(),
+                    kind: "namespace_contains_module".to_string(),
+                    span: None,
+                    provenance: CodegraphProvenance::Source,
+                    degraded,
+                }));
             self.records
                 .push(CodegraphRecord::Containment(CodegraphContainmentRecord {
                     id: format!("contains:{file_id}:{module_id}"),
@@ -2647,6 +2689,7 @@ fn record_degraded(record: &CodegraphRecord) -> bool {
     match record {
         CodegraphRecord::Header(record) => record.degraded,
         CodegraphRecord::File(record) => record.degraded,
+        CodegraphRecord::Namespace(record) => record.degraded,
         CodegraphRecord::Module(record) => record.degraded,
         CodegraphRecord::Declaration(record) => record.degraded,
         CodegraphRecord::Import(record) => record.degraded,
@@ -3686,6 +3729,59 @@ pub def pick(value: int, fallback: int) -> int:
             digests_for(documented)?.iter().all(|(_, doc)| doc.is_some()),
             "a documented one does"
         );
+        Ok(())
+    }
+
+    /// One namespace node per namespace, with its modules beneath it.
+    ///
+    /// RFC 106 makes the namespace the graph's unit of reachable surface. The property that matters is that an
+    /// internal module does not become a namespace of its own: `pkg/_internal` is a detail of `pkg`, so both it
+    /// and `pkg/api` hang off one node, and a consumer reading the surface sees `pkg` once rather than three
+    /// module paths it has to re-derive the grouping from.
+    #[test]
+    fn internal_modules_hang_off_their_enclosing_namespace() -> Result<(), Box<dyn std::error::Error>> {
+        let build = |segments: Vec<&str>| {
+            let path_segments: Vec<String> = segments.iter().map(|s| (*s).to_string()).collect();
+            ParsedModule {
+                name: path_segments.last().cloned().unwrap_or_default(),
+                path_segments,
+                file_path: PathBuf::from("m.incn"),
+                source: String::new(),
+                ast: crate::frontend::ast::Program::default(),
+            }
+        };
+
+        let mut collector = CodegraphBuilder::new(Path::new("."), None, false);
+        for module in [
+            build(vec!["pkg", "api"]),
+            build(vec!["pkg", "_internal"]),
+            build(vec!["pkg", "_other"]),
+        ] {
+            collector.collect_module_records_with_degraded(&module, "file:m", false);
+        }
+
+        let namespaces: Vec<Vec<String>> = collector
+            .records
+            .iter()
+            .filter_map(|record| match record {
+                CodegraphRecord::Namespace(namespace) => Some(namespace.namespace_path.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            namespaces,
+            vec![vec!["pkg".to_string(), "api".to_string()], vec!["pkg".to_string()]],
+            "a public module is its own namespace; two internal siblings share their parent's"
+        );
+
+        let edges = collector
+            .records
+            .iter()
+            .filter(|record| {
+                matches!(record, CodegraphRecord::Containment(edge) if edge.kind == "namespace_contains_module")
+            })
+            .count();
+        assert_eq!(edges, 3, "every module is contained by exactly one namespace");
         Ok(())
     }
 }
