@@ -446,6 +446,7 @@ fn rust_item_metadata_prefers_shipped_library_abi() {
         definition_path: Some("demo_runtime::parse".to_string()),
         visibility: RustVisibility::Public,
         kind: RustItemKind::Function(RustFunctionSig {
+            receiver_contract: None,
             type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("source".to_string()),
@@ -3366,6 +3367,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
                 package: None,
                 modules: vec![CheckedApiMetadata {
                     schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                    derivable_traits: Vec::new(),
                     module_path: vec!["helpers".to_string()],
                     declarations: vec![ApiDeclaration::Function(helper_cast)],
                 }],
@@ -4958,6 +4960,7 @@ fn test_rust_owner_path_expands_crate_relative_signature_displays() {
 fn test_rust_never_return_is_bottom_compatible_issue381() {
     let checker = TypeChecker::new();
     let signature = RustFunctionSig {
+        receiver_contract: None,
         type_params: Vec::new(),
         params: Vec::new(),
         return_type: "!".to_string(),
@@ -5640,6 +5643,7 @@ def slice(text: str) -> str:
                 definition_path: Some("incan_stdlib::strings::str_slice_byte_range".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Function(RustFunctionSig {
+                    receiver_contract: None,
                     type_params: Vec::new(),
                     params: vec![
                         RustParam {
@@ -5698,6 +5702,7 @@ fn test_rust_inspect_function_signature_preserves_borrowed_rust_path_param() -> 
                 definition_path: Some("demo::takes_ref".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Function(RustFunctionSig {
+                    receiver_contract: None,
                     type_params: Vec::new(),
                     params: vec![RustParam {
                         name: Some("value".to_string()),
@@ -6307,6 +6312,7 @@ def f() -> None:
                 definition_path: Some("demo::accept_kind".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Function(RustFunctionSig {
+                    receiver_contract: None,
                     type_params: Vec::new(),
                     params: vec![RustParam {
                         name: Some("value".to_string()),
@@ -6328,6 +6334,7 @@ def f() -> None:
                 definition_path: Some("demo::accept_empty".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Function(RustFunctionSig {
+                    receiver_contract: None,
                     type_params: Vec::new(),
                     params: vec![RustParam {
                         name: Some("value".to_string()),
@@ -6403,6 +6410,7 @@ def f() -> None:
                 definition_path: Some("demo::accept_kind".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Function(RustFunctionSig {
+                    receiver_contract: None,
                     type_params: Vec::new(),
                     params: vec![RustParam {
                         name: Some("value".to_string()),
@@ -6614,6 +6622,7 @@ def f(holder: Holder) -> None:
                 definition_path: Some("demo::accept_item".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Function(RustFunctionSig {
+                    receiver_contract: None,
                     type_params: Vec::new(),
                     params: vec![RustParam {
                         name: Some("value".to_string()),
@@ -7053,6 +7062,7 @@ def render[T](value: Label[T]) -> str:
                     methods: vec![RustMethodSig {
                         name: "as_str".to_string(),
                         signature: RustFunctionSig {
+                            receiver_contract: None,
                             type_params: Vec::new(),
                             params: vec![RustParam {
                                 name: Some("self".to_string()),
@@ -7117,6 +7127,7 @@ fn seed_async_rust_method_probe_with_options_param(
                     RustMethodSig {
                         name: "new".to_string(),
                         signature: RustFunctionSig {
+                            receiver_contract: None,
                             type_params: Vec::new(),
                             params: Vec::new(),
                             return_type: "demo::SessionContext".to_string(),
@@ -7127,6 +7138,7 @@ fn seed_async_rust_method_probe_with_options_param(
                     RustMethodSig {
                         name: "register_csv".to_string(),
                         signature: RustFunctionSig {
+                            receiver_contract: None,
                             type_params: Vec::new(),
                             params: vec![
                                 RustParam {
@@ -7175,6 +7187,7 @@ fn seed_async_rust_method_probe_with_options_param(
                 methods: vec![RustMethodSig {
                     name: "new".to_string(),
                     signature: RustFunctionSig {
+                        receiver_contract: None,
                         type_params: Vec::new(),
                         params: Vec::new(),
                         return_type: "demo::CsvReadOptions".to_string(),
@@ -7195,6 +7208,7 @@ fn seed_async_rust_method_probe_with_options_param(
             definition_path: Some("demo::make_context".to_string()),
             visibility: RustVisibility::Public,
             kind: RustItemKind::Function(RustFunctionSig {
+                receiver_contract: None,
                 type_params: Vec::new(),
                 params: Vec::new(),
                 return_type: "demo::SessionContext".to_string(),
@@ -7210,6 +7224,7 @@ fn seed_async_rust_method_probe_with_options_param(
             definition_path: Some("demo::make_options".to_string()),
             visibility: RustVisibility::Public,
             kind: RustItemKind::Function(RustFunctionSig {
+                receiver_contract: None,
                 type_params: Vec::new(),
                 params: Vec::new(),
                 return_type: "demo::CsvReadOptions".to_string(),
@@ -7354,6 +7369,7 @@ def render(value: Label) -> str:
                     methods: vec![RustMethodSig {
                         name: "as_str".to_string(),
                         signature: RustFunctionSig {
+                            receiver_contract: None,
                             type_params: Vec::new(),
                             params: vec![RustParam {
                                 name: Some("self".to_string()),
@@ -12507,6 +12523,7 @@ def f(w: Widget) -> None:
                         items: vec![RustTraitAssoc::Function {
                             name: "render".to_string(),
                             signature: RustFunctionSig {
+                                receiver_contract: None,
                                 type_params: Vec::new(),
                                 params: vec![RustParam {
                                     name: Some("self".to_string()),
@@ -12593,6 +12610,7 @@ def open(device: Device) -> None:
                 items: vec![RustTraitAssoc::Function {
                     name: "build_output_stream".to_string(),
                     signature: RustFunctionSig {
+                        receiver_contract: None,
                         type_params: vec!["T".to_string(), "D".to_string(), "E".to_string()],
                         params: vec![RustParam {
                             name: Some("self".to_string()),
@@ -12671,6 +12689,7 @@ def f(encoded: bytes) -> None:
                     items: vec![RustTraitAssoc::Function {
                         name: "decode".to_string(),
                         signature: RustFunctionSig {
+                            receiver_contract: None,
                             type_params: Vec::new(),
                             params: vec![RustParam {
                                 name: Some("buf".to_string()),
@@ -12790,6 +12809,7 @@ def f(encoded: bytes) -> None:
                     items: vec![RustTraitAssoc::Function {
                         name: "decode".to_string(),
                         signature: RustFunctionSig {
+                            receiver_contract: None,
                             type_params: Vec::new(),
                             params: vec![RustParam {
                                 name: Some("buf".to_string()),
@@ -13027,6 +13047,7 @@ def choose(rng: ThreadRng, items: List[str]) -> str:
                     items: vec![RustTraitAssoc::Function {
                         name: "gen_range".to_string(),
                         signature: RustFunctionSig {
+                            receiver_contract: None,
                             type_params: Vec::new(),
                             params: vec![
                                 RustParam {
@@ -21739,6 +21760,7 @@ def complete(device: Device) -> None:
                 methods: vec![RustMethodSig {
                     name: "build_output_stream".to_string(),
                     signature: RustFunctionSig {
+                        receiver_contract: None,
                         type_params: vec!["T".to_string(), "D".to_string(), "E".to_string()],
                         params: vec![RustParam {
                             name: Some("self".to_string()),
@@ -21804,6 +21826,7 @@ def run(device: Device) -> None:
                 methods: vec![RustMethodSig {
                     name: "build_output_stream".to_string(),
                     signature: RustFunctionSig {
+                        receiver_contract: None,
                         type_params: vec!["T".to_string(), "D".to_string(), "E".to_string()],
                         params: vec![
                             RustParam {
@@ -21877,6 +21900,7 @@ def direct_contextual() -> Factory[f32]:
                 methods: vec![RustMethodSig {
                     name: "new".to_string(),
                     signature: RustFunctionSig {
+                        receiver_contract: None,
                         type_params: Vec::new(),
                         params: Vec::new(),
                         return_type: "Self".to_string(),
@@ -21928,6 +21952,7 @@ def invalid() -> Factory[f32]:
                 methods: vec![RustMethodSig {
                     name: "new".to_string(),
                     signature: RustFunctionSig {
+                        receiver_contract: None,
                         type_params: Vec::new(),
                         params: Vec::new(),
                         return_type: "Self".to_string(),
@@ -21999,6 +22024,7 @@ def parameter_context() -> None:
                     RustMethodSig {
                         name: "new".to_string(),
                         signature: RustFunctionSig {
+                            receiver_contract: None,
                             type_params: Vec::new(),
                             params: vec![
                                 RustParam {
@@ -22018,6 +22044,7 @@ def parameter_context() -> None:
                     RustMethodSig {
                         name: "first".to_string(),
                         signature: RustFunctionSig {
+                            receiver_contract: None,
                             type_params: Vec::new(),
                             params: vec![RustParam {
                                 name: Some("value".to_string()),
@@ -22097,6 +22124,7 @@ fn receiver_factory_manifest(library_name: &str, value_type: &str) -> LibraryMan
             methods: vec![RustMethodSig {
                 name: "new".to_string(),
                 signature: RustFunctionSig {
+                    receiver_contract: None,
                     type_params: Vec::new(),
                     params: vec![
                         RustParam {
@@ -22224,6 +22252,7 @@ def invalid() -> Factory[i64]:
                 methods: vec![RustMethodSig {
                     name: "new".to_string(),
                     signature: RustFunctionSig {
+                        receiver_contract: None,
                         type_params: Vec::new(),
                         params: vec![RustParam {
                             name: Some("value".to_string()),
@@ -22288,6 +22317,7 @@ def contextual() -> Factory[f32]:
                 methods: vec![RustMethodSig {
                     name: "new".to_string(),
                     signature: RustFunctionSig {
+                        receiver_contract: None,
                         type_params: Vec::new(),
                         params: Vec::new(),
                         return_type: "Self".to_string(),
@@ -25037,3 +25067,7 @@ def f() -> None:
 
 mod rust_supertrait_codegen;
 mod rust_supertraits;
+
+mod borrowed_rust_enum;
+
+mod sdk_module_derives;

@@ -93,6 +93,8 @@ pub(crate) const INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV: &str = "INCAN_INTERNAL_LIBR
 /// Unlike artifact-only mode, an Oven direct-rustc dependency build must emit caller-owned rlibs. It still targets
 /// exactly the dependency project selected by the parent, even if that project is the root of a larger workspace.
 pub(crate) const INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV: &str = "INCAN_INTERNAL_LIBRARY_DEPENDENCY_PREPARATION";
+/// Optional external directory for SDK publication timing evidence.
+const INTERNAL_SDK_BUILD_REPORT_DIR_ENV: &str = "INCAN_INTERNAL_SDK_BUILD_REPORT_DIR";
 /// Internal provider-store override used by isolated compiler and packaging tests.
 const INTERNAL_SDK_PROVIDER_STORE_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_STORE";
 /// Internal file through which release packaging receives the exact immutable SDK provider root.
@@ -363,12 +365,23 @@ fn acquire_sdk_provider_store_lock(store_root: &Path) -> CliResult<SdkProviderSt
         .truncate(false)
         .open(&lock_path)
         .map_err(|error| CliError::failure(format!("failed to open artifact lock {}: {error}", lock_path.display())))?;
-    file.lock().map_err(|error| {
-        CliError::failure(format!(
-            "failed to acquire artifact lock {}: {error}",
-            lock_path.display()
-        ))
-    })?;
+    // Try first, and say something before settling in to wait. Serializing the store is correct — two processes
+    // publishing providers at once is what this lock exists to prevent — but an unannounced block is
+    // indistinguishable from a hang, and preparing providers can take minutes. A command that has stopped printing
+    // for no stated reason gets misread as a compiler defect on whatever project happened to be open. See #1514.
+    if file.try_lock().is_err() {
+        eprintln!(
+            "Waiting for the SDK provider store at {}. Another Incan process holds its lock; this command \
+             continues as soon as that one releases it.",
+            store_root.display()
+        );
+        file.lock().map_err(|error| {
+            CliError::failure(format!(
+                "failed to acquire artifact lock {}: {error}",
+                lock_path.display()
+            ))
+        })?;
+    }
     Ok(SdkProviderStoreLock { _file: file })
 }
 
@@ -522,7 +535,10 @@ fn is_sdk_provider_compiler_checkout(candidate: &Path, stdlib_root: &Path) -> bo
     fs::canonicalize(&expected_stdlib_root).ok() == fs::canonicalize(stdlib_root).ok()
 }
 
-/// Hash only compiler-authoritative checkout inputs, excluding generated output and test-only trees.
+/// Hash compiler-authoritative checkout inputs, excluding generated output, test trees, and root CI administration.
+///
+/// The root `.github` directory configures repository automation; compilation does not read it. This exclusion is
+/// deliberately root-only so similarly named directories within compiler sources retain their existing authority.
 fn hash_sdk_provider_compiler_source_tree(root: &Path, current: &Path, hasher: &mut Sha256) -> CliResult<()> {
     let mut entries = fs::read_dir(current)
         .map_err(|error| {
@@ -554,6 +570,9 @@ fn hash_sdk_provider_compiler_source_tree(root: &Path, current: &Path, hasher: &
                 path.display()
             ))
         })?;
+        if file_type.is_dir() && relative == Path::new(".github") {
+            continue;
+        }
         if file_type.is_dir()
             && relative.components().any(|component| {
                 matches!(
@@ -797,6 +816,10 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
         &distribution_profile,
     )?;
     let _lock = acquire_sdk_provider_store_lock(&store_root)?;
+    let mut build_reports = env::var_os(INTERNAL_SDK_BUILD_REPORT_DIR_ENV)
+        .filter(|path| !path.is_empty())
+        .map(|path| SdkBuildReports::new(Path::new(&path), &store_root, &identity))
+        .transpose()?;
     let artifact_root = store_root.join(&identity);
     let inventory_path = artifact_root.join(SDK_INVENTORY_FILE);
     if inventory_path.is_file() {
@@ -809,6 +832,9 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
             )
             .map_err(|error| CliError::failure(error.to_string()))?;
         record_sdk_provider_root(&artifact_root)?;
+        if let Some(reports) = &mut build_reports {
+            reports.finish("cache_hit");
+        }
         return Ok(Arc::new(inventory));
     }
     if artifact_root.exists() {
@@ -825,8 +851,8 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
         workspace_lock.as_deref(),
         &staging_root,
         &distribution_profile,
-        source_root_override,
-        &stdlib_root,
+        source_root_override.map(|source_root| (source_root, stdlib_root.as_path())),
+        build_reports.as_ref(),
     ) {
         Ok(inventory) => inventory,
         Err(error) => {
@@ -851,7 +877,125 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
         ))
     })?;
     record_sdk_provider_root(&artifact_root)?;
+    if let Some(reports) = &mut build_reports {
+        reports.finish("published");
+    }
     Ok(Arc::new(published))
+}
+
+/// Optional operational evidence kept outside the immutable provider store.
+struct SdkBuildReports {
+    directory: PathBuf,
+    identity: String,
+    started: std::time::Instant,
+    completed: bool,
+}
+
+impl SdkBuildReports {
+    /// Require an existing external directory before creating a unique publication report session.
+    fn new(directory: &Path, store: &Path, identity: &str) -> CliResult<Self> {
+        let directory = fs::canonicalize(directory).map_err(|error| {
+            CliError::failure(format!(
+                "SDK build report directory must already exist: {}: {error}",
+                directory.display()
+            ))
+        })?;
+        let store = fs::canonicalize(store).map_err(|error| CliError::failure(error.to_string()))?;
+        if directory.starts_with(&store) || store.starts_with(&directory) {
+            return Err(CliError::failure(
+                "SDK build report directory must be separate from the provider store",
+            ));
+        }
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| CliError::failure(error.to_string()))?
+            .as_nanos();
+        let directory = directory.join(format!("sdk-build-{}-{nonce}", std::process::id()));
+        fs::create_dir(&directory).map_err(|error| CliError::failure(error.to_string()))?;
+        let reports = Self {
+            directory,
+            identity: identity.to_string(),
+            started: std::time::Instant::now(),
+            completed: false,
+        };
+        reports.summary("preparing");
+        Ok(reports)
+    }
+
+    /// Persist telemetry without changing the compiler's publication result or original failure diagnostic.
+    fn write(&self, name: &str, value: &serde_json::Value) {
+        let result = serde_json::to_vec_pretty(value)
+            .map_err(std::io::Error::other)
+            .and_then(|bytes| fs::write(self.directory.join(name), bytes));
+        if let Err(error) = result {
+            eprintln!("warning: SDK build timing report unavailable: {error}");
+        }
+    }
+
+    /// Describe work after acquiring the store lock; source identity calculation and lock waiting precede this scope.
+    fn summary(&self, status: &str) {
+        self.write(
+            "summary.json",
+            &serde_json::json!({
+                "schema_version": 1, "status": status, "sdk_store_identity": self.identity,
+                "elapsed_scope": "after_store_lock",
+                "elapsed_ms": self.started.elapsed().as_millis()
+            }),
+        );
+    }
+
+    /// Mark a successfully validated cache acquisition or completed publication.
+    fn finish(&mut self, status: &str) {
+        self.summary(status);
+        self.completed = true;
+    }
+
+    /// Select a component-specific child output; the SDK environment helper disables descendant report sessions.
+    fn configure(&self, command: &mut Command, component: &str) {
+        command
+            .args(["--report", "json", "--report-output"])
+            .arg(self.directory.join(format!("{component}.build.json")));
+    }
+
+    /// Retain bounded successful phase data and an explicit unavailable reason on missing or malformed child output.
+    fn component(&self, component: &str, elapsed: std::time::Duration, output: &std::process::Output) {
+        let path = self.directory.join(format!("{component}.build.json"));
+        let parsed = (|| -> Result<serde_json::Value, String> {
+            let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
+            if metadata.len() > 4 * 1024 * 1024 {
+                return Err("child report exceeds 4 MiB".to_string());
+            }
+            let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+            let report: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+            let timings = report
+                .get("timings_ms")
+                .and_then(serde_json::Value::as_object)
+                .filter(|timings| !timings.is_empty() && timings.values().all(|value| value.as_u64().is_some()))
+                .ok_or("child report has no valid timings_ms")?;
+            Ok(serde_json::Value::Object(timings.clone()))
+        })();
+        let (status, timings, reason) = match parsed {
+            Ok(timings) => ("available", timings, None),
+            Err(reason) => ("unavailable", serde_json::Value::Null, Some(reason)),
+        };
+        self.write(
+            &format!("{component}.timing.json"),
+            &serde_json::json!({
+                "schema_version": 1, "component": component, "elapsed_ms": elapsed.as_millis(),
+                "success": output.status.success(), "exit_code": output.status.code(),
+                "report_status": status, "timings_ms": timings, "unavailable_reason": reason,
+                "timings_semantics": "inclusive_nested_scopes"
+            }),
+        );
+    }
+}
+
+impl Drop for SdkBuildReports {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.summary("failed");
+        }
+    }
 }
 
 /// Report the exact immutable provider root to release packaging when requested.
@@ -874,8 +1018,8 @@ fn build_sdk_components_into_staging(
     workspace_lock: Option<&Path>,
     staging_root: &Path,
     distribution_profile: &str,
-    source_root_override: Option<&Path>,
-    stdlib_root: &Path,
+    toolchain_source: Option<(&Path, &Path)>,
+    build_reports: Option<&SdkBuildReports>,
 ) -> CliResult<SdkInventory> {
     fs::create_dir_all(staging_root).map_err(|error| {
         CliError::failure(format!(
@@ -930,7 +1074,7 @@ fn build_sdk_components_into_staging(
             &component.id,
             &cargo_target_dir,
             caller_cargo_target.as_deref(),
-            source_root_override.map(|source_root| (source_root, stdlib_root)),
+            toolchain_source,
         );
         if built_any {
             inventory
@@ -943,6 +1087,10 @@ fn build_sdk_components_into_staging(
         if let Some(workspace_lock) = workspace_lock {
             command.env(INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, workspace_lock);
         }
+        if let Some(reports) = build_reports {
+            reports.configure(&mut command, &component.id);
+        }
+        let component_started = std::time::Instant::now();
         let output = command.output().map_err(|error| {
             CliError::failure(format!(
                 "failed to run SDK component build for `{}` at {}: {error}",
@@ -950,6 +1098,9 @@ fn build_sdk_components_into_staging(
                 component.project_root.display()
             ))
         })?;
+        if let Some(reports) = build_reports {
+            reports.component(&component.id, component_started.elapsed(), &output);
+        }
         if !output.status.success() {
             return Err(nested_sdk_component_build_error(
                 component.id.as_str(),
@@ -1030,6 +1181,7 @@ fn configure_sdk_provider_build_environment(
     command
         .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
         .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
+        .env_remove(INTERNAL_SDK_BUILD_REPORT_DIR_ENV)
         .env(SDK_PROVIDER_BUILD_ENV, component_id)
         .env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1")
         // Share transient Cargo artifacts across components, then remove them before immutable provider publication.
@@ -5416,6 +5568,81 @@ mod tests {
     }
 
     #[test]
+    fn sdk_build_reports_reject_store_paths_and_distinguish_cache_hits() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let store = root.path().join("store");
+        let reports_root = root.path().join("reports");
+        fs::create_dir_all(store.join("artifact"))?;
+        fs::create_dir(&reports_root)?;
+        assert!(SdkBuildReports::new(&store.join("artifact"), &store, "identity").is_err());
+        let mut reports = SdkBuildReports::new(&reports_root, &store, "identity")?;
+        reports.finish("cache_hit");
+        let summary: serde_json::Value = serde_json::from_slice(&fs::read(reports.directory.join("summary.json"))?)?;
+        assert_eq!(summary["status"], "cache_hit");
+        assert_eq!(summary["elapsed_scope"], "after_store_lock");
+        assert_eq!(fs::read_dir(&reports.directory)?.count(), 1);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sdk_build_reports_transport_mock_children_without_replacing_failures() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        let store = root.path().join("store");
+        let reports_root = root.path().join("reports");
+        fs::create_dir(&store)?;
+        fs::create_dir(&reports_root)?;
+        let reports = SdkBuildReports::new(&reports_root, &store, "identity")?;
+        let mut child = Command::new("sh");
+        child.args([
+            "-c",
+            r#"printf '%s' '{"timings_ms":{"library_prepare_total":7}}' > "$4""#,
+            "mock",
+        ]);
+        configure_sdk_provider_build_environment(&mut child, "stdlib-data", root.path(), None, None);
+        reports.configure(&mut child, "stdlib-data");
+        assert!(
+            child
+                .get_envs()
+                .any(|(name, value)| name == INTERNAL_SDK_BUILD_REPORT_DIR_ENV && value.is_none())
+        );
+        let output = child.output()?;
+        assert!(output.status.success());
+        assert!(output.stdout.is_empty());
+        reports.component("stdlib-data", std::time::Duration::from_millis(11), &output);
+        let value: serde_json::Value =
+            serde_json::from_slice(&fs::read(reports.directory.join("stdlib-data.timing.json"))?)?;
+        assert_eq!(value["report_status"], "available");
+        assert_eq!(value["timings_semantics"], "inclusive_nested_scopes");
+        assert_eq!(value["timings_ms"]["library_prepare_total"], 7);
+        let failed = Command::new("sh")
+            .args(["-c", "printf original-diagnostic >&2; exit 9"])
+            .output()?;
+        reports.component("missing", std::time::Duration::ZERO, &failed);
+        fs::write(reports.directory.join("malformed.build.json"), "not-json")?;
+        reports.component("malformed", std::time::Duration::ZERO, &output);
+        for component in ["missing", "malformed"] {
+            let value: serde_json::Value =
+                serde_json::from_slice(&fs::read(reports.directory.join(format!("{component}.timing.json")))?)?;
+            assert_eq!(value["report_status"], "unavailable");
+            assert!(value["timings_ms"].is_null());
+        }
+        assert_eq!(failed.status.code(), Some(9));
+        assert_eq!(failed.stderr, b"original-diagnostic");
+        assert!(
+            nested_sdk_component_build_error("missing", root.path(), &failed)
+                .to_string()
+                .contains("original-diagnostic")
+        );
+        let directory = reports.directory.clone();
+        drop(reports);
+        let summary: serde_json::Value = serde_json::from_slice(&fs::read(directory.join("summary.json"))?)?;
+        assert_eq!(summary["status"], "failed");
+        Ok(())
+    }
+
+    #[test]
     fn sdk_provider_builder_selects_the_real_cli_for_tests_and_utilities() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = tempfile::tempdir()?;
         let cargo_cli = temp_dir.path().join("incan-cli");
@@ -5705,6 +5932,24 @@ mod tests {
             "test-only source must not republish SDK providers"
         );
 
+        let workflow_dir = checkout.join(".github/workflows");
+        fs::create_dir_all(&workflow_dir)?;
+        fs::write(workflow_dir.join("ci.yml"), "name: original CI\n")?;
+        let with_workflow =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_eq!(
+            initial, with_workflow,
+            "CI configuration does not change SDK compilation inputs"
+        );
+        fs::write(workflow_dir.join("ci.yml"), "name: reordered CI\n")?;
+        fs::rename(workflow_dir.join("ci.yml"), workflow_dir.join("renamed.yml"))?;
+        let changed_workflow =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_eq!(
+            initial, changed_workflow,
+            "CI edits and administrative path changes must reuse SDK providers"
+        );
+
         fs::write(
             checkout.join("src/compiler.rs"),
             "pub fn compile() { let changed = true; }\n",
@@ -5714,6 +5959,24 @@ mod tests {
         assert_ne!(
             initial, changed_source,
             "a compiler source change must still invalidate SDK provider artifacts"
+        );
+        fs::write(
+            stdlib_root.join("components/core.incn"),
+            "pub def core() -> int:\n  return 2\n",
+        )?;
+        let changed_stdlib =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_ne!(
+            changed_source, changed_stdlib,
+            "stdlib source remains part of SDK provider identity"
+        );
+        fs::create_dir_all(checkout.join("src/.github"))?;
+        fs::write(checkout.join("src/.github/input.txt"), "compiler-owned input")?;
+        let nested_directory =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_ne!(
+            changed_stdlib, nested_directory,
+            "only root CI administration is excluded"
         );
         Ok(())
     }
@@ -8434,6 +8697,58 @@ def main() -> None:
             relative,
             vec![PathBuf::from("nested/module.incn"), PathBuf::from("root.incn")]
         );
+        Ok(())
+    }
+
+    /// The store lock serializes, and a waiter is a waiter rather than a failure.
+    ///
+    /// This pins the behaviour the diagnostic sits on top of: a second acquirer blocks and then succeeds, instead
+    /// of failing or taking the lock. Timing distinguishes blocking from erroring; it does not assert a duration,
+    /// since the wait ends when the holder releases.
+    ///
+    /// It does **not** cover the message itself. Replacing the `try_lock` guard with `if false` leaves this test
+    /// passing, because the outer `lock()` blocks either way — so the diagnostic is verified by reading it, not by
+    /// this test. Covering it would mean routing one `eprintln!` through an injectable sink, which is more
+    /// structure than a single diagnostic earns. Recorded so the next reader does not assume otherwise.
+    #[test]
+    fn a_held_store_lock_makes_the_next_acquirer_wait_rather_than_fail() -> Result<(), Box<dyn std::error::Error>> {
+        let store = tempfile::tempdir()?;
+        let store_root = store.path().to_path_buf();
+
+        let held = acquire_sdk_provider_store_lock(&store_root)?;
+
+        let waiting_root = store_root.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            let acquired = acquire_sdk_provider_store_lock(&waiting_root);
+            let _ = tx.send(acquired.is_ok());
+        });
+
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_millis(250)).is_err(),
+            "a second acquirer must wait while the first holds the lock, not take it"
+        );
+
+        drop(held);
+        assert_eq!(
+            rx.recv_timeout(std::time::Duration::from_secs(10)),
+            Ok(true),
+            "releasing the lock must let the waiter through"
+        );
+        waiter
+            .join()
+            .map_err(|_| std::io::Error::other("lock waiter panicked"))?;
+        Ok(())
+    }
+
+    /// An uncontended lock is the common path and must stay silent and immediate.
+    #[test]
+    fn an_uncontended_store_lock_is_acquired_without_waiting() -> Result<(), Box<dyn std::error::Error>> {
+        let store = tempfile::tempdir()?;
+        let first = acquire_sdk_provider_store_lock(store.path())?;
+        drop(first);
+        let second = acquire_sdk_provider_store_lock(store.path())?;
+        drop(second);
         Ok(())
     }
 }

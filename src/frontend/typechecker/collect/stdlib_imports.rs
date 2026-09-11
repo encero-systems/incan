@@ -6,7 +6,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::frontend::api_metadata::{
-    ApiDeclaration, checked_api_declaration_is_public_namespace_member, checked_api_modules_for_public_namespace,
+    ApiDeclaration, DecoratorArgMetadata, DecoratorValue, SafeMetadataValue,
+    checked_api_declaration_is_public_namespace_member, checked_api_modules_for_public_namespace,
     checked_api_public_module_paths, checked_api_public_namespace, class_export_from_api, enum_export_from_api,
     function_export_from_api, function_export_from_api_projected, model_export_from_api, newtype_export_from_api,
     partial_export_from_api, trait_export_from_api,
@@ -37,6 +38,7 @@ use crate::library_manifest::{
 };
 use crate::provider::{ProviderModuleResolution, ProviderProvenance};
 use incan_core::interop::{RustItemKind, RustTraitAssoc, fallback_rust_trait_methods, is_rust_capability_bound};
+use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_core::lang::stdlib::{self, is_typechecker_only_stdlib};
 use incan_core::lang::surface::functions as surface_functions;
 use incan_core::lang::surface::types as surface_types;
@@ -282,6 +284,7 @@ impl TypeChecker {
         let resolved_path = self.resolved_source_module_path(path);
         let target_identity = resolved_path.as_deref().and_then(SymbolTable::module_path_identity);
         let canonical_path = resolved_path.unwrap_or(normalized_path);
+        self.cache_stdlib_module_import_semantics(path);
         self.define_import_symbol(name, canonical_path, false, target_identity, span);
     }
 
@@ -404,6 +407,9 @@ impl TypeChecker {
             if self.materialize_bootstrap_source_dependency_import(module, item, span) {
                 continue;
             }
+            if self.materialize_stdlib_submodule_import(module, item, span) {
+                continue;
+            }
             if self.materialize_stdlib_from_import(&context, item, testing_semantics.as_ref(), span) {
                 continue;
             }
@@ -511,6 +517,19 @@ impl TypeChecker {
         }
     }
 
+    /// Retain a module import's hidden type and trait facts for its qualified signatures and derives.
+    ///
+    /// Checked providers keep authority over their own metadata. Only the existing inventoryless or source-bootstrap
+    /// adapters may seed source stub facts; this does not import those declarations into the consumer's namespace.
+    fn cache_stdlib_module_import_semantics(&mut self, module: &ImportPath) {
+        let provider_owned = matches!(
+            self.provider_plan.resolve_module(&module.segments),
+            ProviderModuleResolution::Active(provider) if provider.manifest.is_some()
+        );
+        let context = FromImportContext::new(module, self.is_known_stdlib_module(&module.segments), provider_owned);
+        self.cache_stdlib_stub_semantics(&context);
+    }
+
     /// Cache all known top-level types and traits for a stub-backed stdlib module without making them source-visible.
     fn cache_stdlib_stub_semantics(&mut self, context: &FromImportContext<'_>) {
         if !context.stdlib.as_ref().is_some_and(|stdlib| stdlib.has_stub) {
@@ -573,6 +592,8 @@ impl TypeChecker {
                     // artifact are still one public module rather than a second overload set.
                     continue;
                 }
+                self.dependency_derivable_modules
+                    .insert(module_key.clone(), module.derivable_traits.clone());
                 let function_counts = module
                     .declarations
                     .iter()
@@ -617,6 +638,28 @@ impl TypeChecker {
                             canonical,
                         ));
                         continue;
+                    }
+                    if let ApiDeclaration::Trait(trait_metadata) = &declaration {
+                        let mut paths = Vec::new();
+                        for decorator in &trait_metadata.decorators {
+                            if core_decorators::from_str(&decorator.path.join(".")) != Some(DecoratorId::RustDerive) {
+                                continue;
+                            }
+                            for argument in &decorator.args {
+                                if let DecoratorArgMetadata::Positional {
+                                    value:
+                                        DecoratorValue::Literal {
+                                            value: SafeMetadataValue::String(path),
+                                        },
+                                } = argument
+                                    && !paths.contains(path)
+                                {
+                                    paths.push(path.clone());
+                                }
+                            }
+                        }
+                        self.dependency_trait_rust_derive_paths
+                            .insert(format!("{module_key}.{}", trait_metadata.name), paths);
                     }
                     let Some(mut kind) = self.symbol_kind_from_api_declaration(&declaration) else {
                         continue;
@@ -707,6 +750,14 @@ impl TypeChecker {
                             .or_insert_with(|| trait_info.clone());
                         self.dependency_module_traits
                             .insert(format!("{module_key}.{name}"), trait_info.clone());
+                        if let Some(paths) = self
+                            .dependency_trait_rust_derive_paths
+                            .get(&format!("{target_module}.{target_name}"))
+                            .cloned()
+                        {
+                            self.dependency_trait_rust_derive_paths
+                                .insert(format!("{module_key}.{name}"), paths);
+                        }
                     }
                     _ => {}
                 }
@@ -977,9 +1028,6 @@ impl TypeChecker {
             }
             return true;
         }
-        if self.materialize_stdlib_submodule_import(context.module, item, span) {
-            return true;
-        }
         if self.materialize_sdk_provider_import(context, item, testing_semantics, span) {
             return true;
         }
@@ -1040,9 +1088,13 @@ impl TypeChecker {
         true
     }
 
-    /// Materialize `from std.namespace import submodule` as a module binding when the submodule is registered.
+    /// Bind a registered submodule imported from `std` or `std.namespace`, retaining its hidden signature facts.
     fn materialize_stdlib_submodule_import(&mut self, module: &ImportPath, item: &ImportItem, span: Span) -> bool {
-        if module.segments.len() != 2 {
+        if module.parent_levels != 0
+            || module.is_absolute
+            || module.segments.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT)
+            || !(1..=2).contains(&module.segments.len())
+        {
             return false;
         }
         let mut submodule_path = module.segments.clone();
@@ -1063,11 +1115,16 @@ impl TypeChecker {
         if !is_known_submodule {
             return false;
         }
+        if let Some(error) = self.sdk_provider_module_error(&submodule_path, span) {
+            self.errors.push(error);
+            return true;
+        }
 
         let local_name = Self::import_item_local_name(item);
         self.validate_root_namespace(&local_name, span);
         let path = canonicalize_source_module_segments(&submodule_path);
         let target_identity = SymbolTable::module_path_identity(&path);
+        self.cache_stdlib_module_import_semantics(&ImportPath::simple(submodule_path));
         self.define_import_symbol(local_name, path, false, target_identity, span);
         true
     }

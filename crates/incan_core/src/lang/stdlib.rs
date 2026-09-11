@@ -429,7 +429,12 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
             StdlibExtraCrateDep {
                 crate_name: "toml_edit",
                 source: StdlibExtraCrateSource::Version("0.25"),
-                features: &["parse"],
+                features: &["parse", "serde"],
+            },
+            StdlibExtraCrateDep {
+                crate_name: "serde_path_to_error",
+                source: StdlibExtraCrateSource::Version("0.1"),
+                features: &[],
             },
             StdlibExtraCrateDep {
                 crate_name: "toml",

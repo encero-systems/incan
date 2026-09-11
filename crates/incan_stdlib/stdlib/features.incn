@@ -62,9 +62,7 @@ model FeatureDescriptor:
     pub references: FrozenList[CapabilityReference]
 
 
-static features: Registry[FeatureId, FeatureDescriptor] = Registry.define(
-    subjects=[SubjectKind.CompilationUnit],
-)
+static features: Registry[FeatureId, FeatureDescriptor] = Registry.define(subjects=[SubjectKind.CompilationUnit])
 const namespaced_stdlib_forms: FrozenList[str] = ["from std.testing import assert_eq", "from std.web.routing import route", "@route(\"/hello\")"]
 const namespaced_stdlib_references: FrozenList[CapabilityReference] = [CapabilityReference(
     label="Imports and modules",
@@ -115,12 +113,7 @@ static rust_interop_boundary: RegistryEntry[FeatureId, FeatureDescriptor] = feat
         references=rust_interop_boundary_references,
     ),
 )
-const checked_c_binding_forms: FrozenList[str] = [
-    "from std.interop import c",
-    "binding LibC:",
-    "text = c.cstr(value)?",
-    "unsafe:\n    LibC.absolute(-7)",
-]
+const checked_c_binding_forms: FrozenList[str] = ["from std.interop import c", "binding LibC:", "text = c.cstr(value)?", "unsafe:\n    LibC.absolute(-7)"]
 const checked_c_binding_references: FrozenList[CapabilityReference] = [CapabilityReference(
     label="std.interop",
     path="stdlib/interop.md",
@@ -145,21 +138,14 @@ static checked_c_binding: RegistryEntry[FeatureId, FeatureDescriptor] = features
         references=checked_c_binding_references,
     ),
 )
-const oven_interop_requirements_forms: FrozenList[str] = [
-    "[interop.c]",
-    "[[interop.c.targets]]",
-    "incan lock",
-]
+const oven_interop_requirements_forms: FrozenList[str] = ["[interop.c]", "[[interop.c.targets]]", "incan lock"]
 const oven_interop_requirements_references: FrozenList[CapabilityReference] = [CapabilityReference(
     label="Project configuration",
     path="../../tooling/reference/project_configuration.md#interopc",
-), CapabilityReference(
-    label="Checked C bindings",
-    path="../how-to/checked_c_bindings.md",
-), CapabilityReference(label="std.interop", path="stdlib/interop.md"), CapabilityReference(
-    label="RFC 116",
-    path="../../RFCs/closed/implemented/116_typed_c_abi_interop.md",
-)]
+), CapabilityReference(label="Checked C bindings", path="../how-to/checked_c_bindings.md"), CapabilityReference(
+    label="std.interop",
+    path="stdlib/interop.md",
+), CapabilityReference(label="RFC 116", path="../../RFCs/closed/implemented/116_typed_c_abi_interop.md")]
 static oven_interop_requirements: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("OvenInteropRequirements"),
     subject=RegistrySubject.current_unit(),
@@ -177,11 +163,7 @@ static oven_interop_requirements: RegistryEntry[FeatureId, FeatureDescriptor] = 
         references=oven_interop_requirements_references,
     ),
 )
-const incan_libraries_forms: FrozenList[str] = [
-    "from pub::mylib import my_module",
-    "from pub::mylib.my_module import my_function",
-    "pub from session import Session",
-]
+const incan_libraries_forms: FrozenList[str] = ["from pub::mylib import my_module", "from pub::mylib.my_module import my_function", "pub from session import Session"]
 const incan_libraries_references: FrozenList[CapabilityReference] = [CapabilityReference(
     label="Imports and modules",
     path="imports_and_modules.md",
@@ -231,21 +213,14 @@ static static_storage: RegistryEntry[FeatureId, FeatureDescriptor] = features.en
         references=static_storage_references,
     ),
 )
-const first_class_functions_forms: FrozenList[str] = [
-    "handler: Callable[int, str] = label",
-    "callbacks = [on_success, on_error]",
-    "Mapper with Callable1[int, str]",
-]
+const first_class_functions_forms: FrozenList[str] = ["handler: Callable[int, str] = label", "callbacks = [on_success, on_error]", "Mapper with Callable1[int, str]"]
 const first_class_functions_references: FrozenList[CapabilityReference] = [CapabilityReference(
     label="Functions and calls",
     path="functions.md",
 ), CapabilityReference(label="Callable objects", path="stdlib_traits/callable.md"), CapabilityReference(
     label="Release 0.2",
     path="../../release_notes/0_2.md",
-), CapabilityReference(
-    label="Release 0.5",
-    path="../../release_notes/0_5.md",
-)]
+), CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md")]
 static first_class_functions: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("FirstClassFunctions"),
     subject=RegistrySubject.current_unit(),
@@ -745,21 +720,14 @@ static iterator_adapters: RegistryEntry[FeatureId, FeatureDescriptor] = features
         references=iterator_adapters_references,
     ),
 )
-const fallible_iteration_forms: FrozenList[str] = [
-    "for item in stream?:",
-    "stream.map(transform).map_err(to_domain_error)",
-    "stream.collect()?",
-]
+const fallible_iteration_forms: FrozenList[str] = ["for item in stream?:", "stream.map(transform).map_err(to_domain_error)", "stream.collect()?"]
 const fallible_iteration_references: FrozenList[CapabilityReference] = [CapabilityReference(
     label="Collection protocols",
     path="stdlib_traits/collection_protocols.md",
 ), CapabilityReference(label="std.io", path="stdlib/io.md"), CapabilityReference(
     label="Fallible and infallible paths",
     path="../tutorials/fallible_and_infallible_paths.md",
-), CapabilityReference(
-    label="Release 0.5",
-    path="../../release_notes/0_5.md",
-)]
+), CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md")]
 static fallible_iteration: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("FallibleIteration"),
     subject=RegistrySubject.current_unit(),
@@ -1015,11 +983,7 @@ static std_fs: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         references=std_fs_references,
     ),
 )
-const std_io_forms: FrozenList[str] = [
-    "from std.io import BytesIO, Endian",
-    "stream.write(value, Endian.Little)",
-    "for chunk in stream.chunks(65536)?:",
-]
+const std_io_forms: FrozenList[str] = ["from std.io import BytesIO, Endian", "stream.write(value, Endian.Little)", "for chunk in stream.chunks(65536)?:"]
 const std_io_references: FrozenList[CapabilityReference] = [CapabilityReference(label="std.io", path="stdlib/io.md"), CapabilityReference(
     label="Release 0.3",
     path="../../release_notes/0_3.md",
@@ -1219,8 +1183,11 @@ static std_json: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         references=std_json_references,
     ),
 )
-const std_toml_forms: FrozenList[str] = ["from std.toml import parse, deserialize, serialize, serialize_pretty", "deserialize[Manifest](source)", "serialize(lock)", "serialize_pretty(lock)"]
-const std_toml_references: FrozenList[CapabilityReference] = [CapabilityReference(label="std.toml", path="stdlib/toml.md")]
+const std_toml_forms: FrozenList[str] = ["from std import toml", "document = toml.parse(source)?", "document.get[str](\"project.name\")?", "document.get_optional[str](\"project.version\")?", "toml.deserialize[Manifest](source)", "toml.serialize_pretty(lock)"]
+const std_toml_references: FrozenList[CapabilityReference] = [CapabilityReference(
+    label="std.toml",
+    path="stdlib/toml.md",
+), CapabilityReference(label="API contract: issue #1409", path="https://github.com/encero-systems/incan/issues/1409")]
 static std_toml: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
     key=FeatureId("StdToml"),
     subject=RegistrySubject.current_unit(),
@@ -1229,7 +1196,7 @@ static std_toml: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
         name="`std.toml` project documents",
         category=FeatureCategory.Stdlib,
         since="0.6",
-        rfc="RFC 119",
+        rfc="None (API contract: issue #1409)",
         stability=FeatureStability.Stable,
         activation="Import from `std.toml`.",
         summary="Read typed TOML values and declared models with located diagnostics, and serialize generated documents while retaining date/time kinds. Locate table values for application-owned validation diagnostics.",

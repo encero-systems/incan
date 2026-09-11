@@ -332,7 +332,7 @@ fn collect_generic_callable_name_type_params_from_assign_target(target: &AssignT
             collect_generic_callable_name_type_params_from_expr(object, out);
             collect_generic_callable_name_type_params_from_expr(index, out);
         }
-        AssignTarget::Var(_) | AssignTarget::StaticBinding(_) | AssignTarget::Static { .. } => {}
+        AssignTarget::Var { .. } | AssignTarget::StaticBinding(_) | AssignTarget::Static { .. } => {}
     }
 }
 

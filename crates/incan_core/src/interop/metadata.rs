@@ -406,6 +406,7 @@ pub fn metadata_free_method_signature(rust_path: &str, method: &str) -> Option<R
         .iter()
         .find(|rule| rule.receiver_path == rust_path && rule.method == method)?;
     Some(RustFunctionSig {
+        receiver_contract: None,
         type_params: Vec::new(),
         params: rule
             .params
@@ -447,6 +448,7 @@ pub fn compiler_owned_function_signature(rust_path: &str) -> Option<RustFunction
 /// Materialize a portable callable signature from one registry rule.
 fn function_signature_from_rule(rule: &RustFunctionSignatureRule) -> RustFunctionSig {
     RustFunctionSig {
+        receiver_contract: None,
         type_params: Vec::new(),
         params: rule
             .params
@@ -474,6 +476,10 @@ pub struct RustParam {
 /// Callable signature extracted from rust-analyzer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustFunctionSig {
+    /// Receiver and returned-borrow relationship proven from the original Rust signature, before display elision.
+    /// Missing facts (including older caches) must not authorize inferred borrowing.
+    #[serde(default)]
+    pub receiver_contract: Option<RustReceiverContract>,
     /// Method or function type parameters in source declaration order.
     ///
     /// Rust permits type arguments on a callable independently from generics on its receiver type. Retaining this
@@ -485,6 +491,17 @@ pub struct RustFunctionSig {
     pub return_type: String,
     pub is_async: bool,
     pub is_unsafe: bool,
+}
+
+/// Source-proven Rust receiver facts used by conservative Incan alias planning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RustReceiverContract {
+    /// The callable has an ordinary shared `&self` receiver, with no ownership-consuming or mutable receiver.
+    pub shared: bool,
+    /// Every explicit reference in the output is shared and uses only the receiver's lifetime, explicitly or by
+    /// elision. Consumers must also validate the returned container shape before treating matched payloads as
+    /// descendants.
+    pub returns_receiver_borrow: bool,
 }
 
 /// An inherent or trait method surfaced on a type.

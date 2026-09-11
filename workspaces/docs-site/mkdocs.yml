@@ -81,7 +81,7 @@ extra:
 
 extra_css:
   - stylesheets/pygments.css
-  - /shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2
+  - /shared/incapunk/incapunk.css?v=20260911-oven-map-1
 
 extra_javascript:
   - _snippets/javascripts/mathjax.js
@@ -149,6 +149,7 @@ nav:
           - Binary-text encoding: language/how-to/binary_text_encoding.md
           - Compression: language/how-to/compression.md
           - Dynamic JSON: language/how-to/dynamic_json.md
+          - TOML data: language/how-to/toml.md
           - Hashing data: language/how-to/hashing_data.md
           - Logging: language/how-to/logging.md
           - Generators: language/how-to/generators.md
@@ -285,6 +286,7 @@ nav:
           - Inspect checked C bindings: tooling/how-to/inspect_checked_c_bindings.md
           - Testing: tooling/how-to/testing.md
       - Explanation:
+          - The Oven ecosystem: tooling/explanation/oven_ecosystem.md
           - Projects today: tooling/explanation/projects_today.md
           - Compiled SDK provider flow: tooling/explanation/compiled_sdk_provider_flow.md
           - Generated-build storage model: tooling/explanation/generated_build_storage.md
@@ -360,6 +362,7 @@ nav:
           - Overview: whitepapers/index.md
           - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md
           - A Cargo-free toolchain for Incan and Rust: whitepapers/incan_oven_positioning.md
+          - "Ship the loaf, not the recipe: why Incan and Rust need incan.pub": whitepapers/incan_pub_ship_the_loaf.md
       - Roadmap:
           - Overview: roadmap.md
           - Incan 0.6 delivery: project/v0_6_delivery.md

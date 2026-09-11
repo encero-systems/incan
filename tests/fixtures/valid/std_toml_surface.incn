@@ -125,6 +125,15 @@ model OvenLock:
     cargo: CargoPayload
 
 
+def assert_error[T](result: Result[T, TomlError], kind: TomlErrorKind) -> None:
+    """Require a failure of the expected category without unwrapping an error payload."""
+    match result:
+        Ok(_) =>
+            assert false, "expected a TOML failure"
+        Err(error) =>
+            assert error.kind == kind
+
+
 def run() -> Result[None, TomlError]:
     """Round-trip representative Loaf shapes and exercise source-bearing structural failures."""
     source = "features = [\"json\", \"toml\"]\nenabled = true\n[project]\nname = \"café\"\nversion = \"0.1.0\"\n"
@@ -162,65 +171,25 @@ def run() -> Result[None, TomlError]:
         "offset = 1979-05-27T07:32:00Z\nlocal = 1979-05-27T07:32:00\ndate = 1979-05-27\ntime = 07:32:00\nnumber = 42\nfraction = 1.5\nflag = true\ntext = \"hello\"\narray = [1, 2]\n[table]\nname = \"nested\"\n",
     )?
     assert dynamic.kind() == TomlKind.Table
-    match dynamic.get("offset"):
-        Some(value) =>
-            assert value.kind() == TomlKind.Datetime
-            match value.as_datetime():
-                Some(datetime) =>
-                    assert datetime.as_str() == "1979-05-27T07:32:00Z"
-                None =>
-                    assert false, "datetime payload was lost"
-        None =>
-            assert false, "missing offset datetime"
-    typed_dynamic = deserialize[TomlValue](serialize(dynamic)?)?
-    assert typed_dynamic.kind() == TomlKind.Table
+    for key, expected in [("text", TomlKind.String), ("number", TomlKind.Integer), ("fraction", TomlKind.Float), ("flag", TomlKind.Boolean), ("offset", TomlKind.Datetime), ("array", TomlKind.Array), ("table", TomlKind.Table)]:
+        assert dynamic.get_value(key)?.kind() == expected
+    assert dynamic.get_value("offset")?.as_datetime()?.as_str() == "1979-05-27T07:32:00Z"
     reparsed = parse(dynamic.to_toml()?)?
     for key in ["offset", "local", "date", "time"]:
-        match reparsed.get(key):
-            Some(value) =>
-                assert value.kind() == TomlKind.Datetime
-            None =>
-                assert false, "date/time kind was lost"
-    match dynamic.get("array"):
-        Some(value) =>
-            match value.get_index(-1):
-                Some(_) =>
-                    assert false, "negative index accepted"
-                None => pass
-            match value.get_index(9):
-                Some(_) =>
-                    assert false, "out-of-range index accepted"
-                None => pass
-            match value.get_index(0):
-                Some(first) =>
-                    assert first.as_int() == Some(1)
-                None =>
-                    assert false, "missing array item"
-        None =>
-            assert false, "missing array"
-    match dynamic.as_table():
-        Some(table) =>
-            assert table["number"].as_int() == Some(42)
-            assert table["fraction"].as_float() == Some(1.5)
-            assert table["flag"].as_bool() == Some(true)
-            assert table["text"].as_str() == Some("hello")
-            assert table["number"].as_str() == None
-            match table["array"].as_array():
-                Some(values) =>
-                    assert values[1].as_int() == Some(2)
-                None =>
-                    assert false, "array snapshot was lost"
-            match table["table"].get("name"):
-                Some(name) =>
-                    assert name.as_str() == Some("nested")
-                None =>
-                    assert false, "nested table snapshot was lost"
-        None =>
-            assert false, "root table snapshot was lost"
-    match dynamic.get("missing"):
-        Some(_) =>
-            assert false, "absent key accepted"
-        None => pass
+        assert reparsed.get_value(key)?.kind() == TomlKind.Datetime
+    array = dynamic.get_value("array")?
+    assert_error(array.get_index(-1), TomlErrorKind.Missing)
+    assert_error(array.get_index(9), TomlErrorKind.Missing)
+    assert array.get_index(0)?.as_int()? == 1
+    assert array.as_array()?[1].as_int()? == 2
+    table = dynamic.as_table()?
+    assert table["number"].as_int()? == 42
+    assert table["fraction"].as_float()? == 1.5
+    assert table["flag"].as_bool()?
+    assert table["text"].as_str()? == "hello"
+    assert_error(table["number"].as_str(), TomlErrorKind.Type)
+    assert table["table"].get[str]("name")? == "nested"
+    assert dynamic.get_optional[str]("missing")? == None
 
     policy_source = "title = \"café\"\n[dependencies.\"my.library\"]\nunknown_option = true\n"
     match locate(policy_source, ["dependencies", "my.library", "unknown_option"])?:
@@ -259,16 +228,12 @@ def run() -> Result[None, TomlError]:
             assert error.line == Some(1)
             assert error.column == Some(14)
             assert error.byte_start == Some(14)
-    match dynamic.get("number"):
-        Some(value) =>
-            match value.to_toml():
-                Ok(_) =>
-                    assert false, "scalar TOML document accepted"
-                Err(error) =>
-                    assert error.kind == TomlErrorKind.Encode
-                    assert error.line == None
-        None =>
-            assert false, "missing integer"
+    match dynamic.get_value("number")?.to_toml():
+        Ok(_) =>
+            assert false, "scalar TOML document accepted"
+        Err(error) =>
+            assert error.kind == TomlErrorKind.Encode
+            assert error.line == None
     println("TOML manifest, lock, datetime, and located errors passed")
     return Ok(None)
 
