@@ -8,7 +8,7 @@ hide:
 
 # The Oven ecosystem
 
-One authored project flows top to bottom through this map: what the author writes, how Oven resolves and plans it, how the compiler service and the direct `rustc` executor bake it into Loaves the store keeps, and how the registry moves those Loaves between machines. Border style carries RFC status. The two gold dotted nodes, the store's unit identity and `incan.pub`, are the two designs currently in review; the solid gold node is the Loaf itself, the unit everything else bakes, stores, reuses, and exchanges.
+One authored project flows top to bottom through this map: what the author writes, how Oven resolves and plans it, how the compiler service and the direct `rustc` executor bake it into Loaves the store keeps, and how the registry moves those Loaves between machines. Border style carries RFC status. The two gold dotted nodes, the store's unit identity and `incan.pub`, are the parts still at draft RFC rather than implemented; the solid gold node is the Loaf itself, the unit everything else bakes, stores, reuses, and exchanges.
 
 This page is a map, not a specification. Each box names the RFC that owns it, and the table at the end collects them. Where the map and an RFC disagree, the RFC is right and the map has a defect.
 
@@ -218,7 +218,7 @@ This page is a map, not a specification. Each box names the RFC that owns it, an
       <rect class="box draft pr" x="888" y="652" width="328" height="124" rx="6"/>
       <text class="nm-a" x="904" y="680">Store</text>
       <text class="sub" x="904" y="698">Loaves keyed by unit identity</text>
-      <text class="sub" x="904" y="712">external identity decides who rebakes</text>
+      <text class="sub" x="904" y="712">external identity bounds who rebakes (see RFC 124)</text>
       <text class="sub" x="904" y="726">shared across projects; collected by reach</text>
       <text class="sub" x="904" y="740">two-instance refusal at plan time</text>
       <text class="rfc-a" x="904" y="758">RFC 124 · CRASH-SAFE RFC 112</text>
