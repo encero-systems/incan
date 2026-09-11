@@ -14,6 +14,7 @@
 - **Issue:** https://github.com/encero-systems/incan/issues/404
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
+- **Target scope:** v0.6, slice 5 (Oven CLI delivery, #1142); brought into scope 2026-09-10. Table root is `[policy]` per RFC 117.
 - **Shipped in:** —
 
 ## Summary
@@ -67,14 +68,14 @@ This RFC intentionally stays above hosting and registry transport. It captures t
 A project can define a policy that describes which mutation sources are allowed and which categories require review:
 
 ```toml
-[oven.policy.sources]
+[policy.sources]
 builtin = "allow"
 local = "warn"
 git = "require-immutable-pin"
 public-catalog = "require-review"
 private-catalog = "allow"
 
-[oven.policy.risk]
+[policy.risk]
 source = "require-review"
 dependency = "require-review"
 script = "require-review"
@@ -104,7 +105,7 @@ Policy: requires review
 Risk categories:
   source            src/main.incn
   source            tests/test_cli.incn
-  script            [oven.envs.default.scripts].run
+  script            [envs.default.scripts].run
   dependency        app-cli = "0.3.1"
   agent-guidance    cli.write-commands
 
@@ -253,7 +254,7 @@ Recovery tooling must be conservative when files have user edits. If the current
 
 ### Policy storage and precedence
 
-This Draft does not mandate one storage location. Policy may come from project configuration, organization configuration, a local developer profile, CI environment, or catalog-provided defaults.
+Project-local policy lives in the typed `[policy]` table of `loaf.toml` (RFC 117). Organization policy lives in Oven-controlled organization configuration, the same place RFC 117 keeps registry registrations and trust, and may additionally be supplied as signed policy events by a registered registry (RFC 125). A local developer profile may only add restrictions. Audit facts live in receipts, never in `loaf.toml`.
 
 Implementations must make the effective policy explainable. When policy blocks or gates a mutation, diagnostics should show which policy source caused the decision when that information is available.
 
@@ -282,9 +283,9 @@ RFC 074 owns template rendering, generated-file ownership, template provenance, 
 
 RFC 075 owns starter and capability descriptors, applicability, back-off, mutation planning, capability provenance, and the user-facing capability update flow. This RFC evaluates those mutation plans and defines how policy gates application, descriptor-version update, automation, and recovery.
 
-### Relationship to RFC 034
+### Relationship to RFC 125
 
-RFC 034 owns package registry semantics. Registries and catalogs may provide publisher identity, integrity metadata, yanking state, advisories, and compatibility metadata. This RFC does not change registry transport. It defines how local lifecycle tooling uses that metadata when deciding whether a receiver-side project mutation is allowed.
+RFC 125 (superseding RFC 034) owns package registry semantics. Registries and catalogs may provide publisher identity, integrity metadata, yanking state, advisories, and compatibility metadata. This RFC does not change registry transport. It defines how local lifecycle tooling uses that metadata when deciding whether a receiver-side project mutation is allowed.
 
 ### Relationship to RFC 020
 
@@ -335,17 +336,18 @@ The same policy result should power terminal diagnostics, machine-readable JSON,
 - **Agentic tooling:** agents may consume policy output and propose patches, but policy must not allow them to approve their own receiver-side mutations.
 - **Documentation:** user docs must explain the difference between provenance, policy, approval, quarantine, recovery, and receiver-owned mutation review.
 
-## Unresolved questions
+## Design decisions
 
-- Should project-local mutation policy live in a typed `loaf.toml` table or an explicit tool-owned policy state artifact, and which audit facts belong in receipts rather than either location?
-- What is the minimum useful policy syntax for v1?
-- Which risk categories should be standardized in v1, and which should remain extension labels?
-- Should policy support explicit reviewer or owner requirements, or should it only emit categories for external review systems to interpret?
-- How should organization-level policy be discovered without defining hosted product semantics in this RFC?
-- Should quarantined sources prevent only future mutation, or should they also make ordinary build/test commands warn?
-- What recovery actions should be required in v1: status-only, source replacement proposal, revert proposal, or quarantine marking?
-- Should automated proposal creation be a lifecycle CLI command in v1, or should this RFC only define the output contract for future automation on top of capability `status`, `diff`, and dry-run `update`?
-- What audit metadata is safe and useful enough to record without leaking private source or reviewer information?
+Resolved 2026-09-10 when this RFC was brought into the v0.6 scope.
 
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- **Storage.** Project-local policy is the typed `[policy]` table in `loaf.toml`; organization policy is Oven-controlled organization configuration (RFC 117), optionally fed by signed registry events (RFC 125); a developer profile may only tighten. Audit facts (outcome, policy id, approval kind, approver, source identity and integrity state, plan hash) are receipt facts and never live in the manifest.
+- **Minimum v1 syntax.** `[policy]` carries a `default` outcome, one outcome per standard risk category (`[policy.risk]`), and an ordered list of source rules (`[[policy.sources]]`) each naming a source kind or registry identity, an optional trust tier, and an outcome. Nothing else is required for v1; the schema is additive.
+- **Standard risk categories.** The eleven categories in the reference section are standardized. Extension categories use an `x-` prefix, must appear in machine-readable output, and default to `require-approval`.
+- **Reviewer and owner requirements.** v1 distinguishes two approval kinds, `local-confirmation` and `independent-approval`, and records the approving identity in the receipt as an opaque stable identifier. It does not implement reviewer assignment or ownership rules; those are interpreted by external review systems and, later, by registry organisation events under RFC 125.
+- **Organization-level policy discovery.** Through Oven-controlled organization configuration only, with signed registry policy events as an optional source. The most restrictive applicable decision wins. No hosted product semantics are defined here.
+- **Quarantine scope.** A quarantined source blocks future mutation from that source and makes `plan`, `build`, `test`, and `check` emit a warning naming the quarantined provenance; it never fails a build on its own, and locked or offline builds (RFC 020) continue unchanged. This chooses build continuity over policy strictness for v0.6; a blocking quarantine outcome is a candidate for a later revision as Incan and Oven approach v1.0.
+- **Recovery actions in v1.** Status reporting, a revert proposal for unchanged managed files, a pin-or-replace proposal for the source, and quarantine marking. Every recovery action is a mutation plan subject to this policy; none is auto-applied.
+- **Automated proposal creation.** v1 defines only the output contract: the machine-readable mutation plan that `status`, `diff`, and dry-run `update` already produce. No separate proposal command; automation and typed actions (RFC 078) consume that contract.
+- **Audit metadata.** Outcome, policy id, risk categories, approval kind, approver as an opaque identifier, source identity and integrity state, rendered plan hash, and timestamp. No file contents, no reviewer prose, no personal names or addresses; redaction follows RFC 104's markers.
+
+Amendments made at the same time: the table root is `[policy]` (RFC 117), not `[oven.policy]`; RFC 034 references now mean RFC 125.

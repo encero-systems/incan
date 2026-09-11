@@ -237,10 +237,43 @@ pub(super) struct StructConstructorMetadata {
     default_fields: HashSet<String>,
     field_aliases: HashMap<String, String>,
     type_private_fields: HashSet<String>,
+    /// The constructed declaration's own type parameters.
+    ///
+    /// A field type mentioning one of these is written in the declaration's vocabulary, not the construction
+    /// site's, so it must not be used as an emission target until it is substituted. See #1507.
+    owner_type_params: HashSet<String>,
     constructor_surface: StructConstructorSurface,
 }
 
 impl StructConstructorMetadata {
+    /// Whether a declared field type is written in the declaration's own type-parameter vocabulary.
+    ///
+    /// Such a type cannot be emitted at a construction site: `items: list[Elem]` on a `Holder[Picked](...)` names
+    /// `Elem`, which is bound in the declaration and nowhere at the call. The genericity of the type is not the
+    /// test — `Generic("Picked")` is generic and perfectly emittable, because the construction site binds it — so
+    /// the question is only whether the name belongs to this declaration. See #1507.
+    fn mentions_own_type_param(&self, ty: &IrType) -> bool {
+        if self.owner_type_params.is_empty() {
+            return false;
+        }
+        match ty {
+            IrType::Generic(name) | IrType::Struct(name) => self.owner_type_params.contains(name),
+            IrType::Ref(inner) | IrType::RefMut(inner) | IrType::Option(inner) | IrType::List(inner) => {
+                self.mentions_own_type_param(inner)
+            }
+            IrType::Set(inner) => self.mentions_own_type_param(inner),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                self.mentions_own_type_param(key) || self.mentions_own_type_param(value)
+            }
+            IrType::Tuple(items) => items.iter().any(|item| self.mentions_own_type_param(item)),
+            IrType::NamedGeneric(_, args) => args.iter().any(|arg| self.mentions_own_type_param(arg)),
+            IrType::Function { params, ret } => {
+                params.iter().any(|param| self.mentions_own_type_param(param)) || self.mentions_own_type_param(ret)
+            }
+            _ => false,
+        }
+    }
+
     /// Select the external Rust construction surface for one nominal declaration.
     ///
     /// Models seal private constructor inputs outside their owner. Classes retain their complete constructor input
@@ -267,6 +300,7 @@ impl StructConstructorMetadata {
     fn from_struct(s: &IrStruct) -> Self {
         Self {
             provider_identity: None,
+            owner_type_params: s.type_params.iter().map(|param| param.name.clone()).collect(),
             fields: s.fields.iter().map(|field| field.name.clone()).collect(),
             field_types: s
                 .fields
@@ -341,6 +375,7 @@ impl StructConstructorMetadata {
         let constructor_surface = Self::external_constructor_surface(kind, &type_private_fields, &default_fields);
         Self {
             provider_identity: Some(ConstructorProviderIdentity::PublicDependency(library.to_string())),
+            owner_type_params: HashSet::new(),
             fields: fields.iter().map(|field| field.name.clone()).collect(),
             field_types: fields
                 .iter()
@@ -784,8 +819,17 @@ impl<'a> IrEmitter<'a> {
         let mut planned = Vec::new();
         for field_name in metadata.constructor_fields() {
             let field_ident = Self::rust_ident(field_name);
-            let target_ty = metadata.field_types.get(field_name);
+            // A declared field type is usable as a target only when it is resolved at this construction site. A
+            // model's own type parameter is still spelled with the declaration's name — `items: list[Elem]` on a
+            // `Holder[Picked](...)` — and names nothing bound here, so targeting it emits `Vec::<Elem>::new()`
+            // against a type parameter that does not exist in scope. The supplied value's checked type carries the
+            // substitution this site made, so it is preferred whenever the declared type does not. See #1507.
+            let declared_ty = metadata.field_types.get(field_name);
             let value = if let Some(value) = provided.get(field_name.as_str()) {
+                let target_ty = match declared_ty {
+                    Some(declared) if metadata.mentions_own_type_param(declared) => Some(&value.ty),
+                    other => other,
+                };
                 let value = self.emit_expr_for_use(value, super::ownership::ValueUseSite::StructField { target_ty })?;
                 if metadata.uses_constructor_function() && metadata.default_fields.contains(field_name) {
                     quote! { Some(#value) }
@@ -793,6 +837,7 @@ impl<'a> IrEmitter<'a> {
                     value
                 }
             } else if metadata.default_fields.contains(field_name) {
+                let target_ty = declared_ty;
                 if metadata.uses_constructor_function() {
                     quote! { None }
                 } else {

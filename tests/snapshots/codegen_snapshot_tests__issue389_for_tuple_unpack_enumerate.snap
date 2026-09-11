@@ -87,7 +87,7 @@ fn field_ref(index: i64) -> i64 {
     return index;
 }
 pub fn bind(xs: Vec<String>) -> Vec<Binding> {
-    let mut out: Vec<Binding> = vec![];
+    let mut out: Vec<Binding> = Vec::<Binding>::new();
     for (idx, name) in xs
         .iter()
         .enumerate()

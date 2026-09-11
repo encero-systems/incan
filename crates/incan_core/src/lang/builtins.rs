@@ -18,9 +18,10 @@
 //! ```
 
 use super::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
+use serde::Serialize;
 
 /// Stable identifier for a builtin function.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum BuiltinFnId {
     Print,
     Len,

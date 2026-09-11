@@ -22,5 +22,5 @@ fn main() {
             }
         }),
     );
-    return count_names(vec![]);
+    return count_names(Vec::<String>::new());
 }

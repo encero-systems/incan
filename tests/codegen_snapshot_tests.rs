@@ -4838,6 +4838,40 @@ fn test_issue459_rust_enum_pattern_import_codegen() {
 }
 
 #[test]
+fn test_issue1491_rust_struct_variant_pattern_codegen() {
+    let source = load_test_file("issue1491_rust_struct_variant_pattern");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1491_rust_struct_variant_pattern", rust_code);
+    assert!(
+        rust_code.contains("Predicate::KeyValue"),
+        "expected the struct variant to emit as a qualified path:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("key:") && rust_code.contains("val:"),
+        "expected named field bindings rather than a positional destructure:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("Predicate::KeyValue("),
+        "a struct variant must not emit a tuple-variant pattern, which rustc rejects with E0164:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_issue1493_empty_list_comparison_codegen() {
+    let source = load_test_file("issue1493_empty_list_comparison");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1493_empty_list_comparison", rust_code);
+    assert!(
+        rust_code.contains("Vec::<String>::new()"),
+        "an empty list operand must name its element type, or rustc cannot infer the comparison:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("== vec![]"),
+        "an untyped `vec![]` operand leaves `PartialEq` ambiguous (E0283):\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_rfc041_std_rust_capability_bounds_codegen() {
     let source = load_test_file("rfc041_std_rust_capability_bounds");
     let rust_code = generate_rust(&source);
