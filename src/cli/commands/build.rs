@@ -10751,7 +10751,7 @@ fn prepare_library_project(
         })?
         .ok_or_else(|| CliError::failure("rust-inspect workspace preparation did not return a manifest directory"))?;
         record_timing(&mut timings_ms, "library_rust_inspect_prewarm", rust_inspect_start);
-        Ok(rust_inspect_manifest_dir)
+        Ok::<_, CliError>(rust_inspect_manifest_dir)
     })
     .transpose()?;
 

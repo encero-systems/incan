@@ -22,20 +22,13 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::frontend::ast::Program;
 use crate::frontend::{diagnostics, lexer, parser};
 
-/// Parsed module with its source (for error reporting)
-#[derive(Clone)]
-pub struct ParsedModule {
-    pub name: String,
-    /// Path segments for nested modules (e.g., ["db", "models"] for db::models)
-    pub path_segments: Vec<String>,
-    /// Absolute path to the module file (for diagnostics).
-    pub file_path: PathBuf,
-    pub source: String,
-    pub ast: Program,
-}
+/// Re-exported so existing callers keep naming it here.
+///
+/// The definition moved to the frontend when the codegraph producer moved behind the compiler boundary: a
+/// compiler-side module must not import from `crate::cli` to name its own input.
+pub use crate::frontend::parsed_module::ParsedModule;
 
 /// Error when loading/parsing prelude files.
 #[derive(Debug)]
