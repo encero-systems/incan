@@ -10,6 +10,14 @@ use super::{CanonicalIdentityExport, FieldExport, FieldVisibilityExport, Library
 /// Directory reserved for executable semantic package fragments.
 pub const EXECUTABLE_SURFACE_DIRECTORY: &str = "semantic";
 
+/// Extension reserved for an executable semantic package fragment.
+///
+/// Paired with [`EXECUTABLE_SURFACE_DIRECTORY`] because the two together are the artifact namespace this module
+/// owns. A caller that needs to recognize generated surface output must use both rather than respelling either:
+/// the rollback path skips this namespace to avoid carrying a previous build's surface forward, and a literal
+/// there would stop matching the moment the name changed here.
+pub const EXECUTABLE_SURFACE_EXTENSION: &str = "incnsem";
+
 /// Locate the exact immutable surface selected by a finalized manifest.
 ///
 /// Digest syntax is checked before path construction so manifest contents cannot escape their artifact root.
@@ -27,7 +35,7 @@ pub fn executable_surface_path(manifest_path: &Path, manifest: &LibraryManifest)
         manifest_path
             .parent()?
             .join(EXECUTABLE_SURFACE_DIRECTORY)
-            .join(format!("{digest}.incnsem")),
+            .join(format!("{digest}.{EXECUTABLE_SURFACE_EXTENSION}")),
     )
 }
 

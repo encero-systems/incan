@@ -7,7 +7,7 @@ use super::{EmitError, IrEmitter, IrProgram, IrType};
 use crate::frontend::api_metadata::{ApiDeclaration, CheckedApiMetadata, SourceAnchor};
 use crate::library_manifest::{
     CanonicalIdentityExport, CanonicalIdentityOriginExport, LibraryIdentityGraph, LibraryManifest, NativeUnionExport,
-    NativeUnionOwnerExport, NominalTypeOriginExport, TypeRef, VisitTypeRefs,
+    NativeUnionOwnerExport, NominalTypeOriginExport, TypeRef, VisitTypeRefs, contains_native_union,
 };
 
 /// Type projections for one declaration, scoped by its checked source module and declaration anchor.
@@ -139,8 +139,8 @@ fn capture_local_nominal_bindings(
             .filter(|entry| entry.source_path == source_path)
             .filter_map(|entry| entry.canonical.as_ref())
             .find(|canonical| {
-                canonical.declaration_span.start == anchor.span.start as u64
-                    && canonical.declaration_span.end == anchor.span.end as u64
+                u64::try_from(anchor.span.start).is_ok_and(|start| canonical.declaration_span.start == start)
+                    && u64::try_from(anchor.span.end).is_ok_and(|end| canonical.declaration_span.end == end)
                     && matches!(&canonical.origin, CanonicalIdentityOriginExport::Package { module_path, .. }
                         if module_path == &module.module_path)
             })
@@ -847,14 +847,6 @@ fn foreign_native_function_projection(
 }
 
 /// Return whether a declared surface includes an explicit producer-native union carrier.
-fn contains_native_union(value: &(impl VisitTypeRefs + Clone)) -> bool {
-    let mut found = false;
-    value
-        .clone()
-        .visit_type_refs(&mut |ty| found |= matches!(ty, TypeRef::NativeUnion(_)));
-    found
-}
-
 /// Declared type and callable projections supplied by an already-selected public target.
 type DeclaredAliasSurface = (Option<TypeRef>, Option<crate::library_manifest::FunctionExport>);
 

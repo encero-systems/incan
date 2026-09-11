@@ -2769,7 +2769,7 @@ fn build_replacement_file_report(
     let package_content_bytes_verified = published.content_bytes_verified;
     for module in &published.modules {
         for body in &module.bodies {
-            if let Err(error) = crate::backend::replacement::validate_published_body_profile(body) {
+            if let Err(error) = crate::backend::replacement::validate_direct_body_profile(body) {
                 return Err(package_execution_requirement_error(
                     body,
                     &package_versions,
@@ -11128,7 +11128,7 @@ fn prepare_library_project(
     let unrepresentable = executable_modules
         .iter()
         .flat_map(|module| module.bodies.iter())
-        .filter(|body| crate::backend::replacement::validate_published_body_profile(body).is_err())
+        .filter(|body| crate::backend::replacement::validate_direct_body_profile(body).is_err())
         .filter_map(|body| body.canonical.clone())
         .collect();
     let executable_surface = incan_semantics_core::executable_representation::build_surface(

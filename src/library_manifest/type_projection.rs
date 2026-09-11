@@ -265,6 +265,19 @@ impl VisitTypeRefs for DecoratorValue {
     }
 }
 
+/// Return whether any type reference inside a value is an anonymous native union.
+///
+/// This is the single implementation. `TypeRef::has_native_union` is the same question asked of one type
+/// reference, and delegates here; nothing else should re-fold the visitor to answer it, because a second fold is
+/// how the two spellings drifted apart in the first place.
+pub(crate) fn contains_native_union(value: &(impl VisitTypeRefs + Clone)) -> bool {
+    let mut found = false;
+    value
+        .clone()
+        .visit_type_refs(&mut |ty| found |= matches!(ty, crate::library_manifest::TypeRef::NativeUnion(_)));
+    found
+}
+
 /// Bind native carriers through the existing admitted provider graph before projecting a compiler-owned API copy.
 ///
 /// The original producer members stay immutable. Only the non-serialized physical projection is routed for emission;

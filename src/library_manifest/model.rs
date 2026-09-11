@@ -1274,11 +1274,7 @@ impl NominalTypeOriginExport {
 impl TypeRef {
     /// Return whether this typed position contains an explicit emitted-union carrier at any nesting depth.
     pub(crate) fn has_native_union(&self) -> bool {
-        let mut found = false;
-        super::type_projection::VisitTypeRefs::visit_type_refs(&mut self.clone(), &mut |ty| {
-            found |= matches!(ty, TypeRef::NativeUnion(_));
-        });
-        found
+        super::type_projection::contains_native_union(self)
     }
 }
 

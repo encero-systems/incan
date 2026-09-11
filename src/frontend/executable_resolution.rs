@@ -263,6 +263,16 @@ impl OpenSurface {
             });
         };
         let mut file = File::open(&path).map_err(|error| package.unreadable(path.clone(), error))?;
+        // The frame is written by `encode_surface` as a postcard-encoded `u32` version, then an 8-byte
+        // little-endian index length, then the index, then the payload. `SurfaceReader` parses that same frame
+        // from a slice with `postcard::take_from_bytes`; this reader cannot, because it streams from a file and
+        // must know where the version ends before it can seek.
+        //
+        // So this loop reimplements postcard's varint framing: continuation bit 0x80, at most five bytes for a
+        // `u32`. That is a coupling to a third-party wire format, and it is the reason the two readers are pinned
+        // against each other by test rather than left to drift -- see the paired test in the crate that owns the
+        // frame. If postcard ever changes its integer encoding, this loop is what breaks, and it breaks only on
+        // real artifacts, because every in-memory test goes through the other reader.
         let mut version = Vec::new();
         for _ in 0..5 {
             let mut byte = [0u8; 1];
@@ -302,7 +312,9 @@ impl OpenSurface {
             .metadata()
             .map_err(|error| package.unreadable(path.clone(), error))?
             .len();
-        if index_length > 16 * 1024 * 1024 || payload_offset > file_length {
+        if index_length > incan_semantics_core::executable_representation::MAX_SURFACE_INDEX_BYTES
+            || payload_offset > file_length
+        {
             return Err(package.unusable(malformed("index length exceeds its bounded envelope")));
         }
         let mut bytes = vec![
@@ -319,7 +331,17 @@ impl OpenSurface {
                 "representation package identity/version differs from manifest",
             )));
         }
-        let public = public_executable_identities(&package.manifest).into_iter().filter(|identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library == &package.manifest.name)).collect::<BTreeSet<_>>();
+        // The manifest's public surface includes identities this package only re-exports. Admission compares
+        // against what this package itself declares, so a facade cannot widen the set a consumer may execute.
+        let public = public_executable_identities(&package.manifest)
+            .into_iter()
+            .filter(|identity| {
+                matches!(
+                    &identity.origin,
+                    SymbolOrigin::Package { library, .. } if library == &package.manifest.name
+                )
+            })
+            .collect::<BTreeSet<_>>();
         if index.declarations.keys().cloned().collect::<BTreeSet<_>>() != public {
             return Err(package.unusable(malformed(
                 "declared representation coverage differs from the manifest public surface",
@@ -340,7 +362,8 @@ impl OpenSurface {
                 break;
             }
             digest.update(&buffer[..length]);
-            content_bytes_verified += length as u64;
+            content_bytes_verified +=
+                u64::try_from(length).map_err(|_| package.unusable(malformed("read length exceeds wire range")))?;
         }
         if hex::encode(digest.finalize()) != descriptor.content_digest {
             return Err(package.unusable(malformed(

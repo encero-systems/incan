@@ -2036,6 +2036,28 @@ impl CodegraphBuilder {
         self.push_reference_with_checked(module, module_id, owner_id, name, kind, span, degraded, checked);
     }
 
+    /// Choose the owner id a navigation consumer should follow for one record.
+    ///
+    /// A proven checked owner supersedes the syntactic one; syntax ownership is a fallback for the case where
+    /// nothing was proven, not a second opinion to be merged with it. Reference and call records both make this
+    /// choice, and they made it with two spellings of the same condition, so it is decided here once.
+    ///
+    /// Returns an owned id because every caller pushes a record immediately afterwards, so a borrow of `self`
+    /// cannot outlive the call.
+    fn navigable_owner_id(
+        &self,
+        canonical_owner: Option<&CanonicalSymbolId>,
+        syntactic_owner_id: Option<&str>,
+        has_checked_target: bool,
+    ) -> Option<String> {
+        if !has_checked_target {
+            return syntactic_owner_id.map(str::to_string);
+        }
+        canonical_owner
+            .and_then(|identity| self.canonical_target_ids.get(identity))
+            .cloned()
+    }
+
     /// Emit one checked reference projection, including a type component sharing an expression's source span.
     #[allow(clippy::too_many_arguments)]
     fn push_reference_with_checked(
@@ -2055,16 +2077,7 @@ impl CodegraphBuilder {
             Some((target, owner)) => (Some(target), owner),
             None => (None, None),
         };
-        let checked_owner_id = canonical_owner
-            .as_ref()
-            .and_then(|identity| self.canonical_target_ids.get(identity))
-            .cloned();
-        // Syntax ownership remains a navigation fallback only when no checked target was available.
-        let owner_id = if has_checked_target {
-            checked_owner_id.as_deref()
-        } else {
-            owner_id
-        };
+        let owner_id = self.navigable_owner_id(canonical_owner.as_ref(), owner_id, has_checked_target);
         let target_id = canonical_identity
             .as_ref()
             .and_then(|identity| self.canonical_target_ids.get(identity))
@@ -2075,7 +2088,7 @@ impl CodegraphBuilder {
             id: id.clone(),
             language: CodegraphLanguage::Incan,
             module_id: module_id.to_string(),
-            owner_id: owner_id.map(str::to_string),
+            owner_id: owner_id.clone(),
             name: name.to_string(),
             kind: kind.to_string(),
             target_id,
@@ -2086,7 +2099,7 @@ impl CodegraphBuilder {
             provenance,
             degraded,
         }));
-        if let Some(owner_id) = owner_id {
+        if let Some(owner_id) = owner_id.as_deref() {
             self.records.push(CodegraphRecord::Containment(containment_record(
                 owner_id,
                 &id,
@@ -2182,16 +2195,7 @@ impl CodegraphBuilder {
         let checked = self.source_checked_reference(module, target_span);
         let canonical_identity = checked.map(|reference| reference.target.clone());
         let canonical_owner = checked.and_then(|reference| reference.owner.cloned());
-        let checked_owner_id = canonical_owner
-            .as_ref()
-            .and_then(|identity| self.canonical_target_ids.get(identity))
-            .cloned();
-        // Syntax ownership remains a navigation fallback only when no checked target was available.
-        let owner_id = if checked.is_some() {
-            checked_owner_id.as_deref()
-        } else {
-            owner_id
-        };
+        let owner_id = self.navigable_owner_id(canonical_owner.as_ref(), owner_id, checked.is_some());
         let target_id = canonical_identity
             .as_ref()
             .and_then(|identity| self.canonical_target_ids.get(identity))
@@ -2202,7 +2206,7 @@ impl CodegraphBuilder {
             id: id.clone(),
             language: CodegraphLanguage::Incan,
             module_id: module_id.to_string(),
-            owner_id: owner_id.map(str::to_string),
+            owner_id: owner_id.clone(),
             callee: callee.to_string(),
             kind: kind.to_string(),
             argument_count,
@@ -2215,7 +2219,7 @@ impl CodegraphBuilder {
             provenance,
             degraded,
         }));
-        if let Some(owner_id) = owner_id {
+        if let Some(owner_id) = owner_id.as_deref() {
             self.records.push(CodegraphRecord::Containment(containment_record(
                 owner_id,
                 &id,

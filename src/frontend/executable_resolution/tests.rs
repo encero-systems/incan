@@ -62,7 +62,7 @@ fn artifact_with_provider_plan(
     let unrepresentable = module
         .bodies
         .iter()
-        .filter(|body| crate::backend::replacement::validate_published_body_profile(body).is_err())
+        .filter(|body| crate::backend::replacement::validate_direct_body_profile(body).is_err())
         .filter_map(|body| body.canonical.clone())
         .collect();
     let bytes = build_surface(

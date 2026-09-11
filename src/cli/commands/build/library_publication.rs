@@ -264,13 +264,20 @@ fn copy_unrelated(source: &Path, destination: &Path) -> io::Result<()> {
         let entry = entry?;
         let name = entry.file_name();
         let path = PathBuf::from(&name);
-        if matches!(
+        // The executable-surface namespace belongs to `published_layout`; naming its constants here is what
+        // keeps this skip list correct when the directory or extension is renamed. A literal that stopped
+        // matching would silently reclassify a previous build's surface as an unrelated custom output and copy
+        // it forward, which is exactly the resurrection this rollback exists to prevent.
+        let generated_directory = matches!(
             name.to_str(),
-            Some("Cargo.toml" | "Cargo.lock" | "src" | "semantic" | "oven" | "target")
-        ) || path
-            .extension()
-            .is_some_and(|extension| extension == "incnlib" || extension == "incnsem")
-        {
+            Some("Cargo.toml" | "Cargo.lock" | "src" | "oven" | "target")
+        ) || name.to_str()
+            == Some(crate::library_manifest::published_layout::EXECUTABLE_SURFACE_DIRECTORY);
+        let generated_artifact = path.extension().is_some_and(|extension| {
+            extension == "incnlib"
+                || extension == crate::library_manifest::published_layout::EXECUTABLE_SURFACE_EXTENSION
+        });
+        if generated_directory || generated_artifact {
             continue;
         }
         let target = destination.join(&name);

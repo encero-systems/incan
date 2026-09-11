@@ -30,6 +30,14 @@ use crate::body_ir::{Body, BodyIrModule, FieldlessEnumDeclaration, NominalDeclar
 /// does, because a consumer has no way to detect it.
 pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 4;
 
+/// Largest index this format admits, in bytes.
+///
+/// The index is read before anything about the file has been trusted, so its declared length is the one number an
+/// attacker controls that decides an allocation. Bounding it here, in the module that writes the frame, keeps
+/// every reader agreeing on what is admissible: a streaming reader and an in-memory one that disagree would
+/// accept and refuse the same artifact depending only on how it was opened.
+pub const MAX_SURFACE_INDEX_BYTES: u64 = 16 * 1024 * 1024;
+
 /// One module's checked representation, framed with the version needed to interpret it.
 ///
 /// The version travels inside the encoded bytes rather than beside them, so a representation separated from its
@@ -628,8 +636,11 @@ impl<'bytes> SurfaceReader<'bytes> {
             .ok_or_else(|| malformed("missing index length"))?
             .try_into()
             .map_err(|_| malformed("invalid index length"))?;
-        let index_length =
-            usize::try_from(u64::from_le_bytes(length_bytes)).map_err(|_| malformed("index too large"))?;
+        let declared_index_length = u64::from_le_bytes(length_bytes);
+        if declared_index_length > MAX_SURFACE_INDEX_BYTES {
+            return Err(malformed("index length exceeds its bounded envelope"));
+        }
+        let index_length = usize::try_from(declared_index_length).map_err(|_| malformed("index too large"))?;
         let end = 8usize
             .checked_add(index_length)
             .ok_or_else(|| malformed("index length overflow"))?;
@@ -1216,6 +1227,67 @@ mod tests {
         assert_eq!(
             decoded.locals.first().ok_or("local slot disappeared")?.id,
             crate::body_ir::LocalId(0)
+        );
+        Ok(())
+    }
+    /// The frame's own layout is pinned, because a second reader parses it by hand.
+    ///
+    /// `SurfaceReader` reads the frame from a slice with postcard; the compiler's streaming reader cannot, and
+    /// reimplements postcard's varint framing to find where the version ends before it seeks. Nothing else
+    /// connects those two implementations, so this asserts the shape both rely on: a postcard `u32` version whose
+    /// encoding uses the 0x80 continuation bit, then an 8-byte little-endian index length, then the index, then
+    /// the payload. If postcard ever changes its integer encoding, this test fails here rather than on a real
+    /// artifact in the one reader that has no test of its own.
+    #[test]
+    fn the_frame_layout_the_streaming_reader_reimplements_is_pinned() -> Result<(), Box<dyn std::error::Error>> {
+        let module = module(vec![body("exported", 1)]);
+        let bytes = publish(&module, &BTreeSet::from([identity("exported", 1)]))?;
+
+        // The hand-rolled reader consumes version bytes while the continuation bit is set, at most five.
+        let version_length = bytes
+            .iter()
+            .take(5)
+            .position(|byte| byte & 128 == 0)
+            .ok_or("version prefix is not postcard varint framed")?
+            + 1;
+        let (decoded_version, remainder) = postcard::take_from_bytes::<u32>(&bytes)?;
+        assert_eq!(
+            decoded_version,
+            super::EXECUTABLE_REPRESENTATION_VERSION,
+            "the frame must open with the representation version"
+        );
+        assert_eq!(
+            bytes.len() - remainder.len(),
+            version_length,
+            "the hand-rolled varint scan and postcard must agree on where the version ends"
+        );
+
+        // Then eight little-endian bytes of index length, and the index must land inside the file.
+        let length_bytes: [u8; 8] = remainder.get(..8).ok_or("missing index length")?.try_into()?;
+        let index_length = u64::from_le_bytes(length_bytes);
+        assert!(index_length > 0, "a published surface carries an index");
+        assert!(
+            index_length <= super::MAX_SURFACE_INDEX_BYTES,
+            "a published index must fall inside the bound both readers enforce"
+        );
+        let payload_offset = u64::try_from(version_length)? + 8 + index_length;
+        assert!(
+            payload_offset <= u64::try_from(bytes.len())?,
+            "the streaming reader seeks to this offset; it must be inside the file"
+        );
+
+        // And both readers must agree on what the index says.
+        let reader = SurfaceReader::open(&bytes)?;
+        let decoded = super::SurfaceIndex::decode(
+            remainder
+                .get(8..usize::try_from(8 + index_length)?)
+                .ok_or("index truncated")?,
+            u64::try_from(bytes.len())? - payload_offset,
+        )?;
+        assert_eq!(
+            decoded.declarations.len(),
+            reader.index().declarations.len(),
+            "parsing the frame by offset and through the reader must yield the same index"
         );
         Ok(())
     }

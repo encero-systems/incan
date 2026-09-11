@@ -1432,7 +1432,7 @@ pub fn prepare_free_function_execution_in_graph<'module, 'args>(
 /// would let an otherwise admitted call dispatch an unvalidated sibling body and publish a receipt for a profile the
 /// runtime promises to refuse. Provider-host availability is checked separately across the reachable computation
 /// once during preparation; runtime invocation still rechecks the host and authority.
-fn validate_direct_body_profile(body: &Body) -> Result<(), ReplacementExecutionError> {
+pub(crate) fn validate_direct_body_profile(body: &Body) -> Result<(), ReplacementExecutionError> {
     // An `async def` produces an awaitable even when its body has no explicit `await`. Executing its statements as
     // an ordinary scalar body would erase task construction, suspension, wake, cancellation, and receipt semantics
     // that belong to #1155. The stored declaration fact is therefore a direct profile boundary, not something this
@@ -1456,13 +1456,6 @@ fn validate_direct_body_profile(body: &Body) -> Result<(), ReplacementExecutionE
     } else {
         validate_block_profile(&body.block, &tuple_iteration_locals, &scalar_tuple_collection_locals)
     }
-}
-
-/// Check the executable structural profile used by the producer before declaring published body coverage.
-///
-/// This invokes the runtime's existing structural gate without executing defaults, providers, or program effects.
-pub(crate) fn validate_published_body_profile(body: &Body) -> Result<(), ReplacementExecutionError> {
-    validate_direct_body_profile(body)
 }
 
 /// Resolve one named call by its retained same-module identity for both preflight and runtime dispatch.
