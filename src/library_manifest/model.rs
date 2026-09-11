@@ -1878,11 +1878,42 @@ impl LibraryManifest {
     }
 
     /// Decode, validate, and convert a manifest from JSON text.
+    ///
+    /// The format gate runs before the full decode, and the order is the point. `RawLibraryManifest` deserializes
+    /// every typed field, so a manifest written by a newer compiler fails inside serde on a variant this build has
+    /// never heard of, and it fails there *before* `validate_manifest_version` can say which format it is. The
+    /// reader then reports an opaque parse error for what is really a version mismatch, which is the one case the
+    /// format number exists to make legible. Reading just that number first keeps the designed refusal reachable
+    /// however far the shape has moved. See #1339.
     pub fn from_json_str(content: &str) -> Result<Self, LibraryManifestError> {
+        Self::require_supported_manifest_format(content)?;
         let raw: RawLibraryManifest =
             serde_json::from_str(content).map_err(|err| LibraryManifestError::Parse(err.to_string()))?;
         validate_raw_manifest(&raw)?;
         raw.into_semantic()
+    }
+
+    /// Refuse a manifest whose declared format this build does not implement, before decoding its body.
+    ///
+    /// Only `manifest_format` is read. Serde ignores the unknown fields around it, so this succeeds on any shape a
+    /// future compiler writes, which is exactly what lets the refusal name the format instead of the first field
+    /// that failed to parse. A manifest with no `manifest_format` at all is left to the full decode to reject, so
+    /// this adds a refusal and never replaces one.
+    fn require_supported_manifest_format(content: &str) -> Result<(), LibraryManifestError> {
+        #[derive(serde::Deserialize)]
+        struct DeclaredFormat {
+            manifest_format: u32,
+        }
+        let Ok(declared) = serde_json::from_str::<DeclaredFormat>(content) else {
+            return Ok(());
+        };
+        if declared.manifest_format != LIBRARY_MANIFEST_FORMAT {
+            return Err(LibraryManifestError::Invalid(format!(
+                "unsupported manifest_format {} (expected {})",
+                declared.manifest_format, LIBRARY_MANIFEST_FORMAT
+            )));
+        }
+        Ok(())
     }
 }
 

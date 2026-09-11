@@ -623,7 +623,23 @@ pub(crate) fn ir_type_from_projected_manifest(
     let child = |ty: &TypeRef| ir_type_from_projected_manifest(ty, ordinary);
     match ty {
         TypeRef::NativeUnion(native) => {
+            // An unprojected native union means this manifest never went through `with_checked_native_unions`,
+            // which is the only thing that attaches a projection. The dependency path calls it and refuses when no
+            // provider plan admits the union; the SDK seeding path does not call it at all, so the same construct
+            // arrived here with nothing attached and silently became `Unknown` -- a type the emitter will then
+            // resolve to something unrelated or drop, with no diagnostic anywhere.
+            //
+            // `Unknown` is still what this function returns, because it has no error channel and inventing one
+            // would spread through every `ordinary` caller. What changes is that it is no longer silent: an
+            // unprojected union is a wiring defect in the caller, not a property of the type, and the debug
+            // assertion fails the test suite for the case the two paths disagree on. See #1339.
             let Some(projection) = &native.checked_projection else {
+                debug_assert!(
+                    false,
+                    "native union `{}` reached IR lowering without a checked projection; the seeding path must run \
+                     `with_checked_native_unions` before lowering, as the dependency path does",
+                    native.rust_name
+                );
                 return IrType::Unknown;
             };
             let descriptor = native.clone();

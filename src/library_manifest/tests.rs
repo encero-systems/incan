@@ -4408,3 +4408,48 @@ fn native_union_wire_is_optional_and_excludes_checked_routes() -> Result<(), Box
     assert!(error.to_string().contains("unknown variant `NativeUnion`"));
     Ok(())
 }
+
+/// A manifest from a newer format is refused by format number, not by whatever field parsed first.
+///
+/// This is the whole reason the format gate runs before the body decode. `RawLibraryManifest` decodes every typed
+/// field, so a future manifest carrying a `TypeRef` variant this build does not know would otherwise die inside
+/// serde and report an opaque parse error for what is really a version mismatch. The unknown variant below stands
+/// in for exactly that: without the gate the message names a type-reference field, with it the message names the
+/// format.
+#[test]
+fn a_newer_manifest_format_is_refused_by_number_not_by_a_parse_error() -> Result<(), Box<dyn std::error::Error>> {
+    let future = format!(
+        r#"{{"manifest_format": {}, "incan_version": "0.6.0", "name": "future", "version": "1.0.0",
+            "exports": {{}}, "some_field_this_build_has_never_seen": {{"shape": ["anything", 1, null]}}}}"#,
+        LIBRARY_MANIFEST_FORMAT + 1
+    );
+    let error = LibraryManifest::from_json_str(&future)
+        .err()
+        .ok_or("expected a refusal")?;
+    let message = error.to_string();
+    assert!(
+        message.contains("unsupported manifest_format") && message.contains(&(LIBRARY_MANIFEST_FORMAT + 1).to_string()),
+        "a newer format must be refused by number, got: {message}"
+    );
+    Ok(())
+}
+
+/// A manifest declaring the current format still decodes through the ordinary path.
+///
+/// The gate must add a refusal without taking one over: a malformed manifest at the supported format has to keep
+/// reaching the existing validation, which produces the specific diagnostic, rather than being short-circuited.
+#[test]
+fn the_format_gate_does_not_swallow_ordinary_validation() -> Result<(), Box<dyn std::error::Error>> {
+    let malformed = format!(
+        r#"{{"manifest_format": {LIBRARY_MANIFEST_FORMAT}, "incan_version": "not-a-version", "name": "current",
+            "version": "1.0.0", "exports": {{}}}}"#
+    );
+    let error = LibraryManifest::from_json_str(&malformed)
+        .err()
+        .ok_or("expected a refusal")?;
+    assert!(
+        !error.to_string().contains("unsupported manifest_format"),
+        "the gate must not claim a format problem for a supported format, got: {error}"
+    );
+    Ok(())
+}
