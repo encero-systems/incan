@@ -25,6 +25,15 @@ impl AstLowering {
                 span: Default::default(),
             })?;
 
+        // A field type naming one of the model's own type parameters is a generic, not a nominal type. Lowering it
+        // without them in scope resolves `Elem` in `items: list[Elem]` to `IrType::Struct("Elem")`, which every
+        // later stage reads as a concrete type that happens not to exist. The call-site seed guard
+        // (`is_unresolved_call_seed_type`) then cannot see that it needs substituting, because it treats `Struct`
+        // as resolved, and an empty collection literal is emitted as `Vec::<Elem>::new()` in a scope where `Elem`
+        // is not bound. See #1507.
+        let type_param_names: std::collections::HashSet<&str> =
+            m.type_params.iter().map(|param| param.name.as_str()).collect();
+
         let mut fields: Vec<StructField> = Vec::new();
         for f in &m.fields {
             let visibility = checked_visibilities
@@ -45,7 +54,7 @@ impl AstLowering {
                 .transpose()?;
             fields.push(StructField {
                 name: f.node.name.clone(),
-                ty: self.lower_type(&f.node.ty.node),
+                ty: self.lower_type_with_type_params(&f.node.ty.node, Some(&type_param_names)),
                 surface_type_name: None,
                 visibility: Self::map_visibility(visibility),
                 is_type_private: self.type_info.as_ref().is_some_and(|info| {

@@ -354,3 +354,105 @@ fn nonempty_dict_conversion_does_not_gain_a_checked_constructor_fact_issue1247()
     }
     Ok(())
 }
+
+/// An empty collection literal in a generic constructor must use the type argument, not the declaration's name.
+///
+/// The declaration's own type parameters are a vocabulary of the declaration, not of the construction site. A field
+/// typed `list[Elem]` on `Holder[Picked](items=[])` must emit `Vec::<Picked>::new()`; emitting `Vec::<Elem>::new()`
+/// names a type parameter bound nowhere at the call.
+///
+/// The defect only surfaces when the two names differ. `Holder[U]` constructed with `U` emits the declaration's
+/// name and is accidentally correct, which is why this went unnoticed until the standard library hit the case with
+/// `FlatMapFallibleIterator`'s fourth parameter, `Output`. There the wrong name resolved silently to a same-named
+/// parameter on the enclosing trait implementation and failed as a type mismatch rather than an unknown type.
+/// See #1507.
+#[test]
+fn empty_literal_uses_the_supplied_type_argument_not_the_declared_name_issue1507()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "@derive(Clone)\n",
+        "model Holder[Elem with Clone]:\n",
+        "    items: list[Elem]\n",
+        "\n",
+        "@derive(Clone)\n",
+        "model Source[T with Clone]:\n",
+        "    value: T\n",
+        "\n",
+        "    def expand[Picked with Clone](self) -> Holder[Picked]:\n",
+        "        return Holder[Picked](items=[])\n",
+        "\n",
+        "def main() -> None:\n",
+        "    s = Source[int](value=1)\n",
+        "    h: Holder[str] = s.expand[str]()\n",
+        "    println(f\"{len(h.items)}\")\n",
+    );
+    let (program, _, _) = checked_source(source)?;
+    let generated = IrCodegen::new()
+        .try_generate(&program)
+        .map_err(|error| std::io::Error::other(format!("generic constructor generation failed: {error}")))?;
+
+    if generated.contains("Vec::<Elem>::new()") {
+        return Err(format!(
+            "the empty literal kept the declaration's own type-parameter name, which is bound nowhere at the \
+             construction site:\n{generated}"
+        )
+        .into());
+    }
+    if !generated.contains("Vec::<Picked>::new()") {
+        return Err(
+            format!("expected the empty literal to carry the supplied type argument, got:\n{generated}").into(),
+        );
+    }
+    Ok(())
+}
+
+/// The matching-name case must keep working, since it is the only one that worked before.
+#[test]
+fn empty_literal_still_emits_a_matching_type_parameter_name_issue1507() -> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "@derive(Clone)\n",
+        "model Holder[U with Clone]:\n",
+        "    items: list[U]\n",
+        "\n",
+        "def build[U with Clone]() -> Holder[U]:\n",
+        "    return Holder[U](items=[])\n",
+        "\n",
+        "def main() -> None:\n",
+        "    h: Holder[str] = build[str]()\n",
+        "    println(f\"{len(h.items)}\")\n",
+    );
+    let (program, _, _) = checked_source(source)?;
+    let generated = IrCodegen::new()
+        .try_generate(&program)
+        .map_err(|error| std::io::Error::other(format!("matching-name generation failed: {error}")))?;
+    if !generated.contains("Vec::<U>::new()") {
+        return Err(format!("expected the shared name to survive, got:\n{generated}").into());
+    }
+    Ok(())
+}
+
+/// A concrete field type must still win: the fallback applies only to the declaration's own parameters.
+#[test]
+fn empty_literal_keeps_a_concrete_declared_field_type_issue1507() -> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "@derive(Clone)\n",
+        "model Holder[Elem with Clone]:\n",
+        "    items: list[Elem]\n",
+        "    names: list[str]\n",
+        "\n",
+        "def build[Picked with Clone]() -> Holder[Picked]:\n",
+        "    return Holder[Picked](items=[], names=[])\n",
+        "\n",
+        "def main() -> None:\n",
+        "    h: Holder[int] = build[int]()\n",
+        "    println(f\"{len(h.names)}\")\n",
+    );
+    let (program, _, _) = checked_source(source)?;
+    let generated = IrCodegen::new()
+        .try_generate(&program)
+        .map_err(|error| std::io::Error::other(format!("concrete field generation failed: {error}")))?;
+    if !generated.contains("Vec::<String>::new()") {
+        return Err(format!("a concrete declared field type must still drive emission, got:\n{generated}").into());
+    }
+    Ok(())
+}
