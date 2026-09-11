@@ -44,15 +44,17 @@ review_after: "When a compiled-artifact tier ships in any Rust-ecosystem registr
 
 ## Abstract
 
-Rust's compiled artifacts are excellent. Producing them is the expensive part, and the Rust ecosystem makes every machine produce them from scratch, because it has no unit of exchange for a compiled artifact whose inputs are provably identical. crates.io distributes recipes; every laptop, CI runner, and container image bakes. This paper measures what that costs on two hosts for three popular libraries and for the Incan compiler itself, explains why Rust in particular never shipped compiled dependencies when Java, Python, Nix, and Homebrew all did, and argues that the combination of Oven's receipts and a registry designed around them closes the gap without touching crates.io. The proposed shape is a tier above the existing ecosystem, not a fork of it: Oven-built projects, whether they contain Incan source or only Rust, publish a signed source Loaf and, where available, attested compiled assets to `incan.pub`; consumers download the artifact that exactly matches their plan and bake only what nobody has baked before. The precondition is artifact identity: an exchange of compiled work is only as trustworthy as its answer to whether two artifacts were produced from the same inputs, which is what defeated earlier attempts. The open decision is who bakes: publishers, the registry, or both.
+Rust's compiled artifacts are excellent. Producing them is the expensive part, and the Rust ecosystem makes every machine produce them from scratch, because it has no unit of exchange for a compiled artifact whose inputs are provably identical. crates.io distributes recipes; every laptop, CI runner, and container image bakes. This paper measures what that costs on two hosts for three popular libraries and for the Incan compiler itself, explains why Rust in particular never shipped compiled dependencies when Java, Python, Nix, and Homebrew all did, and argues that what is missing is a verifiable identity model for compiled work — a way to say precisely enough, for a stranger's artifact, that its inputs were the same as yours. Oven's receipt model is designed to encode exactly the inputs Cargo currently lacks when deciding whether two compiled artifacts are interchangeable; an exchange built on those identities follows, without touching crates.io. The proposed shape is a tier above the existing ecosystem, not a fork of it: Oven-built projects, whether they contain Incan source or only Rust, publish a signed source Loaf and, where available, attested compiled assets to `incan.pub`; consumers download the artifact that exactly matches their plan and bake only what nobody has baked before. The precondition is artifact identity: an exchange of compiled work is only as trustworthy as its answer to whether two artifacts were produced from the same inputs, which is what defeated earlier attempts. The open decision is who bakes: publishers, the registry, or both.
 
 ## The claim
 
-Three sentences carry the whole argument.
+One sentence carries the whole argument: **Cargo exchanges source; what Rust still lacks is a way to exchange identity.**
+
+Everything below is evidence for that, and a proposal that follows from it.
 
 For Rust, the compiled artifact is the product, and the ecosystem makes every consumer re-derive it from source on every machine. That re-derivation is expensive in time, memory, and disk, it is paid most heavily by the machines least able to afford it, and it is paid again for every checkout, every runner, and every image. The reason it has never been fixed is not that nobody wanted to; it is that two compilations of the same crate are only interchangeable when every input matches, and until Oven, nothing in the Rust toolchain recorded those inputs precisely enough to say when they do.
 
-The aim is to improve the foundation Rust already laid, not to displace it. The compiler, the crate model, the sparse index, and the lockfile stay. crates.io stays and is consumed as-is. What is added is the layer Rust never built: an exchangeable identity for a compiled artifact, and a place to exchange them. Java, Python, Nix, and Homebrew each added that layer on top of their source ecosystems, and none of them is remembered as a fork.
+The aim is to improve the foundation Rust already laid, not to displace it. The compiler, the crate model, the sparse index, and the lockfile stay. crates.io stays and is consumed as-is. What is added is the layer Rust never built: an exchangeable identity for a compiled artifact, and an exchange for artifacts that carry it. "Registry" is the wrong word for it and invites the wrong fear, because a registry implies a second place to look for source and therefore an ecosystem split. This is closer to a binary cache that strangers can share: the source of record stays on crates.io, and what moves is compiled work that a consumer can prove matches what it would have built. Java, Python, Nix, and Homebrew each added that layer on top of their source ecosystems, and none of them is remembered as a fork.
 
 ## What Cargo and crates.io got right
 
@@ -112,6 +114,14 @@ Incan is, at its core, a very large Rust project, and it feels every one of thes
 
 On the laptop, in its resting state after a cleanup, one development root held twenty `target/` directories totalling 52 GB, two of them the Incan compiler itself at 10.8 GB and 10.4 GB a few commits apart. The registry cache held 6.5 GB of `.crate` files. The maintainer's periodic cleanups run to 500 GB or more. This is not an argument for a registry, but it is the same design fact from another angle: a compiled artifact with no identity anyone else can trust cannot be shared and cannot be safely deleted, so every worktree keeps its own copy of the same wasmtime, and nothing can tell that two 10 GB directories are the same thing.
 
+## Compilation is infrastructure, not developer experience
+
+Compile time is the tangible symptom, and it is the one every developer feels, which makes it the easiest thing to argue about and the easiest to dismiss as impatience. The more durable argument is that repeated derivation is an infrastructure cost the whole ecosystem pays, continuously, for work that has already been done somewhere else.
+
+The same seven minutes reappears in places that have nothing to do with anyone's patience. It is billed as CI compute on every push, on every branch, for every project in an organisation, and CI runners are rented by the minute. It is drawn as energy in a datacentre and as battery on a laptop, for a computation whose result was deterministic before it started. It is onboarding latency, where a new contributor's first impression of a project is a progress bar. It is the reason ephemeral development environments — devcontainers, cloud workspaces, throwaway CI images — are quietly expensive, because ephemerality means every environment starts from nothing and re-derives everything. It is the reason a classroom of thirty students compiles the same dependency graph thirty times on hardware chosen for price. And it is a reproducibility problem in deployment, because a build that takes seven minutes on one machine and is rebuilt on another is trusted on the assumption that it produced the same thing, rather than on evidence.
+
+None of these is a complaint about Rust being slow. They are all the same structural fact: the ecosystem treats a deterministic, expensive computation as something each consumer must perform privately, and has no way to share the result safely. Every mature ecosystem eventually stops paying that cost — not because compilation got faster, but because artifacts became exchangeable.
+
 ## Why Rust never shipped compiled dependencies
 
 Every other mainstream ecosystem did. Maven Central has distributed compiled JARs since its beginning; nobody compiles Guava from source. PyPI's wheels ended the era of building numpy on every laptop, and uv's design assumes wheels as the normal case. Nix binary caches serve build outputs keyed by the hash of every input that produced them. Homebrew bottles turned a source package manager into one that installs in seconds. Debian, Fedora, and every Linux distribution are compiled distribution by definition.
@@ -119,6 +129,18 @@ Every other mainstream ecosystem did. Maven Central has distributed compiled JAR
 Rust's own toolchain does it too, up to a point: `rustup` ships a compiled standard library for every target, and nobody thinks that is a fork of Rust. It stops at `std`.
 
 The reason it stops is real. Rust has no stable ABI across compiler versions, and a compiled crate encodes its exact dependency versions, its enabled features, its target, its profile, and its compiler build into a strict version hash. Two compilations of the same crate at the same version are interchangeable only when all of those match, and mixing two that do not is not a warning but a broken build or a subtly wrong program. Cargo's answer was to make the local target directory the unit of consistency and never to share compiled output beyond it.
+
+### The triangle that made this look impossible
+
+Underneath the specific objections is one shape, and naming it explains why the stall lasted a decade rather than a release cycle. Rust's ecosystem insists on three things at once:
+
+- **Reproducibility** — the artifact you get is the artifact the source produces, not something adjacent to it.
+- **Source transparency** — every artifact has a source of record that anyone can read, audit, rebuild, and redistribute.
+- **Configurable builds** — features, profiles, targets, and dependency versions are the consumer's to choose, and choosing differently produces genuinely different output.
+
+Every historical attempt to ship compiled artifacts sacrificed one of the three. Distributing a binary without its source gives up transparency, which is what the ecosystem rejected in 2023. Pinning one blessed configuration gives up configurability, which is why a precompiled artifact for one target helped almost nobody. Accepting a near match as good enough gives up reproducibility, and in a language with no stable ABI that is not a quality compromise but a runtime fault.
+
+The triangle is only binding while artifacts cannot be told apart. Given an identity that captures every input a configuration can vary, all three survive: the source stays the publication of record, any configuration may be published or built locally, and an artifact is offered only where its inputs match exactly. That is the actual claim of this paper. The registry is a consequence of it.
 
 ### A decade of asking
 
@@ -147,9 +169,76 @@ The lesson is not that Rust developers refuse compiled artifacts. It is that the
 
 Java, Python, and Nix are the familiar examples, but they each had something Rust lacks: a stable bytecode, a stable C ABI at the boundary, or a sandbox that makes every input explicit. The ecosystem that shares Rust's actual problem is C++, and it solved it anyway. [Conan](https://docs.conan.io/2/reference/binary_model/settings_and_options.html) computes a `package_id` from compiler, version, architecture, options, and dependency versions; one recipe has many binaries; a consumer's profile selects a matching one, and `--build=missing` falls back to source. That is the receipt-and-plan match this paper proposes, in production for a decade in an ecosystem with no stable ABI. Within Rust, [crate2nix](https://github.com/nix-community/crate2nix) already does per-crate derivations that are "shared across projects and further can be passed to the binary cache", which is the same idea with Nix as the receipt. The Bytecode Alliance's [warg](https://github.com/bytecodealliance/registry) brought content addressing and a transparency log to a registry of compiled WebAssembly components.
 
-The partial answers that exist for Rust each cover one corner. [sccache](https://github.com/mozilla/sccache) shares compilation across a team's machines but keys on inputs it must reconstruct and distributes nothing publicly. [cargo-chef](https://github.com/LukeMathWalker/cargo-chef) makes container layers cache dependencies but rebuilds them per image. [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) and cargo-quickinstall distribute finished binaries, not dependencies. [crABI](https://github.com/rust-lang/rust/pull/105586) and the [rlib-stabilisation pre-RFC](https://internals.rust-lang.org/t/pre-rfc-stabilize-a-version-of-the-rlib-format/17558) attack the ABI problem from the language side and are years from changing how dependencies are exchanged. What none of them has is an artifact identity precise enough to trust from a stranger, produced by the build system itself rather than inferred afterwards.
+[crABI](https://github.com/rust-lang/rust/pull/105586) and the [rlib-stabilisation pre-RFC](https://internals.rust-lang.org/t/pre-rfc-stabilize-a-version-of-the-rlib-format/17558) attack the ABI problem from the language side and are years from changing how dependencies are exchanged. What none of them has is an artifact identity precise enough to trust from a stranger, produced by the build system itself rather than inferred afterwards.
 
 That is the piece Oven adds. Every `*.loaf` Oven seals carries a receipt naming the source digest, toolchain identity, target, profile, and per-unit feature closure that produced it, and Oven already refuses to reuse an artifact whose receipt does not match the plan. The project's own engineering notes record the failure that rule prevents: two independently resolved closures of identical source produced ABI-incompatible rlibs, and linking them left tokio unable to find its own runtime. Having solved that locally, the same identity can be exchanged across machines. The registry does not need to invent the identity; it needs to distribute artifacts that already carry it.
+
+## Why the existing answers fall short
+
+Rust is not short of attempts. Each one works, and each one stops at the same place, which is the most useful thing about them: the boundary they share is the shape of what is missing.
+
+**[sccache](https://github.com/mozilla/sccache)** shares compilation results across a team's machines and is genuinely effective there. It reconstructs a cache key from compiler invocation inputs rather than receiving one from the build system, so it is conservative by necessity, and it is deployed within an organisation that already trusts itself. It distributes nothing publicly, because a key you reconstruct locally is not a claim a stranger can verify.
+
+**[cargo-chef](https://github.com/LukeMathWalker/cargo-chef)** makes Docker layer caching work for Rust by separating dependency builds from application builds. It is a workaround for a container-layer model, and its unit is the layer: change one dependency and the layer rebuilds entirely. Nothing crosses between images, projects, or organisations.
+
+**Cargo's [cross-workspace cache](https://goals.rust-lang.org/2026/cargo-cross-workspace-cache.html)**, an official 2026 project goal, is the most direct answer and the one this paper agrees with most. The target directory was split into artifact and build directories in 2025, and a cache lands on nightly in 2026 — conservative at first, excluding build scripts and proc-macros. The goal text notes it "could be extended in the future to be pre-populated from a remote cache for CI usecases". That is the local half of the problem, funded and staffed. The remote half needs something the local half does not: an identity a stranger's machine can check.
+
+**[Nix](https://nixos.org) and [crate2nix](https://github.com/nix-community/crate2nix)** solve it properly and have for years. Per-crate derivations are shared through a binary cache, which is exactly the mechanism this paper argues for. The cost is that Nix requires the whole ecosystem to adopt Nix: its guarantee comes from controlling every input, including ones Cargo deliberately leaves to the consumer. It is a correct answer that most Rust projects will not adopt, which makes it evidence that the approach works rather than a path the ecosystem can take.
+
+**[cargo-binstall](https://github.com/cargo-bins/cargo-binstall)** and cargo-quickinstall distribute finished binaries and are widely used. They serve end-user tools, not dependencies. A binary has no consumer-chosen configuration to match — nobody links against `ripgrep` with different features — so the identity problem never arises, which is precisely why they could ship and a dependency tier could not.
+
+**[crABI](https://github.com/rust-lang/rust/pull/105586)** and the [rlib-stabilisation pre-RFC](https://internals.rust-lang.org/t/pre-rfc-stabilize-a-version-of-the-rlib-format/17558)** attack the problem from the other end, by making artifacts compatible across more compilations. That reduces how often identities differ; it does not remove the need to know when they do.
+
+Reading them against the requirements below makes the pattern exact:
+
+| Approach | Identity | Applicability | Public exchange | What stops it |
+| --- | --- | --- | --- | --- |
+| sccache | reconstructed locally | conservative | no | a key you rebuild yourself is not a claim a stranger can check |
+| cargo-chef | layer-shaped | coarse | no | the unit is the image layer, not the artifact |
+| Cargo cross-workspace cache | local | yes | not yet | the remote half needs an identity a stranger's machine can verify |
+| Nix, crate2nix | complete | yes | yes | requires the whole ecosystem to adopt Nix |
+| cargo-binstall | not required | not required | yes | end-user binaries have no consumer-chosen configuration to match |
+| crABI, rlib stabilisation | — | — | — | widens compatibility; does not decide when artifacts differ |
+
+Every approach either restricts the configuration space until matching becomes trivial, or restricts the trust boundary until verification becomes unnecessary. Nix is the exception that proves it: it satisfies every requirement by controlling every input, which is precisely the price most Rust projects decline to pay. None of them makes a compiled artifact something a stranger can offer and an ordinary Cargo-shaped consumer can check.
+
+## What any solution must provide
+
+Before naming any implementation, it is worth stating what the ecosystem's own objections imply. These are not requirements chosen to suit a particular design; they are what the internals threads, the serde episode, and the Cargo roadmap have collectively been asking for since 2015. A reader should be able to evaluate any proposal against them, including this one.
+
+1. **Artifact identity.** A digest over every input that can change the output, including the identities of dependencies, so that two artifacts are comparable at all. The Cargo maintainer's second objection in the 2025 internals thread was precisely this: Cargo would need a real model of the relationship between build environment and ABI before it could trust an artifact. Nothing else on this list is reachable without it.
+
+2. **Deterministic applicability.** A consumer must decide locally, and without ambiguity, whether an artifact matches what it would otherwise have built. A near match must be a miss. This is not fastidiousness: Rust has no stable ABI across compiler versions, so two almost-identical instances of one library linked into one executable is a runtime fault, not a compile error — which is why "close enough" is the one answer the ecosystem cannot accept.
+
+3. **Source transparency.** Every artifact has a source of record that anyone can read, audit, rebuild and redistribute. The 2023 serde episode settled this and settled it emphatically: Fedora could not redistribute a binary it had not built, others could not audit it, and the objection that carried was that a compromised account could ship something nobody could inspect. Ninety-nine comments later the source build was restored. Any proposal that reopens this question has already failed.
+
+4. **Provenance.** An artifact names who produced it, bound to the source it came from, so a consumer reasons about trust instead of assuming it. This is the half of the serde objection that survived after transparency: not only *can I read the source*, but *who turned it into this*.
+
+5. **Trust policy belonging to the consumer.** The consuming project decides which producers it accepts. The same episode showed why: the ecosystem's objection was never to compiled artifacts as such, it was to having one imposed with no way to decline.
+
+6. **Graceful fallback.** A miss, a refusal, or an unavailable artifact degrades to compiling from source. No workflow may depend on an artifact existing — which is also what keeps requirement 5 honest, since declining is only free if the fallback is ordinary.
+
+7. **Configuration sovereignty.** The consumer keeps control of features, profiles, targets, and dependency versions. This was the Cargo maintainer's first objection: precompiled packages lock in profile settings, compiler flags, and dependency versions, taking control away from the top-level package that Cargo's model deliberately puts in charge. An artifact tier must not quietly narrow what a project may choose.
+
+8. **No ecosystem fork.** crates.io remains the source of record, unmirrored and unreplaced, and a Rust developer who never adopts any of this is unaffected. An answer that requires the ecosystem to move is not an answer to this problem; it is a different ecosystem, which is the honest reading of why Nix has not absorbed Rust packaging despite solving the technical problem years ago.
+
+Requirements 1 and 2 are the ones nothing in the Rust ecosystem currently supplies, and they are the reason the rest have never been reachable. Requirements 3 through 8 are, in effect, the conditions the ecosystem has already attached to any answer.
+
+## What a receipt records, and when two are interchangeable
+
+Requirements 1 and 2 are the hard ones, and the rest are unreachable without them. So the question for any candidate is narrow: is its identity precise enough to decide interchangeability?
+
+Oven is one answer, and what follows is only the part that bears on that question. How Oven plans, bakes, seals and reuses work is the subject of its own paper, [A Cargo-free toolchain for Incan and Rust](incan_oven_positioning.md); nothing here depends on reading it first. What matters for this argument is the receipt, stated once, in full.
+
+A receipt identifies a compiled unit by a digest over its *effective compilation inputs*: the semantic content of the source it compiles; the manifest facts the compilation actually observes, such as a version string reaching code through an environment macro; the toolchain identity; the target triple and whether the unit was built for the host or the target; the profile facts that change codegen, meaning optimisation level, debug-info level, codegen units, panic strategy, LTO mode and target features; the resolved feature set; the artifact kind and edition; the identities of every unit it links against; the receipt identity of any build script or procedural macro whose output it consumed; and the digests of any native libraries or headers it links or includes.
+
+Equally important is what a receipt must *exclude*, because each of these breaks sharing without changing output: absolute paths, timestamps, hostnames, user names, publication signatures, and which plan requested the unit. Source paths are remapped so the same source at two locations yields the same identity.
+
+**Two units are interchangeable if and only if their identities are equal and the bytes they produced agree.** Same package and version with a different identity is a miss, and a miss means baking from source. Nothing is ever substituted on a near match, and no ownership declaration waives the rule — because the failure it prevents is not a slow build but a wrong one: two ABI-incompatible instances of the same library linked into one executable, which is a runtime fault, not a compile error.
+
+Two properties fall out. Because the identities of dependencies are themselves inputs, an identity is a Merkle root over the whole closure, so nothing can change beneath a unit without changing the unit. And because the source input is semantic rather than a hash of file bytes, a comment, a docstring, a reordering, or a move between files does not invalidate a unit or anything downstream of it.
+
+This is a design, not a proof. It encodes the inputs Cargo lacks when it has to decide whether compiled artifacts are interchangeable; it does not demonstrate that no input has been overlooked. That distinction matters, and the honest claim is the narrower one.
 
 ## What changes with Oven and `incan.pub`
 
@@ -196,4 +285,6 @@ RFC 124 defines unit identity, cross-plan sharing in the store, and collection; 
 
 ## Closing
 
-Rust made compiled distribution possible by making its source ecosystem trustworthy, and then never built it. The cost of that omission is measurable: seven minutes of a saturated consumer machine to open a query engine session, half a terabyte of indistinguishable duplicates on a maintainer's laptop, and the same work repeated on every runner and in every image. The Rust project has been asked for this since 2015 and is now building the local half of it; the fix was never only a faster cache. It was an artifact identity precise enough to trust from a stranger, and a place to exchange artifacts that carry it. Oven produces the identity. `incan.pub` is the place. The recipe stays on crates.io, where it belongs; the loaf ships from `incan.pub`, already baked, for anyone whose plan matches, and everyone else bakes exactly as they do today.
+Rust made compiled distribution possible by making its source ecosystem trustworthy, and then never built it. The cost of that omission is measurable: seven minutes of a saturated consumer machine to open a query engine session, half a terabyte of indistinguishable duplicates on a maintainer's laptop, and the same work repeated on every runner and in every image. The Rust project has been asked for this since 2015 and is now building the local half of it; the fix was never only a faster cache. It was an artifact identity precise enough to trust from a stranger, and a place to exchange artifacts that carry it. Rust already knows how to describe source, and describes it better than most. What it still lacks is a way to describe compiled work precisely enough that strangers can safely exchange it. That is the missing layer, and it is a smaller thing than a package manager and a larger thing than a cache.
+
+Oven's receipt model is built to supply that description. An exchange built on those identities distributes the result. The recipe stays on crates.io, where it belongs; what ships already baked is whatever some stranger's inputs prove to be identical to yours, and everyone else bakes exactly as they do today.
