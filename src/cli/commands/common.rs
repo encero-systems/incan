@@ -365,12 +365,23 @@ fn acquire_sdk_provider_store_lock(store_root: &Path) -> CliResult<SdkProviderSt
         .truncate(false)
         .open(&lock_path)
         .map_err(|error| CliError::failure(format!("failed to open artifact lock {}: {error}", lock_path.display())))?;
-    file.lock().map_err(|error| {
-        CliError::failure(format!(
-            "failed to acquire artifact lock {}: {error}",
-            lock_path.display()
-        ))
-    })?;
+    // Try first, and say something before settling in to wait. Serializing the store is correct — two processes
+    // publishing providers at once is what this lock exists to prevent — but an unannounced block is
+    // indistinguishable from a hang, and preparing providers can take minutes. A command that has stopped printing
+    // for no stated reason gets misread as a compiler defect on whatever project happened to be open. See #1514.
+    if file.try_lock().is_err() {
+        eprintln!(
+            "Waiting for the SDK provider store at {}. Another Incan process holds its lock; this command \
+             continues as soon as that one releases it.",
+            store_root.display()
+        );
+        file.lock().map_err(|error| {
+            CliError::failure(format!(
+                "failed to acquire artifact lock {}: {error}",
+                lock_path.display()
+            ))
+        })?;
+    }
     Ok(SdkProviderStoreLock { _file: file })
 }
 
@@ -8686,6 +8697,58 @@ def main() -> None:
             relative,
             vec![PathBuf::from("nested/module.incn"), PathBuf::from("root.incn")]
         );
+        Ok(())
+    }
+
+    /// The store lock serializes, and a waiter is a waiter rather than a failure.
+    ///
+    /// This pins the behaviour the diagnostic sits on top of: a second acquirer blocks and then succeeds, instead
+    /// of failing or taking the lock. Timing distinguishes blocking from erroring; it does not assert a duration,
+    /// since the wait ends when the holder releases.
+    ///
+    /// It does **not** cover the message itself. Replacing the `try_lock` guard with `if false` leaves this test
+    /// passing, because the outer `lock()` blocks either way — so the diagnostic is verified by reading it, not by
+    /// this test. Covering it would mean routing one `eprintln!` through an injectable sink, which is more
+    /// structure than a single diagnostic earns. Recorded so the next reader does not assume otherwise.
+    #[test]
+    fn a_held_store_lock_makes_the_next_acquirer_wait_rather_than_fail() -> Result<(), Box<dyn std::error::Error>> {
+        let store = tempfile::tempdir()?;
+        let store_root = store.path().to_path_buf();
+
+        let held = acquire_sdk_provider_store_lock(&store_root)?;
+
+        let waiting_root = store_root.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            let acquired = acquire_sdk_provider_store_lock(&waiting_root);
+            let _ = tx.send(acquired.is_ok());
+        });
+
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_millis(250)).is_err(),
+            "a second acquirer must wait while the first holds the lock, not take it"
+        );
+
+        drop(held);
+        assert_eq!(
+            rx.recv_timeout(std::time::Duration::from_secs(10)),
+            Ok(true),
+            "releasing the lock must let the waiter through"
+        );
+        waiter
+            .join()
+            .map_err(|_| std::io::Error::other("lock waiter panicked"))?;
+        Ok(())
+    }
+
+    /// An uncontended lock is the common path and must stay silent and immediate.
+    #[test]
+    fn an_uncontended_store_lock_is_acquired_without_waiting() -> Result<(), Box<dyn std::error::Error>> {
+        let store = tempfile::tempdir()?;
+        let first = acquire_sdk_provider_store_lock(store.path())?;
+        drop(first);
+        let second = acquire_sdk_provider_store_lock(store.path())?;
+        drop(second);
         Ok(())
     }
 }
