@@ -54,6 +54,12 @@ impl std::error::Error for EmittedSymbolDecodeError {}
 
 /// Encode a complete canonical identity as one Rust-safe `incan-v1` item identifier.
 ///
+/// The identity includes its [`SymbolOrigin`], so the declaring module path is part of the emitted symbol. That has
+/// a consequence worth stating where it is created rather than rediscovering it downstream: splitting a module into
+/// submodules renames every symbol that moves, even when the source-level public API is unchanged and every moved
+/// item is re-exported under its original path. Such a split is therefore visible to a linker, and a build-identity
+/// closure that treated it as invisible would be under-invalidating. It is pinned by a test below.
+///
 /// The carrier is intentionally self-contained. It is not a hash or a key into compiler state: an artifact observer
 /// can reconstruct the complete identity from this identifier alone.
 pub fn encode_incan_symbol_identity(identity: &CanonicalSymbolId) -> String {
@@ -432,6 +438,37 @@ mod tests {
             assert!(emitted.chars().all(|ch| ch == '_' || ch.is_ascii_alphanumeric()));
             assert_eq!(decode_incan_symbol_identity(&emitted)?, Some(identity));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn moving_a_declaration_into_a_submodule_changes_its_emitted_symbol() -> Result<(), Box<dyn std::error::Error>> {
+        let span = crate::HirSourceSpan::new(0, 1);
+        let before = CanonicalSymbolId::module_declaration(
+            vec!["shapes".to_string()],
+            "area",
+            SemanticSourceTargetKind::Function,
+            span,
+        );
+        let after = CanonicalSymbolId::module_declaration(
+            vec!["shapes".to_string(), "detail".to_string()],
+            "area",
+            SemanticSourceTargetKind::Function,
+            span,
+        );
+
+        assert_ne!(
+            encode_incan_symbol_identity(&before),
+            encode_incan_symbol_identity(&after),
+            "a declaration's emitted symbol must name the module that declares it"
+        );
+        let decoded = decode_incan_symbol_identity(&encode_incan_symbol_identity(&after))?
+            .ok_or("an identity this crate encoded must decode as an Incan symbol")?;
+        assert_eq!(
+            decoded.module_path(),
+            Some(["shapes".to_string(), "detail".to_string()].as_slice()),
+            "and the moved declaration must decode back to the module it moved into"
+        );
         Ok(())
     }
 
