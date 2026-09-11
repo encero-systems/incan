@@ -37,8 +37,7 @@ fn generated(source: &str) -> Result<String, Box<dyn std::error::Error>> {
 /// call and the call inside the lambda name the same thing: the bare spelling is not declared anywhere in the
 /// generated Rust, so emitting it does not merely look wrong, it fails to compile.
 #[test]
-fn a_lambda_argument_to_a_rust_method_keeps_its_callee_identity_issue1492()
--> Result<(), Box<dyn std::error::Error>> {
+fn a_lambda_argument_to_a_rust_method_keeps_its_callee_identity_issue1492() -> Result<(), Box<dyn std::error::Error>> {
     let source = concat!(
         "from rust::std::option import Option as RustOption\n",
         "\n",
@@ -111,5 +110,37 @@ fn lambda_shapes_that_already_resolved_are_unchanged_issue1492() -> Result<(), B
             "the `{name}` shape regressed: `{DECLARATION}` emitted its bare source name\n\n{rust}"
         );
     }
+    Ok(())
+}
+
+/// A string literal passed to a generic stdlib method converts to the parameter's declared type.
+///
+/// See #1494. `list[str].append` already converts, because `CollectionMethodKind::Append` extracts the element
+/// type and emits through `ValueUseSite::CollectionElement`. `Deque` is Incan-authored, so its `append` is an
+/// ordinary call whose declared parameter drives the same `str` to `String` conversion.
+///
+/// This no longer reproduces on the dev line: the literal emits as `"default".into()`. Something merged after the
+/// issue was filed fixed it, and the combination had no test, so this is added as the regression cover the fix
+/// never got rather than as a change made here.
+#[test]
+fn a_string_literal_converts_for_a_generic_stdlib_method_issue1494() -> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "from std.collections import Deque\n",
+        "\n",
+        "pub def probe(requested: list[str]) -> None:\n",
+        "    mut pending = Deque[str].from_iter(requested)\n",
+        "    pending.append(\"default\")\n",
+    );
+    let rust = generated(source)?;
+    let appended = rust
+        .lines()
+        .find(|line| line.contains("\"default\""))
+        .map(str::trim)
+        .ok_or("the literal should appear in the generated Rust")?;
+    assert!(
+        appended.contains("to_string") || appended.contains("String::from") || appended.contains("into()"),
+        "the literal reached a `String` parameter unconverted, so the generated Rust will not compile:\n  \
+         {appended}\n\n{rust}"
+    );
     Ok(())
 }
