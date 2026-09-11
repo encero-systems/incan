@@ -30,6 +30,11 @@ ra_ap_paths = "0.0.325"
 ra_ap_project_model = "0.0.325"
 ra_ap_syntax = "0.0.325"
 ra_ap_vfs = "0.0.325"
+# Token-level Rust parsing for the declaration digest, pinned to the versions the compiler crate already builds so
+# the digest sees the same token model the Rust code generator emits against.
+syn = { version = "2.0", features = ["full", "parsing", "printing"] }
+proc-macro2 = "1.0"
+quote = "1.0"
 
 [dev-dependencies]
 tempfile = "3"

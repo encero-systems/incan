@@ -61,7 +61,7 @@ pub fn rust_tuple_arity(path: &str) -> Option<usize> {
 }
 
 /// Backend-neutral Incan type universe used by v0.5 middle-end facts.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum IncanType {
     /// Compiler-internal bottom type used for diverging interop expressions.
     Never,
@@ -192,7 +192,7 @@ fn write_joined_type_args(f: &mut fmt::Formatter<'_>, base: &str, args: &[IncanT
 }
 
 /// Primitive and primitive-like Incan types with compiler-owned semantics.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum IncanPrimitiveType {
     Int,
     Float,
@@ -222,7 +222,7 @@ impl fmt::Display for IncanPrimitiveType {
 }
 
 /// Callable parameter metadata preserved in semantic function types.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct IncanCallableParam {
     pub name: Option<String>,
     pub ty: IncanType,
@@ -246,7 +246,7 @@ impl fmt::Display for IncanCallableParam {
 }
 
 /// Source-level parameter shape for semantic callable types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum IncanCallableParamKind {
     Normal,
     RestPositional,
