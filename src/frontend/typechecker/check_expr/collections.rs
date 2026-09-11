@@ -104,6 +104,35 @@ impl TypeChecker {
         self.merge_collection_member_type(member_ty, value_ty, span);
     }
 
+    /// Refine only list element holes originating in the first member's empty literal.
+    ///
+    /// Compatibility alone accepts `list[Unknown]` against `list[str]`, but retaining that hole loses the owned
+    /// string representation downstream. The source witness prevents peer observations from refining unrelated
+    /// unknown call results or nominal generic arguments. Existing concrete leaves are never widened here.
+    fn refine_empty_list_member(member: &mut ResolvedType, observed: &ResolvedType, seed: &Expr) {
+        let Expr::List(entries) = seed else {
+            return;
+        };
+        let (ResolvedType::Generic(name, args), ResolvedType::Generic(other_name, other_args)) = (member, observed)
+        else {
+            return;
+        };
+        if collection_type_id(name) != Some(CollectionTypeId::List)
+            || collection_type_id(other_name) != Some(CollectionTypeId::List)
+            || args.len() != 1
+            || other_args.len() != 1
+        {
+            return;
+        }
+        if entries.is_empty() {
+            if matches!(args[0], ResolvedType::Unknown) {
+                args[0] = other_args[0].clone();
+            }
+        } else if let Some(ListEntry::Element(first)) = entries.first() {
+            Self::refine_empty_list_member(&mut args[0], &other_args[0], &first.node);
+        }
+    }
+
     /// Type-check a list literal with an optional destination-type hint.
     ///
     /// When a surrounding context already expects `List[T]`, empty lists adopt `T` directly and non-empty lists
@@ -116,11 +145,21 @@ impl TypeChecker {
     ) -> ResolvedType {
         let hinted_elem_ty = Self::list_expected_element_type(expected);
         let mut elem_ty = hinted_elem_ty.clone().unwrap_or(ResolvedType::Unknown);
+        let first_member = match elems.first() {
+            Some(ListEntry::Element(value)) => Some(&value.node),
+            _ => None,
+        };
 
         for elem in elems {
             match elem {
                 ListEntry::Element(value) => {
                     let value_ty = self.check_expr_with_expected(value, hinted_elem_ty.as_ref());
+                    if hinted_elem_ty.is_none()
+                        && let Some(seed) = first_member
+                        && self.types_compatible(&value_ty, &elem_ty)
+                    {
+                        Self::refine_empty_list_member(&mut elem_ty, &value_ty, seed);
+                    }
                     self.check_collection_member_type(hinted_elem_ty.as_ref(), &mut elem_ty, value_ty, value.span);
                 }
                 ListEntry::Spread(value) => {

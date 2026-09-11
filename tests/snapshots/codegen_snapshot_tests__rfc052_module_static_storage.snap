@@ -34,7 +34,7 @@ pub(crate) fn __incan_init_module_statics() {
 static counter: std::sync::LazyLock<incan_stdlib::storage::StaticCell<i64>> = std::sync::LazyLock::new(||
 incan_stdlib::storage::StaticCell::new(0));
 static items: std::sync::LazyLock<incan_stdlib::storage::StaticCell<Vec<i64>>> = std::sync::LazyLock::new(||
-incan_stdlib::storage::StaticCell::new(vec![]));
+incan_stdlib::storage::StaticCell::new(Vec::<i64>::new()));
 fn main() {
     __incan_init_module_statics();
     std::panic::set_hook(

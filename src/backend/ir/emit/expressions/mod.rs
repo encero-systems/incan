@@ -272,6 +272,15 @@ impl<'a> IrEmitter<'a> {
                     )),
                 })
                 .collect::<Result<_, _>>()?;
+            // An empty `vec![]` carries no element type. Where the literal appears as an operand rather than an
+            // initializer -- `features == []` -- there is nothing downstream to infer it from, and rustc reports an
+            // ambiguous `PartialEq`. Name the element type whenever it is known.
+            if item_tokens.is_empty()
+                && let Some(item_ty) = item_target_ty
+            {
+                let ty_tokens = self.emit_type(item_ty);
+                return Ok(quote! { Vec::<#ty_tokens>::new() });
+            }
             return Ok(quote! { vec![#(#item_tokens),*] });
         }
 

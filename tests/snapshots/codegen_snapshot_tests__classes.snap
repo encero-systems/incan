@@ -480,7 +480,7 @@ fn main() {
         Vec < String > = vec![format!("{}", counter.get_count())];
         incan_stdlib::strings::fstring(& __parts, & __args) }
     );
-    let items_list: Vec<i64> = vec![];
+    let items_list: Vec<i64> = Vec::<i64>::new();
     let mut stack: Stack = Stack { items: items_list };
     let _ = stack.push(10);
     let _ = stack.push(20);

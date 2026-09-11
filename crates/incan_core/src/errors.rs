@@ -12,6 +12,7 @@
 //! - Allow dynamic details without heap allocations (borrowed `&str` + primitive fields).
 
 use core::fmt;
+use serde::Serialize;
 
 use crate::strings::StringAccessError;
 
@@ -21,7 +22,7 @@ use crate::strings::StringAccessError;
 /// - User-facing metadata (canonical spelling, description, examples) lives in the language registry:
 ///   `crate::lang::errors`.
 /// - Keep this enum focused on identity; avoid duplicating docs/meaning here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum ErrorKind {
     AssertionError,
     ValueError,
