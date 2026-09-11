@@ -1396,10 +1396,22 @@ impl<'a> IrEmitter<'a> {
                     .iter()
                     .zip(field_tys.iter())
                     .map(|(a, ty)| {
+                        // A declared payload type is usable as a target only when it is resolved at this construction
+                        // site. A variant payload is spelled in the enum's own vocabulary — `Items(list[Elem])` built
+                        // as a `Holder[Picked]` — and that names nothing bound here, so targeting it emits
+                        // `Vec::<Elem>::new()` against a type parameter that does not exist in scope. The typechecker
+                        // substituted the enum's arguments into the argument when it checked it, so prefer the
+                        // argument's own type whenever the declared payload is still unresolved and it is not. See
+                        // #1516, and #1507 for the model-field half of the same defect.
+                        let target_ty = if Self::is_unresolved_call_seed_type(ty) && !Self::is_unresolved_type(&a.ty) {
+                            &a.ty
+                        } else {
+                            ty
+                        };
                         self.emit_expr_for_use(
                             a,
                             ValueUseSite::IncanCallArg {
-                                target_ty: Some(ty),
+                                target_ty: Some(target_ty),
                                 callee_param: None,
                                 in_return: false,
                             },
