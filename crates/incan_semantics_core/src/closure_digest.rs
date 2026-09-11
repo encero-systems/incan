@@ -110,7 +110,10 @@ pub fn closure_digests(nodes: &BTreeMap<String, DependencyNode>) -> BTreeMap<Str
 ///
 /// Without a length, two identities differing only in where their boundary falls encode identically — the same
 /// collision [`crate::semantic_digest`] guards against.
-fn update_delimited(hasher: &mut Sha256, value: &[u8]) {
+///
+/// Public so that every fold in the codebase shares one implementation, and therefore one guard test. A second
+/// copy would need its own, and the copy without one is the copy that silently loses the property.
+pub fn update_delimited(hasher: &mut Sha256, value: &[u8]) {
     hasher.update((value.len() as u64).to_le_bytes());
     hasher.update(value);
 }

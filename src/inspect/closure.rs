@@ -12,7 +12,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use incan_codegraph::{CodegraphRecord, CodegraphStableDeclarationId};
-use incan_semantics_core::closure_digest::{DependencyNode, closure_digests};
+use incan_semantics_core::closure_digest::{DependencyNode, closure_digests, update_delimited};
+use sha2::{Digest, Sha256};
 
 /// Render one exported identity into the key the fold uses.
 ///
@@ -110,6 +111,72 @@ pub fn closure_digests_for_export(records: &[CodegraphRecord]) -> BTreeMap<Strin
     closure_digests(&nodes)
 }
 
+/// The set of declarations a consumer of this unit can observe.
+///
+/// RFC 106 roots the external closure at public declarations and extends it by reachability: visibility marks the
+/// roots, reachability decides membership. A private declaration a public one depends on is part of the external
+/// surface — not an exception to the rule, an instance of it — because a consumer does not merely link against
+/// public signatures, it instantiates parts of what it depends on. Generic bodies are monomorphised in the
+/// consumer's crate, inlinable bodies are code-generated there, and compile-time-evaluated bodies are evaluated
+/// there.
+///
+/// This follows *every* edge out of a public declaration, which is the loose variant RFC 106 describes as sound but
+/// not tight: for an ordinary non-generic, non-inline public function a consumer only ever observes the signature,
+/// so its private callees are not in fact externally visible, and including them over-reports. Over-reporting costs
+/// a rebuild; under-reporting ships a stale artifact. The tighter variant needs to know which bodies a consumer can
+/// instantiate, which is not exported yet, so the safe version goes first and the improvement can then be measured
+/// against it rather than guessed at.
+pub fn external_closure(records: &[CodegraphRecord]) -> BTreeSet<String> {
+    let (nodes, _) = dependency_graph(records);
+
+    let mut frontier: Vec<String> = records
+        .iter()
+        .filter_map(|record| match record {
+            CodegraphRecord::Declaration(declaration) if declaration.visibility == "public" => {
+                declaration.stable_identity.as_ref().map(identity_key)
+            }
+            _ => None,
+        })
+        .collect();
+
+    let mut reached: BTreeSet<String> = frontier.iter().cloned().collect();
+    while let Some(current) = frontier.pop() {
+        let Some(node) = nodes.get(&current) else {
+            continue;
+        };
+        for dependency in &node.dependencies {
+            if reached.insert(dependency.clone()) {
+                frontier.push(dependency.clone());
+            }
+        }
+    }
+    reached
+}
+
+/// Digest what a consumer of this unit can observe.
+///
+/// Paired with [`closure_digests_for_export`], this is the internal/external split RFC 124 folds into unit identity:
+/// the internal digest decides whether *this* unit is rebaked, the external one whether its *dependents* are. A
+/// change confined to a unit's internals moves the first and not the second.
+///
+/// Folding the external closure's members in identity order keeps the result independent of traversal, for the same
+/// reason the per-declaration fold does.
+pub fn external_digest(records: &[CodegraphRecord]) -> String {
+    let digests = closure_digests_for_export(records);
+    let external = external_closure(records);
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"external-v1");
+    for member in &external {
+        // A member with no closure digest is recorded as unresolved rather than skipped: an external surface that
+        // silently omitted part of itself would under-report, which is the direction that ships a stale artifact.
+        let digest = digests.get(member).map(String::as_str).unwrap_or("unresolved");
+        update_delimited(&mut hasher, member.as_bytes());
+        update_delimited(&mut hasher, digest.as_bytes());
+    }
+    format!("sha256:{}", hex::encode(hasher.finalize()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,13 +198,17 @@ mod tests {
     }
 
     fn declaration(id: &str, name: &str, digest: Option<&str>) -> CodegraphRecord {
+        declaration_with(id, name, digest, "public")
+    }
+
+    fn declaration_with(id: &str, name: &str, digest: Option<&str>, visibility: &str) -> CodegraphRecord {
         CodegraphRecord::Declaration(CodegraphDeclarationRecord {
             id: id.to_string(),
             language: CodegraphLanguage::Incan,
             module_id: "m".to_string(),
             kind: "function".to_string(),
             name: name.to_string(),
-            visibility: "public".to_string(),
+            visibility: visibility.to_string(),
             type_params: Vec::new(),
             signature: None,
             canonical_identity: None,
@@ -215,5 +286,66 @@ mod tests {
         let (nodes, _) = dependency_graph(&[declaration("d:x", "x", None)]);
         let key = identity_key(&identity("x"));
         assert_eq!(nodes[&key].digest, "unresolved");
+    }
+
+    /// A private declaration a public one reaches is part of the external surface.
+    ///
+    /// This is the rule that makes the split correct rather than convenient: a consumer instantiates parts of what
+    /// it depends on, so "private" does not mean "invisible".
+    #[test]
+    fn a_private_declaration_reached_from_a_public_one_is_external() {
+        let records = [
+            declaration_with("d:api", "api", Some("d1"), "public"),
+            declaration_with("d:helper", "helper", Some("d2"), "private"),
+            declaration_with("d:alone", "alone", Some("d3"), "private"),
+            call("d:api", Some("helper")),
+        ];
+        let external = external_closure(&records);
+        assert!(
+            external.contains(&identity_key(&identity("api"))),
+            "a public declaration is a root"
+        );
+        assert!(
+            external.contains(&identity_key(&identity("helper"))),
+            "a private declaration a public one reaches is observable"
+        );
+        assert!(
+            !external.contains(&identity_key(&identity("alone"))),
+            "a private declaration nothing public reaches is not: {external:?}"
+        );
+    }
+
+    /// An internal-only change must move the unit's own digests and not what its dependents see.
+    ///
+    /// This is the whole point of carrying two identities: without it, every private edit propagates through the
+    /// closure and the split buys nothing.
+    #[test]
+    fn an_internal_only_change_does_not_move_the_external_digest() {
+        let build = |private_digest: &str| {
+            let records = [
+                declaration_with("d:api", "api", Some("d1"), "public"),
+                declaration_with("d:alone", "alone", Some(private_digest), "private"),
+            ];
+            (
+                closure_digests_for_export(&records)[&identity_key(&identity("alone"))].clone(),
+                external_digest(&records),
+            )
+        };
+        let (before_internal, before_external) = build("d2");
+        let (after_internal, after_external) = build("CHANGED");
+
+        assert_ne!(before_internal, after_internal, "the edited declaration itself moves");
+        assert_eq!(
+            before_external, after_external,
+            "nothing a consumer can observe changed, so dependents must not rebuild"
+        );
+    }
+
+    /// A change a consumer can observe must move the external digest.
+    #[test]
+    fn a_public_change_moves_the_external_digest() {
+        let build =
+            |public_digest: &str| external_digest(&[declaration_with("d:api", "api", Some(public_digest), "public")]);
+        assert_ne!(build("d1"), build("CHANGED"));
     }
 }
