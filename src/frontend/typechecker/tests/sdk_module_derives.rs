@@ -165,6 +165,7 @@ fn sdk_module_derives_trait_alias_retains_target_macro() -> TestResult {
             span: SourceSpan { start: 0, end: 1 },
         },
         target_path: vec!["std".into(), "bundle_probe".into(), "Included".into()],
+        projected_type: None,
         is_public: true,
         projected_function: None,
     })];

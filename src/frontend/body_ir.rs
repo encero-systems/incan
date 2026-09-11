@@ -126,7 +126,32 @@ pub fn build_body_ir_module_v0(
     module_path: &[String],
     type_info: &TypeCheckInfo,
 ) -> bir::BodyIrModule {
-    build_body_ir_module_v0_with_provider_operations(program, module_path, type_info, &ProviderOperationCatalog::new())
+    build_body_ir_module_v0_with_provider_operations(
+        program,
+        module_path,
+        type_info,
+        &ProviderOperationCatalog::new(),
+        &[],
+    )
+}
+
+/// Lower local checked source with canonical type contexts decoded from its selected package artifacts.
+///
+/// Context only supplies the declaring compilation's type layout. References and argument bindings still come from
+/// the consumer's existing typecheck facts, and imported declarations are matched by canonical identity.
+pub fn build_body_ir_module_v0_with_executable_context(
+    program: &ast::Program,
+    module_path: &[String],
+    type_info: &TypeCheckInfo,
+    context: &[bir::BodyIrModule],
+) -> bir::BodyIrModule {
+    build_body_ir_module_v0_with_provider_operations(
+        program,
+        module_path,
+        type_info,
+        &ProviderOperationCatalog::new(),
+        context,
+    )
 }
 
 /// Prepare one manifest-free parsed module so it satisfies [`build_body_ir_module_v0`]'s input contract.
@@ -182,6 +207,7 @@ pub fn build_body_ir_module_v0_with_provider_plan(
         module_path,
         type_info,
         &provider_operations,
+        &[],
     ))
 }
 
@@ -198,26 +224,38 @@ fn build_body_ir_module_v0_with_provider_operations(
     module_path: &[String],
     type_info: &TypeCheckInfo,
     provider_operations: &ProviderOperationCatalog,
+    context: &[bir::BodyIrModule],
 ) -> bir::BodyIrModule {
     let module_identity = body_ir_module_identity(module_path);
     let module_id = CompilerNodeId::module(module_identity.clone());
     let function_default_sources = collect_function_default_sources(program);
     let local_function_declarations = collect_local_function_declarations(program);
     let nominal_declarations = collect_local_nominal_declarations(program, &module_identity, type_info);
-    let local_nominal_declarations = nominal_declarations
+    let mut local_nominal_declarations = nominal_declarations
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
         .collect::<LocalNominalDeclarations>();
     let fieldless_enum_declarations = collect_local_fieldless_enum_declarations(program, &module_identity, type_info);
-    let local_fieldless_enum_declarations = fieldless_enum_declarations
+    let mut local_fieldless_enum_declarations = fieldless_enum_declarations
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
         .collect::<LocalFieldlessEnumDeclarations>();
     let value_enum_declarations = collect_local_value_enum_declarations(program, &module_identity, type_info);
-    let local_value_enum_declarations = value_enum_declarations
+    let mut local_value_enum_declarations = value_enum_declarations
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
         .collect::<LocalValueEnumDeclarations>();
+    for module in context {
+        for declaration in &module.nominal_declarations {
+            local_nominal_declarations.insert(declaration.canonical.render_compact(), declaration.clone());
+        }
+        for declaration in &module.fieldless_enum_declarations {
+            local_fieldless_enum_declarations.insert(declaration.canonical.render_compact(), declaration.clone());
+        }
+        for declaration in &module.value_enum_declarations {
+            local_value_enum_declarations.insert(declaration.canonical.render_compact(), declaration.clone());
+        }
+    }
     let lowering_facts = BodyIrLoweringFacts {
         type_info,
         function_default_sources: &function_default_sources,
@@ -449,11 +487,11 @@ struct BodyBuilder<'type_info, 'source> {
     function_default_sources: &'source FunctionDefaultSources,
     /// Exact declarations physically present in this module, used only to retain same-module call identities.
     local_function_declarations: &'source LocalFunctionDeclarations,
-    /// Source-local plain-model declarations, used only to retain an exact constructor target identity.
+    /// Checked local and selected package models, used to retain exact constructor identity and layout.
     local_nominal_declarations: &'source LocalNominalDeclarations,
-    /// Source-local fieldless normal-enum declarations, used only to retain exact unit-member target identities.
+    /// Checked local and selected package fieldless enums, used to retain exact unit-member target identities.
     local_fieldless_enum_declarations: &'source LocalFieldlessEnumDeclarations,
-    /// Source-local RFC 032 value-enum declarations, used only to retain an exact member target identity.
+    /// Checked local and selected package value enums, used to retain exact member target identity.
     local_value_enum_declarations: &'source LocalValueEnumDeclarations,
     /// Owning module identity used to construct a source-span declaration identity without consulting a backend.
     module_identity: &'source str,

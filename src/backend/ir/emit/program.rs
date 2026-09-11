@@ -3965,6 +3965,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit a program to TokenStream (without formatting).
     pub fn emit_program_tokens(&self, program: &IrProgram) -> Result<TokenStream, EmitError> {
+        self.emitted_native_unions.borrow_mut().clear();
         self.set_static_projections(program)?;
         let mut items = Vec::new();
         let analysis =
@@ -4094,8 +4095,9 @@ impl<'a> IrEmitter<'a> {
             }
             let mut union_type_items: Vec<_> = canonical_union_types.into_iter().collect();
             union_type_items.sort_by(|(left, _), (right, _)| left.cmp(right));
-            for (_, union_ty) in union_type_items {
+            for (name, union_ty) in union_type_items {
                 if let Some(item) = self.emit_generated_union_type(&union_ty) {
+                    self.emitted_native_unions.borrow_mut().insert(name, union_ty);
                     items.push(item);
                 }
             }
@@ -4364,6 +4366,7 @@ mod tests {
     fn external_provider_union() -> IrType {
         IrType::ExternalUnion {
             library: "provider".to_string(),
+            native: None,
             union: Box::new(provider_union()),
         }
     }
@@ -4400,6 +4403,7 @@ mod tests {
         ]);
         let foreign_union = IrType::ExternalUnion {
             library: "other".to_string(),
+            native: None,
             union: Box::new(qualified_provider_union.clone()),
         };
 

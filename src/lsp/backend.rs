@@ -3906,8 +3906,8 @@ fn format_param(param: &ParamExport) -> String {
 /// Format a manifest-level type reference for concise hover display.
 fn format_type_ref(ty: &TypeRef) -> String {
     match ty {
-        TypeRef::Named { name } => name.clone(),
-        TypeRef::Applied { name, args } => {
+        TypeRef::Named { name, .. } => name.clone(),
+        TypeRef::Applied { name, args, .. } => {
             format!(
                 "{name}[{}]",
                 args.iter().map(format_type_ref).collect::<Vec<_>>().join(", ")
@@ -3931,6 +3931,12 @@ fn format_type_ref(ty: &TypeRef) -> String {
         TypeRef::SelfType => "Self".to_string(),
         TypeRef::Ref { inner } => format!("ref {}", format_type_ref(inner)),
         TypeRef::RustPath { path } => format!("rust::{path}"),
+        TypeRef::NativeUnion(native) => native
+            .members
+            .iter()
+            .map(format_type_ref)
+            .collect::<Vec<_>>()
+            .join(" | "),
         TypeRef::Unknown => "_".to_string(),
     }
 }

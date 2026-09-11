@@ -18,6 +18,7 @@ pub(crate) mod ast_walk;
 pub mod body_ir;
 pub mod contract_metadata;
 pub mod decorator_resolution;
+pub mod executable_resolution;
 pub(crate) mod feature_metadata;
 pub mod hir;
 pub mod library_exports;

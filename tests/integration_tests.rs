@@ -17474,6 +17474,7 @@ pub type StrictPort = newtype int
         assert_eq!(
             positive_box.underlying,
             TypeRef::Named {
+                origin: None,
                 name: "PublicPositive".to_string()
             }
         );

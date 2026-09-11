@@ -227,14 +227,14 @@ fn generated_callable_artifact_and_consumers_share_producer_build() -> Result<()
     assert!(matches!(
         function_param_ty(&manifest, "map_owned", "f")?,
         TypeRef::Function { params, return_type }
-            if matches!(params.as_slice(), [TypeRef::Named { name }] if name == "int")
-                && matches!(&**return_type, TypeRef::Named { name } if name == "int")
+            if matches!(params.as_slice(), [TypeRef::Named { name, .. }] if name == "int")
+                && matches!(&**return_type, TypeRef::Named { name, .. } if name == "int")
     ));
     assert!(matches!(
         function_param_ty(&manifest, "inspect_payload", "f")?,
         TypeRef::Function { params, return_type }
-            if matches!(params.as_slice(), [TypeRef::Named { name }] if name == "Payload")
-                && matches!(&**return_type, TypeRef::Named { name } if name == "Unit")
+            if matches!(params.as_slice(), [TypeRef::Named { name, .. }] if name == "Payload")
+                && matches!(&**return_type, TypeRef::Named { name, .. } if name == "Unit")
     ));
 
     let (owned_consumer, owned_main_path) = write_consumer(

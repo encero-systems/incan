@@ -83,6 +83,19 @@ pub(super) fn collect_local_nominal_declarations(
                 name: model.name.clone(),
                 fields: model.fields.iter().map(|field| field.node.name.clone()).collect(),
                 field_identities,
+                field_types: model
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        type_info
+                            .declarations
+                            .model_field_types
+                            .get(&(field.span.start, field.span.end))
+                            .map(semantic_type_from_resolved)
+                            .unwrap_or(IncanType::Unknown)
+                    })
+                    .collect(),
+                named_type_identities: type_info.declarations.named_type_identities.clone(),
                 type_parameter_count: model.type_params.len(),
             })
         })

@@ -5,8 +5,10 @@
 
 mod artifact;
 mod model;
+pub mod published_layout;
 #[cfg(test)]
 mod tests;
+mod type_projection;
 mod type_refs;
 mod validation;
 mod wire;
@@ -22,11 +24,15 @@ pub(crate) use artifact::{
     digest_toolchain_source_tree_with_cache,
 };
 pub use model::*;
+pub(crate) use type_projection::{
+    VisitTypeRefs, contains_native_union, with_checked_native_unions, with_checked_type_origins,
+    with_checked_type_routes, with_native_nominal_origins,
+};
 pub use type_refs::resolved_type_from_manifest_type_ref;
 pub(crate) use type_refs::type_ref_from_resolved;
 
 /// Stable on-disk format version for `.incnlib` manifests.
-pub const LIBRARY_MANIFEST_FORMAT: u32 = 3;
+pub const LIBRARY_MANIFEST_FORMAT: u32 = 4;
 
 /// Stable schema version for generic provider metadata embedded in `.incnlib` manifests.
 pub const COMPILED_PROVIDER_METADATA_SCHEMA_VERSION: u32 = 1;

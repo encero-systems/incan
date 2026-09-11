@@ -8,7 +8,8 @@ use incan_core::lang::conventions::validate_package_feature_identifier;
 use serde::Serialize;
 
 use crate::frontend::library_manifest_index::{
-    LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry, load_provider_dependency_artifact,
+    LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry, dependency_project_root,
+    load_provider_dependency_artifact,
 };
 use crate::library_manifest::{
     LibraryManifest, ProviderDependencyKind, ProviderDependencyMetadata, ProviderFeatureMetadata,
@@ -251,6 +252,18 @@ pub enum PackageFeaturePlanError {
         /// Exact load, identity, projection, or integrity failure.
         message: String,
     },
+    /// A direct source route and an admitted compiled route describe different feature/dependency graphs.
+    #[error(
+        "package `{package}` has conflicting feature/dependency authority in {source_manifest} and compiled artifact {artifact_manifest}; rebake the provider from the intended source before combining these routes"
+    )]
+    SourceArtifactDisagreement {
+        /// Package reached through both routes.
+        package: String,
+        /// Source manifest already used by the direct route.
+        source_manifest: PathBuf,
+        /// Exact compiled manifest selected by the public dependency edge.
+        artifact_manifest: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -288,6 +301,7 @@ impl PackageFeaturePlan {
     ) -> Result<Self, PackageFeaturePlanError> {
         let root = normalize_project_root(root_manifest.project_root());
         let mut manifests = BTreeMap::from([(root.clone(), root_manifest.clone())]);
+        let mut source_graphs = BTreeMap::new();
         let mut compiled_packages = BTreeMap::<PathBuf, CompiledFeaturePackage>::new();
         let mut requests = BTreeMap::from([(
             root.clone(),
@@ -316,14 +330,21 @@ impl PackageFeaturePlan {
             }
             processed.insert(project_root.clone(), request.clone());
 
-            let manifest = match manifests.get(&project_root) {
-                Some(manifest) => Some(manifest.clone()),
-                None if project_root.join(LOAF_MANIFEST_FILENAME).is_file() => {
-                    let loaded = read_exact_project_manifest(&project_root)?;
-                    manifests.insert(project_root.clone(), loaded.clone());
-                    Some(loaded)
+            // A compiled edge selected exact feature/dependency metadata. Recovering its package coordinate must not
+            // substitute a still-present authoring manifest for that admitted artifact, including one reached earlier
+            // through a direct source edge.
+            let manifest = if compiled_packages.contains_key(&project_root) {
+                None
+            } else {
+                match manifests.get(&project_root) {
+                    Some(manifest) => Some(manifest.clone()),
+                    None if project_root.join(LOAF_MANIFEST_FILENAME).is_file() => {
+                        let loaded = read_exact_project_manifest(&project_root)?;
+                        manifests.insert(project_root.clone(), loaded.clone());
+                        Some(loaded)
+                    }
+                    None => None,
                 }
-                None => None,
             };
             let Some(manifest) = manifest else {
                 let Some(compiled_package) = compiled_packages.get(&project_root).cloned() else {
@@ -404,6 +425,17 @@ impl PackageFeaturePlan {
                         });
                     }
                 }
+                if let (Some(source), Some(source_graph)) =
+                    (manifests.get(&project_root), source_graphs.get(&project_root))
+                {
+                    validate_compiled_feature_source_agreement(
+                        source,
+                        source_graph,
+                        &compiled_package,
+                        &graph,
+                        &resolved,
+                    )?;
+                }
                 packages.insert(
                     project_root.clone(),
                     ResolvedPackageFeatureState {
@@ -454,7 +486,14 @@ impl PackageFeaturePlan {
                     if dependency.kind == ProviderDependencyKind::PrivateImplementation {
                         continue;
                     }
-                    let dependency_root = dependency_artifact.crate_root.clone();
+                    // The conventional artifact directory is a delivery coordinate inside the same package root used by
+                    // source-backed edges. Removing source must not split that package into a new feature instance or
+                    // change its semantic lock identity. Arbitrary installed roots retain their own coordinate; only
+                    // the existing checked layout inverse may recover a producer project root.
+                    let dependency_root = normalize_project_root(
+                        &dependency_project_root(&dependency_artifact.crate_root)
+                            .unwrap_or_else(|| dependency_artifact.crate_root.clone()),
+                    );
                     edges.insert(
                         (
                             project_root.clone(),
@@ -482,13 +521,18 @@ impl PackageFeaturePlan {
                         );
                     }
                     dependency_request.enable_default |= dependency.default_features;
-                    compiled_packages.insert(
-                        dependency_root.clone(),
-                        CompiledFeaturePackage {
-                            manifest: dependency_manifest,
-                            artifact: dependency_artifact,
-                        },
-                    );
+                    let first_compiled_edge = compiled_packages
+                        .insert(
+                            dependency_root.clone(),
+                            CompiledFeaturePackage {
+                                manifest: dependency_manifest,
+                                artifact: dependency_artifact,
+                            },
+                        )
+                        .is_none();
+                    if first_compiled_edge {
+                        processed.remove(&dependency_root);
+                    }
                     if dependency_request != &previous || !processed.contains_key(&dependency_root) {
                         pending.push(dependency_root);
                     }
@@ -496,15 +540,12 @@ impl PackageFeaturePlan {
                 continue;
             };
             let package_name = manifest_package_name(&manifest, &project_root);
-            let graph = PackageFeatureGraph::from_manifest(&manifest).map_err(|source| {
-                let location = feature_error_location(manifest.path(), &source);
-                PackageFeaturePlanError::PackageGraph {
-                    package: package_name.clone(),
-                    manifest_path: manifest.path().to_path_buf(),
-                    location,
-                    source: Box::new(source),
+            let graph = match source_graphs.entry(project_root.clone()) {
+                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(checked_source_feature_graph(&manifest)?)
                 }
-            })?;
+            };
             let selection = FeatureSelection {
                 requested: request.requested.clone(),
                 no_default_features: !request.enable_default,
@@ -550,6 +591,14 @@ impl PackageFeaturePlan {
                     continue;
                 };
                 let dependency_root = normalize_project_root(&dependency.path);
+                // Retain direct source authority when its edge is observed, before traversal order can select a
+                // compiled route to the same package. The normalized feature graph is constructed once and reused.
+                if !manifests.contains_key(&dependency_root) && dependency_root.join(LOAF_MANIFEST_FILENAME).is_file() {
+                    let source = read_exact_project_manifest(&dependency_root)?;
+                    source_graphs.insert(dependency_root.clone(), checked_source_feature_graph(&source)?);
+                    manifests.insert(dependency_root.clone(), source);
+                    processed.remove(&dependency_root);
+                }
                 let mut requested_features = dependency.features.iter().cloned().collect::<BTreeSet<_>>();
                 if let Some(conditioned) = resolved.dependency_features.get(&dependency_key) {
                     requested_features.extend(conditioned.iter().cloned());
@@ -628,6 +677,79 @@ impl PackageFeaturePlan {
     pub fn root_package(&self) -> Option<&ResolvedPackageFeatureState> {
         self.packages.get(&self.root)
     }
+}
+
+/// Verify a previously traversed direct source route before switching the same package to compiled authority.
+///
+/// Additive requests from that route may already have reached other packages. Equal normalized feature definitions
+/// and active dependency edges ensure those requests remain valid; a disagreement must fail instead of retaining
+/// stale source-derived edges under a compiled artifact's identity. This uses the already parsed source manifest.
+fn validate_compiled_feature_source_agreement(
+    source: &ProjectManifest,
+    source_graph: &PackageFeatureGraph,
+    compiled: &CompiledFeaturePackage,
+    graph: &PackageFeatureGraph,
+    resolved: &ResolvedPackageFeatures,
+) -> Result<(), PackageFeaturePlanError> {
+    let disagreement = || PackageFeaturePlanError::SourceArtifactDisagreement {
+        package: compiled.manifest.name.clone(),
+        source_manifest: source.path().to_path_buf(),
+        artifact_manifest: compiled.artifact.manifest_path.clone(),
+    };
+    if manifest_package_name(source, source.project_root()) != compiled.manifest.name
+        || source_graph.definitions != graph.definitions
+    {
+        return Err(disagreement());
+    }
+    let source_edges = source
+        .library_dependencies()
+        .iter()
+        .filter(|(key, dependency)| !dependency.optional || resolved.active_optional_dependencies.contains(*key))
+        .map(|(key, dependency)| {
+            let mut features = dependency.features.iter().cloned().collect::<BTreeSet<_>>();
+            features.extend(resolved.dependency_features.get(key).into_iter().flatten().cloned());
+            (
+                key.clone(),
+                normalize_project_root(&dependency.path),
+                features,
+                dependency.default_features,
+                dependency.optional,
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    let compiled_edges = compiled
+        .manifest
+        .contract_metadata
+        .provider
+        .provider_dependencies
+        .iter()
+        .filter(|dependency| dependency.kind == ProviderDependencyKind::PublicPackage)
+        .map(|dependency| {
+            let artifact_root = compiled.artifact.crate_root.join(&dependency.relative_artifact_path);
+            let root = dependency_project_root(&artifact_root).unwrap_or(artifact_root);
+            (
+                dependency.dependency_key.clone(),
+                normalize_project_root(&root),
+                dependency.requested_features.clone(),
+                dependency.default_features,
+                dependency.optional,
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    if source_edges != compiled_edges {
+        return Err(disagreement());
+    }
+    Ok(())
+}
+
+/// Normalize one source-owned feature graph once, retaining its exact manifest diagnostics for every route.
+fn checked_source_feature_graph(manifest: &ProjectManifest) -> Result<PackageFeatureGraph, PackageFeaturePlanError> {
+    PackageFeatureGraph::from_manifest(manifest).map_err(|source| PackageFeaturePlanError::PackageGraph {
+        package: manifest_package_name(manifest, manifest.project_root()),
+        manifest_path: manifest.path().to_path_buf(),
+        location: feature_error_location(manifest.path(), &source),
+        source: Box::new(source),
+    })
 }
 
 /// Select an active-inventory crate root for one frozen private SDK edge before reading its historical cache path.
@@ -1438,6 +1560,148 @@ serializer = { path = "../serializer", optional = true, default-features = false
             }]))
         );
         assert_eq!(plan.edges().count(), 1);
+        Ok(())
+    }
+
+    /// Removing authoring manifests preserves package and edge identity for the same admitted artifact closure.
+    #[test]
+    fn source_removal_preserves_transitive_package_coordinates() -> TestResult {
+        let workspace = tempfile::tempdir()?;
+        let catalog = workspace.path().join("catalog");
+        let facade = workspace.path().join("facade");
+        let consumer = workspace.path().join("consumer");
+        for (root, name, dependencies) in [
+            (
+                &catalog,
+                "catalog",
+                "\n[dependencies]\ninactive = { path = \"../absent\", optional = true }\n",
+            ),
+            (
+                &facade,
+                "facade",
+                "\n[dependencies]\ncatalog = { path = \"../catalog\" }\n",
+            ),
+            (
+                &consumer,
+                "consumer",
+                "\n[dependencies]\nfacade = { path = \"../facade\" }\n",
+            ),
+        ] {
+            fs::create_dir_all(root)?;
+            fs::write(
+                root.join(LOAF_MANIFEST_FILENAME),
+                format!("[project]\nname = \"{name}\"\nversion = \"0.5.0\"\n{dependencies}"),
+            )?;
+        }
+        let catalog_artifact = catalog.join("target/lib");
+        let facade_artifact = facade.join("target/lib");
+        write_test_provider_artifact(&catalog_artifact, "catalog")?;
+        write_test_provider_artifact(&facade_artifact, "facade")?;
+        LibraryManifest::new("catalog", "0.5.0").write_to_path(&catalog_artifact.join("catalog.incnlib"))?;
+        let mut facade_manifest = LibraryManifest::new("facade", "0.5.0");
+        facade_manifest
+            .contract_metadata
+            .provider
+            .provider_dependencies
+            .push(ProviderDependencyMetadata {
+                kind: ProviderDependencyKind::PublicPackage,
+                dependency_key: "catalog".to_string(),
+                provider_name: "catalog".to_string(),
+                provider_version: "0.5.0".to_string(),
+                artifact_digest: digest_provider_artifact(&catalog_artifact)?,
+                relative_artifact_path: "../../../catalog/target/lib".to_string(),
+                requested_features: BTreeSet::new(),
+                default_features: true,
+                optional: false,
+            });
+        facade_manifest.write_to_path(&facade_artifact.join("facade.incnlib"))?;
+        let manifest = ProjectManifest::discover(&consumer)?.ok_or("missing consumer manifest")?;
+        let before = PackageFeaturePlan::resolve(&manifest, &FeatureSelection::default())?;
+        fs::remove_file(facade.join(LOAF_MANIFEST_FILENAME))?;
+        let partial = PackageFeaturePlan::resolve(&manifest, &FeatureSelection::default())?;
+        assert_eq!(before.edges().collect::<Vec<_>>(), partial.edges().collect::<Vec<_>>());
+        let partial_catalog = partial.package(&catalog).ok_or("missing compiled catalog")?;
+        assert!(partial_catalog.manifest.is_none());
+        let mut mixed_routes = Vec::new();
+        for (facade_key, catalog_key) in [("a_facade", "z_catalog"), ("z_facade", "a_catalog")] {
+            let mixed = ProjectManifest::from_str(
+                &format!(
+                    "[project]\nname = \"consumer\"\n[dependencies]\n{facade_key} = {{ path = \"../facade\" }}\n{catalog_key} = {{ path = \"../catalog\" }}\n"
+                ),
+                &consumer.join(LOAF_MANIFEST_FILENAME),
+            )?;
+            let mixed_plan = PackageFeaturePlan::resolve(&mixed, &FeatureSelection::default())?;
+            assert_eq!(mixed_plan.packages().count(), 3);
+            assert_eq!(mixed_plan.edges().count(), 3);
+            assert!(
+                mixed_plan
+                    .package(&catalog)
+                    .ok_or("missing shared catalog")?
+                    .manifest
+                    .is_none()
+            );
+            mixed_routes.push(mixed);
+        }
+        // The compiled edge freezes authority even if its remaining source manifest later diverges.
+        fs::write(
+            catalog.join(LOAF_MANIFEST_FILENAME),
+            "[project]\nname = \"unpublished_catalog\"\n[project.features]\ndefault = [\"changed\"]\nchanged = []\n",
+        )?;
+        let changed_source = PackageFeaturePlan::resolve(&manifest, &FeatureSelection::default())?;
+        let unchanged_catalog = changed_source.package(&catalog).ok_or("missing admitted catalog")?;
+        assert_eq!(unchanged_catalog.package_name, "catalog");
+        assert!(unchanged_catalog.features.active_features.is_empty());
+        assert!(unchanged_catalog.manifest.is_none());
+        for mixed in mixed_routes {
+            assert!(matches!(
+                PackageFeaturePlan::resolve(&mixed, &FeatureSelection::default()),
+                Err(PackageFeaturePlanError::SourceArtifactDisagreement { .. }),
+            ));
+        }
+        fs::remove_file(catalog.join(LOAF_MANIFEST_FILENAME))?;
+        let after = PackageFeaturePlan::resolve(&manifest, &FeatureSelection::default())?;
+        assert_eq!(
+            before
+                .packages()
+                .map(|package| (
+                    &package.package_name,
+                    &package.project_root,
+                    &package.active_dependencies
+                ))
+                .collect::<Vec<_>>(),
+            after
+                .packages()
+                .map(|package| (
+                    &package.package_name,
+                    &package.project_root,
+                    &package.active_dependencies
+                ))
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(before.edges().collect::<Vec<_>>(), after.edges().collect::<Vec<_>>());
+        assert!(after.package(&catalog).is_some());
+        assert!(after.package(&catalog_artifact).is_none());
+        // A nonconventional installed artifact has no inferred producer root; retain its exact coordinate.
+        let installed = workspace.path().join("installed-catalog");
+        fs::rename(&catalog_artifact, &installed)?;
+        facade_manifest.contract_metadata.provider.provider_dependencies[0].relative_artifact_path =
+            "../../../installed-catalog".to_string();
+        facade_manifest.write_to_path(&facade_artifact.join("facade.incnlib"))?;
+        let installed_plan = PackageFeaturePlan::resolve(&manifest, &FeatureSelection::default())?;
+        assert!(installed_plan.package(&installed).is_some());
+        assert!(installed_plan.package(&catalog).is_none());
+        let mut incompatible = LibraryManifest::read_from_path(&installed.join("catalog.incnlib"))?;
+        incompatible.contract_metadata.provider.public_features =
+            BTreeMap::from([("json".to_string(), ProviderFeatureMetadata::default())]);
+        incompatible.contract_metadata.provider.active_features = BTreeSet::from(["json".to_string()]);
+        incompatible.write_to_path(&installed.join("catalog.incnlib"))?;
+        facade_manifest.contract_metadata.provider.provider_dependencies[0].artifact_digest =
+            digest_provider_artifact(&installed)?;
+        facade_manifest.write_to_path(&facade_artifact.join("facade.incnlib"))?;
+        assert!(matches!(
+            PackageFeaturePlan::resolve(&manifest, &FeatureSelection::default()),
+            Err(PackageFeaturePlanError::ArtifactProjectionMismatch { .. })
+        ));
         Ok(())
     }
 
