@@ -125,7 +125,7 @@ fn stable_declaration_identity_is_unique_across_the_standard_library() -> TestRe
         }
         Ok::<_, String>((claims, modules_checked, modules_skipped))
     })
-    .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
+    .map_err(Box::<dyn std::error::Error>::from)?;
 
     let (claims, modules_checked, modules_skipped) = outcome;
     let total: usize = claims.values().map(Vec::len).sum();
@@ -194,7 +194,7 @@ def internal(value: int) -> int:
                 .collect::<Vec<_>>(),
         )
     })
-    .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
+    .map_err(Box::<dyn std::error::Error>::from)?;
 
     let exported = declarations.iter().find(|(name, _)| name == "exported");
     let internal = declarations.iter().find(|(name, _)| name == "internal");
@@ -304,7 +304,7 @@ fn conformant_digest_covers_the_standard_library() -> TestResult {
         }
         Ok::<_, String>((digested, modules, skipped, bodies_digested, by_digest))
     })
-    .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
+    .map_err(Box::<dyn std::error::Error>::from)?;
 
     let elapsed = started.elapsed();
     let (digested, modules, skipped, bodies_digested, by_digest) = outcome;

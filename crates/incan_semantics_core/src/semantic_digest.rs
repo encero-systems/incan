@@ -123,6 +123,7 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
     type SerializeStruct = StructDigest<'hasher>;
     type SerializeStructVariant = StructDigest<'hasher>;
 
+    /// Tag a boolean and write its single byte.
     fn serialize_bool(mut self, value: bool) -> Result<(), DigestError> {
         self.tag(0x01);
         self.hasher.update([u8::from(value)]);
@@ -145,39 +146,46 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
     digest_primitive!(serialize_i128, i128, 0x19);
     digest_primitive!(serialize_u128, u128, 0x1a);
 
+    /// Tag a character and write its UTF-8 encoding, length-delimited.
     fn serialize_char(mut self, value: char) -> Result<(), DigestError> {
         self.tag(0x0c);
         self.bytes(value.to_string().as_bytes());
         Ok(())
     }
 
+    /// Tag a string and write its bytes, length-delimited so adjacent values cannot run together.
     fn serialize_str(mut self, value: &str) -> Result<(), DigestError> {
         self.tag(0x0d);
         self.bytes(value.as_bytes());
         Ok(())
     }
 
+    /// Tag a byte string and write it, length-delimited.
     fn serialize_bytes(mut self, value: &[u8]) -> Result<(), DigestError> {
         self.tag(0x0e);
         self.bytes(value);
         Ok(())
     }
 
+    /// Tag an absent optional, so absence and a present empty value differ.
     fn serialize_none(mut self) -> Result<(), DigestError> {
         self.tag(0x0f);
         Ok(())
     }
 
+    /// Tag a present optional, then hash the value it wraps.
     fn serialize_some<T: ?Sized + Serialize>(mut self, value: &T) -> Result<(), DigestError> {
         self.tag(0x10);
         value.serialize(DigestSerializer { hasher: self.hasher })
     }
 
+    /// Tag the unit value.
     fn serialize_unit(mut self) -> Result<(), DigestError> {
         self.tag(0x11);
         Ok(())
     }
 
+    /// Hash a unit struct by name, since it carries nothing else to distinguish it.
     fn serialize_unit_struct(self, name: &'static str) -> Result<(), DigestError> {
         self.serialize_str(name)
     }
@@ -194,6 +202,7 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
         Ok(())
     }
 
+    /// Hash a newtype's inner value directly; the wrapper adds no meaning of its own.
     fn serialize_newtype_struct<T: ?Sized + Serialize>(
         self,
         _name: &'static str,
@@ -202,6 +211,7 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
         value.serialize(self)
     }
 
+    /// Tag a newtype variant by name, then hash the value it wraps.
     fn serialize_newtype_variant<T: ?Sized + Serialize>(
         mut self,
         _name: &'static str,
@@ -214,20 +224,24 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
         value.serialize(DigestSerializer { hasher: self.hasher })
     }
 
+    /// Tag a sequence and write its length, so two sequences cannot concatenate into one.
     fn serialize_seq(mut self, length: Option<usize>) -> Result<Self, DigestError> {
         self.tag(0x14);
         self.hasher.update((length.unwrap_or_default() as u64).to_le_bytes());
         Ok(self)
     }
 
+    /// Hash a tuple as a fixed-length sequence.
     fn serialize_tuple(self, length: usize) -> Result<Self, DigestError> {
         self.serialize_seq(Some(length))
     }
 
+    /// Hash a tuple struct as a fixed-length sequence; its name adds nothing the fields do not.
     fn serialize_tuple_struct(self, _name: &'static str, length: usize) -> Result<Self, DigestError> {
         self.serialize_seq(Some(length))
     }
 
+    /// Tag a tuple variant by name, then write its length and fields.
     fn serialize_tuple_variant(
         mut self,
         _name: &'static str,
@@ -241,17 +255,20 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
         Ok(self)
     }
 
+    /// Tag a map and write its length, then hash each key and value in turn.
     fn serialize_map(mut self, length: Option<usize>) -> Result<Self, DigestError> {
         self.tag(0x16);
         self.hasher.update((length.unwrap_or_default() as u64).to_le_bytes());
         Ok(self)
     }
 
+    /// Tag a struct; its fields are hashed by [`StructDigest`], which drops the positional ones.
     fn serialize_struct(mut self, _name: &'static str, _length: usize) -> Result<StructDigest<'hasher>, DigestError> {
         self.tag(0x17);
         Ok(StructDigest { hasher: self.hasher })
     }
 
+    /// Tag a struct variant by name; its fields are hashed by [`StructDigest`].
     fn serialize_struct_variant(
         mut self,
         _name: &'static str,
