@@ -188,6 +188,7 @@ The graph must support at least these node kinds:
 - `workspace`
 - `file`
 - `module`
+- `namespace`
 - `declaration`
 - `api_member`
 - `import`
@@ -223,6 +224,23 @@ The graph should support these node kinds as the compiler exposes enough informa
 - `decision_record`
 
 Unknown node kinds must remain visible to consumers as opaque node records rather than causing a parse failure.
+
+### Namespaces and module subgraphs
+
+A module path names where a declaration *is*. A namespace names where a consumer can *reach* it. The graph must distinguish them, because a consumer asking "did the surface change?" gets the wrong answer from a structure that mirrors the file tree.
+
+A module whose name marks it internal is not a namespace of its own; it is a detail of the nearest enclosing namespace. A module path segment marks a module internal when it begins with a single underscore. A leading double underscore does not: `__init__` and its relatives are structural names the compiler owns rather than authors' private modules. A module path's namespace is the path truncated at its *first* internal segment — a public module nested inside an internal one is no more reachable than its parent, so both belong to the same enclosing namespace.
+
+Every `module` record must therefore carry:
+
+- `namespace_path`: the enclosing namespace's path segments, equal to `module_path` when the module is itself a namespace;
+- `internal`: whether the module is a detail of `namespace_path` rather than a namespace a consumer can reach.
+
+A `namespace` node is the graph's top-level unit of reachable surface, and `contains` edges relate it to the modules beneath it. Grouping modules by `namespace_path` yields the same partition, so a consumer that only needs the grouping need not wait for `namespace` nodes to be emitted.
+
+The point of the distinction is that moving a declaration between two internal modules of one namespace changes its module path and not its namespace. A consumer keying on namespace sees no change, which is correct: no consumer could observe one. A consumer keying on module path sees a change that is not there.
+
+Flattening instead — dropping location from identity entirely — does not survive contact with a real standard library. Measured across 1,252 standard-library declarations, a flat root produces 47 collision classes over 167 declarations, and the worst are deliberate: `compress` and `decompress` across eight codec modules, `encode` and `decode` across five base-N modules, and the `read` capability across `clock`, `env`, and `fs` all carry identical signatures, because presenting one interface is the point. Nothing left in the identity separates them. Every one of those classes is cross-namespace, so scoping costs none of it; a collision *within* one namespace would be a duplicate definition, visible to the author where they wrote it.
 
 ### Edge kinds
 
