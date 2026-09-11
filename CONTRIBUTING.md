@@ -30,6 +30,14 @@ Thank you for your interest in contributing to the Incan programming language! T
    cargo test
    ```
 
+4. **Install the commit hooks**
+
+   ```bash
+   make install-hooks
+   ```
+
+   This points `core.hooksPath` at the repository's `.githooks/`. The `commit-msg` hook rejects AI attribution trailers and generation footers, which several agent harnesses inject by default. Commit messages in this repository are authored by their committer and carry no tool attribution.
+
 ## Project Structure
 
 The compiler is organized into a **frontend** (lex/parse/typecheck), a **backend** (lowering + Rust emission), plus CLI and tooling.
