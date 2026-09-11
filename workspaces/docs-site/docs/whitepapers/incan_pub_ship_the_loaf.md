@@ -33,18 +33,18 @@ research_context:
 related_whitepapers:
   - "A Cargo-free toolchain for Incan and Rust"
   - "Incan ecosystem north star"
-review_after: "After RFC 125 reaches Planned"
+review_after: "When a compiled-artifact tier ships in any Rust-ecosystem registry, or when Cargo's cross-workspace cache gains a remote tier"
 ---
 
 # Ship the loaf, not the recipe: why Incan and Rust need `incan.pub`
 
 --8<-- "_snippets/callouts/whitepaper_status.md"
 
-> **Current boundary:** `incan.pub` does not exist as a service. RFC 125 is a Draft that defines its contract; this paper argues why that contract is worth building and what it should be measured against. Every number below was collected on 2026-09-09 with the scripts and versions named in the measurements section, on two ordinary machines, and is reproducible from those scripts. Nothing here is a benchmark of `incan.pub` itself.
+> **Current boundary:** `incan.pub` does not exist as a service. This paper argues what such a registry should be measured against and why the contract is worth building. Every number below was collected on 2026-09-09 with the scripts and versions named in the measurements section, on two ordinary machines, and is reproducible from those scripts. Nothing here is a benchmark of `incan.pub` itself.
 
 ## Abstract
 
-Rust's compiled artifacts are excellent. Producing them is the expensive part, and the Rust ecosystem makes every machine produce them from scratch, because it has no unit of exchange for a compiled artifact whose inputs are provably identical. crates.io distributes recipes; every laptop, CI runner, and container image bakes. This paper measures what that costs on two hosts for three popular libraries and for the Incan compiler itself, explains why Rust in particular never shipped compiled dependencies when Java, Python, Nix, and Homebrew all did, and argues that the combination of Oven's receipts and a registry designed around them closes the gap without touching crates.io. The proposed shape is a tier above the existing ecosystem, not a fork of it: Oven-built projects, whether they contain Incan source or only Rust, publish a signed source Loaf and, where available, attested compiled assets to `incan.pub`; consumers download the artifact that exactly matches their plan and bake only what nobody has baked before. The main caveat is that the artifact-identity problem is what made this hard for Rust, and the paper is only credible because Oven already solves it locally. The main decision pressure is who bakes: publishers, the registry, or both.
+Rust's compiled artifacts are excellent. Producing them is the expensive part, and the Rust ecosystem makes every machine produce them from scratch, because it has no unit of exchange for a compiled artifact whose inputs are provably identical. crates.io distributes recipes; every laptop, CI runner, and container image bakes. This paper measures what that costs on two hosts for three popular libraries and for the Incan compiler itself, explains why Rust in particular never shipped compiled dependencies when Java, Python, Nix, and Homebrew all did, and argues that the combination of Oven's receipts and a registry designed around them closes the gap without touching crates.io. The proposed shape is a tier above the existing ecosystem, not a fork of it: Oven-built projects, whether they contain Incan source or only Rust, publish a signed source Loaf and, where available, attested compiled assets to `incan.pub`; consumers download the artifact that exactly matches their plan and bake only what nobody has baked before. The precondition is artifact identity: an exchange of compiled work is only as trustworthy as its answer to whether two artifacts were produced from the same inputs, which is what defeated earlier attempts. The open decision is who bakes: publishers, the registry, or both.
 
 ## The claim
 
@@ -58,7 +58,7 @@ The aim is to improve the foundation Rust already laid, not to displace it. The 
 
 A paper that reads as anti-Cargo would lose the readers it is written for, and it would also be wrong. Cargo solved the problems that have to be solved before compiled distribution is even thinkable.
 
-The **sparse index** is the right shape for package metadata: one small static file per package, listing every version with its dependencies and features, cacheable by any CDN, with no request that returns more than a resolver needs. npm spent years bolting an abbreviated-metadata content type onto a design that returned every version's README in one document; Cargo never had that problem. RFC 125 copies the sparse index almost verbatim.
+The **sparse index** is the right shape for package metadata: one small static file per package, listing every version with its dependencies and features, cacheable by any CDN, with no request that returns more than a resolver needs. npm spent years bolting an abbreviated-metadata content type onto a design that returned every version's README in one document; Cargo never had that problem. A registry serving compiled artifacts should copy the sparse index almost verbatim.
 
 The **lockfile** is flat, keyed by package identity rather than filesystem path, records a checksum per artifact, and merges cleanly. That is the format uv adopted for Python and the format npm arrived at after three incompatible versions. `oven.lock` inherits it.
 
@@ -141,7 +141,7 @@ A second objection was that Cargo would need a real model of the relationship be
 
 The one time a major Rust crate shipped a compiled artifact, the ecosystem rejected it, and the way it was rejected is instructive. In July 2023 `serde_derive` 1.0.172 began shipping a precompiled macro binary for one target with no way to build from source. [Issue #2538](https://github.com/serde-rs/serde/issues/2538) ran to ninety-nine comments. Fedora could not redistribute a binary it had not built. Others could not audit it. The supply-chain objection was that a compromised maintainer account would ship a binary nobody could inspect. On 21 August 2023, 1.0.184 restored the source build with a release note that reads: "eventually we'd like to use a first-class precompiled macro if such a thing becomes supported by cargo / crates.io". The maintainer's closing comment asked for a Cargo or crates.io RFC on first-class precompiled artifacts.
 
-The lesson is not that Rust developers refuse compiled artifacts. It is that they refuse artifacts that arrive without a source of record, without a verifiable link from artifact to source, without a builder identity, and without a way to say no. The same maintainer's [watt](https://github.com/dtolnay/watt) project supplied the sandboxing half of a proper answer, compiling proc-macros to WebAssembly so a macro can only consume and produce tokens. RFC 125 supplies the rest: the source Loaf is always the publication of record, every asset is attested to its source digest and toolchain and names its builder, trust policy is per builder kind and belongs to the consuming project, and declining an asset costs nothing but the bake everyone does today.
+The lesson is not that Rust developers refuse compiled artifacts. It is that they refuse artifacts that arrive without a source of record, without a verifiable link from artifact to source, without a builder identity, and without a way to say no. The same maintainer's [watt](https://github.com/dtolnay/watt) project supplied the sandboxing half of a proper answer, compiling proc-macros to WebAssembly so a macro can only consume and produce tokens. The rest is what a registry must supply: the source Loaf is always the publication of record, every asset is attested to its source digest and toolchain and names its builder, trust policy is per builder kind and belongs to the consuming project, and declining an asset costs nothing but the bake everyone does today.
 
 ### The closest precedent is C++, not Java
 
@@ -153,7 +153,7 @@ That is the piece Oven adds. Every `*.loaf` Oven seals carries a receipt naming 
 
 ## What changes with Oven and `incan.pub`
 
-RFC 125 defines the contract. The shape, in the terms a user sees:
+The shape, in the terms a user sees:
 
 **The unit of publication is the Loaf.** A project with a `loaf.toml` publishes as one thing, whether its facets are Incan, Rust, or both. A Rust-only project that adopted Loaf publishes exactly like an Incan library; the registry does not care which. This is what makes the registry serve Rust and not only Incan.
 
@@ -163,7 +163,9 @@ RFC 125 defines the contract. The shape, in the terms a user sees:
 
 **Who bakes is a policy, not a mystery.** Assets can be built in the publisher's trusted CI, by a registry bakery over the signed source, or on the publishing machine, and each carries a distinct attestation so a project's trust policy can accept some kinds and not others. Publisher-built assets with provenance from a public transparency log are the strongest; registry-built assets make coverage broad; local assets exist so that publishing never requires infrastructure.
 
-**The store becomes the cache, and the Alpha is already its local end.** The 0.6 development branch already reuses sealed work with verification: a second build of the same project reports that it reused a completed Loaf whose source, dependency, semantic, and interop facts were verified and sealed at bake time. That is the identity chain working, and it is what every Cargo attempt since 2015 lacked. What it does not yet do is share below the plan: two projects with identical closures each sealed their own 51 MB Loaf holding the same fourteen rlibs. RFC 124 makes the compiled unit the store's addressable object, keyed by an identity over its effective compilation inputs and kept distinct from where the source was published, so units are shared across projects and worktrees, a version-only republication of unchanged code still hits, and the store is collected by reachability. The 52 GB of duplicated target directories and the four duplicate Loafs are the same defect, and RFC 124 is the fix; RFC 125 then exchanges the same identities across machines.
+**The store is the local end of the same exchange.** Verified reuse of sealed work is already demonstrable: a second build of the same project reuses a completed Loaf whose source, dependency, semantic, and interop facts were verified and sealed at bake time. That is the identity chain working, and it is precisely what every attempt to add compiled artifacts to Cargo since 2015 lacked.
+
+What that does not yet do is share *below* the plan. Two projects with identical dependency closures each sealed their own 51 MB Loaf holding the same fourteen rlibs, and twenty build directories under one development root totalled 52 GB. Both are the same defect: the plan, not the compiled unit, is the unit of reuse. Making the compiled unit the store's addressable object — keyed by an identity over its effective compilation inputs, kept distinct from where its source was published — shares units across projects and worktrees, lets a version-only republication of unchanged code still hit, and makes the store collectable by reachability. A registry then exchanges those same identities across machines rather than inventing a second notion of sameness.
 
 **crates.io is consumed, not replaced.** `crate` dependencies resolve against the crates.io sparse index through the same client, verification, and store as `incan.pub` Loaves. The registry never mirrors crates.io source and never publishes to it. Where it can help Rust users directly is by publishing attested, registry-built assets for popular crates at the closures a toolchain pins, so that consuming DataFusion through Oven is a download even though DataFusion itself lives on crates.io.
 
@@ -185,7 +187,7 @@ What the tier adds is the same thing a Nix binary cache adds to nixpkgs or a whe
 - It does not claim that every dependency can be precompiled for every target, toolchain, and feature closure. The index never promises completeness; a miss is a bake, not a failure, and small crates may never have assets at all.
 - It does not turn `incan.pub` into a binary-only channel. The source Loaf is the publication of record, is always retained, and is what every asset is attested against.
 - It does not give the registry authority over a project. Trust policy per builder kind, registered sources, and overrides belong to the consuming project, as RFC 117 already requires.
-- It does not decide who bakes. Whether a registry bakery is in scope for the 0.6 release or arrives after publisher-built assets is an open question in RFC 125.
+- It does not decide who bakes. Whether a registry bakery arrives with the first release or after publisher-built assets is deliberately left open.
 - It does not claim the numbers are stable. They are a snapshot of two machines, three libraries, and one toolchain on one day, reproducible from the scripts that produced them, and they will drift.
 
 ## Where the contract lives
