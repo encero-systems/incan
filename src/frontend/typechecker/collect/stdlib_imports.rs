@@ -32,11 +32,11 @@ use crate::frontend::typechecker::{
 use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport,
     FunctionExport, ImplementationTraitBoundOriginExport, ImplementationTypeParamExport, LibraryManifest, MethodExport,
-    ModelExport, NewtypeExport, ParamDefaultExport, ParamExport, ParamKindExport, PartialExport,
-    PartialTargetKindExport, PresetValueExport, PropertyExport, ProviderFactKind, ReceiverExport, StaticExport,
-    TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport, resolved_type_from_manifest_type_ref,
+    ModelExport, NewtypeExport, NominalTypeOriginExport, ParamDefaultExport, ParamExport, ParamKindExport,
+    PartialExport, PartialTargetKindExport, PresetValueExport, PropertyExport, ProviderFactKind, ReceiverExport,
+    StaticExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport, resolved_type_from_manifest_type_ref,
 };
-use crate::provider::{ProviderModuleResolution, ProviderProvenance};
+use crate::provider::{ProviderModuleResolution, ProviderProvenance, PublicProviderArtifact};
 use incan_core::interop::{RustItemKind, RustTraitAssoc, fallback_rust_trait_methods, is_rust_capability_bound};
 use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_core::lang::stdlib::{self, is_typechecker_only_stdlib};
@@ -2121,78 +2121,103 @@ impl TypeChecker {
     ///
     /// Leaf binding keys carry identity; this map only chooses their physical consumer route. Required nominal
     /// layouts come from that same artifact's public identity graph, including types never imported by source name.
+    ///
+    /// The work is three phases and their order is the correctness argument. Seeding finds the origins this
+    /// manifest can reach directly; the closure walks from those to every artifact transitively required; only then
+    /// can layouts be reconstructed, because a layout may reference a type discovered late, and remapping it
+    /// against a partial map would bake in a name that never resolves.
     fn public_library_foreign_type_remapping(
         &mut self,
         library: &str,
         manifest: &LibraryManifest,
     ) -> HashMap<String, String> {
-        use crate::library_manifest::{TypeRef, VisitTypeRefs};
         if let Some(remapping) = self.foreign_pub_type_remappings.get(library) {
             return remapping.clone();
         }
+        let seeds = self.foreign_remapping_seed_origins(library, manifest);
+        let (remapping, artifacts) = self.resolve_public_type_origins(library, seeds);
+        self.reconstruct_artifact_layouts(library, &remapping, &artifacts);
+        self.foreign_pub_type_remappings
+            .insert(library.to_string(), remapping.clone());
+        remapping
+    }
+
+    /// Collect the nominal origins this manifest reaches directly, before any transitive resolution.
+    ///
+    /// Two sources contribute. A native union's members are only visible once the union is projected through the
+    /// dependency bridge, so those are projected here rather than read from the manifest. The manifest's own type
+    /// references supply the rest. A union that cannot be projected is reported and skipped: its members are not
+    /// reachable, and inventing an origin for them would name a type no artifact exports.
+    fn foreign_remapping_seed_origins(
+        &mut self,
+        library: &str,
+        manifest: &LibraryManifest,
+    ) -> BTreeMap<String, NominalTypeOriginExport> {
+        use crate::library_manifest::{TypeRef, VisitTypeRefs};
+
         let mut carriers = Vec::new();
         manifest.clone().visit_type_refs(&mut |ty| {
             if let TypeRef::NativeUnion(native) = ty {
                 carriers.push(native.clone());
             }
         });
-        let mut bound_origins = BTreeMap::new();
+
+        let mut origins = BTreeMap::new();
         for carrier in carriers {
             match self.provider_plan.public_native_union_projection(library, &carrier) {
                 Ok((mut bound, _)) => bound.members.visit_type_refs(&mut |ty| {
-                    if let TypeRef::Named {
-                        origin: Some(origin), ..
-                    }
-                    | TypeRef::Applied {
-                        origin: Some(origin), ..
-                    } = ty
-                    {
-                        bound_origins.insert(origin.binding_key(), origin.clone());
+                    if let Some(origin) = Self::nominal_type_origin(ty) {
+                        origins.insert(origin.binding_key(), origin.clone());
                     }
                 }),
-                Err(message) => self.errors.push(crate::frontend::diagnostics::CompileError::type_error(
-                    format!("compiled library `{library}` has an invalid native union representation: {message}"),
-                    Span::default(),
-                )),
+                Err(message) => self.push_public_library_error(
+                    library,
+                    format!("has an invalid native union representation: {message}"),
+                ),
             }
         }
-        let collect_origins = |manifest: &LibraryManifest| {
-            let mut origins = BTreeMap::new();
-            let mut projection = manifest.clone();
-            projection.visit_type_refs(&mut |ty| {
-                if let TypeRef::Named {
-                    origin: Some(origin), ..
-                }
-                | TypeRef::Applied {
-                    origin: Some(origin), ..
-                } = ty
-                {
-                    origins.insert(origin.binding_key(), origin.clone());
-                }
-            });
-            origins
-        };
-        bound_origins.extend(collect_origins(manifest));
-        let mut pending = std::collections::VecDeque::from_iter(bound_origins.into_values());
+        origins.extend(collect_nominal_type_origins(manifest));
+        origins
+    }
+
+    /// Walk from the seed origins to every artifact transitively required, registering each type's route.
+    ///
+    /// Resolving one origin can reveal an artifact whose own manifest names further origins, so this is a worklist
+    /// rather than a pass: each newly opened artifact contributes its origins back to the queue. `seen` is keyed by
+    /// binding key so a type reached by two routes is resolved once, which is what keeps mutual references from
+    /// looping. An origin that cannot be projected is reported and skipped rather than failing the whole map, so a
+    /// single bad type does not cost every other import in the library.
+    fn resolve_public_type_origins(
+        &mut self,
+        library: &str,
+        seeds: BTreeMap<String, NominalTypeOriginExport>,
+    ) -> (
+        HashMap<String, String>,
+        BTreeMap<String, (PublicProviderArtifact, String)>,
+    ) {
+        let mut pending = std::collections::VecDeque::from_iter(seeds.into_values());
         let mut seen = HashSet::new();
         let mut artifacts = BTreeMap::new();
         let mut remapping = HashMap::new();
+
         while let Some(origin) = pending.pop_front() {
             let key = origin.binding_key();
             if !seen.insert(key.clone()) {
                 continue;
             }
-            let (artifact, export, dependency_route) =
-                match self.provider_plan.public_nominal_projection(library, &origin) {
-                    Ok(projection) => projection,
-                    Err(message) => {
-                        self.errors.push(crate::frontend::diagnostics::CompileError::type_error(
-                            format!("compiled library `{library}` has an invalid public type origin: {message}"),
-                            Span::default(),
-                        ));
-                        continue;
-                    }
-                };
+            let (artifact, export, dependency_route) = match self
+                .provider_plan
+                .public_nominal_projection(library, &origin)
+            {
+                Ok(projection) => projection,
+                Err(message) => {
+                    self.push_public_library_error(library, format!("has an invalid public type origin: {message}"));
+                    continue;
+                }
+            };
+
+            // The consumer route is the importing library, then one bridge hop per dependency crossed. The owner
+            // route stops there; the qualified name continues into the export's own public path.
             let mut route = vec![library.to_string()];
             for dependency in dependency_route {
                 route.push(crate::frontend::rust_type_display::PROVIDER_RUST_BRIDGE_MODULE.to_string());
@@ -2201,6 +2226,7 @@ impl TypeChecker {
             let owner_route = route.join("::");
             route.extend(export.public_path.iter().skip(1).cloned());
             let qualified = format!("pub::{}", route.join("::"));
+
             let Some(canonical) = origin.canonical.hydrate() else {
                 continue;
             };
@@ -2214,80 +2240,127 @@ impl TypeChecker {
                 .insert(key.clone(), identity.clone());
             self.public_library_type_identities.insert(qualified.clone(), identity);
             remapping.insert(key, qualified);
+
             if let std::collections::btree_map::Entry::Vacant(entry) = artifacts.entry(artifact.identity.stable_key()) {
-                pending.extend(collect_origins(&artifact.manifest).into_values());
+                pending.extend(collect_nominal_type_origins(&artifact.manifest).into_values());
                 entry.insert((artifact, owner_route));
             }
         }
-        // Complete every type mapping before reconstructing layouts. This preserves mutually referenced nominal
-        // layouts and foreign field/property/default signatures without reopening artifacts or looking up source.
+        (remapping, artifacts)
+    }
+
+    /// Rebuild each discovered artifact's nominal layouts against the completed remapping.
+    ///
+    /// This runs only after every type mapping exists, which is what preserves mutually referenced layouts and
+    /// foreign field, property and default signatures without reopening artifacts or looking up source. The same
+    /// ordering holds inside each artifact: every export's public name is registered first, so the second pass can
+    /// remap a layout that refers to a sibling declared after it.
+    fn reconstruct_artifact_layouts(
+        &mut self,
+        library: &str,
+        remapping: &HashMap<String, String>,
+        artifacts: &BTreeMap<String, (PublicProviderArtifact, String)>,
+    ) {
         for (artifact, owner_route) in artifacts.values() {
-            let mut local_remapping = remapping.clone();
-            for export in &artifact.manifest.contract_metadata.identity_graph.exports {
-                if !matches!(
-                    export.kind,
-                    crate::library_manifest::ExportIdentityKind::Model
-                        | crate::library_manifest::ExportIdentityKind::Class
-                        | crate::library_manifest::ExportIdentityKind::Enum
-                        | crate::library_manifest::ExportIdentityKind::Newtype
-                ) {
-                    continue;
-                }
-                let public_name = export
-                    .public_path
-                    .iter()
-                    .skip(1)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join("::");
-                let qualified = canonical_public_library_type_name(owner_route, &public_name);
-                let canonical = export.canonical.as_ref().and_then(|identity| identity.hydrate());
-                self.public_library_type_identities.insert(
-                    qualified.clone(),
-                    PublicLibraryTypeIdentity {
-                        dependency_key: library.to_string(),
-                        source_path: export.source_path.clone(),
-                        canonical,
-                        selected_provider: Some(artifact.identity.clone()),
-                    },
-                );
-                if export.public_path.len() == 2 {
-                    local_remapping.insert(export.public_name.clone(), qualified);
-                }
+            let local_remapping = self.register_artifact_type_names(library, artifact, owner_route, remapping);
+            self.rebuild_artifact_symbol_layouts(artifact, owner_route, &local_remapping);
+        }
+    }
+
+    /// Register every nominal export of one artifact under its qualified consumer name.
+    ///
+    /// Returns the remapping extended with this artifact's own top-level spellings, so a layout rebuilt next can
+    /// resolve a sibling type by the bare name its signature uses.
+    fn register_artifact_type_names(
+        &mut self,
+        library: &str,
+        artifact: &PublicProviderArtifact,
+        owner_route: &str,
+        remapping: &HashMap<String, String>,
+    ) -> HashMap<String, String> {
+        let mut local_remapping = remapping.clone();
+        for export in &artifact.manifest.contract_metadata.identity_graph.exports {
+            if !matches!(
+                export.kind,
+                crate::library_manifest::ExportIdentityKind::Model
+                    | crate::library_manifest::ExportIdentityKind::Class
+                    | crate::library_manifest::ExportIdentityKind::Enum
+                    | crate::library_manifest::ExportIdentityKind::Newtype
+            ) {
+                continue;
             }
-            for export in &artifact.manifest.contract_metadata.identity_graph.exports {
-                let info = if export.public_path.len() == 2 {
-                    self.manifest_nominal_type_info(&artifact.manifest, &export.public_name)
-                } else {
-                    Self::api_declaration_for_target_path(&artifact.manifest, &export.source_path)
-                        .and_then(|declaration| self.symbol_kind_from_api_declaration(declaration))
-                        .and_then(|kind| match kind {
-                            SymbolKind::Type(info) => Some(info),
-                            _ => None,
-                        })
-                };
-                let Some(info) = info else {
-                    continue;
-                };
-                let public_name = export
-                    .public_path
-                    .iter()
-                    .skip(1)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join("::");
-                let qualified = canonical_public_library_type_name(owner_route, &public_name);
-                let mut kind = SymbolKind::Type(info);
-                self.remap_symbol_kind_with_import_aliases(&mut kind, &local_remapping);
-                Self::mark_compiled_class_field_provider(&mut kind, owner_route);
-                if let SymbolKind::Type(info) = kind {
-                    self.transitive_pub_types.entry(qualified).or_default().push(info);
-                }
+            let qualified = canonical_public_library_type_name(owner_route, &export_public_name(export));
+            self.public_library_type_identities.insert(
+                qualified.clone(),
+                PublicLibraryTypeIdentity {
+                    dependency_key: library.to_string(),
+                    source_path: export.source_path.clone(),
+                    canonical: export.canonical.as_ref().and_then(|identity| identity.hydrate()),
+                    selected_provider: Some(artifact.identity.clone()),
+                },
+            );
+            // Only a top-level export is reachable by a bare name in a signature; a nested one is always written
+            // through its path, so adding it here would shadow the wrong spelling.
+            if export.public_path.len() == 2 {
+                local_remapping.insert(export.public_name.clone(), qualified);
             }
         }
-        self.foreign_pub_type_remappings
-            .insert(library.to_string(), remapping.clone());
-        remapping
+        local_remapping
+    }
+
+    /// Rebuild one artifact's exported symbol layouts with foreign type names already resolved.
+    fn rebuild_artifact_symbol_layouts(
+        &mut self,
+        artifact: &PublicProviderArtifact,
+        owner_route: &str,
+        local_remapping: &HashMap<String, String>,
+    ) {
+        for export in &artifact.manifest.contract_metadata.identity_graph.exports {
+            // A top-level export is described by the manifest's own nominal info; a nested one has to be read back
+            // from its declaration, because only the declaration records the members.
+            let info = if export.public_path.len() == 2 {
+                self.manifest_nominal_type_info(&artifact.manifest, &export.public_name)
+            } else {
+                Self::api_declaration_for_target_path(&artifact.manifest, &export.source_path)
+                    .and_then(|declaration| self.symbol_kind_from_api_declaration(declaration))
+                    .and_then(|kind| match kind {
+                        SymbolKind::Type(info) => Some(info),
+                        _ => None,
+                    })
+            };
+            let Some(info) = info else {
+                continue;
+            };
+            let qualified = canonical_public_library_type_name(owner_route, &export_public_name(export));
+            let mut kind = SymbolKind::Type(info);
+            self.remap_symbol_kind_with_import_aliases(&mut kind, local_remapping);
+            Self::mark_compiled_class_field_provider(&mut kind, owner_route);
+            if let SymbolKind::Type(info) = kind {
+                self.transitive_pub_types.entry(qualified).or_default().push(info);
+            }
+        }
+    }
+
+    /// Report a malformed compiled-library input without repeating the diagnostic's shape at each call.
+    fn push_public_library_error(&mut self, library: &str, detail: String) {
+        self.errors.push(crate::frontend::diagnostics::CompileError::type_error(
+            format!("compiled library `{library}` {detail}"),
+            Span::default(),
+        ));
+    }
+
+    /// Return the nominal origin carried by a type reference, when it has one.
+    fn nominal_type_origin(ty: &crate::library_manifest::TypeRef) -> Option<&NominalTypeOriginExport> {
+        use crate::library_manifest::TypeRef;
+        match ty {
+            TypeRef::Named {
+                origin: Some(origin), ..
+            }
+            | TypeRef::Applied {
+                origin: Some(origin), ..
+            } => Some(origin),
+            _ => None,
+        }
     }
 
     /// Return whether one public manifest spelling resolves to a type-like import binding.
@@ -4676,6 +4749,35 @@ fn param_kind_from_manifest(kind: ParamKindExport) -> ParamKind {
         ParamKindExport::RestPositional => ParamKind::RestPositional,
         ParamKindExport::RestKeyword => ParamKind::RestKeyword,
     }
+}
+
+/// Collect every nominal type origin a manifest references, keyed by binding key.
+///
+/// Used both to seed the closure and to extend it when a newly opened artifact contributes more origins, so the
+/// two callers cannot drift on what counts as an origin.
+fn collect_nominal_type_origins(
+    manifest: &LibraryManifest,
+) -> BTreeMap<String, crate::library_manifest::NominalTypeOriginExport> {
+    use crate::library_manifest::VisitTypeRefs;
+    let mut origins = BTreeMap::new();
+    let mut projection = manifest.clone();
+    projection.visit_type_refs(&mut |ty| {
+        if let Some(origin) = TypeChecker::nominal_type_origin(ty) {
+            origins.insert(origin.binding_key(), origin.clone());
+        }
+    });
+    origins
+}
+
+/// Render an export's public name without its leading package segment.
+fn export_public_name(export: &crate::library_manifest::ExportIdentity) -> String {
+    export
+        .public_path
+        .iter()
+        .skip(1)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("::")
 }
 
 #[cfg(test)]
