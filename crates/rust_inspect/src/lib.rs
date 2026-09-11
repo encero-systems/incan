@@ -17,6 +17,8 @@ use incan_core::interop::RustItemMetadata;
 mod cache;
 mod cache_resolve;
 mod cache_timing;
+mod digest;
+mod digest_tokens;
 mod error;
 mod extractor;
 mod generic_params;
@@ -24,6 +26,9 @@ mod loader;
 mod receiver_contract;
 
 pub use cache::RustMetadataCache;
+pub use digest::{
+    RustDigestError, RustDigestItemKind, RustItemDigest, RustItemDigestKey, RustSourceDigest, digest_rust_source,
+};
 pub use error::RustMetadataError;
 pub use extractor::{extract_rust_item, rust_type_implements_trait};
 pub use loader::{
