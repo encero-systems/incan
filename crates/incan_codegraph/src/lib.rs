@@ -402,6 +402,17 @@ pub struct CodegraphModuleRecord {
     pub file_id: String,
     /// Module path segments.
     pub module_path: Vec<String>,
+    /// The namespace this module belongs to, which is the module itself unless it is internal.
+    ///
+    /// A module path names where a declaration is; a namespace names where a consumer can reach it. They differ for
+    /// a module that is a detail of its parent, and the difference is what lets a consumer tell an internal
+    /// reorganisation from a change to the surface. Grouping modules by this field yields the namespace-led view:
+    /// one node per reachable namespace, with its internal modules as the subgraph beneath it.
+    #[serde(default)]
+    pub namespace_path: Vec<String>,
+    /// Whether this module is a detail of [`Self::namespace_path`] rather than a namespace a consumer can reach.
+    #[serde(default)]
+    pub internal: bool,
     /// Human-readable module name.
     pub name: String,
     /// Span covering the source file, when available.

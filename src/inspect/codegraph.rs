@@ -29,6 +29,7 @@ use incan_codegraph::{
     CodegraphStableDeclarationId, CodegraphSymbolOrigin,
 };
 use incan_core::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
+use incan_semantics_core::namespace::{enclosing_namespace, is_namespace_root};
 use incan_semantics_core::stable_identity::{DeclarationNesting, DeclarationSignature, StableDeclarationId};
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SemanticModuleSnapshot, SymbolOrigin};
 use serde_json::{Value, json};
@@ -1000,6 +1001,8 @@ impl CodegraphBuilder {
                 language: CodegraphLanguage::Incan,
                 file_id: file_id.to_string(),
                 module_path: module.path_segments.clone(),
+                namespace_path: enclosing_namespace(&module.path_segments).to_vec(),
+                internal: !is_namespace_root(&module.path_segments),
                 name: module.name.clone(),
                 span: Some(module_span),
                 provenance: CodegraphProvenance::Syntax,
