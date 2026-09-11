@@ -1,0 +1,4 @@
+# Change quantities without rebuilding the application.
+first_quantity = 2
+second_quantity = 3
+sku_pattern = '^SKU-[0-9]+$'

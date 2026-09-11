@@ -1,0 +1,13 @@
+"""Small deterministic catalog used while editing the working application."""
+
+from product import Product, StockState
+
+
+pub def first_product() -> Product:
+    """Return the main item; edit its price to exercise implementation invalidation."""
+    return Product(sku="SKU-100", price_cents=350, state=StockState.Available)
+
+
+pub def second_product() -> Product:
+    """Return a second item so the application processes more than one line."""
+    return Product(sku="SKU-200", price_cents=125, state=StockState.Available)

@@ -1,0 +1,5 @@
+[project]
+name = "collision"
+version = "0.1.0"
+[project.scripts]
+main = "src/lib.incn"

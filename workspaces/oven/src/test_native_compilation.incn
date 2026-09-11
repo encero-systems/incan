@@ -1,0 +1,712 @@
+"""
+Synthetic v2 policy controls: logical content equivalence is separate from physical admission and execution.
+
+These call the real Incan projection. No fixture authenticates files, executes rustc or proves a native cache hit.
+"""
+
+from std.json import JsonValue
+from std.testing import fail, fail_t
+from native_compilation import evaluate
+from plan_json import evaluate as evaluate_plan_json
+
+
+pub def test_native_compilation_literal_vector_and_cold_index() -> None:
+    """Cold lookup returns an index only; actual observations are required before a final compilation key exists."""
+    cold = run(fixture())
+    assert text(cold, "status") == "uncacheable"
+    assert get(cold, "reasons").equals(texts(["missing_rustc_dep_info"]))
+    assert not cold.contains_key("compilation_key")
+    assert not cold.contains_key("placement")
+    ready = run(observed(fixture(), []))
+    assert text(ready, "status") == "cacheable"
+    assert text(ready, "candidate_index") == text(cold, "candidate_index")
+    assert text(ready, "compilation_key") == "sha256:c88451d897750fc74c2cd16a761ecb759675f6c595de68a7b9973a9fe793c8e9"
+    assert text(ready, "candidate_index") == "sha256:2ef09aa7443147536834556b39874e0d5d9f90a838f7f63496b29d4953ea0b3c"
+
+
+pub def test_native_compilation_dispatch_matches_direct_document_policy() -> None:
+    """The shared Engine dispatcher routes only the exact schema without changing cold or observed outcomes."""
+    cold = fixture()
+    assert evaluate_plan_json(render(cold.clone())).equals(run(cold))
+    ready = observed(fixture(), [])
+    assert evaluate_plan_json(render(ready.clone())).equals(run(ready))
+
+    unknown = put(fixture(), "schema", JsonValue.string("incan.oven.native-compilation/3"))
+    response = evaluate_plan_json(render(unknown))
+    assert text(response, "schema") == "incan.oven.selection/1"
+    assert text(response, "status") == "refused"
+    assert text(get(response, "error"), "kind") == "invalid_input"
+    assert get(get(response, "error"), "fields").equals(texts(["schema"]))
+    for name in ["binding", "candidate_index", "index_material", "compilation_key", "key_material", "placement"]:
+        assert not response.contains_key(name)
+
+
+pub def test_native_compilation_version_and_physical_rebinding_keep_key() -> None:
+    """Versioned delivery, symlink/compiler/cwd/source/native/search/output roots change only execution binding."""
+    original = observed(fixture(), [])
+    mut moved = original
+    for name, value in [("invocation_id", "invocation-v2"), ("compiler", "/v0.2/toolchain/rustc-link"), ("cwd", "/v0.2/provider"), ("source_root", "/v0.2/provider/source"), ("output_root", "/other/cache/attempt")]:
+        moved = execution_field(moved, name, JsonValue.string(value))
+    moved = execution_field(
+        moved,
+        "source_files",
+        JsonValue.array(
+            [texts(["src/defs.rs", "/v0.2/provider/source/src/defs.rs", hash_text("4")]), texts(
+                ["src/lib.rs", "/v0.2/provider/source/src/lib.rs", hash_text("5")],
+            )],
+        ),
+    )
+    moved = execution_field(
+        moved,
+        "native_files",
+        JsonValue.array([texts(["stdlib", "/v0.2/native/libstdlib.rlib", hash_text("6")])]),
+    )
+    moved = execution_field(moved, "search_paths", JsonValue.array([texts(["dependencies", "/v0.2/native"])]))
+    moved = execution_field(
+        moved,
+        "environment",
+        JsonValue.array([texts(["CARGO_PKG_VERSION", hash_text("b")]), texts(["PATH", hash_text("c")])]),
+    )
+    moved = evidence_field(moved, "path_effects", "invocation_id", JsonValue.string("invocation-v2"))
+    moved = put(
+        moved,
+        "binding",
+        JsonValue.object(
+            {"request_id": JsonValue.string("request-v0.2"), "current_receipt_id": JsonValue.string(
+                "provider@0.2#receipt",
+            ), "original_receipt_id": JsonValue.string("provider@0.1#receipt"), "unit_owner_id": JsonValue.string(
+                "owner-v0.2",
+            ), "observation_id": JsonValue.string("current-admitted-observation")},
+        ),
+    )
+    moved = evidence_field(moved, "dep_info", "kind", JsonValue.string("retained"))
+    moved = evidence_field(moved, "dep_info", "original_compilation_key", get(run(original), "compilation_key"))
+    first = run(original)
+    second = run(moved)
+    require_same_key(original, moved)
+    assert get(second, "binding").equals(get(moved, "binding"))
+    assert not get(first, "binding").equals(get(second, "binding"))
+    assert text(get(get(moved, "evidence"), "dep_info"), "receipt_id") == "provider@0.1#receipt"
+    assert not get(original, "execution").equals(get(moved, "execution"))
+    material = render(get(first, "key_material"))
+    for forbidden in ["/v0.1", "owner-v0.1", "provider@0.1#receipt", "invocation-v0.1", "CARGO_PKG_VERSION"]:
+        assert forbidden not in material
+
+
+pub def test_native_compilation_consumed_version_env_changes_only_final_key() -> None:
+    """A retained env observation projects the current value without changing or relabeling the original record."""
+    original = observed(fixture(), [texts(["CARGO_PKG_VERSION", hash_text("9")])])
+    changed_env = execution_field(
+        original,
+        "environment",
+        JsonValue.array([texts(["CARGO_PKG_VERSION", hash_text("b")]), texts(["PATH", hash_text("a")])]),
+    )
+    require_refused(changed_env)
+    rebound = put(
+        changed_env,
+        "binding",
+        put(get(changed_env, "binding"), "original_receipt_id", JsonValue.string("provider@0.1#receipt")),
+    )
+    retained_kind = evidence_field(rebound, "dep_info", "kind", JsonValue.string("retained"))
+    retained = evidence_field(
+        retained_kind,
+        "dep_info",
+        "original_compilation_key",
+        get(run(original), "compilation_key"),
+    )
+    first = run(original)
+    second = run(retained)
+    require_different(original, retained)
+    assert text(first, "candidate_index") == text(second, "candidate_index")
+    assert get(get(get(retained, "evidence"), "dep_info"), "environment").equals(
+        JsonValue.array([texts(["CARGO_PKG_VERSION", hash_text("9")])]),
+    )
+    fresh = observed(changed_env, [texts(["CARGO_PKG_VERSION", hash_text("b")])])
+    require_same_key(retained, fresh)
+
+
+pub def test_native_compilation_sibling_code_and_generated_effects_change_key() -> None:
+    """Dep-info accepts admitted generated content; complete source/effect facts remain in identity."""
+    original = observed(fixture(), [])
+    narrowed = evidence_field(original, "dep_info", "files", JsonValue.array([texts(["src/lib.rs", hash_text("5")])]))
+    require_same_key(original, narrowed)
+    changed_source = input_field(
+        original,
+        "source",
+        "files",
+        JsonValue.array([texts(["src/defs.rs", hash_text("b")]), texts(["src/lib.rs", hash_text("5")])]),
+    )
+    complete = execution_field(
+        changed_source,
+        "source_files",
+        JsonValue.array(
+            [texts(["src/defs.rs", "/v0.1/provider/source/src/defs.rs", hash_text("b")]), texts(
+                ["src/lib.rs", "/v0.1/provider/source/src/lib.rs", hash_text("5")],
+            )],
+        ),
+    )
+    require_refused(complete)
+    require_different(original, observed(complete, []))
+    generated = input_value(
+        fixture(),
+        "generated",
+        JsonValue.array([texts(["generated/constants", hash_text("7"), hash_text("8")])]),
+    )
+    generated_binding = execution_field(
+        generated,
+        "generated_files",
+        JsonValue.array([texts(["generated/constants", "/owned/generated/constants", hash_text("7")])]),
+    )
+    generated_ready = observed(generated_binding, [])
+    require_different(original, generated_ready)
+    generated_observed = evidence_field(
+        generated_ready,
+        "dep_info",
+        "files",
+        JsonValue.array([texts(["generated/constants", hash_text("7")]), texts(["src/lib.rs", hash_text("5")])]),
+    )
+    require_same_key(generated_ready, generated_observed)
+    require_refused(
+        evidence_field(
+            generated_ready,
+            "dep_info",
+            "files",
+            JsonValue.array([texts(["generated/missing", hash_text("7")]), texts(["src/lib.rs", hash_text("5")])]),
+        ),
+    )
+    require_refused(
+        evidence_field(
+            generated_ready,
+            "dep_info",
+            "files",
+            JsonValue.array([texts(["generated/constants", hash_text("b")]), texts(["src/lib.rs", hash_text("5")])]),
+        ),
+    )
+    require_refused(
+        evidence_field(
+            generated_ready,
+            "dep_info",
+            "files",
+            JsonValue.array([texts(["generated/constants", hash_text("7")])]),
+        ),
+    )
+    for content in [hash_text("5"), hash_text("b")]:
+        overlap = input_value(fixture(), "generated", JsonValue.array([texts(["src/lib.rs", content, hash_text("8")])]))
+        overlap_binding = execution_field(
+            overlap,
+            "generated_files",
+            JsonValue.array([texts(["src/lib.rs", "/owned/generated/lib.rs", content])]),
+        )
+        if content == hash_text("5"):
+            assert text(run(observed(overlap_binding, [])), "status") == "cacheable"
+        else:
+            require_refused(overlap_binding)
+
+
+pub def test_native_compilation_native_bytes_alias_and_role_are_effective() -> None:
+    """Native paths are admission-only, but exact member bytes, emitted aliases and original roles affect compilation."""
+    original = observed(fixture(), [])
+    for row in [JsonValue.array(
+        [JsonValue.string("stdlib"), JsonValue.string("renamed"), JsonValue.string("target_library"), hash_value("6")],
+    ), JsonValue.array(
+        [JsonValue.string("stdlib"), JsonValue.string("incan_stdlib"), JsonValue.string("host_library"), hash_value("6")],
+    )]:
+        require_different(original, observed(input_value(fixture(), "native", JsonValue.array([row])), []))
+    native = input_value(
+        fixture(),
+        "native",
+        JsonValue.array(
+            [JsonValue.array(
+                [JsonValue.string("stdlib"), JsonValue.string("incan_stdlib"), JsonValue.string("target_library"), hash_value(
+                    "b",
+                )],
+            )],
+        ),
+    )
+    native_binding = execution_field(
+        native,
+        "native_files",
+        JsonValue.array([texts(["stdlib", "/v0.1/native/libstdlib.rlib", hash_text("b")])]),
+    )
+    require_different(original, observed(native_binding, []))
+
+
+pub def test_native_compilation_compiler_flags_and_output_filename_change_key() -> None:
+    """Actual compiler/configuration and observable Rlib filename remain inputs; output directory does not."""
+    original = observed(fixture(), [])
+    compiler = input_field(fixture(), "compiler", "binary_digest", hash_value("b"))
+    require_different(original, observed(compiler, []))
+    closure = input_field(fixture(), "compiler", "closure_digest", hash_value("c"))
+    bound_closure = evidence_field(closure, "path_effects", "compiler_closure_digest", hash_value("c"))
+    require_different(original, observed(bound_closure, []))
+    require_different(
+        original,
+        observed(input_field(fixture(), "output", "filename", JsonValue.string("librenamed.rlib")), []),
+    )
+    arguments = values(get(get(get(fixture(), "inputs"), "command"), "arguments"))
+    for extra in [texts(["option", "opt-level", "3"]), texts(["option", "cfg", "feature=\"testing\""])]:
+        changed = input_field(fixture(), "command", "arguments", JsonValue.array(arguments + [extra]))
+        require_different(original, observed(changed, []))
+    reordered = input_field(
+        fixture(),
+        "command",
+        "arguments",
+        JsonValue.array([arguments[1], arguments[0]] + arguments[2:]),
+    )
+    require_different(original, observed(reordered, []))
+
+
+pub def test_native_compilation_command_structure_is_exact_and_cross_checked() -> None:
+    """Every structural slot occurs once and its core options agree with the declared command and compiler."""
+    original = fixture()
+    arguments = values(get(get(get(original, "inputs"), "command"), "arguments"))
+    for index in range(len(arguments)):
+        missing = arguments[:index] + arguments[index + 1:]
+        require_refused(input_field(original, "command", "arguments", JsonValue.array(missing)))
+        require_refused(input_field(original, "command", "arguments", JsonValue.array(arguments + [arguments[index]])))
+
+    require_refused(input_field(original, "command", "crate_name", JsonValue.string("renamed")))
+    require_refused(input_field(original, "command", "crate_kind", JsonValue.string("dylib")))
+    require_refused(input_field(original, "command", "edition", JsonValue.string("2024")))
+    require_refused(input_field(original, "compiler", "target", JsonValue.string("other-target")))
+
+
+pub def test_native_compilation_path_effects_are_bound_not_assumed() -> None:
+    """Unknown file!/debug/rpath effects cannot reuse; a changed bound observable effect changes the final key."""
+    original = observed(fixture(), [])
+    require_uncacheable(evidence_value(original, "path_effects", JsonValue.null()), ["missing_path_effects"])
+    for reason in ["file_macro", "debug_paths", "rpath", "unclassified_argument"]:
+        unknown = JsonValue.object({"kind": JsonValue.string("unknown"), "reasons": texts([reason])})
+        require_uncacheable(evidence_value(original, "path_effects", unknown), ["unbound_path_effect:" + reason])
+    require_refused(evidence_field(original, "path_effects", "invocation_id", JsonValue.string("other-invocation")))
+    require_refused(evidence_field(original, "path_effects", "compiler_closure_digest", hash_value("b")))
+    changed = evidence_field(original, "path_effects", "effects_digest", hash_value("b"))
+    require_different(original, changed)
+    assert text(run(original), "candidate_index") == text(run(changed), "candidate_index")
+
+
+pub def test_native_compilation_untyped_paths_and_unknown_slots_refuse() -> None:
+    """The key cannot accidentally retain a versioned path through raw --extern, -L, source or output argv."""
+    original = fixture()
+    arguments = values(get(get(get(original, "inputs"), "command"), "arguments"))
+    for extra in [texts(["literal", "--extern=dep=/v0.2/libdep.rlib"]), texts(["literal", "-Ldependency=/v0.2/deps"]), texts(
+        ["literal", "/v0.2/src/lib.rs"],
+    ), texts(["option", "link-arg", "-Wl,-rpath,/v0.2"]), texts(["extern", "missing"]), texts(["search", "missing"]), texts(
+        ["source", "/v0.2/src/lib.rs"],
+    ), texts(["output", "/v0.2/output.rlib"])]:
+        require_refused(input_field(original, "command", "arguments", JsonValue.array(arguments + [extra])))
+    for filename in ["../output.rlib", "with space.rlib", ".rlib"]:
+        require_refused(input_field(original, "output", "filename", JsonValue.string(filename)))
+
+
+pub def test_native_compilation_observation_provenance_and_members_are_exact() -> None:
+    """A candidate index never authenticates an unrelated receipt, stale member digest or missing retained owner."""
+    original = observed(fixture(), [])
+    require_refused(evidence_field(original, "dep_info", "candidate_index", hash_value("b")))
+    require_refused(evidence_field(original, "dep_info", "receipt_id", JsonValue.string("unrelated")))
+    require_refused(evidence_field(original, "dep_info", "kind", JsonValue.string("retained")))
+    bound = put(
+        original,
+        "binding",
+        put(get(original, "binding"), "original_receipt_id", JsonValue.string("provider@0.1#receipt")),
+    )
+    require_refused(bound)
+    assert get(run(bound), "fields").equals(texts(["binding", "original_receipt_id"]))
+    retained_kind = evidence_field(bound, "dep_info", "kind", JsonValue.string("retained"))
+    retained = evidence_field(
+        retained_kind,
+        "dep_info",
+        "original_compilation_key",
+        get(run(original), "compilation_key"),
+    )
+    require_same_key(original, retained)
+    require_refused(evidence_field(retained, "path_effects", "effects_digest", hash_value("b")))
+    changed_host = JsonValue.object({"kind": JsonValue.string("observed"), "effects_digest": hash_value("b")})
+    require_refused(evidence_value(retained, "host_effects", changed_host))
+    require_refused(evidence_field(retained, "dep_info", "original_compilation_key", hash_value("b")))
+    require_refused(
+        execution_field(
+            original,
+            "source_files",
+            JsonValue.array(
+                [texts(["src/defs.rs", "/v0.1/provider/source/src/defs.rs", hash_text("b")]), texts(
+                    ["src/lib.rs", "/v0.1/provider/source/src/lib.rs", hash_text("5")],
+                )],
+            ),
+        ),
+    )
+    require_refused(
+        evidence_field(
+            original,
+            "dep_info",
+            "files",
+            JsonValue.array([texts(["outside.rs", hash_text("4")]), texts(["src/lib.rs", hash_text("5")])]),
+        ),
+    )
+    require_refused(evidence_field(original, "dep_info", "files", JsonValue.array([])))
+
+
+pub def test_native_compilation_unknown_host_effects_and_missing_code_have_no_key() -> None:
+    """Dep-info cannot promote unobserved macro/build-script effects or invent unavailable source/compiler facts."""
+    original = observed(fixture(), [])
+    for reason in ["proc_macro_reads", "build_script_environment", "native_tool"]:
+        unknown = JsonValue.object({"kind": JsonValue.string("unknown"), "reasons": texts([reason])})
+        require_uncacheable(evidence_value(original, "host_effects", unknown), ["unobserved_host_effect:" + reason])
+    for section in ["compiler", "command", "source", "native", "search", "generated", "output"]:
+        missing = input_value(original, section, JsonValue.null())
+        require_uncacheable(missing, ["missing_" + section + "_evidence"])
+        assert not run(missing).contains_key("candidate_index")
+
+
+pub def test_native_compilation_consumed_absence_differs_from_empty() -> None:
+    """A retained consumed name reads current absence distinctly from an empty value, without keying unused env."""
+    absent = execution_field(fixture(), "environment", JsonValue.array([texts(["PATH", hash_text("a")])]))
+    absent_ready = observed(absent, [JsonValue.array([JsonValue.string("CARGO_PKG_VERSION"), JsonValue.null()])])
+    empty_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    empty = execution_field(
+        fixture(),
+        "environment",
+        JsonValue.array([texts(["CARGO_PKG_VERSION", empty_digest]), texts(["PATH", hash_text("a")])]),
+    )
+    empty_ready = observed(empty, [texts(["CARGO_PKG_VERSION", empty_digest])])
+    require_different(absent_ready, empty_ready)
+    require_same_key(observed(absent, []), observed(empty, []))
+
+
+pub def test_native_compilation_schema_and_checked_projection_reject_shortcuts() -> None:
+    """Versioned schemas reject old/path-salted forms and require one complete canonical checked source projection."""
+    future = run(JsonValue.object({"schema": JsonValue.string("incan.oven.native-compilation/1")}))
+    assert get(future, "fields").equals(texts(["schema"]))
+    require_refused(input_field(fixture(), "source", "tree_digest", hash_value("b")))
+    require_refused(input_field(fixture(), "source", "projection", JsonValue.string("directory_scan")))
+    require_refused(input_field(fixture(), "compiler", "executable", JsonValue.string("/v0.2/rustc")))
+    require_refused(input_field(fixture(), "output", "root", JsonValue.string("/cache")))
+    files = values(get(get(get(fixture(), "inputs"), "source"), "files"))
+    for rows in [JsonValue.array([files[1], files[0]]), JsonValue.array([files[0], files[0]])]:
+        require_refused(input_field(fixture(), "source", "files", rows))
+    native = input_value(
+        fixture(),
+        "native",
+        JsonValue.array(
+            [JsonValue.array(
+                [JsonValue.string("helper"), JsonValue.null(), JsonValue.string("target_library"), hash_value("7")],
+            ), texts(["stdlib", "incan_stdlib", "target_library", hash_text("6")])],
+        ),
+    )
+    native_binding = execution_field(
+        native,
+        "native_files",
+        JsonValue.array(
+            [texts(["helper", "/v0.1/native/libhelper.rlib", hash_text("7")]), texts(
+                ["stdlib", "/v0.1/native/libstdlib.rlib", hash_text("6")],
+            )],
+        ),
+    )
+    canonical = input_value(
+        native_binding,
+        "search",
+        JsonValue.array(
+            [JsonValue.array(
+                [JsonValue.string("dependencies"), JsonValue.string("dependency"), texts(["helper", "stdlib"])],
+            )],
+        ),
+    )
+    assert text(run(observed(canonical, [])), "status") == "cacheable"
+    for members in [texts(["stdlib", "helper"]), texts(["helper", "helper"])]:
+        invalid = input_value(
+            canonical,
+            "search",
+            JsonValue.array(
+                [JsonValue.array([JsonValue.string("dependencies"), JsonValue.string("dependency"), members])],
+            ),
+        )
+        require_refused(invalid)
+        assert get(run(invalid), "fields").equals(texts(["inputs", "search", "0", "2"]))
+    mut missing = fixture()
+    match missing.remove("execution"):
+        Err(error) => fail(error.message())
+        Ok(_) => pass
+    require_refused(missing)
+
+
+def observed(value: JsonValue, environment: list[JsonValue]) -> JsonValue:
+    """Attach synthetic current observations at the real policy's candidate index, without duplicating hashing logic."""
+    without = evidence_value(value, "dep_info", JsonValue.object({"kind": JsonValue.string("missing")}))
+    lookup = run(without)
+    record = JsonValue.object(
+        {"kind": JsonValue.string("current"), "candidate_index": get(lookup, "candidate_index"), "receipt_id": get(
+            get(value, "binding"),
+            "current_receipt_id",
+        ), "original_compilation_key": JsonValue.null(), "files": get(get(get(value, "inputs"), "source"), "files"), "environment": JsonValue.array(
+            environment,
+        )},
+    )
+    return evidence_value(value, "dep_info", record)
+
+
+def require_same_key(left: JsonValue, right: JsonValue) -> None:
+    """Equality requires two valid projections, not equally missing keys."""
+    first = run(left)
+    second = run(right)
+    assert text(first, "status") == "cacheable"
+    assert text(second, "status") == "cacheable"
+    assert text(first, "compilation_key") == text(second, "compilation_key")
+    assert get(first, "key_material").equals(get(second, "key_material"))
+
+
+def require_different(left: JsonValue, right: JsonValue) -> None:
+    """A meaningful input mutation must stay valid and change the content key."""
+    first = run(left)
+    second = run(right)
+    assert text(first, "status") == "cacheable"
+    assert text(second, "status") == "cacheable"
+    assert text(first, "compilation_key") != text(second, "compilation_key")
+
+
+def require_uncacheable(value: JsonValue, reasons: list[str]) -> None:
+    """A lookup index may remain available, but unknown evidence returns no final key or output placement."""
+    response = run(value)
+    assert text(response, "status") == "uncacheable"
+    assert get(response, "binding").equals(get(value, "binding"))
+    assert get(response, "reasons").equals(texts(reasons))
+    assert not response.contains_key("compilation_key")
+    assert not response.contains_key("key_material")
+    assert not response.contains_key("placement")
+
+
+def require_refused(value: JsonValue) -> None:
+    """Contradictory evidence has neither admission-looking binding nor any usable identity."""
+    response = run(value)
+    assert text(response, "status") == "refused"
+    for name in ["binding", "candidate_index", "index_material", "compilation_key", "key_material", "placement"]:
+        assert not response.contains_key(name)
+
+
+def input_value(value: JsonValue, section: str, item: JsonValue) -> JsonValue:
+    """Change one logical input section."""
+    return put(value, "inputs", put(get(value, "inputs"), section, item))
+
+
+def input_field(value: JsonValue, section: str, name: str, item: JsonValue) -> JsonValue:
+    """Change one logical input field."""
+    return input_value(value, section, put(get(get(value, "inputs"), section), name, item))
+
+
+def execution_field(value: JsonValue, name: str, item: JsonValue) -> JsonValue:
+    """Rebind physical execution independently of logical input content."""
+    return put(value, "execution", put(get(value, "execution"), name, item))
+
+
+def evidence_value(value: JsonValue, name: str, item: JsonValue) -> JsonValue:
+    """Replace one evidence variant."""
+    return put(value, "evidence", put(get(value, "evidence"), name, item))
+
+
+def evidence_field(value: JsonValue, section: str, name: str, item: JsonValue) -> JsonValue:
+    """Change one field of an observation without changing its neighbors."""
+    return evidence_value(value, section, put(get(get(value, "evidence"), section), name, item))
+
+
+def run(value: JsonValue) -> JsonValue:
+    """Call the actual authored wire adapter; no test-side policy implementation is used."""
+    return evaluate(render(value))
+
+
+def render(value: JsonValue) -> str:
+    """Use the production JSON encoder for fixture transport and material inspection."""
+    match value.to_json():
+        Err(error) => return fail_t[str](error.message())
+        Ok(source) => return source
+
+
+def put(value: JsonValue, name: str, item: JsonValue) -> JsonValue:
+    """Keep fixture mutation isolated and handle the fallible JSON API."""
+    mut changed = value.clone()
+    match changed.set(name, item):
+        Err(error) => return fail_t[JsonValue](error.message())
+        Ok(_) => return changed
+
+
+def get(value: JsonValue, name: str) -> JsonValue:
+    """Fail at the missing fixture field, rather than at an unrelated later assertion."""
+    match value.get(name):
+        Some(item) => return item
+        None => return fail_t[JsonValue]("missing fixture field: " + name)
+
+
+def text(value: JsonValue, name: str) -> str:
+    """Require an actual string result."""
+    match get(value, name).as_str():
+        Some(item) => return item
+        None => return fail_t[str]("fixture field is not text: " + name)
+
+
+def values(value: JsonValue) -> list[JsonValue]:
+    """Preserve array order while reading a known fixture."""
+    match value.as_array():
+        Some(items) => return items
+        None => return fail_t[list[JsonValue]]("fixture is not an array")
+
+
+def texts(items: list[str]) -> JsonValue:
+    """Encode literal expected rows without recreating the policy."""
+    return JsonValue.array([JsonValue.string(item) for item in items])
+
+
+def hash_text(character: str) -> str:
+    """Create visibly synthetic, shape-valid content facts."""
+    mut digest = "sha256:"
+    for _ in range(64):
+        digest += character
+    return digest
+
+
+def hash_value(character: str) -> JsonValue:
+    """Wrap a synthetic digest as JSON."""
+    return JsonValue.string(hash_text(character))
+
+
+def fixture() -> JsonValue:
+    """Literal cold fixture with two checked code siblings; all physical authority is synthetic and unexecuted."""
+    mut value = JsonValue.object({})
+    value = put(value, "schema", JsonValue.string("incan.oven.native-compilation/2"))
+    value = put(value, "binding", fixture_binding())
+    value = put(value, "execution", fixture_execution())
+    value = put(value, "inputs", fixture_inputs())
+    value = put(value, "evidence", fixture_evidence())
+    return value
+
+
+def fixture_binding() -> JsonValue:
+    """Bind the synthetic request to its current owner without claiming an original receipt."""
+    mut value = JsonValue.object({})
+    value = put(value, "request_id", JsonValue.string("request-v0.1"))
+    value = put(value, "current_receipt_id", JsonValue.string("provider@0.1#receipt"))
+    value = put(value, "original_receipt_id", JsonValue.null())
+    value = put(value, "unit_owner_id", JsonValue.string("owner-v0.1"))
+    value = put(value, "observation_id", JsonValue.string("observation-v0.1"))
+    return value
+
+
+def fixture_execution() -> JsonValue:
+    """Describe physical bindings separately from logical compilation identity."""
+    mut source_files: list[JsonValue] = []
+    source_files.append(texts(["src/defs.rs", "/v0.1/provider/source/src/defs.rs", hash_text("4")]))
+    source_files.append(texts(["src/lib.rs", "/v0.1/provider/source/src/lib.rs", hash_text("5")]))
+    mut environment: list[JsonValue] = []
+    environment.append(texts(["CARGO_PKG_VERSION", hash_text("9")]))
+    environment.append(texts(["PATH", hash_text("a")]))
+    mut value = JsonValue.object({})
+    value = put(value, "invocation_id", JsonValue.string("invocation-v0.1"))
+    value = put(value, "compiler", JsonValue.string("/v0.1/toolchain/rustc"))
+    value = put(value, "cwd", JsonValue.string("/v0.1/provider"))
+    value = put(value, "source_root", JsonValue.string("/v0.1/provider/source"))
+    value = put(value, "source_files", JsonValue.array(source_files))
+    value = put(
+        value,
+        "native_files",
+        JsonValue.array([texts(["stdlib", "/v0.1/native/libstdlib.rlib", hash_text("6")])]),
+    )
+    value = put(value, "search_paths", JsonValue.array([texts(["dependencies", "/v0.1/native"])]))
+    value = put(value, "generated_files", JsonValue.array([]))
+    value = put(value, "output_root", JsonValue.string("/cache/attempt-v0.1"))
+    value = put(value, "environment", JsonValue.array(environment))
+    return value
+
+
+def fixture_inputs() -> JsonValue:
+    """Assemble the checked logical inputs that are eligible for key projection."""
+    mut value = JsonValue.object({})
+    value = put(value, "compiler", fixture_compiler())
+    value = put(value, "command", fixture_command())
+    value = put(value, "source", fixture_source())
+    value = put(value, "native", JsonValue.array([texts(["stdlib", "incan_stdlib", "target_library", hash_text("6")])]))
+    value = put(value, "search", fixture_search())
+    value = put(value, "generated", JsonValue.array([]))
+    value = put(value, "output", fixture_output())
+    return value
+
+
+def fixture_compiler() -> JsonValue:
+    """Identify effective compiler bytes and target facts without retaining its physical path."""
+    mut value = JsonValue.object({})
+    value = put(value, "binary_digest", hash_value("1"))
+    value = put(value, "closure_digest", hash_value("2"))
+    value = put(value, "host", JsonValue.string("host"))
+    value = put(value, "target", JsonValue.string("target"))
+    return value
+
+
+def fixture_command() -> JsonValue:
+    """Use the typed command vocabulary rather than embedding physical paths in raw arguments."""
+    mut arguments: list[JsonValue] = []
+    arguments.append(texts(["option", "crate-name", "provider"]))
+    arguments.append(texts(["option", "crate-type", "rlib"]))
+    arguments.append(texts(["option", "edition", "2021"]))
+    arguments.append(texts(["option", "target", "target"]))
+    arguments.append(texts(["switch", "dep-info-stdout"]))
+    arguments.append(texts(["switch", "json-diagnostics"]))
+    arguments.append(texts(["remap-source", "incan-source"]))
+    arguments.append(texts(["remap-toolchain", "incan-toolchain"]))
+    arguments.append(texts(["remap-search", "dependencies"]))
+    arguments.append(texts(["search", "dependencies"]))
+    arguments.append(texts(["extern", "stdlib"]))
+    arguments.append(texts(["source", "src/lib.rs"]))
+    arguments.append(texts(["output", "native"]))
+    mut value = JsonValue.object({})
+    value = put(value, "cwd", JsonValue.string("unit"))
+    value = put(value, "crate_name", JsonValue.string("provider"))
+    value = put(value, "crate_kind", JsonValue.string("rlib"))
+    value = put(value, "edition", JsonValue.string("2021"))
+    value = put(value, "arguments", JsonValue.array(arguments))
+    return value
+
+
+def fixture_source() -> JsonValue:
+    """Supply the complete checked source membership used by the projection."""
+    mut files: list[JsonValue] = []
+    files.append(texts(["src/defs.rs", hash_text("4")]))
+    files.append(texts(["src/lib.rs", hash_text("5")]))
+    mut value = JsonValue.object({})
+    value = put(value, "projection", JsonValue.string("checked_code_members_v1"))
+    value = put(value, "logical_root", JsonValue.string("incan-source"))
+    value = put(value, "entrypoint", JsonValue.string("src/lib.rs"))
+    value = put(value, "files", JsonValue.array(files))
+    return value
+
+
+def fixture_search() -> JsonValue:
+    """Bind the named search slot to its complete ordered native membership."""
+    mut row: list[JsonValue] = []
+    row.append(JsonValue.string("dependencies"))
+    row.append(JsonValue.string("dependency"))
+    row.append(texts(["stdlib"]))
+    return JsonValue.array([JsonValue.array(row)])
+
+
+def fixture_output() -> JsonValue:
+    """Keep only the observable output filename in logical identity."""
+    mut value = JsonValue.object({})
+    value = put(value, "policy", JsonValue.string("fixed_rlib_filename_v1"))
+    value = put(value, "filename", JsonValue.string("libprovider.rlib"))
+    return value
+
+
+def fixture_evidence() -> JsonValue:
+    """Begin cold while binding known path effects to the exact synthetic invocation."""
+    mut value = JsonValue.object({})
+    value = put(value, "dep_info", JsonValue.object({"kind": JsonValue.string("missing")}))
+    value = put(value, "host_effects", JsonValue.object({"kind": JsonValue.string("none")}))
+    value = put(value, "path_effects", fixture_path_effects())
+    return value
+
+
+def fixture_path_effects() -> JsonValue:
+    """Bind path observability to the same compiler closure and prepared invocation."""
+    mut value = JsonValue.object({})
+    value = put(value, "kind", JsonValue.string("bound"))
+    value = put(value, "profile", JsonValue.string("checked_logical_paths_v1"))
+    value = put(value, "invocation_id", JsonValue.string("invocation-v0.1"))
+    value = put(value, "compiler_closure_digest", hash_value("2"))
+    value = put(value, "effects_digest", hash_value("d"))
+    return value

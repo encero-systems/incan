@@ -1,0 +1,456 @@
+"""
+Expand selected-source Rust feature declarations into complete dependency-slot demands.
+
+This is Incan policy over caller-owned declarations and target facts. It does not admit source owners, resolve
+versions, select native candidates or execute build providers. Every output slot still needs either an exact
+selected-child binding or its retained inactive reason before the semantic input producer can finish.
+"""
+
+from rust::cfg_expr import Expression, Predicate, TargetPredicate
+from rust::cfg_expr::targets import Endian
+from rust::semver import Version, VersionReq
+from std.collections import Deque, OrderedSet
+from rust_source import RustDependencyCatalog, RustDependencyDeclaration, RustDependencyRole, RustDependencySource
+from manifest_errors import IntakeError, IntakeErrorKind
+
+
+@derive(Eq)
+pub enum ActivationPurpose(str):
+    """Development requirements participate only in the owning unit's explicit test purpose."""
+
+    Normal = "normal"
+    Test = "test"
+
+
+@derive(Eq)
+pub enum DependencyDomain(str):
+    """Keep host build dependencies separate from the current unit's target dependencies."""
+
+    Host = "host"
+    Target = "target"
+
+
+@derive(Eq)
+pub enum InactiveReason(str):
+    """One original declaration's checked exclusion; its source request is never deleted."""
+
+    OptionalNotEnabled = "optional_not_enabled"
+    TargetConditionFalse = "target_condition_false"
+    DevelopmentExcluded = "development_excluded"
+    BuildUnitAbsent = "build_unit_absent"
+
+
+pub model CfgSnapshot:
+    """
+    The complete original toolchain cfg output projected by the caller's checked IO boundary.
+
+    These values are data, not a trust marker. The host must retain and bind the actual complete snapshot to the
+    selected target configuration. An absent key in that complete snapshot is false; a missing snapshot is an
+    error. No built-in target database, host machine query or package feature inference fills missing records.
+    """
+
+    pub flags: list[str]
+    pub values: Dict[str, list[str]]
+
+
+pub model TargetConfiguration:
+    """Original selected target identity and optional complete cfg records from the same owner."""
+
+    pub triple: str
+    pub cfg: Option[CfgSnapshot]
+
+
+pub model ActivationContext:
+    """
+    Explicit choices for one source unit; child host/target contexts remain separate graph identities.
+
+    build_unit_present comes from the checked source-unit inventory, not merely a build.rs filename. A present
+    build unit declares source requirements only; it does not grant provider execution. The Test purpose belongs
+    to an actual owning test unit and is not propagated to every transitive dependency.
+    """
+
+    pub host: TargetConfiguration
+    pub target: TargetConfiguration
+    pub purpose: ActivationPurpose
+    pub requested_features: list[str]
+    pub default_features: bool
+    pub build_unit_present: bool
+
+
+pub enum SlotActivation:
+    """Active carries requested child features/defaults and domain, never a selected child or native artifact."""
+
+    Active(list[str], bool, DependencyDomain)
+    Inactive(InactiveReason)
+
+
+pub model SlotDemand:
+    """Original catalog position; the final producer binds this index to the full definition digest."""
+
+    pub index: int
+    pub activation: SlotActivation
+
+
+pub model RustActivation:
+    """Local feature fixed point and one demand for every original dependency declaration."""
+
+    pub effective_features: list[str]
+    pub slots: list[SlotDemand]
+
+
+enum FeatureSymbol:
+    """The three feature expansion forms; weak is meaningful only for dependency feature forwarding."""
+
+    Local(str)
+    Dependency(str)
+    DependencyFeature(str, str, bool)
+
+
+model FeatureCatalog:
+    """Explicit expansions plus permitted implicit optional feature names; no source graph is constructed."""
+
+    names: OrderedSet[str]
+    expansions: Dict[str, list[FeatureSymbol]]
+    optional_aliases: OrderedSet[str]
+
+
+model FeatureClosure:
+    """Local feature closure and deferred forwarding before per-slot child requests are produced."""
+
+    names: list[str]
+    optional_aliases: list[str]
+    forwarding: list[FeatureSymbol]
+
+
+def refusal(manifest: str, field: list[str], kind: IntakeErrorKind, detail: str) -> IntakeError:
+    """Use the existing intake error vocabulary without inventing a source location after projection."""
+    return IntakeError(kind=kind, manifest=manifest, field=field, location=None, detail=detail)
+
+
+def unique(values: list[str]) -> list[str]:
+    """Normalize a feature set deterministically without changing the declaration's source order."""
+    items: list[str] = OrderedSet[str].from_iter(values).to_list()
+    return sorted(items)
+
+
+def cfg_value(snapshot: CfgSnapshot, key: str, value: str) -> bool:
+    """Query an explicit complete cfg snapshot; this does not synthesize target facts."""
+    return key in snapshot.values and value in snapshot.values[key]
+
+
+def target_predicate(predicate: &TargetPredicate, snapshot: CfgSnapshot) -> bool:
+    """Compare cfg-expr's parsed target vocabulary with supplied compiler facts."""
+    match predicate:
+        TargetPredicate.Abi(value) => return cfg_value(snapshot, "target_abi", str(value.as_str()))
+        TargetPredicate.Arch(value) => return cfg_value(snapshot, "target_arch", str(value.as_str()))
+        TargetPredicate.Endian(value) =>
+            match value:
+                Endian.big => return cfg_value(snapshot, "target_endian", "big")
+                Endian.little => return cfg_value(snapshot, "target_endian", "little")
+        TargetPredicate.Env(value) => return cfg_value(snapshot, "target_env", str(value.as_str()))
+        TargetPredicate.Family(value) => return cfg_value(snapshot, "target_family", str(value.as_str()))
+        TargetPredicate.HasAtomic(value) => return cfg_value(snapshot, "target_has_atomic", str(value))
+        TargetPredicate.Os(value) => return cfg_value(snapshot, "target_os", str(value.as_str()))
+        TargetPredicate.Panic(value) => return cfg_value(snapshot, "panic", str(value.as_str()))
+        TargetPredicate.PointerWidth(value) => return cfg_value(snapshot, "target_pointer_width", str(value))
+        TargetPredicate.Vendor(value) => return cfg_value(snapshot, "target_vendor", str(value.as_str()))
+
+
+def cfg_predicate(predicate: &Predicate, snapshot: CfgSnapshot) -> Option[bool]:
+    """Refuse package-feature/test/proc-macro cfg as dependency-selection policy, including dead branches."""
+    match predicate:
+        Predicate.Target(value) => return Some(target_predicate(value, snapshot))
+        Predicate.TargetFeature(value) => return Some(cfg_value(snapshot, "target_feature", str(value)))
+        Predicate.Flag(value) => return Some(str(value) in snapshot.flags)
+        # TODO: blocked by #1491. `Predicate::KeyValue` is a Rust struct variant, and neither spelling compiles:
+        # named fields are refused by the typechecker, positional emits Rust that rustc refuses. The named form is
+        # kept because it says what the match means.
+        Predicate.KeyValue(key=key, val=value) => return Some(cfg_value(snapshot, str(key), str(value)))
+        Predicate.Feature(_) => return None
+        Predicate.Test => return None
+        Predicate.DebugAssertions => return None
+        Predicate.ProcMacro => return None
+
+
+def target_matches(
+    condition: str,
+    target: TargetConfiguration,
+    manifest: str,
+    field: list[str],
+) -> Result[bool, IntakeError]:
+    """Evaluate the original cfg expression or exact triple without querying an ambient toolchain."""
+    if not condition.startswith("cfg("):
+        if condition != condition.strip() or "(" in condition or ")" in condition or " " in condition or "\t" in condition:
+            return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "malformed target selector"))
+        return Ok(condition == target.triple)
+    expression = Expression
+        .parse(condition)
+        .map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, str(error)))?
+    match target.cfg:
+        None => return Err(refusal(manifest, field, IntakeErrorKind.Missing, "original target cfg snapshot"))
+        Some(snapshot) =>
+            for predicate in expression.predicates():
+                if cfg_predicate(predicate, snapshot) == None:
+                    return Err(
+                        refusal(
+                            manifest,
+                            field,
+                            IntakeErrorKind.Unsupported,
+                            "cfg predicate is not dependency target policy",
+                        ),
+                    )
+            result: Option[bool] = expression.eval((predicate) => cfg_predicate(predicate, snapshot))
+            match result:
+                Some(value) => return Ok(value)
+                None =>
+                    return Err(refusal(manifest, field, IntakeErrorKind.Missing, "complete target predicate evidence"))
+
+
+def dependency_domain(role: RustDependencyRole) -> DependencyDomain:
+    """Choose the original dependency role's execution domain without merging host and target requests."""
+    if role == RustDependencyRole.Build:
+        return DependencyDomain.Host
+    return DependencyDomain.Target
+
+
+def dependency_target(role: RustDependencyRole, context: ActivationContext) -> TargetConfiguration:
+    """Use host cfg only for build dependencies; the owning unit's selected target covers normal/dev edges."""
+    if dependency_domain(role) == DependencyDomain.Host:
+        return context.host
+    return context.target
+
+
+def slot_restrictions(
+    catalog: RustDependencyCatalog,
+    context: ActivationContext,
+    manifest: str,
+) -> Result[list[Option[InactiveReason]], IntakeError]:
+    """Validate each original slot and decide context exclusions before optional-feature activation."""
+    mut restrictions: list[Option[InactiveReason]] = []
+    for declaration in catalog.dependencies:
+        if declaration.index != len(restrictions):
+            return Err(refusal(manifest, declaration.field, IntakeErrorKind.Invalid, "noncanonical original slot index"))
+        match declaration.source:
+            RustDependencySource.Workspace =>
+                return Err(
+                    refusal(
+                        manifest,
+                        declaration.field,
+                        IntakeErrorKind.Missing,
+                        "original inherited dependency metadata",
+                    ),
+                )
+            _ => pass
+        if let Some(requirement) = declaration.version_requirement:
+            VersionReq
+                .parse(requirement)
+                .map_err(
+                    (error) => refusal(manifest, declaration.field + ["version"], IntakeErrorKind.Invalid, str(error)),
+                )?
+        selected_target = dependency_target(declaration.role, context)
+        mut matches_target = true
+        if let Some(condition) = declaration.target_condition:
+            matches_target = target_matches(condition, selected_target, manifest, declaration.field)?
+        mut reason: Option[InactiveReason] = None
+        if declaration.role == RustDependencyRole.Dev and context.purpose == ActivationPurpose.Normal:
+            reason = Some(InactiveReason.DevelopmentExcluded)
+        elif declaration.role == RustDependencyRole.Build and not context.build_unit_present:
+            reason = Some(InactiveReason.BuildUnitAbsent)
+        elif not matches_target:
+            reason = Some(InactiveReason.TargetConditionFalse)
+        restrictions.append(reason)
+    return Ok(restrictions)
+
+
+def feature_symbol(value: str, manifest: str, field: list[str]) -> Result[FeatureSymbol, IntakeError]:
+    """Parse feature expansion syntax in Incan without selecting or enabling any dependency yet."""
+    if value.startswith("dep:"):
+        alias: str = value.__slice__(4, len(value))
+        if alias == "" or "/" in alias or "?" in alias:
+            return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "malformed dependency feature token"))
+        return Ok(FeatureSymbol.Dependency(alias))
+    parts = value.split("/")
+    if len(parts) == 1:
+        if value == "" or "?" in value or ":" in value:
+            return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "malformed local feature name"))
+        return Ok(FeatureSymbol.Local(value))
+    if len(parts) != 2 or parts[0] == "" or parts[1] == "":
+        return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "malformed dependency feature forwarding"))
+    mut alias = parts[0]
+    weak = alias.endswith("?")
+    if weak:
+        alias = alias.__slice__(0, len(alias) - 1)
+    if alias == "" or "?" in alias or ":" in alias or "?" in parts[1] or ":" in parts[1]:
+        return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "malformed dependency feature forwarding"))
+    return Ok(FeatureSymbol.DependencyFeature(alias, parts[1], weak))
+
+
+def feature_catalog(catalog: RustDependencyCatalog, manifest: str) -> Result[FeatureCatalog, IntakeError]:
+    """Validate the complete feature graph and determine which optional aliases have implicit local features."""
+    mut aliases = OrderedSet[str]()
+    mut optional = OrderedSet[str]()
+    for declaration in catalog.dependencies:
+        aliases.add(declaration.alias)
+        if declaration.optional == Some(true):
+            optional.add(declaration.alias)
+    mut suppressed = OrderedSet[str]()
+    mut expansions: Dict[str, list[FeatureSymbol]] = {}
+    for name in sorted([key for key in catalog.features.keys()]):
+        mut symbols: list[FeatureSymbol] = []
+        for value in catalog.features[name]:
+            symbol = feature_symbol(value, manifest, ["features", name])?
+            match symbol:
+                FeatureSymbol.Dependency(alias) =>
+                    if alias not in optional:
+                        return Err(
+                            refusal(
+                                manifest,
+                                ["features", name],
+                                IntakeErrorKind.Invalid,
+                                "dep token does not name an optional dependency",
+                            ),
+                        )
+                    suppressed.add(alias)
+                FeatureSymbol.DependencyFeature(alias, _, _) =>
+                    if alias not in aliases:
+                        return Err(
+                            refusal(
+                                manifest,
+                                ["features", name],
+                                IntakeErrorKind.Invalid,
+                                "feature forwarding names no dependency",
+                            ),
+                        )
+                _ => pass
+            symbols.append(symbol)
+        expansions[name] = symbols
+    mut names = OrderedSet[str].from_iter([name for name in catalog.features.keys()])
+    for alias in optional.to_list():
+        if alias not in suppressed:
+            names.add(alias)
+    for name in sorted([key for key in expansions.keys()]):
+        for symbol in expansions[name]:
+            match symbol:
+                FeatureSymbol.Local(local) =>
+                    if local not in names:
+                        return Err(
+                            refusal(
+                                manifest,
+                                ["features", name],
+                                IntakeErrorKind.Invalid,
+                                "feature expansion names no local feature",
+                            ),
+                        )
+                _ => pass
+    return Ok(FeatureCatalog(names=names, expansions=expansions, optional_aliases=optional))
+
+
+def eligible_alias(alias: str, catalog: RustDependencyCatalog, restrictions: list[Option[InactiveReason]]) -> bool:
+    """Require an actual context-eligible optional slot before strong forwarding enables its local feature."""
+    for declaration in catalog.dependencies:
+        if declaration.alias == alias and declaration.optional == Some(true) and restrictions[declaration.index] == None:
+            return true
+    return false
+
+
+def expand_features(
+    catalog: RustDependencyCatalog,
+    features: FeatureCatalog,
+    context: ActivationContext,
+    restrictions: list[Option[InactiveReason]],
+    manifest: str,
+) -> Result[FeatureClosure, IntakeError]:
+    """Compute a finite local feature closure and preserve weak forwarding until slot activation is known."""
+    mut pending = Deque[str].from_iter(unique(context.requested_features))
+    if context.default_features and "default" in features.names and "default" not in context.requested_features:
+        pending.append("default")
+    mut enabled = OrderedSet[str]()
+    mut activated = OrderedSet[str]()
+    mut forwarding: list[FeatureSymbol] = []
+    # FIFO expansion preserves declaration order; the set prevents cycles from expanding a feature twice.
+    while len(pending) > 0:
+        name = pending.popleft()
+        if name in enabled:
+            continue
+        if name not in features.names:
+            return Err(
+                refusal(manifest, ["features", name], IntakeErrorKind.Invalid, "requested local feature is absent"),
+            )
+        enabled.add(name)
+        if name not in features.expansions:
+            activated.add(name)
+            continue
+        for symbol in features.expansions[name]:
+            match symbol:
+                FeatureSymbol.Local(local) => pending.append(local)
+                FeatureSymbol.Dependency(alias) => activated.add(alias)
+                FeatureSymbol.DependencyFeature(alias, child_feature, weak) =>
+                    # Keep weak forwarding even before activation: a later feature can enable the same child.
+                    forwarding.append(FeatureSymbol.DependencyFeature(alias, child_feature, weak))
+                    if not weak and eligible_alias(alias, catalog, restrictions):
+                        activated.add(alias)
+                        if alias in features.names:
+                            pending.append(alias)
+    return Ok(
+        FeatureClosure(
+            names=sorted(enabled.to_list()),
+            optional_aliases=sorted(activated.to_list()),
+            forwarding=forwarding,
+        ),
+    )
+
+
+def slot_demand(
+    declaration: RustDependencyDeclaration,
+    restriction: Option[InactiveReason],
+    closure: FeatureClosure,
+) -> SlotDemand:
+    """Retain an inactive original slot or issue an exact active child request without selecting its source."""
+    if let Some(reason) = restriction:
+        return SlotDemand(index=declaration.index, activation=SlotActivation.Inactive(reason))
+    if declaration.optional == Some(true) and declaration.alias not in closure.optional_aliases:
+        return SlotDemand(index=declaration.index, activation=SlotActivation.Inactive(InactiveReason.OptionalNotEnabled))
+    mut requested = declaration.features
+    for symbol in closure.forwarding:
+        match symbol:
+            FeatureSymbol.DependencyFeature(alias, feature, _) =>
+                if alias == declaration.alias:
+                    requested.append(feature)
+            _ => pass
+    domain = dependency_domain(declaration.role)
+    defaults = declaration.default_features != Some(false)
+    return SlotDemand(index=declaration.index, activation=SlotActivation.Active(unique(requested), defaults, domain))
+
+
+pub def activate_unit(
+    catalog: RustDependencyCatalog,
+    context: ActivationContext,
+    manifest: str,
+) -> Result[RustActivation, IntakeError]:
+    """
+    Return every original slot's activation outcome for one supplied host/target/purpose context.
+
+    Original source admission, inherited unit/configuration validation and target snapshot authenticity remain
+    the caller's responsibility. This result is not a selected dependency graph: Active slots require exact child
+    source bindings before registration with the semantic projection. Inactive slots retain their original index.
+    """
+    if context.host.triple == "" or context.target.triple == "":
+        return Err(refusal(manifest, [], IntakeErrorKind.Missing, "original host and target identities"))
+    restrictions = slot_restrictions(catalog, context, manifest)?
+    features = feature_catalog(catalog, manifest)?
+    closure = expand_features(catalog, features, context, restrictions, manifest)?
+    mut slots: list[SlotDemand] = []
+    for declaration in catalog.dependencies:
+        slots.append(slot_demand(declaration, restrictions[declaration.index], closure))
+    return Ok(RustActivation(effective_features=closure.names, slots=slots))
+
+
+pub def version_matches(requirement: str, selected_version: str, manifest: str) -> Result[bool, IntakeError]:
+    """Check a supplied selected version with the existing semver crate; this performs no source selection."""
+    wanted = VersionReq
+        .parse(requirement)
+        .map_err((error) => refusal(manifest, ["version"], IntakeErrorKind.Invalid, str(error)))?
+    selected = Version
+        .parse(selected_version)
+        .map_err((error) => refusal(manifest, ["selected-version"], IntakeErrorKind.Invalid, str(error)))?
+    return Ok(wanted.matches(selected))

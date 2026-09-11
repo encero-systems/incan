@@ -1,0 +1,53 @@
+"""
+Manifest diagnostics shared by pure declaration readers and filesystem intake.
+
+Locating a diagnostic uses only supplied TOML text; importing these types never loads project discovery or Rust
+inspection code.
+"""
+
+from std import toml
+from std.toml import TomlLocation
+from std.traits.error import Error
+
+
+pub enum IntakeErrorKind(str):
+    """Stable refusal categories without unvalidated string states."""
+
+    Invalid = "invalid"
+    Missing = "missing"
+    Unsupported = "unsupported"
+    Cycle = "cycle"
+
+    def as_str(self) -> str:
+        """Return the stable diagnostic category spelling."""
+        return self.value()
+
+
+pub model IntakeError with Error:
+    """A manifest-local refusal; unsupported intent is never silently discarded."""
+
+    pub kind: IntakeErrorKind
+    pub manifest: str
+    pub field: list[str]
+    pub location: Option[TomlLocation]
+    pub detail: str
+
+    def message(self) -> str:
+        """Render the manifest, literal key segments, category and refusal detail."""
+        return f"{self.manifest}: {self.field}: {self.kind.as_str()}: {self.detail}"
+
+    def with_source(self, source: str) -> Self:
+        """Attach a literal-key source location; missing fields legitimately have no span."""
+        mut location: Option[TomlLocation] = None
+        match toml.locate(source, self.field):
+            Ok(found) =>
+                location = found
+            Err(_) =>
+                location = self.location.clone()
+        return IntakeError(
+            kind=self.kind,
+            manifest=self.manifest,
+            field=self.field,
+            detail=self.detail,
+            location=location,
+        )

@@ -1,0 +1,370 @@
+"""Wire-boundary assertions with synthetic comparison facts, never admitted native artifacts."""
+
+from std.json import JsonValue
+from std.testing import fail, fail_t
+from plan_json import decode_request, evaluate
+from plan import SelectionErrorKind, NativeCandidateEvidence
+
+
+pub def test_selection_binding_and_rank() -> None:
+    """A valid wire request reaches the selector and preserves every result reference and rank."""
+    source = render(envelope())
+    match decode_request(source):
+        Err(error) => fail(error.message())
+        Ok(request) =>
+            assert request.context.features == ["feature"]
+            # Empty-list comparison loses context in native emission: https://github.com/encero-systems/incan/issues/1476
+            assert len(request.runtime.unknown_input_keys) == 0
+            assert request.providers[0].direct_link
+            match request.candidates[0].evidence:
+                NativeCandidateEvidence.RuntimeProviderRecipe(_, providers) =>
+                    assert providers[0].modules == ["prelude"]
+                NativeCandidateEvidence.ExactBuildUnit => fail("legacy decoder produced exact-unit evidence")
+            assert len(request.unsupported_intent) == 0
+    response = evaluate(source)
+    assert text(response, "status") == "selected"
+    assert text(response, "request_id") == "request"
+    assert text(response, "request_evidence_id") == "request-evidence"
+    result = get(response, "selection")
+    assert text(result, "request_id") == "request"
+    assert text(result, "request_evidence_id") == "request-evidence"
+    assert text(result, "candidate_id") == "candidate"
+    assert text(result, "candidate_evidence_id") == "candidate-evidence"
+    assert text(result, "plan_identity") == "plan"
+    assert text(result, "build_unit_identity") == "unit"
+    rank = get(result, "excess")
+    for name in ["providers", "modules", "facets", "direct_links"]:
+        assert get(rank, name).as_int() == Some(0)
+    assert not response.contains_key("error")
+
+
+pub def test_every_object_field_is_required() -> None:
+    """Removing any field, including defaulted intent lists, produces its exact decoder path."""
+    for owner in ["envelope", "request", "context", "runtime", "provider", "candidate"]:
+        original = component(owner)
+        for key in original.keys():
+            mut changed = component(owner)
+            match changed.remove(key):
+                Err(error) => fail(error.message())
+                Ok(_) => pass
+            require_invalid(wrap(owner, changed), location(owner) + [key])
+            wrong_type = put(component(owner), key, JsonValue.null())
+            require_invalid(wrap(owner, wrong_type), location(owner) + [key])
+
+
+pub def test_nested_unknown_fields_refuse() -> None:
+    """Unknown literal keys are not dropped or split into misleading dotted paths."""
+    for owner in ["envelope", "request", "context", "runtime", "provider", "candidate"]:
+        changed = put(component(owner), "extra.field", JsonValue.string("ignored?"))
+        require_invalid(wrap(owner, changed), location(owner) + ["extra.field"])
+    mut candidate_value = put(candidate(), "context", put(context(), "extra", JsonValue.int(1)))
+    require_invalid(wrap("candidate", candidate_value), ["request", "candidates", "0", "context", "extra"])
+    candidate_value = put(candidate(), "runtime", put(runtime(), "extra", JsonValue.int(1)))
+    require_invalid(wrap("candidate", candidate_value), ["request", "candidates", "0", "runtime", "extra"])
+    nested_provider = put(provider(), "extra", JsonValue.int(1))
+    candidate_value = put(candidate(), "providers", JsonValue.array([nested_provider]))
+    require_invalid(wrap("candidate", candidate_value), ["request", "candidates", "0", "providers", "0", "extra"])
+
+
+pub def test_wrong_types_and_array_indices_refuse() -> None:
+    """Null and mixed arrays never coerce; array paths retain decimal indices."""
+    for owner in ["request", "context", "runtime", "provider", "candidate"]:
+        require_invalid(wrap(owner, JsonValue.null()), location(owner))
+    require_invalid(wrap("context", put(context(), "target", JsonValue.int(1))), ["request", "context", "target"])
+    require_invalid(
+        wrap("provider", put(provider(), "direct_link", JsonValue.string("true"))),
+        ["request", "providers", "0", "direct_link"],
+    )
+    require_invalid(
+        wrap("provider", put(provider(), "modules", JsonValue.string("prelude"))),
+        ["request", "providers", "0", "modules"],
+    )
+    mixed = JsonValue.array([JsonValue.string("ok"), JsonValue.bool(false)])
+    require_invalid(wrap("context", put(context(), "features", mixed)), ["request", "context", "features", "1"])
+    mut names: list[JsonValue] = [JsonValue.string("ok") for _ in range(10)]
+    names.append(JsonValue.int(9))
+    require_invalid(
+        wrap("provider", put(provider(), "facets", JsonValue.array(names))),
+        ["request", "providers", "0", "facets", "10"],
+    )
+    require_invalid(
+        wrap("request", put(request(), "candidates", JsonValue.string("candidate"))),
+        ["request", "candidates"],
+    )
+
+
+pub def test_malformed_json_and_schema_refuse() -> None:
+    """Parse/schema failures have no binding or selected payload."""
+    require_unbound(evaluate("{"))
+    require_invalid(JsonValue.null(), [])
+    require_invalid(put(envelope(), "schema", JsonValue.string("incan.oven.selection/3")), ["schema"])
+    require_invalid(put(envelope(), "schema", JsonValue.int(1)), ["schema"])
+
+
+pub def test_semantic_refusal_keeps_binding() -> None:
+    """Decoded unsupported intent and incompatible contexts stay owned by the typed selector."""
+    changed = put(request(), "unsupported_intent", JsonValue.array([JsonValue.string("rust-request")]))
+    mut response = evaluate(render(wrap("request", changed)))
+    assert text(response, "status") == "refused"
+    assert text(response, "request_id") == "request"
+    assert text(response, "request_evidence_id") == "request-evidence"
+    assert text(get(response, "error"), "kind") == "unsupported_intent"
+    assert not response.contains_key("selection")
+    wrong = put(candidate(), "context", put(context(), "profile", JsonValue.string("release")))
+    response = evaluate(render(wrap("candidate", wrong)))
+    assert text(get(response, "error"), "kind") == "no_compatible_candidate"
+    assert text(response, "request_id") == "request"
+
+
+pub def test_candidate_features_cannot_be_omitted() -> None:
+    """Candidate context uses the same strict required-feature boundary as the request."""
+    mut missing = context()
+    match missing.remove("features"):
+        Err(error) => fail(error.message())
+        Ok(_) => pass
+    changed = put(candidate(), "context", missing)
+    require_invalid(wrap("candidate", changed), ["request", "candidates", "0", "context", "features"])
+
+
+pub def test_superset_and_duplicate_semantics() -> None:
+    """The adapter preserves subset ranking and leaves duplicate-set refusal to the selector."""
+    broad = put(provider(), "modules", JsonValue.array([JsonValue.string("prelude"), JsonValue.string("extra")]))
+    changed = put(candidate(), "providers", JsonValue.array([broad]))
+    mut response = evaluate(render(wrap("candidate", changed)))
+    assert text(response, "status") == "selected"
+    rank = get(get(response, "selection"), "excess")
+    assert get(rank, "modules").as_int() == Some(1)
+    duplicates = JsonValue.array([JsonValue.string("feature"), JsonValue.string("feature")])
+    response = evaluate(render(wrap("context", put(context(), "features", duplicates))))
+    assert text(response, "status") == "refused"
+    assert text(response, "request_id") == "request"
+    assert text(get(response, "error"), "kind") == "invalid_input"
+    assert not response.contains_key("selection")
+
+
+def require_invalid(value: JsonValue, path: list[str]) -> None:
+    """Check both typed diagnosis and the absence of a selection response."""
+    source = render(value)
+    match decode_request(source):
+        Ok(_) => fail("malformed request decoded")
+        Err(error) =>
+            assert error.kind == SelectionErrorKind.InvalidInput
+            assert error.fields == path
+    require_unbound(evaluate(source))
+
+
+def require_unbound(response: JsonValue) -> None:
+    """Decode failures cannot be mistaken for a bound selector result."""
+    assert text(response, "status") == "refused"
+    assert text(response, "request_id") == ""
+    assert text(response, "request_evidence_id") == ""
+    assert not response.contains_key("selection")
+
+
+def context() -> JsonValue:
+    """Supply every native context field, including an explicit feature set."""
+    return JsonValue.object(
+        {"target": JsonValue.string("target"), "toolchain": JsonValue.string("rustc"), "profile": JsonValue.string(
+            "debug",
+        ), "features": JsonValue.array([JsonValue.string("feature")])},
+    )
+
+
+def runtime() -> JsonValue:
+    """Supply six distinct evidence values and explicit unknown-input state."""
+    return JsonValue.object(
+        {"compiler_version": JsonValue.string("compiler"), "sdk_provider_codegen_revision": JsonValue.string("7"), "runtime_lock_digest": JsonValue.string(
+            "lock",
+        ), "core_source_digest": JsonValue.string("core"), "derive_source_digest": JsonValue.string("derive"), "stdlib_source_digest": JsonValue.string(
+            "stdlib",
+        ), "unknown_input_keys": JsonValue.array([])},
+    )
+
+
+def provider() -> JsonValue:
+    """Supply one synthetic semantic owner with module/facet/direct-link capabilities."""
+    return JsonValue.object(
+        {"semantic_identity": JsonValue.string("provider@1#semantic[]"), "modules": JsonValue.array(
+            [JsonValue.string("prelude")],
+        ), "facets": JsonValue.array([JsonValue.string("runtime")]), "direct_link": JsonValue.bool(true)},
+    )
+
+
+def candidate() -> JsonValue:
+    """Offer a synthetic candidate, not a claimed authenticated artifact."""
+    return JsonValue.object(
+        {"candidate_id": JsonValue.string("candidate"), "evidence_id": JsonValue.string("candidate-evidence"), "plan_identity": JsonValue.string(
+            "plan",
+        ), "build_unit_identity": JsonValue.string("unit"), "context": context(), "runtime": runtime(), "providers": JsonValue.array(
+            [provider()],
+        )},
+    )
+
+
+def request() -> JsonValue:
+    """Build a complete protocol request without relying on model defaults."""
+    return JsonValue.object(
+        {"request_id": JsonValue.string("request"), "evidence_id": JsonValue.string("request-evidence"), "context": context(), "runtime": runtime(), "providers": JsonValue.array(
+            [provider()],
+        ), "candidates": JsonValue.array([candidate()]), "unsupported_intent": JsonValue.array([])},
+    )
+
+
+def envelope() -> JsonValue:
+    """Wrap one request with the exact protocol version."""
+    return JsonValue.object({"schema": JsonValue.string("incan.oven.selection/1"), "request": request()})
+
+
+def component(owner: str) -> JsonValue:
+    """Select a fixture object for systematic required-key and unknown-key controls."""
+    match owner:
+        "envelope" => return envelope()
+        "request" => return request()
+        "context" => return context()
+        "runtime" => return runtime()
+        "provider" => return provider()
+        _ => return candidate()
+
+
+def location(owner: str) -> list[str]:
+    """Return the exact diagnostic path where a fixture object is embedded."""
+    match owner:
+        "envelope" => return []
+        "request" => return ["request"]
+        "context" => return ["request", "context"]
+        "runtime" => return ["request", "runtime"]
+        "provider" => return ["request", "providers", "0"]
+        _ => return ["request", "candidates", "0"]
+
+
+def wrap(owner: str, value: JsonValue) -> JsonValue:
+    """Embed a changed object into an otherwise valid request."""
+    match owner:
+        "envelope" => return value
+        "request" => return put(envelope(), "request", value)
+        "provider" => return put(envelope(), "request", put(request(), "providers", JsonValue.array([value])))
+        "candidate" => return put(envelope(), "request", put(request(), "candidates", JsonValue.array([value])))
+        _ => return put(envelope(), "request", put(request(), owner, value))
+
+
+def put(value: JsonValue, key: str, item: JsonValue) -> JsonValue:
+    """Return an updated copy, preserving the input fixture and reporting mutation failure."""
+    mut updated = value.clone()
+    match updated.set(key, item):
+        Err(error) => return fail_t[JsonValue](error.message())
+        Ok(_) => return updated
+
+
+def get(value: JsonValue, key: str) -> JsonValue:
+    """Require an expected response field for an assertion."""
+    match value.get(key):
+        Some(item) => return item
+        None => return fail_t[JsonValue](f"missing response field {key}")
+
+
+def text(value: JsonValue, key: str) -> str:
+    """Require an expected string response field without coercion."""
+    match get(value, key).as_str():
+        Some(item) => return item
+        None => return fail_t[str](f"response field {key} is not text")
+
+
+def render(value: JsonValue) -> str:
+    """Serialize fixture JSON, failing explicitly if the fixture itself is invalid."""
+    match value.to_json():
+        Ok(source) => return source
+        Err(error) => return fail_t[str](error.message())
+
+
+pub def test_version_two_exact_and_recipe_evidence() -> None:
+    """Both explicit evidence forms retain original publisher bindings in version two."""
+    for exact in [true, false]:
+        response = evaluate(render(envelope_v2(exact)))
+        assert text(response, "schema") == "incan.oven.selection/2"
+        assert text(response, "status") == "selected"
+        selection = get(response, "selection")
+        assert text(selection, "candidate_evidence_id") == "candidate-evidence"
+        assert text(selection, "build_unit_identity") == "unit"
+    value = envelope_v2(true)
+    changed = put(get(value, "request"), "build_unit_identity", JsonValue.string("different"))
+    response = evaluate(render(put(value, "request", changed)))
+    assert text(get(response, "error"), "kind") == "no_compatible_candidate"
+
+
+pub def test_version_two_requires_explicit_key_and_evidence() -> None:
+    """Missing or malformed version-two evidence never falls back to the legacy recipe adapter."""
+    value = envelope_v2(true)
+    mut missing = get(value, "request")
+    missing.remove("build_unit_identity")
+    require_invalid(put(value, "request", missing), ["request", "build_unit_identity"])
+    for key in [JsonValue.string(""), JsonValue.int(1)]:
+        changed = put(get(value, "request"), "build_unit_identity", key)
+        require_invalid(put(value, "request", changed), ["request", "build_unit_identity"])
+    mut without_features = context()
+    without_features.remove("features")
+    missing_features_candidate = put(candidate_v2(true), "context", without_features)
+    missing_features_request = put(get(value, "request"), "candidates", JsonValue.array([missing_features_candidate]))
+    require_invalid(
+        put(value, "request", missing_features_request),
+        ["request", "candidates", "0", "context", "features"],
+    )
+    invalid: list[JsonValue] = [
+        JsonValue.object({}),
+        JsonValue.object({"kind": JsonValue.string("unknown")}),
+        JsonValue.object({"kind": JsonValue.string("exact_build_unit"), "runtime": runtime()}),
+    ]
+    for evidence in invalid:
+        offered = put(candidate_v2(true), "evidence", evidence)
+        changed = put(get(value, "request"), "candidates", JsonValue.array([offered]))
+        response = evaluate(render(put(value, "request", changed)))
+        require_unbound(response)
+        assert text(response, "schema") == "incan.oven.selection/2"
+        assert text(get(response, "error"), "kind") == "invalid_input"
+    legacy = put(request(), "candidates", JsonValue.array([candidate_v2(true)]))
+    response = evaluate(render(put(envelope(), "request", legacy)))
+    require_unbound(response)
+    assert text(response, "schema") == "incan.oven.selection/1"
+
+
+pub def test_version_two_validates_losing_candidates() -> None:
+    """Exact equality cannot conceal malformed contexts or unknown recipe inputs on another offer."""
+    value = envelope_v2(true)
+    for axis in ["target", "toolchain", "profile"]:
+        loser = put(candidate_v2(true), "candidate_id", JsonValue.string("loser"))
+        wrong = put(loser, "context", put(context(), axis, JsonValue.string("")))
+        changed = put(get(value, "request"), "candidates", JsonValue.array([candidate_v2(true), wrong]))
+        response = evaluate(render(put(value, "request", changed)))
+        assert text(get(response, "error"), "kind") == "invalid_input"
+        assert not response.contains_key("selection")
+    unknown = put(runtime(), "unknown_input_keys", JsonValue.array([JsonValue.string("uncovered")]))
+    evidence = JsonValue.object({
+        "kind": JsonValue.string("runtime_provider_recipe"),
+        "runtime": unknown,
+        "providers": JsonValue.array([provider()]),
+    })
+    loser = put(candidate_v2(false), "candidate_id", JsonValue.string("loser"))
+    loser_with_unknown = put(loser, "evidence", evidence)
+    changed = put(get(value, "request"), "candidates", JsonValue.array([candidate_v2(true), loser_with_unknown]))
+    response = evaluate(render(put(value, "request", changed)))
+    assert text(get(response, "error"), "kind") == "unsupported_intent"
+
+
+def candidate_v2(exact: bool) -> JsonValue:
+    """Explicitly construct either wire variant from synthetic fixture facts."""
+    mut value = candidate()
+    value.remove("runtime")
+    value.remove("providers")
+    if exact:
+        return put(value, "evidence", JsonValue.object({"kind": JsonValue.string("exact_build_unit")}))
+    return put(value, "evidence", JsonValue.object({
+        "kind": JsonValue.string("runtime_provider_recipe"),
+        "runtime": runtime(),
+        "providers": JsonValue.array([provider()]),
+    }))
+
+
+def envelope_v2(exact: bool) -> JsonValue:
+    """Supply a synthetic verified-key input; authentication remains a host obligation."""
+    with_key = put(request(), "build_unit_identity", JsonValue.string("unit"))
+    value = put(with_key, "candidates", JsonValue.array([candidate_v2(exact)]))
+    return JsonValue.object({"schema": JsonValue.string("incan.oven.selection/2"), "request": value})
