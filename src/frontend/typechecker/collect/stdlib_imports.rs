@@ -2218,11 +2218,7 @@ impl TypeChecker {
 
             // The consumer route is the importing library, then one bridge hop per dependency crossed. The owner
             // route stops there; the qualified name continues into the export's own public path.
-            let mut route = vec![library.to_string()];
-            for dependency in dependency_route {
-                route.push(crate::frontend::rust_type_display::PROVIDER_RUST_BRIDGE_MODULE.to_string());
-                route.push(dependency);
-            }
+            let mut route = crate::frontend::rust_type_display::provider_bridge_route(library, dependency_route);
             let owner_route = route.join("::");
             route.extend(export.public_path.iter().skip(1).cloned());
             let qualified = format!("pub::{}", route.join("::"));

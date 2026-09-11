@@ -13,9 +13,9 @@
 //! partial presets, source-evaluable defaults, identity-selected local or same-module named calls, generator
 //! expressions and generator functions, and their bounded lazy `map`/`filter` adapters. Published package bodies enter
 //! the same graph after their public executable requirements are resolved. Rust interop, unsupported callable/default
-//! forms, general destructuring, and other projections remain visible refusals. Its
-//! enclosing declaration snapshot retains a deferred generator's shape, but the frame executes and adds execution-frame
-//! evidence only when collection polls it; no path falls back to generated Rust.
+//! forms, general destructuring, and other projections remain visible refusals. Its enclosing declaration snapshot
+//! retains a deferred generator's shape, but the frame executes and adds execution-frame evidence only when
+//! collection polls it; no path falls back to generated Rust.
 //!
 //! One checked provider-service operation also executes directly, from the already-lowered
 //! [`ProviderOperationPlan`] rather than from source or generated Rust (#1156). That vertical is owned by

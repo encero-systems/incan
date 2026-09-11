@@ -365,8 +365,9 @@ pub enum Command {
         #[arg(long)]
         release: bool,
         /// Select the compiler backend for this build. Defaults to the legacy Rust-emission backend, declared
-        /// explicitly even when this flag is omitted. The `replacement` profile is source-only and partial: it
-        /// executes supported free functions from Body IR and refuses unsupported input visibly.
+        /// explicitly even when this flag is omitted. The `replacement` profile is partial: it executes supported
+        /// declarations from Body IR, including methods and declarations resolved from a published package's
+        /// executable representation, and refuses unsupported input visibly.
         #[arg(long = "backend", value_enum)]
         backend: Option<BackendCliKind>,
         /// Request a source-observable shadow comparison against the replacement backend. Recorded explicitly as

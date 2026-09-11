@@ -167,10 +167,10 @@ impl BodyIrModule {
 /// The exact local declaration and canonical field layout for one direct-executable plain model.
 ///
 /// The record belongs to its declaring module and deliberately excludes classes, enums, generic models, and
-/// behavior-bearing models. A consumer may load this same canonical context from a package artifact. Its field order is
-/// the checked constructor-slot order; a direct runtime must compare it
-/// with [`ConstructorTarget::canonical_field_layout`] before applying [`ConstructorTarget::binding`], rather than
-/// treating constructor argument spelling as layout evidence.
+/// behavior-bearing models. A consumer may load this same canonical context from a package artifact. Its field order
+/// is the checked constructor-slot order; a direct runtime must compare it with
+/// [`ConstructorTarget::canonical_field_layout`] before applying [`ConstructorTarget::binding`], rather than treating
+/// constructor argument spelling as layout evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NominalDeclaration {
     /// Exact source-local declaration identity, derived from the declaration source span.

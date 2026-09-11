@@ -357,6 +357,12 @@ fn project_declarations(
         //
         // A partially public enum has no executable form, because a consumer matching on it could not name the
         // variants it cannot see. Neither kind carries requirements: a variant has no payload to depend on.
+        //
+        // The two loops below are the same shape over two types that share no trait, differing only in the
+        // collection, the refusal label, and the wrapping variant. They are left explicit rather than unified
+        // behind a trait written for exactly two implementors, which would cost more machinery than the
+        // duplication does. The consequence is that they must be changed together: the public-variant gate is the
+        // rule both enforce, and a third enum kind would need a third copy or the trait this deliberately avoids.
         for value in &module.fieldless_enum_declarations {
             if !declarations.contains_key(&value.canonical)
                 || !value.variants.iter().all(|variant| public.contains(&variant.canonical))

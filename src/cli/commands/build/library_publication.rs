@@ -260,50 +260,45 @@ fn owned_library_output(path: &Path) -> CliResult<bool> {
 
 /// Preserve only output-root entries outside the generator's artifact namespace.
 fn copy_unrelated(source: &Path, destination: &Path) -> io::Result<()> {
+    copy_missing_except(source, destination, true)
+}
+
+/// Return whether an entry is this build's own generated output rather than a user file to carry forward.
+///
+/// The executable-surface namespace belongs to `published_layout`; naming its constants here is what keeps this
+/// list correct when the directory or extension is renamed. A literal that stopped matching would silently
+/// reclassify a previous build's surface as an unrelated custom output and copy it forward, which is exactly the
+/// resurrection this rollback exists to prevent.
+fn is_generated_output(name: &std::ffi::OsStr) -> bool {
+    let path = PathBuf::from(name);
+    let directory = matches!(
+        name.to_str(),
+        Some("Cargo.toml" | "Cargo.lock" | "src" | "oven" | "target")
+    ) || name.to_str() == Some(crate::library_manifest::published_layout::EXECUTABLE_SURFACE_DIRECTORY);
+    let artifact = path.extension().is_some_and(|extension| {
+        extension == "incnlib" || extension == crate::library_manifest::published_layout::EXECUTABLE_SURFACE_EXTENSION
+    });
+    directory || artifact
+}
+
+/// Copy entries the destination does not already have, optionally skipping generated output at this level.
+///
+/// One traversal serves both the root call and its recursion, because two of them drifted. The root used
+/// `Path::exists`, which follows symbolic links: a broken link at the destination reads as absent, so it took the
+/// create-directory branch, `create_dir` failed with `AlreadyExists` on the link that was there all along, and the
+/// error propagated out of a rollback that is supposed to leave the tree recoverable. Deciding from
+/// `symlink_metadata`, which does not follow, keeps a broken link an existing entry and skips it.
+///
+/// `skip_generated` applies only at the level it is passed, matching where the filter belongs: generated output
+/// sits at the artifact root, and a nested file of the same name is a user file.
+fn copy_missing_except(source: &Path, destination: &Path, skip_generated: bool) -> io::Result<()> {
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let name = entry.file_name();
-        let path = PathBuf::from(&name);
-        // The executable-surface namespace belongs to `published_layout`; naming its constants here is what
-        // keeps this skip list correct when the directory or extension is renamed. A literal that stopped
-        // matching would silently reclassify a previous build's surface as an unrelated custom output and copy
-        // it forward, which is exactly the resurrection this rollback exists to prevent.
-        let generated_directory = matches!(
-            name.to_str(),
-            Some("Cargo.toml" | "Cargo.lock" | "src" | "oven" | "target")
-        ) || name.to_str()
-            == Some(crate::library_manifest::published_layout::EXECUTABLE_SURFACE_DIRECTORY);
-        let generated_artifact = path.extension().is_some_and(|extension| {
-            extension == "incnlib"
-                || extension == crate::library_manifest::published_layout::EXECUTABLE_SURFACE_EXTENSION
-        });
-        if generated_directory || generated_artifact {
+        if skip_generated && is_generated_output(&name) {
             continue;
         }
         let target = destination.join(&name);
-        if entry.file_type()?.is_dir() {
-            if !target.exists() {
-                fs::create_dir(&target)?;
-            }
-            if fs::symlink_metadata(&target)?.file_type().is_dir() {
-                copy_missing(&entry.path(), &target)?;
-            }
-        } else if fs::symlink_metadata(&target).is_err_and(|error| error.kind() == io::ErrorKind::NotFound) {
-            if entry.file_type()?.is_symlink() {
-                copy_symlink(&entry.path(), &target)?;
-            } else {
-                fs::copy(entry.path(), target)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Retain unrelated nested files without overwriting new contents.
-fn copy_missing(source: &Path, destination: &Path) -> io::Result<()> {
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        let target = destination.join(entry.file_name());
         let kind = entry.file_type()?;
         let target_kind = match fs::symlink_metadata(&target) {
             Ok(metadata) => Some(metadata.file_type()),
@@ -315,7 +310,7 @@ fn copy_missing(source: &Path, destination: &Path) -> io::Result<()> {
                 continue;
             }
             fs::create_dir_all(&target)?;
-            copy_missing(&entry.path(), &target)?;
+            copy_missing_except(&entry.path(), &target, false)?;
         } else if target_kind.is_none() {
             if kind.is_symlink() {
                 copy_symlink(&entry.path(), &target)?;

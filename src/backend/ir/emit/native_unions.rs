@@ -46,25 +46,61 @@ impl EmittedDeclarationTypes {
             .filter(|entry| entry.source_path == source_path)
             .map(|entry| entry.public_name.clone())
             .collect::<Vec<_>>();
-        macro_rules! rewrite_exports {
-            ($($field:ident),* $(,)?) => { $(
-                for export in &mut manifest.exports.$field {
-                    if names.contains(&export.name) { self.rewrite(export); }
-                }
-            )* };
+        // Written out rather than generated. A macro here hid the one fact worth seeing: this list is not the
+        // whole of `LibraryExports`. `functions` is absent deliberately, because `refresh_native_function_exports`
+        // owns it and rewriting it twice would reproject an already-projected union. Spelled out, a reader can
+        // compare this list against the struct and against `type_fields!`; generated, the omission looked like an
+        // oversight that nobody could check without finding the other function three hundred lines away.
+        for export in &mut manifest.exports.models {
+            if names.contains(&export.name) {
+                self.rewrite(export);
+            }
         }
-        rewrite_exports!(
-            models,
-            classes,
-            traits,
-            enums,
-            type_aliases,
-            newtypes,
-            consts,
-            statics,
-            aliases,
-            partials
-        );
+        for export in &mut manifest.exports.classes {
+            if names.contains(&export.name) {
+                self.rewrite(export);
+            }
+        }
+        for export in &mut manifest.exports.traits {
+            if names.contains(&export.name) {
+                self.rewrite(export);
+            }
+        }
+        for export in &mut manifest.exports.enums {
+            if names.contains(&export.name) {
+                self.rewrite(export);
+            }
+        }
+        for export in &mut manifest.exports.type_aliases {
+            if names.contains(&export.name) {
+                self.rewrite(export);
+            }
+        }
+        for export in &mut manifest.exports.newtypes {
+            if names.contains(&export.name) {
+                self.rewrite(export);
+            }
+        }
+        for export in &mut manifest.exports.consts {
+            if names.contains(&export.name) {
+                self.rewrite(export);
+            }
+        }
+        for export in &mut manifest.exports.statics {
+            if names.contains(&export.name) {
+                self.rewrite(export);
+            }
+        }
+        for export in &mut manifest.exports.aliases {
+            if names.contains(&export.name) {
+                self.rewrite(export);
+            }
+        }
+        for export in &mut manifest.exports.partials {
+            if names.contains(&export.name) {
+                self.rewrite(export);
+            }
+        }
     }
 
     /// Replace typed occurrences within a single source declaration without crossing module or artifact boundaries.
@@ -611,12 +647,21 @@ pub(in crate::backend::ir) fn preserve_native_aliases(
             let Some((mut ty, mut function)) = declared_alias_surface(provider, public_path)? else {
                 continue;
             };
-            let mut failure = None;
+            // `VisitTypeRefs` is infallible, so a failure has to be carried out in a cell. Keep the FIRST one
+            // and stop projecting after it: overwriting would report whichever union happened to be visited
+            // last, which is an ordering detail, and a declaration with two bad unions would name a different
+            // one depending on field order. `with_checked_native_unions` already works this way.
+            let mut failure: Option<String> = None;
             let mut bind = |ty: &mut TypeRef| {
+                if failure.is_some() {
+                    return;
+                }
                 if let TypeRef::NativeUnion(native) = ty {
                     match plan.public_native_union_projection(library, native) {
                         Ok((bound, _)) => *native = bound.for_publication(),
-                        Err(error) => failure = Some(error),
+                        Err(error) => {
+                            failure.get_or_insert(error);
+                        }
                     }
                 }
             };
@@ -828,15 +873,21 @@ fn foreign_native_function_projection(
     let Some(mut function) = native_function_at_canonical(api, canonical)? else {
         return Ok(None);
     };
-    let mut failure = None;
+    // Keep the first failure, as the other two fallible visits do; see the note at the binding above.
+    let mut failure: Option<String> = None;
     function.visit_type_refs(&mut |ty| {
+        if failure.is_some() {
+            return;
+        }
         if let TypeRef::NativeUnion(native) = ty {
             if native.owner == NativeUnionOwnerExport::ContainingArtifact {
                 native.owner = NativeUnionOwnerExport::SelectedArtifact(owner.identity.clone());
             }
             match plan.public_native_union_projection(library, native) {
                 Ok((bound, _)) => *native = bound.for_publication(),
-                Err(error) => failure = Some(error),
+                Err(error) => {
+                    failure.get_or_insert(error);
+                }
             }
         }
     });

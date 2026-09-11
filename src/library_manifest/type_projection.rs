@@ -66,6 +66,15 @@ impl VisitTypeRefs for TypeRef {
     }
 }
 
+// A deliberate exception to the repository's rule against `macro_rules!` outside `incan_derive`, and worth
+// stating rather than leaving as drift. This generates the `VisitTypeRefs` implementation for roughly fifty
+// manifest types whose only difference is which fields they forward to. Hand-writing them would not make the
+// visitor clearer; it would make adding a field a silent omission in whichever of fifty impls was forgotten,
+// which is the failure this exists to prevent. The precedent in the tree is the same shape:
+// `semantic_digest.rs`'s `digest_primitive!` and `incan_vocab`'s runtime macros.
+//
+// The cost is real and belongs here too: a grep for `impl VisitTypeRefs` does not find these, so the list below
+// is the only inventory of what the visitor reaches.
 macro_rules! type_fields {
     ($($ty:ty => [$($field:ident),*];)*) => { $(
         impl VisitTypeRefs for $ty {
@@ -313,11 +322,7 @@ pub(crate) fn with_checked_native_unions<T: VisitTypeRefs>(
                 return;
             }
         };
-        let mut owner_path = vec![library.to_string()];
-        for dependency in route {
-            owner_path.push(crate::frontend::rust_type_display::PROVIDER_RUST_BRIDGE_MODULE.to_string());
-            owner_path.push(dependency);
-        }
+        let owner_path = crate::frontend::rust_type_display::provider_bridge_route(library, route);
         let rust_owner = format!("::{}", owner_path.join("::"));
         let mut members = match with_checked_native_unions(bound.members.clone(), library, Some(plan), routes) {
             Ok(members) => with_checked_type_routes(members, routes),
