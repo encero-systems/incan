@@ -109,6 +109,31 @@ impl TypeChecker {
         }
     }
 
+    /// Type-check call arguments against a purely positional list of expected types.
+    ///
+    /// This exists for callees whose parameters are positional payloads rather than named [`CallableParam`]s; enum
+    /// variant construction is the case that needs it. An argument with no corresponding expectation, or one whose
+    /// expectation is unresolved, is checked without a hint, so a missing expectation degrades to the unconstrained
+    /// behavior rather than asserting `Unknown` onto the argument.
+    pub(in crate::frontend::typechecker::check_expr) fn check_call_args_with_positional_expectations(
+        &mut self,
+        args: &[CallArg],
+        expected: &[ResolvedType],
+    ) {
+        for (index, arg) in args.iter().enumerate() {
+            self.call_argument_depth += 1;
+            match expected.get(index) {
+                Some(ty) if !matches!(ty, ResolvedType::Unknown) => {
+                    self.check_expr_with_expected(Self::call_arg_expr(arg), Some(ty));
+                }
+                _ => {
+                    self.check_expr(Self::call_arg_expr(arg));
+                }
+            }
+            self.call_argument_depth -= 1;
+        }
+    }
+
     /// Type-check all call arguments and collect their resolved types.
     pub(in crate::frontend::typechecker::check_expr::calls) fn check_call_arg_types(
         &mut self,

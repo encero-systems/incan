@@ -14,6 +14,13 @@ impl AstLowering {
             ast::ValueEnumType::Str => IrEnumValueType::String,
             ast::ValueEnumType::Int => IrEnumValueType::Int,
         });
+        // A variant payload naming one of the enum's own type parameters is a generic, not a nominal type. Lowering it
+        // without them in scope resolves `Elem` in `Items(list[Elem])` to `IrType::Struct("Elem")`, which every later
+        // stage reads as a concrete type that happens not to exist. This is the enum counterpart of the model field
+        // case fixed in #1507; see #1516.
+        let type_param_names: std::collections::HashSet<&str> =
+            e.type_params.iter().map(|param| param.name.as_str()).collect();
+
         let variants: Vec<EnumVariant> = e
             .variants
             .iter()
@@ -21,7 +28,13 @@ impl AstLowering {
                 let fields = if v.node.fields.is_empty() {
                     VariantFields::Unit
                 } else {
-                    VariantFields::Tuple(v.node.fields.iter().map(|t| self.lower_type(&t.node)).collect())
+                    VariantFields::Tuple(
+                        v.node
+                            .fields
+                            .iter()
+                            .map(|t| self.lower_type_with_type_params(&t.node, Some(&type_param_names)))
+                            .collect(),
+                    )
                 };
                 let raw_value = v.node.value.as_ref().map(|value| match &value.node {
                     ast::ValueEnumLiteral::Str(raw) => IrEnumValue::String(raw.clone()),
