@@ -1,0 +1,16 @@
+"""Quotations retain catalog identity across a package boundary."""
+
+from pub::catalog import Product, line_total
+
+
+pub model Quotation:
+    """One priced line, retaining the original product and requested quantity."""
+
+    pub product: Product
+    pub quantity: int
+    pub total_cents: int
+
+
+pub def quote(product: Product, quantity: int = 1) -> Quotation:
+    """Price a line using the catalog's public calculation."""
+    return Quotation(product=product, quantity=quantity, total_cents=line_total(product, quantity))

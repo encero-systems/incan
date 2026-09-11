@@ -1,0 +1,13 @@
+[project]
+name = "oven_workbench"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+stock = { path = "../catalog" }
+pricing = { path = "../pricing" }
+
+[rust-dependencies]
+regex = "1"

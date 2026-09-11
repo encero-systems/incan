@@ -1,0 +1,29 @@
+"""Execute local-intake contracts with an explicitly selected authoring compiler."""
+
+from test_intake import (
+    test_formatting_changes_evidence_not_effective_requests,
+    test_rust_requirements_preserve_features_and_package_alias,
+    test_unsupported_intent_is_not_dropped,
+    test_dependency_options_are_not_silently_ignored,
+    test_workbench_aliases_and_unselected_rust_request,
+    test_cycle_refuses,
+    test_conventional_library_cannot_be_a_script,
+    test_missing_root_refuses,
+    test_literal_alias_diagnostic_retains_segments_and_location,
+    test_absent_build_options_stay_absent,
+)
+
+
+def main() -> None:
+    """Run every intake assertion and print the success marker only after all contracts pass."""
+    test_formatting_changes_evidence_not_effective_requests()
+    test_rust_requirements_preserve_features_and_package_alias()
+    test_unsupported_intent_is_not_dropped()
+    test_dependency_options_are_not_silently_ignored()
+    test_workbench_aliases_and_unselected_rust_request()
+    test_cycle_refuses()
+    test_conventional_library_cannot_be_a_script()
+    test_missing_root_refuses()
+    test_literal_alias_diagnostic_retains_segments_and_location()
+    test_absent_build_options_stay_absent()
+    println("local intake: 10 contracts passed")

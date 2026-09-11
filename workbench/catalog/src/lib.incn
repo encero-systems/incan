@@ -1,0 +1,5 @@
+"""Catalog package facade shared by the pricing package and the application."""
+
+pub from product import Product, StockState
+pub from prices import line_total
+pub from sample import first_product, second_product

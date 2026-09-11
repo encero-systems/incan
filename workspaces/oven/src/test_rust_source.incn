@@ -1,0 +1,197 @@
+"""Constrained Rust declarations retain all slots before any source or feature selection."""
+
+from rust_source import (
+    read_dependency_catalog,
+    RustDependencyRole,
+    RustDependencySource,
+    RustGitReference,
+    RustRegistryRequest,
+)
+from manifest_errors import IntakeErrorKind
+from std.fs import Path
+from std.testing import fail
+
+
+pub def test_normalized_regex_catalog_retains_inactive_declarations() -> None:
+    """Read the exact normalized manifest as a format fixture, not as workbench selection evidence."""
+    match Path("tests/fixtures/rust-source/regex-1.12.3.toml").read_text("utf-8", "strict"):
+        Err(error) => fail(error.message())
+        Ok(source) =>
+            match read_dependency_catalog(source, "fixture/regex/Cargo.toml"):
+                Err(error) => fail(error.message())
+                Ok(catalog) =>
+                    assert len(catalog.dependencies) == 9
+                    mut normal: list[str] = []
+                    mut dev: list[str] = []
+                    for dependency in catalog.dependencies:
+                        if dependency.role == RustDependencyRole.Normal:
+                            normal.append(dependency.alias)
+                        if dependency.role == RustDependencyRole.Dev:
+                            dev.append(dependency.alias)
+                    assert normal == ["aho-corasick", "memchr", "regex-automata", "regex-syntax"]
+                    assert dev == ["anyhow", "doc-comment", "env_logger", "quickcheck", "regex-test"]
+                    assert catalog.features["default"] == ["std", "perf", "unicode", "regex-syntax/default"]
+                    assert catalog.features["logging"] == ["aho-corasick?/logging", "memchr?/logging", "regex-automata/logging"]
+                    assert catalog.features["perf-literal"] == ["dep:aho-corasick", "dep:memchr", "regex-automata/perf-literal"]
+                    assert catalog.dependencies[0].optional == Some(true)
+                    assert catalog.dependencies[0].default_features == Some(false)
+                    match catalog.document.as_table():
+                        Err(error) => fail(error.message())
+                        Ok(document) =>
+                            assert "profile" in document
+                            assert "package" in document
+                            assert "lib" in document
+                            assert "test" in document
+
+
+pub def test_aliases_have_distinct_original_role_and_target_slots() -> None:
+    """The same alias in separate declaration tables cannot collapse into a name-only edge."""
+    source = "[dependencies]\nshared='1'\n[build-dependencies]\nshared='2'\n[dev-dependencies]\nshared='3'\n[target.'cfg(unix)'.dependencies]\nshared='4'\n[target.'cfg(unix)'.build-dependencies]\nshared='5'\n[target.'cfg(windows)'.dev-dependencies]\nshared='6'\n"
+    match read_dependency_catalog(source, "Cargo.toml"):
+        Err(error) => fail(error.message())
+        Ok(catalog) =>
+            assert len(catalog.dependencies) == 6
+            mut slots: list[int] = []
+            for dependency in catalog.dependencies:
+                slots.append(dependency.index)
+                assert dependency.alias == "shared"
+            assert slots == [0, 1, 2, 3, 4, 5]
+            assert catalog.dependencies[0].role == RustDependencyRole.Normal
+            assert catalog.dependencies[1].role == RustDependencyRole.Build
+            assert catalog.dependencies[2].role == RustDependencyRole.Dev
+            assert catalog.dependencies[3].target_condition == Some("cfg(unix)")
+            assert catalog.dependencies[3].field == ["target", "cfg(unix)", "dependencies", "shared"]
+            assert catalog.dependencies[5].target_condition == Some("cfg(windows)")
+
+
+pub def test_registry_path_and_git_are_requests_not_selected_sources() -> None:
+    """Keep authored source coordinates and missing versions without selecting a checkout or registry owner."""
+    source = "[dependencies]\nsearch={package='regex', version='1', registry='company', features=['unicode', 'std', 'std']}\nlocal={path='../local'}\nremote={git='https://example.invalid/repo', tag='v1'}\nhead={git='https://example.invalid/repo'}\nabsolute={path='/authored/absolute'}\n"
+    match read_dependency_catalog(source, "one/Cargo.toml"):
+        Err(error) => fail(error.message())
+        Ok(catalog) =>
+            assert catalog.dependencies[4].package == "regex"
+            assert catalog.dependencies[4].version_requirement == Some("1")
+            assert catalog.dependencies[4].features == ["std", "unicode"]
+            match catalog.dependencies[4].source:
+                RustDependencySource.Registry(RustRegistryRequest.Named(alias)) =>
+                    assert alias == "company"
+                _ => fail("registry request changed source kind")
+            match catalog.dependencies[2].source:
+                RustDependencySource.Path(path, _) =>
+                    assert path == "../local"
+                _ => fail("relative path request was resolved or dropped")
+            assert catalog.dependencies[2].version_requirement == None
+            match catalog.dependencies[0].source:
+                RustDependencySource.Path(path, _) =>
+                    assert path == "/authored/absolute"
+                _ => fail("absolute authored coordinate was relabeled")
+            match catalog.dependencies[3].source:
+                RustDependencySource.Git(url, reference, _) =>
+                    assert url == "https://example.invalid/repo"
+                    match reference:
+                        Some(RustGitReference.Tag(tag)) =>
+                            assert tag == "v1"
+                        _ => fail("authored Git tag was dropped")
+                _ => fail("Git request changed source kind")
+            match catalog.dependencies[1].source:
+                RustDependencySource.Git(_, reference, _) =>
+                    assert reference == None
+                _ => fail("unspecified Git reference was invented")
+
+
+pub def test_workspace_request_preserves_unresolved_overrides() -> None:
+    """Inheritance needs an explicit original metadata owner; no parent manifest is searched here."""
+    source = "[dependencies]\nserde={workspace=true, features=['derive'], optional=true}\n"
+    match read_dependency_catalog(source, "missing-parent/member/Cargo.toml"):
+        Err(error) => fail(error.message())
+        Ok(catalog) =>
+            dependency = catalog.dependencies[0]
+            assert dependency.version_requirement == None
+            assert dependency.features == ["derive"]
+            assert dependency.optional == Some(true)
+            assert dependency.default_features == None
+            match dependency.source:
+                RustDependencySource.Workspace => pass
+                _ => fail("inherited request was changed into a selected registry source")
+
+
+pub def test_omitted_flags_and_feature_expansions_remain_explicit() -> None:
+    """Absent flags are not defaulted before inheritance; weak and dep syntax remain original feature edges."""
+    source = "[dependencies]\nplain='1'\noptional={version='2', optional=true}\n[features]\nactivate=['dep:optional']\nforward=['optional?/std', 'plain/std']\n"
+    match read_dependency_catalog(source, "Cargo.toml"):
+        Err(error) => fail(error.message())
+        Ok(catalog) =>
+            assert catalog.dependencies[1].optional == None
+            assert catalog.dependencies[1].default_features == None
+            assert catalog.features["activate"] == ["dep:optional"]
+            assert catalog.features["forward"] == ["optional?/std", "plain/std"]
+
+
+pub def test_unknown_dependency_semantics_refuse_at_the_original_key() -> None:
+    """Artifact dependency and unknown selector semantics cannot disappear from a successful catalog."""
+    for extra in ["artifact='bin'", "public=true", "mystery='value'"]:
+        source = "[dependencies]\n'foo.bar'={version='1', " + extra + "}\n"
+        match read_dependency_catalog(source, "Cargo.toml"):
+            Ok(_) => fail("unsupported dependency meaning was dropped")
+            Err(error) =>
+                assert error.kind == IntakeErrorKind.Unsupported
+                assert error.field[0] == "dependencies"
+                assert error.field[1] == "foo.bar"
+                match error.location:
+                    None => fail("present literal field lost its source location")
+                    Some(location) =>
+                        assert location.line == 2
+
+
+pub def test_conflicting_or_unattached_source_selectors_refuse() -> None:
+    """Reject conflicting source declarations without choosing one by field order."""
+    for entry in ["{version='1', path='../p', git='https://example.invalid/r'}", "{version='1', registry='r', registry-index='https://example.invalid/i'}", "{git='https://example.invalid/r', branch='main', rev='abc'}", "{version='1', branch='main'}", "{workspace=false}", "{workspace=true, version='1'}", "{path=''}"]:
+        match read_dependency_catalog("[dependencies]\np=" + entry + "\n", "Cargo.toml"):
+            Ok(_) => fail("invalid source declaration was accepted")
+            Err(error) =>
+                assert error.kind == IntakeErrorKind.Invalid
+
+
+pub def test_unknown_target_metadata_and_wrong_value_types_refuse() -> None:
+    """A malformed table or unsupported target meaning cannot be hidden behind inactive status."""
+    for source in ["[dependencies]\np={version='1', optional='yes'}\n", "[features]\nx='not-an-array'\n", "[target.'cfg(unix)']\nlinker='custom'\n", "dependencies=['bad']\n", "[dependencies]\n''='1'\n"]:
+        match read_dependency_catalog(source, "Cargo.toml"):
+            Ok(_) => fail("malformed or unsupported declaration was accepted")
+            Err(_) => pass
+
+
+pub def test_manifest_location_does_not_change_the_declaration_catalog() -> None:
+    """Diagnostic paths neither resolve authored paths nor enter declaration identities."""
+    source = "[dependencies]\nlocal={path='../local', features=['b', 'a']}\n"
+    match read_dependency_catalog(source, "first/Cargo.toml"):
+        Err(error) => fail(error.message())
+        Ok(left) =>
+            match read_dependency_catalog(source, "relocated/Cargo.toml"):
+                Err(error) => fail(error.message())
+                Ok(right) =>
+                    assert left.dependencies == right.dependencies
+
+
+pub def test_path_version_and_registry_location_are_not_erased() -> None:
+    """Multiple-location declarations preserve their version constraint and original registry metadata."""
+    source = "[dependencies]\nlocal={path='../local', version='1', registry='company'}\n"
+    match read_dependency_catalog(source, "Cargo.toml"):
+        Err(error) => fail(error.message())
+        Ok(catalog) =>
+            dependency = catalog.dependencies[0]
+            assert dependency.version_requirement == Some("1")
+            match dependency.source:
+                RustDependencySource.Path(path, RustRegistryRequest.Named(registry)) =>
+                    assert path == "../local"
+                    assert registry == "company"
+                _ => fail("registry declaration replaced or erased the authored path")
+
+
+pub def test_inherited_default_override_requires_checked_edition_semantics() -> None:
+    """The catalog does not guess legacy inheritance behavior without the checked package edition."""
+    source = "[dependencies]\nserde={workspace=true, default-features=false}\n"
+    match read_dependency_catalog(source, "Cargo.toml"):
+        Ok(_) => fail("edition-dependent inherited override was silently accepted")
+        Err(error) =>
+            assert error.kind == IntakeErrorKind.Unsupported
