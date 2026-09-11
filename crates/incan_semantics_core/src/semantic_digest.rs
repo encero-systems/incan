@@ -140,6 +140,11 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
     digest_primitive!(serialize_f32, f32, 0x0a);
     digest_primitive!(serialize_f64, f64, 0x0b);
 
+    // `serde`'s defaults for these reject the value. Body IR carries 128-bit numeric constants, so without them
+    // the digest cannot cover a standard library at all -- a gap no fixture exercised and only a corpus found.
+    digest_primitive!(serialize_i128, i128, 0x19);
+    digest_primitive!(serialize_u128, u128, 0x1a);
+
     fn serialize_char(mut self, value: char) -> Result<(), DigestError> {
         self.tag(0x0c);
         self.bytes(value.to_string().as_bytes());
