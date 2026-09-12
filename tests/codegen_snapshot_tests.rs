@@ -1733,6 +1733,11 @@ def main() -> None:
         // type arguments. The subscripted receiver used to resolve to `Unknown`, so method resolution matched no
         // declaration and recorded no identity, and lowering emitted the source spelling against a declaration that
         // was emitted under its projection.
+        //
+        // The subscript now also reaches the generated Rust, as a turbofish: resolving it to `Named` kept the
+        // projection but discarded the argument, which is what made `Deque[str].from_iter(...)` produce
+        // `Deque[Unknown]` in #1494. So the assertion pins the instantiation as well as the projection, and
+        // whitespace is collapsed first because prettyplease wraps the turbofish across lines.
         let rust_code = generate_registry_rust(
             r#"
 @derive(Clone)
@@ -1750,9 +1755,12 @@ def main() -> None:
             "app.main",
         );
 
+        let collapsed = rust_code.split_whitespace().collect::<Vec<_>>().join("");
         assert!(
-            rust_code.contains("FactoryBox::__incan_v1_"),
-            "an explicitly instantiated type-owned call must name its declaration's projection:\n{rust_code}"
+            collapsed.contains("FactoryBox::<i64,>::__incan_v1_")
+                || collapsed.contains("FactoryBox::<i64>::__incan_v1_"),
+            "an explicitly instantiated type-owned call must name its declaration's projection and carry its type \
+             argument:\n{rust_code}"
         );
         assert!(
             !rust_code.contains("FactoryBox::make("),

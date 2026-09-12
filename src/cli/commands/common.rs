@@ -41,6 +41,7 @@ use crate::frontend::testing_markers::{
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::frontend::typechecker::{CBindingDescriptor, TypeCheckInfo};
 use crate::frontend::{ast_walk, diagnostics, lexer, parser, typechecker, vocab_desugar_pass};
+use crate::inspect::effect_digest::{COMPILER_RUST_EFFECT_ROOTS, COMPILER_STDLIB_ROOT, compiler_effect_digest};
 use crate::library_manifest::{
     LibraryManifest, ProviderCargoDependency, ProviderCargoDependencySource, ProviderModuleClaim,
     digest_provider_artifact,
@@ -441,8 +442,22 @@ fn hash_sdk_provider_source_tree(root: &Path, current: &Path, hasher: &mut Sha25
 /// closure. The identity is content based, so a stale provider set is never accepted because a directory exists.
 ///
 /// Development binaries are rebuilt when test-only Rust changes, and their raw bytes are not a stable description of
-/// compiler behavior. A checkout therefore contributes its compiler source closure; an installed toolchain, which has
-/// no source closure to inspect, falls back to the executable digest.
+/// compiler behavior. A checkout therefore contributes an effect digest — what this compiler *produces* for this
+/// standard library — while an installed toolchain, which has no source to inspect, falls back to the executable
+/// digest.
+///
+/// # Why the effect digest replaced the source closure
+///
+/// Through v3 a checkout folded a hash of its whole `src/`, `crates/` and `tests/` tree, so editing the language
+/// server, a CLI command or an inspection module rebuilt all ten SDK components at a cost of roughly seventeen
+/// minutes (#1495). Hashing the source answers "did the compiler change", and what the cache needs to know is
+/// "would this compiler produce different components", which is a different question for almost every edit anyone
+/// makes. [`compiler_effect_digest`] answers the second one directly.
+///
+/// [`crate::version::SDK_PROVIDER_CODEGEN_REVISION`] is folded alongside it. Publication code can change the shape
+/// of the store without changing any component's content, and that constant is the declared mechanism for saying
+/// so; the inventory already validates it on every cache hit, and folding it here means a bump also partitions the
+/// store rather than only rejecting what is in it.
 fn sdk_provider_store_identity(
     stdlib_root: &Path,
     executable: &Path,
@@ -450,18 +465,20 @@ fn sdk_provider_store_identity(
     distribution_profile: &str,
 ) -> CliResult<String> {
     let mut hasher = Sha256::new();
-    hasher.update(b"incan-sdk-provider-store-v3\0");
-    hash_sdk_provider_source_tree(stdlib_root, stdlib_root, &mut hasher)?;
+    hasher.update(b"incan-sdk-provider-store-v4\0");
     hasher.update(b"compiler-version\0");
     hasher.update(crate::version::INCAN_VERSION.as_bytes());
+    hasher.update(b"provider-codegen-revision\0");
+    hasher.update(crate::version::SDK_PROVIDER_CODEGEN_REVISION.to_le_bytes());
     hasher.update(b"distribution-profile\0");
     hasher.update(distribution_profile.as_bytes());
 
     let executable = fs::canonicalize(executable).unwrap_or_else(|_| executable.to_path_buf());
     if let Some(checkout_root) = sdk_provider_compiler_checkout_root(stdlib_root) {
-        hasher.update(b"compiler-source-closure\0");
-        hash_sdk_provider_compiler_source_tree(&checkout_root, &checkout_root, &mut hasher)?;
+        hasher.update(b"compiler-effect\0");
+        hasher.update(sdk_provider_effect_digest(&checkout_root)?.as_bytes());
     } else {
+        hash_sdk_provider_source_tree(stdlib_root, stdlib_root, &mut hasher)?;
         hasher.update(b"compiler-executable-content\0");
         hasher.update(sdk_provider_compiler_digest(&executable)?);
     }
@@ -474,6 +491,124 @@ fn sdk_provider_store_identity(
                 workspace_lock.display()
             ))
         })?);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Digest what the compiler in `checkout_root` produces for its standard library, memoized on its inputs' bytes.
+///
+/// The digest itself costs about 1.8 seconds over all 104 standard-library sources, which is three orders of
+/// magnitude below the rebuild it prevents but far too much to pay on every command that resolves the provider
+/// store. So it is computed once per distinct input content and read back afterwards.
+///
+/// The memo key is a plain byte hash of the same roots the digest reads, which makes the two agree by
+/// construction: the digest is a pure function of those bytes, so equal bytes cannot produce a different digest,
+/// and any edit — even one the digest would forgive, like a comment — misses the memo and recomputes rather than
+/// returning a stale answer. Entries are published by rename, because `make -j` puts many processes on one cache
+/// and a half-written digest is still a well-formed cache key.
+///
+/// # The memo changes the cost, never the value
+///
+/// An environment with nowhere to put the memo recomputes the digest each time and gets the same answer. That is
+/// deliberate rather than an omission: the identity must be a function of the compiler and its standard library
+/// alone. Substituting the cheaper byte hash where no cache exists would make two machines with identical source
+/// publish to two different store paths, which is exactly what
+/// [`sdk_provider_store_identity_for_compiler_root`] exists to prevent.
+fn sdk_provider_effect_digest(checkout_root: &Path) -> CliResult<String> {
+    let content_key = sdk_provider_effect_input_key(checkout_root)?;
+    let cached_path = sdk_provider_effect_digest_cache_root().map(|root| root.join(&content_key));
+    if let Some(cached_path) = &cached_path
+        && let Ok(cached) = fs::read_to_string(cached_path)
+        && cached.starts_with("sha256:")
+    {
+        return Ok(cached.trim().to_string());
+    }
+
+    let root = checkout_root.to_path_buf();
+    let digest = crate::compiler_stack::run_on_compiler_stack(move || {
+        compiler_effect_digest(&root).map_err(|error| error.to_string())
+    })
+    .map_err(|message| {
+        CliError::failure(format!(
+            "failed to digest compiler effect for the standard library: {message}"
+        ))
+    })?;
+
+    if let Some(cached_path) = &cached_path {
+        write_effect_digest_memo(cached_path, &digest);
+    }
+    Ok(digest)
+}
+
+/// Publish one memoized digest by rename, so a concurrent reader never sees a partially written one.
+///
+/// `make -j` runs many `incan` processes against one cache, and every one of them computes this digest on a miss.
+/// A plain write can be read mid-flight, and a truncated digest is still a well-formed cache key — it would
+/// partition the store under a value no compiler will ever produce again. Writing beside the target and renaming
+/// makes the file appear whole or not at all; two processes racing write byte-identical content, so whichever
+/// rename lands last is correct either way.
+///
+/// Every failure here is ignored deliberately. This is a cache: an unwritable directory, a full disk or a losing
+/// race costs the next command a recomputation, which the caller already handles.
+fn write_effect_digest_memo(cached_path: &Path, digest: &str) {
+    let Some(parent) = cached_path.parent() else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let Some(name) = cached_path.file_name().and_then(|name| name.to_str()) else {
+        return;
+    };
+    let staged = parent.join(format!(".{name}.{}.staged", std::process::id()));
+    if fs::write(&staged, digest).is_ok() && fs::rename(&staged, cached_path).is_err() {
+        let _ = fs::remove_file(&staged);
+    }
+}
+
+/// Resolve where effect digests are memoized, or `None` when this environment has nowhere durable to put them.
+///
+/// A test harness that redirects the provider store gets its memo redirected with it, and a unit test gets a
+/// target-directory memo of its own, so neither ever reads or writes the developer's own cache.
+fn sdk_provider_effect_digest_cache_root() -> Option<PathBuf> {
+    if cfg!(test) {
+        return Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_effect_digest"));
+    }
+    if let Some(store) = env::var_os(INTERNAL_SDK_PROVIDER_STORE_ENV).filter(|path| !path.is_empty()) {
+        return Some(PathBuf::from(store).join(".effect-digest-v1"));
+    }
+    env::var_os("INCAN_HOME")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("HOME")
+                .or_else(|| env::var_os("USERPROFILE"))
+                .filter(|path| !path.is_empty())
+                .map(|path| PathBuf::from(path).join(".incan"))
+        })
+        .map(|root| root.join("cache").join("effect-digest-v1"))
+}
+
+/// Hash the bytes of every root the effect digest reads, as the memo key for its result.
+///
+/// Roots are folded in their declared order under their declared labels so two checkouts with the same content
+/// agree, and a root that is absent is recorded as absent rather than skipped — a missing tree is a different
+/// compiler, not the same one.
+fn sdk_provider_effect_input_key(checkout_root: &Path) -> CliResult<String> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"incan-effect-inputs-v1\0");
+    let stdlib_root = checkout_root.join(COMPILER_STDLIB_ROOT);
+    hasher.update(b"stdlib\0");
+    hash_sdk_provider_source_tree(&stdlib_root, &stdlib_root, &mut hasher)?;
+    for (label, relative) in COMPILER_RUST_EFFECT_ROOTS {
+        let root = checkout_root.join(relative);
+        hasher.update(label.as_bytes());
+        hasher.update([0]);
+        if root.is_dir() {
+            hash_sdk_provider_source_tree(&root, &root, &mut hasher)?;
+        } else {
+            hasher.update(b"absent\0");
+        }
     }
     Ok(hex::encode(hasher.finalize()))
 }
@@ -524,94 +659,6 @@ fn is_sdk_provider_compiler_checkout(candidate: &Path, stdlib_root: &Path) -> bo
     }
     let expected_stdlib_root = candidate.join("crates/incan_stdlib/stdlib");
     fs::canonicalize(&expected_stdlib_root).ok() == fs::canonicalize(stdlib_root).ok()
-}
-
-/// Hash compiler-authoritative checkout inputs, excluding generated output, test trees, and root CI administration.
-///
-/// The root `.github` directory configures repository automation; compilation does not read it. This exclusion is
-/// deliberately root-only so similarly named directories within compiler sources retain their existing authority.
-fn hash_sdk_provider_compiler_source_tree(root: &Path, current: &Path, hasher: &mut Sha256) -> CliResult<()> {
-    let mut entries = fs::read_dir(current)
-        .map_err(|error| {
-            CliError::failure(format!(
-                "failed to read compiler source directory {}: {error}",
-                current.display()
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| {
-            CliError::failure(format!(
-                "failed to enumerate compiler source directory {}: {error}",
-                current.display()
-            ))
-        })?;
-    entries.sort_by_key(|entry| entry.file_name());
-
-    for entry in entries {
-        let path = entry.path();
-        let relative = path.strip_prefix(root).map_err(|error| {
-            CliError::failure(format!(
-                "failed to make compiler source path {} relative: {error}",
-                path.display()
-            ))
-        })?;
-        let file_type = entry.file_type().map_err(|error| {
-            CliError::failure(format!(
-                "failed to inspect compiler source path {}: {error}",
-                path.display()
-            ))
-        })?;
-        if file_type.is_dir() && relative == Path::new(".github") {
-            continue;
-        }
-        if file_type.is_dir()
-            && relative.components().any(|component| {
-                matches!(
-                    component.as_os_str().to_str(),
-                    Some(
-                        ".agents"
-                            | ".git"
-                            | ".incan"
-                            | "benches"
-                            | "docs"
-                            | "examples"
-                            | "target"
-                            | "tests"
-                            | "workspaces"
-                    )
-                )
-            })
-        {
-            continue;
-        }
-
-        hasher.update(relative.to_string_lossy().as_bytes());
-        hasher.update([0]);
-        if file_type.is_dir() {
-            hasher.update(b"directory\0");
-            hash_sdk_provider_compiler_source_tree(root, &path, hasher)?;
-        } else if file_type.is_file() {
-            hasher.update(b"file\0");
-            let bytes = fs::read(&path).map_err(|error| {
-                CliError::failure(format!(
-                    "failed to read compiler source file {}: {error}",
-                    path.display()
-                ))
-            })?;
-            hasher.update(bytes);
-        } else if file_type.is_symlink() {
-            hasher.update(b"symlink\0");
-            let target = fs::read_link(&path).map_err(|error| {
-                CliError::failure(format!(
-                    "failed to read compiler source symlink {}: {error}",
-                    path.display()
-                ))
-            })?;
-            hasher.update(target.to_string_lossy().as_bytes());
-        }
-        hasher.update([0xff]);
-    }
-    Ok(())
 }
 
 /// Hash the running compiler once per process with BLAKE3's optimized implementation, independent of its path.
@@ -5878,9 +5925,41 @@ mod tests {
         Ok(())
     }
 
+    /// The memo key over this repository's own effect roots stays cheap enough to pay on every command.
+    ///
+    /// This is the cost the fix actually charges. The digest behind it costs seconds and is paid once per distinct
+    /// input content; what a warm command pays is this byte hash, and it reads a small named set of roots rather
+    /// than the whole `src/`, `crates/` and `tests/` tree v3 walked.
     #[test]
-    fn sdk_provider_store_identity_ignores_rebuilt_development_executable_bytes()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn the_effect_memo_key_over_this_checkout_stays_cheap() -> Result<(), Box<dyn std::error::Error>> {
+        let checkout = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let started = std::time::Instant::now();
+        let key = sdk_provider_effect_input_key(&checkout)?;
+        let elapsed = started.elapsed();
+        println!("EFFECT-MEMO-KEY {key} in {} ms", elapsed.as_millis());
+        assert_eq!(key.len(), 64, "the memo key is a hex sha256");
+        assert_eq!(
+            key,
+            sdk_provider_effect_input_key(&checkout)?,
+            "the memo key must not depend on directory iteration order"
+        );
+        // Generous enough to survive a loaded machine and a cold page cache, tight enough to fail if the key ever
+        // starts walking the whole checkout again.
+        assert!(
+            elapsed.as_secs() < 5,
+            "the memo key took {} ms, which is no longer a per-command cost",
+            elapsed.as_millis()
+        );
+        Ok(())
+    }
+
+    /// The store identity keys on what the compiler produces, not on what the compiler is made of (#1495).
+    ///
+    /// Each assertion below is one row of that contract. The two that changed in v4 are the ones that used to cost
+    /// seventeen minutes: an edit to a compiler subsystem no component's compilation can reach now reuses the
+    /// store, and a comment added to a standard-library source does too.
+    #[test]
+    fn sdk_provider_store_identity_keys_on_what_the_compiler_produces() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = tempfile::tempdir()?;
         let checkout = temp_dir.path().join("checkout");
         let stdlib_root = checkout.join("crates/incan_stdlib/stdlib");
@@ -5944,16 +6023,33 @@ mod tests {
             "CI edits and administrative path changes must reuse SDK providers"
         );
 
+        // The seventeen minutes. `src/compiler.rs` stands for every subsystem outside the effect roots — the
+        // language server, an inspection module, a CLI command — none of which can change what a component
+        // contains, and all of which rebuilt all ten components through v3.
         fs::write(
             checkout.join("src/compiler.rs"),
             "pub fn compile() { let changed = true; }\n",
         )?;
-        let changed_source =
+        let unreachable_subsystem =
             sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
-        assert_ne!(
-            initial, changed_source,
-            "a compiler source change must still invalidate SDK provider artifacts"
+        assert_eq!(
+            initial, unreachable_subsystem,
+            "an edit no component's compilation can reach must reuse the provider store"
         );
+
+        // A comment cannot change what the compiler emits, so it cannot change the store. This is the property the
+        // byte hash could not express at any granularity, and the reason the key is a digest of meaning.
+        fs::write(
+            stdlib_root.join("components/core.incn"),
+            "# a comment the compiler cannot emit\npub def core() -> int:\n  return 1\n",
+        )?;
+        let commented_stdlib =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_eq!(
+            initial, commented_stdlib,
+            "a comment in a standard-library source must reuse the provider store"
+        );
+
         fs::write(
             stdlib_root.join("components/core.incn"),
             "pub def core() -> int:\n  return 2\n",
@@ -5961,16 +6057,38 @@ mod tests {
         let changed_stdlib =
             sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
         assert_ne!(
-            changed_source, changed_stdlib,
-            "stdlib source remains part of SDK provider identity"
+            initial, changed_stdlib,
+            "a changed standard-library body is a changed component"
         );
-        fs::create_dir_all(checkout.join("src/.github"))?;
-        fs::write(checkout.join("src/.github/input.txt"), "compiler-owned input")?;
-        let nested_directory =
+
+        // The transitional half. Lowering and emission change generated Rust without moving any HIR, so their
+        // source is folded until direct-HIR removes the need.
+        let backend = checkout.join("src/backend/ir/emit");
+        fs::create_dir_all(&backend)?;
+        fs::write(backend.join("decls.rs"), "pub fn emit() -> u8 { 1 }\n")?;
+        let with_backend =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        fs::write(backend.join("decls.rs"), "pub fn emit() -> u8 { 2 }\n")?;
+        let changed_backend =
             sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
         assert_ne!(
-            changed_stdlib, nested_directory,
-            "only root CI administration is excluded"
+            with_backend, changed_backend,
+            "an emission change alters generated Rust without moving any HIR"
+        );
+
+        // The Rust half is mandatory rather than an enhancement: every component links this runtime, so an
+        // Incan-only key would report a hit for a change the consumer can observe.
+        let runtime = checkout.join("crates/incan_stdlib/src");
+        fs::create_dir_all(&runtime)?;
+        fs::write(runtime.join("frozen.rs"), "pub fn limit() -> u8 { 1 }\n")?;
+        let with_runtime =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        fs::write(runtime.join("frozen.rs"), "pub fn limit() -> u8 { 2 }\n")?;
+        let changed_runtime =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_ne!(
+            with_runtime, changed_runtime,
+            "every component links the Rust runtime, so a change to it must invalidate"
         );
         Ok(())
     }
