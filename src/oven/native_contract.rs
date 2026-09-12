@@ -18,33 +18,12 @@ pub const OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION: u32 = 1;
 pub const OVEN_COMPILER_TEST_SUITE_TOOLCHAIN_DATA_SCHEMA_VERSION: u32 = 1;
 
 /// Immutable payload retained by a receipt-bound project extension Loaf.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct OvenProjectExtensionPayload {
-    /// Version of this extension wire contract.
-    pub schema_version: u32,
-    /// Content address of the exact compiler-shipped base Loaf that supplies the selected release cohort.
-    pub base_loaf_identity: String,
-    /// Compatibility identity that must still authorize the project receipt when the extension is consumed.
-    pub base_build_unit_identity: String,
-    /// Raw publisher-derived direct-Rustc plan retained as immutable provenance.
-    ///
-    /// This is never executed by a normal command. It records the project publisher's original closure before its
-    /// compiler-owned runtime, overlapping registry, and vocabulary inputs are canonicalized against the exact base.
-    pub publisher_plan: OvenRustcArtifactManifest,
-    /// Complete direct-Rustc execution contract after release-cohort canonicalization and base composition.
-    pub complete_plan: OvenRustcArtifactManifest,
-    /// Exact root registry dependency identities selected by the explicit baker, sorted by their Rust-facing aliases.
-    #[serde(default)]
-    pub registry_source_dependencies: Vec<OvenProjectRegistrySourceDependency>,
-    /// Exact dev-only root registry dependency identities selected by the same canonical publisher lock.
-    ///
-    /// These remain separate from normal roots so an inspection consumer can validate the complete test surface
-    /// without pretending a dev-only crate belongs to a normal generated executable.
-    #[serde(default)]
-    pub dev_registry_source_dependencies: Vec<OvenProjectRegistrySourceDependency>,
-    /// Sorted paths physically retained below this extension's immutable artifact root.
-    pub extension_paths: Vec<String>,
-}
+///
+/// Re-exported from the legacy-Cargo baker rather than redeclared. Both modules describe the same wire contract, and
+/// two same-named types would make the extension a publisher wrote unusable by the consumer that reads it. The
+/// declaration moves here once `legacy_cargo` is retired; until then this module names the one that exists.
+pub(crate) use super::legacy_cargo::OvenProjectExtensionPayload;
+
 
 /// Portable source-authority identity for one direct registry dependency declared by a generated project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
