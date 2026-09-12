@@ -7,6 +7,10 @@
 mod artifact;
 mod diagnostics;
 mod inspection;
+mod runtime_closure;
+mod runtime_executor;
+mod runtime_foundation;
+mod selected_unit;
 
 // Split along seams this file already had: the artifact/plan shapes, the project-inspection authority payloads,
 // and the rustc diagnostic report. Every path stays where callers expect it -- re-exported here rather than
