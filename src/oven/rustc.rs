@@ -31,11 +31,6 @@ pub use diagnostics::*;
 pub(crate) use inspection::*;
 #[allow(
     unused_imports,
-    reason = "selected inspection producer wiring follows the owner contract"
-)]
-// pub(crate) use inspection_toolchain::*;
-#[allow(
-    unused_imports,
     reason = "normal-build selection consumes the published runtime closure in the hot-path gate"
 )]
 pub(crate) use runtime_closure::*;
@@ -10332,6 +10327,7 @@ fi
             source_authority_digest: source_authority_digest.to_string(),
             compiler_version: compiler_version.to_string(),
             registry_lock_digest: digest_bytes(b"registry lock"),
+            generated_out_dirs: Vec::new(),
             registry_source_dependencies: Vec::new(),
             dev_registry_source_dependencies: Vec::new(),
             test_dependency_envelope: None,
@@ -10465,12 +10461,12 @@ fi
             source_authority_digest: source_authority_digest.to_string(),
             compiler_version: compiler_version.to_string(),
             registry_lock_digest: digest_bytes(b"registry lock"),
+            generated_out_dirs: Vec::new(),
             registry_source_dependencies: Vec::new(),
             dev_registry_source_dependencies: Vec::new(),
             test_dependency_envelope: None,
             constituents: Vec::new(),
             registry_sources: Vec::new(),
-            generated_out_dirs: Vec::new(),
         };
         let encoded_payload = serde_json::to_vec(&payload)?;
         let publish = |domain: &str| {
@@ -10532,12 +10528,12 @@ fi
             source_authority_digest: source_authority_digest.to_string(),
             compiler_version: compiler_version.to_string(),
             registry_lock_digest: digest_bytes(b"registry lock"),
+            generated_out_dirs: Vec::new(),
             registry_source_dependencies: Vec::new(),
             dev_registry_source_dependencies: Vec::new(),
             test_dependency_envelope: None,
             constituents: Vec::new(),
             registry_sources: Vec::new(),
-            generated_out_dirs: Vec::new(),
         };
         let authority = store.publish(&OvenArtifactPublishRequest {
             receipt: receipt.clone(),
@@ -11832,6 +11828,7 @@ fi
             source_authority_digest: "sha256:source".to_string(),
             compiler_version: "0.5.0-rc0".to_string(),
             registry_lock_digest: digest_bytes(b"lock"),
+            generated_out_dirs: Vec::new(),
             registry_source_dependencies: vec![root.clone()],
             dev_registry_source_dependencies: Vec::new(),
             test_dependency_envelope: None,
