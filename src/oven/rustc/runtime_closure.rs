@@ -367,8 +367,7 @@ mod tests {
     use crate::oven::rustc::{OvenRuntimeCompilerClosure, execute_runtime_foundation_rebuild};
     use crate::oven::store::OvenStoreLimits;
     use crate::oven::{
-        OVEN_RECEIPT_SCHEMA_VERSION, OvenBuildIntent, OvenCompatibility, OvenCompatibilityKind, OvenProjectIdentity,
-        OvenSourceEvidence,
+        OVEN_RECEIPT_SCHEMA_VERSION, OvenCompatibility, OvenCompatibilityKind, OvenProjectIdentity, OvenSourceEvidence,
     };
 
     /// Build one publication-authorizing receipt for the fixture closure.
