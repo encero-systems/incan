@@ -384,7 +384,11 @@ test-oven-replay:
 				--store "$(INCAN_TEST_OVEN_COMPILER_SUITE_STORE)" \
 				$(INCAN_TEST_OVEN_COMPILER_SUITE_PARTITION_ARGS) \
 				--format text; \
-		test ! -s "$$suite_output/cargo-guard/invocations.log"; \
+		if [ -s "$$suite_output/cargo-guard/invocations.log" ]; then \
+			echo "\033[31mThe Oven suite must run without Cargo, and these invocations reached the guard:\033[0m" >&2; \
+			sed "s/^/  /" "$$suite_output/cargo-guard/invocations.log" >&2; \
+			exit 1; \
+		fi; \
 		suite_succeeded=true
 
 .PHONY: test-oven-case-timings  ## test - Run the complete Oven suite once and retain its measured-duration report
@@ -753,7 +757,11 @@ test-one: test-prewarm-oven-loafs
 				--feature lsp --target "$(TEST_ROOT)" $(if $(TEST_EXACT),--exact "$(TEST_EXACT)") \
 				--output "$$root_output" --store "$(INCAN_TEST_OVEN_COMPILER_SUITE_STORE)" \
 				--format text; \
-		test ! -s "$$root_output/cargo-guard/invocations.log"; \
+		if [ -s "$$root_output/cargo-guard/invocations.log" ]; then \
+			echo "\033[31mThe Oven suite must run without Cargo, and these invocations reached the guard:\033[0m" >&2; \
+			sed "s/^/  /" "$$root_output/cargo-guard/invocations.log" >&2; \
+			exit 1; \
+		fi; \
 		root_succeeded=true
 
 # =============================================================================
