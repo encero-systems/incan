@@ -514,6 +514,10 @@ jobs:
       - name: Restore executable permissions
         run: chmod +x target/debug/incan
       - uses: ./.github/actions/consume-sdk-provider-store
+      # Cargo builds test dependencies in a separate target so it cannot replace the handoff CLI. The Makefile's
+      # own `TARGET_DIR` defaults to `CARGO_TARGET_DIR`, so it has to be told where the handoff binary actually
+      # is -- the same compensation the platform ABI job makes with `CARGO_BIN_EXE_incan`. Without it the recipe
+      # looks for the compiler in the empty scratch target and the lane cannot pass at all.
       - name: Prove the source-observable comparison ran and agreed
         env:
           CARGO_NET_OFFLINE: "true"
@@ -521,14 +525,16 @@ jobs:
           INCAN_TEST_COMPILER_ALREADY_BUILT: "1"
         run: |
           sha256sum target/debug/incan > "$RUNNER_TEMP/compiler-handoff.sha256"
-          make -s shadow-comparison-evidence
+          make -s shadow-comparison-evidence TARGET_DIR="$GITHUB_WORKSPACE/target"
           sha256sum --check "$RUNNER_TEMP/compiler-handoff.sha256"
+      # The corpus summary follows `CARGO_TARGET_DIR`, not the Makefile's `TARGET_DIR`, because the test writes it
+      # from inside the cargo run. It therefore lands in the scratch target above.
       - name: Upload the parity corpus summary
         if: always()
         uses: actions/upload-artifact@v5
         with:
           name: shadow-comparison-parity-summary
-          path: target/parity-corpus/summary.json
+          path: ${{ runner.temp }}/incan-shadow-test-target/parity-corpus/summary.json
           if-no-files-found: warn
 
   oven-linux-replay:
