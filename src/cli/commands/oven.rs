@@ -63,8 +63,8 @@ use crate::oven::loaf::{
 };
 use crate::oven::native_test::{
     OvenNativeTestBatchReport, OvenNativeTestBatchRequest, OvenNativeTestCaseCounts, OvenNativeTestCaseTiming,
-    OvenNativeTestCommandTiming, OvenNativeTestRequest, run_native_test_batch_all_for_request, run_native_tests,
-    run_native_tests_exact_in_directory_with_timeout,
+    OvenNativeTestCommandTiming, OvenNativeTestRequest, OvenNativeTestShare, run_native_test_batch_all_for_request,
+    run_native_tests, run_native_tests_exact_in_directory_with_timeout,
 };
 use crate::oven::progress::{PhaseProgress, announce as announce_oven_progress, elapsed_detail};
 use crate::oven::rustc::{
@@ -1681,9 +1681,10 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
         options.partition_index,
         options.partition_count,
     )?;
+    let compiler_suite_shares = selected_shard_references.shares;
     let (selected_shard_references, exact_test_names) = compiler_suite_exact_test_selection(
         &options.exact_names,
-        selected_shard_references,
+        selected_shard_references.references,
         options.partition_index.is_some(),
     )?;
     // Indexed schemas acquire every shard and foundation lease before their first child starts. Keeping both values
@@ -2124,6 +2125,7 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                 &receipt,
                 &rustc,
                 exact_test_names.as_deref(),
+                &compiler_suite_shares,
             )?;
             Ok((
                 suite_report,
@@ -2185,6 +2187,7 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
         options.partition_index,
         options.partition_count,
         planned_target_count,
+        compiler_suite_shares.len(),
     );
     let complete_root_success = success && selection.complete_root_evidence;
     let complete_suite_success = success && selection.complete_suite_evidence;
@@ -3112,6 +3115,7 @@ fn run_prepared_compiler_suite_children(
     receipt: &OvenReceipt,
     rustc: &Path,
     exact_test_names: Option<&[String]>,
+    shares: &BTreeMap<String, OvenNativeTestShare>,
 ) -> CliResult<CompilerSuiteChildrenReport> {
     let child_count = children.len();
     if child_count == 0 {
@@ -3141,9 +3145,16 @@ fn run_prepared_compiler_suite_children(
                         let Some(child) = child else {
                             return;
                         };
-                        let result =
-                            run_prepared_compiler_suite_child(child, receipt, rustc, libtest_threads, exact_test_names)
-                                .map_err(|error| error.to_string());
+                        let share = shares.get(&child.target.source_relative_path).copied();
+                        let result = run_prepared_compiler_suite_child(
+                            child,
+                            receipt,
+                            rustc,
+                            libtest_threads,
+                            exact_test_names,
+                            share,
+                        )
+                        .map_err(|error| error.to_string());
                         if let Ok(mut results) = results.lock() {
                             results.push(result);
                         }
@@ -3216,6 +3227,7 @@ fn run_prepared_compiler_suite_child(
     rustc: &Path,
     libtest_threads: usize,
     exact_test_names: Option<&[String]>,
+    share: Option<OvenNativeTestShare>,
 ) -> CliResult<CompilerSuiteChildrenReport> {
     let mut artifacts = child.closure.manifest_for_target(child.target, child.intent.clone());
     for (name, value) in &child.binary_compile_environment {
@@ -3274,6 +3286,7 @@ fn run_prepared_compiler_suite_child(
                     test_threads: Some(libtest_threads),
                     root_label: Some(&child.target.source_relative_path),
                     progress: None,
+                    share: None,
                 }),
             }
             .map_err(oven_error)?;
@@ -3295,7 +3308,9 @@ fn run_prepared_compiler_suite_child(
                 )]
             };
             Ok(CompilerSuiteChildrenReport {
-                native_test_count: if exact_test_names.is_some() {
+                // A shared root executes part of its inventory, so the inventory size is not this child's case
+                // count; the observed counts are. The same holds for exact diagnostic selection.
+                native_test_count: if exact_test_names.is_some() || share.is_some_and(|share| share.count > 1) {
                     report
                         .case_counts
                         .as_ref()
@@ -3503,6 +3518,7 @@ fn run_planned_compiler_suite_children(
                     test_threads: None,
                     root_label: Some(&target.source_relative_path),
                     progress: None,
+                    share: None,
                 })
                 .map_err(oven_error)?;
                 suite_report.native_test_count += report.inventory.names.len();
@@ -3872,6 +3888,8 @@ struct CompilerSuiteSelectionReport {
     partition_count: Option<usize>,
     /// Number of receipt-bound roots selected by target, partition, or complete-suite selection.
     selected_root_count: usize,
+    /// Number of selected roots this partition runs only a share of, because they were too large to pack whole.
+    shared_root_count: usize,
     /// Whether a green invocation can serve as complete-root evidence for every selected root.
     complete_root_evidence: bool,
     /// Whether a green invocation covers the complete compiler workspace suite.
@@ -3885,6 +3903,7 @@ fn compiler_suite_selection_report(
     partition_index: Option<usize>,
     partition_count: Option<usize>,
     selected_root_count: usize,
+    shared_root_count: usize,
 ) -> CompilerSuiteSelectionReport {
     let requested_target_paths = requested_target_paths
         .iter()
@@ -3903,6 +3922,7 @@ fn compiler_suite_selection_report(
             partition_index,
             partition_count,
             selected_root_count,
+            shared_root_count,
             complete_root_evidence: false,
             complete_suite_evidence: false,
         },
@@ -3914,8 +3934,23 @@ fn compiler_suite_selection_report(
             partition_index,
             partition_count,
             selected_root_count,
+            shared_root_count,
             complete_root_evidence: true,
             complete_suite_evidence: true,
+        },
+        // A root divided across partitions is run in parts, so this invocation is not complete-root evidence for it
+        // even though the partitions together still cover every case exactly once.
+        None if shared_root_count > 0 => CompilerSuiteSelectionReport {
+            mode: "selected-shared-roots",
+            normalized_exact_names: Vec::new(),
+            selected_case_count: 0,
+            requested_target_paths,
+            partition_index,
+            partition_count,
+            selected_root_count,
+            shared_root_count,
+            complete_root_evidence: false,
+            complete_suite_evidence: false,
         },
         None => CompilerSuiteSelectionReport {
             mode: "selected-complete-roots",
@@ -3925,6 +3960,7 @@ fn compiler_suite_selection_report(
             partition_index,
             partition_count,
             selected_root_count,
+            shared_root_count,
             complete_root_evidence: true,
             complete_suite_evidence: false,
         },
@@ -4107,7 +4143,7 @@ fn compiler_suite_selected_shard_references(
     requested_targets: &[String],
     partition_index: Option<usize>,
     partition_count: Option<usize>,
-) -> CliResult<Vec<OvenCompilerTestSuiteShardReference>> {
+) -> CliResult<CompilerSuitePartitionSelection> {
     let partition = match (partition_index, partition_count) {
         (None, None) => None,
         (Some(index), Some(count)) if count > 0 && index < count => Some((index, count)),
@@ -4134,29 +4170,39 @@ fn compiler_suite_selected_shard_references(
         ));
     }
     if let Some((index, count)) = partition {
-        if count > references.len() {
-            return Err(CliError::failure(format!(
-                "Oven compiler-suite partition count {count} exceeds the {} receipt-bound roots",
-                references.len()
-            )));
-        }
-        let mut ordered = references.to_vec();
-        ordered.sort_by(|left, right| {
-            right
-                .source_bytes
-                .cmp(&left.source_bytes)
-                .then_with(|| left.target.source_relative_path.cmp(&right.target.source_relative_path))
-                .then_with(|| left.identity.cmp(&right.identity))
-        });
-        let mut partitions = vec![Vec::new(); count];
-        let mut partition_weights = vec![0_u64; count];
-        for reference in ordered {
+        for reference in references {
             if reference.source_bytes == 0 {
                 return Err(CliError::failure(format!(
                     "receipt-bound compiler-suite root `{}` has no digest-verified source footprint; republish the Oven suite",
                     reference.target.source_relative_path
                 )));
             }
+        }
+        let mut ordered = compiler_suite_divided_partition_items(references, count)?;
+        // Division can give more packing items than roots, so the limit is the item count, not the root count: a
+        // suite with three roots and one dominant among them still fills four partitions.
+        if count > ordered.len() {
+            return Err(CliError::failure(format!(
+                "Oven compiler-suite partition count {count} exceeds the {} divisible receipt-bound root part(s)",
+                ordered.len()
+            )));
+        }
+        ordered.sort_by(|left, right| {
+            right
+                .weight
+                .cmp(&left.weight)
+                .then_with(|| {
+                    left.reference
+                        .target
+                        .source_relative_path
+                        .cmp(&right.reference.target.source_relative_path)
+                })
+                .then_with(|| left.reference.identity.cmp(&right.reference.identity))
+                .then_with(|| left.share.index.cmp(&right.share.index))
+        });
+        let mut partitions = vec![Vec::new(); count];
+        let mut partition_weights = vec![0_u64; count];
+        for item in ordered {
             let selected_partition = partition_weights
                 .iter()
                 .enumerate()
@@ -4164,26 +4210,35 @@ fn compiler_suite_selected_shard_references(
                 .map(|(partition_index, _)| partition_index)
                 .ok_or_else(|| CliError::failure("Oven compiler-suite has no partition capacity".to_string()))?;
             partition_weights[selected_partition] = partition_weights[selected_partition]
-                .checked_add(reference.source_bytes)
+                .checked_add(item.weight)
                 .ok_or_else(|| {
                     CliError::failure("Oven compiler-suite partition source footprint overflowed".to_string())
                 })?;
-            partitions[selected_partition].push(reference);
+            partitions[selected_partition].push(item);
         }
         let mut selected = partitions
             .get(index)
             .cloned()
             .ok_or_else(|| CliError::failure("Oven compiler-suite partition index is unavailable".to_string()))?;
         selected.sort_by(|left, right| {
-            left.target
+            left.reference
+                .target
                 .source_relative_path
-                .cmp(&right.target.source_relative_path)
-                .then_with(|| left.identity.cmp(&right.identity))
+                .cmp(&right.reference.target.source_relative_path)
+                .then_with(|| left.reference.identity.cmp(&right.reference.identity))
         });
-        return Ok(selected);
+        let shares = selected
+            .iter()
+            .filter(|item| item.share.count > 1)
+            .map(|item| (item.reference.target.source_relative_path.clone(), item.share))
+            .collect();
+        return Ok(CompilerSuitePartitionSelection {
+            references: selected.into_iter().map(|item| item.reference).collect(),
+            shares,
+        });
     }
     if requested_targets.is_empty() {
-        return Ok(references.to_vec());
+        return Ok(CompilerSuitePartitionSelection::whole(references.to_vec()));
     }
 
     let requested = requested_targets
@@ -4207,11 +4262,95 @@ fn compiler_suite_selected_shard_references(
         )));
     }
 
-    Ok(references
+    Ok(CompilerSuitePartitionSelection::whole(
+        references
+            .iter()
+            .filter(|reference| requested.contains(&reference.target.source_relative_path))
+            .cloned()
+            .collect(),
+    ))
+}
+
+/// One packing item: a whole receipt-bound root, or one share of a root divided across partitions.
+#[derive(Debug, Clone)]
+struct CompilerSuitePartitionItem {
+    reference: OvenCompilerTestSuiteShardReference,
+    share: OvenNativeTestShare,
+    weight: u64,
+}
+
+/// The roots one partition runs, plus the share of any root it does not run whole.
+#[derive(Debug, Clone, Default)]
+struct CompilerSuitePartitionSelection {
+    references: Vec<OvenCompilerTestSuiteShardReference>,
+    /// Keyed by source-relative path, which is unique for every divided root by construction.
+    shares: BTreeMap<String, OvenNativeTestShare>,
+}
+
+impl CompilerSuitePartitionSelection {
+    /// Select whole roots, which is what every unpartitioned selection does.
+    fn whole(references: Vec<OvenCompilerTestSuiteShardReference>) -> Self {
+        Self {
+            references,
+            shares: BTreeMap::new(),
+        }
+    }
+}
+
+/// Expand receipt-bound roots into packing items, dividing any root too large for the packer to balance against.
+///
+/// Packing whole roots makes the largest root the lane's floor. The argument is about packing, not about timing: once
+/// one item takes more than half a partition's budget, nothing left in the set is large enough to pair with it, so
+/// every arrangement leaves that partition holding it nearly alone while the others split the remainder. Dividing
+/// such a root into shares restores the packer's freedom, at the cost of baking that root's binary once per share.
+///
+/// Division is deliberately narrow. Only a root above half the ideal per-partition footprint is divided, and only
+/// when its source path is unique among the references -- a shared path could not be keyed unambiguously when the
+/// share is handed back to the runner. Everything else stays whole, so the ordinary root pays nothing.
+///
+/// The footprint is a publisher-recorded, digest-verified source size, which is a coarse stand-in for cost: a root
+/// whose cases each launch a child `incan` command costs far more per byte than one that stays in process. Balancing
+/// what the work actually costs needs a cost the publisher records, which this index does not yet carry (#1549).
+fn compiler_suite_divided_partition_items(
+    references: &[OvenCompilerTestSuiteShardReference],
+    partition_count: usize,
+) -> CliResult<Vec<CompilerSuitePartitionItem>> {
+    let total = references
         .iter()
-        .filter(|reference| requested.contains(&reference.target.source_relative_path))
-        .cloned()
-        .collect())
+        .try_fold(0_u64, |total, reference| total.checked_add(reference.source_bytes))
+        .ok_or_else(|| CliError::failure("Oven compiler-suite source footprint overflowed".to_string()))?;
+    let ideal = (total / partition_count as u64).max(1);
+    let divisible_above = (ideal / 2).max(1);
+    let mut path_counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for reference in references {
+        *path_counts
+            .entry(reference.target.source_relative_path.as_str())
+            .or_default() += 1;
+    }
+    let mut items = Vec::new();
+    for reference in references {
+        let divisible = path_counts
+            .get(reference.target.source_relative_path.as_str())
+            .copied()
+            .unwrap_or(0)
+            == 1;
+        let shares = if divisible && reference.source_bytes > divisible_above {
+            reference
+                .source_bytes
+                .div_ceil(divisible_above)
+                .min(partition_count as u64) as usize
+        } else {
+            1
+        };
+        for index in 0..shares {
+            items.push(CompilerSuitePartitionItem {
+                reference: reference.clone(),
+                share: OvenNativeTestShare { index, count: shares },
+                weight: (reference.source_bytes / shares as u64).max(1),
+            });
+        }
+    }
+    Ok(items)
 }
 
 /// Resolve and validate the deliberately narrow compiler-suite exact-test diagnostic selection.
@@ -6714,13 +6853,14 @@ mod tests {
 
         assert_eq!(
             compiler_suite_selected_shard_references(&references, &["tests/second.rs".to_string()], None, None,)?
+                .references
                 .into_iter()
                 .map(|reference| reference.identity)
                 .collect::<Vec<_>>(),
             vec!["sha256:second"]
         );
         assert_eq!(
-            compiler_suite_selected_shard_references(&references, &[], None, None)?,
+            compiler_suite_selected_shard_references(&references, &[], None, None)?.references,
             references
         );
         assert!(
@@ -6773,21 +6913,36 @@ mod tests {
         .collect::<Vec<_>>();
         references.reverse();
 
-        let selected = (0..4)
+        let selections = (0..4)
             .map(|index| compiler_suite_selected_shard_references(&references, &[], Some(index), Some(4)))
             .collect::<CliResult<Vec<_>>>()?;
+        let selected = selections
+            .iter()
+            .map(|selection| selection.references.clone())
+            .collect::<Vec<_>>();
         let mut reordered_references = references.clone();
         reordered_references.reverse();
         let selected_from_reordered = (0..4)
-            .map(|index| compiler_suite_selected_shard_references(&reordered_references, &[], Some(index), Some(4)))
+            .map(|index| {
+                compiler_suite_selected_shard_references(&reordered_references, &[], Some(index), Some(4))
+                    .map(|selection| selection.references)
+            })
             .collect::<CliResult<Vec<_>>>()?;
         assert_eq!(selected, selected_from_reordered);
-        let largest_partition = selected
+        // The largest root carries more than an even share of the footprint, so it is divided rather than given a
+        // partition of its own -- a whole root of that size would set the lane's floor by itself.
+        let largest_shares = selections
             .iter()
-            .find(|partition| partition.iter().any(|reference| reference.identity == "sha256:largest"))
-            .ok_or_else(|| "partition selection omitted the largest receipt root".to_string())?;
-        assert_eq!(largest_partition.len(), 1);
-        assert_eq!(largest_partition[0].identity, "sha256:largest");
+            .filter_map(|selection| selection.shares.get("tests/largest.rs").copied())
+            .collect::<Vec<_>>();
+        assert!(largest_shares.len() > 1, "the largest root must be divided");
+        assert_eq!(
+            selected
+                .iter()
+                .filter(|partition| partition.iter().any(|reference| reference.identity == "sha256:largest"))
+                .count(),
+            largest_shares.len(),
+        );
         let selected_identities = selected
             .iter()
             .flatten()
@@ -6798,7 +6953,24 @@ mod tests {
             .map(|reference| reference.identity.clone())
             .collect::<BTreeSet<_>>();
         assert_eq!(selected_identities, receipt_identities);
-        assert_eq!(selected.iter().map(Vec::len).sum::<usize>(), references.len());
+        // Every root is placed once, plus one extra placement for each additional share of a divided root.
+        let divided_paths = selections
+            .iter()
+            .flat_map(|selection| selection.shares.iter())
+            .map(|(path, share)| (path.clone(), share.count))
+            .collect::<BTreeMap<_, _>>();
+        let extra_placements = divided_paths.values().map(|count| count - 1).sum::<usize>();
+        assert_eq!(
+            selected.iter().map(Vec::len).sum::<usize>(),
+            references.len() + extra_placements,
+        );
+        // Two resolved units share `tests/shared.rs`, so neither can be divided: a share is handed back to the
+        // runner under its source path, which would then be ambiguous.
+        assert!(
+            selections
+                .iter()
+                .all(|selection| !selection.shares.contains_key("tests/shared.rs"))
+        );
         let shared_identities = selected
             .iter()
             .flatten()
@@ -6822,6 +6994,18 @@ mod tests {
         Ok(())
     }
 
+    /// Build a receipt-bound target key for one test root, which is all partition selection reads.
+    fn partition_reference_target(source_relative_path: &str) -> OvenCompilerTestSuiteTargetKey {
+        OvenCompilerTestSuiteTargetKey {
+            package_name: "incan".to_string(),
+            target_name: source_relative_path.to_string(),
+            target_kind: "test".to_string(),
+            runner: "rustc-test".to_string(),
+            source_relative_path: source_relative_path.to_string(),
+        }
+    }
+
+    /// Build one receipt-bound shard reference whose footprint drives partition packing.
     fn exact_selection_reference(runner: &str) -> OvenCompilerTestSuiteShardReference {
         OvenCompilerTestSuiteShardReference {
             identity: format!("sha256:{runner}"),
@@ -6890,7 +7074,7 @@ mod tests {
         let rustdoc_test = exact_selection_reference("rustdoc-test");
         let references = vec![rustdoc_test.clone(), rustc_test.clone()];
         let path_selected =
-            compiler_suite_selected_shard_references(&references, &["src/lib.rs".to_string()], None, None)?;
+            compiler_suite_selected_shard_references(&references, &["src/lib.rs".to_string()], None, None)?.references;
         assert_eq!(path_selected, references);
         assert_eq!(
             compiler_suite_exact_test_selection(&[], path_selected.clone(), false)?,
@@ -6939,6 +7123,55 @@ mod tests {
     }
 
     #[test]
+    fn a_root_too_large_to_pack_whole_is_divided_into_disjoint_shares() -> Result<(), Box<dyn std::error::Error>> {
+        let root = |name: &str, bytes: u64| OvenCompilerTestSuiteShardReference {
+            identity: format!("sha256:{name}"),
+            target: partition_reference_target(&format!("tests/{name}.rs")),
+            source_bytes: bytes,
+        };
+        // One root carries three quarters of the suite's footprint, so no arrangement of the rest can finish a
+        // partition before it does.
+        let references = vec![root("dominant", 600), root("small_one", 100), root("small_two", 100)];
+
+        let selections = (0..4)
+            .map(|index| compiler_suite_selected_shard_references(&references, &[], Some(index), Some(4)))
+            .collect::<CliResult<Vec<_>>>()?;
+
+        let shares = selections
+            .iter()
+            .filter_map(|selection| selection.shares.get("tests/dominant.rs").copied())
+            .collect::<Vec<_>>();
+        assert!(
+            shares.len() > 1,
+            "the dominant root must be divided across partitions, got {shares:?}"
+        );
+        assert!(
+            shares.iter().all(|share| share.count == shares.len()),
+            "every share must agree on how many parts the root has, got {shares:?}"
+        );
+        assert_eq!(
+            shares.iter().map(|share| share.index).collect::<BTreeSet<_>>(),
+            (0..shares.len()).collect::<BTreeSet<_>>(),
+            "the shares must be exactly the parts of one division"
+        );
+        // Every case of the divided root is owned by exactly one share, so the partitions together still run the
+        // whole root once.
+        for case in ["alpha::first", "beta::second", "gamma::third", "delta::fourth", "tail"] {
+            assert_eq!(
+                shares.iter().filter(|share| share.owns(case)).count(),
+                1,
+                "`{case}` must belong to exactly one share of {shares:?}"
+            );
+        }
+        // A root small enough to pack whole is never divided.
+        for selection in &selections {
+            assert!(!selection.shares.contains_key("tests/small_one.rs"));
+            assert!(!selection.shares.contains_key("tests/small_two.rs"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn compiler_suite_selection_report_distinguishes_full_selected_root_and_exact_evidence()
     -> Result<(), Box<dyn std::error::Error>> {
         let names = vec!["selected::first".to_string(), "selected::second".to_string()];
@@ -6948,11 +7181,13 @@ mod tests {
             None,
             None,
             1,
+            0,
         );
         let selected =
-            compiler_suite_selection_report(None, &["tests/integration_tests.rs".to_string()], None, None, 1);
-        let partition = compiler_suite_selection_report(None, &[], Some(2), Some(4), 9);
-        let complete = compiler_suite_selection_report(None, &[], None, None, 37);
+            compiler_suite_selection_report(None, &["tests/integration_tests.rs".to_string()], None, None, 1, 0);
+        let partition = compiler_suite_selection_report(None, &[], Some(2), Some(4), 9, 0);
+        let shared = compiler_suite_selection_report(None, &[], Some(2), Some(4), 9, 1);
+        let complete = compiler_suite_selection_report(None, &[], None, None, 37, 0);
 
         assert_eq!(diagnostic.mode, "exact-diagnostic");
         assert_eq!(diagnostic.normalized_exact_names, names);
@@ -6972,6 +7207,11 @@ mod tests {
         assert!(partition.complete_root_evidence);
         assert!(!partition.complete_suite_evidence);
         assert_eq!(partition.selected_root_count, 9);
+        // A partition that runs part of one root covers neither that root nor the suite, even when green.
+        assert_eq!(shared.mode, "selected-shared-roots");
+        assert!(!shared.complete_root_evidence);
+        assert!(!shared.complete_suite_evidence);
+        assert_eq!(shared.shared_root_count, 1);
         assert_eq!(
             compiler_suite_selection_context(&partition),
             "zero-based partition 2 of 4"
@@ -8064,8 +8304,13 @@ fn planned_suite_second_exact_case_keeps_cargo_guarded() -> Result<(), String> {
             "planned_suite_child_uses_sdk_inventory".to_string(),
             "planned_suite_second_exact_case_keeps_cargo_guarded".to_string(),
         ];
-        let report =
-            run_prepared_compiler_suite_children(vec![prepared_child], &receipt, &rustc, Some(&exact_test_names))?;
+        let report = run_prepared_compiler_suite_children(
+            vec![prepared_child],
+            &receipt,
+            &rustc,
+            Some(&exact_test_names),
+            &BTreeMap::new(),
+        )?;
 
         assert_eq!(report.native_test_count, 2);
         assert_eq!(report.doctest_targets, 0);
