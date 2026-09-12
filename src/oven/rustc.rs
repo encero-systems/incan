@@ -8988,9 +8988,17 @@ mod tests {
             compiler_version,
         )?;
         assert_eq!(loaded.identity(), authority.identity);
+        // Both sides are canonicalized before comparison. The loader resolves its root through the filesystem and
+        // the store hands back the path it was given, so on a host where the temporary directory sits behind a
+        // symlink -- `/var` to `/private/var` on macOS -- the two spell the same directory differently and the
+        // assertion fails for a reason that has nothing to do with selection.
         assert_eq!(
-            loaded.artifact_root(),
-            store.select(&authority.identity)?.0.materialized_root()
+            loaded.artifact_root().canonicalize()?,
+            store
+                .select(&authority.identity)?
+                .0
+                .materialized_root()
+                .canonicalize()?
         );
         assert_eq!(loaded.payload, authority_payload);
         Ok(())
@@ -9098,7 +9106,7 @@ mod tests {
         let result = load_project_inspection_authority(
             &store,
             &OvenProjectInspectionAuthorityRef {
-                identity: requested.identity,
+                identity: requested.identity.clone(),
                 receipt_identity: receipt.identity,
                 build_unit_identity: receipt.build_unit_identity,
             },
@@ -9106,10 +9114,23 @@ mod tests {
             source_authority_digest,
             compiler_version,
         );
-        assert!(matches!(
-            result,
-            Err(OvenRustcError::InvalidStoredPlan { identity, .. }) if identity == substitute.identity
-        ));
+        let refusal = match result {
+            Ok(_) => return Err("a substituted entry must not satisfy the requested authority".into()),
+            Err(error) => error.to_string(),
+        };
+        // The refusal moved down a layer and got stronger. It used to surface as `InvalidStoredPlan` from the
+        // authority loader, which noticed the payload disagreed after reading it. The store now refuses the
+        // substituted directory by its immutable coordinate before the loader sees it, so the assertion is on the
+        // property the test is named for -- the requested identity is what could not be selected -- rather than on
+        // which layer happened to say so.
+        assert!(
+            refusal.contains(&requested.identity),
+            "the refusal must name the authority that was requested: {refusal}"
+        );
+        assert!(
+            refusal.contains("entry directory and manifest names do not match"),
+            "a substituted entry must be refused on its immutable coordinate: {refusal}"
+        );
         Ok(())
     }
 
