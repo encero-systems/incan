@@ -60,6 +60,7 @@ use commands::diagnostics::DiagnosticOutputFormat;
 use commands::interop_plan::InteropPlanInspectionFormat;
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
 use commands::provider_inspect::ProviderInspectionFormat;
+use commands::representation_inspect::RepresentationInspectionFormat;
 use commands::tools::{ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat};
 use commands::workspace::WorkspaceInspectFormat;
 
@@ -855,6 +856,15 @@ pub enum InspectCommand {
         #[arg(long, value_name = "TRIPLE")]
         target: Option<String>,
     },
+    /// Inspect a package's published executable representation: its version and the declarations it covers
+    Representation {
+        /// Package manifest, generated artifact root, or project root to inspect
+        #[arg(value_name = "PATH", default_value = ".")]
+        path: PathBuf,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: RepresentationInspectionFormat,
+    },
     /// Inspect one locked Oven interop deployment handoff
     InteropPlan {
         /// Project path containing the Oven interop declaration and canonical lock
@@ -1610,6 +1620,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 sdk_profile.profile(),
                 target.as_deref(),
             ),
+            InspectCommand::Representation { path, format } => commands::inspect_representation(&path, format),
             InspectCommand::InteropPlan { path, target, format } => {
                 commands::inspect_interop_plan(&path, &target, format)
             }
