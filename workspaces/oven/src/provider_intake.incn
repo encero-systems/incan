@@ -4,7 +4,7 @@ from std.hash import sha256
 from manifest_errors import IntakeError, IntakeErrorKind
 from intake import ManifestEvidence
 from rust_source import RustDependencyCatalog, RustDependencyDeclaration, RustDependencyRole
-from rust_activation import ActivationContext, RustActivation, SlotActivation
+from rust_activation import ActivationContext, InactiveReason, RustActivation, SlotActivation
 
 
 @derive(Eq)
@@ -76,11 +76,19 @@ def declaration_at(catalog: RustDependencyCatalog, index: int) -> Option[RustDep
     return None
 
 
-def slot_is_active(activation: SlotActivation) -> bool:
-    """Report whether one slot activated, without inspecting why an inactive one did not."""
+def build_slot_is_declared_here(activation: SlotActivation) -> bool:
+    """
+    Report whether a build-role slot belongs in this unit's evidence.
+
+    Whether a build dependency was declared and whether the unit has a build unit are different facts that
+    usually agree. Activation folds them together — a build slot in a unit with no build unit is `BuildUnitAbsent`
+    — so reading activation alone would make `build_slots` a mirror of `build_unit_present` and lose the
+    disagreement the evidence exists to record. Every other exclusion is a genuine deselection for this target or
+    feature selection, and those slots stay out.
+    """
     match activation:
         SlotActivation.Active(_, _, _) => return true
-        SlotActivation.Inactive(_) => return false
+        SlotActivation.Inactive(reason) => return reason == InactiveReason.BuildUnitAbsent
 
 
 pub def provider_intake_evidence(
@@ -142,7 +150,7 @@ pub def provider_intake_evidence(
                 f"activation slot {slot.index} has no declaration in the retained catalog",
             ))
             Some(declaration) =>
-                if declaration.role == RustDependencyRole.Build and slot_is_active(slot.activation):
+                if declaration.role == RustDependencyRole.Build and build_slot_is_declared_here(slot.activation):
                     build_slots.append(
                         SelectedBuildSlot(
                             index=slot.index, alias=declaration.alias, host_unit=context.host.triple
