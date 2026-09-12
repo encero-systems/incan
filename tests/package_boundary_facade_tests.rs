@@ -233,24 +233,38 @@ fn source_free_native_diamond_preserves_published_store_inventory_issue1458() ->
     let catalog = fixture.path().join("catalog");
     let pricing = fixture.path().join("pricing");
     let home = fixture.path().join("incan-home");
+    // The named Rust dependency is what forces a portable project entry, rather than an empty package store whose
+    // native closure the compiler's release envelope happens to supply whole. Two things have to hold for that, and
+    // both have been quietly lost before.
+    //
+    // The emitted Rust has to reach the crate: a dependency nothing calls is not in the closure, so the bake
+    // resolves the plain stdlib Loaf and packages nothing. `fresh_id` therefore calls into it rather than naming it.
+    //
+    // And the crate has to be one the release envelope cannot contain. A registry crate is a poor choice for that:
+    // the lane pre-fetches a locked source inventory and builds an envelope from it, so a crate this fixture names
+    // may already be inside, the closure is satisfied, and the precondition fails on the lane while passing on a
+    // developer machine whose envelope is narrower. A path dependency written by the fixture itself cannot be in any
+    // envelope, needs no registry, and stays inside what the offline publisher will resolve.
+    let helper = fixture.path().join("shelfmark");
+    write_fixture_file(
+        &helper,
+        "Cargo.toml",
+        "[package]\nname = \"shelfmark\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    write_fixture_file(
+        &helper,
+        "src/lib.rs",
+        "/// Return a stable catalogue shelfmark, so the generated crate reaches this dependency.\npub fn shelfmark() -> String {\n    \"aisle-7\".to_string()\n}\n",
+    )?;
     write_fixture_file(
         &catalog,
         "loaf.toml",
-        "[project]\nname = \"immutable_catalog\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\nuuid = { version = \"1.0\", features = [\"v4\"] }\n",
+        "[project]\nname = \"immutable_catalog\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\nshelfmark = { path = \"../shelfmark\" }\n",
     )?;
-    // The named Rust dependency forces a portable project entry, rather than an empty package store whose entire
-    // native closure happens to be supplied by the compiler's release envelope — but only while the emitted Rust
-    // actually reaches it. A dependency nothing in the generated crate calls is not in the closure, so the bake
-    // resolves the plain stdlib Loaf and packages no entry at all, and this regression's precondition quietly
-    // stops holding. `answer` therefore calls into the crate rather than merely naming it.
-    //
-    // The requirement is spelled the way `tests/fixtures/oven_loaf_dependencies/Cargo.toml` spells it, because
-    // that manifest is the locked source inventory the lane pre-fetches. An exact pin on whatever version happens
-    // to sit in a local registry forces a re-resolve the offline publisher refuses.
     write_fixture_file(
         &catalog,
         "src/lib.incn",
-        "from rust::uuid import Uuid\n\npub def answer() -> int:\n    return 42\n\npub def fresh_id() -> str:\n    return Uuid.new_v4().to_string()\n",
+        "from rust::shelfmark import shelfmark\n\npub def answer() -> int:\n    return 42\n\npub def location() -> str:\n    return shelfmark()\n",
     )?;
     write_fixture_file(
         &pricing,
@@ -276,7 +290,13 @@ fn source_free_native_diamond_preserves_published_store_inventory_issue1458() ->
             .keys()
             .any(|path| path.starts_with("oven/loafs/entries")
                 && path.file_name().is_some_and(|name| name == "loaf.json")),
-        "the regression requires actual packaged store entries"
+        "the regression requires actual packaged store entries; the catalog published {} path(s) instead: {}",
+        catalog_before.len(),
+        catalog_before
+            .keys()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     assert_success(&bake(&pricing)?, "pricing publication through catalog");
     assert_eq!(artifact_inventory(&catalog_artifact)?, catalog_before);
