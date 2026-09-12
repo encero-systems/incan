@@ -287,6 +287,78 @@ pub(crate) fn contains_native_union(value: &(impl VisitTypeRefs + Clone)) -> boo
     found
 }
 
+/// Route one union's producer-local nominal leaves under the Rust owner already selected for it, and attach the
+/// resulting physical projection.
+///
+/// The leaf rewriting is the delicate half and it is written once here: a producer-local nominal is a name in the
+/// owner's crate, while a collection head, the union wrapper itself, `decimal`, and anything already absolute are
+/// not, so prefixing those would name a type that does not exist. Both owner-resolution strategies — the admitted
+/// provider graph, and a provider that owns its own unions — end here rather than each keeping a copy.
+fn attach_owner_projection(
+    bound: &mut crate::library_manifest::NativeUnionExport,
+    dependency_root: &str,
+    rust_owner: String,
+    mut members: Vec<TypeRef>,
+) {
+    members.visit_type_refs(&mut |member| match member {
+        TypeRef::Named { name, origin: None } if !name.starts_with("::") => {
+            if matches!(
+                super::resolved_type_from_manifest_type_ref(&TypeRef::Named {
+                    name: name.clone(),
+                    origin: None
+                }),
+                crate::frontend::symbols::ResolvedType::Named(_)
+            ) {
+                *name = format!("{rust_owner}::{name}");
+            }
+        }
+        TypeRef::Applied { name, origin: None, .. }
+            if !name.starts_with("::")
+                && incan_core::lang::types::collections::from_str(name).is_none()
+                && name != incan_core::lang::types::UNION_TYPE_NAME
+                && name != "decimal" =>
+        {
+            *name = format!("{rust_owner}::{name}");
+        }
+        _ => {}
+    });
+    bound.checked_projection = Some(Box::new(super::model::NativeUnionProjection {
+        dependency_root: dependency_root.to_string(),
+        rust_owner,
+        members,
+        nominal_origins: BTreeMap::new(),
+    }));
+}
+
+/// Bind the native unions a compiled SDK provider owns itself, whose physical owner is the provider's own crate.
+///
+/// [`with_checked_native_unions`] resolves an owner through the admitted public-artifact graph, and an SDK provider
+/// is not in it: that graph is built from project-dependency records, so looking one up fails with "union import
+/// container is unavailable". The lookup exists to answer *which* artifact owns a union that a consumer merely
+/// names. An SDK provider seeding its own manifest already knows: it is the owner, its crate is the physical route,
+/// and there is no second representation to reconcile against.
+///
+/// Unprojected unions are the only ones touched, so a manifest that has already been through the plan-based path is
+/// unchanged. A `SelectedArtifact` union names some *other* owner and is left alone here, because answering that is
+/// exactly what the artifact graph is for.
+pub(crate) fn with_self_owned_native_unions<T: VisitTypeRefs>(mut value: T, provider_crate: &str) -> T {
+    use crate::library_manifest::NativeUnionOwnerExport;
+    let rust_owner = format!("::{provider_crate}");
+    value.visit_type_refs(&mut |ty| {
+        let TypeRef::NativeUnion(native) = ty else {
+            return;
+        };
+        if native.checked_projection.is_some() || native.owner != NativeUnionOwnerExport::ContainingArtifact {
+            return;
+        }
+        let mut bound = native.for_publication();
+        let members = with_self_owned_native_unions(bound.members.clone(), provider_crate);
+        attach_owner_projection(&mut bound, provider_crate, rust_owner.clone(), members);
+        *native = bound;
+    });
+    value
+}
+
 /// Bind native carriers through the existing admitted provider graph before projecting a compiler-owned API copy.
 ///
 /// The original producer members stay immutable. Only the non-serialized physical projection is routed for emission;
@@ -324,41 +396,14 @@ pub(crate) fn with_checked_native_unions<T: VisitTypeRefs>(
         };
         let owner_path = crate::frontend::rust_type_display::provider_bridge_route(library, route);
         let rust_owner = format!("::{}", owner_path.join("::"));
-        let mut members = match with_checked_native_unions(bound.members.clone(), library, Some(plan), routes) {
+        let members = match with_checked_native_unions(bound.members.clone(), library, Some(plan), routes) {
             Ok(members) => with_checked_type_routes(members, routes),
             Err(error) => {
                 failure = Some(error);
                 return;
             }
         };
-        members.visit_type_refs(&mut |member| match member {
-            TypeRef::Named { name, origin: None } if !name.starts_with("::") => {
-                if matches!(
-                    super::resolved_type_from_manifest_type_ref(&TypeRef::Named {
-                        name: name.clone(),
-                        origin: None
-                    }),
-                    crate::frontend::symbols::ResolvedType::Named(_)
-                ) {
-                    *name = format!("{rust_owner}::{name}");
-                }
-            }
-            TypeRef::Applied { name, origin: None, .. }
-                if !name.starts_with("::")
-                    && incan_core::lang::types::collections::from_str(name).is_none()
-                    && name != incan_core::lang::types::UNION_TYPE_NAME
-                    && name != "decimal" =>
-            {
-                *name = format!("{rust_owner}::{name}");
-            }
-            _ => {}
-        });
-        bound.checked_projection = Some(Box::new(super::model::NativeUnionProjection {
-            dependency_root: library.to_string(),
-            rust_owner,
-            members,
-            nominal_origins: BTreeMap::new(),
-        }));
+        attach_owner_projection(&mut bound, library, rust_owner, members);
         *native = bound;
     });
     match failure {

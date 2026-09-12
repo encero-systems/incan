@@ -25,19 +25,27 @@
 //!
 //! # The transitional input, and when to remove it
 //!
-//! Today the compiler still lowers to Rust and emits it, so a change confined to the emitter alters generated
-//! output without moving any HIR. Two of this programme's own defects had exactly that shape. Until emission is
-//! gone, a digest over HIR alone would be a false hit for an emitter change, so the emitter's own sources are
-//! folded in as a narrow, explicitly transitional input — narrow enough to exclude the rest of the compiler, and
-//! removed with the emitter rather than maintained forever.
+//! Today the compiler still lowers to Rust and emits it, so a change confined to lowering or emission alters
+//! generated output without moving any HIR. Two of this programme's own defects had exactly that shape. Until
+//! emission is gone, a digest over HIR alone would be a false hit for such a change, so the backend's own sources
+//! are folded in as a narrow, explicitly transitional input — narrow enough to exclude the rest of the compiler,
+//! and removed with the backend rather than maintained forever.
 //!
 //! This is the one place where the *source* of a compiler subsystem still reaches the key, and it is here because
 //! the alternative is unsound today, not because source hashing is the design.
+//!
+//! # The caller names the Rust roots
+//!
+//! Which Rust trees reach a compiled component is a property of the compiler's layout, not of digesting, so the
+//! caller supplies them as labelled roots rather than this module hard-coding three. A root is labelled so the
+//! hash distinguishes the same bytes arriving under a different role, and the labels are folded in the order
+//! given, which the caller keeps stable.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use incan_semantics_core::closure_digest::{DependencyNode, closure_digests};
 use incan_semantics_core::semantic_digest::{body_without_docstring, semantic_digest};
 use incan_semantics_core::stable_identity::{DeclarationSignature, StableDeclarationId};
 use sha2::{Digest, Sha256};
@@ -177,39 +185,105 @@ fn module_meaning(path: &Path, source: &str) -> Result<BTreeMap<String, String>,
     Ok(meanings)
 }
 
+/// The standard-library Incan sources inside a compiler checkout.
+pub const COMPILER_STDLIB_ROOT: &str = "crates/incan_stdlib/stdlib";
+
+/// The Rust roots inside a compiler checkout whose content can change a compiled standard-library component.
+///
+/// # Why an inclusion list is sound here
+///
+/// #1495's own first step proposed narrowing the existing whole-tree hash by *excluding* paths, which fails open
+/// in the dangerous direction: forget to exclude something and you pay for it, forget that something belongs
+/// excluded and nothing tells you. This list is the other shape. It answers "what can reach a compiled component"
+/// and everything it omits is omitted for a stated reason, each of which is one of exactly two:
+///
+/// - **Covered by meaning.** `src/frontend`, `crates/incan_syntax` and `crates/incan_vocab` are run, not hashed: the
+///   digest lexes, parses, checks and lowers all 104 standard-library sources with this compiler, so a change to any of
+///   them that alters what the compiler understands moves the digest, and one that does not, does not. That is a
+///   stronger answer than hashing their source, not a weaker one.
+/// - **Cannot reach a component.** `src/cli`, `src/lsp`, `src/inspect`, `src/oven`, `crates/incan_codegraph`,
+///   `crates/rust_inspect` and `tests/` are the compiler's own tooling. They decide *when* components are built and
+///   *where* they are written, never what a component contains.
+///
+/// The second reason has one edge the digest does not cover by itself: publication code that changes the store's
+/// own layout or manifest produces a differently-shaped store from identical component content. That case is
+/// deliberate by construction and already has its own mechanism — [`crate::version::SDK_PROVIDER_CODEGEN_REVISION`],
+/// which the inventory validates on every cache hit and which is folded into the store identity beside this
+/// digest. Publication changes bump that constant; they do not rely on a source hash noticing them.
+///
+/// `src/backend` is the transitional entry. Lowering and emission change generated Rust without moving any HIR, so
+/// until direct-HIR lands their source is folded. It is labelled apart from the runtime crates for that reason, and
+/// it is removed with the backend rather than maintained.
+pub const COMPILER_RUST_EFFECT_ROOTS: &[(&str, &str)] = &[
+    ("stdlib-runtime", "crates/incan_stdlib/src"),
+    ("core", "crates/incan_core"),
+    ("derive", "crates/incan_derive"),
+    ("web-macros", "crates/incan_web_macros"),
+    ("semantics-core", "crates/incan_semantics_core"),
+    ("semantics-stdlib", "crates/incan_semantics_stdlib"),
+    ("transitional-backend", "src/backend"),
+];
+
+/// Digest what the compiler in `checkout_root` would produce for its own standard library.
+///
+/// Resolves [`COMPILER_STDLIB_ROOT`] and [`COMPILER_RUST_EFFECT_ROOTS`] against the checkout and folds them through
+/// [`stdlib_effect_digest`], so a caller keying a cache does not restate the layout.
+///
+/// # Errors
+///
+/// Returns [`EffectDigestError`] when a root cannot be enumerated or a source cannot be read.
+pub fn compiler_effect_digest(checkout_root: &Path) -> Result<String, EffectDigestError> {
+    let roots: Vec<(&str, PathBuf)> = COMPILER_RUST_EFFECT_ROOTS
+        .iter()
+        .map(|(label, relative)| (*label, checkout_root.join(relative)))
+        .collect();
+    let borrowed: Vec<(&str, &Path)> = roots.iter().map(|(label, path)| (*label, path.as_path())).collect();
+    stdlib_effect_digest(&checkout_root.join(COMPILER_STDLIB_ROOT), &borrowed)
+}
+
 /// Digest what this compiler would produce for the standard library rooted at `stdlib_root`.
 ///
-/// The returned digest moves when the compiler would emit different output and holds still otherwise. It folds
-/// three inputs: the checked meaning of every `.incn` source, the token-level content of the Rust runtime every
-/// component links against, and — transitionally — the emitter's own sources.
+/// The returned digest moves when the compiler would emit different output and holds still otherwise. It folds the
+/// checked meaning of every `.incn` source under `stdlib_root`, then the token-level content of each Rust root in
+/// `rust_roots`, each under the label it is given.
+///
+/// A caller supplies two kinds of Rust root, and the distinction is in the label rather than in the treatment: the
+/// runtime crates a component links against, which are permanent, and the backend that lowers and emits, which is
+/// transitional and goes away with emission. A Rust root that does not exist is folded as absent; `stdlib_root`
+/// itself is required, because a digest with no standard library in it describes nothing.
 ///
 /// # Errors
 ///
 /// Returns [`EffectDigestError`] when a source cannot be read or a standard-library module does not compile. Both
 /// are refusals: a digest that skipped what it could not read would describe a different standard library.
-pub fn stdlib_effect_digest(
-    stdlib_root: &Path,
-    rust_runtime_root: &Path,
-    emitter_root: &Path,
-) -> Result<String, EffectDigestError> {
+pub fn stdlib_effect_digest(stdlib_root: &Path, rust_roots: &[(&str, &Path)]) -> Result<String, EffectDigestError> {
     let mut hasher = Sha256::new();
-    delimited(&mut hasher, b"incan-stdlib-effect-v1");
+    delimited(&mut hasher, b"incan-stdlib-effect-v2");
+    fold_incan_meaning(&mut hasher, stdlib_root)?;
+    fold_rust_roots(&mut hasher, rust_roots)?;
+    Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
+}
 
-    // ---- The Incan half: checked meaning, not source text ----
-    delimited(&mut hasher, b"incan-meaning");
-    for path in collect_sources(stdlib_root, &["incn"])? {
+/// Fold the checked meaning of every `.incn` source beneath one root: what the compiler understands, not its text.
+///
+/// Paths are folded relative to `root` and in sorted order, so the same sources under a different absolute prefix
+/// digest identically — which is what lets a component be digested from its own project directory and a whole
+/// standard library from its own root, by the same code.
+fn fold_incan_meaning(hasher: &mut Sha256, root: &Path) -> Result<(), EffectDigestError> {
+    delimited(hasher, b"incan-meaning");
+    for path in collect_sources(root, &["incn"])? {
         let source = fs::read_to_string(&path).map_err(|error| EffectDigestError::Read {
             path: path.clone(),
             message: error.to_string(),
         })?;
-        let relative = path.strip_prefix(stdlib_root).unwrap_or(&path);
-        delimited(&mut hasher, relative.to_string_lossy().as_bytes());
+        let relative = path.strip_prefix(root).unwrap_or(&path);
+        delimited(hasher, relative.to_string_lossy().as_bytes());
         match module_meaning(&path, &source) {
             Ok(meanings) => {
-                delimited(&mut hasher, b"meaning");
+                delimited(hasher, b"meaning");
                 for (identity, digest) in meanings {
-                    delimited(&mut hasher, identity.as_bytes());
-                    delimited(&mut hasher, digest.as_bytes());
+                    delimited(hasher, identity.as_bytes());
+                    delimited(hasher, digest.as_bytes());
                 }
             }
             // A module the frontend cannot check standalone still contributes. Folding its bytes over-invalidates
@@ -217,43 +291,40 @@ pub fn stdlib_effect_digest(
             // module out of 104 rather than a general fallback. Refusing outright would be worse: the digest would
             // be unavailable whenever any module was mid-edit.
             Err(_) => {
-                delimited(&mut hasher, b"unchecked-source");
-                delimited(&mut hasher, source.as_bytes());
+                delimited(hasher, b"unchecked-source");
+                delimited(hasher, source.as_bytes());
             }
         }
     }
+    Ok(())
+}
 
-    // ---- The Rust half: mandatory, because every component links against it ----
-    delimited(&mut hasher, b"rust-runtime");
-    for path in collect_sources(rust_runtime_root, &["rs"])? {
-        let source = fs::read_to_string(&path).map_err(|error| EffectDigestError::Read {
-            path: path.clone(),
-            message: error.to_string(),
-        })?;
-        let relative = path.strip_prefix(rust_runtime_root).unwrap_or(&path);
-        delimited(&mut hasher, relative.to_string_lossy().as_bytes());
-        delimited(
-            &mut hasher,
-            rust_source_digest(&relative.to_string_lossy(), &source).as_bytes(),
-        );
+/// Fold the token-level content of each labelled Rust root.
+fn fold_rust_roots(hasher: &mut Sha256, rust_roots: &[(&str, &Path)]) -> Result<(), EffectDigestError> {
+    for (label, root) in rust_roots {
+        delimited(hasher, b"rust-root");
+        delimited(hasher, label.as_bytes());
+        // A root that is not there is folded as absent rather than refused. Compiler layouts differ — a trimmed
+        // distribution need not ship every crate — and a missing tree is a different compiler, which "absent"
+        // already says. Refusing would make the key unavailable for a checkout that builds perfectly well.
+        if !root.is_dir() {
+            delimited(hasher, b"absent");
+            continue;
+        }
+        for path in collect_sources(root, &["rs"])? {
+            let source = fs::read_to_string(&path).map_err(|error| EffectDigestError::Read {
+                path: path.clone(),
+                message: error.to_string(),
+            })?;
+            let relative = path.strip_prefix(root).unwrap_or(&path);
+            delimited(hasher, relative.to_string_lossy().as_bytes());
+            delimited(
+                hasher,
+                rust_source_digest(&relative.to_string_lossy(), &source).as_bytes(),
+            );
+        }
     }
-
-    // ---- The transitional half: remove this with the emitter ----
-    delimited(&mut hasher, b"emitter-source");
-    for path in collect_sources(emitter_root, &["rs"])? {
-        let source = fs::read_to_string(&path).map_err(|error| EffectDigestError::Read {
-            path: path.clone(),
-            message: error.to_string(),
-        })?;
-        let relative = path.strip_prefix(emitter_root).unwrap_or(&path);
-        delimited(&mut hasher, relative.to_string_lossy().as_bytes());
-        delimited(
-            &mut hasher,
-            rust_source_digest(&relative.to_string_lossy(), &source).as_bytes(),
-        );
-    }
-
-    Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
+    Ok(())
 }
 
 /// Digest one Rust source file's tokens, falling back to its bytes when it does not parse.
@@ -281,6 +352,74 @@ fn rust_source_digest(module_path: &str, source: &str) -> String {
         }
     }
     hex::encode(hasher.finalize())
+}
+
+/// One SDK component's own sources and the components it links.
+#[derive(Debug, Clone)]
+pub struct ComponentSources {
+    /// Directory holding this component's own `.incn` sources.
+    pub project: PathBuf,
+    /// Names of the components this one depends on, as declared in the catalog.
+    pub dependencies: BTreeSet<String>,
+}
+
+/// Digest what this compiler produces for each SDK component, folded along the component dependency graph.
+///
+/// [`stdlib_effect_digest`] answers one question for the whole standard library, which is the right shape for a
+/// single store identity and the wrong shape for deciding which components to rebuild: every component shares one
+/// answer, so editing a leaf rebuilds all ten. This returns one digest per component instead.
+///
+/// # What each component's digest covers
+///
+/// Its own `.incn` meaning, the shared Rust roots every component links or is produced by, and — through
+/// [`closure_digests`] — the digests of the components it depends on. That last part is what makes the result a
+/// closure rather than a local answer: editing `stdlib-core` moves every component that reaches it, editing a leaf
+/// moves only the leaf.
+///
+/// The shared Rust half is folded into *every* component rather than apportioned between them. That is deliberate
+/// over-invalidation: a change to the linked runtime or to the backend that emits it can reach any component, and
+/// nothing here proves which. Apportioning it would need the reachability answer RFC 106's graph is being built to
+/// give, and guessing it wrong produces a component built from sources its digest never saw.
+///
+/// # Errors
+///
+/// Returns [`EffectDigestError`] when a component's sources cannot be enumerated or read. A component naming a
+/// dependency absent from `components` is not an error here: [`closure_digests`] folds an unresolved edge as an
+/// explicit marker, which RFC 106 requires a consumer to read as affected rather than as absent.
+pub fn component_effect_digests(
+    components: &BTreeMap<String, ComponentSources>,
+    rust_roots: &[(&str, &Path)],
+) -> Result<BTreeMap<String, String>, EffectDigestError> {
+    // Folded once and shared. It is identical for every component by construction, and digesting the compiler's
+    // Rust trees ten times over would cost ten times as much for the same bytes.
+    let shared_rust = {
+        let mut hasher = Sha256::new();
+        delimited(&mut hasher, b"incan-component-rust-v1");
+        fold_rust_roots(&mut hasher, rust_roots)?;
+        hex::encode(hasher.finalize())
+    };
+
+    let mut nodes = BTreeMap::new();
+    for (name, sources) in components {
+        let mut hasher = Sha256::new();
+        delimited(&mut hasher, b"incan-component-effect-v1");
+        delimited(&mut hasher, name.as_bytes());
+        fold_incan_meaning(&mut hasher, &sources.project)?;
+        delimited(&mut hasher, b"shared-rust");
+        delimited(&mut hasher, shared_rust.as_bytes());
+        nodes.insert(
+            name.clone(),
+            DependencyNode {
+                digest: hex::encode(hasher.finalize()),
+                dependencies: sources.dependencies.clone(),
+            },
+        );
+    }
+
+    Ok(closure_digests(&nodes)
+        .into_iter()
+        .map(|(name, digest)| (name, format!("sha256:{digest}")))
+        .collect())
 }
 
 /// Digest one standard-library module's meaning, for callers that bucket per component rather than per tree.

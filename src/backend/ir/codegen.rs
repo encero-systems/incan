@@ -1012,7 +1012,11 @@ impl<'a> IrCodegen<'a> {
             )?;
             for provider in plan.active_sdk_records() {
                 if let Some(manifest) = provider.manifest.as_deref() {
-                    emitter.seed_sdk_provider_manifest_metadata(manifest);
+                    emitter.seed_sdk_provider_manifest_metadata(
+                        manifest,
+                        Some(plan),
+                        foreign_type_routes.get(&manifest.name),
+                    )?;
                 }
             }
         }
