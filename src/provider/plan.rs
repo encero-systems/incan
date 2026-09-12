@@ -1481,7 +1481,71 @@ fn project_dependency_records(
 }
 
 /// Normalize every known SDK provider, including disabled and unavailable component records, into the shared catalog.
+/// Name the exact SDK reading these records were built from.
+///
+/// Everything the records depend on is already stated by the inventory the SDK shipped: its release identity, the
+/// codegen revision that emitted the providers, the digest recorded for each one, and which components this
+/// invocation enabled. The provider store is itself a content-addressed directory, so two readings agreeing on this
+/// key cannot be looking at different bytes.
+fn sdk_provider_records_key(inventory: &SdkInventory, resolved: Option<&ResolvedSdkComponents>) -> String {
+    let mut key = format!(
+        "{}\u{1f}{}\u{1f}{}\u{1f}{}",
+        inventory.root.display(),
+        inventory.sdk_id,
+        inventory.sdk_version,
+        inventory.provider_codegen_revision
+    );
+    for (id, component) in &inventory.components {
+        key.push('\u{1e}');
+        key.push_str(id);
+        for descriptor in &component.providers {
+            key.push('\u{1d}');
+            key.push_str(&descriptor.digest);
+        }
+    }
+    if let Some(resolved) = resolved {
+        key.push('\u{1c}');
+        for enabled in &resolved.enabled {
+            key.push('\u{1d}');
+            key.push_str(enabled);
+        }
+    }
+    key
+}
+
+/// Build the provider records for one SDK reading, reusing the last identical reading in this process.
+///
+/// The SDK reaches the baker prebuilt and sealed: the publisher wrote the inventory and the `.incnlib` descriptors
+/// together, and nothing between then and now can move one without moving the other. Yet a single explicit bake
+/// rebuilt these records four times — six when it materializes both profiles, twice in a plain `incan build` — and
+/// each rebuild re-read and re-deserialized the whole 6.6 MB provider surface and re-validated all ten descriptors
+/// against the inventory that shipped with them. Measured on one profile of a bake that compiles nothing, that was
+/// about thirty percent of the run.
+///
+/// `ProviderRecord` keeps its manifest behind an `Arc`, so serving a repeat reading costs a handful of small clones
+/// rather than another parse.
 fn sdk_provider_records(
+    inventory: &SdkInventory,
+    resolved: Option<&ResolvedSdkComponents>,
+) -> Result<Vec<ProviderRecord>, ProviderPlanError> {
+    let key = sdk_provider_records_key(inventory, resolved);
+    static READINGS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, Vec<ProviderRecord>>>> =
+        std::sync::OnceLock::new();
+    let readings = READINGS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    if let Ok(cached) = readings.lock()
+        && let Some(records) = cached.get(&key)
+    {
+        return Ok(records.clone());
+    }
+    let records = build_sdk_provider_records(inventory, resolved)?;
+    if let Ok(mut cached) = readings.lock() {
+        cached.insert(key, records.clone());
+    }
+    Ok(records)
+}
+
+/// Read every enabled SDK provider's sealed manifest and artifact into one catalog record per provider.
+fn build_sdk_provider_records(
     inventory: &SdkInventory,
     resolved: Option<&ResolvedSdkComponents>,
 ) -> Result<Vec<ProviderRecord>, ProviderPlanError> {
@@ -2435,6 +2499,54 @@ mod tests {
 
     fn set_paths(values: &[&[&str]]) -> BTreeSet<Vec<String>> {
         values.iter().map(|value| path(value)).collect()
+    }
+
+    /// Build one resolved selection enabling exactly the named components.
+    fn resolved_components(enabled: &[&str]) -> super::super::ResolvedSdkComponents {
+        super::super::ResolvedSdkComponents {
+            sdk_identity: "incan@0.5.0".to_string(),
+            profile: "default".to_string(),
+            enabled: enabled.iter().map(|id| (*id).to_string()).collect(),
+            unavailable: BTreeSet::new(),
+            reasons: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn the_sdk_reading_key_moves_with_everything_the_records_depend_on() {
+        // The records are reused whenever this key repeats, so anything that would change them has to change it.
+        let root = Path::new("/sdk/root");
+        let manifest = Path::new("/sdk/root/core.incnlib");
+        let inventory = sdk_inventory(root, manifest, "sha256:aaa".to_string());
+        let enabled = resolved_components(&["stdlib-core"]);
+
+        let key = super::sdk_provider_records_key(&inventory, Some(&enabled));
+        assert_eq!(key, super::sdk_provider_records_key(&inventory, Some(&enabled)));
+
+        let republished = sdk_inventory(root, manifest, "sha256:bbb".to_string());
+        assert_ne!(
+            key,
+            super::sdk_provider_records_key(&republished, Some(&enabled)),
+            "a provider republished at a different digest must not reuse the earlier reading"
+        );
+
+        let elsewhere = sdk_inventory(Path::new("/other/root"), manifest, "sha256:aaa".to_string());
+        assert_ne!(
+            key,
+            super::sdk_provider_records_key(&elsewhere, Some(&enabled)),
+            "the same SDK installed at a second root is a separate reading"
+        );
+
+        assert_ne!(
+            key,
+            super::sdk_provider_records_key(&inventory, Some(&resolved_components(&[]))),
+            "enabling a different component set must not reuse the earlier reading"
+        );
+        assert_ne!(
+            key,
+            super::sdk_provider_records_key(&inventory, None),
+            "an unresolved selection is not the same reading as an explicitly enabled one"
+        );
     }
 
     fn sdk_inventory(root: &Path, manifest_path: &Path, digest: String) -> SdkInventory {
