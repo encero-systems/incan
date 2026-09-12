@@ -370,6 +370,10 @@ fn validate_supplemental_source_roots(
     Ok(())
 }
 
+/// Bind each owner the selected graph names to exactly one supplied physical root.
+///
+/// The supplied set has to match the declared one exactly, both ways: an owner without a root cannot be
+/// materialized, and a supplied root for an owner the graph never names is authority nobody asked for.
 fn admitted_owner_roots(
     graph: &OvenSelectedRustFacetGraph,
     supplied: &[OvenSelectedRustFacetOwnerRoot],
@@ -399,6 +403,10 @@ fn admitted_owner_roots(
     Ok(roots)
 }
 
+/// Resolve one unit's declared compiler environment, turning its path-valued entries into admitted paths.
+///
+/// Text entries pass through unchanged; a path entry is resolved against the admitted owner roots like any other
+/// declared path, so an environment variable cannot name a tree the selection never admitted.
 fn materialize_environment(
     owners: &BTreeMap<String, PathBuf>,
     unit: &OvenSelectedRustFacetUnit,
@@ -432,6 +440,10 @@ fn materialize_environment(
         .collect()
 }
 
+/// Admit one build-script output as a compiler input, returning its name, physical path and digest.
+///
+/// Generated inputs are the one class of source this materialization does not find in a declared source tree, so
+/// each is admitted individually against the digest its producing unit's receipt recorded.
 fn materialize_generated_input(
     owners: &BTreeMap<String, PathBuf>,
     input: &OvenSelectedRustFacetGeneratedInput,
@@ -471,6 +483,12 @@ fn materialize_generated_input(
     Ok((input.name.clone(), path, input.digest.clone()))
 }
 
+/// Require the physical tree under `root` to be exactly the member set the selection declared.
+///
+/// Both directions matter and are checked: a declared member that is absent, and a file present on disk that was
+/// never declared. Admitting only the first would let an undeclared file reach the compiler, which is how a
+/// source closure stops being the thing its digest describes. `supplemental` carries the members a package root
+/// contributes beyond the unit's own, so they are admitted rather than reported as strays.
 fn verify_source_tree(
     root: &Path,
     members: &[OvenSelectedRustFacetSourceMember],
@@ -551,6 +569,7 @@ fn verify_supplemental_source_tree(root: &Path, members: &BTreeMap<String, Strin
     verify_source_tree(root, &members, &digest, None)
 }
 
+/// Walk one admitted directory into `root`-relative paths and digests, refusing anything not a plain file.
 fn collect_source_tree(
     root: &Path,
     directory: &Path,
@@ -600,6 +619,7 @@ fn collect_source_tree(
     Ok(())
 }
 
+/// Resolve one owner-relative directory and require it to be a real directory.
 fn resolve_directory(
     owners: &BTreeMap<String, PathBuf>,
     owner: &str,
@@ -610,6 +630,7 @@ fn resolve_directory(
     canonical_directory(&path, field)
 }
 
+/// Resolve one declared owner-relative path and require it to be a real directory.
 fn resolve_directory_path(
     owners: &BTreeMap<String, PathBuf>,
     path: &OvenSelectedRustFacetPath,
@@ -619,6 +640,7 @@ fn resolve_directory_path(
     canonical_directory(&path, field)
 }
 
+/// Resolve one declared owner-relative file and admit it only at its expected digest.
 fn resolve_file(
     owners: &BTreeMap<String, PathBuf>,
     path: &OvenSelectedRustFacetPath,
@@ -629,6 +651,7 @@ fn resolve_file(
     verify_file(&path, expected_digest, field)
 }
 
+/// Resolve one file below an already-admitted root and admit it only at its expected digest.
 fn resolve_file_relative(
     root: &Path,
     relative: &str,
@@ -639,6 +662,11 @@ fn resolve_file_relative(
     verify_file(&path, expected_digest, field)
 }
 
+/// Admit one physical file only when it is a regular non-symlink file whose bytes match what was declared.
+///
+/// Shape is checked on the link rather than its target, before canonicalization, so a symlink cannot smuggle a
+/// file from outside the selected closure past a digest that happens to match. The digest is read from the
+/// canonical path so the bytes verified are the bytes a later step opens.
 fn verify_file(path: &Path, expected_digest: &str, field: &'static str) -> Result<PathBuf, OvenRustcError> {
     let metadata = fs::symlink_metadata(path).map_err(|source| OvenRustcError::Io {
         path: path.to_path_buf(),
@@ -668,6 +696,11 @@ fn verify_file(path: &Path, expected_digest: &str, field: &'static str) -> Resul
     })
 }
 
+/// Resolve one declared owner-relative path against the roots this materialization admitted.
+///
+/// The declared form carries an owner name and a relative path rather than a location, which is what lets one
+/// selected graph be materialized at different roots. This is the single place that turns the pair back into a
+/// physical path, so no caller invents its own join.
 fn resolve_path(
     owners: &BTreeMap<String, PathBuf>,
     path: &OvenSelectedRustFacetPath,
@@ -676,6 +709,11 @@ fn resolve_path(
     resolve_relative_owner_path(owners, &path.owner, &path.path, field)
 }
 
+/// Look the owner up among the admitted roots before resolving anything under it.
+///
+/// An unbound owner is a refusal rather than a fallback to some default root: a path whose owner was never
+/// admitted names a tree this materialization has no authority over, and silently resolving it elsewhere would
+/// admit source the selection never declared.
 fn resolve_relative_owner_path(
     owners: &BTreeMap<String, PathBuf>,
     owner: &str,
@@ -689,6 +727,11 @@ fn resolve_relative_owner_path(
     resolve_relative_path(root, relative, field)
 }
 
+/// Walk one relative path under an admitted root, refusing any component that could leave it.
+///
+/// Every step is checked as it is built rather than the result being checked at the end, because a symlink part
+/// way along escapes the root while the final resolved path can still look like it sits inside. Absolute paths,
+/// `..`, a root, and a drive prefix are each refused for the same reason.
 fn resolve_relative_path(root: &Path, relative: &str, field: &'static str) -> Result<PathBuf, OvenRustcError> {
     let relative_path = Path::new(relative);
     if relative_path.is_absolute() {
@@ -725,6 +768,12 @@ fn resolve_relative_path(root: &Path, relative: &str, field: &'static str) -> Re
     Ok(resolved)
 }
 
+/// Resolve one admitted directory, refusing a symlink before it is followed.
+///
+/// The symlink check runs on the link itself rather than on its target, and it runs *before* canonicalization,
+/// because canonicalizing first would silently accept a link pointing outside the selected source closure and
+/// report the resolved path as if it had been admitted. `field` names the caller's input so a refusal says which
+/// declared root was wrong rather than only which path it resolved to.
 fn canonical_directory(path: &Path, field: &'static str) -> Result<PathBuf, OvenRustcError> {
     let metadata = fs::symlink_metadata(path).map_err(|source| OvenRustcError::Io {
         path: path.to_path_buf(),
@@ -742,6 +791,12 @@ fn canonical_directory(path: &Path, field: &'static str) -> Result<PathBuf, Oven
     })
 }
 
+/// Express one admitted path relative to its selected root, in a form another machine reads the same way.
+///
+/// Everything but ordinary named components is refused rather than normalized: `..`, a root prefix, or a Windows
+/// drive letter would each let a recorded path mean something different where it is later materialized, and a
+/// non-UTF-8 component cannot survive the wire contract at all. Refusing here keeps a relocation failure at the
+/// boundary that admitted the path instead of at whichever consumer first resolves it.
 fn portable_relative_path(root: &Path, path: &Path, field: &'static str) -> Result<String, OvenRustcError> {
     let relative = path.strip_prefix(root).map_err(|_| OvenRustcError::InvalidInput {
         field,

@@ -345,10 +345,12 @@ mod selected_rust_facet_graph {
         schema_version: u32,
     }
 
+    /// Build the refusal for a required selected-graph field that was absent or empty.
     fn selected_graph_missing(field: impl Into<String>) -> OvenSelectedRustFacetGraphError {
         OvenSelectedRustFacetGraphError::Missing { field: field.into() }
     }
 
+    /// Build the refusal for a selected-graph field that is present but not admissible, naming both.
     fn selected_graph_invalid(field: impl Into<String>, message: impl Into<String>) -> OvenSelectedRustFacetGraphError {
         OvenSelectedRustFacetGraphError::Invalid {
             field: field.into(),
@@ -356,6 +358,10 @@ mod selected_rust_facet_graph {
         }
     }
 
+    /// Require one text field to be non-empty and already trimmed.
+    ///
+    /// Trimming here instead of accepting and normalizing keeps the wire form canonical: two graphs that differ
+    /// only in surrounding whitespace would otherwise digest differently while meaning the same thing.
     fn validate_selected_graph_text(value: &str, field: &str) -> Result<(), OvenSelectedRustFacetGraphError> {
         if value.is_empty() {
             return Err(selected_graph_missing(field));
@@ -366,6 +372,7 @@ mod selected_rust_facet_graph {
         Ok(())
     }
 
+    /// Require one field to be a lowercase-hex `sha256:` identity of the right length.
     fn validate_selected_graph_digest(value: &str, field: &str) -> Result<(), OvenSelectedRustFacetGraphError> {
         if value.is_empty() {
             return Err(selected_graph_missing(field));
@@ -385,6 +392,10 @@ mod selected_rust_facet_graph {
         Ok(())
     }
 
+    /// Require one declared path to be relative, portable and free of components that escape its owner.
+    ///
+    /// `allow_owner_root` admits the empty path, which names the owner root itself; everywhere else an empty
+    /// path is a missing field rather than a reference to the root.
     fn validate_selected_graph_path(
         value: &str,
         field: &str,
@@ -525,6 +536,7 @@ mod selected_rust_facet_graph {
         validate_selected_graph_portable_coordinate(coordinate, field)
     }
 
+    /// Require one dependency alias to be a single Rust-facing name rather than a path or a phrase.
     fn validate_selected_graph_alias(value: &str, field: &str) -> Result<(), OvenSelectedRustFacetGraphError> {
         validate_selected_graph_text(value, field)?;
         if value.contains("::") || value.chars().any(char::is_whitespace) {
@@ -533,6 +545,7 @@ mod selected_rust_facet_graph {
         Ok(())
     }
 
+    /// Require a string list to be sorted and duplicate-free, so its digest does not depend on producer order.
     fn validate_selected_graph_sorted_strings(
         values: &[String],
         field: &str,
@@ -546,10 +559,15 @@ mod selected_rust_facet_graph {
         Ok(())
     }
 
+    /// Render one SHA-256 digest in the `sha256:<hex>` form every selected-graph identity uses.
     pub(crate) fn selected_graph_sha256(bytes: &[u8]) -> String {
         format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
     }
 
+    /// Digest one unit's declared source members into the single identity its selection carries.
+    ///
+    /// An empty member set is refused rather than digested: a source tree with nothing in it is a declaration
+    /// error, and hashing it would mint a perfectly stable identity for no source at all.
     pub(crate) fn selected_graph_source_digest(
         members: &[OvenSelectedRustFacetSourceMember],
     ) -> Result<String, OvenSelectedRustFacetGraphError> {
@@ -572,6 +590,7 @@ mod selected_rust_facet_graph {
         Ok(selected_graph_sha256(&bytes))
     }
 
+    /// Require one field to be a lowercase-hex `hmac-sha256:` value of the right length.
     fn validate_selected_graph_hmac_sha256(value: &str, field: &str) -> Result<(), OvenSelectedRustFacetGraphError> {
         if value.is_empty() {
             return Err(selected_graph_missing(field));
@@ -591,6 +610,7 @@ mod selected_rust_facet_graph {
         Ok(())
     }
 
+    /// Require one declared environment variable name to be a plain name the compiler can be given.
     fn validate_selected_graph_environment_name(
         value: &str,
         field: &str,
@@ -700,6 +720,10 @@ mod selected_rust_facet_graph {
             || name.ends_with("_FILE")
     }
 
+    /// Whether one environment variable holds a search-path list rather than a single value.
+    ///
+    /// A list is validated and relocated element by element, so treating one as a scalar would let an entry
+    /// outside the admitted roots through inside a longer string.
     fn selected_graph_environment_is_path_list(name: &str) -> bool {
         matches!(
             name,
@@ -755,10 +779,12 @@ mod selected_rust_facet_graph {
         Ok(())
     }
 
+    /// Put one selection into canonical order so equal selections digest equally.
     fn canonicalize_selected_graph_selection(selection: &mut OvenSelectedRustFacetSelection) {
         selection.intent.features.sort();
     }
 
+    /// Put one unit's unordered facts into canonical order before it contributes to an identity.
     fn canonicalize_selected_graph_unit(unit: &mut OvenSelectedRustFacetUnit) {
         unit.source_members.sort();
         unit.features.sort();
@@ -775,6 +801,7 @@ mod selected_rust_facet_graph {
         });
     }
 
+    /// Put a whole graph into canonical order, so a producer's iteration order cannot reach an identity.
     fn canonicalize_selected_graph(graph: &mut OvenSelectedRustFacetGraph) {
         canonicalize_selected_graph_selection(&mut graph.selection);
         graph.owners.sort_by(|left, right| {
@@ -893,6 +920,10 @@ mod selected_rust_facet_graph {
         )
     }
 
+    /// Resolve one owner reference against the owners the graph declares, returning its kind.
+    ///
+    /// A reference to an owner the graph never declared is refused here rather than at materialization, so the
+    /// graph is internally consistent before anything physical is looked for.
     fn validate_selected_graph_owner_reference(
         owner: &str,
         owners: &BTreeMap<&str, OvenSelectedRustFacetOwnerKind>,
@@ -905,6 +936,7 @@ mod selected_rust_facet_graph {
             .ok_or_else(|| selected_graph_missing(format!("{field} owner `{owner}`")))
     }
 
+    /// Resolve one declared path against its owner, requiring both the owner and the path shape to be admissible.
     fn validate_selected_graph_path_reference(
         value: &OvenSelectedRustFacetPath,
         owners: &BTreeMap<&str, OvenSelectedRustFacetOwnerKind>,

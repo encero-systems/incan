@@ -408,10 +408,10 @@ fn transitive_rebuild_search_paths(
 /// Every argument comes from an already-admitted fact: the sealed artifact plan supplies the foundation's own search
 /// paths and compiler environment, the selected graph supplies features and cfgs, and `search_paths`/`externs` were
 /// derived from graph edges. Nothing here lists a directory to discover an input.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "each argument is a distinct admitted authority; bundling them would hide which one supplied a flag"
-)]
+///
+/// Each argument is a distinct admitted authority, so `clippy::too_many_arguments` is allowed here: bundling them
+/// into one struct would hide which authority supplied a given flag, which is the thing this signature records.
+#[allow(clippy::too_many_arguments)]
 fn compile_rebuild_unit(
     closure: &OvenRuntimeCompilerClosure,
     unit: &OvenSelectedRustFacetUnit,
@@ -574,10 +574,10 @@ pub(crate) mod tests {
     }
 
     /// Build one selected library unit bound to its exact owner-relative source root.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "the fixture mirrors the selected unit's own distinct facts rather than bundling them"
-    )]
+    ///
+    /// `clippy::too_many_arguments` is allowed because the fixture mirrors the selected unit's own distinct facts
+    /// one for one; bundling them would stop the fixture reading like the thing it stands in for.
+    #[allow(clippy::too_many_arguments)]
     fn library_unit(
         selection: &OvenSelectedRustFacetSelection,
         crate_name: &str,
@@ -1017,6 +1017,52 @@ pub(crate) mod tests {
             rebuilt.compiler_launches(),
             2,
             "a cold scratch executor compiles every unit it is asked for"
+        );
+        Ok(())
+    }
+
+    /// The same sources at two unrelated absolute roots compile to byte-identical outputs.
+    ///
+    /// This is the relocation claim the Store depends on. Reuse is decided by identity, and identity folds output
+    /// digests, so a unit that compiles differently depending on where its checkout happens to sit can never be
+    /// shared between two worktrees, two projects, or two machines — each would publish the same identity with
+    /// different bytes. Nothing here compares paths; it compares what the compiler produced from them.
+    ///
+    /// `coordinate_only_change_selects_the_published_closure_without_recompiling` exercises the same property
+    /// through the Store. This one states it directly, so a regression in the remapping names relocation rather
+    /// than surfacing as a confusing selection miss two layers up.
+    #[test]
+    fn the_same_sources_at_different_roots_compile_identically() -> Result<(), Box<dyn std::error::Error>> {
+        let first = fixture()?;
+        let second = fixture()?;
+        let first_root = tempfile::tempdir()?;
+        let second_root = tempfile::tempdir()?;
+        let first_build = execute_runtime_foundation_rebuild(
+            &first.foundation,
+            &first.materialized,
+            &OvenRuntimeCompilerClosure::new(&first.rustc, FIXTURE_CLOSURE),
+            first_root.path(),
+        )?;
+        let second_build = execute_runtime_foundation_rebuild(
+            &second.foundation,
+            &second.materialized,
+            &OvenRuntimeCompilerClosure::new(&second.rustc, FIXTURE_CLOSURE),
+            second_root.path(),
+        )?;
+
+        assert_eq!(first_build.compiler_launches(), 2);
+        assert_eq!(second_build.compiler_launches(), 2, "the second root is genuinely cold");
+        let digests = |build: &OvenRuntimeFoundationBuild| {
+            build
+                .outputs()
+                .iter()
+                .map(|output| (output.crate_name.clone(), output.digest.clone()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            digests(&first_build),
+            digests(&second_build),
+            "identical sources at unrelated roots must produce identical bytes"
         );
         Ok(())
     }

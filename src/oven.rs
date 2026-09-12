@@ -444,6 +444,16 @@ pub enum OvenError {
         "Oven selected native plan unavailable for build unit {build_unit_identity}; execution requires a compatible dependency closure"
     )]
     SelectedNativePlanUnavailable { build_unit_identity: String },
+    /// The store holds a native plan for this build unit that this compiler cannot read.
+    ///
+    /// Deliberately distinct from [`OvenError::SelectedNativePlanUnavailable`]: something *is* published and
+    /// reading it failed. The two ask for opposite responses — bake, or look at the store — so reporting a corrupt
+    /// or newer-than-this-build record as an absence sends a reader to rebuild something that already exists.
+    #[error("Oven selected native plan for build unit {build_unit_identity} cannot be read: {message}")]
+    SelectedNativePlanUnreadable {
+        build_unit_identity: String,
+        message: String,
+    },
     /// A requested receipt transformation named a build-unit input that was not present.
     #[error("Oven receipt has no build-unit input `{input}`")]
     MissingBuildUnitInput { input: String },

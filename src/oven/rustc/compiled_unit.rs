@@ -157,6 +157,10 @@ pub(crate) fn compiled_rust_unit_identities(
     Ok(identities)
 }
 
+/// Require the compiler-closure digest folded into a compiled identity to be a real SHA-256 identity.
+///
+/// It arrives as a caller-supplied string, and a malformed one would still hash into a plausible-looking unit
+/// identity that no other machine could reproduce.
 fn validate_compiler_closure_digest(value: &str) -> Result<(), OvenRustcError> {
     let Some(hex) = value.strip_prefix("sha256:") else {
         return Err(OvenRustcError::InvalidInput {
@@ -177,6 +181,10 @@ fn validate_compiler_closure_digest(value: &str) -> Result<(), OvenRustcError> {
     Ok(())
 }
 
+/// Resolve one declared edge to the compiled identity of the unit it links against.
+///
+/// Folding the dependency's *compiled* identity rather than its selected one is what makes a unit identity a
+/// Merkle root over its closure: a dependency that recompiles differently changes its dependents.
 fn compiled_dependency<'a>(
     dependency: &'a OvenSelectedRustFacetDependency,
     identities: &'a BTreeMap<String, OvenCompiledRustUnitIdentity>,
@@ -193,6 +201,10 @@ fn compiled_dependency<'a>(
     })
 }
 
+/// Assemble everything a compiled unit's identity is taken over, in one canonical shape.
+///
+/// Gathering the inputs here rather than hashing them at the call site is what keeps the identity auditable: a
+/// new compiler input has to appear in this struct to reach the digest, so the set can be read in one place.
 fn compiled_unit_identity_input<'a>(
     graph: &'a OvenSelectedRustFacetGraph,
     unit: &'a OvenSelectedRustFacetUnit,
@@ -243,6 +255,10 @@ fn compiled_unit_identity_input<'a>(
     }
 }
 
+/// Express one declared path relative to the unit's own source root wherever it names that root.
+///
+/// A path inside the unit becomes a root-relative form and an outside one keeps its owner, so the identity does
+/// not change when the same unit is materialized under a different owner root.
 fn compiled_path<'a>(path: &'a OvenSelectedRustFacetPath, unit: &'a OvenSelectedRustFacetUnit) -> CompiledPath<'a> {
     if path.owner == unit.source.owner && path.path == unit.source.root {
         CompiledPath::UnitSourceRoot
@@ -254,6 +270,7 @@ fn compiled_path<'a>(path: &'a OvenSelectedRustFacetPath, unit: &'a OvenSelected
     }
 }
 
+/// Project one declared environment value into its identity form, relocating any path it carries.
 fn compiled_environment_value<'a>(
     value: &'a OvenSelectedRustFacetEnvironmentValue,
     unit: &'a OvenSelectedRustFacetUnit,
@@ -269,6 +286,7 @@ fn compiled_environment_value<'a>(
     }
 }
 
+/// Project one declared build-script output into its identity form, relocating the path it names.
 fn compiled_generated_input<'a>(
     input: &'a OvenSelectedRustFacetGeneratedInput,
     unit: &'a OvenSelectedRustFacetUnit,
