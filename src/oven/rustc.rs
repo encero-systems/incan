@@ -2395,22 +2395,11 @@ impl OvenRustcArtifactManifest {
                     ));
                 }
                 for leaf in &mut composed.registry_leaves {
-                    let original = OvenRustcSupportingArtifact {
-                        relative_path: leaf.artifact.relative_path.clone(),
-                        digest: leaf.artifact.digest.clone(),
-                    };
                     if let Some(rerooted) = rerooted_paths.get(&leaf.artifact.relative_path)
                         && !follows_the_base(&leaf.artifact.relative_path, &leaf.artifact.digest)
                     {
                         leaf.artifact.relative_path = rerooted.clone();
                     }
-                    source_replacements.push((
-                        original,
-                        OvenRustcSupportingArtifact {
-                            relative_path: leaf.artifact.relative_path.clone(),
-                            digest: leaf.artifact.digest.clone(),
-                        },
-                    ));
                 }
                 let mut rerooted_search_dirs = BTreeSet::new();
                 for rerooted in rerooted_paths.values() {
@@ -2456,20 +2445,9 @@ impl OvenRustcArtifactManifest {
                 ));
             }
             for leaf in &mut composed.registry_leaves {
-                let original = OvenRustcSupportingArtifact {
-                    relative_path: leaf.artifact.relative_path.clone(),
-                    digest: leaf.artifact.digest.clone(),
-                };
                 if let Some(release) = release_artifacts.get(&leaf.artifact.relative_path) {
                     leaf.artifact.digest = release.digest.clone();
                 }
-                source_replacements.push((
-                    original,
-                    OvenRustcSupportingArtifact {
-                        relative_path: leaf.artifact.relative_path.clone(),
-                        digest: leaf.artifact.digest.clone(),
-                    },
-                ));
             }
         }
         for (original, replacement) in source_replacements {
@@ -2518,8 +2496,22 @@ impl OvenRustcArtifactManifest {
         // the search directory, and a member the composed manifest never declares is exactly what
         // `validate_source_search_roles` refuses. Drop that stale claim -- and only when it really is stale, since
         // a canonicalizing composition may legitimately keep the base's bytes at the same path.
-        let composed_artifacts = expected_artifacts(&composed)?;
-        if composed_artifacts.get(&base_runtime.relative_path) != Some(&base_runtime.digest) {
+        //
+        // The question is answered by scanning the three declaring lists rather than through `expected_artifacts`,
+        // which additionally refuses a duplicate path. The composition is still mid-flight here: `validate_shape`
+        // below is where a genuine duplicate must be reported, and taking that judgement early turned a transient
+        // arrangement into a bake failure.
+        let declares_base_runtime = composed
+            .externs
+            .iter()
+            .chain(composed.registry_leaves.iter().map(|leaf| &leaf.artifact))
+            .any(|artifact| {
+                artifact.relative_path == base_runtime.relative_path && artifact.digest == base_runtime.digest
+            })
+            || composed.supporting_artifacts.iter().any(|artifact| {
+                artifact.relative_path == base_runtime.relative_path && artifact.digest == base_runtime.digest
+            });
+        if !declares_base_runtime {
             let stale = OvenRustcSupportingArtifact {
                 relative_path: base_runtime.relative_path.clone(),
                 digest: base_runtime.digest.clone(),

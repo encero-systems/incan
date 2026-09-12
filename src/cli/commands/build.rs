@@ -4736,6 +4736,48 @@ fn provider_compilation_artifacts(artifacts: &OvenRustcArtifactManifest) -> CliR
     Ok(projected)
 }
 
+/// Give a materialized plan the source role that the provider projection is about to select against.
+///
+/// `provider_compilation_artifacts` republishes one source role's closure under `generated-root` so the provider
+/// compile has a role to select. When the manifest declared no source roles at all -- an unscoped publisher, whose
+/// whole closure is its one implicit role -- that key is *new*, and the plan was materialized before it existed. Its
+/// physical bindings therefore carry no role of that name, and projecting against it refuses a plan that is in fact
+/// complete, with "source evidence `generated-root` has no materialized role".
+///
+/// Fill the gap rather than refuse: an unscoped publisher excludes nothing, so the role's selected directories are
+/// exactly the directories the plan already declared. An existing role is never overwritten, so a scoped publisher
+/// keeps the exclusion its own binding recorded.
+fn plan_with_provider_compilation_role(
+    plan: &OvenRustcArtifactPlan,
+    artifacts: &OvenRustcArtifactManifest,
+    provider_artifacts: &OvenRustcArtifactManifest,
+) -> OvenRustcArtifactPlan {
+    let mut plan = plan.clone();
+    let Some(projection) = plan.source_path_projection.as_mut() else {
+        return plan;
+    };
+    if projection.roles.contains_key("generated-root") {
+        return plan;
+    }
+    let Some(closure) = provider_artifacts
+        .entrypoint_dependency_search_paths
+        .get("generated-root")
+    else {
+        return plan;
+    };
+    if artifacts
+        .entrypoint_dependency_search_paths
+        .contains_key("generated-root")
+    {
+        return plan;
+    }
+    let declared = projection.declared.clone();
+    projection
+        .roles
+        .insert("generated-root".to_string(), (closure.clone(), declared));
+    plan
+}
+
 /// Retain a compiler macro only when it is a named root of the selected provider compilation.
 ///
 /// Generated manifests declare derive support unconditionally. A current publisher's explicit provider projection
@@ -5337,8 +5379,9 @@ fn rematerialize_caller_owned_provider_graph(
 
         let receipt = caller_owned_library_receipt(artifact, profile, artifacts, authority_context.as_deref_mut())?;
         let provider_artifacts = provider_compilation_artifacts(artifacts)?;
+        let provider_source_plan = plan_with_provider_compilation_role(artifact_plan, artifacts, &provider_artifacts);
         let mut provider_plan =
-            trusted_artifact_plan_for_source_evidence(artifact_plan, &provider_artifacts, "generated-root")
+            trusted_artifact_plan_for_source_evidence(&provider_source_plan, &provider_artifacts, "generated-root")
                 .map_err(oven_rustc_error)?;
         let edition = caller_owned_library_edition(artifact)?;
         let is_proc_macro = caller_owned_library_is_proc_macro(artifact)?;
