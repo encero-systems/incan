@@ -1288,8 +1288,11 @@ pub(crate) struct OvenOwnedDirectRustcCompiler {
 ///
 /// Unavailability is deliberately distinct from a hard receipt or intent mismatch: callers may keep compiling
 /// deterministically through their admitted compiler, but must surface why byte-identical reuse was disabled.
+///
+/// `Retained` is boxed because it carries the whole owned compiler, several hundred bytes against `Unavailable`'s
+/// single string. The unavailable arm is the common one on a cold store, and every caller moves the value.
 pub(crate) enum OvenDirectRustcCompilerRetention {
-    Retained(OvenOwnedDirectRustcCompiler),
+    Retained(Box<OvenOwnedDirectRustcCompiler>),
     Unavailable { reason: String },
 }
 
@@ -6355,7 +6358,7 @@ pub(crate) fn retain_direct_rustc_compiler(
         let host = payload.host.clone();
         let owner = selected.remove(*index);
         if let Some(owned) = admit_direct_rustc_compiler_owner(owner, target, &toolchain, &host, None)? {
-            return Ok(OvenDirectRustcCompilerRetention::Retained(owned));
+            return Ok(OvenDirectRustcCompilerRetention::Retained(Box::new(owned)));
         }
     }
 
@@ -6394,7 +6397,7 @@ pub(crate) fn retain_direct_rustc_compiler(
     }) {
         let owner = selected.remove(index);
         if let Some(owned) = admit_direct_rustc_compiler_owner(owner, target, &toolchain, &host, Some(&evidence))? {
-            return Ok(OvenDirectRustcCompilerRetention::Retained(owned));
+            return Ok(OvenDirectRustcCompilerRetention::Retained(Box::new(owned)));
         }
     }
 
@@ -6438,7 +6441,7 @@ pub(crate) fn retain_direct_rustc_compiler(
         });
     };
     match admit_direct_rustc_compiler_owner(owner, target, &toolchain, &host, Some(&evidence))? {
-        Some(owned) => Ok(OvenDirectRustcCompilerRetention::Retained(owned)),
+        Some(owned) => Ok(OvenDirectRustcCompilerRetention::Retained(Box::new(owned))),
         None => Ok(OvenDirectRustcCompilerRetention::Unavailable {
             reason: "the published compiler closure failed final admission".to_string(),
         }),
