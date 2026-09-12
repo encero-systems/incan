@@ -80,10 +80,12 @@ use crate::oven::interop::{
     load_interop_execution_receipt, validate_interop_execution_receipt,
 };
 use crate::oven::legacy_cargo::{
-    OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION, OvenLegacyCargoBaseLoaf, OvenLegacyCargoDirectDependencyClosure,
-    OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind, OvenProjectExtensionPayload,
-    OvenProjectRegistrySourceDependency, digest_local_cargo_workspace_authority, direct_rustc_compile_environment,
-    direct_rustc_reusable_project_plan_environment, prepare_direct_rustc_plan, stage_locked_loaf_fixture,
+    OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION, OVEN_PROVIDER_COMPILATION_KEY, OvenCompilerMacroDependency,
+    OvenLegacyCargoBaseLoaf, OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoPrepareRequest,
+    OvenLegacyCargoPublicationKind, OvenProjectExtensionPayload, OvenProjectRegistrySourceDependency,
+    digest_local_cargo_workspace_authority, direct_rustc_compile_environment,
+    direct_rustc_reusable_project_plan_environment, prepare_direct_rustc_plan,
+    provider_compilation_requirements_digest, stage_locked_loaf_fixture,
 };
 use crate::oven::loaf::{
     OVEN_DEPENDENCY_MISS_SUMMARY, OVEN_LOAF_ENV, OVEN_LOAF_MISS_GUIDANCE, OVEN_NESTED_DEPENDENCY_MISS_SUMMARY,
@@ -101,9 +103,9 @@ use crate::oven::rustc::{
     OvenProjectInspectionTestDependencyEnvelope, OvenProjectInspectionTestDependencyRoot, OvenRegistryLeafAuthority,
     OvenRustcArtifactExtern, OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcError, OvenRustcRegistryLeaf,
     OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact, OvenSelectedPathRustcAuthority,
-    OvenTrustedDirectRustcTargetRequest, OvenTrustedRustcArtifactRoot, attach_caller_owned_rustc_libraries,
-    bake_trusted_direct_rustc_library, bake_trusted_direct_rustc_proc_macro, bake_trusted_direct_rustc_run,
-    clear_inherited_cargo_environment, load_project_inspection_authority,
+    OvenTrustedDirectRustcTargetRequest, OvenTrustedRustcArtifactRoot, OvenTrustedRustcSearchRoot,
+    attach_caller_owned_rustc_libraries, bake_trusted_direct_rustc_library, bake_trusted_direct_rustc_proc_macro,
+    bake_trusted_direct_rustc_run, clear_inherited_cargo_environment, load_project_inspection_authority,
     materialize_declared_rust_libraries_with_selected_path_authority, project_inspection_constituent_matches_receipt,
     resolve_active_rustc, rustc_host_target, rustc_identity, select_direct_rustc_plan_for_execution,
     trusted_artifact_plan_for_source_evidence, validate_project_extension_payload_against_base,
@@ -945,9 +947,8 @@ pub(crate) struct OvenProjectExtensionExecutionPlan {
 /// One package-owned project-extension fragment retained while a consumer uses the composed closure.
 ///
 /// A public package may contribute a closure that overlaps another package's compiler base or registry leaves.
-/// The compositor owns the one canonical copy of every byte-identical path and keeps this lease only for the
-/// package-specific paths it contributes.  This prevents package count from becoming an artificial compatibility
-/// limit while retaining a distinct lease for every source of executable artifacts.
+/// The compositor assigns one canonical copy of every byte-identical path and retains every selected lease.
+/// Duplicate-only contributors can still supply clean directories for exact source-role search bindings.
 struct OvenPackagedProviderFragment {
     dependency_key: String,
     receipt: crate::oven::OvenReceipt,
@@ -956,6 +957,10 @@ struct OvenPackagedProviderFragment {
     dependency_search_paths: Vec<String>,
     native_search_paths: Vec<String>,
     supporting_artifacts: Vec<OvenRustcSupportingArtifact>,
+    /// Complete inventory of the same leased root, retained before fragment deduplication.
+    root_inventory: Vec<OvenRustcSupportingArtifact>,
+    /// Original declared dependency directories in this leased extension, before canonical assignment.
+    root_dependency_search_paths: Vec<String>,
 }
 
 /// Complete direct-Rustc closure assembled from compatible public package Loafs.
@@ -987,6 +992,8 @@ struct OvenPackagedDirectProviderFragment {
     dependency_search_paths: Vec<String>,
     native_search_paths: Vec<String>,
     supporting_artifacts: Vec<OvenRustcSupportingArtifact>,
+    /// Complete inventory of the same leased root, retained before fragment deduplication.
+    root_inventory: Vec<OvenRustcSupportingArtifact>,
 }
 
 /// Complete direct-Rustc closure assembled from compatible self-contained public package Loafs.
@@ -1135,11 +1142,9 @@ fn retain_packaged_provider_fragment_dependency_search_paths<'a>(
     fragments: impl IntoIterator<Item = (&'a Path, &'a [String])>,
 ) {
     for (artifact_root, dependency_search_paths) in fragments {
-        plan.dependency_search_paths.extend(
-            dependency_search_paths
-                .iter()
-                .map(|dependency_search_path| artifact_root.join(dependency_search_path)),
-        );
+        for relative in dependency_search_paths {
+            plan.retain_caller_dependency_search_path(artifact_root.join(relative));
+        }
     }
     plan.dependency_search_paths.sort();
     plan.dependency_search_paths.dedup();
@@ -1337,18 +1342,21 @@ fn project_extension_execution_plan_from_selected(
         .map_err(oven_rustc_error)?;
     let base_artifacts = base_fragment.composition_artifacts().map_err(oven_rustc_error)?;
     let extension_artifacts = extension_fragment.composition_artifacts().map_err(oven_rustc_error)?;
+    let base_inventory = base.artifacts.composition_artifacts().map_err(oven_rustc_error)?;
     let roots = [
         OvenTrustedRustcArtifactRoot {
             artifact_root: &base.artifact_root,
             dependency_search_paths: &base_fragment.dependency_search_paths,
             native_search_paths: &base_fragment.native_search_paths,
             supporting_artifacts: &base_artifacts,
+            root_inventory: Some(&base_inventory),
         },
         OvenTrustedRustcArtifactRoot {
             artifact_root: &artifact_root,
             dependency_search_paths: &extension_fragment.dependency_search_paths,
             native_search_paths: &extension_fragment.native_search_paths,
             supporting_artifacts: &extension_artifacts,
+            root_inventory: Some(&extension_artifacts),
         },
     ];
     let artifact_plan = extension_payload
@@ -1508,12 +1516,19 @@ fn select_published_project_plan(
 /// closures. This selector instead lets the consumer compile against the exact package closures after the explicit
 /// consumer bake imported them into the consumer's bounded store. It is deliberately a closure compositor rather
 /// than a first-provider shortcut: independent packages may contribute one ABI-compatible collection of Loafs.
-fn select_packaged_provider_plan(
+/// Already selected package inputs shared by requirement inspection and normal composition.
+#[derive(Default)]
+struct SelectedPackagedProviderPlans {
+    extensions: Vec<(String, OvenPackagedLibraryLoafEntry, OvenProjectExtensionExecutionPlan)>,
+    direct: Vec<(String, OvenPackagedLibraryLoafEntry, OvenStoredDirectRustcExecutionPlan)>,
+}
+
+/// Select each checked package entry once and retain its execution lease through preparation.
+fn select_packaged_provider_plans(
     store: &OvenStore,
     checked_profiles: &[CheckedPackagedProviderProfile],
     profile: &str,
-    consumer_receipt: &crate::oven::OvenReceipt,
-) -> CliResult<Option<OvenDirectRustcPlanSelection>> {
+) -> CliResult<SelectedPackagedProviderPlans> {
     let mut candidates = Vec::new();
     for checked in checked_profiles.iter().filter(|checked| checked.profile == profile) {
         let package_profile = &checked.package;
@@ -1525,16 +1540,11 @@ fn select_packaged_provider_plan(
         candidates.push((checked.dependency_key.clone(), package_profile.clone()));
     }
     if candidates.is_empty() {
-        return Ok(None);
+        return Ok(SelectedPackagedProviderPlans::default());
     }
     let mut extension_selected = Vec::new();
     let mut direct_selected = Vec::new();
     for (dependency_key, package_profile) in candidates {
-        if package_profile.receipt.intent != consumer_receipt.intent {
-            return Err(CliError::failure(format!(
-                "Oven Alpha cannot compose pub::{dependency_key} package Loaf with this consumer: the sealed provider intent differs from the consumer intent; rebake the provider for the selected target, toolchain, profile, and feature set"
-            )));
-        }
         for entry in package_profile.entries {
             match entry.kind {
                 OvenArtifactKind::ProjectPayload => {
@@ -1586,6 +1596,35 @@ fn select_packaged_provider_plan(
                     )));
                 }
             }
+        }
+    }
+    Ok(SelectedPackagedProviderPlans {
+        extensions: extension_selected,
+        direct: direct_selected,
+    })
+}
+
+/// Compose the already leased package entries after the consumer's actual intent is known.
+fn compose_selected_packaged_provider_plan(
+    selected: SelectedPackagedProviderPlans,
+    checked_profiles: &[CheckedPackagedProviderProfile],
+    profile: &str,
+    consumer_receipt: &crate::oven::OvenReceipt,
+) -> CliResult<Option<OvenDirectRustcPlanSelection>> {
+    let SelectedPackagedProviderPlans {
+        extensions: extension_selected,
+        direct: direct_selected,
+    } = selected;
+    if extension_selected.is_empty() && direct_selected.is_empty() {
+        return Ok(None);
+    }
+    for checked in checked_profiles.iter().filter(|checked| checked.profile == profile) {
+        let dependency_key = &checked.dependency_key;
+        let package_profile = &checked.package;
+        if package_profile.receipt.intent != consumer_receipt.intent {
+            return Err(CliError::failure(format!(
+                "Oven Alpha cannot compose pub::{dependency_key} package Loaf with this consumer: the sealed provider intent differs from the consumer intent; rebake the provider for the selected target, toolchain, profile, and feature set"
+            )));
         }
     }
     if !extension_selected.is_empty() && !direct_selected.is_empty() {
@@ -1658,6 +1697,7 @@ fn compose_packaged_provider_plan(
         .base_paths;
     let base_fragment = artifacts.artifact_fragment(&base_paths).map_err(oven_rustc_error)?;
     let base_supporting_artifacts = base_fragment.composition_artifacts().map_err(oven_rustc_error)?;
+    let base_inventory = base_artifacts.composition_artifacts().map_err(oven_rustc_error)?;
     let mut owned_paths = base_supporting_artifacts
         .iter()
         .map(|artifact| artifact.relative_path.clone())
@@ -1670,11 +1710,11 @@ fn compose_packaged_provider_plan(
         let extension_fragment = provider_artifacts
             .artifact_fragment(&partition.extension_paths)
             .map_err(oven_rustc_error)?;
-        let mut supporting_artifacts = extension_fragment
-            .composition_artifacts()
-            .map_err(oven_rustc_error)?
-            .into_iter()
+        let root_inventory = extension_fragment.composition_artifacts().map_err(oven_rustc_error)?;
+        let mut supporting_artifacts = root_inventory
+            .iter()
             .filter(|artifact| owned_paths.insert(artifact.relative_path.clone()))
+            .cloned()
             .collect::<Vec<_>>();
         supporting_artifacts.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
         let retains_artifact_below = |search_path: &str| {
@@ -1682,6 +1722,7 @@ fn compose_packaged_provider_plan(
                 .iter()
                 .any(|artifact| Path::new(&artifact.relative_path).starts_with(Path::new(search_path)))
         };
+        let root_dependency_search_paths = extension_fragment.dependency_search_paths.clone();
         let mut dependency_search_paths = extension_fragment
             .dependency_search_paths
             .into_iter()
@@ -1697,6 +1738,8 @@ fn compose_packaged_provider_plan(
         native_search_paths.sort();
         native_search_paths.dedup();
         fragments.push(OvenPackagedProviderFragment {
+            root_inventory,
+            root_dependency_search_paths,
             dependency_key,
             receipt,
             identity: extension.identity.clone(),
@@ -1715,6 +1758,7 @@ fn compose_packaged_provider_plan(
         fragments,
         artifacts,
         artifact_plan: OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: Vec::new(),
@@ -1730,6 +1774,7 @@ fn compose_packaged_provider_plan(
         dependency_search_paths: &base_fragment.dependency_search_paths,
         native_search_paths: &base_fragment.native_search_paths,
         supporting_artifacts: &base_supporting_artifacts,
+        root_inventory: Some(&base_inventory),
     }];
     roots.extend(
         composed
@@ -1741,11 +1786,22 @@ fn compose_packaged_provider_plan(
                 dependency_search_paths: &fragment.dependency_search_paths,
                 native_search_paths: &fragment.native_search_paths,
                 supporting_artifacts: &fragment.supporting_artifacts,
+                root_inventory: Some(&fragment.root_inventory),
             }),
     );
+    let mut search_roots = vec![OvenTrustedRustcSearchRoot {
+        artifact_root: &composed.base.artifact_root,
+        dependency_search_paths: &base_artifacts.dependency_search_paths,
+        root_inventory: &base_inventory,
+    }];
+    search_roots.extend(composed.fragments.iter().map(|fragment| OvenTrustedRustcSearchRoot {
+        artifact_root: &fragment.extension.artifact_root,
+        dependency_search_paths: &fragment.root_dependency_search_paths,
+        root_inventory: &fragment.root_inventory,
+    }));
     composed.artifact_plan = composed
         .artifacts
-        .materialize_trusted_store_composed(&roots, expected_intent)
+        .materialize_trusted_store_composed_with_search_roots(&roots, &search_roots, expected_intent)
         .map_err(oven_rustc_error)?;
     for fragment in &composed.fragments {
         if composed
@@ -1836,12 +1892,11 @@ fn compose_direct_packaged_provider_plan(
                 "Oven Alpha cannot compose pub::{dependency_key}: its sealed direct-plan intent differs from this consumer; rebake it for the selected target, toolchain, profile, and feature set"
             )));
         }
-        let mut supporting_artifacts = plan
-            .artifacts
-            .composition_artifacts()
-            .map_err(oven_rustc_error)?
-            .into_iter()
+        let root_inventory = plan.artifacts.composition_artifacts().map_err(oven_rustc_error)?;
+        let mut supporting_artifacts = root_inventory
+            .iter()
             .filter(|artifact| owned_paths.insert(artifact.relative_path.clone()))
+            .cloned()
             .collect::<Vec<_>>();
         supporting_artifacts.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
         let retains_artifact_below = |search_path: &str| {
@@ -1868,6 +1923,7 @@ fn compose_direct_packaged_provider_plan(
         native_search_paths.sort();
         native_search_paths.dedup();
         fragments.push(OvenPackagedDirectProviderFragment {
+            root_inventory,
             dependency_key,
             receipt: entry.receipt,
             identity: plan.identity.clone(),
@@ -1885,6 +1941,7 @@ fn compose_direct_packaged_provider_plan(
         fragments,
         artifacts,
         artifact_plan: OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: Vec::new(),
@@ -1904,11 +1961,21 @@ fn compose_direct_packaged_provider_plan(
             dependency_search_paths: &fragment.dependency_search_paths,
             native_search_paths: &fragment.native_search_paths,
             supporting_artifacts: &fragment.supporting_artifacts,
+            root_inventory: Some(&fragment.root_inventory),
+        })
+        .collect::<Vec<_>>();
+    let search_roots = composed
+        .fragments
+        .iter()
+        .map(|fragment| OvenTrustedRustcSearchRoot {
+            artifact_root: &fragment.plan.artifact_root,
+            dependency_search_paths: &fragment.plan.artifacts.dependency_search_paths,
+            root_inventory: &fragment.root_inventory,
         })
         .collect::<Vec<_>>();
     composed.artifact_plan = composed
         .artifacts
-        .materialize_trusted_store_composed(&roots, expected_intent)
+        .materialize_trusted_store_composed_with_search_roots(&roots, &search_roots, expected_intent)
         .map_err(oven_rustc_error)?;
     for fragment in &composed.fragments {
         if composed
@@ -2000,6 +2067,27 @@ fn release_base_consumer_overlay(
         provider_extern_names.extend(provider.externs.iter().map(|artifact| artifact.crate_name.as_str()));
     }
     let mut overlay = base.clone();
+    if base.schema_version == 9 {
+        overlay.schema_version = crate::oven::rustc::OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION;
+        for key in base.entrypoint_externs.keys() {
+            overlay
+                .entrypoint_dependency_search_paths
+                .insert(key.clone(), base.source_search_closure(key).map_err(oven_rustc_error)?);
+        }
+        if !overlay.entrypoint_externs.contains_key("generated-root") {
+            overlay.entrypoint_externs.insert(
+                "generated-root".to_string(),
+                base.externs
+                    .iter()
+                    .map(|artifact| artifact.crate_name.clone())
+                    .collect(),
+            );
+            overlay.entrypoint_dependency_search_paths.insert(
+                "generated-root".to_string(),
+                base.source_search_closure("generated-root").map_err(oven_rustc_error)?,
+            );
+        }
+    }
     let base_extern_paths = base
         .externs
         .iter()
@@ -2056,6 +2144,11 @@ fn merge_packaged_provider_artifact_manifests_with_release_base(
     inputs.push(("Incan release base", &base_overlay));
     let mut composed = merge_packaged_provider_artifact_manifests(&inputs, expected_intent)?;
     for (source_key, base_names) in &base.entrypoint_externs {
+        composed
+            .entrypoint_dependency_search_paths
+            .entry(source_key.clone())
+            .or_default()
+            .merge(&base.source_search_closure(source_key).map_err(oven_rustc_error)?);
         let names = composed.entrypoint_externs.entry(source_key.clone()).or_default();
         names.extend(
             base_names
@@ -2090,6 +2183,15 @@ fn merge_packaged_provider_artifact_manifests(
     let mut artifact_digests = BTreeMap::<String, String>::new();
     let mut supporting_artifacts = BTreeMap::<String, OvenRustcSupportingArtifact>::new();
     let mut entrypoint_externs = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut role_keys = inputs
+        .iter()
+        .flat_map(|(_, manifest)| manifest.entrypoint_externs.keys().cloned())
+        .collect::<BTreeSet<_>>();
+    let unscoped = role_keys.is_empty();
+    if unscoped {
+        role_keys.insert("generated-root".to_string());
+    }
+    let mut entrypoint_search_paths = BTreeMap::<String, crate::oven::rustc::OvenRustcSourceSearchClosure>::new();
     let mut registry_leaves = BTreeMap::<(String, String), OvenRustcRegistryLeaf>::new();
     let mut registry_sources = BTreeMap::<(String, String, String), OvenRustcRegistrySourcePackage>::new();
     let mut compile_environment = BTreeMap::<String, String>::new();
@@ -2150,6 +2252,18 @@ fn merge_packaged_provider_artifact_manifests(
                 supporting_artifacts.insert(artifact.relative_path.clone(), artifact.clone());
             }
         }
+        for source_key in &role_keys {
+            let contributor_key = if manifest.entrypoint_externs.contains_key(source_key) {
+                source_key.as_str()
+            } else {
+                "generated-root"
+            };
+            entrypoint_search_paths.entry(source_key.clone()).or_default().merge(
+                &manifest
+                    .source_search_closure(contributor_key)
+                    .map_err(oven_rustc_error)?,
+            );
+        }
         for (source_key, names) in &manifest.entrypoint_externs {
             entrypoint_externs
                 .entry(source_key.clone())
@@ -2207,12 +2321,16 @@ fn merge_packaged_provider_artifact_manifests(
             // immutable manifest's one-path rule.
         }
     }
+    if unscoped {
+        entrypoint_externs.insert("generated-root".to_string(), externs.keys().cloned().collect());
+    }
     let composed = OvenRustcArtifactManifest {
-        schema_version: first.schema_version,
+        schema_version: crate::oven::rustc::OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
         intent: expected_intent.clone(),
         dependency_search_paths: dependency_search_paths.into_iter().collect(),
         native_search_paths: native_search_paths.into_iter().collect(),
         externs: externs.into_values().collect(),
+        entrypoint_dependency_search_paths: entrypoint_search_paths,
         entrypoint_externs: entrypoint_externs
             .into_iter()
             .map(|(key, names)| (key, names.into_iter().collect()))
@@ -4585,27 +4703,165 @@ fn caller_owned_library_rust_dependencies(artifact: &LibraryArtifactMetadata) ->
     Ok(dependencies.into_values().collect())
 }
 
-/// Omit the generated Cargo projection's unconditional derive support when its Rust source does not invoke it.
+/// Use the publisher's provider-only roots for every body in the existing checked provider graph.
 ///
-/// Every generated package declares the compiler-owned `incan_derive` path dependency, but direct `rustc` needs a
-/// procedural macro only when the generated source names it. Treating an unused declaration as a caller-owned
-/// dependency would recursively resolve the macro's private registry build closure, even though the provider itself
-/// is being rebuilt only to share the consumer's already selected runtime cohort.
-fn caller_owned_library_dependencies_without_unused_incan_derive(
-    artifact: &LibraryArtifactMetadata,
+/// The caller's ordinary receipt still binds each actual source. This projection changes only extern visibility;
+/// it never loads another artifact, invents a source route, or replaces an already selected macro.
+fn provider_compilation_artifacts(artifacts: &OvenRustcArtifactManifest) -> CliResult<OvenRustcArtifactManifest> {
+    let mut projected = artifacts.clone();
+    let names = artifacts
+        .entrypoint_externs
+        .get(OVEN_PROVIDER_COMPILATION_KEY)
+        .cloned()
+        .unwrap_or_else(|| {
+            artifacts
+                .externs
+                .iter()
+                .map(|artifact| artifact.crate_name.clone())
+                .collect()
+        });
+    if artifacts.schema_version == crate::oven::rustc::OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION {
+        let key = if artifacts.entrypoint_externs.contains_key(OVEN_PROVIDER_COMPILATION_KEY) {
+            OVEN_PROVIDER_COMPILATION_KEY
+        } else {
+            "generated-root"
+        };
+        projected.entrypoint_dependency_search_paths.insert(
+            "generated-root".to_string(),
+            artifacts.source_search_closure(key).map_err(oven_rustc_error)?,
+        );
+    }
+    projected.entrypoint_externs.insert("generated-root".to_string(), names);
+    projected.validate_shape(&artifacts.intent).map_err(oven_rustc_error)?;
+    Ok(projected)
+}
+
+/// Retain a compiler macro only when it is a named root of the selected provider compilation.
+///
+/// Generated manifests declare derive support unconditionally. A current publisher's explicit provider projection
+/// distinguishes real use from an unused declaration, while an older broad plan preserves its selected macro.
+/// A missing required named root is rejected by the existing source projection before this filter runs.
+fn caller_owned_library_dependencies_for_compilation(
     dependencies: Vec<DependencySpec>,
-) -> CliResult<Vec<DependencySpec>> {
-    let source = fs::read_to_string(&artifact.crate_lib_path).map_err(|error| {
-        CliError::failure(format!(
-            "Oven Alpha cannot read generated provider source for pub::{} at {}: {error}",
-            artifact.dependency_key,
-            artifact.crate_lib_path.display()
-        ))
-    })?;
-    Ok(dependencies
+    plan: &OvenRustcArtifactPlan,
+) -> Vec<DependencySpec> {
+    let has_derive = plan.externs.iter().any(|(name, _)| name == "incan_derive");
+    dependencies
         .into_iter()
-        .filter(|dependency| dependency.crate_name != "incan_derive" || source.contains("incan_derive"))
-        .collect())
+        .filter(|dependency| dependency.crate_name != "incan_derive" || has_derive)
+        .collect()
+}
+
+/// Capture the compiler macro set from admitted provider plans, retaining their existing physical selection.
+///
+/// The fixed provider projection also carries a facade's transitive macro requirement. No provider body or generated
+/// source path is read here, and an unconditional Cargo declaration alone never requests macro preparation.
+fn checked_provider_compilation_requirements(
+    selections: &SelectedPackagedProviderPlans,
+    checked_profiles: &[CheckedPackagedProviderProfile],
+    profile: &str,
+    runtime_inputs: &BTreeMap<String, String>,
+) -> CliResult<Vec<OvenCompilerMacroDependency>> {
+    let mut requirements = Vec::new();
+    for checked in checked_profiles.iter().filter(|checked| checked.profile == profile) {
+        let receipt = &checked.package.receipt;
+        let mut needs_derive = false;
+        for (alias, _, plan) in &selections.direct {
+            if alias == &checked.dependency_key {
+                needs_derive |= selected_provider_requires_derive(&plan.artifact_plan, &plan.artifacts)?;
+            }
+        }
+        for (alias, _, plan) in &selections.extensions {
+            if alias == &checked.dependency_key {
+                needs_derive |= selected_provider_requires_derive(&plan.artifact_plan, &plan.artifacts)?;
+            }
+        }
+        if checked.package.entries.is_empty() {
+            let base = project_extension_base_loaf(receipt)?
+                .ok_or_else(|| CliError::failure("provider has no packaged delta or compatible compiler base"))?;
+            needs_derive = selected_provider_requires_derive(&base.artifact_plan, &base.artifacts)?;
+        }
+        if !needs_derive {
+            continue;
+        }
+        let artifact = LibraryArtifactMetadata::from_crate_root(
+            checked.dependency_key.clone(),
+            receipt.project.name.clone(),
+            &checked.artifact_root,
+        );
+        let dependencies = caller_owned_library_rust_dependencies(&artifact)?;
+        let dependency = dependencies
+            .iter()
+            .find(|dependency| dependency.crate_name == "incan_derive")
+            .ok_or_else(|| CliError::failure("provider native plan requires undeclared incan_derive"))?;
+        let requirement = checked_provider_macro_dependency(dependency, receipt, runtime_inputs)?;
+        if !requirements.contains(&requirement) {
+            requirements.push(requirement);
+        }
+    }
+    Ok(requirements)
+}
+
+/// Read direct or encapsulated provider macro use from the already selected named roots.
+fn selected_provider_requires_derive(
+    plan: &OvenRustcArtifactPlan,
+    artifacts: &OvenRustcArtifactManifest,
+) -> CliResult<bool> {
+    let root =
+        trusted_artifact_plan_for_source_evidence(plan, artifacts, "generated-root").map_err(oven_rustc_error)?;
+    if root.externs.iter().any(|(name, _)| name == "incan_derive") {
+        return Ok(true);
+    }
+    if artifacts.entrypoint_externs.contains_key(OVEN_PROVIDER_COMPILATION_KEY) {
+        let providers = trusted_artifact_plan_for_source_evidence(plan, artifacts, OVEN_PROVIDER_COMPILATION_KEY)
+            .map_err(oven_rustc_error)?;
+        return Ok(providers.externs.iter().any(|(name, _)| name == "incan_derive"));
+    }
+    Ok(false)
+}
+
+/// Associate one declared compiler macro with matching checked runtime source and lock content.
+fn checked_provider_macro_dependency(
+    dependency: &DependencySpec,
+    receipt: &crate::oven::OvenReceipt,
+    runtime_inputs: &BTreeMap<String, String>,
+) -> CliResult<OvenCompilerMacroDependency> {
+    let DependencySource::Path { path } = &dependency.source else {
+        return Err(CliError::failure(
+            "provider incan_derive must name the compiler-owned source path",
+        ));
+    };
+    let root = fs::canonicalize(crate::toolchain_layout::resolve_toolchain_crate_path("incan_derive"))
+        .map_err(|error| CliError::failure(format!("cannot resolve compiler macro source: {error}")))?;
+    if dependency.crate_name != "incan_derive"
+        || dependency.package.as_deref().is_some_and(|name| name != "incan_derive")
+        || dependency.optional
+        || !dependency.default_features
+        || !dependency.features.is_empty()
+        || fs::canonicalize(path).ok().as_ref() != Some(&root)
+    {
+        return Err(CliError::failure(
+            "provider incan_derive declaration differs from the compiler-owned macro source",
+        ));
+    }
+    let matching_input = |key: &str| -> CliResult<String> {
+        let expected = runtime_inputs
+            .get(key)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| CliError::failure(format!("consumer lacks checked {key}")))?;
+        if receipt.sources.build_unit_inputs.get(key) != Some(expected) {
+            return Err(CliError::failure(format!("provider macro has incompatible {key}")));
+        }
+        Ok(expected.clone())
+    };
+    Ok(OvenCompilerMacroDependency {
+        alias: dependency.crate_name.clone(),
+        package: "incan_derive".to_string(),
+        source_root: root,
+        source_digest: matching_input("runtime-source-incan-derive")?,
+        core_source_digest: matching_input("runtime-source-incan-core")?,
+        runtime_lock_digest: matching_input("runtime-lock")?,
+    })
 }
 
 /// Validate every required package profile once for one consumer preparation.
@@ -5080,16 +5336,20 @@ fn rematerialize_caller_owned_provider_graph(
         deduplicate_caller_owned_libraries_prefer_extern(&mut nested_libraries);
 
         let receipt = caller_owned_library_receipt(artifact, profile, artifacts, authority_context.as_deref_mut())?;
+        let provider_artifacts = provider_compilation_artifacts(artifacts)?;
+        let mut provider_plan =
+            trusted_artifact_plan_for_source_evidence(artifact_plan, &provider_artifacts, "generated-root")
+                .map_err(oven_rustc_error)?;
         let edition = caller_owned_library_edition(artifact)?;
         let is_proc_macro = caller_owned_library_is_proc_macro(artifact)?;
         let provider_dependencies = caller_owned_library_rust_dependencies(artifact)?;
         let provider_dependencies =
-            caller_owned_library_dependencies_without_unused_incan_derive(artifact, provider_dependencies)?;
+            caller_owned_library_dependencies_for_compilation(provider_dependencies, &provider_plan);
         let provider_dependencies =
             caller_owned_library_dependencies_without_public_provider_edges(provider_dependencies, manifest);
         let provider_dependencies = caller_owned_library_dependencies_missing_from_selected_plan_with_owned_roots(
             &provider_dependencies,
-            artifact_plan,
+            &provider_plan,
             compiler_owned_roots,
         );
         let mut provider_rust_libraries = materialize_declared_rust_libraries_with_selected_path_authority(
@@ -5127,7 +5387,6 @@ fn rematerialize_caller_owned_provider_graph(
             } else {
                 format!("lib{crate_name}.rlib")
             });
-        let mut provider_plan = artifact_plan.clone();
         attach_caller_owned_rustc_libraries(&mut provider_plan, &nested_libraries).map_err(oven_rustc_error)?;
         if provider_dependencies
             .iter()
@@ -5140,14 +5399,12 @@ fn rematerialize_caller_owned_provider_graph(
             // closure (see `caller_owned_provider_registry_leaf_authority`), the same directories that made this
             // provider's own standalone bake link successfully.
             for directory in extra_dependency_search_paths {
-                if !provider_plan.dependency_search_paths.contains(directory) {
-                    provider_plan.dependency_search_paths.push(directory.clone());
-                }
+                provider_plan.retain_caller_dependency_search_path(directory.clone());
             }
         }
         let bake_request = OvenTrustedDirectRustcTargetRequest {
             receipt: &receipt,
-            artifacts,
+            artifacts: &provider_artifacts,
             artifact_root,
             artifact_plan: Some(&provider_plan),
             rustc,
@@ -6007,6 +6264,13 @@ fn prepare_oven_project(
     )?;
     let oven_plan_dependencies = inline_path_dependencies.clone();
     import_packaged_provider_loafs_for_explicit_bake(oven_plan_mode, &oven_store, &checked_provider_profiles)?;
+    let selected_provider_inputs = select_packaged_provider_plans(&oven_store, &checked_provider_profiles, profile)?;
+    let provider_compilations = checked_provider_compilation_requirements(
+        &selected_provider_inputs,
+        &checked_provider_profiles,
+        profile,
+        &oven_build_inputs,
+    )?;
     generator.set_dependencies(resolved.dependencies);
     generator.set_dev_dependencies(resolved.dev_dependencies);
 
@@ -6057,6 +6321,13 @@ fn prepare_oven_project(
     for (name, value) in &oven_build_inputs {
         receipt_request = receipt_request.with_build_unit_input(name.clone(), value.clone());
     }
+    if !provider_compilations.is_empty() {
+        receipt_request = receipt_request.with_build_unit_input(
+            "provider-compilation-requirements",
+            provider_compilation_requirements_digest(&provider_compilations)
+                .map_err(|error| CliError::failure(error.to_string()))?,
+        );
+    }
     let receipt = receipt_generated_project(&receipt_request).map_err(|error| CliError::failure(error.to_string()))?;
     let receipt_path =
         prepared_oven_receipt_path(&project_root, oven_plan_mode, &receipt.intent.target, path, profile)?;
@@ -6066,7 +6337,12 @@ fn prepare_oven_project(
     // consumer's own direct registry roots with its complete generated source closure; otherwise the provider's
     // catalog would incorrectly become the registry authority for a consumer-declared dependency.
     let packaged_provider_selection = if oven_plan_mode == OvenProjectPlanMode::ConsumeOnly {
-        select_packaged_provider_plan(&oven_store, &checked_provider_profiles, profile, &receipt)?
+        compose_selected_packaged_provider_plan(
+            selected_provider_inputs,
+            &checked_provider_profiles,
+            profile,
+            &receipt,
+        )?
     } else {
         None
     };
@@ -6083,6 +6359,7 @@ fn prepare_oven_project(
             &receipt,
             OvenProjectDependencySurface {
                 selection: &oven_plan_dependencies,
+                provider_compilations: &provider_compilations,
             },
             generator.output_dir(),
             &generator.crate_root_path(),
@@ -6467,6 +6744,7 @@ fn bake_generated_project_compatibility_plan(
     base_loaf: Option<&OvenToolchainLoaf>,
     source_compiler_vocab_support: bool,
     publication_kind: OvenLegacyCargoPublicationKind,
+    provider_compilations: &[OvenCompilerMacroDependency],
 ) -> CliResult<OvenToolchainMaterialization> {
     let compile_environment = direct_rustc_reusable_project_plan_environment(generated_project, generated_root)
         .map_err(|error| CliError::failure(error.to_string()))?;
@@ -6488,6 +6766,7 @@ fn bake_generated_project_compatibility_plan(
         // receipt-bound registry catalog entries, making legitimate re-materialization fail closed later.
         inspection_packages: None,
         direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::GeneratedSource,
+        provider_compilations,
         // The stored direct-rustc plan needs debuggable generated source and verified link inputs, not Cargo's
         // multi-gigabyte dependency DWARF payload. Keep the named debug publisher compact so one project closure stays
         // inside Oven's bounded compatibility domain.
@@ -6543,6 +6822,7 @@ fn project_extension_base_loaf(receipt: &crate::oven::OvenReceipt) -> CliResult<
 /// every direct-Rustc root the generated program and its caller-owned public providers may re-materialize.
 struct OvenProjectDependencySurface<'a> {
     selection: &'a [DependencySpec],
+    provider_compilations: &'a [OvenCompilerMacroDependency],
 }
 
 /// Promote the complete canonical normal/dev surface into one generated-test dependency set.
@@ -6695,6 +6975,7 @@ fn bake_generated_project_test_dependency_plan(
         compile_environment,
         inspection_packages: None,
         direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::CheckedDeclared,
+        provider_compilations: &[],
         compact_debug_info: true,
         source_compiler_vocab_support: false,
         base_loaf: base_loaf.map(|base| OvenLegacyCargoBaseLoaf {
@@ -6922,6 +7203,7 @@ fn select_or_bake_generated_project_plan(
             } else {
                 OvenLegacyCargoPublicationKind::Executable
             },
+            dependency_surface.provider_compilations,
         )?;
         let mut prepared = select_published_project_plan(store, receipt, materialization)?.ok_or_else(|| {
             CliError::failure("the explicit Oven project bake completed without a receipt-compatible direct-rustc plan")
@@ -10124,9 +10406,7 @@ fn bake_oven_project(
     // `-L dependency=...` search, the same way `rematerialize_caller_owned_provider_graph` already extends that
     // library's own compile with this same closure. The final consumer binary link needs it too.
     for directory in &extra_dependency_search_paths {
-        if !artifact_plan.dependency_search_paths.contains(directory) {
-            artifact_plan.dependency_search_paths.push(directory.clone());
-        }
+        artifact_plan.retain_caller_dependency_search_path(directory.clone());
     }
     bake_trusted_direct_rustc_run(&OvenTrustedDirectRustcTargetRequest {
         receipt: &prepared.receipt,
@@ -10225,9 +10505,7 @@ fn bake_oven_library(
     // See the matching comment in `bake_oven_project`: a re-materialized caller-owned library's own metadata can
     // require this same dependency search closure to load, not only the library's own re-materialization compile.
     for directory in &extra_dependency_search_paths {
-        if !artifact_plan.dependency_search_paths.contains(directory) {
-            artifact_plan.dependency_search_paths.push(directory.clone());
-        }
+        artifact_plan.retain_caller_dependency_search_path(directory.clone());
     }
     let direct = bake_trusted_direct_rustc_library(&OvenTrustedDirectRustcTargetRequest {
         receipt: &selected.receipt,
@@ -11460,6 +11738,22 @@ fn prepare_library_project(
             for (name, value) in oven_build_inputs.as_ref().into_iter().flat_map(|inputs| inputs.iter()) {
                 receipt_request = receipt_request.with_build_unit_input(name.clone(), value.clone());
             }
+            let selected_provider_inputs = select_packaged_provider_plans(store, &checked_provider_profiles, profile)?;
+            let provider_compilations = checked_provider_compilation_requirements(
+                &selected_provider_inputs,
+                &checked_provider_profiles,
+                profile,
+                oven_build_inputs
+                    .as_ref()
+                    .ok_or_else(|| CliError::failure("library lacks checked runtime inputs"))?,
+            )?;
+            if !provider_compilations.is_empty() {
+                receipt_request = receipt_request.with_build_unit_input(
+                    "provider-compilation-requirements",
+                    provider_compilation_requirements_digest(&provider_compilations)
+                        .map_err(|error| CliError::failure(error.to_string()))?,
+                );
+            }
             let receipt = receipt_generated_project_with_source_evidence(&receipt_request, &generated_source_evidence)
                 .map_err(|error| CliError::failure(error.to_string()))?;
             let receipt_path = if profile == "release" {
@@ -11473,7 +11767,12 @@ fn prepare_library_project(
             // An imported package Loaf is sufficient only for consume-only commands. An explicit library bake must
             // instead publish the library's own direct registry roots with its complete generated source closure.
             let packaged_provider_selection = if oven_plan_mode == OvenProjectPlanMode::ConsumeOnly {
-                select_packaged_provider_plan(store, &checked_provider_profiles, profile, &receipt)?
+                compose_selected_packaged_provider_plan(
+                    selected_provider_inputs,
+                    &checked_provider_profiles,
+                    profile,
+                    &receipt,
+                )?
             } else {
                 None
             };
@@ -11490,6 +11789,7 @@ fn prepare_library_project(
                     &receipt,
                     OvenProjectDependencySurface {
                         selection: &oven_plan_dependencies,
+                    provider_compilations: &provider_compilations,
                     },
                     generator.output_dir(),
                     &generator.crate_root_path(),
@@ -15405,6 +15705,176 @@ mod tests {
     use crate::oven_interop::locked_oven_interop_targets;
     use std::fs;
 
+    /// Unused macro declarations do not request a build; transitive facade requirements preserve the selected macro.
+    #[test]
+    fn selected_provider_macro_requirements_follow_named_roots() -> Result<(), Box<dyn std::error::Error>> {
+        let plan = OvenRustcArtifactPlan {
+            source_path_projection: Some(crate::oven::rustc::OvenRustcSourcePathProjection {
+                declared: BTreeSet::new(),
+                roles: BTreeMap::new(),
+            }),
+            dependency_search_paths: Vec::new(),
+            native_search_paths: Vec::new(),
+            externs: vec![("incan_derive".to_string(), PathBuf::from("/selected/current-macro"))],
+            compile_environment: BTreeMap::new(),
+            caller_owned_library_digests: BTreeMap::new(),
+        };
+        let mut artifacts = OvenRustcArtifactManifest {
+            schema_version: crate::oven::rustc::OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+            intent: crate::oven::OvenBuildIntent {
+                target: "target".to_string(),
+                toolchain: "rustc".to_string(),
+                profile: "debug".to_string(),
+                features: Vec::new(),
+            },
+            dependency_search_paths: Vec::new(),
+            native_search_paths: Vec::new(),
+            externs: vec![crate::oven::rustc::OvenRustcArtifactExtern {
+                crate_name: "incan_derive".to_string(),
+                relative_path: "macro".to_string(),
+                digest: digest_bytes(b"macro"),
+            }],
+            entrypoint_dependency_search_paths: BTreeMap::from([(
+                "generated-root".to_string(),
+                crate::oven::rustc::OvenRustcSourceSearchClosure::default(),
+            )]),
+            entrypoint_externs: BTreeMap::from([("generated-root".to_string(), Vec::new())]),
+            registry_leaves: Vec::new(),
+            registry_sources: Vec::new(),
+            compile_environment: BTreeMap::new(),
+            vocab_auxiliary_targets: Vec::new(),
+            supporting_artifacts: Vec::new(),
+        };
+        assert!(!selected_provider_requires_derive(&plan, &artifacts)?);
+        let empty = trusted_artifact_plan_for_source_evidence(&plan, &artifacts, "generated-root")?;
+        let declaration = DependencySpec {
+            crate_name: "incan_derive".to_string(),
+            version: None,
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Path {
+                path: PathBuf::from("/unused-declaration"),
+            },
+            optional: false,
+            package: None,
+        };
+        assert!(caller_owned_library_dependencies_for_compilation(vec![declaration.clone()], &empty).is_empty());
+        artifacts.entrypoint_externs.insert(
+            OVEN_PROVIDER_COMPILATION_KEY.to_string(),
+            vec!["incan_derive".to_string()],
+        );
+        artifacts.entrypoint_dependency_search_paths.insert(
+            OVEN_PROVIDER_COMPILATION_KEY.to_string(),
+            crate::oven::rustc::OvenRustcSourceSearchClosure::default(),
+        );
+        assert!(selected_provider_requires_derive(&plan, &artifacts)?);
+        let providers = provider_compilation_artifacts(&artifacts)?;
+        assert_eq!(
+            providers.entrypoint_dependency_search_paths["generated-root"],
+            artifacts.entrypoint_dependency_search_paths[OVEN_PROVIDER_COMPILATION_KEY],
+        );
+        let selected = trusted_artifact_plan_for_source_evidence(&plan, &providers, "generated-root")?;
+        assert_eq!(
+            trusted_artifact_plan_for_source_evidence(&selected, &providers, "generated-root")?,
+            selected,
+        );
+        assert_eq!(selected.externs, plan.externs);
+        assert_eq!(
+            caller_owned_library_dependencies_for_compilation(vec![declaration.clone()], &selected),
+            vec![declaration]
+        );
+        assert!(
+            trusted_artifact_plan_for_source_evidence(&plan, &artifacts, "generated-root")?
+                .externs
+                .is_empty()
+        );
+        artifacts.validate_shape(&artifacts.intent)?;
+        artifacts.externs.clear();
+        let Err(error) = artifacts.validate_shape(&artifacts.intent) else {
+            return Err("manifest admission accepted a missing provider macro".into());
+        };
+        assert!(matches!(
+            error,
+            crate::oven::rustc::OvenRustcError::InvalidInput {
+                field: "artifact manifest entrypoint externs",
+                message,
+            } if message == "source evidence `provider-compilation` names undeclared extern `incan_derive`"
+        ));
+        Ok(())
+    }
+
+    /// A macro requirement needs the compiler-owned declaration and all retained source/lock authorities.
+    #[test]
+    fn provider_macro_dependency_refuses_changed_sources_and_declarations() -> Result<(), Box<dyn std::error::Error>> {
+        let source = tempfile::tempdir()?;
+        let root = source.path().join("lib.rs");
+        fs::write(&root, "pub fn answer() -> i64 { 42 }\n")?;
+        let owned = fs::canonicalize(crate::toolchain_layout::resolve_toolchain_crate_path("incan_derive"))?;
+        let dependency = DependencySpec {
+            crate_name: "incan_derive".to_string(),
+            version: None,
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Path { path: owned },
+            optional: false,
+            package: None,
+        };
+        let inputs = BTreeMap::from([
+            ("runtime-source-incan-derive".to_string(), "sha256:macro".to_string()),
+            ("runtime-source-incan-core".to_string(), "sha256:core".to_string()),
+            ("runtime-lock".to_string(), "sha256:lock".to_string()),
+        ]);
+        let mut request = OvenGeneratedProjectRequest::new(
+            source.path(),
+            "provider",
+            "0.1.0",
+            "target",
+            "rustc",
+            "debug",
+            Vec::new(),
+        )
+        .with_generated_source("generated-root", &root);
+        for (name, value) in &inputs {
+            request = request.with_build_unit_input(name, value);
+        }
+        let receipt = receipt_generated_project(&request)?;
+        checked_provider_macro_dependency(&dependency, &receipt, &inputs)?;
+        for key in inputs.keys() {
+            let mut changed = inputs.clone();
+            changed.insert(key.clone(), "sha256:changed".to_string());
+            assert!(checked_provider_macro_dependency(&dependency, &receipt, &changed).is_err());
+            changed.remove(key);
+            assert!(checked_provider_macro_dependency(&dependency, &receipt, &changed).is_err());
+        }
+        for changed in [
+            DependencySpec {
+                package: Some("unrelated".to_string()),
+                ..dependency.clone()
+            },
+            DependencySpec {
+                features: vec!["extra".to_string()],
+                ..dependency.clone()
+            },
+            DependencySpec {
+                optional: true,
+                ..dependency.clone()
+            },
+            DependencySpec {
+                default_features: false,
+                ..dependency.clone()
+            },
+            DependencySpec {
+                source: DependencySource::Path {
+                    path: source.path().to_path_buf(),
+                },
+                ..dependency
+            },
+        ] {
+            assert!(checked_provider_macro_dependency(&changed, &receipt, &inputs).is_err());
+        }
+        Ok(())
+    }
+
     #[test]
     fn provider_operation_metadata_is_projected_from_checked_declaration_facts()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -16172,6 +16642,7 @@ headers = ["interop/include/bridge.h"]
                 dependency_search_paths: Vec::new(),
                 native_search_paths: Vec::new(),
                 externs: Vec::new(),
+                entrypoint_dependency_search_paths: Default::default(),
                 entrypoint_externs: BTreeMap::new(),
                 registry_leaves: Vec::new(),
                 registry_sources: Vec::new(),
@@ -16186,7 +16657,10 @@ headers = ["interop/include/bridge.h"]
             OvenProjectPlanMode::ConsumeOnly,
             &store,
             &receipt,
-            OvenProjectDependencySurface { selection: &[] },
+            OvenProjectDependencySurface {
+                selection: &[],
+                provider_compilations: &[],
+            },
             project.path(),
             &generated,
             &PathBuf::from("/usr/bin/rustc"),
@@ -17953,7 +18427,10 @@ headers = ["interop/include/bridge.h"]
             OvenProjectPlanMode::ConsumeOnly,
             &store,
             &receipt,
-            OvenProjectDependencySurface { selection: &[] },
+            OvenProjectDependencySurface {
+                selection: &[],
+                provider_compilations: &[],
+            },
             project.path(),
             &generated_root,
             &rustc,
@@ -17989,7 +18466,10 @@ headers = ["interop/include/bridge.h"]
             OvenProjectPlanMode::ExplicitBake,
             &store,
             &receipt,
-            OvenProjectDependencySurface { selection: &[] },
+            OvenProjectDependencySurface {
+                selection: &[],
+                provider_compilations: &[],
+            },
             project.path(),
             &generated_root,
             &rustc,
@@ -18014,7 +18494,10 @@ headers = ["interop/include/bridge.h"]
             OvenProjectPlanMode::ExplicitBake,
             &store,
             &receipt,
-            OvenProjectDependencySurface { selection: &[] },
+            OvenProjectDependencySurface {
+                selection: &[],
+                provider_compilations: &[],
+            },
             project.path(),
             &generated_root,
             &rustc,
@@ -18175,6 +18658,7 @@ headers = ["interop/include/bridge.h"]
             package: None,
         };
         let plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: vec![("serde_json".to_string(), PathBuf::from("sealed/serde_json.rlib"))],
@@ -18208,6 +18692,7 @@ headers = ["interop/include/bridge.h"]
             package: None,
         };
         let plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: vec![(
@@ -18268,6 +18753,7 @@ headers = ["interop/include/bridge.h"]
             package: None,
         };
         let selected_plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: vec![("serde_json".to_string(), artifact_path)],
@@ -18366,6 +18852,7 @@ headers = ["interop/include/bridge.h"]
         }));
 
         let plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: vec![(
@@ -18451,6 +18938,7 @@ headers = ["interop/include/bridge.h"]
             &owned_roots,
         ));
         let plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: vec![
@@ -18563,6 +19051,7 @@ headers = ["interop/include/bridge.h"]
             [],
         )?;
         let artifact_plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: vec![(
@@ -20244,6 +20733,7 @@ pub model Nested:
                 optional: false,
             });
         let plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: vec![("incan_stdlib_core".to_string(), PathBuf::from("core.rlib"))],
@@ -20361,6 +20851,22 @@ pub model Nested:
                     digest: provider_digest.to_string(),
                 },
             ],
+            entrypoint_dependency_search_paths: BTreeMap::from([(
+                "generated-root".to_string(),
+                crate::oven::rustc::OvenRustcSourceSearchClosure::publisher_selected(
+                    vec!["artifacts/deps".to_string()],
+                    &BTreeMap::from([
+                        (
+                            "artifacts/deps/libincan_stdlib-shared.rlib".to_string(),
+                            "sha256:shared".to_string(),
+                        ),
+                        (
+                            format!("artifacts/deps/lib{provider_crate}-{provider_digest}.rlib"),
+                            provider_digest.to_string(),
+                        ),
+                    ]),
+                ),
+            )]),
             entrypoint_externs: BTreeMap::from([(
                 "generated-root".to_string(),
                 vec!["incan_stdlib".to_string(), provider_crate.to_string()],
@@ -20609,9 +21115,12 @@ pub model Nested:
         artifacts
             .entrypoint_externs
             .insert("generated-root".to_string(), vec!["incan_stdlib".to_string()]);
+        artifacts.schema_version = 9;
+        artifacts.entrypoint_dependency_search_paths.clear();
         let package_root = PathBuf::from("sealed-provider.loaf");
         let private_dependency_path = package_root.join("target/aarch64-apple-darwin/debug/deps");
         let plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
             dependency_search_paths: vec![package_root.join("runtime/deps"), private_dependency_path.clone()],
             native_search_paths: Vec::new(),
             externs: vec![
@@ -20647,6 +21156,332 @@ pub model Nested:
         Ok(())
     }
 
+    struct DuplicateSearchFixture {
+        _root: tempfile::TempDir,
+        store: OvenStore,
+        receipts: Vec<crate::oven::OvenReceipt>,
+        identities: Vec<String>,
+    }
+
+    fn duplicate_search_fixture() -> Result<DuplicateSearchFixture, Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            root.path().join("store"),
+            crate::oven::store::OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000),
+        );
+        let mut receipts = Vec::new();
+        let mut identities = Vec::new();
+        for (label, legacy) in [("a", true), ("b", false)] {
+            let source = root.path().join(format!("{label}.rs"));
+            fs::write(&source, format!("pub fn marker_{label}() {{}}\n"))?;
+            let receipt = receipt_generated_project(
+                &OvenGeneratedProjectRequest::new(
+                    root.path(),
+                    label,
+                    "0.1.0",
+                    "aarch64-apple-darwin",
+                    "rustc fixture",
+                    "debug",
+                    Vec::new(),
+                )
+                .with_generated_source("generated-root", &source),
+            )?;
+            let mut manifest = package_loaf_manifest(receipt.intent.clone(), "common", "unused placeholder");
+            manifest.externs.clear();
+            manifest.entrypoint_externs.clear();
+            manifest.entrypoint_dependency_search_paths.clear();
+            manifest.dependency_search_paths = if legacy {
+                vec!["host".to_string(), "target".to_string()]
+            } else {
+                vec!["host".to_string()]
+            };
+            let mut members = vec![("common", "host/libcommon.rlib", b"same common native bytes".as_slice())];
+            if legacy {
+                members.extend([
+                    ("runtime", "target/libruntime.rlib", b"runtime".as_slice()),
+                    (
+                        "private_helper",
+                        "host/libprivate_helper.rlib",
+                        b"private helper".as_slice(),
+                    ),
+                ]);
+            }
+            let mut files = Vec::new();
+            for (name, relative, bytes) in members {
+                let input = root.path().join(label).join(relative);
+                fs::create_dir_all(input.parent().ok_or("fixture member has no parent")?)?;
+                fs::write(&input, bytes)?;
+                manifest.externs.push(OvenRustcArtifactExtern {
+                    crate_name: name.to_string(),
+                    relative_path: relative.to_string(),
+                    digest: digest_bytes(bytes),
+                });
+                files.push(OvenArtifactMaterializedFile {
+                    source_path: input,
+                    relative_path: relative.to_string(),
+                });
+            }
+            manifest.entrypoint_externs.insert(
+                "generated-root".to_string(),
+                vec![if legacy { "runtime" } else { "common" }.to_string()],
+            );
+            manifest.entrypoint_externs.insert(
+                "runtime-only".to_string(),
+                if legacy {
+                    vec!["runtime".to_string()]
+                } else {
+                    Vec::new()
+                },
+            );
+            if legacy {
+                manifest.schema_version = 9;
+            } else {
+                manifest.entrypoint_dependency_search_paths.insert(
+                    "generated-root".to_string(),
+                    manifest.capture_source_search_closure(&manifest.dependency_search_paths)?,
+                );
+                manifest
+                    .entrypoint_dependency_search_paths
+                    .insert("runtime-only".to_string(), manifest.capture_source_search_closure(&[])?);
+            }
+            manifest.validate_shape(&receipt.intent)?;
+            let stored = store.publish(&OvenArtifactPublishRequest {
+                receipt: receipt.clone(),
+                domain: "duplicate-search-fixture".to_string(),
+                kind: OvenArtifactKind::DirectRustcPlan,
+                payload: serde_json::to_vec(&manifest)?,
+                materialized_files: files,
+            })?;
+            // Each original contributor is admitted independently through the real selected-store reader.
+            let selected = select_packaged_direct_rustc_execution_plan(&store, &receipt, &stored.identity)?
+                .ok_or("fixture publication was not admitted")?;
+            trusted_artifact_plan_for_source_evidence(&selected.artifact_plan, &selected.artifacts, "generated-root")?;
+            receipts.push(receipt);
+            identities.push(stored.identity);
+        }
+        Ok(DuplicateSearchFixture {
+            _root: root,
+            store,
+            receipts,
+            identities,
+        })
+    }
+
+    type DuplicateSearchInput = (String, OvenPackagedLibraryLoafEntry, OvenStoredDirectRustcExecutionPlan);
+
+    fn duplicate_search_input(
+        fixture: &DuplicateSearchFixture,
+        index: usize,
+    ) -> Result<DuplicateSearchInput, Box<dyn std::error::Error>> {
+        let receipt = fixture.receipts[index].clone();
+        let identity = fixture.identities[index].clone();
+        let selected = select_packaged_direct_rustc_execution_plan(&fixture.store, &receipt, &identity)?
+            .ok_or("lost admitted fixture")?;
+        Ok((
+            format!("input_{index}"),
+            OvenPackagedLibraryLoafEntry {
+                receipt,
+                identity,
+                kind: OvenArtifactKind::DirectRustcPlan,
+                base_loaf_identity: None,
+            },
+            selected,
+        ))
+    }
+
+    #[test]
+    fn direct_package_search_roles_reuse_a_clean_duplicate_in_either_contribution_order()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = duplicate_search_fixture()?;
+        let a = duplicate_search_input(&fixture, 0)?;
+        let b = duplicate_search_input(&fixture, 1)?;
+        let a_root = a.2.artifact_root.clone();
+        let b_root = b.2.artifact_root.clone();
+        let logical = merge_packaged_provider_artifact_manifests(
+            &[("a", &a.2.artifacts), ("b", &b.2.artifacts)],
+            &fixture.receipts[0].intent,
+        )?;
+        let reversed_logical = merge_packaged_provider_artifact_manifests(
+            &[("b", &b.2.artifacts), ("a", &a.2.artifacts)],
+            &fixture.receipts[0].intent,
+        )?;
+        assert_eq!(logical, reversed_logical);
+        let before = [
+            fs::read(a_root.join("host/libcommon.rlib"))?,
+            fs::read(a_root.join("host/libprivate_helper.rlib"))?,
+            fs::read(a_root.join("target/libruntime.rlib"))?,
+            fs::read(b_root.join("host/libcommon.rlib"))?,
+        ];
+        // Exercise the clean-first control before the duplicate-only fragment case.
+        for order in [[1, 0], [0, 1]] {
+            let inputs = order
+                .into_iter()
+                .map(|index| duplicate_search_input(&fixture, index))
+                .collect::<Result<Vec<_>, _>>()?;
+            let composed = compose_direct_packaged_provider_plan(inputs, &fixture.receipts[0].intent)
+                .map_err(|error| format!("contribution order {order:?}: {error}"))?;
+            assert_eq!(composed.artifacts(), &logical);
+            // Isolate the compositor's validated source binding before the separate caller-fragment grants.
+            let projected = trusted_artifact_plan_for_source_evidence(
+                composed.artifact_plan(),
+                composed.artifacts(),
+                "generated-root",
+            )?;
+            assert!(projected.dependency_search_paths.contains(&b_root.join("host")));
+            assert!(!projected.dependency_search_paths.contains(&a_root.join("host")));
+            assert!(
+                projected
+                    .source_path_projection
+                    .as_ref()
+                    .ok_or("missing source binding")?
+                    .declared
+                    .contains(&b_root.join("host"))
+            );
+            assert_eq!(
+                projected,
+                trusted_artifact_plan_for_source_evidence(&projected, composed.artifacts(), "generated-root")?
+            );
+            let runtime_only =
+                trusted_artifact_plan_for_source_evidence(&projected, composed.artifacts(), "runtime-only")?;
+            assert!(runtime_only.dependency_search_paths.contains(&a_root.join("target")));
+            assert!(!runtime_only.dependency_search_paths.contains(&b_root.join("host")));
+            assert_eq!(
+                projected
+                    .externs
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<BTreeSet<_>>(),
+                BTreeSet::from(["common", "runtime"])
+            );
+            assert_eq!(
+                before,
+                [
+                    fs::read(a_root.join("host/libcommon.rlib"))?,
+                    fs::read(a_root.join("host/libprivate_helper.rlib"))?,
+                    fs::read(a_root.join("target/libruntime.rlib"))?,
+                    fs::read(b_root.join("host/libcommon.rlib"))?,
+                ]
+            );
+            eprintln!("admitted composition order {order:?}; exact source roles and native bytes preserved");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn direct_package_search_roles_still_refuse_without_a_clean_admitted_directory()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = duplicate_search_fixture()?;
+        let a = duplicate_search_input(&fixture, 0)?;
+        let b = duplicate_search_input(&fixture, 1)?;
+        let logical = merge_packaged_provider_artifact_manifests(
+            &[("a", &a.2.artifacts), ("b", &b.2.artifacts)],
+            &fixture.receipts[0].intent,
+        )?;
+        let a_inventory = a.2.artifacts.composition_artifacts()?;
+        let roots = [OvenTrustedRustcArtifactRoot {
+            artifact_root: &a.2.artifact_root,
+            dependency_search_paths: &a.2.artifacts.dependency_search_paths,
+            native_search_paths: &[],
+            supporting_artifacts: &a_inventory,
+            root_inventory: Some(&a_inventory),
+        }];
+        let error = logical
+            .materialize_trusted_store_composed(&roots, &fixture.receipts[0].intent)
+            .err()
+            .ok_or("an excluded co-resident helper must still refuse without a clean admitted alternative")?;
+        assert!(error.to_string().contains("co-resident"));
+        Ok(())
+    }
+
+    #[test]
+    fn direct_package_search_roles_reject_incomplete_conflicting_or_escaped_candidates()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = duplicate_search_fixture()?;
+        let a = duplicate_search_input(&fixture, 0)?;
+        let b = duplicate_search_input(&fixture, 1)?;
+        let logical = merge_packaged_provider_artifact_manifests(
+            &[("a", &a.2.artifacts), ("b", &b.2.artifacts)],
+            &fixture.receipts[0].intent,
+        )?;
+        let a_inventory = a.2.artifacts.composition_artifacts()?;
+        let b_inventory = b.2.artifacts.composition_artifacts()?;
+        let roots = [OvenTrustedRustcArtifactRoot {
+            artifact_root: &a.2.artifact_root,
+            dependency_search_paths: &a.2.artifacts.dependency_search_paths,
+            native_search_paths: &[],
+            supporting_artifacts: &a_inventory,
+            root_inventory: Some(&a_inventory),
+        }];
+        let candidate = OvenTrustedRustcSearchRoot {
+            artifact_root: &b.2.artifact_root,
+            dependency_search_paths: &b.2.artifacts.dependency_search_paths,
+            root_inventory: &b_inventory,
+        };
+        logical.materialize_trusted_store_composed_with_search_roots(
+            &roots,
+            std::slice::from_ref(&candidate),
+            &fixture.receipts[0].intent,
+        )?;
+        for (inventory, message) in [
+            (Vec::new(), "manifest-recorded"),
+            (
+                vec![OvenRustcSupportingArtifact {
+                    relative_path: "host/libcommon.rlib".to_string(),
+                    digest: digest_bytes(b"different bytes"),
+                }],
+                "conflicts",
+            ),
+        ] {
+            let error = logical
+                .materialize_trusted_store_composed_with_search_roots(
+                    &roots,
+                    &[OvenTrustedRustcSearchRoot {
+                        root_inventory: &inventory,
+                        ..candidate
+                    }],
+                    &fixture.receipts[0].intent,
+                )
+                .err()
+                .ok_or("invalid candidate was accepted")?;
+            assert!(error.to_string().contains(message), "{error}");
+        }
+        let escaped = vec!["../outside".to_string()];
+        assert!(
+            logical
+                .materialize_trusted_store_composed_with_search_roots(
+                    &roots,
+                    &[OvenTrustedRustcSearchRoot {
+                        dependency_search_paths: &escaped,
+                        ..candidate
+                    }],
+                    &fixture.receipts[0].intent,
+                )
+                .is_err()
+        );
+        // Another admitted root cannot replace the canonical coverage or supply absent canonical inventory.
+        assert!(
+            logical
+                .materialize_trusted_store_composed_with_search_roots(
+                    &[],
+                    std::slice::from_ref(&candidate),
+                    &fixture.receipts[0].intent,
+                )
+                .is_err()
+        );
+        let mut missing_inventory = roots;
+        missing_inventory[0].root_inventory = None;
+        assert!(
+            logical
+                .materialize_trusted_store_composed_with_search_roots(
+                    &missing_inventory,
+                    std::slice::from_ref(&candidate),
+                    &fixture.receipts[0].intent,
+                )
+                .is_err()
+        );
+        Ok(())
+    }
+
     #[test]
     fn package_loaf_composition_unifies_compatible_provider_closures() -> Result<(), Box<dyn std::error::Error>> {
         let intent = crate::oven::OvenBuildIntent {
@@ -20677,6 +21512,76 @@ pub model Nested:
                 "incql".to_string()
             ])
         );
+        Ok(())
+    }
+
+    #[test]
+    fn mixed_package_search_roles_preserve_original_legacy_projection_without_republication()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let intent = crate::oven::OvenBuildIntent {
+            target: "aarch64-apple-darwin".to_string(),
+            toolchain: "rustc fixture".to_string(),
+            profile: "debug".to_string(),
+            features: Vec::new(),
+        };
+        let mut legacy = package_loaf_manifest(intent.clone(), "legacy_provider", "sha256:legacy");
+        legacy.schema_version = 9;
+        legacy.entrypoint_dependency_search_paths.clear();
+        legacy.dependency_search_paths.push("host".to_string());
+        legacy.externs.push(OvenRustcArtifactExtern {
+            crate_name: "private_helper".to_string(),
+            relative_path: "host/libprivate_helper.rlib".to_string(),
+            digest: "sha256:private".to_string(),
+        });
+        let original = legacy.source_search_closure("generated-root")?;
+        let mut current = package_loaf_manifest(intent.clone(), "current_provider", "sha256:current");
+        current.dependency_search_paths = vec!["host".to_string()];
+        current
+            .externs
+            .iter_mut()
+            .find(|artifact| artifact.crate_name == "current_provider")
+            .ok_or("current provider missing")?
+            .relative_path = "host/libcurrent_provider.rlib".to_string();
+        current.entrypoint_dependency_search_paths.insert(
+            "generated-root".to_string(),
+            current.capture_source_search_closure(&current.dependency_search_paths)?,
+        );
+        let composed =
+            merge_packaged_provider_artifact_manifests(&[("legacy", &legacy), ("current", &current)], &intent)?;
+        let closure = composed
+            .entrypoint_dependency_search_paths
+            .get("generated-root")
+            .ok_or("composed role missing")?;
+        assert_eq!(closure.legacy_projections, original.legacy_projections);
+        assert_eq!(
+            closure
+                .publisher_paths
+                .iter()
+                .map(|directory| directory.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["host"]
+        );
+        assert!(
+            closure
+                .directories()
+                .filter(|directory| directory.relative_path == "host")
+                .flat_map(|directory| &directory.artifacts)
+                .all(|artifact| artifact.relative_path == "host/libcurrent_provider.rlib")
+        );
+        let aliased =
+            merge_packaged_provider_artifact_manifests(&[("renamed_a", &legacy), ("renamed_b", &current)], &intent)?;
+        assert_eq!(aliased, composed);
+        let forwarded = provider_compilation_artifacts(&composed)?;
+        assert_eq!(forwarded.entrypoint_dependency_search_paths["generated-root"], *closure);
+        let third = package_loaf_manifest(intent.clone(), "third_provider", "sha256:third");
+        let nested =
+            merge_packaged_provider_artifact_manifests(&[("composed", &composed), ("third", &third)], &intent)?;
+        assert_eq!(
+            nested.entrypoint_dependency_search_paths["generated-root"].legacy_projections,
+            original.legacy_projections
+        );
+        assert_eq!(legacy.schema_version, 9);
+        assert!(legacy.entrypoint_dependency_search_paths.is_empty());
         Ok(())
     }
 
@@ -20795,7 +21700,9 @@ pub model Nested:
         import_checked_packaged_library_loaf(&consumer_store, &checked)?;
         assert_eq!(digest_provider_artifact(&checked.artifact_root)?, published_digest);
         assert_eq!(fs::read(entry_root.join("last-used"))?, b"1\n");
-        let selected = select_packaged_provider_plan(&consumer_store, &[checked], "debug", &consumer_receipt)?
+        let checked = [checked];
+        let inputs = select_packaged_provider_plans(&consumer_store, &checked, "debug")?;
+        let selected = compose_selected_packaged_provider_plan(inputs, &checked, "debug", &consumer_receipt)?
             .ok_or("consumer should select the imported direct-plan package Loaf")?;
         let OvenDirectRustcPlanSelection::PackagedProvider(packages) = selected else {
             return Err("consumer did not retain the packaged provider closure".into());
