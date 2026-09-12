@@ -19,15 +19,6 @@ INCAN_TEST_CARGO_BUILD_JOBS ?= $(shell n=$$(( $(INCAN_HOST_CPUS) * 3 / 4 )); if 
 INCAN_TEST_GENERATED_CARGO_TARGET_DIR ?= $(TARGET_DIR)/incan_generated_shared_target
 INCAN_TEST_SDK_PROVIDER_STORE ?= $(TARGET_DIR)/incan_test_sdk_provider_store
 INCAN_TEST_SDK_PROVIDER_PATH_FILE ?= $(TARGET_DIR)/incan_test_sdk_provider_path
-# An explicit bake materializes debug *and* release for the library and every declared script, and the compiler
-# suite only ever executes debug — so half the output of every bake inside it is never run. `INCAN_OVEN_BAKE_PROFILES`
-# is the existing policy for narrowing that, and it is an environment variable rather than a flag precisely so one
-# setting covers `bake`, `build` and `test` together: a bake narrowed for only one of them reports a confusing
-# authority miss in the others. It is scoped to the suite harness rather than to `TEST_RUNTIME_ENV` because the
-# example and smoke lanes bake release-cohort output on purpose. The two tests that genuinely need both profiles
-# already opt back in per command.
-INCAN_TEST_OVEN_BAKE_PROFILES ?= debug
-OVEN_SUITE_BAKE_ENV = INCAN_OVEN_BAKE_PROFILES="$(INCAN_TEST_OVEN_BAKE_PROFILES)"
 INCAN_TEST_OVEN_HOME ?= $(TARGET_DIR)/incan_test_oven_home
 INCAN_TEST_OVEN_LOAF_ROOT ?= $(TARGET_DIR)/share/incan/oven/loafs
 INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT ?= $(TARGET_DIR)/oven-alpha-release-toolchain
@@ -384,7 +375,7 @@ test-oven-replay:
 		command_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
 		PATH="$$suite_output/cargo-guard:$$PATH" \
 			INCAN_OVEN_CARGO_GUARD_LOG="$$suite_output/cargo-guard/invocations.log" TMPDIR="$$suite_tmp" \
-			$(TEST_RUNTIME_ENV) $(OVEN_SUITE_BAKE_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
+			$(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
 			INCAN_INTERNAL_OVEN_NORMAL_CONSUMER_BIN="$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" \
 			INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="$(TARGET_DIR)" \
 			"$(TARGET_DIR)/debug/incan" oven compiler-libtests \
@@ -755,7 +746,7 @@ test-one: test-prewarm-oven-loafs
 		: > "$$root_output/cargo-guard/invocations.log"; \
 		command_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
 		PATH="$$root_output/cargo-guard:$$PATH" INCAN_OVEN_CARGO_GUARD_LOG="$$root_output/cargo-guard/invocations.log" \
-			TMPDIR="$$root_tmp" $(TEST_RUNTIME_ENV) $(OVEN_SUITE_BAKE_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" \
+			TMPDIR="$$root_tmp" $(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" \
 			CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="$(TARGET_DIR)" \
 			"$(TARGET_DIR)/debug/incan" oven compiler-libtests \
 				--compiler-root "$(CURDIR)" --rustc "$$rustc_path" --fixture-cargo "$$fixture_cargo_path" \
