@@ -7654,8 +7654,13 @@ def main() -> None:
         generated_consumer.contains("union_provider::__IncanUnion"),
         "expected public method call to use dependency-owned wrapper paths, got:\n{generated_consumer}"
     );
+    // The dependency's wrapper reaches the emitter down two routes -- a caller-supplied crate qualifier, and the
+    // carried native union's own recorded path -- and the two spell the same item relatively and absolutely. Both
+    // resolve to the dependency's wrapper, which is what this regression is about, so accept either; asserting one
+    // spelling made this fail on a generated file that was already correct.
     assert!(
-        generated_consumer.contains("union_provider::desc(union_provider::__IncanUnion"),
+        generated_consumer.contains("union_provider::desc(union_provider::__IncanUnion")
+            || generated_consumer.contains("union_provider::desc(::union_provider::__IncanUnion"),
         "expected public union-return helper call to use dependency-owned wrapper paths, got:\n{generated_consumer}"
     );
     assert!(
