@@ -1,0 +1,160 @@
+"""Companion evidence for one selected unit, assembled only from what the source authority already retained."""
+
+from std.hash import sha256
+from manifest_errors import IntakeError, IntakeErrorKind
+from intake import ManifestEvidence
+from rust_source import RustDependencyCatalog, RustDependencyDeclaration, RustDependencyRole
+from rust_activation import ActivationContext, RustActivation, SlotActivation
+
+
+@derive(Eq)
+pub model SelectedBuildSlot:
+    """
+    One original build-dependency slot, named by where it was declared rather than by what it resolved to.
+
+    The index is the declaration's position in the authored catalog, which is the only identity a slot has before
+    a child source is admitted. The alias is what the manifest wrote, not a package name: an aliased dependency
+    keeps the spelling its host compiles against. The host unit is supplied by the caller because a build
+    dependency activates in the host domain, and which host that is, is a property of the activation context
+    rather than of the declaration.
+    """
+
+    pub index: int
+    pub alias: str
+    pub host_unit: str
+
+
+pub model ProviderIntakeEvidence:
+    """
+    What one selected unit's provider intake retained, beside the unit rather than inside it.
+
+    A selected unit deliberately carries no manifest slot and no member inventory: it names what was chosen, not
+    what was read. Those facts still have to survive, because a later producer has to show that the thing it
+    compiled is the thing the manifest described. Keeping them in a companion record is what stops the unit's
+    identity absorbing physical evidence that would make two identical units compare unequal.
+
+    Every field here is carried, never derived. See [`provider_intake_evidence`] for the refusals that enforce it.
+
+    Deliberately not `Eq`. It holds a `ManifestEvidence`, which is physical evidence rather than identity, and
+    comparing two of these would invite exactly the confusion the separation exists to prevent: whether two units
+    are the same is a question about their identity, not about whether they were read from identical bytes.
+    """
+
+    pub owner: str
+    pub package_root: str
+    pub manifest: ManifestEvidence
+    pub members: list[str]
+    pub build_slots: list[SelectedBuildSlot]
+    pub build_unit_present: bool
+    pub effective_features: list[str]
+
+
+def refusal(manifest: str, field: list[str], kind: IntakeErrorKind, detail: str) -> IntakeError:
+    """Reuse the source-located intake vocabulary so a companion refusal reads like any other manifest refusal."""
+    return IntakeError(kind=kind, manifest=manifest, field=field, location=None, detail=detail)
+
+
+def members_excluding_manifest(members: list[str], manifest_path: str) -> list[str]:
+    """
+    Drop the manifest from the member inventory, preserving the order the authority supplied.
+
+    The manifest is evidence in its own right and is carried separately with its digest. Leaving it in the
+    inventory too would let a consumer digest it twice and disagree with itself about what the package contains.
+    """
+    mut kept: list[str] = []
+    for member in members:
+        if member != manifest_path:
+            kept.append(member)
+    return kept
+
+
+def declaration_at(catalog: RustDependencyCatalog, index: int) -> Option[RustDependencyDeclaration]:
+    """Find the authored declaration an activation slot refers to, by its original catalog position."""
+    for declaration in catalog.dependencies:
+        if declaration.index == index:
+            return Some(declaration)
+    return None
+
+
+def slot_is_active(activation: SlotActivation) -> bool:
+    """Report whether one slot activated, without inspecting why an inactive one did not."""
+    match activation:
+        SlotActivation.Active(_, _, _) => return true
+        SlotActivation.Inactive(_) => return false
+
+
+pub def provider_intake_evidence(
+    owner: str,
+    package_root: str,
+    manifest: ManifestEvidence,
+    members: list[str],
+    catalog: RustDependencyCatalog,
+    context: ActivationContext,
+    activation: RustActivation,
+) -> Result[ProviderIntakeEvidence, IntakeError]:
+    """
+    Build one unit's companion evidence from the retained authority, refusing rather than reconstructing.
+
+        Nothing here inspects a filesystem, re-parses a manifest, or reads a selected graph. Every fact is either
+        handed in by the caller that already held it or read out of `catalog` and `activation`, which are the
+        authored declarations and their activation outcome. That is the whole property this function exists to
+        have: an implementation that satisfied the same shape by re-deriving the data would pass the same value
+        assertions and lose the guarantee.
+
+        `build_unit_present` is carried from the context rather than inferred from whether any build slot
+        activated. They are different facts: a package can declare build dependencies and have no build unit, and
+        the inventory is what knows. Deriving it from the slot list would be the reconstruction this gate forbids,
+        arrived at by an accident of the two usually agreeing.
+
+        Two refusals keep it honest. Evidence whose digest does not match its own bytes is rejected, because a
+        companion record that disagrees with itself proves nothing about the compiled artifact. An activation slot
+        naming a build declaration the catalog does not contain is also rejected, rather than filled in from the
+        alias or the package name, because guessing there is exactly the reconstruction the gate forbids.
+
+        Args:
+            owner: Identity of the provider that retained this source, supplied by the retaining caller.
+            package_root: Package root under that owner, as the authority recorded it.
+            manifest: Byte snapshot of the unit's `Cargo.toml` with its digest, from the original read.
+            members: Package member inventory from the authority, manifest included; it is removed here.
+            catalog: Authored dependency declarations; the only source of slot indices and aliases.
+            context: The activation context this unit was activated under; supplies the host triple the build
+                slots activate against, and `build_unit_present`, which the checked source-unit inventory owns.
+            activation: Per-slot activation outcome for this unit.
+
+        Returns:
+            The companion evidence, or a structured refusal naming the manifest and field.
+    """
+    if sha256.digest(manifest.raw_bytes) != manifest.sha256_digest:
+        return Err(refusal(
+            manifest.path,
+            ["sha256_digest"],
+            IntakeErrorKind.Invalid,
+            "manifest evidence digest does not match its own bytes; the retained source is not self-consistent",
+        ))
+
+    mut build_slots: list[SelectedBuildSlot] = []
+    for slot in activation.slots:
+        match declaration_at(catalog, slot.index):
+            None => return Err(refusal(
+                manifest.path,
+                ["dependencies"],
+                IntakeErrorKind.Invalid,
+                f"activation slot {slot.index} has no declaration in the retained catalog",
+            ))
+            Some(declaration) =>
+                if declaration.role == RustDependencyRole.Build and slot_is_active(slot.activation):
+                    build_slots.append(
+                        SelectedBuildSlot(
+                            index=slot.index, alias=declaration.alias, host_unit=context.host.triple
+                        )
+                    )
+
+    return Ok(ProviderIntakeEvidence(
+        owner=owner,
+        package_root=package_root,
+        manifest=manifest,
+        members=members_excluding_manifest(members, manifest.path),
+        build_slots=build_slots,
+        build_unit_present=context.build_unit_present,
+        effective_features=activation.effective_features,
+    ))
