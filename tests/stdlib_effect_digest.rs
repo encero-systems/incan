@@ -5,7 +5,7 @@
 //! replacement has to get right — it must move for a change the compiler would emit differently, and hold still
 //! for one it would not — and record what it costs against the real standard library.
 
-use incan::inspect::effect_digest::{module_effect_digest, stdlib_effect_digest};
+use incan::inspect::effect_digest::{compiler_effect_digest, module_effect_digest, stdlib_effect_digest};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -95,9 +95,15 @@ fn the_digest_covers_the_rust_runtime_every_component_links_against() -> TestRes
     fs::write(emitter.join("emit.rs"), "pub fn emit() -> u8 { 1 }\n")?;
 
     fs::write(runtime.join("frozen.rs"), "pub fn limit() -> u8 { 1 }\n")?;
-    let before = stdlib_effect_digest(&stdlib, &runtime, &emitter)?;
+    let before = stdlib_effect_digest(
+        &stdlib,
+        &[("runtime", runtime.as_path()), ("backend", emitter.as_path())],
+    )?;
     fs::write(runtime.join("frozen.rs"), "pub fn limit() -> u8 { 2 }\n")?;
-    let after = stdlib_effect_digest(&stdlib, &runtime, &emitter)?;
+    let after = stdlib_effect_digest(
+        &stdlib,
+        &[("runtime", runtime.as_path()), ("backend", emitter.as_path())],
+    )?;
     assert_ne!(before, after, "an edit to the linked Rust runtime must invalidate");
     Ok(())
 }
@@ -120,9 +126,15 @@ fn the_digest_covers_the_emitter_while_the_emitter_still_exists() -> TestResult 
     fs::write(runtime.join("frozen.rs"), "pub fn limit() -> u8 { 1 }\n")?;
 
     fs::write(emitter.join("emit.rs"), "pub fn emit() -> u8 { 1 }\n")?;
-    let before = stdlib_effect_digest(&stdlib, &runtime, &emitter)?;
+    let before = stdlib_effect_digest(
+        &stdlib,
+        &[("runtime", runtime.as_path()), ("backend", emitter.as_path())],
+    )?;
     fs::write(emitter.join("emit.rs"), "pub fn emit() -> u8 { 2 }\n")?;
-    let after = stdlib_effect_digest(&stdlib, &runtime, &emitter)?;
+    let after = stdlib_effect_digest(
+        &stdlib,
+        &[("runtime", runtime.as_path()), ("backend", emitter.as_path())],
+    )?;
     assert_ne!(
         before, after,
         "an emitter change alters generated Rust without moving HIR"
@@ -133,20 +145,17 @@ fn the_digest_covers_the_emitter_while_the_emitter_still_exists() -> TestResult 
 #[test]
 fn the_real_standard_library_digests_deterministically_and_cheaply() -> TestResult {
     let root = repo_root();
-    let stdlib = root.join("crates/incan_stdlib/stdlib");
-    let runtime = root.join("crates/incan_stdlib/src");
-    let emitter = root.join("src/backend/ir/emit");
 
     let started = Instant::now();
     let first = incan::compiler_stack::run_on_compiler_stack({
-        let (stdlib, runtime, emitter) = (stdlib.clone(), runtime.clone(), emitter.clone());
-        move || stdlib_effect_digest(&stdlib, &runtime, &emitter).map_err(|error| error.to_string())
+        let root = root.clone();
+        move || compiler_effect_digest(&root).map_err(|error| error.to_string())
     })?;
     let elapsed = started.elapsed();
 
     let second = incan::compiler_stack::run_on_compiler_stack({
-        let (stdlib, runtime, emitter) = (stdlib.clone(), runtime.clone(), emitter.clone());
-        move || stdlib_effect_digest(&stdlib, &runtime, &emitter).map_err(|error| error.to_string())
+        let root = root.clone();
+        move || compiler_effect_digest(&root).map_err(|error| error.to_string())
     })?;
 
     println!("EFFECT-DIGEST {first} in {} ms", elapsed.as_millis());
