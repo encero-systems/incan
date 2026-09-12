@@ -20,6 +20,7 @@
         "crate::frontend::body_ir",
         "crate::frontend::contract_metadata",
         "crate::frontend::diagnostics",
+        "crate::frontend::executable_resolution",
         "crate::frontend::lexer",
         "crate::frontend::library_exports",
         "crate::frontend::library_manifest_index",
@@ -34,15 +35,6 @@
       "path": "src/cli/commands/build_report.rs",
       "reaches": [
         "crate::backend::selection"
-      ]
-    },
-    {
-      "path": "src/cli/commands/codegraph.rs",
-      "reaches": [
-        "crate::frontend::ast",
-        "crate::frontend::diagnostics",
-        "crate::frontend::registry_metadata",
-        "crate::frontend::typechecker"
       ]
     },
     {
@@ -117,7 +109,7 @@
     {
       "path": "src/cli/prelude.rs",
       "reaches": [
-        "crate::frontend::ast"
+        "crate::frontend::parsed_module"
       ]
     },
     {
