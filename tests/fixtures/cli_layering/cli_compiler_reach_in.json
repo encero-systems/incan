@@ -20,6 +20,7 @@
         "crate::frontend::body_ir",
         "crate::frontend::contract_metadata",
         "crate::frontend::diagnostics",
+        "crate::frontend::executable_resolution",
         "crate::frontend::lexer",
         "crate::frontend::library_exports",
         "crate::frontend::library_manifest_index",
