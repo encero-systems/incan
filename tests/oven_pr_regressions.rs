@@ -105,6 +105,7 @@ fn legacy_cargo_capacity_abort_terminates_descendants() -> Result<(), Box<dyn st
         compile_environment: BTreeMap::new(),
         inspection_packages: None,
         direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::GeneratedSource,
+        provider_compilations: &[],
         compact_debug_info: false,
         source_compiler_vocab_support: false,
     });

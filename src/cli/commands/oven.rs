@@ -250,6 +250,7 @@ pub fn oven_legacy_cargo_prepare(options: OvenLegacyCargoPrepareCommandOptions) 
         compile_environment: std::collections::BTreeMap::new(),
         inspection_packages: None,
         direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::GeneratedSource,
+        provider_compilations: &[],
         compact_debug_info: false,
         source_compiler_vocab_support: false,
         base_loaf: None,
@@ -1483,6 +1484,7 @@ fn finish_loaf_bake(
         compile_environment: BTreeMap::new(),
         inspection_packages: Some(Vec::new()),
         direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::CheckedDeclared,
+        provider_compilations: &[],
         compact_debug_info: false,
         source_compiler_vocab_support: false,
         base_loaf: None,
@@ -4625,6 +4627,7 @@ fn compiler_suite_composed_artifact_plan(
             dependency_search_paths: &foundation.payload.artifact_closure.dependency_search_paths,
             native_search_paths: &foundation.payload.artifact_closure.native_search_paths,
             supporting_artifacts: &foundation.payload.artifact_closure.supporting_artifacts,
+            root_inventory: Some(&foundation.payload.artifact_closure.supporting_artifacts),
         });
     }
     artifacts
@@ -5845,6 +5848,7 @@ mod tests {
                     dependency_search_paths: Vec::new(),
                     native_search_paths: Vec::new(),
                     externs: Vec::new(),
+                    entrypoint_dependency_search_paths: Default::default(),
                     entrypoint_externs: BTreeMap::new(),
                     registry_leaves: Vec::new(),
                     registry_sources: Vec::new(),
@@ -6042,6 +6046,7 @@ mod tests {
                 dependency_search_paths: Vec::new(),
                 native_search_paths: Vec::new(),
                 externs: Vec::new(),
+                entrypoint_dependency_search_paths: Default::default(),
                 entrypoint_externs: BTreeMap::new(),
                 registry_leaves: Vec::new(),
                 registry_sources: Vec::new(),
@@ -7706,6 +7711,7 @@ mod tests {
             &inventory,
             &rustc,
             &OvenRustcArtifactPlan {
+                source_path_projection: None,
                 dependency_search_paths: vec![target_dependencies.clone(), host_dependencies.clone()],
                 native_search_paths: Vec::new(),
                 externs: vec![
@@ -7897,6 +7903,7 @@ fn planned_suite_second_exact_case_keeps_cargo_guarded() -> Result<(), String> {
             &inventory,
             &rustc,
             &OvenRustcArtifactPlan {
+                source_path_projection: None,
                 dependency_search_paths: Vec::new(),
                 native_search_paths: Vec::new(),
                 externs: vec![("incan_stdlib".to_string(), stdlib_extern)],
@@ -8124,6 +8131,7 @@ fn planned_suite_second_exact_case_keeps_cargo_guarded() -> Result<(), String> {
                 dependency_search_paths: Vec::new(),
                 native_search_paths: Vec::new(),
                 externs: Vec::new(),
+                entrypoint_dependency_search_paths: Default::default(),
                 entrypoint_externs: std::collections::BTreeMap::new(),
                 registry_leaves: Vec::new(),
                 registry_sources: Vec::new(),

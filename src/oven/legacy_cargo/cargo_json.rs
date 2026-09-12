@@ -33,6 +33,8 @@ pub(super) struct CargoCompilerArtifactProfile {
 pub(super) struct CargoCompilerArtifactTarget {
     pub(super) name: String,
     #[serde(default)]
+    pub(super) kind: Vec<String>,
+    #[serde(default)]
     pub(super) src_path: PathBuf,
 }
 

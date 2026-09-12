@@ -3255,6 +3255,7 @@ mod tests {
                     digest: selected_graph_sha256(b"serde private.rs"),
                 },
             ],
+            entrypoint_dependency_search_paths: Default::default(),
         }
     }
 

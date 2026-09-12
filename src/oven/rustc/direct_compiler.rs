@@ -263,7 +263,7 @@ pub(crate) fn prepare_trusted_direct_rustc_library_with_artifact_role(
     }
     let selected_artifacts = request.artifacts.for_source_evidence(artifact_role)?;
     let plan = if let Some(plan) = request.artifact_plan {
-        trusted_artifact_plan_for_source(plan, request.artifacts, &selected_artifacts)
+        trusted_artifact_plan_for_source(plan, request.artifacts, &selected_artifacts, artifact_role)?
     } else {
         selected_artifacts.materialize_trusted_store(request.artifact_root, &request.receipt.intent)?
     };

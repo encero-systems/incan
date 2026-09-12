@@ -1706,6 +1706,7 @@ mod tests {
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: Vec::new(),
+            entrypoint_dependency_search_paths: Default::default(),
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: Vec::new(),
             registry_sources: Vec::new(),

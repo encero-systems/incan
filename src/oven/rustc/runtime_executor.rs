@@ -789,6 +789,7 @@ pub(crate) mod tests {
                 relative_path: format!("{DEP_SOURCE_ROOT}/Cargo.toml"),
                 digest: selected_graph_sha256(dep_cargo_toml().as_bytes()),
             }],
+            entrypoint_dependency_search_paths: Default::default(),
         };
         let units = vec![
             OvenRuntimeFoundationUnit {
