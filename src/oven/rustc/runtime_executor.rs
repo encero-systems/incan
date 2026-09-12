@@ -253,28 +253,41 @@ pub(crate) fn execute_runtime_foundation_rebuild(
         }
         dependencies.sort_by(|left, right| left.alias.cmp(&right.alias));
 
-        // ---- Compile, or reuse an output already present under this compiled identity ----
+        // ---- Compile into a directory this run owns ----
+        //
+        // The executor used to skip compilation whenever `lib<crate>.rlib` already existed here. That directory is
+        // caller-owned scratch, so the check trusted whatever was in it -- a partially written file from an
+        // interrupted run, a stale artifact from a compiler that has since changed, or bytes a caller placed
+        // deliberately -- and published its digest as this identity's output. None of those is evidence that this
+        // identity was compiled. Deciding that two compilations are interchangeable is the Store's decision, made
+        // on identity; this executor's job is to produce the bytes. So the unit directory is emptied first, the
+        // compiler always runs, and `compiler_launches` counts real launches rather than scratch misses.
         let compiled_identity = source.compiled_identity.clone();
         let unit_root = output_root.join(compiled_identity.as_str().replace(':', "-"));
         let artifact = unit_root.join(format!("lib{}.rlib", unit.crate_name));
-        if !artifact.is_file() {
-            fs::create_dir_all(&unit_root).map_err(|source_error| OvenRustcError::Io {
+        if unit_root.exists() {
+            fs::remove_dir_all(&unit_root).map_err(|source_error| OvenRustcError::Io {
                 path: unit_root.clone(),
                 source: source_error,
             })?;
-            let search_paths = transitive_rebuild_search_paths(graph, foundation, &rebuilt, unit)?;
-            compile_rebuild_unit(
-                closure,
-                unit,
-                source,
-                selection,
-                materialized.artifact_plan(),
-                &search_paths,
-                &externs,
-                &artifact,
-            )?;
-            compiler_launches += 1;
         }
+        fs::create_dir_all(&unit_root).map_err(|source_error| OvenRustcError::Io {
+            path: unit_root.clone(),
+            source: source_error,
+        })?;
+        let search_paths = transitive_rebuild_search_paths(graph, foundation, &rebuilt, unit)?;
+        compile_rebuild_unit(
+            closure,
+            unit,
+            source,
+            selection,
+            materialized.artifact_plan(),
+            &search_paths,
+            &externs,
+            output_root,
+            &artifact,
+        )?;
+        compiler_launches += 1;
         let digest = digest_regular_file(&artifact, "runtime rebuild output")?;
         rebuilt.insert(
             selected_identity.to_string(),
@@ -407,6 +420,7 @@ fn compile_rebuild_unit(
     plan: &super::OvenRustcArtifactPlan,
     search_paths: &BTreeSet<PathBuf>,
     externs: &[(String, PathBuf)],
+    output_root: &Path,
     artifact: &Path,
 ) -> Result<(), OvenRustcError> {
     let mut command = Command::new(closure.rustc());
@@ -422,6 +436,31 @@ fn compile_rebuild_unit(
         .arg("-o")
         .arg(artifact);
     apply_oven_profile(&mut command, &selection.intent.profile);
+    // ---- Deterministic path remapping for reproducible unit bytes ----
+    //
+    // `rustc` folds absolute paths into what it emits, so the same unit compiled from two scratch locations
+    // produces different bytes and therefore a different closure identity. That is not hypothetical here: with the
+    // executor no longer reusing whatever sat in its output directory, the coordinate-only reuse proof only holds
+    // because these remaps make a cold root reproduce the original bytes. The legacy-Cargo publisher already
+    // applies the same discipline for the same reason; this is the direct route's half of it, and the two must not
+    // drift, which is why the rustc source remap calls the one helper rather than restating the form.
+    command.arg(format!(
+        "--remap-path-prefix={}=/incan/source",
+        source.source_root.display()
+    ));
+    command.arg(format!("--remap-path-prefix={}=/incan/target", output_root.display()));
+    // Standard-library spans leak through inlined core and alloc generics. A toolchain carrying `rust-src`
+    // resolves them to its real checkout while one without emits the virtual `/rustc/<commit>` form, so the same
+    // unit compiles differently depending on which components are installed. On a toolchain without the component
+    // the prefix never matches and the flag is inert.
+    if let Some(toolchain_root) = closure.rustc().parent().and_then(Path::parent)
+        && let Some(commit) = crate::oven::legacy_cargo::rustc_commit_hash(closure.rustc())
+    {
+        command.arg(format!(
+            "--remap-path-prefix={}=/rustc/{commit}",
+            toolchain_root.join("lib/rustlib/src/rust").display()
+        ));
+    }
     clear_inherited_cargo_environment(&mut command);
     for (name, value) in &plan.compile_environment {
         command.env(name, value);
@@ -841,7 +880,7 @@ pub(crate) mod tests {
     }
 
     /// Real `rustc` compiles the compiler-owned layer in declared order above a sealed prebuilt edge, and a second
-    /// execution reuses every unit without starting the compiler.
+    /// execution reproduces it byte for byte.
     #[test]
     fn host_native_rebuild_compiles_incan_core_then_incan_stdlib() -> Result<(), Box<dyn std::error::Error>> {
         let fixture = fixture()?;
@@ -903,14 +942,82 @@ pub(crate) mod tests {
             "the linked edge is the earlier rebuild output, recorded by compiled identity"
         );
 
-        let reused = execute_runtime_foundation_rebuild(
+        // A second execution against the same inputs compiles again and lands byte-identical outputs. That pair is
+        // the claim worth making. The earlier version asserted zero launches, which only showed that the scratch
+        // directory had survived between runs -- a statement about the filesystem, not about identity, and true
+        // even when the file there had never been compiled by this compiler. Determinism is what lets the Store
+        // decide two compilations are interchangeable; producing the bytes is this executor's job either way.
+        let rebuilt = execute_runtime_foundation_rebuild(
             &fixture.foundation,
             &fixture.materialized,
             &closure,
             output_root.path(),
         )?;
-        assert_eq!(reused.compiler_launches(), 0, "unchanged units must not recompile");
-        assert_eq!(reused.outputs(), build.outputs());
+        assert_eq!(
+            rebuilt.compiler_launches(),
+            2,
+            "a cold scratch executor compiles every unit it is asked for, every time"
+        );
+        assert_eq!(
+            rebuilt.outputs(),
+            build.outputs(),
+            "the same inputs must produce the same identities and the same bytes"
+        );
+        Ok(())
+    }
+
+    /// A file already sitting at a unit's scratch output path is never mistaken for that unit's output.
+    ///
+    /// The executor used to skip compilation whenever `lib<crate>.rlib` existed under the unit's identity
+    /// directory. That directory is caller-owned scratch, so the check trusted whatever was there: a partially
+    /// written file from an interrupted run, a stale artifact from a compiler that has since changed, or bytes a
+    /// caller placed deliberately. None of those is evidence that this identity was compiled, and treating them as
+    /// evidence is what made the old two-to-zero assertion a statement about the filesystem rather than about
+    /// identity. Reuse is the Store's decision; this executor's job is to compile.
+    #[test]
+    fn a_planted_scratch_artifact_is_never_reused() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = fixture()?;
+        let output_root = tempfile::tempdir()?;
+        let closure = OvenRuntimeCompilerClosure::new(&fixture.rustc, FIXTURE_CLOSURE);
+
+        let build = execute_runtime_foundation_rebuild(
+            &fixture.foundation,
+            &fixture.materialized,
+            &closure,
+            output_root.path(),
+        )?;
+        let core = build
+            .outputs()
+            .iter()
+            .find(|output| output.crate_name == "incan_core")
+            .ok_or("build lost incan_core")?
+            .clone();
+
+        // Bytes `rustc` did not produce, at the exact path the executor writes.
+        fs::write(&core.artifact, b"not an rlib")?;
+        let planted = digest_regular_file(&core.artifact, "planted scratch artifact")?;
+        assert_ne!(planted, core.digest, "the fixture must actually have been overwritten");
+
+        let rebuilt = execute_runtime_foundation_rebuild(
+            &fixture.foundation,
+            &fixture.materialized,
+            &closure,
+            output_root.path(),
+        )?;
+        let rebuilt_core = rebuilt
+            .outputs()
+            .iter()
+            .find(|output| output.crate_name == "incan_core")
+            .ok_or("rebuild lost incan_core")?;
+        assert_eq!(
+            rebuilt_core.digest, core.digest,
+            "the planted bytes must be replaced by a real compilation of this identity"
+        );
+        assert_eq!(
+            rebuilt.compiler_launches(),
+            2,
+            "a cold scratch executor compiles every unit it is asked for"
+        );
         Ok(())
     }
 

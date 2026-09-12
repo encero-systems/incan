@@ -556,10 +556,15 @@ mod tests {
         Ok(())
     }
 
-    /// A coordinate-only change reuses every compiled unit, launches no compiler, and selects the closure that the
-    /// earlier coordinate already published.
+    /// A coordinate-only change produces the same closure identity and selects the entry the earlier coordinate
+    /// published, from a scratch directory that has never seen it.
     ///
-    /// This is the whole reuse claim in one place: same compiler inputs, different package version, zero Rustc.
+    /// This is the whole reuse claim in one place: same compiler inputs, different package version, one Store
+    /// entry. It deliberately does *not* assert that the compiler stayed idle. The earlier version did, and its
+    /// zero came from both rebuilds sharing one output root -- the second run found the first run's files. That is
+    /// a statement about the filesystem, and it would hold just as well for bytes no compiler ever produced. The
+    /// second rebuild now runs in its own empty root, so the only thing that can carry reuse across is identity,
+    /// which is what JEC actually claims.
     #[test]
     fn coordinate_only_change_selects_the_published_closure_without_recompiling()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -592,13 +597,14 @@ mod tests {
             "a coordinate change really does produce a different selected identity"
         );
 
+        let cold_root = tempfile::tempdir()?;
         let second_build =
-            execute_runtime_foundation_rebuild(&second.foundation, &second.materialized, &closure, output_root.path())?;
+            execute_runtime_foundation_rebuild(&second.foundation, &second.materialized, &closure, cold_root.path())?;
 
         assert_eq!(
             second_build.compiler_launches(),
-            0,
-            "a coordinate-only change must launch no compiler"
+            2,
+            "a cold root compiles; reuse is the Store's decision, not the scratch directory's"
         );
         let second_payload = runtime_closure_payload(&second.foundation, &second_build)?;
         assert_eq!(
