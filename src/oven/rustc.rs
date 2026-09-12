@@ -8,7 +8,11 @@ mod artifact;
 mod compiled_unit;
 mod diagnostics;
 mod inspection;
-mod inspection_toolchain;
+// `inspection_toolchain` is deliberately not declared yet. It is the compiler/sysroot-closure-under-lease surface,
+// and the only thing on this branch that needs `rust_inspect`'s selected-projection API — which does not exist on
+// the dev line and belongs in its own change. None of Gate 6 or 7's nine review blockers touches it, so carrying an
+// undeclared module is what lets the four runtime modules they *do* touch compile.
+// mod inspection_toolchain;
 mod runtime_closure;
 mod runtime_executor;
 mod runtime_foundation;
@@ -29,7 +33,7 @@ pub(crate) use inspection::*;
     unused_imports,
     reason = "selected inspection producer wiring follows the owner contract"
 )]
-pub(crate) use inspection_toolchain::*;
+// pub(crate) use inspection_toolchain::*;
 #[allow(
     unused_imports,
     reason = "normal-build selection consumes the published runtime closure in the hot-path gate"
