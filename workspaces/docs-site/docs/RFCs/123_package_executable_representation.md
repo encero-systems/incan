@@ -205,7 +205,7 @@ Keep each selected semantic sidecar coherent with its manifest through publicati
 ### Distribution and verification
 
 - [x] Verify coherent semantic sidecar publication, copying, sealed materialization and reuse, including failed publication.
-- [ ] Surface representation version and coverage in inspection output. The Tooling layer names three things and two are delivered: the representation is published and located beside a package's other products, but no `incan inspect` surface reports its version or which declarations it covers, and a build report artifact path is not that. Tracked here so the checklist does not read as complete against the layer it lists.
+- [x] Surface representation version and coverage in inspection output. `incan inspect representation` reports the encoded version, the declared coverage of every indexed declaration with its refusal reason, and any public identity the manifest declares that the index does not mention. A package publishing none, and a version this build cannot interpret, are reported rather than refused.
 - [ ] Verify the semantic slot within the signed package archive boundary; track RFC 034's dependency explicitly until this is executable.
 - [x] Pass focused codec, compiler, package-boundary and failure regressions.
 - [ ] Complete the applicable PR integration gates for the final published head.
