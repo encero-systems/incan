@@ -5704,6 +5704,9 @@ fn explicit_bake_profiles() -> Vec<&'static str> {
     match std::env::var("INCAN_OVEN_BAKE_PROFILES").ok().as_deref().map(str::trim) {
         Some("debug") => vec!["debug"],
         Some("release") => vec!["release"],
+        // `all` is named rather than left to the catch-all because callers already write it to mean both, and a
+        // spelling the matcher does not name is one rename away from silently selecting something else.
+        Some("all") => vec!["debug", "release"],
         _ => vec!["debug", "release"],
     }
 }

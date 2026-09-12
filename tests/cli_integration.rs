@@ -3297,6 +3297,11 @@ def main() -> None:
     Ok(())
 }
 
+/// Assert the record contract every codegraph export owes a consumer, over an Incan-only fixture.
+///
+/// The language assertion is a property of *these fixtures*, which import nothing from Rust, not of the export
+/// format: RFC 106 keeps one graph across both languages and makes `language` an attribute of each fact, so a
+/// fixture that reaches a Rust item legitimately yields `"rust"` records and must not be checked with this helper.
 fn assert_codegraph_record_contract(records: &[serde_json::Value]) {
     assert!(!records.is_empty(), "codegraph export should include a header record");
     assert_eq!(records[0]["record"], serde_json::json!("header"));
@@ -3312,7 +3317,7 @@ fn assert_codegraph_record_contract(records: &[serde_json::Value]) {
         assert_eq!(
             record["language"],
             serde_json::json!("incan"),
-            "v0.5 codegraph fact records should be explicitly Incan-language facts: {record}"
+            "every fact from an Incan-only fixture should be an Incan-language fact: {record}"
         );
         assert!(
             record["provenance"].is_string(),
@@ -3330,14 +3335,6 @@ fn assert_codegraph_record_contract(records: &[serde_json::Value]) {
             assert_source_span_shape(span, record);
         }
     }
-
-    assert!(
-        records
-            .iter()
-            .skip(1)
-            .all(|record| record["language"] != serde_json::json!("rust")),
-        "v0.4 should not emit Rust codegraph facts before first-class Rust support lands"
-    );
 }
 
 fn assert_source_span_shape(span: &serde_json::Value, record: &serde_json::Value) {

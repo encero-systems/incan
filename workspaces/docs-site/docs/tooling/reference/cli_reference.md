@@ -34,7 +34,7 @@ Commands:
 
 ## Semantic inspection surfaces
 
-Incan 0.5 extends the machine-readable inspection surfaces introduced in 0.4. Use `incan check --format json` for the stable diagnostic plane, `incan build --report json` for successful build and artifact metadata (including the `backend` field described below), `incan inspect backend-selection --format json` for a persisted backend-selection execution receipt, `incan inspect rust --format json` for current generated Rust output, `incan inspect codegraph --format jsonl` for source-structure graph facts, `incan inspect providers --format json` for SDK component and provider participation, `incan inspect features --format json` for the additive package-feature graph, `incan inspect bindings --format json` for checked C declaration facts, `incan inspect bindings --format receipt` for redacted checked binding use, and `incan inspect interop-plan --format json` for one locked Oven interop platform handoff.
+Incan 0.5 extends the machine-readable inspection surfaces introduced in 0.4. Use `incan check --format json` for the stable diagnostic plane, `incan build --report json` for successful build and artifact metadata (including the `backend` field described below), `incan inspect backend-selection --format json` for a persisted backend-selection execution receipt, `incan inspect rust --format json` for current generated Rust output, `incan inspect codegraph --format jsonl` for source-structure graph facts, `incan inspect providers --format json` for SDK component and provider participation, `incan inspect features --format json` for the additive package-feature graph, `incan inspect bindings --format json` for checked C declaration facts, `incan inspect bindings --format receipt` for redacted checked binding use, `incan inspect interop-plan --format json` for one locked Oven interop platform handoff, and `incan inspect representation --format json` for a published package's executable-representation version and declaration coverage.
 
 These commands are intentionally not a single full semantic database. They are stable public surfaces that tools can join without scraping terminal prose, generated Rust, or source text independently. When a fact appears in more than one surface, consumers should prefer compiler-owned identity fields, source paths, schema versions, and explicit degraded-state or diagnostic records over human output.
 
@@ -429,6 +429,33 @@ incan inspect bindings
 incan inspect bindings src/main.incn --format json
 incan inspect bindings . --format json --features sqlite --sdk-profile minimal
 incan inspect bindings . --format receipt --target aarch64-apple-darwin
+```
+
+### `incan inspect representation`
+
+Usage:
+
+```text
+incan inspect representation [PATH] [--format text|json]
+```
+
+Reports the executable representation a package publishes beside its other products: which encoded version the representation carries, and which of the package's public declarations it covers. `PATH` defaults to the current directory and accepts a package manifest, a generated artifact root, or a project root whose artifacts sit under `target/lib`.
+
+Coverage is read from the representation's declared index, never inferred from its content, so a declaration that is covered with an empty body is reported differently from one the publisher refused to cover. Each refusal carries its stable reason: `unsupported_construct`, `private_dependency`, `unresolved_reference`, `required_declaration_unavailable`, or `no_executable_declaration`. A member that executes through its declaring type's context is reported as `type_context` alongside the owner it resolves through.
+
+The command reads the published sidecar and nothing else. It does not compile, execute, or decode declaration fragments, and it resolves no dependency.
+
+Two states are reported rather than refused, because both are legitimate answers. A package that links without publishing a representation reports `none published`; the non-linking route cannot execute it, which is exactly what the reader needs to know. A representation whose version this build cannot interpret still reports that version, because the version is the one fact an unsupported artifact can still give; its index is not read.
+
+The JSON report additionally carries each declaration's full canonical identity, a covered declaration's direct public requirements, and any public identity the manifest declares that the representation's index does not mention at all — a disagreement between the two, distinct from a declaration the publisher considered and refused.
+
+Examples:
+
+```bash
+incan inspect representation
+incan inspect representation --format json
+incan inspect representation packages/catalog --format json
+incan inspect representation target/lib/catalog.incnlib
 ```
 
 ### `incan run`

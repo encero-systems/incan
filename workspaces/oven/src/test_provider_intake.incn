@@ -1,0 +1,167 @@
+"""Companion evidence is carried from the retained authority; reconstructing it is what these tests forbid."""
+
+from std.hash import sha256
+from rust::std::str import from_utf8
+from std.testing import fail, fail_t
+from manifest_errors import IntakeError, IntakeErrorKind
+from intake import ManifestEvidence
+from rust_source import read_dependency_catalog, RustDependencyCatalog
+from rust_activation import (
+    activate_unit,
+    ActivationContext,
+    ActivationPurpose,
+    CfgSnapshot,
+    RustActivation,
+    TargetConfiguration,
+)
+from provider_intake import provider_intake_evidence, ProviderIntakeEvidence
+
+
+def require_ok[T](result: Result[T, IntakeError]) -> T:
+    """Keep fixture setup shallow while reporting the original intake diagnostic on failure."""
+    match result:
+        Ok(value) => return value
+        Err(error) => return fail_t[T](error.message())
+
+
+def manifest_bytes() -> bytes:
+    """
+    One authored manifest carrying both roles, so a build slot can be told from a normal one.
+
+    A bytes literal rather than a string, because bytes are what the authority retains: the str is derived from
+    them exactly as `parse_document` derives it, and deriving it the other way round would let the fixture agree
+    with itself for the wrong reason.
+    """
+    return b"[package]\x0aname = 'probe'\x0aversion = '0.1.0'\x0a\x0a[dependencies]\x0aserde = '1'\x0a\x0a[build-dependencies]\x0acc = { version = '1', package = 'cc' }\x0a"
+
+
+def decoded(raw: bytes) -> str:
+    """Decode the retained bytes the way the intake boundary does."""
+    match from_utf8(raw):
+        Ok(text) => return str(text)
+        Err(error) => return fail_t[str](str(error))
+
+
+def evidence_for(raw: bytes) -> ManifestEvidence:
+    """Build evidence the way a retaining caller would: exact bytes, and the digest of those bytes."""
+    return ManifestEvidence(
+        path="Cargo.toml", raw_bytes=raw, source=decoded(raw), sha256_digest=sha256.digest(raw)
+    )
+
+
+def host_context(build_unit: bool) -> ActivationContext:
+    """A concrete host and target, because activation refuses an empty triple."""
+    snapshot = CfgSnapshot(flags=[], values={})
+    unit = TargetConfiguration(triple="x86_64-unknown-linux-gnu", cfg=Some(snapshot))
+    return ActivationContext(
+        host=unit,
+        target=unit,
+        purpose=ActivationPurpose.Normal,
+        requested_features=[],
+        default_features=true,
+        build_unit_present=build_unit,
+    )
+
+
+def catalog_and_activation(raw: bytes, build_unit: bool) -> (RustDependencyCatalog, RustActivation):
+    """Read the authored catalog and activate it once, which is all the authority a producer gets."""
+    catalog = require_ok(read_dependency_catalog(decoded(raw), "Cargo.toml"))
+    activation = require_ok(activate_unit(catalog, host_context(build_unit), "Cargo.toml"))
+    return (catalog, activation)
+
+
+def produced(raw: bytes, members: list[str], build_unit: bool) -> ProviderIntakeEvidence:
+    """Run the producer over one manifest, failing the test with its refusal rather than swallowing it."""
+    catalog, activation = catalog_and_activation(raw, build_unit)
+    return require_ok(
+        provider_intake_evidence(
+            "incan-oven",
+            "packages/probe",
+            evidence_for(raw),
+            members,
+            catalog,
+            host_context(build_unit),
+            activation,
+        )
+    )
+
+
+pub def test_manifest_digest_is_the_digest_of_the_retained_bytes() -> None:
+    """
+    The evidence a unit carries must digest the bytes it also carries, not a re-read of the file.
+
+    This is the property that makes the record worth keeping: a later producer can show the thing it compiled is
+    the thing the manifest described. If the digest came from a fresh filesystem read it would agree with the
+    file and say nothing about the snapshot.
+    """
+    raw = manifest_bytes()
+    evidence = produced(raw, ["Cargo.toml", "src/lib.rs"], true)
+    if evidence.manifest.sha256_digest != sha256.digest(raw):
+        fail("the carried digest must be the digest of the carried bytes")
+    if evidence.manifest.raw_bytes != raw:
+        fail("the exact source bytes must survive into the evidence")
+
+
+pub def test_the_manifest_is_removed_from_the_member_inventory() -> None:
+    """The manifest is carried once, as evidence; leaving it in the inventory would digest it twice."""
+    evidence = produced(manifest_bytes(), ["Cargo.toml", "src/lib.rs", "build.rs"], true)
+    if "Cargo.toml" in evidence.members:
+        fail("the manifest must not appear in the member inventory")
+    if evidence.members != ["src/lib.rs", "build.rs"]:
+        fail(f"the remaining members must keep the authority's order, got {evidence.members}")
+
+
+pub def test_a_build_dependency_is_recorded_by_its_declaration_index_and_alias() -> None:
+    """
+    A build slot is named by where it was declared and what the manifest called it.
+
+    Both are properties of the authored catalog. A producer that reached for the resolved package name would
+    lose the distinction the moment a dependency is aliased, which is the case this pins.
+    """
+    evidence = produced(manifest_bytes(), ["Cargo.toml"], true)
+    if len(evidence.build_slots) != 1:
+        fail(f"exactly one build slot was declared, got {len(evidence.build_slots)}")
+    slot = evidence.build_slots[0]
+    if slot.alias != "cc":
+        fail(f"the slot keeps the authored alias, got {slot.alias}")
+    if slot.host_unit != "x86_64-unknown-linux-gnu":
+        fail(f"a build dependency activates against the context's host triple, got {slot.host_unit}")
+
+
+pub def test_build_unit_presence_is_carried_not_inferred_from_the_slots() -> None:
+    """
+    `build_unit_present` comes from the checked source-unit inventory, never from the slot list.
+
+    They are different facts and usually agree, which is the danger: a package can declare build dependencies
+    and have no build unit. This manifest declares one and the context says there is no build unit, so a
+    producer that inferred presence from the slots would disagree with the inventory here and nowhere else.
+    """
+    evidence = produced(manifest_bytes(), ["Cargo.toml", "src/lib.rs"], false)
+    if evidence.build_unit_present:
+        fail("presence must follow the inventory, not the fact that a build dependency was declared")
+    if len(evidence.build_slots) != 1:
+        fail(f"the declared build slot is still recorded, got {len(evidence.build_slots)}")
+
+
+pub def test_inconsistent_evidence_is_refused_rather_than_repaired() -> None:
+    """
+    Evidence whose digest disagrees with its own bytes is refused, not silently re-digested.
+
+    Repairing it here would be the reconstruction the gate exists to prevent: the producer would be asserting a
+    digest it computed rather than one the authority retained, and the record would prove nothing.
+    """
+    raw = manifest_bytes()
+    catalog, activation = catalog_and_activation(raw, true)
+    tampered = ManifestEvidence(
+        path="Cargo.toml",
+        raw_bytes=raw,
+        source=decoded(raw),
+        sha256_digest=sha256.digest(b"not the manifest"),
+    )
+    match provider_intake_evidence(
+        "incan-oven", "packages/probe", tampered, ["Cargo.toml"], catalog, host_context(true), activation
+    ):
+        Ok(_) => fail("evidence that disagrees with its own bytes must be refused")
+        Err(error) =>
+            if error.kind != IntakeErrorKind.Invalid:
+                fail(f"the refusal should be an Invalid intake error, got {error.kind}")

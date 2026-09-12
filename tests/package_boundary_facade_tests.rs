@@ -236,14 +236,21 @@ fn source_free_native_diamond_preserves_published_store_inventory_issue1458() ->
     write_fixture_file(
         &catalog,
         "loaf.toml",
-        "[project]\nname = \"immutable_catalog\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\nbitflags = \"=1.3.2\"\n",
+        "[project]\nname = \"immutable_catalog\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\nuuid = { version = \"1.0\", features = [\"v4\"] }\n",
     )?;
     // The named Rust dependency forces a portable project entry, rather than an empty package store whose entire
-    // native closure happens to be supplied by the compiler's release envelope.
+    // native closure happens to be supplied by the compiler's release envelope — but only while the emitted Rust
+    // actually reaches it. A dependency nothing in the generated crate calls is not in the closure, so the bake
+    // resolves the plain stdlib Loaf and packages no entry at all, and this regression's precondition quietly
+    // stops holding. `answer` therefore calls into the crate rather than merely naming it.
+    //
+    // The requirement is spelled the way `tests/fixtures/oven_loaf_dependencies/Cargo.toml` spells it, because
+    // that manifest is the locked source inventory the lane pre-fetches. An exact pin on whatever version happens
+    // to sit in a local registry forces a re-resolve the offline publisher refuses.
     write_fixture_file(
         &catalog,
         "src/lib.incn",
-        "rust.module(\"bitflags\")\n\npub def answer() -> int:\n    return 42\n",
+        "from rust::uuid import Uuid\n\npub def answer() -> int:\n    return 42\n\npub def fresh_id() -> str:\n    return Uuid.new_v4().to_string()\n",
     )?;
     write_fixture_file(
         &pricing,
