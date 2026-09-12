@@ -3646,14 +3646,60 @@ impl TypeChecker {
     /// and recorded no identity for the call. Lowering then had nothing to project with and emitted the source
     /// spelling, while the declaration was emitted under its projection. Keeping the nominal type gives the
     /// subscripted spelling the same receiver the bare `FactoryBox.make(...)` form already has.
-    fn resolve_type_index_expression(&self, base_ty: &ResolvedType, base: &Spanned<Expr>) -> Option<ResolvedType> {
-        let ResolvedType::Named(_) = base_ty else {
+    fn resolve_type_index_expression(
+        &self,
+        base_ty: &ResolvedType,
+        base: &Spanned<Expr>,
+        index: &Spanned<Expr>,
+    ) -> Option<ResolvedType> {
+        let ResolvedType::Named(name) = base_ty else {
             return None;
         };
         if !matches!(self.type_info.ident_kind(base.span), Some(IdentKind::TypeName)) {
             return None;
         }
-        Some(base_ty.clone())
+        // `Deque[str]` applies a type argument; dropping it here left the receiver generic over nothing, so a
+        // classmethod returning `Self` produced `Deque[Unknown]` and every later substitution carried the
+        // unknown forward. See #1494, where it surfaced as a string literal reaching a `String` parameter
+        // unconverted -- the literal was correct for the element type it had been given.
+        match self.type_arguments_from_index_expression(index) {
+            Some(args) if !args.is_empty() => Some(ResolvedType::Generic(name.clone(), args)),
+            _ => Some(base_ty.clone()),
+        }
+    }
+
+    /// Read one type application's arguments out of the expression the parser produced for its brackets.
+    ///
+    /// A type application and a subscript are the same syntax, so the arguments arrive as an expression rather
+    /// than as types: `Deque[str]` is an index whose index is an identifier, and `Dict[str, int]` one whose index
+    /// is a tuple. Only identifiers and nested applications are read; anything else is a genuine subscript and
+    /// returns `None` so the caller keeps its existing behaviour rather than inventing a type from a value.
+    fn type_arguments_from_index_expression(&self, index: &Spanned<Expr>) -> Option<Vec<ResolvedType>> {
+        let elements: Vec<&Spanned<Expr>> = match &index.node {
+            Expr::Tuple(items) => items.iter().collect(),
+            _ => vec![index],
+        };
+        let mut args = Vec::new();
+        for element in elements {
+            args.push(self.type_argument_from_expression(element)?);
+        }
+        Some(args)
+    }
+
+    /// Resolve one type argument spelled as an expression, including a nested application such as `list[str]`.
+    fn type_argument_from_expression(&self, expr: &Spanned<Expr>) -> Option<ResolvedType> {
+        match &expr.node {
+            Expr::Ident(name) => Some(resolve_type(&Type::Simple(name.clone()), &self.symbols)),
+            Expr::Paren(inner) => self.type_argument_from_expression(inner),
+            Expr::Index(base, index) => {
+                let Expr::Ident(name) = &base.node else {
+                    return None;
+                };
+                let args = self.type_arguments_from_index_expression(index)?;
+                Some(ResolvedType::Generic(name.clone(), args))
+            }
+            _ => None,
+        }
     }
 
     /// Return whether `ty` is the compiler-owned `std.json.JsonValue` wrapper over the raw runtime carrier.
@@ -3688,7 +3734,7 @@ impl TypeChecker {
         span: Span,
     ) -> ResolvedType {
         let base_ty = self.check_type_receiver_expr(base);
-        if let Some(ty) = self.resolve_type_index_expression(&base_ty, base) {
+        if let Some(ty) = self.resolve_type_index_expression(&base_ty, base, index) {
             return ty;
         }
         let index_ty = self.check_expr(index);
