@@ -288,13 +288,31 @@ pub(crate) fn admit_runtime_closure(
     owner: &OvenStoreExecutionPayload,
     expected: &OvenRuntimeClosurePayload,
 ) -> Result<Option<OvenSelectedRuntimeClosure>, OvenRustcError> {
+    // A different kind is not a candidate at all, so it is an absence.
     if owner.manifest.kind != OvenArtifactKind::NativeRuntimeClosure {
         return Ok(None);
     }
-    let Ok(payload) = serde_json::from_slice::<OvenRuntimeClosurePayload>(&owner.payload) else {
-        return Ok(None);
-    };
-    if payload.schema_version != OVEN_RUNTIME_CLOSURE_SCHEMA_VERSION || payload.identity()? != expected.identity()? {
+    // From here the entry *is* a candidate of this kind, and anything this build cannot read about it is a
+    // refusal rather than a miss. Both used to return `Ok(None)`, which made a corrupt or newer-than-this-build
+    // record indistinguishable from "nothing published yet" — and those two ask for opposite responses: one for a
+    // bake, the other for someone to look at the store.
+    let payload = serde_json::from_slice::<OvenRuntimeClosurePayload>(&owner.payload).map_err(|error| {
+        OvenRustcError::InvalidStoredPlan {
+            identity: owner.manifest.identity.clone(),
+            message: format!("runtime closure record cannot be decoded: {error}"),
+        }
+    })?;
+    if payload.schema_version != OVEN_RUNTIME_CLOSURE_SCHEMA_VERSION {
+        return Err(OvenRustcError::InvalidStoredPlan {
+            identity: owner.manifest.identity.clone(),
+            message: format!(
+                "runtime closure record declares unsupported schema {} (this build reads {OVEN_RUNTIME_CLOSURE_SCHEMA_VERSION})",
+                payload.schema_version
+            ),
+        });
+    }
+    // A candidate whose identity genuinely differs is the one honest absence.
+    if payload.identity()? != expected.identity()? {
         return Ok(None);
     }
     let mut artifacts = BTreeMap::new();
@@ -352,8 +370,15 @@ pub(crate) fn require_runtime_closure(
 ) -> Result<OvenSelectedRuntimeClosure, super::super::OvenError> {
     match select_runtime_closure(store, expected) {
         Ok(Some(selected)) => Ok(selected),
-        Ok(None) | Err(_) => Err(super::super::OvenError::SelectedNativePlanUnavailable {
+        // Only a clean miss becomes the ordinary "no selected native plan". An error from selection says the store
+        // holds something wrong rather than nothing, and flattening the two hid every corrupt record behind the
+        // diagnostic for an unbaked one.
+        Ok(None) => Err(super::super::OvenError::SelectedNativePlanUnavailable {
             build_unit_identity: receipt.build_unit_identity.clone(),
+        }),
+        Err(error) => Err(super::super::OvenError::SelectedNativePlanUnreadable {
+            build_unit_identity: receipt.build_unit_identity.clone(),
+            message: error.to_string(),
         }),
     }
 }
@@ -552,6 +577,53 @@ mod tests {
         assert_eq!(
             first.domain, second.domain,
             "the same compiler inputs publish into the same content-addressed domain"
+        );
+        Ok(())
+    }
+
+    /// A store record of this kind that this build cannot read is a refusal, never an ordinary miss.
+    ///
+    /// Selection turned a payload it could not decode into `Ok(None)`, and `require_runtime_closure` collapsed
+    /// every error into the same terminal "no selected native plan" as a clean miss. A corrupt or
+    /// newer-than-this-build record therefore read exactly like "nothing published yet", and the honest response
+    /// to those two is not the same: one means bake, the other means something is wrong with the store. Only a
+    /// candidate whose identity genuinely differs is an absence.
+    #[test]
+    fn an_unreadable_closure_record_refuses_rather_than_reading_as_a_miss() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = fixture()?;
+        let output_root = tempfile::tempdir()?;
+        let store_root = tempfile::tempdir()?;
+        let closure = OvenRuntimeCompilerClosure::new(&fixture.rustc, FIXTURE_CLOSURE);
+        let store = OvenStore::new(
+            store_root.path(),
+            OvenStoreLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024),
+        );
+        let build = execute_runtime_foundation_rebuild(
+            &fixture.foundation,
+            &fixture.materialized,
+            &closure,
+            output_root.path(),
+        )?;
+        let expected = runtime_closure_payload(&fixture.foundation, &build)?;
+        let intent = &fixture.foundation.selected_graph().graph().selection.intent;
+        let receipt = publication_receipt("fixture_project", "0.1.0", &intent.target, &intent.toolchain)?;
+
+        // A record this build cannot read, published under the kind and domain selection searches. The store's own
+        // digest check passes, because the publisher wrote these bytes; the shape is what this build cannot use.
+        store.publish(&OvenArtifactPublishRequest {
+            receipt,
+            domain: expected.domain()?,
+            kind: OvenArtifactKind::NativeRuntimeClosure,
+            payload: br#"{"schema_version":9999}"#.to_vec(),
+            materialized_files: Vec::new(),
+        })?;
+
+        let error = select_runtime_closure(&store, &expected)
+            .err()
+            .ok_or("an unreadable record of this kind must not read as a clean miss")?;
+        assert!(
+            error.to_string().contains("runtime closure"),
+            "the refusal must name what it could not read: {error}"
         );
         Ok(())
     }

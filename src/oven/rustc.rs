@@ -8,11 +8,10 @@ mod artifact;
 mod compiled_unit;
 mod diagnostics;
 mod inspection;
-// `inspection_toolchain` is deliberately not declared yet. It is the compiler/sysroot-closure-under-lease surface,
-// and the only thing on this branch that needs `rust_inspect`'s selected-projection API — which does not exist on
-// the dev line and belongs in its own change. None of Gate 6 or 7's nine review blockers touches it, so carrying an
-// undeclared module is what lets the four runtime modules they *do* touch compile.
-// mod inspection_toolchain;
+// `inspection_toolchain` is deliberately absent. It is the compiler/sysroot-closure-under-lease surface, and the
+// only thing here that needed `rust_inspect`'s selected-projection API — which does not exist on the dev line and
+// belongs in its own change alongside that port. None of Gate 6 or 7's nine review blockers touches it, so leaving
+// it out is what lets the four runtime modules they *do* touch compile. It is retained on `work/oven-hot-path`.
 mod runtime_closure;
 mod runtime_executor;
 mod runtime_foundation;
@@ -1297,32 +1296,39 @@ pub(crate) enum OvenDirectRustcCompilerRetention {
 }
 
 impl OvenDirectRustcCompilerEvidence {
+    /// Content digest of the `rustc` binary itself, separate from the closure around it.
     pub(crate) fn binary_digest(&self) -> &str {
         &self.binary_digest
     }
 
+    /// Digest over every member of the compiler closure, which is what makes two installations comparable.
     pub(crate) fn closure_digest(&self) -> &str {
         &self.closure_digest
     }
 
+    /// Triple the retained compiler runs on, as opposed to the one it emits for.
     pub(crate) fn host(&self) -> &str {
         &self.host
     }
 
+    /// Triple the retained compiler emits for, as opposed to the one it runs on.
     pub(crate) fn target(&self) -> &str {
         &self.target
     }
 }
 
 impl OvenOwnedDirectRustcCompiler {
+    /// Path to the store-owned `rustc`, valid only while this closure holds its lease.
     pub(crate) fn rustc(&self) -> &Path {
         &self.rustc
     }
 
+    /// Borrow the admitted identity of this retained closure, without exposing the lease that holds it.
     pub(crate) fn evidence(&self) -> &OvenDirectRustcCompilerEvidence {
         &self.evidence
     }
 
+    /// Toolchain identity the closure was admitted under, as the receipt records it.
     pub(crate) fn toolchain(&self) -> &str {
         &self._owner.manifest.intent.toolchain
     }
@@ -4760,54 +4766,67 @@ pub(crate) fn prepare_trusted_direct_rustc_library_with_artifact_role(
 }
 
 impl OvenPreparedDirectRustcLibrary {
+    /// Canonical `rustc` this preparation will launch.
     pub(crate) fn rustc(&self) -> &Path {
         &self.rustc
     }
 
+    /// Admitted compiler identity, absent when this preparation runs without a retained closure.
     pub(crate) fn compiler(&self) -> Option<&OvenDirectRustcCompilerEvidence> {
         self.compiler.as_ref()
     }
 
+    /// Root module this library compiles, already resolved and digest-checked.
     pub(crate) fn source(&self) -> &Path {
         &self.source
     }
 
+    /// Admitted source tree the root module sits in; nothing outside it may reach the compiler.
     pub(crate) fn source_root(&self) -> &Path {
         &self.source_root
     }
 
+    /// Digest of that source tree as it was admitted, so a later step can prove it did not move underneath.
     pub(crate) fn source_digest(&self) -> &str {
         &self.source_digest
     }
 
+    /// Sealed artifact manifest this preparation links against.
     pub(crate) fn selected_artifacts(&self) -> &OvenRustcArtifactManifest {
         &self.selected_artifacts
     }
 
+    /// Store-owned root the sealed artifacts were materialized under.
     pub(crate) fn artifact_root(&self) -> &Path {
         &self.artifact_root
     }
 
+    /// Verified compiler inputs — search paths, externs and environment — from the sealed plan.
     pub(crate) fn artifact_plan(&self) -> &OvenRustcArtifactPlan {
         &self.plan
     }
 
+    /// Target triple from the receipt this preparation was bound to.
     pub(crate) fn target(&self) -> &str {
         &self.target
     }
 
+    /// Named build profile, which decides the codegen flags rather than carrying them.
     pub(crate) fn profile(&self) -> &str {
         &self.profile
     }
 
+    /// Crate name the compiler is told, which is a declared fact rather than one inferred from a path.
     pub(crate) fn crate_name(&self) -> &str {
         &self.crate_name
     }
 
+    /// Rust edition this library is compiled under.
     pub(crate) fn edition(&self) -> &str {
         &self.edition
     }
 
+    /// Resolved feature set, already unified; this is not the declared request.
     pub(crate) fn features(&self) -> &[String] {
         &self.features
     }
@@ -4939,6 +4958,12 @@ impl OvenPreparedDirectRustcLibrary {
         })
     }
 
+    /// Re-check the compiler and sources against what was admitted, immediately before launching.
+    ///
+    /// Preparation validated them once; this runs again at use because nothing holds the filesystem still in
+    /// between. The check is skipped when a store-retained closure owns the compiler, because its lease already
+    /// does hold it, and re-digesting a multi-hundred-megabyte closure per invocation is the cost that lease
+    /// exists to avoid.
     fn verify_current_inputs(&self) -> Result<(), OvenRustcError> {
         if self.compiler_owner.is_none() {
             let compiler = digest_regular_file(&self.rustc, "rustc")?;
@@ -4972,6 +4997,10 @@ impl OvenPreparedDirectRustcLibrary {
         Ok(())
     }
 
+    /// Refuse logical bindings that could not describe this compilation on another machine.
+    ///
+    /// The bindings are what make a recorded invocation comparable across hosts, so an empty or non-logical one is
+    /// rejected here rather than producing a record that looks portable and is not.
     fn validate_bindings(&self, bindings: &OvenDirectRustcJecBindings) -> Result<(), OvenRustcError> {
         let invalid = |message: &str| OvenRustcError::InvalidInput {
             field: "JEC logical bindings",
@@ -4999,14 +5028,17 @@ impl OvenPreparedDirectRustcLibrary {
 }
 
 impl OvenBoundDirectRustcLibrary<'_> {
+    /// Path the compilation wrote, owned by the caller that asked for it.
     pub(crate) fn output(&self) -> &Path {
         &self.output
     }
 
+    /// Compiler invocations as location-independent argument vectors, for comparison across machines.
     pub(crate) fn logical_arguments(&self) -> &[Vec<String>] {
         &self.logical_arguments
     }
 
+    /// Digest of the observed path effects, absent when the compilation ran without observation.
     pub(crate) fn path_effects_digest(&self) -> Option<&str> {
         self.path_effects_digest.as_deref()
     }
@@ -5088,6 +5120,10 @@ impl OvenBoundDirectRustcLibrary<'_> {
         self.compile_with_observation(false)
     }
 
+    /// Run the prepared invocation, optionally recording the paths it touched.
+    ///
+    /// `observe` is a parameter rather than two functions because the compile is identical either way; only
+    /// whether the effects are captured differs, and forking the launch would let the two drift.
     fn compile_with_observation(&self, observe: bool) -> Result<OvenDirectRustcJecCompilation, OvenRustcError> {
         self.prepared.verify_current_inputs()?;
         let mut command = Command::new(&self.prepared.rustc);
@@ -5806,6 +5842,10 @@ fn freeze_direct_rustc_environment(
     Some(compile_environment.clone())
 }
 
+/// Whether one inherited environment variable must be cleared before launching `rustc`.
+///
+/// Anything Cargo sets, plus the wrapper and flag variables, changes what the compiler does without appearing in
+/// the recorded invocation. Leaving one set would make an identity describe a compilation that did not happen.
 fn direct_rustc_excludes_inherited_environment(name: &OsStr) -> bool {
     name == "CARGO"
         || name.to_string_lossy().starts_with("CARGO_")
@@ -6263,6 +6303,10 @@ pub(crate) fn direct_rustc_compiler_evidence(
     })
 }
 
+/// Digest one compiler closure from its members' logical coordinates and byte identities.
+///
+/// The schema tag is folded in so a later change to what a closure contains cannot silently collide with an
+/// identity minted under the old shape.
 fn direct_rustc_compiler_closure_digest(members: &BTreeMap<String, String>) -> Result<String, OvenRustcError> {
     let material = serde_json::to_vec(&("incan.oven.rustc-rlib-closure/1", members)).map_err(|error| {
         OvenRustcError::InvalidInput {
@@ -6273,6 +6317,10 @@ fn direct_rustc_compiler_closure_digest(members: &BTreeMap<String, String>) -> R
     Ok(digest_bytes(&material))
 }
 
+/// Derive the store compatibility domain one compiler closure is published into.
+///
+/// Keying the domain on the closure digest is what keeps two installations of the same toolchain version from
+/// sharing an entry when their closures actually differ.
 fn direct_rustc_compiler_domain(closure_digest: &str) -> Result<String, OvenRustcError> {
     let Some(hex) = closure_digest.strip_prefix("sha256:") else {
         return Err(OvenRustcError::InvalidInput {
@@ -6473,6 +6521,11 @@ fn matching_direct_rustc_compiler_owner_payload(
     Some(payload)
 }
 
+/// Admit one retained store entry as this batch's compiler, or say why it cannot serve.
+///
+/// The entry's recorded host, target and toolchain must match the request, and where the caller already holds
+/// expected evidence it must match that too. A mismatch is reported as unavailability rather than as an error:
+/// the caller can still compile through its own admitted compiler, it just loses byte-identical reuse.
 fn admit_direct_rustc_compiler_owner(
     owner: OvenStoreExecutionPayload,
     target: &str,
@@ -6548,6 +6601,11 @@ fn admit_direct_rustc_compiler_owner(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Walk one directory of the compiler installation into logical members, bounded by count and bytes.
+///
+/// The bounds are the point: this reads a directory the caller named, and an unbounded walk of a sysroot would
+/// admit an arbitrary amount of material into an identity. `logical_root` keeps each member's coordinate
+/// independent of where the installation happens to live.
 fn collect_compiler_closure_directory(
     root: &Path,
     logical_root: &str,
@@ -6597,6 +6655,7 @@ fn collect_compiler_closure_directory(
     Ok(())
 }
 
+/// Admit one compiler-closure file under its logical coordinate, enforcing the member and byte bounds.
 fn collect_compiler_closure_file(
     path: &Path,
     logical: String,
