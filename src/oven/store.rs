@@ -1978,8 +1978,13 @@ fn verify_published_entry_coordinate(root: &Path, manifest: &OvenArtifactManifes
     Ok(())
 }
 
-/// Read one immutable manifest only from its authenticated published coordinate.
-fn verify_published_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreError> {
+/// Read one immutable manifest from its authenticated published coordinate, without the identity recheck.
+///
+/// Everything here is cheap and every bit of it still runs for every entry: the entry root's shape, the manifest
+/// being a regular file rather than a symlink, the schema version, and the coordinate check that binds the
+/// directory name to the identity the manifest records. What is left out is only the proof that the content
+/// hashes to that identity, which `verify_published_entry_manifest` adds.
+fn read_published_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreError> {
     verify_store_entry_root(root)?;
     let manifest_path = manifest_path_for_entry(root);
     let metadata = fs::symlink_metadata(&manifest_path).map_err(|source| OvenStoreError::Io {
@@ -1992,8 +1997,15 @@ fn verify_published_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, 
             message: "store entry manifest must be a regular non-symlink file".to_string(),
         });
     }
-    let manifest = verify_entry_manifest(root)?;
+    let manifest = read_entry_manifest(root)?;
     verify_published_entry_coordinate(root, &manifest)?;
+    Ok(manifest)
+}
+
+/// Read one immutable manifest only from its authenticated published coordinate.
+fn verify_published_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreError> {
+    let manifest = read_published_entry_manifest(root)?;
+    verify_manifest_identity(&manifest)?;
     Ok(manifest)
 }
 
@@ -2110,10 +2122,21 @@ where
             });
         }
         let path = canonical_published_entry_root(&path)?;
-        let manifest = verify_published_entry_manifest(&path)?;
+        // Read every candidate, but prove only the ones this selection actually takes. Enumerating a store means
+        // touching every entry in it — 519 in one measured store, and the largest manifests carry close to four
+        // thousand materialized-file records each — while a selection usually wants a handful. Recomputing every
+        // enumerated entry's identity to answer a question that only reads its fields was most of the cost of a
+        // bake that compiles nothing.
+        //
+        // Nothing that gets used goes unproven. An entry that does not match is never executed, and one that does
+        // is verified here before its payload is read, so a tampered manifest cannot reach execution by matching.
+        // The cheap structural checks — entry root shape, regular non-symlink manifest, schema version, and the
+        // coordinate binding the directory name to the recorded identity — still run for every entry enumerated.
+        let manifest = read_published_entry_manifest(&path)?;
         if !matches(&manifest) {
             continue;
         }
+        verify_manifest_identity(&manifest)?;
         let payload = verified_payload_bytes(&path, &manifest)?;
         let lease = acquire_execution_lease(&path, false)?;
         selected.push((
@@ -2495,8 +2518,13 @@ fn verify_entry(root: &Path) -> Result<OvenStoreEntry, OvenStoreError> {
     })
 }
 
-/// Verify immutable manifest structure and identity without traversing the materialized compiler closure.
-fn verify_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreError> {
+/// Read one entry manifest and check its structure, without recomputing the identity its content implies.
+///
+/// Reading and identity-checking are separated because they are needed at different moments. A caller deciding
+/// *whether* it wants an entry needs the manifest's fields; only a caller about to use one needs proof that those
+/// fields hash to the identity the entry is filed under. `verify_entry_manifest` still does both, so every path
+/// that authenticated an entry before still authenticates it now.
+fn read_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreError> {
     let manifest_path = manifest_path_for_entry(root);
     let content = fs::read(&manifest_path).map_err(|source| OvenStoreError::Io {
         path: manifest_path.clone(),
@@ -2513,13 +2541,29 @@ fn verify_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreE
             message: format!("unsupported store schema {}", manifest.schema_version),
         });
     }
-    let identity = artifact_identity_from_manifest(&manifest)?;
+    Ok(manifest)
+}
+
+/// Prove that a manifest's content hashes to the identity it records.
+///
+/// This is the expensive half of verification: it re-serializes the identity-bearing content, which for a Loaf
+/// carrying several thousand materialized files is most of a megabyte. Call it for an entry that is about to be
+/// used, not for every entry that happens to be enumerated on the way there.
+fn verify_manifest_identity(manifest: &OvenArtifactManifest) -> Result<(), OvenStoreError> {
+    let identity = artifact_identity_from_manifest(manifest)?;
     if identity != manifest.identity {
         return Err(OvenStoreError::Integrity {
-            identity: manifest.identity,
+            identity: manifest.identity.clone(),
             message: "manifest identity does not match its immutable content".to_string(),
         });
     }
+    Ok(())
+}
+
+/// Verify immutable manifest structure and identity without traversing the materialized compiler closure.
+fn verify_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreError> {
+    let manifest = read_entry_manifest(root)?;
+    verify_manifest_identity(&manifest)?;
     Ok(manifest)
 }
 
@@ -3954,6 +3998,42 @@ mod tests {
             assert!(matches!(result, Err(OvenStoreError::Integrity { .. })));
             assert_eq!(published_inventory(temp.path())?, before);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn a_tampered_manifest_is_refused_when_it_is_selected_and_ignored_when_it_is_not()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // Identity is proven for the entries a selection takes, not for every entry it walks past. The property
+        // that has to survive is that nothing reaches execution unproven: a tampered manifest that matches the
+        // selector must still be refused, and it must be refused before its payload is read.
+        let temp = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let wanted = store.publish(&request(project.path(), "wanted", b"wanted payload")?)?;
+        let other = store.publish(&request(project.path(), "other-domain", b"other payload")?)?;
+
+        // Publication seals the manifest read-only; replacing this test-owned entry models external corruption.
+        // The recorded identity stays put so the entry still matches its directory coordinate, and only the
+        // content that identity is derived from moves.
+        let manifest_path = super::manifest_path_for_entry(&store.entry_root(&other.identity));
+        let tampered = fs::read_to_string(&manifest_path)?.replace("\"other-domain\"", "\"switched-domain\"");
+        fs::remove_file(&manifest_path)?;
+        fs::write(&manifest_path, tampered)?;
+
+        // A selection that does not want the tampered entry still succeeds, and returns only what it asked for.
+        let untouched = super::PublishedOvenStore::new(temp.path())
+            .select_payloads_matching_for_execution(|manifest| manifest.identity == wanted.identity)?;
+        assert_eq!(untouched.len(), 1);
+        assert_eq!(untouched[0].admitted_identity, wanted.identity);
+
+        // A selection that does want it is refused.
+        let refused = super::PublishedOvenStore::new(temp.path()).select_payloads_matching_for_execution(|_| true);
+        assert!(
+            matches!(refused, Err(OvenStoreError::Integrity { .. })),
+            "a tampered manifest must be refused once the selection takes it"
+        );
         Ok(())
     }
 
