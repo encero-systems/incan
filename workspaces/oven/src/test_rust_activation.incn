@@ -275,7 +275,7 @@ pub def test_inactive_invalid_version_and_malformed_cfg_refuse() -> None:
 
 
 pub def test_duplicate_requests_and_shared_feature_paths_keep_sorted_demands() -> None:
-    """Duplicate queue arrivals and roots produce one sorted demand without mutating authored features."""
+    """Duplicate queue arrivals and roots produce one sorted demand, and activation leaves the catalog alone."""
     source = "\n    [dependencies]\n    cache={version='1', optional=true, features=['base','base'], default-features=false}\n    [features]\n    default=['right','left','right']\n    left=['dep:cache','leaf','cache?/serde','cache?/serde']\n    right=['leaf','left']\n    leaf=[]\n    "
     catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
     for requested in [["right", "left", "right"], ["left", "right"]]:
@@ -291,4 +291,6 @@ pub def test_duplicate_requests_and_shared_feature_paths_keep_sorted_demands() -
                 assert not defaults
                 assert domain == DependencyDomain.Target
             _ => fail("duplicate feature paths lost the active optional dependency")
-        assert catalog.dependencies[0].features == ["base", "base"]
+        # Intake already collapsed the authored `['base','base']` into one sorted demand. Re-reading it after each
+        # activation proves activation does not fold `cache?/serde` back into the declaration it was resolved from.
+        assert catalog.dependencies[0].features == ["base"]

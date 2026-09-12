@@ -8,3 +8,4 @@ pub from source_unit import select_source_units, SourceBatch, BatchSelection
 pub from rust_source import read_dependency_catalog
 pub from rust_activation import activate_unit, version_matches
 pub from invocation import decide_invocation
+pub from provider_intake import provider_intake_evidence, ProviderIntakeEvidence, SelectedBuildSlot

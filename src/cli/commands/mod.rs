@@ -30,6 +30,7 @@ pub mod lifecycle;
 pub mod lock;
 pub mod oven;
 pub mod provider_inspect;
+pub mod representation_inspect;
 pub(crate) mod shadow_support;
 pub mod stdlib_loader;
 pub mod tools;
@@ -61,6 +62,7 @@ pub use oven::{
     oven_publish_direct_rustc_plan, oven_run, oven_run_compiler_libtests, oven_test, prune_oven_store,
 };
 pub use provider_inspect::{ProviderInspectionFormat, inspect_features, inspect_providers};
+pub use representation_inspect::{RepresentationInspectionFormat, inspect_representation};
 pub use shadow_support::compare_source_observable;
 pub use tools::{
     ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat, tools_doctor, tools_metadata_api,

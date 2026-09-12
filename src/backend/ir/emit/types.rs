@@ -646,10 +646,15 @@ mod tests {
         let registry = FunctionRegistry::new();
         let mut emitter = IrEmitter::new(&registry);
         emitter.set_qualify_union_types_from_crate(true);
+        // A prelude constructor is unqualified on both sides, so it names the same registry spelling twice.
+        let bare_none = incan_core::lang::surface::constructors::as_str(
+            incan_core::lang::surface::constructors::ConstructorId::None,
+        )
+        .to_string();
         for (variant, expected) in [
             ("__IncanUnion123::V0", "crate :: __IncanUnion123 :: V0"),
             ("Shape::Circle", "Shape :: Circle"),
-            ("None", "None"),
+            (bare_none.as_str(), bare_none.as_str()),
         ] {
             let pattern = Pattern::Enum {
                 name: String::new(),
