@@ -87,6 +87,12 @@ pub enum OvenArtifactKind {
     ProjectPayload,
     /// Completed project-native output selected before frontend work on an exact authored-source match.
     ProjectOutput,
+    /// One immutable JEC result and its compiler-produced logical dependency observation.
+    NativeCompilationOutput,
+    /// One immutable compiler/sysroot closure selected under lease for JEC lookup and execution.
+    NativeCompilerClosure,
+    /// Compiler-bound Rust source, cfg, and target facts selected under lease for semantic inspection.
+    RustInspectionToolchain,
     /// Project-level Rust inspection authority selected only through a source-current completed project output.
     ProjectInspectionAuthority,
     /// Verified direct-rustc artifact plan consumed by a later executor stage.
@@ -95,6 +101,8 @@ pub enum OvenArtifactKind {
     CompilerTestSuite,
     /// One independently admitted direct-rustc compiler-suite shard referenced by a small suite index.
     CompilerTestSuiteShard,
+    /// One immutable Cargo-free runtime closure rebuilt above a sealed SDK runtime foundation.
+    NativeRuntimeClosure,
     /// One bounded compiler-test dependency foundation composed by receipt-bound root shards.
     CompilerTestSuiteFoundation,
     /// One independently policy-bounded compiler-Loaf data partition required by a stored suite child.
