@@ -525,10 +525,28 @@ impl ProviderPlan {
             });
             Ok(ty)
         };
-        let requested = normalize(native)?;
         let mut matched = None;
         for candidate in candidates {
-            if normalize(&candidate)? == requested {
+            // Both sides are captures of one producer's wrapper, and each carries only the nominal bindings the
+            // module it was captured in could see. The published record is captured from every module that
+            // mentions the wrapper; the requested side comes from one declaration's type, and a module that
+            // accepts the union in a signature without declaring its payload models contributes no bindings at
+            // all. Comparing them as they stand compares how much each module happened to know.
+            //
+            // So complete the requested view from the published record before comparing, filling only bindings it
+            // does not already carry: a spelling it binds differently still disagrees and still fails to match,
+            // and every filled binding is validated against the owner's public surface by
+            // `bind_native_union_local_nominals` exactly as the candidate's own are. What the comparison is left
+            // deciding is the wrapper's representation — its owner, and its payload members in producer order,
+            // which is what consumers index the emitted `V0`, `V1`, ... variants by.
+            let mut completed = native.clone();
+            for (spelling, canonical) in &candidate.local_nominals {
+                completed
+                    .local_nominals
+                    .entry(spelling.clone())
+                    .or_insert_with(|| canonical.clone());
+            }
+            if normalize(&candidate)? == normalize(&completed)? {
                 matched = Some(candidate);
                 break;
             }
