@@ -998,7 +998,8 @@ mod tests {
     };
 
     #[test]
-    fn stdlib_import_through_a_facade_finds_the_provider_by_the_declaring_module() {
+    fn stdlib_import_through_a_facade_finds_the_provider_by_the_declaring_module()
+    -> Result<(), Box<dyn std::error::Error>> {
         // A provider publishes the module that declares an item, not every facade re-exporting it. `from std.datetime
         // import utc` looks up `std.datetime.utc`, which the graph does not carry; the declaration lives at
         // `std.datetime.civil.naive.utc`, which it does.
@@ -1036,7 +1037,7 @@ mod tests {
 
         let registry = FunctionRegistry::new();
         let mut emitter = IrEmitter::new(&registry);
-        emitter.seed_sdk_provider_manifest_metadata(&manifest);
+        emitter.seed_sdk_provider_manifest_metadata(&manifest, None, None)?;
 
         // Import resolution proved the declaring module even though the facade path is not published.
         let item = IrImportItem {
@@ -1065,10 +1066,12 @@ mod tests {
             encode_incan_symbol_identity(&provider_identity),
             "a facade import must resolve to the provider's declaration, not a source-shaped stand-in"
         );
+        Ok(())
     }
 
     #[test]
-    fn stdlib_import_reexports_the_providers_identity_over_a_same_named_source_declaration() {
+    fn stdlib_import_reexports_the_providers_identity_over_a_same_named_source_declaration()
+    -> Result<(), Box<dyn std::error::Error>> {
         let provider_identity = CanonicalSymbolId {
             namespace: SymbolNamespace::OrdinaryLexical,
             origin: SymbolOrigin::Package {
@@ -1121,7 +1124,7 @@ mod tests {
         );
 
         let mut emitter = IrEmitter::new(&registry);
-        emitter.seed_sdk_provider_manifest_metadata(&manifest);
+        emitter.seed_sdk_provider_manifest_metadata(&manifest, None, None)?;
 
         let item = IrImportItem {
             name: "utc".to_string(),
@@ -1140,6 +1143,7 @@ mod tests {
             encode_incan_symbol_identity(&provider_identity),
             "a stdlib re-export must name the linked provider's declaration, not a same-named source one"
         );
+        Ok(())
     }
 
     #[test]
