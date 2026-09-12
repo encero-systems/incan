@@ -1,9 +1,9 @@
-//! A local function called from inside a lambda must emit the identity it emits anywhere else.
+//! A local function called from inside a closure must emit the identity it emits anywhere else.
 //!
 //! See #1492. The trigger is narrower than the issue states, and the narrow case is the one with no coverage: it
-//! is not lambdas generally, and it is not emission. A lambda bound to a local, passed to a stdlib combinator,
+//! is not closures generally, and it is not emission. A closure bound to a local, passed to a stdlib combinator,
 //! capturing an enclosing binding, or passed to a user-defined method taking a `Callable` all resolve correctly.
-//! The callee's canonical path only goes missing when the lambda is an argument to a **Rust-interop** method,
+//! The callee's canonical path only goes missing when the closure is an argument to a **Rust-interop** method,
 //! which is a different lowering path.
 //!
 //! The emitter is not at fault. `emit_call_expr` takes the canonical-path branch whenever the fact is present and
@@ -30,14 +30,14 @@ fn generated(source: &str) -> Result<String, Box<dyn std::error::Error>> {
         .map_err(|error| std::io::Error::other(format!("generation failed: {error}")).into())
 }
 
-/// A lambda argument to a Rust-interop method keeps its callee's resolved identity.
+/// A closure argument to a Rust-interop method keeps its callee's resolved identity.
 ///
 /// Asserted as agreement between two call sites in one function rather than against a literal mangled string,
 /// which would make this a change detector for RFC 120's projection format. What must hold is that the direct
-/// call and the call inside the lambda name the same thing: the bare spelling is not declared anywhere in the
+/// call and the call inside the closure name the same thing: the bare spelling is not declared anywhere in the
 /// generated Rust, so emitting it does not merely look wrong, it fails to compile.
 #[test]
-fn a_lambda_argument_to_a_rust_method_keeps_its_callee_identity_issue1492() -> Result<(), Box<dyn std::error::Error>> {
+fn a_closure_argument_to_a_rust_method_keeps_its_callee_identity_issue1492() -> Result<(), Box<dyn std::error::Error>> {
     let source = concat!(
         "from rust::std::option import Option as RustOption\n",
         "\n",
@@ -72,7 +72,7 @@ fn a_lambda_argument_to_a_rust_method_keeps_its_callee_identity_issue1492() -> R
 /// canonical path onto every call inside every closure — would also reach them, and a regression here would
 /// otherwise be invisible.
 #[test]
-fn lambda_shapes_that_already_resolved_are_unchanged_issue1492() -> Result<(), Box<dyn std::error::Error>> {
+fn closure_shapes_that_already_resolved_are_unchanged_issue1492() -> Result<(), Box<dyn std::error::Error>> {
     let cases = [
         (
             "bound to a local",
