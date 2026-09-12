@@ -70,7 +70,7 @@ use super::native_contract::{
     OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION, OvenProjectExtensionPayload, OvenProjectRegistrySourceDependency,
 };
 use super::process::{isolate_process_group, terminate_process_group};
-use super::{OVEN_COMPILER_TEST_PROFILE, OvenBuildIntent, OvenReceipt, digest_bytes};
+use super::{OVEN_COMPILER_TEST_PROFILE, OvenBuildIntent, OvenReceipt, digest_bytes, digest_source_tree};
 use crate::manifest::{DependencySource, DependencySpec};
 use crate::oven::store::{
     OvenArtifactKind, OvenArtifactManifest, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore,
@@ -648,7 +648,6 @@ struct ResolvedSealedRegistryLeaf {
 }
 
 /// Resolve one registry dependency from the selected Loaf's sealed catalog.
-#[cfg(test)]
 fn resolve_sealed_registry_leaf(
     dependency: &DependencySpec,
     authority: Option<&OvenRegistryLeafAuthority>,
@@ -2061,11 +2060,11 @@ fn validate_project_extension_payload_shape(
     payload.complete_plan.validate_shape(intent)?;
     validate_project_registry_source_dependencies(
         &payload.registry_source_dependencies,
-        &payload.complete_plan.registry_sources,
+        payload.complete_plan.registry_sources.as_slice(),
     )?;
     validate_project_registry_source_dependencies(
         &payload.dev_registry_source_dependencies,
-        &payload.complete_plan.registry_sources,
+        payload.complete_plan.registry_sources.as_slice(),
     )?;
     let declared = payload.complete_plan.declared_artifact_paths()?;
     let mut prior = None::<String>;
