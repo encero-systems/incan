@@ -79,6 +79,15 @@ pub def evaluate(source: str) -> JsonValue:
 pub def decode_request(source: str) -> Result[SelectionRequest, SelectionError]:
     """Decode every required wire field; model defaults never supply omitted protocol intent."""
     document = parse(source).map_err((_) => SelectionError(kind=SelectionErrorKind.InvalidInput, fields=[]))?
+    # An unsupported version is refused before the envelope's shape is read. Every other field's meaning is
+    # version-specific, so a document from a sibling schema — a native-compilation request reaching the shared
+    # dispatcher, say — must be refused on `schema` and not on whichever keys that other schema happens to carry.
+    # This peeks rather than decodes, so a document that is not an object, or whose `schema` is not a string, still
+    # falls through to the checks below that own those faults.
+    if let Some(declared) = document.get("schema"):
+        if let Some(declared_name) = declared.as_str():
+            if declared_name != SCHEMA and declared_name != SCHEMA_V2:
+                return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=["schema"]))
     exact_object(document, ["schema", "request"], [])?
     schema = text_field(document, "schema", [])?
     if schema != SCHEMA and schema != SCHEMA_V2:
