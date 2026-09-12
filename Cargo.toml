@@ -51,7 +51,7 @@ readme.workspace = true
 
 [features]
 default = ["cli", "std_testing", "std_async", "std_decorators"]
-cli = ["dep:clap", "dep:tracing-subscriber", "rust_inspect"]
+cli = ["dep:clap", "dep:tracing-subscriber", "dep:tempfile", "rust_inspect"]
 lsp = ["dep:tower-lsp", "dep:tokio"]
 std_testing = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_testing"]
 std_async = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_async"]
@@ -81,6 +81,9 @@ serde_json = "1.0"
 
 # CLI parsing with typed subcommands
 clap = { version = "4.4", features = ["derive"], optional = true }
+# Already a dev-dependency below. The direct-rustc reuse path publishes a verified copy of a retained output through
+# a uniquely named sibling, so it needs the same crate at runtime under `cli`.
+tempfile = { version = "3", optional = true }
 # Composable error types
 thiserror = "2.0"
 # Rich error diagnostics with source context
