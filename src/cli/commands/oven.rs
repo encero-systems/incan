@@ -5389,6 +5389,18 @@ pub fn inspect_oven_store(options: OvenStoreCommandOptions, format: OvenOutputFo
                     human_bytes(entry.logical_bytes),
                     human_bytes(entry.physical_bytes),
                 );
+                // Reuse hands a consumer bytes some other invocation produced. The manifest names that receipt;
+                // the retained record says what it actually was, and `--format json` carries the whole thing.
+                if let Some(receipt) = entry.original_native_receipt.as_ref() {
+                    println!(
+                        "      produced by receipt {} for build unit {} ({} {} {})",
+                        receipt.identity,
+                        receipt.build_unit_identity,
+                        receipt.intent.target,
+                        receipt.intent.profile,
+                        receipt.intent.toolchain,
+                    );
+                }
             }
         }
         OvenOutputFormat::Json => print_json(&inspection)?,
