@@ -107,6 +107,11 @@ fn nested_list_all_empty_leaves_remain_unknown() -> TestResult {
 }
 
 /// Existing checked lowering must carry the inferred leaf into owned-string collection emission.
+///
+/// The empty leaf is asserted as `Vec::<String>::new()` rather than as a bare `vec![]`. #1493 gave an empty list
+/// literal its element type, because as a comparison operand nothing else supplies one and `rustc` reported an
+/// ambiguous `PartialEq`. That strengthened exactly the property this test is here for -- the first empty list must
+/// not erase the later string element type -- so the assertion follows it rather than pinning the older spelling.
 #[test]
 fn nested_list_loop_emits_owned_strings_without_caller_annotation() -> TestResult {
     let source = include_str!("fixtures/nested_list_loop_1471.incn");
@@ -114,7 +119,10 @@ fn nested_list_loop_emits_owned_strings_without_caller_annotation() -> TestResul
     let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let rust = IrCodegen::new().try_generate(&program)?;
     let compact: String = rust.chars().filter(|character| !character.is_whitespace()).collect();
-    assert!(compact.contains("vec![vec![],vec![\"x\".to_string()]]"), "{rust}");
+    assert!(
+        compact.contains("vec![Vec::<String>::new(),vec![\"x\".to_string()]]"),
+        "{rust}"
+    );
     Ok(())
 }
 
