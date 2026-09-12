@@ -1,10 +1,8 @@
 //! Deterministic integrity identity for one relocatable compiled-provider artifact tree.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
-use std::time::SystemTime;
 
 use sha2::{Digest, Sha256};
 
@@ -48,83 +46,10 @@ pub fn digest_provider_artifact(root: &Path) -> Result<String, ProviderArtifactD
             path: root.to_path_buf(),
         });
     }
-    let stamp = provider_artifact_tree_stamp(root);
-    if let Some(stamp) = stamp.as_ref()
-        && let Ok(memo) = provider_artifact_digest_memo().lock()
-        && let Some(digest) = memo.get(stamp)
-    {
-        return Ok(digest.clone());
-    }
     let mut hasher = Sha256::new();
     hasher.update(b"incan-provider-artifact-v1\0");
     hash_directory(root, root, &mut hasher)?;
-    let digest = format!("sha256:{}", hex::encode(hasher.finalize()));
-    if let Some(stamp) = stamp
-        && let Ok(mut memo) = provider_artifact_digest_memo().lock()
-    {
-        memo.insert(stamp, digest.clone());
-    }
-    Ok(digest)
-}
-
-/// Every kept entry of one artifact tree as the cheapest observation that still notices it changing.
-///
-/// The root's own path leads, so two trees whose relative shapes coincide cannot share an entry.
-type ProviderArtifactTreeStamp = (PathBuf, Vec<(PathBuf, u64, Option<SystemTime>)>);
-
-/// Reuse an artifact tree's hashed identity for as long as the tree itself is observably unchanged.
-///
-/// `digest_provider_artifact` reads and hashes every file under a provider root. The consumer half of a plan build
-/// calls it once per materialized dependency, and a bake builds the plan several times, so the same unchanged tree
-/// is read from disk and hashed again on every one of them.
-///
-/// The key is what a walk of the tree observes -- each kept entry's relative path, byte length and modification
-/// time -- and never an identity the tree or its manifest claims for itself. A memo keyed on a claimed identity
-/// cannot notice the bytes behind it changing, which is precisely the failure a digest exists to catch. A hit here
-/// still pays one `stat` per entry; what it saves is reading and hashing the bytes.
-///
-/// The residual hazard is the ordinary one for a metadata stamp: a file rewritten to the same length within the
-/// same modification-time tick is not observed. The store's manifest memo accepts the same trade for the same
-/// reason, and the alternative -- reading every byte to decide whether reading every byte can be skipped -- has no
-/// value to give.
-fn provider_artifact_digest_memo() -> &'static Mutex<HashMap<ProviderArtifactTreeStamp, String>> {
-    static MEMO: OnceLock<Mutex<HashMap<ProviderArtifactTreeStamp, String>>> = OnceLock::new();
-    MEMO.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// Observe one artifact tree well enough to notice any kept entry being added, removed, resized or rewritten.
-///
-/// A tree that cannot be walked is simply not memoized: the caller falls through to the full hash, which produces
-/// the honest error rather than a stale identity.
-fn provider_artifact_tree_stamp(root: &Path) -> Option<ProviderArtifactTreeStamp> {
-    let mut entries = Vec::new();
-    stamp_directory(root, root, &mut entries).ok()?;
-    Some((root.to_path_buf(), entries))
-}
-
-/// Record each kept entry of one artifact directory, recursing in the same order the digest hashes them.
-fn stamp_directory(
-    root: &Path,
-    directory: &Path,
-    entries: &mut Vec<(PathBuf, u64, Option<SystemTime>)>,
-) -> Result<(), ProviderArtifactDigestError> {
-    for entry in artifact_directory_entries(root, directory, false, false)? {
-        if entry.file_type.is_dir() {
-            // A directory contributes its own marker, so one appearing or disappearing is observed even when it is
-            // empty and therefore contributes no file of its own.
-            entries.push((entry.relative.clone(), 0, None));
-            stamp_directory(root, &entry.path, entries)?;
-        } else if entry.file_type.is_file() {
-            let metadata = fs::metadata(&entry.path).map_err(|source| ProviderArtifactDigestError::Io {
-                path: entry.path.clone(),
-                source,
-            })?;
-            entries.push((entry.relative, metadata.len(), metadata.modified().ok()));
-        } else {
-            return Err(ProviderArtifactDigestError::UnsupportedEntry { path: entry.path });
-        }
-    }
-    Ok(())
+    Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
 }
 
 /// Hash the authored manifest and logically named Incan source modules that define one compiled provider's semantics.
@@ -1347,9 +1272,8 @@ struct ArtifactEntry {
 
 /// Enumerate the entries of one artifact directory the digest projection keeps, in hashing order.
 ///
-/// Both the byte-exact digest and the cheap tree stamp below read this, so an exclusion can never apply to one and
-/// not the other. A stamp that observed a different file set than the digest hashes would let a memo miss a change,
-/// which is the whole hazard a content-observed key exists to avoid.
+/// The exclusion rules live here rather than inline in the traversal so a second reader of the same tree cannot
+/// drift from what the digest actually hashes.
 fn artifact_directory_entries(
     root: &Path,
     directory: &Path,
@@ -1415,41 +1339,6 @@ mod tests {
     use super::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
-
-    #[test]
-    fn a_memoized_artifact_digest_is_recomputed_once_its_tree_changes() -> TestResult {
-        let artifact = tempfile::tempdir()?;
-        fs::create_dir_all(artifact.path().join("src"))?;
-        fs::write(artifact.path().join("provider.incnlib"), "manifest")?;
-        fs::write(artifact.path().join("src/lib.rs"), "pub fn value() -> i32 { 1 }")?;
-
-        let first = digest_provider_artifact(artifact.path())?;
-        assert_eq!(
-            first,
-            digest_provider_artifact(artifact.path())?,
-            "a warm read must agree"
-        );
-
-        // Rewriting a file to a different length is observed by the stamp, so the memo cannot serve the old digest.
-        fs::write(
-            artifact.path().join("src/lib.rs"),
-            "pub fn value() -> i32 { 1 } // widened",
-        )?;
-        let rewritten = digest_provider_artifact(artifact.path())?;
-        assert_ne!(first, rewritten);
-
-        // So is a file appearing, and one disappearing again.
-        fs::write(artifact.path().join("src/extra.rs"), "pub fn extra() {}")?;
-        let added = digest_provider_artifact(artifact.path())?;
-        assert_ne!(rewritten, added);
-        fs::remove_file(artifact.path().join("src/extra.rs"))?;
-        assert_eq!(rewritten, digest_provider_artifact(artifact.path())?);
-
-        // And an empty directory, which contributes no file of its own.
-        fs::create_dir(artifact.path().join("src/empty"))?;
-        assert_ne!(rewritten, digest_provider_artifact(artifact.path())?);
-        Ok(())
-    }
 
     #[test]
     fn digest_tracks_manifest_and_generated_source_but_ignores_mutable_output() -> TestResult {
