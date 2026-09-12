@@ -19,7 +19,10 @@ use super::{
 };
 
 /// Domain separator for a compiled unit identity.
-pub(crate) const OVEN_COMPILED_RUST_UNIT_IDENTITY_DOMAIN: &str = "incan.oven.compiled-rust-unit/1";
+///
+/// Version 2 drops the selection-global root feature set from the identity. The two schemes name different things,
+/// so the separator moves with them rather than letting a v1 identity be mistaken for a v2 one.
+pub(crate) const OVEN_COMPILED_RUST_UNIT_IDENTITY_DOMAIN: &str = "incan.oven.compiled-rust-unit/2";
 
 /// Content address of one direct-Rustc compilation unit.
 ///
@@ -42,8 +45,6 @@ struct CompiledUnitIdentityInput<'a> {
     toolchain_version: &'a str,
     profile: &'a str,
     purpose: super::OvenSelectedRustFacetPurpose,
-    root_features: &'a [String],
-    root_default_features: bool,
     compilation_target: &'a str,
     target_spec_digest: Option<&'a str>,
     crate_name: &'a str,
@@ -224,8 +225,6 @@ fn compiled_unit_identity_input<'a>(
         toolchain_version: &graph.selection.toolchain_version,
         profile: &graph.selection.intent.profile,
         purpose: graph.selection.purpose,
-        root_features: &graph.selection.intent.features,
-        root_default_features: graph.selection.default_features,
         compilation_target,
         target_spec_digest,
         crate_name: &unit.crate_name,
@@ -422,6 +421,139 @@ mod tests {
             exposed_roots: BTreeMap::from([("fixture".to_string(), identity)]),
         }
         .validated()?)
+    }
+
+    /// Build the fixture graph with the selection mutated, leaving every unit fact this unit compiles with intact.
+    ///
+    /// The unit keeps its own features, default-feature choice, cfg, source, environment and dependencies; only the
+    /// selection-global root feature set changes. Nothing in the `rustc` command for this unit depends on it.
+    fn graph_with_root_selection(
+        root_features: &[&str],
+        root_default_features: bool,
+    ) -> Result<ValidatedOvenSelectedRustFacetGraph, Box<dyn std::error::Error>> {
+        let mut selection = selection();
+        selection.intent.features = root_features.iter().map(|feature| (*feature).to_string()).collect();
+        selection.default_features = root_default_features;
+        let members = vec![source_member("src/lib.rs", b"pub fn marker() -> u8 { 7 }\n")];
+        let owner = source_owner();
+        let mut unit = OvenSelectedRustFacetUnit {
+            identity: String::new(),
+            package: "fixture".to_string(),
+            package_version: "1.0.0".to_string(),
+            crate_name: "fixture".to_string(),
+            crate_kind: OvenSelectedRustFacetCrateKind::Rlib,
+            role: OvenSelectedRustFacetUnitRole::Library,
+            domain: OvenSelectedRustFacetDomain::Target,
+            edition: "2024".to_string(),
+            source: OvenSelectedRustFacetSource {
+                kind: OvenSelectedRustFacetSourceKind::Registry,
+                identity: "registry:fixture@1.0.0".to_string(),
+                owner: owner.clone(),
+                root: ".".to_string(),
+                digest: selected_graph_source_digest(&members)?,
+            },
+            root_module: "src/lib.rs".to_string(),
+            source_members: members,
+            features: vec!["feature_a".to_string()],
+            default_features: true,
+            cfg: vec!["feature=\"feature_a\"".to_string()],
+            environment: BTreeMap::new(),
+            include_dirs: vec![OvenSelectedRustFacetPath {
+                owner: owner.clone(),
+                path: ".".to_string(),
+            }],
+            exclude_dirs: Vec::new(),
+            dependencies: Vec::new(),
+            generated_inputs: Vec::new(),
+        };
+        unit.identity = selected_graph_unit_identity(&selection, &unit)?;
+        let identity = unit.identity.clone();
+        Ok(OvenSelectedRustFacetGraph {
+            schema_version: OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION,
+            selection,
+            owners: vec![
+                OvenSelectedRustFacetOwner {
+                    identity: owner,
+                    kind: OvenSelectedRustFacetOwnerKind::Constituent,
+                },
+                OvenSelectedRustFacetOwner {
+                    identity: toolchain_owner(),
+                    kind: OvenSelectedRustFacetOwnerKind::Toolchain,
+                },
+            ],
+            units: vec![unit],
+            exposed_roots: BTreeMap::from([("fixture".to_string(), identity)]),
+        }
+        .validated()?)
+    }
+
+    /// A fact the compilation never observes must not rekey its output. RFC 124 states that plainly, and the
+    /// selection-global root feature set is the case Gate 6-7 review blocker 8 names: a workspace root toggling one
+    /// of its own features leaves every dependency's `rustc` command byte-identical, yet moved every compiled
+    /// identity in the graph and therefore reproduced every output.
+    #[test]
+    fn a_root_feature_the_unit_never_compiles_with_does_not_rekey_it() -> Result<(), Box<dyn std::error::Error>> {
+        let baseline = graph_with_root_selection(&["root-feature"], true)?;
+        let other_features = graph_with_root_selection(&["root-feature", "unrelated-root-feature"], true)?;
+        let other_defaults = graph_with_root_selection(&["root-feature"], false)?;
+
+        let identity_of = |graph: &ValidatedOvenSelectedRustFacetGraph| {
+            compiled_rust_unit_identities(graph, COMPILER_CLOSURE)
+                .map(|identities| identities.into_values().map(|identity| identity.0).collect::<Vec<_>>())
+        };
+
+        let expected = identity_of(&baseline)?;
+        assert_eq!(expected.len(), 1);
+        assert_eq!(
+            identity_of(&other_features)?,
+            expected,
+            "adding a root feature this unit does not compile with must not rekey it"
+        );
+        assert_eq!(
+            identity_of(&other_defaults)?,
+            expected,
+            "changing the root's default-feature choice must not rekey a unit that keeps its own"
+        );
+        Ok(())
+    }
+
+    /// The other two fields blocker 8 names are kept, and this is the mutation that justifies keeping them.
+    ///
+    /// `include_dirs` and `exclude_dirs` are per-unit, not selection-global, and they decide which directories are
+    /// materialized into the compilation sandbox. A different directory is a different set of files `rustc` can
+    /// reach through `include!`, `include_str!` or a generated module, so a compilation does observe them and an
+    /// output compiled against one must not be reused for the other.
+    #[test]
+    fn a_units_own_include_directories_do_rekey_it() -> Result<(), Box<dyn std::error::Error>> {
+        let baseline = graph_with_root_selection(&["root-feature"], true)?;
+        let mut widened = graph_with_root_selection(&["root-feature"], true)?.graph().clone();
+        let owner = source_owner();
+        for unit in &mut widened.units {
+            unit.include_dirs.push(OvenSelectedRustFacetPath {
+                owner: owner.clone(),
+                path: "vendored".to_string(),
+            });
+            unit.identity = selected_graph_unit_identity(&widened.selection, unit)?;
+        }
+        let exposed = widened
+            .units
+            .first()
+            .map(|unit| unit.identity.clone())
+            .ok_or("fixture graph has no unit")?;
+        widened.exposed_roots = BTreeMap::from([("fixture".to_string(), exposed)]);
+        let widened = widened.validated()?;
+
+        let identity_of = |graph: &ValidatedOvenSelectedRustFacetGraph| {
+            compiled_rust_unit_identities(graph, COMPILER_CLOSURE)
+                .map(|identities| identities.into_values().map(|identity| identity.0).collect::<Vec<_>>())
+        };
+
+        assert_ne!(
+            identity_of(&widened)?,
+            identity_of(&baseline)?,
+            "a directory the compilation can reach is an input, so adding one must rekey the unit"
+        );
+        Ok(())
     }
 
     fn graph_with_dependency(
