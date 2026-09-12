@@ -37,15 +37,6 @@
       ]
     },
     {
-      "path": "src/cli/commands/codegraph.rs",
-      "reaches": [
-        "crate::frontend::ast",
-        "crate::frontend::diagnostics",
-        "crate::frontend::registry_metadata",
-        "crate::frontend::typechecker"
-      ]
-    },
-    {
       "path": "src/cli/commands/common.rs",
       "reaches": [
         "crate::backend::c_abi",
@@ -117,7 +108,7 @@
     {
       "path": "src/cli/prelude.rs",
       "reaches": [
-        "crate::frontend::ast"
+        "crate::frontend::parsed_module"
       ]
     },
     {
