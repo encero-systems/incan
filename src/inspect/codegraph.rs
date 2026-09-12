@@ -1071,6 +1071,121 @@ impl CodegraphBuilder {
         }
     }
 
+    /// Record each Rust item an import brings into scope as a reference fact of its own.
+    ///
+    /// Before this, a `from rust::… import …` produced one import record and nothing else, so the graph could say
+    /// a module imported *from* a crate but not *what* it reached. RFC 106 makes that question answerable with the
+    /// vocabulary already here rather than with a second one: a Rust declaration is a `Declaration` with
+    /// `language: rust`, a reference to it is a `Reference`, and the reserved `rust_item` and `uses_rust_item`
+    /// kinds are retired because they encode the distinction the `language` field exists to dissolve.
+    ///
+    /// # Why the target is `None` and that is not a gap
+    ///
+    /// The declaration these point at is not emitted here. It cannot be: naming a Rust item is not the same as
+    /// locating one, and inventing a module and file node for a crate whose source this pass never opens would put
+    /// a placeholder where a fact belongs. `rust_inspect` resolves crate, module, item and defining file together,
+    /// and the declaration half arrives with it; until then `target_id` says unresolved, which RFC 106 already
+    /// binds consumers to read as affected rather than as absent.
+    ///
+    /// The identity is not guessed either. Where the typechecker resolved the binding, the import's own checked
+    /// projection carries it and the reference is `Checked`; where it did not, the reference is `Syntax` and the
+    /// name is all the graph claims.
+    ///
+    /// Every argument is one import declaration's own fact, so bundling them into a struct for a single call site
+    /// would move the parameter list rather than shorten it.
+    #[allow(clippy::too_many_arguments)]
+    fn collect_rust_item_references(
+        &mut self,
+        module: &ParsedModule,
+        module_id: &str,
+        import_id: &str,
+        import: &ImportDecl,
+        span: Span,
+        bindings: &[CodegraphImportBinding],
+        degraded: bool,
+    ) {
+        let reached = match &import.kind {
+            ImportKind::RustCrate { crate_name, path, .. } => {
+                vec![(
+                    rust_path_display(crate_name, path),
+                    "imported_module",
+                    import.alias.clone(),
+                )]
+            }
+            ImportKind::RustFrom {
+                crate_name,
+                path,
+                items,
+                ..
+            } => items
+                .iter()
+                .map(|item| {
+                    let mut segments = path.clone();
+                    segments.push(item.name.clone());
+                    (
+                        rust_path_display(crate_name, &segments),
+                        "imported_item",
+                        item.alias.clone(),
+                    )
+                })
+                .collect(),
+            ImportKind::Module(_)
+            | ImportKind::From { .. }
+            | ImportKind::PubLibrary { .. }
+            | ImportKind::PubFrom { .. }
+            | ImportKind::Python(_) => Vec::new(),
+        };
+
+        for (path, kind, alias) in reached {
+            // The binding carries the checked identity under the name the importing module sees, which is the
+            // alias where one was written and the item's own name otherwise.
+            let local_name = alias.unwrap_or_else(|| {
+                path.rsplit("::")
+                    .next()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| path.clone())
+            });
+            let binding = bindings.iter().find(|binding| binding.local_name == local_name);
+            let canonical_identity = binding.and_then(|binding| binding.canonical_identity.clone());
+            let stable_identity = binding.and_then(|binding| binding.stable_identity.clone());
+            let provenance = if canonical_identity.is_some() {
+                CodegraphProvenance::Checked
+            } else {
+                CodegraphProvenance::Syntax
+            };
+            let reference_id = self.next_body_fact_id("rust_reference", module, span, &path);
+            self.records.push(CodegraphRecord::Reference(CodegraphReferenceRecord {
+                id: reference_id.clone(),
+                language: CodegraphLanguage::Rust,
+                module_id: module_id.to_string(),
+                owner_id: None,
+                name: path,
+                kind: kind.to_string(),
+                target_id: None,
+                canonical_identity,
+                canonical_owner: None,
+                stable_identity,
+                span: Some(source_span(&module.file_path, &module.source, span)),
+                provenance,
+                degraded,
+            }));
+            // The import statement is what reaches the item, so the edge hangs off the import rather than off the
+            // module. `owner_id` is left unset above because it names a declaration a navigator can open, and an
+            // import record is not one.
+            self.records
+                .push(CodegraphRecord::Containment(CodegraphContainmentRecord {
+                    id: format!("contains:{import_id}:{reference_id}"),
+                    language: CodegraphLanguage::Rust,
+                    parent_id: import_id.to_string(),
+                    child_id: reference_id,
+                    kind: "import_contains_reference".to_string(),
+                    span: None,
+                    provenance: CodegraphProvenance::Source,
+                    degraded,
+                }));
+        }
+    }
+
     /// Include checked type, layout and default sites that the source expression walker does not visit.
     ///
     /// The snapshot supplies both anchors and identities. These records do not infer a dependency from type spelling
@@ -1387,6 +1502,15 @@ impl CodegraphBuilder {
                         declaration.span,
                         degraded,
                     )));
+                    self.collect_rust_item_references(
+                        module,
+                        module_id,
+                        &import_id,
+                        import,
+                        declaration.span,
+                        &import_bindings,
+                        degraded,
+                    );
                     if import.visibility == Visibility::Public {
                         for name in import_export_names(import) {
                             let exported_binding = import_bindings.iter().find(|binding| binding.local_name == name);
@@ -2948,7 +3072,7 @@ fn import_record(
     let (kind, path, items) = import_shape(import);
     CodegraphImportRecord {
         id: import_id.to_string(),
-        language: CodegraphLanguage::Incan,
+        language: import_language(import),
         module_id: module_id.to_string(),
         kind,
         path,
@@ -3223,6 +3347,24 @@ fn format_type_params(type_params: &[TypeParam]) -> String {
 }
 
 /// Return the import kind, path, and item list for one parsed import declaration.
+/// Return the language of the items an import brings into scope.
+///
+/// The import statement is Incan source either way; what this names is the language of what it imports, which is
+/// the axis RFC 106 defined `language` for. One graph spans both languages and `language` is an attribute of the
+/// fact rather than a partition of the schema -- that is why the reserved `rust_item` node kind and
+/// `uses_rust_item` edge kind were retired rather than added. Filling the field with a constant left the graph
+/// unable to answer which Rust items a module reaches, which is the question build invalidation has to ask.
+fn import_language(import: &ImportDecl) -> CodegraphLanguage {
+    match &import.kind {
+        ImportKind::RustCrate { .. } | ImportKind::RustFrom { .. } => CodegraphLanguage::Rust,
+        ImportKind::Module(_)
+        | ImportKind::From { .. }
+        | ImportKind::PubLibrary { .. }
+        | ImportKind::PubFrom { .. }
+        | ImportKind::Python(_) => CodegraphLanguage::Incan,
+    }
+}
+
 fn import_shape(import: &ImportDecl) -> (String, String, Vec<String>) {
     match &import.kind {
         ImportKind::Module(path) => ("module".to_string(), import_path_display(path), Vec::new()),
@@ -4035,6 +4177,158 @@ pub def pick(value: int, fallback: int) -> int:
             })
             .count();
         assert_eq!(edges, 3, "every module is contained by exactly one namespace");
+        Ok(())
+    }
+    /// An import of a Rust item is recorded as a Rust-language fact, not an Incan one.
+    ///
+    /// RFC 106 settled this deliberately: one graph spans both languages and `language` is an attribute of the
+    /// fact rather than a partition of the schema, which is why the reserved `rust_item` node kind and
+    /// `uses_rust_item` edge kind were retired. The field existed and was filled with the constant `Incan`, so
+    /// every `from rust::… import …` claimed to be Incan and the graph could not answer which Rust items a module
+    /// reaches — the question invalidation needs.
+    ///
+    /// Exercised at the record builder rather than through `collect_codegraph_records`, which is a
+    /// compiler-backed utility requiring a prepared SDK provider store. The language decision is made here, so
+    /// this is where it can be pinned without that.
+    #[test]
+    fn a_rust_import_is_recorded_as_a_rust_language_fact() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "from rust::std::option import Option as RustOption\nfrom std.collections import Deque\n";
+        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let module = ParsedModule {
+            name: "probe".to_string(),
+            path_segments: vec!["probe".to_string()],
+            file_path: PathBuf::from("probe.incn"),
+            source: source.to_string(),
+            ast: program.clone(),
+        };
+
+        let mut languages = Vec::new();
+        for declaration in &program.declarations {
+            let Declaration::Import(import) = &declaration.node else {
+                continue;
+            };
+            let record = import_record(
+                &module,
+                "m",
+                "i",
+                import,
+                declaration.span,
+                Vec::new(),
+                CodegraphProvenance::Syntax,
+                false,
+            );
+            languages.push((record.path.clone(), record.language));
+        }
+
+        let rust = languages
+            .iter()
+            .find(|(path, _)| path.starts_with("rust::"))
+            .ok_or("the rust:: import should produce a record")?;
+        assert_eq!(
+            rust.1,
+            CodegraphLanguage::Rust,
+            "an import of a Rust item is a Rust-language fact; recording it as Incan leaves the graph unable to \
+             say which Rust items a module reaches"
+        );
+
+        let incan = languages
+            .iter()
+            .find(|(path, _)| !path.starts_with("rust::"))
+            .ok_or("the std import should produce a record")?;
+        assert_eq!(
+            incan.1,
+            CodegraphLanguage::Incan,
+            "an ordinary Incan import must not be relabelled by this change"
+        );
+        Ok(())
+    }
+
+    /// Every Rust item an import reaches is its own fact, so the graph can be asked what a module reaches.
+    ///
+    /// The import record alone says a module imported *from* a crate. What a build-invalidation consumer has to
+    /// ask is which items it reached, and that is a per-item question. RFC 106 answers it with the vocabulary
+    /// already present — a `Reference` whose `language` is `rust` — rather than the `uses_rust_item` edge kind it
+    /// retired for encoding the same distinction twice.
+    ///
+    /// `target_id` is asserted absent on purpose. Naming a Rust item is not locating one, and the declaration
+    /// these point at arrives with `rust_inspect`, which resolves crate, module, item and defining file together.
+    /// Until then the graph says unresolved, which RFC 106 binds a consumer to read as affected.
+    #[test]
+    fn a_module_records_every_rust_item_it_reaches() -> Result<(), Box<dyn std::error::Error>> {
+        let source = concat!(
+            "import rust::cfg_expr\n",
+            "from rust::cfg_expr::expr import Expression, Predicate as Pred\n",
+            "from std.collections import Deque\n",
+        );
+        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let module = ParsedModule {
+            name: "probe".to_string(),
+            path_segments: vec!["probe".to_string()],
+            file_path: PathBuf::from("probe.incn"),
+            source: source.to_string(),
+            ast: program,
+        };
+
+        let mut collector = CodegraphBuilder::new(Path::new("."), None, false);
+        collector.collect_module_records_with_degraded(&module, "file:probe", false);
+
+        let rust_references: Vec<(String, String, bool)> = collector
+            .records
+            .iter()
+            .filter_map(|record| match record {
+                CodegraphRecord::Reference(reference) if reference.language == CodegraphLanguage::Rust => Some((
+                    reference.name.clone(),
+                    reference.kind.clone(),
+                    reference.target_id.is_some(),
+                )),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            rust_references,
+            vec![
+                ("rust::cfg_expr".to_string(), "imported_module".to_string(), false),
+                (
+                    "rust::cfg_expr::expr::Expression".to_string(),
+                    "imported_item".to_string(),
+                    false
+                ),
+                (
+                    "rust::cfg_expr::expr::Predicate".to_string(),
+                    "imported_item".to_string(),
+                    false
+                ),
+            ],
+            "each Rust item reached is one reference fact, named by its full path and not by its local alias"
+        );
+
+        let incan_references = collector
+            .records
+            .iter()
+            .filter(|record| {
+                matches!(record, CodegraphRecord::Reference(reference)
+                    if reference.language == CodegraphLanguage::Incan && reference.name.starts_with("rust::"))
+            })
+            .count();
+        assert_eq!(
+            incan_references, 0,
+            "a Rust item must never be recorded as an Incan fact"
+        );
+
+        let edges = collector
+            .records
+            .iter()
+            .filter(|record| {
+                matches!(record, CodegraphRecord::Containment(edge) if edge.kind == "import_contains_reference")
+            })
+            .count();
+        assert_eq!(
+            edges, 3,
+            "the import statement is what reaches the item, so each reference hangs off it"
+        );
         Ok(())
     }
 }
