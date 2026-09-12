@@ -43,6 +43,28 @@ pub struct RustWorkspace {
 /// tree or in Cargo's cache.
 static OVEN_PROJECT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+/// Resolve the active toolchain's sysroot, for declaring it in a build-system-neutral project graph.
+///
+/// A `rust-project.json` graph contains exactly the crates it lists. Unlike the Cargo loader, nothing discovers
+/// the sysroot for it, so omitting these fields leaves `std`, `core` and `alloc` absent and every `rust::std::…`
+/// or `rust::core::…` lookup fails with `CrateNotFound`. That failure is then persisted as a negative cache
+/// entry, so one unanswerable query poisons the item for the life of the workspace. See #1530.
+fn active_sysroot() -> Option<PathBuf> {
+    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let output = std::process::Command::new(rustc)
+        .args(["--print", "sysroot"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let sysroot = std::str::from_utf8(&output.stdout).ok()?.trim();
+    if sysroot.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(sysroot))
+}
+
 /// Resolve the proc-macro server installed beside the active Rust compiler.
 fn active_proc_macro_server() -> ProcMacroServerChoice {
     let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
@@ -1122,10 +1144,17 @@ impl RustWorkspace {
                 })
             })
             .collect::<Vec<_>>();
-        serde_json::to_vec(&serde_json::json!({
-            "crates": crates,
-        }))
-        .map_err(|error| RustMetadataError::LoadWorkspace {
+        // Declare the sysroot so `std`, `core` and `alloc` are in the graph. Their absence is not a property of
+        // this project: a `rust-project.json` contains exactly what it lists, and nothing discovers them for it.
+        let mut graph = serde_json::json!({ "crates": crates });
+        if let Some(sysroot) = active_sysroot() {
+            let sysroot_src = sysroot.join("lib/rustlib/src/rust/library");
+            graph["sysroot"] = serde_json::json!(sysroot.to_string_lossy());
+            if sysroot_src.is_dir() {
+                graph["sysroot_src"] = serde_json::json!(sysroot_src.to_string_lossy());
+            }
+        }
+        serde_json::to_vec(&graph).map_err(|error| RustMetadataError::LoadWorkspace {
             path: manifest_dir.to_path_buf(),
             message: format!("failed to encode direct Oven rust-project graph: {error}"),
         })
