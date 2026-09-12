@@ -1933,26 +1933,6 @@ impl<'a> IrEmitter<'a> {
         self.native_nominal_origins = origins;
     }
 
-    /// Bind one provider manifest's native carriers, nominal origins and type routes before its exports are read.
-    ///
-    /// Every path that reads a manifest's exported types has to do this first, because an unprojected native union
-    /// carries no physical projection and lowering has no error channel to complain through — it returns `Unknown`,
-    /// which the emitter then resolves to something unrelated or drops. The dependency path did it and the SDK
-    /// seeding path did not, which is the disagreement `ir_type_from_projected_manifest`'s debug assertion exists
-    /// to catch. Both call this now, so there is one order and one place to change it.
-    fn projected_provider_manifest(
-        &self,
-        manifest: &LibraryManifest,
-        library: &str,
-        plan: Option<&crate::provider::ProviderPlan>,
-        routes: Option<&HashMap<String, String>>,
-    ) -> Result<LibraryManifest, EmitError> {
-        let projected = crate::library_manifest::with_checked_native_unions(manifest.clone(), library, plan, routes)
-            .map_err(EmitError::InternalInvariant)?;
-        let projected = crate::library_manifest::with_native_nominal_origins(projected, &self.native_nominal_origins);
-        Ok(crate::library_manifest::with_checked_type_routes(projected, routes))
-    }
-
     /// Seed public dependency nominal metadata from `.incnlib` manifests.
     ///
     /// Package consumers do not have the provider's lowered IR available, but const validation and constructor emission
@@ -1981,9 +1961,18 @@ impl<'a> IrEmitter<'a> {
             let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = index.get(&library) else {
                 continue;
             };
+            let projected = crate::library_manifest::with_checked_native_unions(
+                manifest.as_ref().clone(),
+                &library,
+                plan,
+                routes.get(&library),
+            )
+            .map_err(EmitError::InternalInvariant)?;
+            let projected =
+                crate::library_manifest::with_native_nominal_origins(projected, &self.native_nominal_origins);
             manifests.insert(
                 library.clone(),
-                self.projected_provider_manifest(manifest.as_ref(), &library, plan, routes.get(&library))?,
+                crate::library_manifest::with_checked_type_routes(projected, routes.get(&library)),
             );
         }
         let mut counts = HashMap::<String, usize>::new();
@@ -2464,11 +2453,19 @@ impl<'a> IrEmitter<'a> {
         routes: Option<&HashMap<String, String>>,
     ) -> Result<(), EmitError> {
         let provider_crate = manifest.name.replace('-', "_");
-        // A provider owns the unions its own surface publishes, and the admitted public-artifact graph is built
-        // from project dependencies, so it has no entry to look this provider up by. Bind those first; whatever is
-        // left names another artifact, which is the question the plan does answer.
+        // Only the union binding, and deliberately not the rest of the dependency path's projection. A provider
+        // owns the unions its own surface publishes, and the admitted public-artifact graph is built from project
+        // dependencies, so it has no entry to look this provider up by; bind those first, and leave whatever names
+        // another artifact to the plan, which is the question the plan answers.
+        //
+        // `with_checked_type_routes` must not run here. It rewrites every origin-carrying leaf to its route and
+        // replaces it with `Unknown` where no route matches, and an SDK provider has no foreign type routes — so
+        // applying it would erase the very metadata this function exists to seed. That is a dependency-path step
+        // for a dependency-path input, and the seeding path needs neither it nor the nominal-origin overlay.
         let manifest = &crate::library_manifest::with_self_owned_native_unions(manifest.clone(), &provider_crate);
-        let manifest = &self.projected_provider_manifest(manifest, &manifest.name, plan, routes)?;
+        let manifest =
+            &crate::library_manifest::with_checked_native_unions(manifest.clone(), &manifest.name, plan, routes)
+                .map_err(EmitError::InternalInvariant)?;
         for entry in &manifest.contract_metadata.identity_graph.exports {
             if entry.kind != ExportIdentityKind::Function || entry.public_path.first() != Some(&manifest.name) {
                 continue;
