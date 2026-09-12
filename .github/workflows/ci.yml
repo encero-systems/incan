@@ -58,6 +58,7 @@ jobs:
           python3 scripts/test_release_version_consistency.py
           python3 scripts/test_ci_scope.py
           python3 scripts/test_ci_sdk_handoff.py
+          python3 -m unittest discover -s scripts/tests -p test_ci_tool_outputs.py
           python3 scripts/check_release_version_consistency.py \
             --release-branch "$RELEASE_BRANCH" --base-branch "$BASE_BRANCH"
       - name: Classify the pull request
@@ -244,10 +245,61 @@ jobs:
           make fetch-locked-cargo-sources
           make fetch-oven-loaf-sources
           make fetch-release-support-workspace-sources
+      - name: Fingerprint Linux tool inputs
+        id: tool-inputs
+        run: >-
+          python3 scripts/ci_tool_outputs.py identity --state target/ci-tool-evidence
+          --bundle target/ci-tools-restored
+      - name: Restore exact Linux tool outputs
+        continue-on-error: true
+        if: steps.tool-inputs.outputs.eligible == 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: target/ci-tools-restored
+          key: ${{ steps.tool-inputs.outputs.key }}
+      - name: Verify restored Linux tool outputs
+        id: tool-restore
+        if: steps.tool-inputs.outputs.eligible == 'true'
+        run: >-
+          python3 scripts/ci_tool_outputs.py restore --state target/ci-tool-evidence
+          --bundle target/ci-tools-restored
       - name: Build optimized Linux compiler and reference generators
+        if: steps.tool-restore.outputs.hit != 'true'
         run: |
-          CARGO_BUILD_JOBS=2 cargo build --locked --release --features lsp --bin incan --bin generate_feature_inventory
-          CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan_core --bin generate_lang_reference
+          set -o pipefail
+          mkdir -p target/ci-tool-evidence
+          CARGO_BUILD_JOBS=2 cargo build --locked --release --features lsp --bin incan --bin generate_feature_inventory --message-format=json-render-diagnostics | python3 scripts/ci_tool_outputs.py record target/ci-tool-private/compiler.jsonl
+          CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan_core --bin generate_lang_reference --message-format=json-render-diagnostics | python3 scripts/ci_tool_outputs.py record target/ci-tool-private/reference.jsonl
+      - name: Audit cold Linux tool input coverage
+        id: tool-admission
+        if: steps.tool-restore.outputs.hit != 'true' && steps.tool-inputs.outputs.eligible == 'true'
+        run: >-
+          python3 scripts/ci_tool_outputs.py admit --state target/ci-tool-evidence
+          --bundle target/ci-tools-restored
+          --cargo-log target/ci-tool-private/compiler.jsonl
+          --cargo-log target/ci-tool-private/reference.jsonl
+      - name: Collect ineligible cold tool facts
+        if: steps.tool-restore.outputs.hit != 'true' && steps.tool-inputs.outputs.eligible != 'true'
+        run: >-
+          python3 scripts/ci_tool_outputs.py collect --state target/ci-tool-evidence
+          --bundle target/ci-tools-restored
+          --cargo-log target/ci-tool-private/compiler.jsonl
+          --cargo-log target/ci-tool-private/reference.jsonl
+      - name: Save admitted Linux tool outputs
+        continue-on-error: true
+        if: steps.tool-admission.outputs.admitted == 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: target/ci-tools-restored
+          key: ${{ steps.tool-inputs.outputs.key }}
+      - name: Upload Linux tool input coverage
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-linux-tool-input-evidence
+          path: target/ci-tool-evidence
+          if-no-files-found: warn
+          retention-days: 7
       - name: Stage exact release tools for SDK preparation and consumers
         run: |
           # Consumers use these stable delivery paths; all three executables were built with the release profile.
