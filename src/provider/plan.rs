@@ -1,8 +1,9 @@
 //! Immutable provider catalog and active compilation projection from RFC 114.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
@@ -1528,13 +1529,12 @@ fn sdk_provider_records(
                             provider: descriptor.name.clone(),
                             message: "available provider has no generated crate root".to_string(),
                         })?;
-                let loaded = LibraryManifest::read_from_path(manifest_path).map_err(|error| {
-                    ProviderPlanError::ManifestLoad {
+                let loaded =
+                    read_sdk_provider_manifest(manifest_path).map_err(|error| ProviderPlanError::ManifestLoad {
                         provider: descriptor.name.clone(),
                         path: manifest_path.clone(),
                         message: manifest_error_message(error),
-                    }
-                })?;
+                    })?;
                 validate_sdk_descriptor(descriptor, &loaded, manifest_path)?;
                 let artifact = LibraryArtifactMetadata::from_manifest_path(
                     descriptor.name.clone(),
@@ -1542,7 +1542,7 @@ fn sdk_provider_records(
                     manifest_path.clone(),
                     crate_root.clone(),
                 );
-                (Some(Arc::new(loaded)), Some(artifact))
+                (Some(loaded), Some(artifact))
             } else {
                 (None, None)
             };
@@ -1577,6 +1577,54 @@ fn sdk_provider_records(
         }
     }
     Ok(records)
+}
+
+/// Describe one sealed SDK manifest well enough to notice it being rewritten underneath us.
+type SdkManifestFileStamp = (PathBuf, u64, Option<SystemTime>);
+
+/// Reuse one already-parsed SDK provider manifest for as long as its file is observably unchanged.
+///
+/// A plan build reads all ten sealed provider descriptors, and a bake builds the plan several times, so the same
+/// 6.6 MB provider surface is re-read and re-deserialized on each one. The `api_metadata` surface alone accounts for
+/// a measured 14% of a no-op bake.
+///
+/// Only the parse is memoized. `validate_sdk_descriptor` still runs against every record, and every artifact digest
+/// is still taken at its own call site, so no check is skipped -- the reader simply stops turning the same bytes
+/// into the same structure repeatedly. That boundary is the point: an earlier attempt keyed this on the digest the
+/// inventory *records* for a provider, which cannot notice the generated Rust behind that digest changing, and its
+/// own integrity test caught it. The key here is what the file system reports about the file that was read.
+fn sdk_manifest_memo() -> &'static Mutex<HashMap<SdkManifestFileStamp, Arc<LibraryManifest>>> {
+    static MEMO: OnceLock<Mutex<HashMap<SdkManifestFileStamp, Arc<LibraryManifest>>>> = OnceLock::new();
+    MEMO.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Observe one sealed manifest file, or report nothing when it cannot be stated.
+///
+/// A manifest that cannot be stated is simply not memoized: the caller falls through to a full read, which produces
+/// the honest error rather than a stale structure.
+fn sdk_manifest_file_stamp(manifest_path: &Path) -> Option<SdkManifestFileStamp> {
+    let metadata = std::fs::metadata(manifest_path).ok()?;
+    Some((manifest_path.to_path_buf(), metadata.len(), metadata.modified().ok()))
+}
+
+/// Read one sealed SDK provider manifest, reusing the parse when the file has not changed since it was read.
+fn read_sdk_provider_manifest(
+    manifest_path: &Path,
+) -> Result<Arc<LibraryManifest>, crate::library_manifest::LibraryManifestError> {
+    let stamp = sdk_manifest_file_stamp(manifest_path);
+    if let Some(stamp) = stamp.as_ref()
+        && let Ok(memo) = sdk_manifest_memo().lock()
+        && let Some(manifest) = memo.get(stamp)
+    {
+        return Ok(Arc::clone(manifest));
+    }
+    let manifest = Arc::new(LibraryManifest::read_from_path(manifest_path)?);
+    if let Some(stamp) = stamp
+        && let Ok(mut memo) = sdk_manifest_memo().lock()
+    {
+        memo.insert(stamp, Arc::clone(&manifest));
+    }
+    Ok(manifest)
 }
 
 /// Return active provider-local module claims, falling back to checked API metadata for pre-RFC-114 artifacts.
@@ -1832,6 +1880,24 @@ mod tests {
     use crate::manifest::ProjectManifest;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn a_memoized_sdk_manifest_is_parsed_again_once_its_file_changes() -> TestResult {
+        let sealed = tempfile::tempdir()?;
+        let manifest_path = sealed.path().join("provider.incnlib");
+        LibraryManifest::new("sealed_provider", "1.0.0").write_to_path(&manifest_path)?;
+
+        let first = read_sdk_provider_manifest(&manifest_path)?;
+        assert_eq!(first.name, "sealed_provider");
+        assert_eq!(read_sdk_provider_manifest(&manifest_path)?.version, "1.0.0");
+
+        // Rewriting the sealed file changes what the file system reports about it, so the memo cannot serve the
+        // structure it parsed from the previous bytes. Keying on a digest the manifest records for itself is what
+        // made an earlier attempt at this unsound.
+        LibraryManifest::new("sealed_provider", "2.0.0").write_to_path(&manifest_path)?;
+        assert_eq!(read_sdk_provider_manifest(&manifest_path)?.version, "2.0.0");
+        Ok(())
+    }
 
     #[test]
     fn resolves_active_disabled_and_unavailable_provider_modules() -> TestResult {
