@@ -15708,10 +15708,23 @@ mod tests {
     /// Unused macro declarations do not request a build; transitive facade requirements preserve the selected macro.
     #[test]
     fn selected_provider_macro_requirements_follow_named_roots() -> Result<(), Box<dyn std::error::Error>> {
+        // The plan declares no physical search paths, but it still has to bind the one source role the manifests
+        // below declare a closure for -- projecting a plan for a role the plan never materialized is refused.
         let plan = OvenRustcArtifactPlan {
             source_path_projection: Some(crate::oven::rustc::OvenRustcSourcePathProjection {
                 declared: BTreeSet::new(),
-                roles: BTreeMap::new(),
+                roles: ["generated-root", OVEN_PROVIDER_COMPILATION_KEY]
+                    .into_iter()
+                    .map(|role| {
+                        (
+                            role.to_string(),
+                            (
+                                crate::oven::rustc::OvenRustcSourceSearchClosure::default(),
+                                BTreeSet::new(),
+                            ),
+                        )
+                    })
+                    .collect(),
             }),
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
@@ -20834,7 +20847,7 @@ pub model Nested:
         provider_crate: &str,
         provider_digest: &str,
     ) -> OvenRustcArtifactManifest {
-        OvenRustcArtifactManifest {
+        let mut manifest = OvenRustcArtifactManifest {
             schema_version: crate::oven::rustc::OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
             intent,
             dependency_search_paths: vec!["artifacts/deps".to_string()],
@@ -20851,22 +20864,7 @@ pub model Nested:
                     digest: provider_digest.to_string(),
                 },
             ],
-            entrypoint_dependency_search_paths: BTreeMap::from([(
-                "generated-root".to_string(),
-                crate::oven::rustc::OvenRustcSourceSearchClosure::publisher_selected(
-                    vec!["artifacts/deps".to_string()],
-                    &BTreeMap::from([
-                        (
-                            "artifacts/deps/libincan_stdlib-shared.rlib".to_string(),
-                            "sha256:shared".to_string(),
-                        ),
-                        (
-                            format!("artifacts/deps/lib{provider_crate}-{provider_digest}.rlib"),
-                            provider_digest.to_string(),
-                        ),
-                    ]),
-                ),
-            )]),
+            entrypoint_dependency_search_paths: BTreeMap::new(),
             entrypoint_externs: BTreeMap::from([(
                 "generated-root".to_string(),
                 vec!["incan_stdlib".to_string(), provider_crate.to_string()],
@@ -20876,7 +20874,30 @@ pub model Nested:
             compile_environment: BTreeMap::new(),
             vocab_auxiliary_targets: Vec::new(),
             supporting_artifacts: Vec::new(),
-        }
+        };
+        recapture_package_loaf_closure(&mut manifest);
+        manifest
+    }
+
+    /// Rebuild every source role's publisher-selected closure from the manifest's current artifact set.
+    ///
+    /// A closure records each search directory's members by digest, so any fixture that rewrites an extern's digest
+    /// after construction leaves the closure claiming bytes the manifest no longer declares -- which is exactly what
+    /// `validate_shape` refuses. Deriving the closure here keeps the two from being written out twice by hand.
+    fn recapture_package_loaf_closure(manifest: &mut OvenRustcArtifactManifest) {
+        let closure = crate::oven::rustc::OvenRustcSourceSearchClosure::publisher_selected(
+            manifest.dependency_search_paths.clone(),
+            &manifest
+                .externs
+                .iter()
+                .map(|artifact| (artifact.relative_path.clone(), artifact.digest.clone()))
+                .collect(),
+        );
+        manifest.entrypoint_dependency_search_paths = manifest
+            .entrypoint_externs
+            .keys()
+            .map(|key| (key.clone(), closure.clone()))
+            .collect();
     }
 
     fn packaged_provider_authority_fixture(
@@ -21640,6 +21661,7 @@ pub model Nested:
                 })
             })
             .collect::<Result<Vec<_>, std::io::Error>>()?;
+        recapture_package_loaf_closure(&mut artifacts);
         let limits = crate::oven::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024);
         let artifact_root = provider.path().join("target/incan/provider");
         let package_store = OvenStore::new(packaged_library_loaf_store_root(&artifact_root), limits);

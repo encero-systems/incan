@@ -9,6 +9,7 @@ use crate::library_manifest::{
     CanonicalIdentityExport, CanonicalIdentityOriginExport, LibraryIdentityGraph, LibraryManifest, NativeUnionExport,
     NativeUnionOwnerExport, NominalTypeOriginExport, TypeRef, VisitTypeRefs, contains_native_union,
 };
+use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 /// Type projections for one declaration, scoped by its checked source module and declaration anchor.
 #[derive(Debug, Clone)]
@@ -534,7 +535,7 @@ fn pair_function<'a>(
             .iter()
             .find(|candidate| !candidate.is_self && candidate.name == param.name)
         {
-            let ty = if param.has_default {
+            let ty = if param.has_default && !declares_its_own_option(&param.ty) {
                 match &lowered.ty {
                     IrType::Option(inner) => inner,
                     other => other,
@@ -547,6 +548,16 @@ fn pair_function<'a>(
     }
     pairs.push((ret, &function.return_type));
     Ok(())
+}
+
+/// Whether a declared parameter type already spells the `Option` wrapper that lowering would otherwise add.
+///
+/// Lowering gives every defaulted parameter an `Option<T>` slot so a caller may omit it, and the declared manifest
+/// type does not carry that slot -- so pairing removes one `Option` before matching the two shapes. When the source
+/// itself declared `Option[...]`, those are the same wrapper, and removing it hands the union projection the bare
+/// payload: the published parameter then reads as required, and a consumer emits the argument unwrapped. See #745.
+fn declares_its_own_option(ty: &TypeRef) -> bool {
+    matches!(ty, TypeRef::Applied { name, .. } if name == collections::as_str(CollectionTypeId::Option))
 }
 
 /// Pair named fields within one already-matched nominal declaration.
@@ -1071,6 +1082,45 @@ mod tests {
         assert_eq!(
             second.type_alias.target,
             TypeRef::NativeUnion(second_definitions[0].clone())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_optional_union_parameter_keeps_its_option_wrapper_issue745() -> TestResult {
+        let (api, captured, definitions, _rust, _identities) = emitted_module(
+            "pub model IntExpr:\n    pub value: int\n\npub def accept(value: Option[IntExpr | str] = None) -> int:\n    return 1\n",
+            "lib",
+        )?;
+        let mut manifest = LibraryManifest::new("producer", "1.0.0");
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![api],
+            public_namespaces: Vec::new(),
+        });
+        for captured in captured {
+            captured.apply(&mut manifest);
+        }
+        let modules = &manifest.contract_metadata.api.as_ref().ok_or("API absent")?.modules;
+        let function = modules[0]
+            .declarations
+            .iter()
+            .find_map(|declaration| match declaration {
+                ApiDeclaration::Function(function) if function.name == "accept" => Some(function),
+                _ => None,
+            })
+            .ok_or("accept absent")?;
+        let param = function.params.first().ok_or("value param absent")?;
+        assert_eq!(
+            param.ty,
+            TypeRef::Applied {
+                name: "Option".to_string(),
+                args: vec![TypeRef::NativeUnion(definitions[0].clone())],
+                origin: None,
+            },
+            "a defaulted `Option[union]` parameter must publish its Option wrapper, got {:?}",
+            param.ty
         );
         Ok(())
     }

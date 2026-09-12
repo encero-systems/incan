@@ -2395,11 +2395,22 @@ impl OvenRustcArtifactManifest {
                     ));
                 }
                 for leaf in &mut composed.registry_leaves {
+                    let original = OvenRustcSupportingArtifact {
+                        relative_path: leaf.artifact.relative_path.clone(),
+                        digest: leaf.artifact.digest.clone(),
+                    };
                     if let Some(rerooted) = rerooted_paths.get(&leaf.artifact.relative_path)
                         && !follows_the_base(&leaf.artifact.relative_path, &leaf.artifact.digest)
                     {
                         leaf.artifact.relative_path = rerooted.clone();
                     }
+                    source_replacements.push((
+                        original,
+                        OvenRustcSupportingArtifact {
+                            relative_path: leaf.artifact.relative_path.clone(),
+                            digest: leaf.artifact.digest.clone(),
+                        },
+                    ));
                 }
                 let mut rerooted_search_dirs = BTreeSet::new();
                 for rerooted in rerooted_paths.values() {
@@ -2445,9 +2456,20 @@ impl OvenRustcArtifactManifest {
                 ));
             }
             for leaf in &mut composed.registry_leaves {
+                let original = OvenRustcSupportingArtifact {
+                    relative_path: leaf.artifact.relative_path.clone(),
+                    digest: leaf.artifact.digest.clone(),
+                };
                 if let Some(release) = release_artifacts.get(&leaf.artifact.relative_path) {
                     leaf.artifact.digest = release.digest.clone();
                 }
+                source_replacements.push((
+                    original,
+                    OvenRustcSupportingArtifact {
+                        relative_path: leaf.artifact.relative_path.clone(),
+                        digest: leaf.artifact.digest.clone(),
+                    },
+                ));
             }
         }
         for (original, replacement) in source_replacements {
@@ -2490,6 +2512,21 @@ impl OvenRustcArtifactManifest {
                 "generated-root"
             };
             closure.merge(&base.source_search_closure(base_key)?);
+        }
+        // The base's own `incan_stdlib` root is the one release artifact the loop above deliberately skips: the
+        // extension links its own runtime instead. A closure merged from the base still carries it as a member of
+        // the search directory, and a member the composed manifest never declares is exactly what
+        // `validate_source_search_roles` refuses. Drop that stale claim -- and only when it really is stale, since
+        // a canonicalizing composition may legitimately keep the base's bytes at the same path.
+        let composed_artifacts = expected_artifacts(&composed)?;
+        if composed_artifacts.get(&base_runtime.relative_path) != Some(&base_runtime.digest) {
+            let stale = OvenRustcSupportingArtifact {
+                relative_path: base_runtime.relative_path.clone(),
+                digest: base_runtime.digest.clone(),
+            };
+            for closure in composed.entrypoint_dependency_search_paths.values_mut() {
+                closure.replace_artifact(&stale, None);
+            }
         }
         composed
             .native_search_paths
@@ -3161,9 +3198,13 @@ impl OvenRustcArtifactManifest {
                             || !artifact_is_below_search_path(&member.relative_path, path)
                             || expected.get(&member.relative_path) != Some(&member.digest)
                         {
+                            let declared = expected
+                                .get(&member.relative_path)
+                                .map_or_else(|| "undeclared".to_string(), |digest| format!("declared {digest}"));
                             return Err(invalid(format!(
-                                "source evidence `{key}` search path `{path}` has invalid or unowned member `{}`",
-                                member.relative_path
+                                "source evidence `{key}` search path `{path}` has invalid or unowned member `{}` \
+                                 (closure claims {}, manifest {declared})",
+                                member.relative_path, member.digest
                             )));
                         }
                     }
@@ -6830,6 +6871,29 @@ fi
                 digest: digest_bytes(files[1].1.as_bytes()),
             },
         }];
+        // Every declared source role carries a publisher-selected search closure. Each role gets only the
+        // directories one of its own direct roots actually lives under, so the helper role keeps no claim on the
+        // generated root's `release/deps` -- the exclusion `for_source_evidence` used to derive is now recorded.
+        artifacts.entrypoint_dependency_search_paths = artifacts
+            .entrypoint_externs
+            .iter()
+            .map(|(role, names)| {
+                let paths = artifacts
+                    .dependency_search_paths
+                    .iter()
+                    .filter(|search_path| {
+                        artifacts.externs.iter().any(|artifact| {
+                            names.contains(&artifact.crate_name)
+                                && super::artifact_is_below_search_path(&artifact.relative_path, search_path)
+                        })
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                artifacts
+                    .capture_source_search_closure(&paths)
+                    .map(|closure| (role.clone(), closure))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
         let materialized = artifacts
             .materialized_artifacts(&source, &receipt.intent)?
             .into_iter()
@@ -12310,6 +12374,11 @@ fi
     }
 
     fn write_project(root: &Path) -> Result<(), std::io::Error> {
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"rustc_fixture\"\nversion = \"0.1.0\"\n",
+        )?;
+        fs::write(root.join("Cargo.lock"), "version = 4\n")?;
         fs::write(root.join("fixture.rs"), "pub fn fixture() {}\n")
     }
 }
