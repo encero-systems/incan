@@ -423,7 +423,7 @@ mod tests {
         let intent = &fixture.foundation.selected_graph().graph().selection.intent;
         let receipt = publication_receipt("fixture_project", "0.1.0", &intent.target, &intent.toolchain)?;
         let store = OvenStore::new(
-            store_root.path().to_path_buf(),
+            store_root.path(),
             OvenStoreLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024),
         );
 
@@ -532,7 +532,7 @@ mod tests {
         )?;
         let intent = &fixture.foundation.selected_graph().graph().selection.intent;
         let store = OvenStore::new(
-            store_root.path().to_path_buf(),
+            store_root.path(),
             OvenStoreLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024),
         );
 
@@ -568,7 +568,7 @@ mod tests {
         let store_root = tempfile::tempdir()?;
         let closure = OvenRuntimeCompilerClosure::new(&first.rustc, FIXTURE_CLOSURE);
         let store = OvenStore::new(
-            store_root.path().to_path_buf(),
+            store_root.path(),
             OvenStoreLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024),
         );
 
@@ -632,7 +632,7 @@ mod tests {
         )?;
         let payload = runtime_closure_payload(&fixture.foundation, &build)?;
         let store = OvenStore::new(
-            store_root.path().to_path_buf(),
+            store_root.path(),
             OvenStoreLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024),
         );
         let intent = &fixture.foundation.selected_graph().graph().selection.intent;
