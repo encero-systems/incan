@@ -1066,11 +1066,15 @@ mod tests {
             &roots,
             &supplemental,
         )?;
+        // Canonicalized on both sides: materialization resolves the root through the filesystem while the fixture
+        // holds the path it created, so on a host whose temporary directory sits behind a symlink -- `/var` to
+        // `/private/var` on macOS -- the two spell one directory differently.
         assert_eq!(
             materialized
                 .supplemental_source_root(&supplemental[0].source_root)
-                .ok_or("package-root fixture lost its admitted supplemental root")?,
-            package_root.as_path()
+                .ok_or("package-root fixture lost its admitted supplemental root")?
+                .canonicalize()?,
+            package_root.as_path().canonicalize()?
         );
         assert_eq!(
             materialized
