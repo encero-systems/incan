@@ -12,6 +12,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+/// Layout version of the kept sealed-SDK semantic readings.
+///
+/// Bump this whenever the semantic digest itself changes meaning, so a compiler never reads a reading an earlier
+/// one computed under different rules. Old directories are inert once nothing names them.
+const SEALED_SEMANTIC_READING_LAYOUT: &str = "sealed-semantic-reading-v1";
+
 use crate::library_manifest::{
     ProviderSemanticToolchainDependency, digest_provider_semantic_artifact_with_context_and_cache,
     digest_toolchain_source_tree_with_cache,
@@ -476,6 +482,24 @@ fn provider_dependency_semantic_digests(
     provider_plan: &ProviderPlan,
     semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
 ) -> Result<BTreeMap<String, String>, String> {
+    let key = provider_semantic_digest_key(provider_plan, semantic_toolchain_dependencies);
+    static DIGESTS: std::sync::OnceLock<std::sync::Mutex<BTreeMap<String, BTreeMap<String, String>>>> =
+        std::sync::OnceLock::new();
+    let memo = DIGESTS.get_or_init(|| std::sync::Mutex::new(BTreeMap::new()));
+    if let Ok(cached) = memo.lock()
+        && let Some(digests) = cached.get(&key)
+    {
+        return Ok(digests.clone());
+    }
+    let sealed = sealed_reading_path(provider_plan, &key);
+    if let Some(path) = sealed.as_ref()
+        && let Some(digests) = read_sealed_semantic_digests(path)
+    {
+        if let Ok(mut cached) = memo.lock() {
+            cached.insert(key, digests.clone());
+        }
+        return Ok(digests);
+    }
     let mut candidates = BTreeMap::<String, BTreeSet<String>>::new();
     let mut resolved_artifacts = BTreeMap::new();
     for provider in provider_plan.records() {
@@ -497,12 +521,132 @@ fn provider_dependency_semantic_digests(
             .or_default()
             .insert(semantic_digest);
     }
-    Ok(candidates
+    let digests = candidates
         .into_iter()
         .filter_map(|(physical, semantic)| {
             (semantic.len() == 1).then(|| semantic.into_iter().next().map(|semantic| (physical, semantic)))?
         })
-        .collect())
+        .collect::<BTreeMap<_, _>>();
+    if let Some(path) = sealed.as_ref() {
+        write_sealed_semantic_digests(path, &digests);
+    }
+    if let Ok(mut cached) = memo.lock() {
+        cached.insert(key, digests.clone());
+    }
+    Ok(digests)
+}
+
+/// Where this reading may be kept between runs, when the reading describes only Incan's own sealed SDK.
+///
+/// A reading over project dependencies is not a candidate: those roots are ordinary source the author edits, and a
+/// suite that bakes in temporary directories would leave one file behind per fixture. A reading over SDK providers
+/// alone is the opposite — the SDK arrives prebuilt in a content-addressed directory, so there is exactly one such
+/// reading per installed SDK and toolchain pairing, and it is correct until one of them is replaced.
+fn sealed_reading_path(provider_plan: &ProviderPlan, key: &str) -> Option<PathBuf> {
+    sealed_reading_path_under(sealed_reading_root()?, provider_plan, key)
+}
+
+/// Resolve the Incan home that keeps readings, matching how every other Incan-owned cache is placed.
+fn sealed_reading_root() -> Option<PathBuf> {
+    std::env::var_os("INCAN_HOME")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .filter(|path| !path.is_empty())
+                .map(|path| PathBuf::from(path).join(".incan"))
+        })
+}
+
+/// Place one reading under a given home, or refuse when the reading is not one that may be kept.
+fn sealed_reading_path_under(root: PathBuf, provider_plan: &ProviderPlan, key: &str) -> Option<PathBuf> {
+    let mut described_any = false;
+    for provider in provider_plan.records() {
+        if provider.manifest.is_none() || provider.artifact.is_none() {
+            continue;
+        }
+        if !matches!(provider.provenance, ProviderProvenance::Sdk { .. }) {
+            return None;
+        }
+        described_any = true;
+    }
+    if !described_any {
+        return None;
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(key.as_bytes());
+    let name = format!("{:x}.json", hasher.finalize());
+    Some(root.join("cache").join(SEALED_SEMANTIC_READING_LAYOUT).join(name))
+}
+
+/// Read one kept reading, treating anything unreadable as simply absent.
+///
+/// A cache may never fail a build. Every failure here — no file, a partial write from a killed process, a layout
+/// this compiler does not understand — falls through to computing the reading, which is always correct.
+fn read_sealed_semantic_digests(path: &Path) -> Option<BTreeMap<String, String>> {
+    serde_json::from_slice(&fs::read(path).ok()?).ok()
+}
+
+/// Keep one reading for later runs, atomically, and give up silently if the filesystem will not take it.
+///
+/// The rename is what makes a concurrent reader safe: many baker processes share one store, and a reader either
+/// sees the previous complete file or the new complete file, never a half-written one.
+fn write_sealed_semantic_digests(path: &Path, digests: &BTreeMap<String, String>) {
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let Ok(encoded) = serde_json::to_vec(digests) else {
+        return;
+    };
+    let staged = parent.join(format!(
+        "{}.{}.staging",
+        path.file_name().unwrap_or_default().to_string_lossy(),
+        std::process::id()
+    ));
+    if fs::write(&staged, encoded).is_err() {
+        let _ = fs::remove_file(&staged);
+        return;
+    }
+    if fs::rename(&staged, path).is_err() {
+        let _ = fs::remove_file(&staged);
+    }
+}
+
+/// Name the exact inputs one semantic-digest pass would read.
+///
+/// The pass walks every present provider artifact and hashes its semantic content. Its answer depends on nothing
+/// but which providers are in the plan — each already carrying the content digest the SDK recorded for it — and
+/// the exact support-crate roots the toolchain resolved, each likewise carrying its own content digest. Two passes
+/// agreeing on all of those are hashing the same bytes.
+fn provider_semantic_digest_key(
+    provider_plan: &ProviderPlan,
+    semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
+) -> String {
+    let mut key = String::new();
+    for provider in provider_plan.records() {
+        let (Some(_), Some(artifact)) = (provider.manifest.as_deref(), provider.artifact.as_ref()) else {
+            continue;
+        };
+        key.push('\u{1e}');
+        key.push_str(&provider.identity.digest);
+        key.push('\u{1d}');
+        key.push_str(&artifact.crate_root.to_string_lossy());
+    }
+    for dependency in semantic_toolchain_dependencies {
+        key.push('\u{1c}');
+        key.push_str(&dependency.crate_name);
+        key.push('\u{1d}');
+        key.push_str(&dependency.package_name);
+        key.push('\u{1d}');
+        key.push_str(&dependency.content_digest);
+        key.push('\u{1d}');
+        key.push_str(&dependency.artifact_root.to_string_lossy());
+    }
+    key
 }
 
 /// Hash the relocatable SDK inventory after replacing physical provider digests with semantic lock identities.
@@ -1925,6 +2069,65 @@ mod tests {
             &second_specs,
         );
         assert_ne!(second_fingerprint, changed_fingerprint);
+        Ok(())
+    }
+
+    #[test]
+    fn a_sealed_sdk_reading_is_kept_between_runs_and_a_partial_one_reads_as_absent() -> TestResult {
+        // Keeping a reading is only correct for providers that arrive prebuilt, and a kept reading may never fail
+        // a build: anything unreadable has to look like nothing was kept at all.
+        let temp = tempfile::tempdir()?;
+        let home = temp.path().join("incan-home");
+        let fixture = production_toolchain_semantic_fixture(&temp.path().join("sealed"))?;
+
+        let Some(kept) = sealed_reading_path_under(home.clone(), &fixture.provider_plan, "reading-key") else {
+            return Err("an SDK-only reading must be keepable".into());
+        };
+        assert!(kept.starts_with(&home), "a kept reading belongs under the Incan home");
+        assert_eq!(
+            Some(kept.clone()),
+            sealed_reading_path_under(home.clone(), &fixture.provider_plan, "reading-key"),
+            "one reading must always land on one path"
+        );
+        assert_ne!(
+            Some(kept.clone()),
+            sealed_reading_path_under(home, &fixture.provider_plan, "another-key"),
+            "a different reading must land somewhere else"
+        );
+
+        let digests = BTreeMap::from([("sha256:physical".to_string(), "sha256:semantic".to_string())]);
+        write_sealed_semantic_digests(&kept, &digests);
+        assert_eq!(read_sealed_semantic_digests(&kept), Some(digests));
+
+        fs::write(&kept, b"{ not json")?;
+        assert_eq!(
+            read_sealed_semantic_digests(&kept),
+            None,
+            "a partial write from a killed process must read as absent, not as an error"
+        );
+        assert_eq!(read_sealed_semantic_digests(&temp.path().join("absent.json")), None);
+        Ok(())
+    }
+
+    #[test]
+    fn repeating_a_semantic_identity_pass_answers_from_the_first_one() -> TestResult {
+        // The pass hashes every present provider artifact, and a bake asks for it twice. Repeating it must answer
+        // identically, and a relocated SDK must not be served the earlier reading: its provider artifacts sit at
+        // different roots, which is exactly what the surrounding relocation test distinguishes.
+        let temp = tempfile::tempdir()?;
+        let sealed = production_toolchain_semantic_fixture(&temp.path().join("sealed"))?;
+        let relocated = production_toolchain_semantic_fixture(&temp.path().join("relocated"))?;
+
+        let first = provider_semantic_identities(&sealed.provider_plan, &sealed.specs)?;
+        let repeated = provider_semantic_identities(&sealed.provider_plan, &sealed.specs)?;
+        assert_eq!(first, repeated, "a repeated pass over one plan must answer identically");
+
+        let elsewhere = provider_semantic_identities(&relocated.provider_plan, &relocated.specs)?;
+        assert_ne!(
+            first.keys().collect::<Vec<_>>(),
+            elsewhere.keys().collect::<Vec<_>>(),
+            "a second SDK root is a separate reading, not a repeat of the first"
+        );
         Ok(())
     }
 
