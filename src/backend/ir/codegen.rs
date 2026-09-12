@@ -599,6 +599,53 @@ pub struct IrCodegen<'a> {
     rust_inspect_manifest_dir: Option<PathBuf>,
 }
 
+/// Fold one module's capture of an emitted union wrapper into the record already held for that wrapper.
+///
+/// A wrapper is captured once per module that mentions it, and each capture only sees what that module can:
+/// `local_nominals` comes from the module's own checked declarations, so the module declaring the payload models
+/// contributes every leaf binding while a module that merely accepts the union in a signature contributes none.
+/// The bindings are therefore merged rather than compared — the published record has to name every leaf, not the
+/// subset whichever module happened to be emitted first could see.
+///
+/// What must agree across modules is the wrapper's representation: its owner, and the payload members in producer
+/// order, because consumers index the emitted `V0`, `V1`, ... variants by that order and may not recompute it. Two
+/// captures disagreeing there, or binding one leaf name to two canonical identities, is a genuine defect and stays
+/// an error — named precisely, so the next occurrence does not need an instrumented build to diagnose.
+fn merge_native_union_capture(
+    existing: &mut crate::library_manifest::NativeUnionExport,
+    captured: crate::library_manifest::NativeUnionExport,
+) -> Result<(), EmitError> {
+    if existing.owner != captured.owner {
+        return Err(EmitError::InternalInvariant(format!(
+            "emitted union {} was captured under two owners",
+            captured.rust_name
+        )));
+    }
+    if existing.members != captured.members {
+        return Err(EmitError::InternalInvariant(format!(
+            "emitted union {} was captured with two different payload orders",
+            captured.rust_name
+        )));
+    }
+    for (name, canonical) in captured.local_nominals {
+        match existing.local_nominals.entry(name) {
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                slot.insert(canonical);
+            }
+            std::collections::btree_map::Entry::Occupied(slot) => {
+                if slot.get() != &canonical {
+                    return Err(EmitError::InternalInvariant(format!(
+                        "emitted union {} binds {} to two canonical identities",
+                        captured.rust_name,
+                        slot.key()
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 impl<'a> IrCodegen<'a> {
     /// Create a new IR-based code generator
     pub fn new() -> Self {
@@ -718,20 +765,15 @@ impl<'a> IrCodegen<'a> {
         );
         self.emitted_declaration_types.extend(declarations);
         for definition in definitions {
-            if let Some(existing) = self
+            let Some(existing) = self
                 .native_unions
-                .iter()
+                .iter_mut()
                 .find(|existing| existing.rust_name == definition.rust_name)
-            {
-                if existing != &definition {
-                    return Err(EmitError::InternalInvariant(format!(
-                        "emitted union {} has incompatible source-module identities",
-                        definition.rust_name
-                    )));
-                }
-            } else {
+            else {
                 self.native_unions.push(definition);
-            }
+                continue;
+            };
+            merge_native_union_capture(existing, definition)?;
         }
         self.native_unions
             .sort_by(|left, right| left.rust_name.cmp(&right.rust_name));
@@ -8274,6 +8316,93 @@ pub def observe(item: Item) -> Item:
             checker.type_info().rust.receiver_contracts
         );
         assert!(!generated.contains("child.clone()"), "{generated}");
+        Ok(())
+    }
+
+    /// Build one producer-local nominal binding for the union-capture merge tests.
+    fn nominal_binding(name: &str, module: &str) -> crate::library_manifest::CanonicalIdentityExport {
+        crate::library_manifest::CanonicalIdentityExport {
+            namespace: crate::library_manifest::CanonicalIdentityNamespaceExport::OrdinaryLexical,
+            origin: crate::library_manifest::CanonicalIdentityOriginExport::Package {
+                library: "provider".to_string(),
+                module_path: vec![module.to_string()],
+            },
+            declaration_name: name.to_string(),
+            kind: "model".to_string(),
+            declaration_span: crate::library_manifest::CanonicalIdentitySpanExport { start: 0, end: 1 },
+        }
+    }
+
+    /// Build one capture of the same emitted wrapper as seen from a single module.
+    fn union_capture(members: &[&str], nominals: &[(&str, &str)]) -> crate::library_manifest::NativeUnionExport {
+        crate::library_manifest::NativeUnionExport {
+            owner: crate::library_manifest::NativeUnionOwnerExport::ContainingArtifact,
+            rust_name: "__IncanUnionTest".to_string(),
+            members: members
+                .iter()
+                .map(|name| crate::library_manifest::TypeRef::Named {
+                    name: (*name).to_string(),
+                    origin: None,
+                })
+                .collect(),
+            local_nominals: nominals
+                .iter()
+                .map(|(name, module)| ((*name).to_string(), nominal_binding(name, module)))
+                .collect(),
+            checked_projection: None,
+        }
+    }
+
+    #[test]
+    fn a_wrapper_captured_from_two_modules_keeps_every_module_s_nominal_bindings()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // The module declaring the payload models sees every leaf; a module that only accepts the union in a
+        // signature sees none. Both are honest partial views of one wrapper, so the merge has to keep the union.
+        let mut declaring = union_capture(&["Left", "Right"], &[("Left", "shapes"), ("Right", "shapes")]);
+        let accepting = union_capture(&["Left", "Right"], &[]);
+        merge_native_union_capture(&mut declaring, accepting)?;
+        assert_eq!(
+            declaring.local_nominals.keys().cloned().collect::<Vec<_>>(),
+            vec!["Left".to_string(), "Right".to_string()]
+        );
+
+        let mut accepting = union_capture(&["Left", "Right"], &[]);
+        let declaring = union_capture(&["Left", "Right"], &[("Left", "shapes"), ("Right", "shapes")]);
+        merge_native_union_capture(&mut accepting, declaring)?;
+        assert_eq!(
+            accepting.local_nominals.keys().cloned().collect::<Vec<_>>(),
+            vec!["Left".to_string(), "Right".to_string()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_wrapper_captured_with_two_payload_orders_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+        // Consumers index the emitted `V0`, `V1`, ... variants by producer order, so disagreement here is a defect
+        // rather than a partial view, and must not be merged away.
+        let mut first = union_capture(&["Left", "Right"], &[]);
+        let reordered = union_capture(&["Right", "Left"], &[]);
+        let Err(error) = merge_native_union_capture(&mut first, reordered) else {
+            return Err("a reordered payload list must not merge".into());
+        };
+        assert!(
+            format!("{error:?}").contains("two different payload orders"),
+            "the refusal must name the payload order: {error:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_leaf_bound_to_two_canonical_identities_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+        let mut first = union_capture(&["Left"], &[("Left", "shapes")]);
+        let conflicting = union_capture(&["Left"], &[("Left", "other_module")]);
+        let Err(error) = merge_native_union_capture(&mut first, conflicting) else {
+            return Err("one leaf name bound to two identities must not merge".into());
+        };
+        assert!(
+            format!("{error:?}").contains("two canonical identities"),
+            "the refusal must name the conflicting binding: {error:?}"
+        );
         Ok(())
     }
 }
