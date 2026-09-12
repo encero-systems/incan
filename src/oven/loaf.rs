@@ -37,6 +37,11 @@ use super::{OvenReceipt, digest_bytes, receipt_without_build_unit_input};
 use crate::manifest::{DependencySource, DependencySpec, ProjectManifest};
 use crate::version::{INCAN_VERSION, SDK_PROVIDER_CODEGEN_REVISION};
 
+pub(crate) mod native_candidates;
+
+// The candidate intake moved into a submodule; its types are still named through `oven::loaf` by every caller.
+pub(crate) use native_candidates::OvenMaterializedLoafCandidate;
+
 /// Current wire format for one compiler-shipped Oven Loaf.
 pub const OVEN_LOAF_SCHEMA_VERSION: u32 = 13;
 /// Current wire format for the atomically committed Loaf-envelope manifest.

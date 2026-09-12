@@ -25,6 +25,7 @@ pub(crate) mod compiler_suite_env;
 pub(crate) mod interop;
 pub mod legacy_cargo;
 pub mod loaf;
+pub mod native_contract;
 pub mod native_test;
 mod process;
 pub mod progress;
@@ -435,6 +436,24 @@ pub enum OvenError {
     /// Supplemental source evidence cannot identify a portable build unit.
     #[error("Oven import requires a non-empty supplemental source {field}")]
     EmptySupplementalSource { field: &'static str },
+    /// A selected build unit has no compatible native dependency closure retained for it.
+    ///
+    /// Distinct from an ordinary cache miss: the closure is a selection the Incan Oven control plane supplies, and
+    /// its absence is a refusal rather than a reason to rebuild.
+    #[error(
+        "Oven selected native plan unavailable for build unit {build_unit_identity}; execution requires a compatible dependency closure"
+    )]
+    SelectedNativePlanUnavailable { build_unit_identity: String },
+    /// The store holds a native plan for this build unit that this compiler cannot read.
+    ///
+    /// Deliberately distinct from [`OvenError::SelectedNativePlanUnavailable`]: something *is* published and
+    /// reading it failed. The two ask for opposite responses — bake, or look at the store — so reporting a corrupt
+    /// or newer-than-this-build record as an absence sends a reader to rebuild something that already exists.
+    #[error("Oven selected native plan for build unit {build_unit_identity} cannot be read: {message}")]
+    SelectedNativePlanUnreadable {
+        build_unit_identity: String,
+        message: String,
+    },
     /// A requested receipt transformation named a build-unit input that was not present.
     #[error("Oven receipt has no build-unit input `{input}`")]
     MissingBuildUnitInput { input: String },
