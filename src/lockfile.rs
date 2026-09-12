@@ -476,6 +476,15 @@ fn provider_dependency_semantic_digests(
     provider_plan: &ProviderPlan,
     semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
 ) -> Result<BTreeMap<String, String>, String> {
+    let key = provider_semantic_digest_key(provider_plan, semantic_toolchain_dependencies);
+    static DIGESTS: std::sync::OnceLock<std::sync::Mutex<BTreeMap<String, BTreeMap<String, String>>>> =
+        std::sync::OnceLock::new();
+    let memo = DIGESTS.get_or_init(|| std::sync::Mutex::new(BTreeMap::new()));
+    if let Ok(cached) = memo.lock()
+        && let Some(digests) = cached.get(&key)
+    {
+        return Ok(digests.clone());
+    }
     let mut candidates = BTreeMap::<String, BTreeSet<String>>::new();
     let mut resolved_artifacts = BTreeMap::new();
     for provider in provider_plan.records() {
@@ -497,12 +506,49 @@ fn provider_dependency_semantic_digests(
             .or_default()
             .insert(semantic_digest);
     }
-    Ok(candidates
+    let digests = candidates
         .into_iter()
         .filter_map(|(physical, semantic)| {
             (semantic.len() == 1).then(|| semantic.into_iter().next().map(|semantic| (physical, semantic)))?
         })
-        .collect())
+        .collect::<BTreeMap<_, _>>();
+    if let Ok(mut cached) = memo.lock() {
+        cached.insert(key, digests.clone());
+    }
+    Ok(digests)
+}
+
+/// Name the exact inputs one semantic-digest pass would read.
+///
+/// The pass walks every present provider artifact and hashes its semantic content. Its answer depends on nothing
+/// but which providers are in the plan — each already carrying the content digest the SDK recorded for it — and
+/// the exact support-crate roots the toolchain resolved, each likewise carrying its own content digest. Two passes
+/// agreeing on all of those are hashing the same bytes.
+fn provider_semantic_digest_key(
+    provider_plan: &ProviderPlan,
+    semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
+) -> String {
+    let mut key = String::new();
+    for provider in provider_plan.records() {
+        let (Some(_), Some(artifact)) = (provider.manifest.as_deref(), provider.artifact.as_ref()) else {
+            continue;
+        };
+        key.push('\u{1e}');
+        key.push_str(&provider.identity.digest);
+        key.push('\u{1d}');
+        key.push_str(&artifact.crate_root.to_string_lossy());
+    }
+    for dependency in semantic_toolchain_dependencies {
+        key.push('\u{1c}');
+        key.push_str(&dependency.crate_name);
+        key.push('\u{1d}');
+        key.push_str(&dependency.package_name);
+        key.push('\u{1d}');
+        key.push_str(&dependency.content_digest);
+        key.push('\u{1d}');
+        key.push_str(&dependency.artifact_root.to_string_lossy());
+    }
+    key
 }
 
 /// Hash the relocatable SDK inventory after replacing physical provider digests with semantic lock identities.
@@ -1925,6 +1971,28 @@ mod tests {
             &second_specs,
         );
         assert_ne!(second_fingerprint, changed_fingerprint);
+        Ok(())
+    }
+
+    #[test]
+    fn repeating_a_semantic_identity_pass_answers_from_the_first_one() -> TestResult {
+        // The pass hashes every present provider artifact, and a bake asks for it twice. Repeating it must answer
+        // identically, and a relocated SDK must not be served the earlier reading: its provider artifacts sit at
+        // different roots, which is exactly what the surrounding relocation test distinguishes.
+        let temp = tempfile::tempdir()?;
+        let sealed = production_toolchain_semantic_fixture(&temp.path().join("sealed"))?;
+        let relocated = production_toolchain_semantic_fixture(&temp.path().join("relocated"))?;
+
+        let first = provider_semantic_identities(&sealed.provider_plan, &sealed.specs)?;
+        let repeated = provider_semantic_identities(&sealed.provider_plan, &sealed.specs)?;
+        assert_eq!(first, repeated, "a repeated pass over one plan must answer identically");
+
+        let elsewhere = provider_semantic_identities(&relocated.provider_plan, &relocated.specs)?;
+        assert_ne!(
+            first.keys().collect::<Vec<_>>(),
+            elsewhere.keys().collect::<Vec<_>>(),
+            "a second SDK root is a separate reading, not a repeat of the first"
+        );
         Ok(())
     }
 
