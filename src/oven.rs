@@ -25,6 +25,7 @@ pub(crate) mod compiler_suite_env;
 pub(crate) mod interop;
 pub mod legacy_cargo;
 pub mod loaf;
+pub mod native_contract;
 pub mod native_test;
 mod process;
 pub mod progress;
