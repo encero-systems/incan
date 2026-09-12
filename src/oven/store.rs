@@ -2066,7 +2066,7 @@ fn read_published_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, Ov
 /// Read one immutable manifest only from its authenticated published coordinate.
 fn verify_published_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreError> {
     let manifest = read_published_entry_manifest(root)?;
-    verify_manifest_identity(&manifest)?;
+    prove_entry_manifest(root, &manifest)?;
     Ok(manifest)
 }
 
@@ -2197,7 +2197,7 @@ where
         if !matches(&manifest) {
             continue;
         }
-        verify_manifest_identity(&manifest)?;
+        prove_entry_manifest(&path, &manifest)?;
         let payload = verified_payload_bytes(&path, &manifest)?;
         let lease = acquire_execution_lease(&path, false)?;
         let original_native_receipt = admit_native_receipt(&path, &manifest)?;
@@ -2789,6 +2789,17 @@ fn read_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreErr
     Ok(manifest)
 }
 
+/// Process-local record of manifest files already proven in this run, keyed by the bytes that were proven.
+///
+/// The key must be the file's stamp and never the identity the manifest records. That identity is what the
+/// manifest *claims*; keying by it would let a tampered manifest that keeps its recorded identity ride on the
+/// proof the genuine one earned earlier in the same process, which
+/// `a_tampered_manifest_is_refused_when_it_is_selected_and_ignored_when_it_is_not` exists to catch.
+fn proven_manifest_memo() -> &'static Mutex<BTreeSet<ManifestFileStamp>> {
+    static MEMO: OnceLock<Mutex<BTreeSet<ManifestFileStamp>>> = OnceLock::new();
+    MEMO.get_or_init(|| Mutex::new(BTreeSet::new()))
+}
+
 /// Prove that a manifest's content hashes to the identity it records.
 ///
 /// This is the expensive half of verification: it re-serializes the identity-bearing content, which for a Loaf
@@ -2805,10 +2816,28 @@ fn verify_manifest_identity(manifest: &OvenArtifactManifest) -> Result<(), OvenS
     Ok(())
 }
 
+/// Prove one entry's manifest, skipping the work when this run already proved the very same bytes.
+fn prove_entry_manifest(root: &Path, manifest: &OvenArtifactManifest) -> Result<(), OvenStoreError> {
+    let stamp = manifest_file_stamp(&manifest_path_for_entry(root));
+    if let Some(stamp) = stamp.as_ref()
+        && let Ok(proven) = proven_manifest_memo().lock()
+        && proven.contains(stamp)
+    {
+        return Ok(());
+    }
+    verify_manifest_identity(manifest)?;
+    if let Some(stamp) = stamp
+        && let Ok(mut proven) = proven_manifest_memo().lock()
+    {
+        proven.insert(stamp);
+    }
+    Ok(())
+}
+
 /// Verify immutable manifest structure and identity without traversing the materialized compiler closure.
 fn verify_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreError> {
     let manifest = read_entry_manifest(root)?;
-    verify_manifest_identity(&manifest)?;
+    prove_entry_manifest(root, &manifest)?;
     Ok(manifest)
 }
 
