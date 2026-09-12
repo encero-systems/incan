@@ -17,6 +17,11 @@ fn configured_incan_command_with_binary(binary: PathBuf, project_root: &Path, in
     let mut command = Command::new(binary);
     command
         .current_dir(project_root)
+        // The suite narrows explicit bakes to the one profile it executes. This root is an exception: it asserts on
+        // release-owned JSON authority and on sealed inputs reused across projects, both of which need the release
+        // half of the bake to exist. The setting reaches every command, not just the bake, because `build` verifies
+        // the same profile set the bake produced.
+        .env("INCAN_OVEN_BAKE_PROFILES", "all")
         // Normal Oven commands must not inherit a generated-Cargo cache control from the test harness.
         .env_remove("INCAN_GENERATED_CARGO_TARGET_DIR")
         .env_remove("INCAN_GENERATED_CACHE")

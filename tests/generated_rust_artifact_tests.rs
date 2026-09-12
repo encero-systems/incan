@@ -33,6 +33,12 @@ fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Command {
         .args(args)
         .current_dir(current_dir)
         .env("CARGO_NET_OFFLINE", "true")
+        // The suite narrows explicit bakes to the one profile it executes. This root is an exception: the artifact
+        // baselines are compared against a `release` package Loaf, and a consumer build here refuses with "no
+        // compatible `release` package Loaf" when the dependency bake never materialized one. The setting has to
+        // reach every command rather than just the bake, because `build` verifies the same profile set the bake
+        // produced.
+        .env("INCAN_OVEN_BAKE_PROFILES", "all")
         .env("INCAN_NO_BANNER", "1");
     if !support::oven_compiler_suite_is_active() {
         command
