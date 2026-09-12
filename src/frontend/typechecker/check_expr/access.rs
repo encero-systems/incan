@@ -4794,6 +4794,20 @@ impl TypeChecker {
                     .and_then(|construction| construction.payloads.get(index))
                     .filter(|payload| !matches!(payload, ResolvedType::Unknown));
                 if defer_rust_closures && contextual_rust_callable.is_none() && is_closure {
+                    // The closure's parameter types are not known until the Rust method signature is selected,
+                    // so checking it here reports those parameters as unknowns. Those diagnostics are noise and
+                    // are discarded, which is what the deferral exists for.
+                    //
+                    // What must not be discarded with them is everything the body records on the way, above all
+                    // the resolved identity of any call inside it. Lowering reads that identity to emit a callee
+                    // by its projected name; without it the emitter has no fact to act on and falls back to the
+                    // source spelling, which is not declared in the generated Rust at all. Skipping the body
+                    // entirely is what made a local function called inside such a closure emit an undeclared
+                    // bare name. The result type stays `Unknown` exactly as before -- this records facts, it
+                    // does not resolve the closure early. See #1492.
+                    let diagnostics_before = self.errors.len();
+                    self.check_expr(arg_expr);
+                    self.errors.truncate(diagnostics_before);
                     ResolvedType::Unknown
                 } else if let Some(input_ty) = result_callback_input.as_ref()
                     && is_closure
