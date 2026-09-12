@@ -2214,7 +2214,7 @@ impl CodegraphBuilder {
         let stable_identity = self.stable_identity_for(canonical_identity.as_ref());
         self.records.push(CodegraphRecord::Reference(CodegraphReferenceRecord {
             id: id.clone(),
-            language: CodegraphLanguage::Incan,
+            language: reference_language(canonical_identity.as_ref()),
             module_id: module_id.to_string(),
             owner_id: owner_id.clone(),
             name: name.to_string(),
@@ -3002,6 +3002,20 @@ const fn checked_registry_subject_kind(kind: CheckedRegistrySubjectKind) -> &'st
         CheckedRegistrySubjectKind::Method => "method",
         CheckedRegistrySubjectKind::CompilationUnit => "compilation_unit",
         CheckedRegistrySubjectKind::Package => "package",
+    }
+}
+
+/// Return the language a body fact belongs to, taken from the identity the compiler gave what it resolved to.
+///
+/// RFC 106 keeps one graph across both languages and makes `language` an attribute of a fact rather than a separate
+/// node kind, so a reference the compiler resolved to a Rust crate item is a Rust fact even though the source that
+/// wrote it is Incan. Only a checked identity decides this. Where nothing was proven the fact stays Incan, the
+/// language of the module that wrote it: matching a name against the module's Rust imports would infer origin from
+/// a spelling, which is the mistake RFC 120 exists to prevent and which an alias defeats immediately.
+fn reference_language(identity: Option<&CanonicalSymbolId>) -> CodegraphLanguage {
+    match identity.map(|identity| &identity.origin) {
+        Some(SymbolOrigin::RustCrate(_)) => CodegraphLanguage::Rust,
+        _ => CodegraphLanguage::Incan,
     }
 }
 
@@ -4241,6 +4255,85 @@ pub def pick(value: int, fallback: int) -> int:
             CodegraphLanguage::Incan,
             "an ordinary Incan import must not be relabelled by this change"
         );
+        Ok(())
+    }
+
+    /// A reference the compiler resolved into a Rust crate is a Rust fact, whatever the source that wrote it.
+    ///
+    /// The import records from `a_module_records_every_rust_item_it_reaches` say which items a module *reaches*.
+    /// They do not say which declaration *uses* one, and that is the question a build-invalidation or navigation
+    /// consumer actually asks. Every use site was emitted as `language: "incan"` regardless of what it resolved
+    /// to, so the graph could not distinguish a call into a Rust crate from a call to a local function.
+    ///
+    /// The identity decides it, not the spelling. An alias makes the spelling useless — `Predicate as Pred` reads
+    /// as an ordinary local name at the call site — and inferring origin from a name is the mistake RFC 120 exists
+    /// to prevent. A reference with no checked identity therefore stays Incan: absence of proof is not proof.
+    #[test]
+    fn a_reference_resolved_into_a_rust_crate_is_a_rust_fact() -> Result<(), Box<dyn std::error::Error>> {
+        fn identity(origin: SymbolOrigin, name: &str) -> CanonicalSymbolId {
+            CanonicalSymbolId {
+                namespace: incan_semantics_core::SymbolNamespace::OrdinaryLexical,
+                origin,
+                declaration_name: name.to_string(),
+                kind: incan_semantics_core::SemanticSourceTargetKind::Function,
+                scope_discriminant: None,
+                declaration_span: incan_semantics_core::HirSourceSpan::new(0, 1),
+            }
+        }
+
+        let source = "def probe() -> None:\n    pass\n";
+        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let module = ParsedModule {
+            name: "probe".to_string(),
+            path_segments: vec!["probe".to_string()],
+            file_path: PathBuf::from("probe.incn"),
+            source: source.to_string(),
+            ast: program,
+        };
+
+        let cases = [
+            (
+                "rust_call",
+                Some(identity(
+                    SymbolOrigin::RustCrate(vec!["cfg_expr".to_string(), "Predicate".to_string()]),
+                    "Predicate",
+                )),
+                CodegraphLanguage::Rust,
+            ),
+            (
+                "incan_call",
+                Some(identity(SymbolOrigin::Module(vec!["probe".to_string()]), "helper")),
+                CodegraphLanguage::Incan,
+            ),
+            ("unresolved_call", None, CodegraphLanguage::Incan),
+        ];
+
+        for (name, checked, expected) in cases {
+            let mut collector = CodegraphBuilder::new(Path::new("."), None, false);
+            collector.push_reference_with_checked(
+                &module,
+                "file:probe",
+                None,
+                name,
+                "call",
+                Span::new(0, 1),
+                false,
+                checked.map(|identity| (identity, None)),
+            );
+            let language = collector
+                .records
+                .iter()
+                .find_map(|record| match record {
+                    CodegraphRecord::Reference(reference) if reference.name == name => Some(reference.language),
+                    _ => None,
+                })
+                .ok_or_else(|| format!("`{name}` should produce a reference record"))?;
+            assert_eq!(
+                language, expected,
+                "`{name}` must take its language from the identity the compiler resolved, not from the module"
+            );
+        }
         Ok(())
     }
 
