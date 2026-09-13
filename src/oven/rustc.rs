@@ -3206,6 +3206,36 @@ impl OvenRustcArtifactManifest {
         Ok(())
     }
 
+    /// Report whether `key` already binds the crate that `relative_path` holds, through an explicit extern at a
+    /// different path.
+    ///
+    /// The isolation rule refuses a directory holding an artifact the role never selected, because rustc would
+    /// otherwise reach it through `-L dependency`. That reasoning does not apply to a crate the role passes as an
+    /// explicit `--extern`: the name is already resolved to one exact path, and a same-named file beside it cannot
+    /// be selected implicitly.
+    ///
+    /// This is exactly the arrangement a project extension produces in the conservative regime. The extension keeps
+    /// its own `incan_stdlib` while still drawing registry leaves from the base Loaf, whose directory carries the
+    /// base's runtime -- the one artifact `with_release_cohort_from_base` deliberately declines. One mechanism drops
+    /// that claim and the other demanded it back, so a bake that was correctly composed could not be materialized.
+    ///
+    /// Deliberately narrow: it admits only a crate this role explicitly externs, and only from a different path.
+    /// An unrelated co-resident, or a second copy of a crate the role does not extern, still refuses.
+    fn role_binds_crate_elsewhere(&self, key: &str, relative_path: &str) -> bool {
+        let Some(crate_name) = rust_library_crate_name(relative_path) else {
+            return false;
+        };
+        let bound_by_role = self
+            .entrypoint_externs
+            .get(key)
+            .is_some_and(|names| names.iter().any(|name| name == crate_name));
+        bound_by_role
+            && self
+                .externs
+                .iter()
+                .any(|artifact| artifact.crate_name == crate_name && artifact.relative_path != relative_path)
+    }
+
     /// Bind selected members to clean assigned directories or exact admitted copies under retained leases.
     fn bind_source_search_roles(
         &self,
@@ -3238,9 +3268,9 @@ impl OvenRustcArtifactManifest {
                     let canonical = (root.clone(), directory.relative_path.clone());
                     let clean = |inventory: &BTreeMap<String, String>| {
                         inventory.get(&member.relative_path) == Some(&member.digest)
-                            && inventory
-                                .iter()
-                                .all(|(path, digest)| selected_members.get(path) == Some(digest))
+                            && inventory.iter().all(|(path, digest)| {
+                                selected_members.get(path) == Some(digest) || self.role_binds_crate_elsewhere(key, path)
+                            })
                     };
                     let chosen = if inventories.get(&canonical).is_some_and(clean) {
                         &canonical
@@ -3736,6 +3766,21 @@ fn normalized_package_name(name: &str) -> String {
 }
 
 /// Return whether one declared artifact is directly below a declared search directory.
+/// Recover the crate name from a Rust library filename such as `libincan_stdlib-9c218ea857854fce.rlib`.
+///
+/// Returns `None` for anything that is not a `lib<name>-<hash>.{rlib,rmeta}`, so a source file, a native archive, or
+/// an unhashed artifact never looks like an explicitly externed crate.
+fn rust_library_crate_name(relative_path: &str) -> Option<&str> {
+    let file_name = relative_path.rsplit('/').next()?;
+    let stem = file_name
+        .strip_suffix(".rlib")
+        .or_else(|| file_name.strip_suffix(".rmeta"))?;
+    let named = stem.strip_prefix("lib")?;
+    let (crate_name, hash) = named.rsplit_once('-')?;
+    (!crate_name.is_empty() && !hash.is_empty() && hash.chars().all(|character| character.is_ascii_hexdigit()))
+        .then_some(crate_name)
+}
+
 fn artifact_is_below_search_path(relative_path: &str, search_path: &str) -> bool {
     Path::new(relative_path)
         .strip_prefix(Path::new(search_path))
