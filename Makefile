@@ -209,6 +209,10 @@ rustdoc-gate-ci:
 version-gate:
 	@python3 scripts/check_release_version_consistency.py
 
+.PHONY: parity-corpus-owners  ## check - Verify every deferred parity row names an OPEN owning issue
+parity-corpus-owners:
+	@python3 scripts/check_parity_corpus_owners.py
+
 .PHONY: agents-doc-sync  ## quality - Check AGENTS.md's skill table matches .agents/skills/ (local only, not CI)
 agents-doc-sync:
 	@echo "\033[1mChecking AGENTS.md skill table against .agents/skills/...\033[0m"
