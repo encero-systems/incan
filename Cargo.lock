@@ -1457,7 +1457,6 @@ dependencies = [
  "globset",
  "hex",
  "hmac",
- "incan_cargo_platform",
  "incan_codegraph",
  "incan_core",
  "incan_semantics_core",
@@ -1502,10 +1501,6 @@ dependencies = [
  "xz2",
  "zstd",
 ]
-
-[[package]]
-name = "incan_cargo_platform"
-version = "0.6.0-dev.3"
 
 [[package]]
 name = "incan_codegraph"
