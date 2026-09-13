@@ -2032,7 +2032,7 @@ pub fn prepare_compiler_test_suite(
             ),
         });
     }
-    if let Some(suite_identity) = select_compiler_test_suite_identity(request.store, &request.receipt)? {
+    if let Some(suite_identity) = select_or_import_compiler_test_suite_identity(request.store, &request.receipt)? {
         return Ok(OvenLegacyCargoCompilerSuiteResult {
             suite_identity,
             cargo_version: "not-run-existing-suite".to_string(),
@@ -2416,6 +2416,40 @@ fn cargo_profile_directory(profile: &str) -> Result<&'static str, OvenLegacyCarg
             ),
         }),
     }
+}
+
+/// Select the compiler suite locally, and on a miss admit the whole family from any configured mirror first.
+///
+/// The family — foundation, shards, and the suite record — is what a cold runner spends its first quarter hour
+/// rebuilding through Cargo. A mirror in store layout (`INCAN_OVEN_MIRRORS`) turns that miss into a verified copy;
+/// nothing is trusted from it, and the bake below still runs when no mirror has a compatible family. The import is
+/// keyed by this receipt's build unit and intent, so a mirror baked for another compiler or target contributes
+/// nothing.
+fn select_or_import_compiler_test_suite_identity(
+    store: &OvenStore,
+    receipt: &OvenReceipt,
+) -> Result<Option<String>, OvenLegacyCargoError> {
+    if let Some(identity) = select_compiler_test_suite_identity(store, receipt)? {
+        return Ok(Some(identity));
+    }
+    let mirrors = crate::oven::store_mirror::configured_mirrors(|name| std::env::var_os(name));
+    if mirrors.is_empty() {
+        return Ok(None);
+    }
+    let imported =
+        crate::oven::store_mirror::import_matching_from_mirrors(store, &mirrors, Some(receipt), |manifest| {
+            matches!(
+                manifest.kind,
+                OvenArtifactKind::CompilerTestSuite
+                    | OvenArtifactKind::CompilerTestSuiteFoundation
+                    | OvenArtifactKind::CompilerTestSuiteShard
+            ) && manifest.build_unit_identity == receipt.build_unit_identity
+                && manifest.intent == receipt.intent
+        })?;
+    if imported.is_empty() {
+        return Ok(None);
+    }
+    select_compiler_test_suite_identity(store, receipt)
 }
 
 /// Select one immutable compiler suite only when it is uniquely authorized by the exact receipt build unit.

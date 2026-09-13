@@ -1950,6 +1950,18 @@ impl OvenStore {
     /// so preserving the digest identity verbatim would split one immutable directory into two invalid locations on
     /// Linux. The v2 store root adopts the safe spelling below, so prior entries are never selected into a new
     /// direct-Rustc runtime closure.
+    /// Test-only view of an entry's root, for sibling modules that verify what a copy placed on disk.
+    #[cfg(test)]
+    pub(crate) fn entry_root_for_tests(&self, identity: &str) -> PathBuf {
+        self.entry_root(identity)
+    }
+
+    /// Test-only layout creation, for sibling modules that need an empty but valid store.
+    #[cfg(test)]
+    pub(crate) fn ensure_layout_for_tests(&self) -> Result<(), OvenStoreError> {
+        self.ensure_layout()
+    }
+
     fn entry_root(&self, identity: &str) -> PathBuf {
         let directory_name = entry_directory_name(identity);
         let loaf = self.entries_root().join(format!("{directory_name}{LOAF_ENTRY_SUFFIX}"));
@@ -4029,7 +4041,7 @@ struct ValidatedMaterializedFile {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::{
         LEGACY_CARGO_PUBLISHER_LOCK_FILE, LEGACY_CARGO_STAGING_DIRECTORY, OvenArtifactKind,
         OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreError, OvenStoreLimits,
@@ -5613,7 +5625,8 @@ mod tests {
         Ok(())
     }
 
-    fn request(
+    /// A publish request for the frozen fixture project, shared with sibling store modules' tests.
+    pub(crate) fn request(
         project: &Path,
         domain: &str,
         payload: &[u8],
@@ -5634,7 +5647,8 @@ mod tests {
         })
     }
 
-    fn write_project(root: &Path) -> Result<(), std::io::Error> {
+    /// Write the frozen fixture project a receipt can be computed from, shared with sibling store modules' tests.
+    pub(crate) fn write_project(root: &Path) -> Result<(), std::io::Error> {
         fs::write(
             root.join("Cargo.toml"),
             "[package]\nname = \"store_fixture\"\nversion = \"0.1.0\"\n",

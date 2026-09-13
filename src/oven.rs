@@ -31,6 +31,7 @@ mod process;
 pub mod progress;
 pub mod rustc;
 pub mod store;
+pub(crate) mod store_mirror;
 
 /// Digest the portable dependency facts that select a native Oven closure.
 ///
