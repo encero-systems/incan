@@ -25,6 +25,8 @@ const ARTIFACT_MANIFEST_FILE: &str = "artifact.json";
 const LOAF_MANIFEST_FILE: &str = "loaf.json";
 const PAYLOAD_FILE: &str = "payload";
 const MATERIALIZED_DIRECTORY: &str = "artifacts";
+/// Directory suffix marking an entry that carries a receipt-bound Loaf rather than a generic store object.
+const LOAF_ENTRY_SUFFIX: &str = ".loaf";
 const ACCESS_FILE: &str = "last-used";
 /// Sidecar cache for one immutable entry's recursively measured physical allocation.
 ///
@@ -1924,7 +1926,7 @@ impl OvenStore {
     /// direct-Rustc runtime closure.
     fn entry_root(&self, identity: &str) -> PathBuf {
         let directory_name = entry_directory_name(identity);
-        let loaf = self.entries_root().join(format!("{directory_name}.loaf"));
+        let loaf = self.entries_root().join(format!("{directory_name}{LOAF_ENTRY_SUFFIX}"));
         if loaf.exists() {
             loaf
         } else {
@@ -2024,7 +2026,7 @@ fn entry_directory_name_for_kind(identity: &str, kind: OvenArtifactKind) -> Stri
             | OvenArtifactKind::ProjectOutput
             | OvenArtifactKind::ProjectInspectionAuthority
     ) {
-        format!("{directory}.loaf")
+        format!("{directory}{LOAF_ENTRY_SUFFIX}")
     } else {
         directory
     }
@@ -2584,23 +2586,21 @@ fn write_staged_entry(
                 path: destination.clone(),
                 source,
             })?;
-        } else if is_private_publisher_materialized_source(root, &file.source_path)? {
-            OpenOptions::new()
-                .read(true)
-                .open(&file.source_path)
-                .and_then(|source| source.sync_all())
-                .map_err(|source| OvenStoreError::Io {
-                    path: file.source_path.clone(),
-                    source,
-                })?;
-            fs::hard_link(&file.source_path, &destination).map_err(|source| OvenStoreError::Io {
-                path: destination.clone(),
-                source,
-            })?;
-            shared_materialized_files.insert(shared_key, destination.clone());
         } else {
-            write_synced_file(&destination, &bytes, false)?;
-            set_materialized_executable(&destination, file.manifest.executable)?;
+            // A source that is already an immutable, synchronized store file is adopted by link. The bytes above
+            // were still read and re-digested first, so the entry is admitted on exactly the same evidence as a
+            // copied one -- the link only avoids rewriting content that is byte-identical by construction.
+            let linked = if is_admitted_entry_materialized_source(&file.source_path) {
+                link_immutable_materialized_source(&file.source_path, &destination, false)?
+            } else if is_private_publisher_materialized_source(root, &file.source_path)? {
+                link_immutable_materialized_source(&file.source_path, &destination, true)?
+            } else {
+                false
+            };
+            if !linked {
+                write_synced_file(&destination, &bytes, false)?;
+                set_materialized_executable(&destination, file.manifest.executable)?;
+            }
             shared_materialized_files.insert(shared_key, destination.clone());
         }
     }
@@ -2637,6 +2637,76 @@ fn write_staged_entry(
 /// one immutable entry's `artifacts/` root. The latter supports receipt-held composition of a sealed runtime plan
 /// with a native interop extension without doubling its physical disk allocation. A caller cannot turn arbitrary
 /// mutable input into a store-owned inode by choosing a convenient path.
+/// Report whether one directory name is a published entry coordinate.
+///
+/// Entries are filed under the digest of their own content, so the name alone establishes that the directory is an
+/// admitted immutable entry rather than staging or a caller-owned tree that merely sits beside one.
+fn is_entry_directory_name(name: &str) -> bool {
+    let digest = name.strip_suffix(LOAF_ENTRY_SUFFIX).unwrap_or(name);
+    digest
+        .strip_prefix("sha256-")
+        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
+/// Report whether a materialized source already lives inside some store's admitted, immutable entry.
+///
+/// The compiler's own closure -- its core and stdlib SDK providers -- is sealed once and then only ever selected. A
+/// package export still has to place that closure in the destination store, but placing it is not permission to
+/// rewrite it: the source directory is named for the digest of its own content, is never modified after admission,
+/// and was synchronized when it was published. Recognizing that shape here lets the destination adopt the existing
+/// bytes rather than copying and re-synchronizing a closure that is byte-identical by construction.
+///
+/// This deliberately accepts an entry in *any* store, not just this one. A project-local package store and the
+/// shared store are different roots holding the same immutable content, and the expensive case is precisely the
+/// copy between them.
+fn is_admitted_entry_materialized_source(source: &Path) -> bool {
+    source.ancestors().skip(1).any(|candidate| {
+        candidate.file_name() == Some(std::ffi::OsStr::new(MATERIALIZED_DIRECTORY))
+            && candidate.parent().is_some_and(|entry_root| {
+                entry_root
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(is_entry_directory_name)
+                    && entry_root.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new(ENTRIES_DIRECTORY))
+            })
+    })
+}
+
+/// Place one immutable source into the staged entry by link, reporting whether the link was taken.
+///
+/// `sync_source` says whether this source still needs synchronizing before the link. A publisher's private staging
+/// output is a file this process just wrote, so it does; an already-admitted entry in some store was synchronized
+/// when it was published and is never written again, so syncing it once per file is pure cost -- on a closure of a
+/// few thousand files that single distinction is most of a bake.
+///
+/// A hard link cannot cross a filesystem, and a package store under a project root is not always on the same device
+/// as the shared store. A cross-device refusal is an ordinary placement outcome rather than a publication failure,
+/// so it returns `false` and the caller writes its own verified copy. Any other error is a real I/O fault.
+fn link_immutable_materialized_source(
+    source_path: &Path,
+    destination: &Path,
+    sync_source: bool,
+) -> Result<bool, OvenStoreError> {
+    if sync_source {
+        OpenOptions::new()
+            .read(true)
+            .open(source_path)
+            .and_then(|source| source.sync_all())
+            .map_err(|source| OvenStoreError::Io {
+                path: source_path.to_path_buf(),
+                source,
+            })?;
+    }
+    match fs::hard_link(source_path, destination) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::CrossesDevices => Ok(false),
+        Err(source) => Err(OvenStoreError::Io {
+            path: destination.to_path_buf(),
+            source,
+        }),
+    }
+}
+
 fn is_private_publisher_materialized_source(root: &Path, source: &Path) -> Result<bool, OvenStoreError> {
     let store_root = root
         .parent()
@@ -4573,6 +4643,90 @@ mod tests {
             b"publisher-owned proof"
         );
         Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_package_export_adopts_an_admitted_provider_closure_without_rewriting_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::MetadataExt;
+
+        // The compiler's own closure is sealed once and then only ever selected. Exporting a package still has to
+        // place that closure in the destination store, but placing it must not mean rewriting it: a fixture project
+        // that bakes a library was re-copying and re-synchronizing the whole immutable provider set every time.
+        let temp = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        let publisher = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let source = publisher.path().join("native/libprovider.rlib");
+        fs::create_dir_all(source.parent().ok_or("provider fixture must have a parent")?)?;
+        fs::write(&source, b"immutable provider closure")?;
+
+        let limits = OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000);
+        let shared = OvenStore::new(temp.path().join("shared"), limits);
+        let mut publication = request(project.path(), "engine-arm64", b"plan")?;
+        publication.materialized_files = vec![OvenArtifactMaterializedFile {
+            source_path: source.clone(),
+            relative_path: "native/libprovider.rlib".to_string(),
+        }];
+        let admitted = shared.publish(&publication)?;
+        let admitted_file = shared
+            .select(&admitted.identity)?
+            .0
+            .materialized_root()
+            .join("native/libprovider.rlib");
+
+        // Export that admitted entry into a second store the way a package export does: same content, same
+        // filesystem, source path inside the first store's immutable entry.
+        let package = OvenStore::new(temp.path().join("package"), limits);
+        publication.materialized_files = vec![OvenArtifactMaterializedFile {
+            source_path: admitted_file.clone(),
+            relative_path: "native/libprovider.rlib".to_string(),
+        }];
+        let exported = package.publish(&publication)?;
+        let exported_file = package
+            .select(&exported.identity)?
+            .0
+            .materialized_root()
+            .join("native/libprovider.rlib");
+
+        let admitted_metadata = fs::metadata(&admitted_file)?;
+        let exported_metadata = fs::metadata(&exported_file)?;
+        assert_eq!(admitted_metadata.dev(), exported_metadata.dev());
+        assert_eq!(
+            admitted_metadata.ino(),
+            exported_metadata.ino(),
+            "an exported provider closure must adopt the admitted bytes rather than copy them"
+        );
+        assert!(admitted_metadata.nlink() >= 2);
+
+        // The export is still a complete, independently verifiable entry.
+        let (entry, _payload, _lease) = package.select_payload(&exported.identity)?;
+        assert_eq!(
+            fs::read(entry.materialized_root().join("native/libprovider.rlib"))?,
+            b"immutable provider closure"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_caller_owned_source_beside_an_entry_shaped_path_is_still_copied() {
+        // The link route is keyed on a real entry coordinate -- `entries/<digest>/artifacts/...` -- because that
+        // shape is what proves the source immutable. A caller-owned tree that merely borrows one of those names
+        // must not inherit the permission to be adopted by link.
+        let digest = "a".repeat(64);
+        assert!(!super::is_admitted_entry_materialized_source(&PathBuf::from(
+            "/caller/entries/not-a-digest/artifacts/native/libprovider.rlib"
+        )));
+        assert!(!super::is_admitted_entry_materialized_source(&PathBuf::from(format!(
+            "/caller/cache/sha256-{digest}/artifacts/native/libprovider.rlib"
+        ))));
+        assert!(super::is_admitted_entry_materialized_source(&PathBuf::from(format!(
+            "/store/entries/sha256-{digest}.loaf/artifacts/native/libprovider.rlib"
+        ))));
+        assert!(super::is_admitted_entry_materialized_source(&PathBuf::from(format!(
+            "/store/entries/sha256-{digest}/artifacts/native/libprovider.rlib"
+        ))));
     }
 
     #[cfg(unix)]
