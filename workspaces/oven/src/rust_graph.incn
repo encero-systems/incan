@@ -1,0 +1,196 @@
+"""
+Propagate Rust feature demands across a locked dependency graph until they stop changing.
+
+`rust_activation.activate_unit` answers one unit against one context. Cargo's answer is graph-wide: a package's
+effective features are the union of what every dependent asks of it, and asking for a feature can enable an optional
+dependency, which adds a dependent, which can widen another package's demand. The answer is therefore a fixed point,
+not a single pass.
+
+This module owns only that propagation. It does not read manifests, evaluate target conditions, validate feature
+graphs or select sources; those belong to `rust_source` and `rust_activation` and are called, never reimplemented.
+
+## Why host and target demands stay separate
+
+A build dependency is compiled for the host and the same package may also appear in the target graph. Unifying the
+two would let a feature enabled for a build script leak into the shipped unit, changing what is compiled for the
+user. `DependencyDomain` already carries that split and this propagation keeps it: one accumulated demand per
+(package, domain), never per package alone.
+"""
+
+from std.collections import Deque, OrderedSet
+from manifest_errors import IntakeError, IntakeErrorKind
+from rust_activation import (
+    activate_unit,
+    ActivationContext,
+    DependencyDomain,
+    RustActivation,
+    SlotActivation,
+)
+from rust_source import RustDependencyCatalog
+
+
+@derive(Eq, Clone)
+pub model GraphNode:
+    """One package identity in the locked graph, kept distinct per domain."""
+
+    pub package: str
+    pub domain: DependencyDomain
+
+
+@derive(Clone)
+pub model NodeDemand:
+    """
+    Everything the graph has asked of one node so far.
+
+    `features` only grows: a dependent may add a feature, never retract one another dependent asked for. That
+    monotonicity is what makes the iteration terminate.
+    """
+
+    pub features: list[str]
+    pub default_features: bool
+
+
+pub model GraphActivation:
+    """The settled activation for every reachable node, and the order the fixed point was reached in."""
+
+    pub nodes: list[GraphNode]
+    pub activations: list[RustActivation]
+    pub rounds: int
+
+
+def demanded(base: ActivationContext, demand: NodeDemand) -> ActivationContext:
+    """Apply one node's accumulated demand to the shared host/target context."""
+    return ActivationContext(
+        host=base.host,
+        target=base.target,
+        purpose=base.purpose,
+        requested_features=demand.features,
+        default_features=demand.default_features,
+        build_unit_present=base.build_unit_present,
+    )
+
+
+def rounds_exhausted(manifest: str, max_rounds: int) -> IntakeError:
+    """
+    Refuse rather than spin when propagation does not settle.
+
+    Demands only grow and a graph's feature set is finite, so a fixed point exists; reaching this bound means a
+    catalog described edges the walk cannot settle, and reporting that is more useful than looping.
+    """
+    return IntakeError(
+        kind=IntakeErrorKind.Invalid,
+        manifest=manifest,
+        field=["dependencies"],
+        location=None,
+        detail=f"feature propagation did not settle within {max_rounds} rounds",
+    )
+
+
+def merged(existing: NodeDemand, addition: NodeDemand) -> Option[NodeDemand]:
+    """
+    Union one incoming demand into an existing one, or None when it adds nothing.
+
+    Returning None is how the caller learns a node need not be revisited; a demand that grew is the only reason to
+    recompute one, and without that test the walk would not terminate on a cyclic graph.
+    """
+    mut names = OrderedSet[str]()
+    for feature in existing.features:
+        names.add(feature)
+    mut grew = false
+    for feature in addition.features:
+        if not names.contains(feature):
+            names.add(feature)
+            grew = true
+    defaults = existing.default_features or addition.default_features
+    if not grew and defaults == existing.default_features:
+        return None
+    return Some(NodeDemand(features=names.to_list(), default_features=defaults))
+
+
+pub def propagate_features(
+    catalogs: Dict[str, RustDependencyCatalog],
+    base: ActivationContext,
+    manifest: str,
+    roots: list[GraphNode],
+    root_demand: NodeDemand,
+    max_rounds: int,
+) -> Result[GraphActivation, IntakeError]:
+    """
+    Run `activate_unit` over the graph until no node's demand grows.
+
+    Catalogs are supplied as data rather than read here: parsing a manifest is an owned IO boundary and this module
+    decides only how demands propagate. A package absent from `catalogs` contributes no edges -- it is a leaf as far
+    as propagation is concerned, which is the conservative answer for a package this walk cannot see into and can
+    never prune a unit the build actually needs.
+
+    `base` carries the host and target identities every node shares; only the requested features and default flag
+    vary per node, and those come from the accumulated demand.
+
+    `max_rounds` bounds the iteration explicitly. Demands only grow and a graph's feature set is finite, so a fixed
+    point exists; the bound is there so a malformed catalog reports a refusal instead of spinning.
+    """
+    mut demands: Dict[str, NodeDemand] = {}
+    mut order: list[GraphNode] = []
+    mut queue = Deque[GraphNode]()
+    for root in roots:
+        key = node_key(root)
+        if key not in demands:
+            demands[key] = root_demand
+            order.append(root)
+            queue.append(root)
+
+    mut rounds = 0
+    mut settled: Dict[str, RustActivation] = {}
+    while len(queue) > 0:
+        node = queue.popleft()
+        rounds += 1
+        if rounds > max_rounds:
+            return Err(rounds_exhausted(manifest, max_rounds))
+        key = node_key(node)
+        demand = demands[key]
+        if node.package not in catalogs:
+            # A package this walk cannot see into contributes no edges. Treating it as a leaf is the conservative
+            # answer: it can never prune a unit the build actually needs.
+            continue
+        unit = catalogs[node.package]
+        activation = activate_unit(unit, demanded(base, demand), manifest)?
+        settled[key] = activation
+        for slot in activation.slots:
+            match slot.activation:
+                SlotActivation.Inactive(_) => pass
+                SlotActivation.Active(features, defaults, domain) =>
+                    declaration = unit.dependencies[slot.index]
+                    child = GraphNode(package=declaration.package, domain=domain)
+                    child_key = node_key(child)
+                    incoming = NodeDemand(features=features, default_features=defaults)
+                    if child_key not in demands:
+                        demands[child_key] = incoming
+                        order.append(child)
+                        queue.append(child)
+                    else:
+                        match merged(demands[child_key], incoming):
+                            None => pass
+                            Some(widened) =>
+                                demands[child_key] = widened
+                                queue.append(child)
+
+    mut activations: list[RustActivation] = []
+    mut reached: list[GraphNode] = []
+    for node in order:
+        key = node_key(node)
+        if key in settled:
+            reached.append(node)
+            activations.append(settled[key])
+    return Ok(GraphActivation(nodes=reached, activations=activations, rounds=rounds))
+
+
+def node_key(node: GraphNode) -> str:
+    """
+    Identity for the demand table.
+
+    The domain is part of the key, never a detail beside it: the same package compiled for the host and for the
+    target are two nodes, and merging them would let a build script's feature reach the shipped unit.
+    """
+    if node.domain == DependencyDomain.Host:
+        return f"host::{node.package}"
+    return f"target::{node.package}"
