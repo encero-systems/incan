@@ -4,7 +4,8 @@
 //! and the only offline source. That makes a mirror the simplest possible thing: another store root, in the same
 //! `entries/` layout, that this machine may read but never writes. A fresh checkout or CI runner that syncs such a
 //! directory first can then admit a whole sealed closure — the standard library, the compiler-suite foundation — by
-//! copying it, instead of running the compatibility baker to reproduce it.
+//! copying it, instead of running the compatibility baker to reproduce it. The same `INCAN_OVEN_MIRRORS` list also
+//! names Loaf envelope roots (see `loaf_mirror`); each reader recognises its own layout and ignores the rest.
 //!
 //! Nothing is trusted from the mirror. A candidate is selected under the mirror's own manager lock and active lease,
 //! its admitted record is revalidated, and it enters the local store only through the same verifying publication
@@ -77,6 +78,11 @@ where
     F: Fn(&OvenArtifactManifest) -> bool,
 {
     for mirror in mirrors {
+        // One mirror list serves every mirrored root kind. A Loaf envelope root, or a path that is not a store
+        // at all, has no `entries/` and is simply not a store mirror; only a store that exists is read.
+        if !mirror.join("entries").is_dir() {
+            continue;
+        }
         let mut candidates = PublishedOvenStore::new(mirror).select_payloads_matching_for_execution(&matches)?;
         if candidates.is_empty() {
             continue;
@@ -294,12 +300,18 @@ mod tests {
     }
 
     #[test]
-    fn a_path_that_is_not_a_store_is_an_error_not_a_bake() -> TestResult {
-        let not_a_store = tempfile::tempdir()?;
+    fn a_root_without_entries_is_not_a_store_mirror_and_is_skipped() -> TestResult {
+        // The same list names Loaf envelope roots; those have no `entries/` and are another reader's business.
+        let envelope_root = tempfile::tempdir()?;
+        fs::write(envelope_root.path().join("envelope.json"), b"{}")?;
         let local_root = tempfile::tempdir()?;
         let local = OvenStore::new(local_root.path(), limits());
-        let result = import_matching_from_mirrors(&local, &[not_a_store.path().to_path_buf()], None, |_| true);
-        assert!(result.is_err(), "an unreadable mirror must surface, got {result:?}");
+        let imported = import_matching_from_mirrors(&local, &[envelope_root.path().to_path_buf()], None, |_| true)?;
+        assert!(imported.is_empty());
+        assert!(
+            !envelope_root.path().join("entries").exists(),
+            "a skipped root is never touched"
+        );
         Ok(())
     }
 

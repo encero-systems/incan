@@ -61,6 +61,9 @@ use crate::oven::loaf::{
     loaf_envelope_specifications, loaf_raw_disk_bytes, prepare_loaf_from_generated_project,
     retire_unreferenced_loaf_generations, validate_stored_loaf_for_reuse,
 };
+use crate::oven::loaf_mirror::{
+    LoafEnvelopeExpectation, LoafMemberExpectation, LoafMirrorMiss, import_loaf_envelope_from_mirrors,
+};
 use crate::oven::native_test::{
     OvenNativeTestBatchReport, OvenNativeTestBatchRequest, OvenNativeTestCaseCounts, OvenNativeTestCaseTiming,
     OvenNativeTestCommandTiming, OvenNativeTestRequest, run_native_test_batch_all_for_request, run_native_tests,
@@ -80,6 +83,7 @@ use crate::oven::store::{
     OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreExecutionPayload,
     OvenStoreInspection, OvenStoreLease, OvenStoreLimits,
 };
+use crate::oven::store_mirror::configured_mirrors;
 use crate::oven::{
     DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES, DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES,
     DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
@@ -675,6 +679,87 @@ fn loaf_envelope_compatibility_map(evidence: &OvenLoafEnvelopeEvidence) -> BTree
     ])
 }
 
+/// Return the content identity of the generation one envelope name and evidence map would commit.
+fn loaf_generation_identity(envelope: OvenLoafEnvelope, evidence: &BTreeMap<String, String>) -> CliResult<String> {
+    Ok(digest_bytes(
+        &serde_json::to_vec(&(loaf_envelope_name(envelope), evidence))
+            .map_err(|error| CliError::failure(format!("could not encode Loaf generation identity: {error}")))?,
+    ))
+}
+
+/// Return the wire spelling of one checked fixture action.
+fn loaf_fixture_action_name(action: OvenLoafFixtureAction) -> &'static str {
+    match action {
+        OvenLoafFixtureAction::Build => "build",
+        OvenLoafFixtureAction::Run => "run",
+    }
+}
+
+/// Commit the expected generation from a configured mirror when the local root has none.
+///
+/// Runs under the exclusive publication lock, right before ordinary reuse, and only when `output/envelope.json` is
+/// absent: a root that already holds a generation is either reused or rebaked by the existing rules, never replaced
+/// from a mirror. A miss is silent; a corrupt mirror is reported as a note and otherwise ignored.
+fn import_loaf_envelope_from_configured_mirrors(
+    output: &Path,
+    scratch: &Path,
+    envelope: OvenLoafEnvelope,
+    evidence: &OvenLoafEnvelopeEvidence,
+) -> CliResult<()> {
+    if output.join("envelope.json").is_file() {
+        return Ok(());
+    }
+    let mirrors = configured_mirrors(|name| env::var_os(name));
+    if mirrors.is_empty() {
+        return Ok(());
+    }
+    import_loaf_envelope_from_mirror_roots(output, scratch, envelope, evidence, &mirrors)
+}
+
+/// Commit the expected generation from the first of `mirrors` that proves in full; see the configured wrapper.
+fn import_loaf_envelope_from_mirror_roots(
+    output: &Path,
+    scratch: &Path,
+    envelope: OvenLoafEnvelope,
+    evidence: &OvenLoafEnvelopeEvidence,
+    mirrors: &[PathBuf],
+) -> CliResult<()> {
+    let compatibility_evidence = loaf_envelope_compatibility_map(evidence);
+    let generation_identity = loaf_generation_identity(envelope, &compatibility_evidence)?;
+    let members = loaf_envelope_specifications(envelope)
+        .iter()
+        .map(|specification| LoafMemberExpectation {
+            label: specification.label.to_string(),
+            profile: specification.profile.to_string(),
+            action: loaf_fixture_action_name(specification.action).to_string(),
+            role: specification.role,
+        })
+        .collect::<Vec<_>>();
+    let expectation = LoafEnvelopeExpectation {
+        schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
+        envelope: loaf_envelope_name(envelope),
+        generation_identity: &generation_identity,
+        evidence: &compatibility_evidence,
+        members: &members,
+    };
+    let started = Instant::now();
+    match import_loaf_envelope_from_mirrors(output, scratch, &expectation, mirrors) {
+        Ok(admitted) => announce_oven_progress(
+            "MIRROR",
+            &format!(
+                "{} Loaf envelope: {} member(s) proven from {}",
+                loaf_envelope_name(envelope),
+                admitted.member_count,
+                admitted.mirror.display()
+            ),
+            Some(&elapsed_detail(started)),
+        ),
+        Err(LoafMirrorMiss::NoCompatibleEnvelope) => {}
+        Err(miss @ LoafMirrorMiss::Unreadable { .. }) => eprintln!("note: {miss}"),
+    }
+    Ok(())
+}
+
 /// Gather release-family compatibility evidence and baker provenance for a built-in envelope.
 fn loaf_envelope_evidence(
     envelope: OvenLoafEnvelope,
@@ -696,10 +781,7 @@ fn loaf_envelope_evidence(
                 "label": specification.label,
                 "project_name": specification.project_name,
                 "profile": specification.profile,
-                "action": match specification.action {
-                    OvenLoafFixtureAction::Build => "build",
-                    OvenLoafFixtureAction::Run => "run",
-                },
+                "action": loaf_fixture_action_name(specification.action),
                 "source": specification.source,
                 "manifest": specification.manifest,
                 "inspection_manifest": specification.inspection_manifest,
@@ -818,10 +900,7 @@ fn reuse_complete_loaf_envelope(
     }
     let mut reports = Vec::with_capacity(manifest.loafs.len());
     for (entry, specification) in manifest.loafs.iter().zip(specifications) {
-        let expected_action = match specification.action {
-            OvenLoafFixtureAction::Build => "build",
-            OvenLoafFixtureAction::Run => "run",
-        };
+        let expected_action = loaf_fixture_action_name(specification.action);
         if entry.label != specification.label
             || entry.profile != specification.profile
             || entry.action != expected_action
@@ -1030,6 +1109,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         preflight_elapsed_ms: started.elapsed().as_millis(),
         ..OvenLoafBakePhaseTiming::default()
     };
+    import_loaf_envelope_from_configured_mirrors(&options.output, scratch.path(), envelope, &evidence)?;
     if let Some(report) =
         reuse_complete_loaf_envelope(&options.output, scratch.path(), envelope, &evidence, limits, started)?
     {
@@ -1046,10 +1126,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     // staged generation is private and has no publication authority, so release exclusivity until the atomic commit.
     drop(publication_lock);
     let compatibility_evidence = loaf_envelope_compatibility_map(&evidence);
-    let generation_identity = digest_bytes(
-        &serde_json::to_vec(&(loaf_envelope_name(envelope), &compatibility_evidence))
-            .map_err(|error| CliError::failure(format!("could not encode Loaf generation identity: {error}")))?,
-    );
+    let generation_identity = loaf_generation_identity(envelope, &compatibility_evidence)?;
     let generation_name = generation_identity
         .strip_prefix("sha256:")
         .unwrap_or(&generation_identity);
@@ -1285,11 +1362,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         pending.push(OvenLoafBakeEntryReport {
             label: specification.label.to_string(),
             profile: specification.profile.to_string(),
-            action: match specification.action {
-                OvenLoafFixtureAction::Build => "build",
-                OvenLoafFixtureAction::Run => "run",
-            }
-            .to_string(),
+            action: loaf_fixture_action_name(specification.action).to_string(),
             role: specification.role,
             result,
         });
@@ -5760,12 +5833,13 @@ mod tests {
         compiler_suite_remove_generated_rust_closure, compiler_suite_selected_shard_references,
         compiler_suite_selection_context, compiler_suite_selection_report, compiler_suite_temporary_directory,
         compiler_suite_uses_indexed_foundations, compiler_suite_workspace_library_dependency_closure,
-        default_rustup_home, default_store_root, interop_bake_terminal_message, loaf_envelope_default_limits,
-        loaf_envelope_evidence, native_test_failure_summary, oven_import, oven_publish_direct_rustc_plan, oven_run,
-        oven_test, parse_named_path, prepare_compiler_suite_child, resolve_limits_with_environment_and_defaults,
-        reuse_complete_loaf_envelope, run_compiler_suite_children_with_leases_retained,
-        run_prepared_compiler_suite_children, select_compiler_suite_shards, write_compiler_suite_report,
-        write_native_test_transcript,
+        default_rustup_home, default_store_root, import_loaf_envelope_from_mirror_roots, interop_bake_terminal_message,
+        loaf_envelope_compatibility_map, loaf_envelope_default_limits, loaf_envelope_evidence,
+        loaf_fixture_action_name, loaf_generation_identity, native_test_failure_summary, oven_import,
+        oven_publish_direct_rustc_plan, oven_run, oven_test, parse_named_path, prepare_compiler_suite_child,
+        resolve_limits_with_environment_and_defaults, reuse_complete_loaf_envelope,
+        run_compiler_suite_children_with_leases_retained, run_prepared_compiler_suite_children,
+        select_compiler_suite_shards, write_compiler_suite_report, write_native_test_transcript,
     };
     use crate::cli::{CliResult, OvenLoafEnvelopeArgument, OvenOutputFormat};
     use crate::oven::legacy_cargo::{
@@ -5777,8 +5851,8 @@ mod tests {
     };
     use crate::oven::loaf::{
         OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION, OvenLoaf, OvenLoafEnvelope,
-        OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenLoafMemberRole,
-        acquire_exclusive_loaf_generation_lock, loaf_envelope_specifications,
+        OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafMemberRole, acquire_exclusive_loaf_generation_lock,
+        loaf_envelope_specifications,
     };
     use crate::oven::loaf::{commit_loaf_generation, retire_unreferenced_loaf_generations};
     use crate::oven::native_test::{OvenNativeTestCaseCounts, OvenNativeTestCaseTiming};
@@ -5890,6 +5964,168 @@ mod tests {
     }
 
     #[cfg(unix)]
+    /// Write one complete synthetic `release` envelope — every checked member with an empty plan — into `root`.
+    fn write_synthetic_release_envelope(
+        root: &Path,
+        generation_identity: &str,
+        evidence: &BTreeMap<String, String>,
+    ) -> Result<OvenLoafEnvelopeManifest, Box<dyn std::error::Error>> {
+        let generation = Path::new("generations").join(
+            generation_identity
+                .strip_prefix("sha256:")
+                .unwrap_or(generation_identity),
+        );
+        let mut members = Vec::new();
+        for specification in loaf_envelope_specifications(OvenLoafEnvelope::Release) {
+            let build_unit_identity =
+                digest_bytes(format!("{}:{}", specification.label, specification.profile).as_bytes());
+            let loaf = OvenLoaf {
+                schema_version: OVEN_LOAF_SCHEMA_VERSION,
+                build_unit_identity: build_unit_identity.clone(),
+                provenance: Default::default(),
+                accounting: Default::default(),
+                compatibility: Default::default(),
+                registry_leaves: Vec::new(),
+                plan: OvenRustcArtifactManifest {
+                    schema_version: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+                    intent: OvenBuildIntent {
+                        target: "fixture-target".to_string(),
+                        toolchain: "rustc fixture".to_string(),
+                        profile: specification.profile.to_string(),
+                        features: Vec::new(),
+                    },
+                    dependency_search_paths: Vec::new(),
+                    native_search_paths: Vec::new(),
+                    externs: Vec::new(),
+                    entrypoint_dependency_search_paths: Default::default(),
+                    entrypoint_externs: BTreeMap::new(),
+                    registry_leaves: Vec::new(),
+                    registry_sources: Vec::new(),
+                    compile_environment: BTreeMap::new(),
+                    vocab_auxiliary_targets: Vec::new(),
+                    supporting_artifacts: Vec::new(),
+                },
+            };
+            let loaf_bytes = serde_json::to_vec_pretty(&loaf)?;
+            let loaf_identity = digest_bytes(&loaf_bytes);
+            let relative_directory = generation.join(format!(
+                "{}.loaf",
+                loaf_identity.strip_prefix("sha256:").unwrap_or(&loaf_identity)
+            ));
+            let directory = root.join(&relative_directory);
+            fs::create_dir_all(&directory)?;
+            fs::write(directory.join("loaf.json"), &loaf_bytes)?;
+            members.push(OvenLoafEnvelopeMember {
+                label: specification.label.to_string(),
+                profile: specification.profile.to_string(),
+                action: loaf_fixture_action_name(specification.action).to_string(),
+                role: specification.role,
+                build_unit_identity,
+                loaf_identity,
+                plan_identity: digest_bytes(&serde_json::to_vec(&loaf.plan)?),
+                logical_bytes: loaf_bytes.len() as u64,
+                physical_bytes: 0,
+                path: relative_directory.join("loaf.json"),
+            });
+        }
+        let manifest = OvenLoafEnvelopeManifest {
+            schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
+            envelope: "release".to_string(),
+            generation_identity: generation_identity.to_string(),
+            evidence: evidence.clone(),
+            loafs: members,
+        };
+        fs::write(root.join("envelope.json"), serde_json::to_vec(&manifest)?)?;
+        Ok(manifest)
+    }
+
+    #[test]
+    fn a_cold_root_reuses_the_exact_generation_from_a_mirror_without_cargo() -> Result<(), Box<dyn std::error::Error>> {
+        let mirror = tempfile::tempdir()?;
+        let output = tempfile::tempdir()?;
+        let scratch = tempfile::tempdir_in(output.path())?;
+        let compiler_root = tempfile::tempdir()?;
+        let tools = tempfile::tempdir()?;
+        fs::write(
+            compiler_root.path().join("Cargo.toml"),
+            "[workspace]\nresolver = \"3\"\n",
+        )?;
+        fs::write(compiler_root.path().join("Cargo.lock"), "version = 4\n")?;
+        for crate_name in ["incan_core", "incan_derive", "incan_stdlib"] {
+            let crate_root = compiler_root.path().join("crates").join(crate_name);
+            fs::create_dir_all(crate_root.join("src"))?;
+            fs::write(
+                crate_root.join("Cargo.toml"),
+                format!("[package]\nname = \"{crate_name}\"\nversion = \"0.1.0\"\n"),
+            )?;
+            fs::write(crate_root.join("src/lib.rs"), "pub fn fixture() {}\n")?;
+        }
+        let sdk_inventory = compiler_root.path().join("sdk-inventory.json");
+        fs::write(&sdk_inventory, "sealed sdk inventory")?;
+        let rustc = tools.path().join("rustc");
+        write_executable(&rustc, "#!/bin/sh\nprintf 'rustc fixture\\n'\n")?;
+        let compiler = tools.path().join("incan");
+        write_executable(&compiler, "#!/bin/sh\nprintf 'incan\\n'\n")?;
+        let evidence = loaf_envelope_evidence(
+            OvenLoafEnvelope::Release,
+            compiler_root.path(),
+            &compiler,
+            &sdk_inventory,
+            &rustc,
+        )?;
+        let compatibility = loaf_envelope_compatibility_map(&evidence);
+        let generation_identity = loaf_generation_identity(OvenLoafEnvelope::Release, &compatibility)?;
+        let manifest = write_synthetic_release_envelope(mirror.path(), &generation_identity, &compatibility)?;
+
+        // A mirror that names a different generation for the same evidence is refused: the identity is derived,
+        // never taken from the mirror.
+        let stale = tempfile::tempdir()?;
+        write_synthetic_release_envelope(stale.path(), &digest_bytes(b"other generation"), &compatibility)?;
+        import_loaf_envelope_from_mirror_roots(
+            output.path(),
+            scratch.path(),
+            OvenLoafEnvelope::Release,
+            &evidence,
+            &[stale.path().to_path_buf()],
+        )?;
+        assert!(
+            !output.path().join("envelope.json").exists(),
+            "a stale mirror commits nothing"
+        );
+
+        import_loaf_envelope_from_mirror_roots(
+            output.path(),
+            scratch.path(),
+            OvenLoafEnvelope::Release,
+            &evidence,
+            &[stale.path().to_path_buf(), mirror.path().to_path_buf()],
+        )?;
+        let committed: OvenLoafEnvelopeManifest =
+            serde_json::from_slice(&fs::read(output.path().join("envelope.json"))?)?;
+        assert_eq!(committed, manifest);
+        assert!(
+            fs::read_dir(scratch.path())?.next().is_none(),
+            "nothing is left in scratch after a commit"
+        );
+
+        let report = reuse_complete_loaf_envelope(
+            output.path(),
+            scratch.path(),
+            OvenLoafEnvelope::Release,
+            &evidence,
+            OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+            Instant::now(),
+        )?
+        .ok_or("the mirrored generation must be reused by the ordinary path")?;
+        assert_eq!(report.action, "reused");
+        assert_eq!(report.reused_count, manifest.loafs.len());
+        assert!(
+            !report.cargo_process_started,
+            "a mirrored envelope never launches Cargo"
+        );
+        Ok(())
+    }
+
     #[test]
     fn complete_envelope_reuses_nonsemantic_churn_without_cargo() -> Result<(), Box<dyn std::error::Error>> {
         let output = tempfile::tempdir()?;
@@ -5957,76 +6193,10 @@ mod tests {
             &rustc,
         )?;
         let generation_identity = digest_bytes(b"generation");
-        let generation = Path::new("generations").join(
-            generation_identity
-                .strip_prefix("sha256:")
-                .unwrap_or(&generation_identity),
-        );
-        let mut members = Vec::new();
-        for specification in loaf_envelope_specifications(OvenLoafEnvelope::Release) {
-            let action = match specification.action {
-                OvenLoafFixtureAction::Build => "build",
-                OvenLoafFixtureAction::Run => "run",
-            };
-            let build_unit_identity =
-                digest_bytes(format!("{}:{}", specification.label, specification.profile).as_bytes());
-            let loaf = OvenLoaf {
-                schema_version: OVEN_LOAF_SCHEMA_VERSION,
-                build_unit_identity: build_unit_identity.clone(),
-                provenance: Default::default(),
-                accounting: Default::default(),
-                compatibility: Default::default(),
-                registry_leaves: Vec::new(),
-                plan: OvenRustcArtifactManifest {
-                    schema_version: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
-                    intent: OvenBuildIntent {
-                        target: "fixture-target".to_string(),
-                        toolchain: "rustc fixture".to_string(),
-                        profile: specification.profile.to_string(),
-                        features: Vec::new(),
-                    },
-                    dependency_search_paths: Vec::new(),
-                    native_search_paths: Vec::new(),
-                    externs: Vec::new(),
-                    entrypoint_dependency_search_paths: Default::default(),
-                    entrypoint_externs: BTreeMap::new(),
-                    registry_leaves: Vec::new(),
-                    registry_sources: Vec::new(),
-                    compile_environment: BTreeMap::new(),
-                    vocab_auxiliary_targets: Vec::new(),
-                    supporting_artifacts: Vec::new(),
-                },
-            };
-            let loaf_identity = digest_bytes(&serde_json::to_vec_pretty(&loaf)?);
-            let relative_directory = generation.join(format!(
-                "{}.loaf",
-                loaf_identity.strip_prefix("sha256:").unwrap_or(&loaf_identity)
-            ));
-            let directory = output.path().join(&relative_directory);
-            fs::create_dir_all(&directory)?;
-            fs::write(directory.join("loaf.json"), serde_json::to_vec_pretty(&loaf)?)?;
-            members.push(OvenLoafEnvelopeMember {
-                label: specification.label.to_string(),
-                profile: specification.profile.to_string(),
-                action: action.to_string(),
-                role: specification.role,
-                build_unit_identity,
-                loaf_identity,
-                plan_identity: digest_bytes(&serde_json::to_vec(&loaf.plan)?),
-                logical_bytes: serde_json::to_vec_pretty(&loaf)?.len() as u64,
-                physical_bytes: 0,
-                path: relative_directory.join("loaf.json"),
-            });
-        }
-        fs::write(
-            output.path().join("envelope.json"),
-            serde_json::to_vec(&OvenLoafEnvelopeManifest {
-                schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
-                envelope: "release".to_string(),
-                generation_identity,
-                evidence: super::loaf_envelope_compatibility_map(&first_evidence),
-                loafs: members,
-            })?,
+        write_synthetic_release_envelope(
+            output.path(),
+            &generation_identity,
+            &loaf_envelope_compatibility_map(&first_evidence),
         )?;
 
         let report = reuse_complete_loaf_envelope(
