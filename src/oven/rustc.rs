@@ -595,13 +595,27 @@ pub(crate) fn attach_caller_owned_rustc_libraries(
         .collect::<BTreeSet<_>>();
     for library in libraries {
         validate_rust_identifier(&library.crate_name)?;
+        let output = verified_regular_file(&library.output, "caller-owned library")?;
         if library.expose_extern && !crate_names.insert(library.crate_name.clone()) {
+            // A package diamond reaches one provider under one alias from two sides (#1459): the consumer names it
+            // directly and an intermediate provider names it too. The same sealed artifact arriving twice is not a
+            // conflict, so it is attached once; a different artifact under the same name still is one.
+            let same_artifact = plan
+                .externs
+                .iter()
+                .any(|(name, path)| name == &library.crate_name && path == &output)
+                && plan
+                    .caller_owned_library_digests
+                    .get(&library.crate_name)
+                    .is_none_or(|digest| digest == &library.digest);
+            if same_artifact {
+                continue;
+            }
             return Err(OvenRustcError::InvalidInput {
                 field: "caller-owned library",
                 message: format!("duplicates direct-Rustc extern `{}`", library.crate_name),
             });
         }
-        let output = verified_regular_file(&library.output, "caller-owned library")?;
         let extension = output.extension().and_then(|extension| extension.to_str());
         if !matches!(extension, Some("rlib" | "dylib" | "so" | "dll")) {
             return Err(OvenRustcError::InvalidInput {
@@ -10531,6 +10545,52 @@ fi
             plan.caller_owned_library_digests
                 .keys()
                 .all(|key| key.starts_with("transitive:provider_child:"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn one_sealed_artifact_reached_twice_under_one_alias_is_attached_once_issue1459()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let output = tempfile::tempdir()?;
+        let stock = output.path().join("libstock.rlib");
+        fs::write(&stock, "sealed catalog")?;
+        let digest = digest_bytes(b"sealed catalog");
+        let library = |output: &Path| OvenCallerOwnedRustcLibrary {
+            crate_name: "stock".to_string(),
+            output: output.to_path_buf(),
+            digest: digest.clone(),
+            expose_extern: true,
+        };
+        let mut plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
+            dependency_search_paths: Vec::new(),
+            native_search_paths: Vec::new(),
+            externs: Vec::new(),
+            compile_environment: BTreeMap::new(),
+            caller_owned_library_digests: BTreeMap::new(),
+        };
+        // The consumer names `stock` directly and its intermediate provider names the same sealed artifact `stock`.
+        attach_caller_owned_rustc_libraries(&mut plan, &[library(&stock), library(&stock)])?;
+        assert_eq!(plan.externs.len(), 1, "one artifact, one extern: {:?}", plan.externs);
+
+        // A different artifact under the same alias is still the conflict it always was.
+        let other = output.path().join("libother.rlib");
+        fs::write(&other, "a different catalog")?;
+        let conflict = attach_caller_owned_rustc_libraries(
+            &mut plan,
+            &[OvenCallerOwnedRustcLibrary {
+                crate_name: "stock".to_string(),
+                output: other,
+                digest: digest_bytes(b"a different catalog"),
+                expose_extern: true,
+            }],
+        );
+        assert!(
+            conflict
+                .as_ref()
+                .is_err_and(|error| error.to_string().contains("duplicates direct-Rustc extern `stock`")),
+            "{conflict:?}"
         );
         Ok(())
     }

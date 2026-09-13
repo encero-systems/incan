@@ -335,6 +335,142 @@ fn source_free_native_diamond_preserves_published_store_inventory_issue1458() ->
     Ok(())
 }
 
+/// A consumer of an admitted package never needs the package's private Rust path sources (#1469).
+///
+/// The provider's generated manifest still spells out the Cargo edge to its private Rust dependency. Once the
+/// package is sealed, that edge is the producer's business: the consumer identifies the provider by its sealed
+/// artifact and composes its package Loafs, so deleting the private crate after publication changes nothing.
+#[test]
+fn source_free_consumer_needs_no_provider_private_rust_sources_issue1469() -> TestResult {
+    let fixture = tempfile::tempdir()?;
+    let catalog = fixture.path().join("catalog");
+    let consumer = fixture.path().join("consumer");
+    let home = fixture.path().join("incan-home");
+    let witness = fixture.path().join("package-store-witness");
+    write_fixture_file(
+        &witness,
+        "Cargo.toml",
+        "[package]\nname = \"package_store_witness\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    write_fixture_file(
+        &witness,
+        "src/lib.rs",
+        "/// Reached from the generated crate, so the private dependency is genuinely in the sealed closure.\npub fn witness() -> i64 {\n    40\n}\n",
+    )?;
+    write_fixture_file(
+        &catalog,
+        "loaf.toml",
+        "[project]\nname = \"immutable_catalog\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\npackage_store_witness = { path = \"../package-store-witness\" }\n",
+    )?;
+    write_fixture_file(
+        &catalog,
+        "src/lib.incn",
+        "from rust::package_store_witness import witness\n\npub def answer() -> int:\n    return witness() + 2\n",
+    )?;
+    write_fixture_file(
+        &consumer,
+        "loaf.toml",
+        "[project]\nname = \"direct_source_refusal\"\nversion = \"0.1.0\"\n\n[dependencies]\nstock = { path = \"../catalog\" }\n",
+    )?;
+    write_fixture_file(
+        &consumer,
+        "src/main.incn",
+        "from pub::stock import answer\n\ndef main() -> None:\n    println(answer())\n",
+    )?;
+    let bake = |project: &Path| -> Result<Output, Box<dyn std::error::Error>> {
+        let mut command = configured_incan_command(project, &["oven", "bake", "--project", "."]);
+        support::configure_explicit_oven_bake_command(&mut command)?;
+        command.env("INCAN_HOME", &home);
+        Ok(command.output()?)
+    };
+    assert_success(
+        &bake(&catalog)?,
+        "catalog publication with a private Rust path dependency",
+    );
+    let catalog_artifact = catalog.join("target/lib");
+    let catalog_before = artifact_inventory(&catalog_artifact)?;
+    // The producer's private world goes away: its Incan source, its manifest, and the Rust crate it depended on.
+    fs::remove_dir_all(catalog.join("src"))?;
+    fs::remove_file(catalog.join("loaf.toml"))?;
+    fs::remove_dir_all(&witness)?;
+    assert_success(
+        &bake(&consumer)?,
+        "explicit consumer bake without the provider's sources or its private Rust dependency",
+    );
+    let mut command = configured_incan_command(&consumer, &["run", "--locked", "src/main.incn"]);
+    command.env_remove("CARGO").env("INCAN_HOME", &home);
+    let output = command.output()?;
+    assert_success(&output, "source-free consumer execution");
+    assert_eq!(String::from_utf8(output.stdout)?.trim(), "42");
+    assert_eq!(
+        artifact_inventory(&catalog_artifact)?,
+        catalog_before,
+        "the provider is never mutated"
+    );
+    Ok(())
+}
+
+/// A package diamond that names one provider under one alias from both sides links it once (#1459).
+///
+/// The consumer names the catalog `stock`; so does the intermediate provider it also depends on. The same sealed
+/// artifact arrives at the consumer's plan twice under one extern name, which is a diamond, not a conflict.
+#[test]
+fn diamond_with_one_alias_from_two_sides_links_the_provider_once_issue1459() -> TestResult {
+    let fixture = tempfile::tempdir()?;
+    let catalog = fixture.path().join("catalog");
+    let pricing = fixture.path().join("pricing");
+    let consumer = fixture.path().join("consumer");
+    let home = fixture.path().join("incan-home");
+    write_fixture_file(
+        &catalog,
+        "loaf.toml",
+        "[project]\nname = \"immutable_catalog\"\nversion = \"0.1.0\"\n",
+    )?;
+    write_fixture_file(&catalog, "src/lib.incn", "pub def answer() -> int:\n    return 42\n")?;
+    write_fixture_file(
+        &pricing,
+        "loaf.toml",
+        "[project]\nname = \"immutable_pricing\"\nversion = \"0.1.0\"\n\n[dependencies]\nstock = { path = \"../catalog\" }\n",
+    )?;
+    write_fixture_file(
+        &pricing,
+        "src/lib.incn",
+        "from pub::stock import answer\n\npub def quote() -> int:\n    return answer()\n",
+    )?;
+    write_fixture_file(
+        &consumer,
+        "loaf.toml",
+        "[project]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\nstock = { path = \"../catalog\" }\npricing = { path = \"../pricing\" }\n",
+    )?;
+    write_fixture_file(
+        &consumer,
+        "src/main.incn",
+        "from pub::stock import answer\nfrom pub::pricing import quote\n\ndef main() -> None:\n    println(answer() + quote())\n",
+    )?;
+    let bake = |project: &Path| -> Result<Output, Box<dyn std::error::Error>> {
+        let mut command = configured_incan_command(project, &["oven", "bake", "--project", "."]);
+        support::configure_explicit_oven_bake_command(&mut command)?;
+        command.env("INCAN_HOME", &home);
+        Ok(command.output()?)
+    };
+    assert_success(&bake(&catalog)?, "catalog publication");
+    assert_success(&bake(&pricing)?, "pricing publication naming the catalog `stock`");
+    for project in [&catalog, &pricing] {
+        fs::remove_dir_all(project.join("src"))?;
+        fs::remove_file(project.join("loaf.toml"))?;
+    }
+    assert_success(
+        &bake(&consumer)?,
+        "consumer publication naming the catalog `stock` beside pricing",
+    );
+    let mut command = configured_incan_command(&consumer, &["run", "--locked", "src/main.incn"]);
+    command.env_remove("CARGO").env("INCAN_HOME", &home);
+    let output = command.output()?;
+    assert_success(&output, "diamond execution");
+    assert_eq!(String::from_utf8(output.stdout)?.trim(), "84");
+    Ok(())
+}
+
 /// Private child-module derives survive both direct and transitive source-free package consumption.
 #[test]
 fn child_module_derive_is_available_when_only_a_function_crosses_the_package_boundary() -> TestResult {
