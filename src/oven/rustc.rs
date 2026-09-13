@@ -8863,6 +8863,84 @@ fi
     }
 
     #[test]
+    fn a_named_role_claims_every_composed_artifact_in_a_directory_it_already_owns()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // Every other composition test here builds `entrypoint_externs: BTreeMap::new()`, which sends
+        // `source_search_closure` down its fresh-capture branch. A publisher with a named role takes the other
+        // branch and returns its *stored* closure, and that branch has had no composition coverage at all -- which
+        // is why a stale role survived into a bake and only surfaced as "cannot isolate selected member".
+        //
+        // The invariant asserted here is the one nothing asserts today: a role that claims a directory must claim
+        // every artifact the composed manifest declares in it. `bind_source_search_roles` refuses the directory
+        // otherwise, so a composition that breaks this produces a plan that cannot be materialized.
+        let root = tempfile::tempdir()?;
+        let receipt = intent(root.path())?;
+        let project_runtime = OvenRustcArtifactExtern {
+            crate_name: "incan_stdlib".to_string(),
+            relative_path: "target/debug/deps/libincan_stdlib-project.rlib".to_string(),
+            digest: "sha256:project-stdlib".to_string(),
+        };
+        let base_runtime = OvenRustcArtifactExtern {
+            crate_name: "incan_stdlib".to_string(),
+            relative_path: "target/debug/deps/libincan_stdlib-base.rlib".to_string(),
+            digest: "sha256:base-stdlib".to_string(),
+        };
+        let mut project = OvenRustcArtifactManifest {
+            schema_version: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+            intent: receipt.intent.clone(),
+            dependency_search_paths: vec!["target/debug/deps".to_string()],
+            native_search_paths: Vec::new(),
+            externs: vec![project_runtime.clone()],
+            entrypoint_dependency_search_paths: Default::default(),
+            entrypoint_externs: BTreeMap::new(),
+            registry_leaves: Vec::new(),
+            registry_sources: Vec::new(),
+            compile_environment: BTreeMap::new(),
+            vocab_auxiliary_targets: Vec::new(),
+            supporting_artifacts: Vec::new(),
+        };
+        // Give the publisher a named role whose closure is captured now, before the base contributes anything.
+        let captured = project.capture_source_search_closure(&project.dependency_search_paths)?;
+        project
+            .entrypoint_externs
+            .insert("generated-root".to_string(), vec!["incan_stdlib".to_string()]);
+        project
+            .entrypoint_dependency_search_paths
+            .insert("generated-root".to_string(), captured);
+
+        let base = OvenRustcArtifactManifest {
+            externs: vec![base_runtime.clone()],
+            supporting_artifacts: vec![OvenRustcSupportingArtifact {
+                relative_path: "target/debug/deps/libincan_stdlib-base.rmeta".to_string(),
+                digest: "sha256:base-stdlib-meta".to_string(),
+            }],
+            ..project.clone()
+        };
+
+        let composed = project.with_release_cohort_from_base(&base, &BTreeSet::new())?;
+        let declared = super::expected_artifacts(&composed)?;
+        for (key, closure) in &composed.entrypoint_dependency_search_paths {
+            let claimed_paths = closure.paths().cloned().collect::<BTreeSet<_>>();
+            let claimed = closure
+                .directories()
+                .flat_map(|directory| &directory.artifacts)
+                .map(|artifact| artifact.relative_path.as_str())
+                .collect::<BTreeSet<_>>();
+            for (relative, _) in &declared {
+                let owning = claimed_paths
+                    .iter()
+                    .any(|path| super::artifact_is_below_search_path(relative, path));
+                assert!(
+                    !owning || claimed.contains(relative.as_str()),
+                    "role `{key}` claims the directory holding `{relative}` but not the artifact itself; \
+                     `bind_source_search_roles` refuses such a directory"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn conservative_regime_reroots_retained_leaves_that_collide_with_a_foreign_base_copy()
     -> Result<(), Box<dyn std::error::Error>> {
         // A salted extension unit shares its Cargo filename with the sealed base's twin while carrying a distinct
