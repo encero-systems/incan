@@ -10530,14 +10530,22 @@ fn bake_oven_library(
             &selected.provider_plan,
             profile,
         )?;
-        // Library outputs have no unified-Cargo fallback, so a conflicted provider closure fails closed on every
-        // selection path, packaged-provider composition included.
-        reject_caller_owned_provider_registry_conflict(
-            registry_authority.as_ref(),
-            &closure,
-            selected.plan_selection.artifact_plan(),
-        )?;
-        if !selected.plan_selection.uses_packaged_provider_closure() {
+        // Refuse only where the conflict cannot be resolved. The re-materialization below rebuilds each provider's
+        // Rust dependency libraries against the *merged* authority through
+        // `materialize_declared_rust_libraries_with_selected_path_authority`, which is what unifying a diverging
+        // package means: one compiled artifact, every dependent relinked against it. A packaged provider closure
+        // skips that step and consumes the provider's sealed artifacts as they are, so there the divergence really
+        // does survive into the link and failing closed is the only safe answer.
+        //
+        // The rejection previously ran on every selection path, so the resolvable case never reached the machinery
+        // that resolves it.
+        if selected.plan_selection.uses_packaged_provider_closure() {
+            reject_caller_owned_provider_registry_conflict(
+                registry_authority.as_ref(),
+                &closure,
+                selected.plan_selection.artifact_plan(),
+            )?;
+        } else {
             extra_dependency_search_paths = closure.dependency_search_paths.clone();
             registry_authority = closure.merged_authority(registry_authority);
             let re_materialized = rematerialize_caller_owned_libraries_with_authority_context(
