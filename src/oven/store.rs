@@ -253,12 +253,15 @@ impl OvenStoreExecutionPayload {
         self.original_native_receipt.as_ref().map(|witness| &witness.receipt)
     }
 
-    /// Revalidate the original admitted record, payload and complete materialized closure under the held lease.
+    /// Revalidate the original admitted record and payload bytes without walking the materialized closure.
     ///
     /// A lease protects the selected entry from store pruning; it does not authenticate mutable public fields. This
     /// checks those fields against the original selected coordinate and content identity before a new physical
-    /// consumer borrows them. The existing materialized validator performs the sole full artifact walk.
-    pub(crate) fn verify_admitted_payload(&self) -> Result<(), OvenStoreError> {
+    /// consumer borrows them, and it is deliberately cheap: it stats the artifact root rather than hashing what is
+    /// under it. A consumer that never reads the closure must use [`Self::verify_admitted_payload`], which adds that
+    /// walk. One that is about to read every file anyway — a store-to-store import building a destination manifest —
+    /// proves the closure with that read instead, by handing this manifest to the publication as its expectation.
+    pub(crate) fn verify_admitted_record(&self) -> Result<(), OvenStoreError> {
         let manifest = verify_published_entry_manifest(&self.admitted_entry_root)?;
         if manifest.identity != self.admitted_identity
             || manifest != self.manifest
@@ -293,8 +296,25 @@ impl OvenStoreExecutionPayload {
                 message: "original native receipt witness changed after admission".to_string(),
             });
         }
-        verify_materialized_root(&self.admitted_entry_root, &manifest)?;
-        verify_materialized_files(&self.admitted_entry_root, &manifest).map(|_| ())
+        verify_materialized_root(&self.admitted_entry_root, &manifest)
+    }
+
+    /// Revalidate the original admitted record, payload and complete materialized closure under the held lease.
+    ///
+    /// [`Self::verify_admitted_record`] proves everything but the closure; this adds the full artifact walk for a
+    /// consumer that will not read those files itself.
+    pub(crate) fn verify_admitted_payload(&self) -> Result<(), OvenStoreError> {
+        self.verify_admitted_record()?;
+        verify_materialized_files(&self.admitted_entry_root, &self.manifest).map(|_| ())
+    }
+
+    /// Borrow the admitted content descriptors this payload's closure was proven against.
+    ///
+    /// A publication that reads the same files can be handed these as expectations, so one read both describes the
+    /// destination entry and proves the source one.
+    #[must_use]
+    pub(crate) fn admitted_materialized_files(&self) -> &[OvenArtifactMaterializedFileManifest] {
+        &self.manifest.materialized_files
     }
 
     /// Verify the complete materialized file closure while retaining this payload's active lease.
@@ -503,19 +523,24 @@ impl OvenStore {
 
     /// Publish an immutable payload after capacity admission and atomic same-filesystem staging.
     pub fn publish(&self, request: &OvenArtifactPublishRequest) -> Result<OvenArtifactManifest, OvenStoreError> {
-        self.publish_with_legacy_cargo_publisher_permission(request, false, true)
+        self.publish_with_legacy_cargo_publisher_permission(request, false, true, None)
     }
 
-    /// Publish a portable package constituent under its exact receipt-bound identity.
+    /// Publish a portable package constituent imported wholesale from another store's admitted entry.
     ///
     /// A shared direct plan may be reusable under a compatible receipt in its originating store. A package handoff,
     /// however, records the precise receipt that owns the provider output, so its destination store must retain that
     /// receipt-specific manifest instead of returning another entry with equivalent bytes and older provenance.
-    pub(crate) fn publish_receipt_bound(
+    ///
+    /// `admitted` is the source entry's immutable content record, held under the caller's execution lease. The
+    /// publication reads every source file exactly once and proves it against that record as it goes, so the import
+    /// is verified without hashing the same bytes a second time to describe the destination entry.
+    pub(crate) fn publish_verified_import(
         &self,
         request: &OvenArtifactPublishRequest,
+        admitted: &[OvenArtifactMaterializedFileManifest],
     ) -> Result<OvenArtifactManifest, OvenStoreError> {
-        self.publish_with_legacy_cargo_publisher_permission(request, false, false)
+        self.publish_with_legacy_cargo_publisher_permission(request, false, false, Some(admitted))
     }
 
     /// Publish one immutable result owned by the explicit compatibility baker.
@@ -527,7 +552,7 @@ impl OvenStore {
         &self,
         request: &OvenArtifactPublishRequest,
     ) -> Result<OvenArtifactManifest, OvenStoreError> {
-        self.publish_with_legacy_cargo_publisher_permission(request, true, true)
+        self.publish_with_legacy_cargo_publisher_permission(request, true, true, None)
     }
 
     /// Implement one publication, admitting the active legacy publisher only through its named transition boundary.
@@ -536,6 +561,7 @@ impl OvenStore {
         request: &OvenArtifactPublishRequest,
         allow_legacy_cargo_publisher: bool,
         reuse_equivalent_direct_plan: bool,
+        admitted: Option<&[OvenArtifactMaterializedFileManifest]>,
     ) -> Result<OvenArtifactManifest, OvenStoreError> {
         let domain = normalized_domain(&request.domain)?;
         if request.payload.is_empty() {
@@ -544,7 +570,7 @@ impl OvenStore {
                 message: "payload must not be empty".to_string(),
             });
         }
-        let materialized_files = validated_materialized_files(&request.materialized_files)?;
+        let materialized_files = validated_materialized_files(&request.materialized_files, admitted)?;
         let logical_bytes = request_logical_bytes(&request.payload, &materialized_files)?;
         if logical_bytes > self.limits.max_domain_logical_bytes {
             return Err(OvenStoreError::CapacityBlocked {
@@ -702,7 +728,7 @@ impl OvenStore {
                 message: "payload must not be empty".to_string(),
             });
         }
-        let materialized_files = validated_materialized_files(&request.materialized_files)?;
+        let materialized_files = validated_materialized_files(&request.materialized_files, None)?;
         let logical_bytes = request_logical_bytes(&request.payload, &materialized_files)?;
         if logical_bytes > self.limits.max_domain_logical_bytes {
             return Err(OvenStoreError::CapacityBlocked {
@@ -781,7 +807,7 @@ impl OvenStore {
                     message: "payload must not be empty".to_string(),
                 });
             }
-            let materialized_files = validated_materialized_files(&request.materialized_files)?;
+            let materialized_files = validated_materialized_files(&request.materialized_files, None)?;
             let logical_bytes = request_logical_bytes(&request.payload, &materialized_files)?;
             if logical_bytes > self.limits.max_domain_logical_bytes {
                 return Err(OvenStoreError::CapacityBlocked {
@@ -2279,9 +2305,24 @@ fn artifact_manifest(
 }
 
 /// Validate portable paths and content before a publisher-owned file becomes a store-owned artifact.
+///
+/// `expected` is the content an importing publisher has already had admitted for these exact source files. Supplying
+/// it does not skip work or soften a check: every byte is still read and hashed here, and the digest that read
+/// produces is compared against the admitted record before it is allowed to describe the destination entry. What it
+/// removes is the *second* full pass. A store-to-store import used to hash the whole closure once to prove the source
+/// entry and again to describe the destination one, so importing a compiler suite read roughly three hundred megabytes
+/// twice for two answers that are the same number. Proving the source with the describing read collapses that to one
+/// pass, and turns a file that has drifted from its manifest into an integrity failure at the point of import.
 fn validated_materialized_files(
     files: &[OvenArtifactMaterializedFile],
+    expected: Option<&[OvenArtifactMaterializedFileManifest]>,
 ) -> Result<Vec<ValidatedMaterializedFile>, OvenStoreError> {
+    let expected_by_path = expected.map(|files| {
+        files
+            .iter()
+            .map(|file| (file.relative_path.as_str(), file))
+            .collect::<BTreeMap<_, _>>()
+    });
     let mut by_path = BTreeMap::new();
     for file in files {
         let relative_path = normalized_materialized_relative_path(&file.relative_path)?;
@@ -2295,21 +2336,30 @@ fn validated_materialized_files(
                 message: format!("{} must be a non-symlink regular file", file.source_path.display()),
             });
         }
-        let bytes = fs::read(&file.source_path).map_err(|source| OvenStoreError::Io {
-            path: file.source_path.clone(),
-            source,
-        })?;
-        let logical_bytes = u64::try_from(bytes.len()).map_err(|_| OvenStoreError::InvalidInput {
-            field: "materialized file",
-            message: format!("{} exceeds supported accounting range", file.source_path.display()),
-        })?;
+        let (logical_bytes, digest) = digest_materialized_file(&file.source_path)?;
+        let executable = source_is_executable(&metadata);
+        if let Some(expected_by_path) = expected_by_path.as_ref() {
+            let admitted = expected_by_path
+                .get(relative_path.as_str())
+                .ok_or_else(|| OvenStoreError::Integrity {
+                    identity: relative_path.clone(),
+                    message: "imported materialized file is absent from the admitted source manifest".to_string(),
+                })?;
+            if admitted.digest != digest || admitted.logical_bytes != logical_bytes || admitted.executable != executable
+            {
+                return Err(OvenStoreError::Integrity {
+                    identity: relative_path.clone(),
+                    message: "imported materialized file disagrees with the admitted source manifest".to_string(),
+                });
+            }
+        }
         let validated = ValidatedMaterializedFile {
             source_path: file.source_path.clone(),
             manifest: OvenArtifactMaterializedFileManifest {
                 relative_path: relative_path.clone(),
-                digest: digest_bytes(&bytes),
+                digest,
                 logical_bytes,
-                executable: source_is_executable(&metadata),
+                executable,
             },
         };
         if by_path.insert(relative_path.clone(), validated).is_some() {
@@ -2318,6 +2368,14 @@ fn validated_materialized_files(
                 message: format!("declares duplicate store path `{relative_path}`"),
             });
         }
+    }
+    if let Some(expected_by_path) = expected_by_path.as_ref()
+        && by_path.len() != expected_by_path.len()
+    {
+        return Err(OvenStoreError::Integrity {
+            identity: "materialized import".to_string(),
+            message: "imported closure does not cover every file in the admitted source manifest".to_string(),
+        });
     }
     Ok(by_path.into_values().collect())
 }
@@ -4280,6 +4338,58 @@ mod tests {
         fs::write(artifact, b"changed content")?;
         assert!(matches!(
             selected[0].verify_materialized_files(),
+            Err(OvenStoreError::Integrity { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_verified_import_rejects_a_source_file_mutated_after_admission() -> Result<(), Box<dyn std::error::Error>> {
+        let source_root = tempfile::tempdir()?;
+        let first_destination = tempfile::tempdir()?;
+        let second_destination = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let staged = project.path().join("native.rlib");
+        fs::write(&staged, b"native artifact")?;
+        let mut publication = request(project.path(), "import-owner", b"native plan")?;
+        publication.materialized_files.push(OvenArtifactMaterializedFile {
+            source_path: staged,
+            relative_path: "lib/native.rlib".to_string(),
+        });
+        let limits = OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000);
+        let source = OvenStore::new(source_root.path(), limits.clone());
+        let manifest = source.publish(&publication)?;
+        let selected = source.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
+        assert_eq!(selected.len(), 1);
+
+        let artifact = source
+            .entry_root(&manifest.identity)
+            .join(super::MATERIALIZED_DIRECTORY)
+            .join("lib/native.rlib");
+        let import = || OvenArtifactPublishRequest {
+            receipt: publication.receipt.clone(),
+            domain: manifest.domain.clone(),
+            kind: manifest.kind,
+            payload: publication.payload.clone(),
+            materialized_files: vec![OvenArtifactMaterializedFile {
+                source_path: artifact.clone(),
+                relative_path: "lib/native.rlib".to_string(),
+            }],
+        };
+
+        let first = OvenStore::new(first_destination.path(), limits.clone());
+        first.publish_verified_import(&import(), selected[0].admitted_materialized_files())?;
+
+        fs::remove_file(&artifact)?;
+        fs::write(&artifact, b"changed content")?;
+
+        // The record check stats the artifact root rather than hashing what is under it, so a file rewritten below
+        // it is invisible there. The import's own describing read is what has to refuse it.
+        selected[0].verify_admitted_record()?;
+        let second = OvenStore::new(second_destination.path(), limits);
+        assert!(matches!(
+            second.publish_verified_import(&import(), selected[0].admitted_materialized_files()),
             Err(OvenStoreError::Integrity { .. })
         ));
         Ok(())
