@@ -18,6 +18,7 @@ mod runtime_closure;
 mod runtime_executor;
 mod runtime_foundation;
 mod selected_unit;
+pub(crate) mod substitution;
 
 // The native-input view moved into a submodule; callers and this module's own tests still name these directly.
 
