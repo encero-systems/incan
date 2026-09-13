@@ -3150,7 +3150,7 @@ mod tests {
             "oven",
             "compiler-libtests",
             "--target",
-            "tests/integration_tests.rs",
+            "tests/rfc031_pub_import_integration_tests.rs",
             "--exact",
             "rfc031_pub_import_integration_tests::compiled_parent_fields_lower_into_consumer_subclasses_issue885",
             "--exact",
@@ -3164,7 +3164,7 @@ mod tests {
         else {
             return Err(expected_command("oven compiler-libtests"));
         };
-        assert_eq!(targets, ["tests/integration_tests.rs"]);
+        assert_eq!(targets, ["tests/rfc031_pub_import_integration_tests.rs"]);
         assert_eq!(
             exact_names,
             [
