@@ -6072,11 +6072,7 @@ fn compiler_suite_foundation_lock(
 /// that subset from an ambient offline index can choose a newer cached transitive than the compiler itself uses.
 /// This helper carries the compiler's locked registry graph forward, adds only the generated root and local path
 /// package records Cargo requires, and makes the subsequent named publisher invocation unconditionally locked.
-pub fn stage_locked_loaf_fixture(
-    cargo: &Path,
-    generated_project: &Path,
-    compiler_lock: &Path,
-) -> Result<(), OvenLegacyCargoError> {
+pub fn stage_locked_loaf_fixture(generated_project: &Path, compiler_lock: &Path) -> Result<(), OvenLegacyCargoError> {
     let generated_project = canonical_directory(generated_project, "generated Loaf fixture")?;
     let manifest_path = generated_project.join("Cargo.toml");
     let manifest = regular_file_bytes(&manifest_path)?;
@@ -6088,27 +6084,14 @@ pub fn stage_locked_loaf_fixture(
         source,
     })?;
 
-    // Cargo owns local feature unification and therefore the dependency lists attached to path-package lock
-    // records. Let it normalize only that local graph while offline, then reject the result unless every registry
-    // identity and checksum is a member of the checked compiler lock. All later compilation sees the normalized
-    // file and is unconditionally `--locked`.
-    let cargo = canonical_tool_file(cargo, "cargo")?;
-    let mut command = Command::new(&cargo);
-    command
-        .current_dir(&generated_project)
-        .arg("metadata")
-        .arg("--manifest-path")
-        .arg(&manifest_path)
-        .args(["--offline", "--format-version", "1"]);
-    clear_inherited_cargo_environment(&mut command);
-    let output = command
-        .output()
-        .map_err(|source| OvenLegacyCargoError::Io { path: cargo, source })?;
-    if !output.status.success() {
-        return Err(OvenLegacyCargoError::CargoFailed {
-            output: String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        });
-    }
+    // The lock written above is already complete: `locked_generated_project` walks the generated manifest, records
+    // every local package with its own dependency list, and prunes the checked compiler lock to that root. Handing
+    // it to `cargo metadata` only asked Cargo to re-resolve what this process had just computed, which made seeding
+    // one interop bootstrap depend on a Cargo that the Oven consume path deliberately refuses to provide.
+    //
+    // Nothing is trusted that was not checked before. Every registry identity and checksum is still validated
+    // against the checked compiler lock below, and the compilation that follows remains unconditionally `--locked`,
+    // so a lock this function got wrong fails that build loudly rather than passing silently.
     validate_generated_registry_lock(&source_lock, &regular_file_bytes(&lock_path)?)
 }
 
