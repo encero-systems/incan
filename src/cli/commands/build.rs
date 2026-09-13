@@ -12946,75 +12946,6 @@ fn packaged_library_loaf_store_root(artifact_root: &Path) -> PathBuf {
     artifact_root.join(OVEN_PACKAGED_LIBRARY_LOAF_STORE_RELATIVE_PATH)
 }
 
-/// Remove package Loaf entries this publication does not name, so a retained store cannot grow across generations.
-///
-/// Carrying the package store across a generation is what lets an unchanged bake skip re-copying it. The cost of
-/// carrying it is that an entry from a previous generation survives a change that no longer needs it: editing one
-/// line of a two-line library took the store from 2 entries and 154 MB to 4 and 308 MB. The published manifest
-/// names every entry this generation links against, including each profile's base Loaf, so anything else in the
-/// store belongs to a generation that is over.
-///
-/// Reading each entry's own `loaf.json` is how an entry is matched to an identity: a directory name encodes the
-/// identity but the manifest inside it is the fact. An entry that cannot be read is left alone rather than removed,
-/// because this is a size policy and must never be the thing that deletes something a reader still needs.
-fn discard_unreferenced_package_loaf_entries(
-    package_store_root: &Path,
-    manifest: &OvenPackagedLibraryLoafManifest,
-) -> CliResult<()> {
-    let referenced = manifest
-        .profiles
-        .values()
-        .flat_map(|profile| profile.entries.iter())
-        .flat_map(|entry| std::iter::once(entry.identity.clone()).chain(entry.base_loaf_identity.iter().cloned()))
-        .collect::<BTreeSet<_>>();
-    if referenced.is_empty() {
-        return Ok(());
-    }
-    let entries_root = package_store_root.join("entries");
-    let listing = match fs::read_dir(&entries_root) {
-        Ok(listing) => listing,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(CliError::failure(format!(
-                "failed to inspect package Loaf store {}: {error}",
-                entries_root.display()
-            )));
-        }
-    };
-    for entry in listing.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let Some(identity) = package_loaf_entry_identity(&path) else {
-            continue;
-        };
-        if referenced.contains(&identity) {
-            continue;
-        }
-        fs::remove_dir_all(&path).map_err(|error| {
-            CliError::failure(format!(
-                "failed to discard superseded package Loaf entry {}: {error}",
-                path.display()
-            ))
-        })?;
-    }
-    Ok(())
-}
-
-/// Read one package Loaf entry's recorded identity, treating anything unreadable as simply unknown.
-fn package_loaf_entry_identity(entry_root: &Path) -> Option<String> {
-    for name in ["loaf.json", "plan.json", "manifest.json"] {
-        if let Ok(bytes) = fs::read(entry_root.join(name))
-            && let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes)
-            && let Some(identity) = value.get("identity").and_then(serde_json::Value::as_str)
-        {
-            return Some(identity.to_string());
-        }
-    }
-    None
-}
-
 /// Return the package-owned Loaf index retained beside one generated public library artifact.
 fn packaged_library_loaf_manifest_path(artifact_root: &Path) -> PathBuf {
     artifact_root.join(OVEN_PACKAGED_LIBRARY_LOAF_MANIFEST_RELATIVE_PATH)
@@ -15178,7 +15109,6 @@ pub(crate) fn bake_oven_project_targets(
                         profiles: package_profiles,
                     };
                     write_packaged_library_loaf_manifest(&prepared.out_dir, &published_manifest)?;
-                    discard_unreferenced_package_loaf_entries(&package_store_root, &published_manifest)?;
                     let package_loaf_manifest = packaged_library_loaf_manifest_path(&prepared.out_dir);
                     let package_loaf_store_relative_path = package_store_root
                         .strip_prefix(&prepared.project_root)
