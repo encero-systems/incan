@@ -249,14 +249,19 @@ impl OvenRegistryLeafAuthority {
     /// means two compiled instances of one crate in one binary. Two *different versions* of a package are deliberate,
     /// ordinary Cargo semver coexistence and are not flagged; only a same-version byte divergence -- two independent
     /// compiles of identical source -- is the anomaly this reports.
-    pub(crate) fn first_diverging_shared_package(&self, other: &Self) -> Option<String> {
+    /// Return the first diverging shared package together with the artifact root of the copy `other` pins.
+    ///
+    /// The package name alone tells a reader what conflicts but not what to change. The pinning artifact root names
+    /// the already-compiled contributor whose copy cannot move, which is the difference between "two versions of
+    /// this crate exist" and "this provider was built against that one and would have to be rebuilt to agree".
+    pub(crate) fn first_diverging_shared_package_pin(&self, other: &Self) -> Option<(String, PathBuf)> {
         for entry in &self.entries {
             for candidate in &other.entries {
                 if entry.leaf.package == candidate.leaf.package
                     && entry.leaf.version == candidate.leaf.version
                     && entry.leaf.artifact.digest != candidate.leaf.artifact.digest
                 {
-                    return Some(entry.leaf.package.clone());
+                    return Some((entry.leaf.package.clone(), candidate.artifact_root.clone()));
                 }
             }
         }
@@ -8403,9 +8408,10 @@ fi
             vec![leaf("tokio", "1.52.3", "sha256:provider-tokio")],
         );
         assert_eq!(
-            consumer.first_diverging_shared_package(&provider),
-            Some("tokio".to_string()),
-            "one package at one version with two byte-distinct compiled artifacts is the exact dangerous shape"
+            consumer.first_diverging_shared_package_pin(&provider),
+            Some(("tokio".to_string(), PathBuf::from("/provider"))),
+            "one package at one version with two byte-distinct compiled artifacts is the exact dangerous shape, and \
+             the pin names the already-compiled contributor that would have to be rebuilt to agree"
         );
 
         let identical = OvenRegistryLeafAuthority::new(
@@ -8413,7 +8419,7 @@ fi
             vec![leaf("tokio", "1.52.3", "sha256:consumer-tokio")],
         );
         assert_eq!(
-            consumer.first_diverging_shared_package(&identical),
+            consumer.first_diverging_shared_package_pin(&identical),
             None,
             "the same compiled bytes on both sides is the harmless shared case"
         );
@@ -8423,7 +8429,7 @@ fi
             vec![leaf("tokio", "1.51.0", "sha256:provider-tokio")],
         );
         assert_eq!(
-            consumer.first_diverging_shared_package(&different_version),
+            consumer.first_diverging_shared_package_pin(&different_version),
             None,
             "distinct versions are ordinary Cargo semver coexistence, not a divergence"
         );
@@ -8432,7 +8438,7 @@ fi
             PathBuf::from("/provider"),
             vec![leaf("datafusion", "53.1.0", "sha256:provider-datafusion")],
         );
-        assert_eq!(consumer.first_diverging_shared_package(&unrelated), None);
+        assert_eq!(consumer.first_diverging_shared_package_pin(&unrelated), None);
     }
 
     #[test]

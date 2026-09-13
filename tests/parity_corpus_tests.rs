@@ -3293,7 +3293,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             evidence: "#1162; src/frontend/body_ir/tests.rs::an_unsafe_region_refuses_under_a_named_permanent_boundary",
             // The corpus's first real `Unsupported` row, so it carries the full migration note the schema asks
             // for rather than a pointer to one.
-            disposition: Disposition::Unsupported {
+            disposition: Disposition::IntentionalMigration {
                 owning_issue: 1162,
                 migration_note: "An `unsafe:` region records an explicit acknowledgement that the operations \
                                  inside it require authorization. It introduces no separate Incan scope, so \
@@ -3308,7 +3308,14 @@ fn seed_corpus() -> Vec<ParityCase> {
                                  unchanged, so no accepted program regresses. Reversing this disposition means \
                                  designing the acknowledgement representation first and deciding who may admit \
                                  it — adding a dispatch arm alone would be the silent execution this row \
-                                 exists to prevent. Owned by #1162 until that design lands.",
+                                 exists to prevent. \
+                                 \
+                                 This is a deliberate, settled boundary for 0.6, not deferred work: `unsafe:` stays \
+                                 restricted to the C ABI, so there is no acknowledgement representation to design \
+                                 within this release and nothing for the replacement route to admit. #1162 named the \
+                                 residual refusals and closed having done so, which is why this row is an intentional \
+                                 migration rather than an unsupported one awaiting an owner. Widening `unsafe:` \
+                                 beyond the C ABI is what would reopen the question.",
             },
             source: CASE_19_SRC,
             evaluate: Some(case_unsafe_region_is_a_stated_refusal),
