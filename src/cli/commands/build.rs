@@ -6737,11 +6737,22 @@ fn select_oven_direct_rustc_plan_with_materialization(
                 cargo_process_started: false,
             }));
         }
+        // A miss here has two different causes and they need different words. When the receipt names registry
+        // dependencies, the caller really does have to bake them first. When it names none, nothing was missing to
+        // bake and the rejection happened during Loaf compatibility instead; reporting "Needs: none." there sends the
+        // reader to dependency resolution while the actual condition sits in the selected Loaf's intent or providers.
+        let requirements = format_oven_registry_dependency_requirements(registry_dependencies);
+        if requirements == "none" {
+            return Err(CliError::failure(format!(
+                "{}. Nested build and run {}. No dependency is missing: {}.",
+                OVEN_NESTED_DEPENDENCY_MISS_SUMMARY,
+                OVEN_NO_IMPLICIT_DEPENDENCY_BUILD,
+                crate::oven::loaf::describe_compiler_owned_loaf_miss(receipt),
+            )));
+        }
         return Err(CliError::failure(format!(
-            "{}. Nested build and run {}. (Needs: {}.)",
-            OVEN_NESTED_DEPENDENCY_MISS_SUMMARY,
-            OVEN_NO_IMPLICIT_DEPENDENCY_BUILD,
-            format_oven_registry_dependency_requirements(registry_dependencies),
+            "{}. Nested build and run {}. (Needs: {requirements}.)",
+            OVEN_NESTED_DEPENDENCY_MISS_SUMMARY, OVEN_NO_IMPLICIT_DEPENDENCY_BUILD,
         )));
     }
 
