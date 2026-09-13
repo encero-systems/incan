@@ -109,9 +109,9 @@ pub const OVEN_COMPILER_TEST_JOBS_ENV: &str = "INCAN_OVEN_COMPILER_TEST_JOBS";
 /// Constrained hosted runners can require more than fifteen minutes for the two largest integration roots even
 /// though prepared reference-machine replay remains inside the five-minute suite budget. The unsharded release
 /// evidence workflow (`oven_evidence.yml`) runs every root in one job rather than the four-way split the ordinary
-/// CI workflow uses, so its largest roots -- `cli_integration`, then `integration_tests` and the
-/// `rfc031_pub_import_integration_tests` split out of it -- have repeatedly needed more than thirty minutes under
-/// real hosted-runner contention. Keep a deterministic per-root ceiling, but calibrate it with enough headroom that
+/// CI workflow uses, so its largest roots have repeatedly needed more than thirty minutes under real hosted-runner
+/// contention. `cli_integration` and `integration_tests` have since been split into topic roots, which lowers that
+/// worst case without removing it. Keep a deterministic per-root ceiling, but calibrate it with enough headroom that
 /// slow hardware is not misreported as a test failure.
 const OVEN_COMPILER_TEST_ROOT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
@@ -7869,7 +7869,7 @@ mod tests {
             .cargo_fixture
         );
         assert!(
-            OvenCompilerSuiteTargetCapabilities::for_target("incan", "test", "tests/cli_integration.rs")
+            OvenCompilerSuiteTargetCapabilities::for_target("incan", "test", "tests/cli_provider_boundary_tests.rs")
                 .explicit_bake_cargo
         );
         assert!(
@@ -7958,8 +7958,8 @@ mod tests {
         );
 
         target.target_kind = "test".to_string();
-        target.target_name = "cli_integration".to_string();
-        target.source_relative_path = "tests/cli_integration.rs".to_string();
+        target.target_name = "cli_provider_boundary_tests".to_string();
+        target.source_relative_path = "tests/cli_provider_boundary_tests.rs".to_string();
         let mut ordinary_environment = BTreeMap::new();
         assert!(apply_compiler_suite_target_capabilities(&target, &mut ordinary_environment, None).is_err());
         assert!(!ordinary_environment.contains_key("CARGO"));
@@ -8342,7 +8342,7 @@ fn planned_suite_second_exact_case_keeps_cargo_guarded() -> Result<(), String> {
         )?;
         let suite_child = OvenCompilerTestSuiteTarget {
             package_name: "suite_fixture".to_string(),
-            target_name: "cli_integration".to_string(),
+            target_name: "cli_provider_boundary_tests".to_string(),
             target_kind: "test".to_string(),
             runner: "rustc-test".to_string(),
             source_relative_path: "src/lib.rs".to_string(),
@@ -8428,7 +8428,7 @@ fn planned_suite_second_exact_case_keeps_cargo_guarded() -> Result<(), String> {
             "default state must remain inside the same child-owned boundary"
         );
         let mut sibling = suite_child.clone();
-        sibling.target_name = "cli_integration_sibling".to_string();
+        sibling.target_name = "cli_provider_boundary_sibling".to_string();
         assert_ne!(
             compiler_suite_child_state_root(output.path(), &suite_child),
             compiler_suite_child_state_root(output.path(), &sibling),
