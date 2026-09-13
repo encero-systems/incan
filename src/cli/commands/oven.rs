@@ -2997,19 +2997,6 @@ fn prepare_compiler_suite_child<'a>(
             .display()
             .to_string(),
     );
-    // A test's own project bake materializes both profiles by default, and almost no test then executes the
-    // optimized half. Measured on a two-module fixture, that half is 7.2 s of a 16.3 s bake -- 44% of every bake
-    // the suite performs, and the roots that bake are the ones that set the lane's wall clock: one root spent
-    // 641 s on six cases while 266 in-process snapshot cases finished in 3.4 s.
-    //
-    // The profile set has to be stated the same way to every command in a session, which is why it is an
-    // environment policy rather than a bake flag: a consumer that still expects both profiles reports missing
-    // authority rather than the profile it actually wants. Setting it on the child covers that child's bake and
-    // every nested `build`, `test` and `run` alike, so they agree. A root that does need the optimized half sets
-    // the variable itself, and this default then leaves it alone.
-    target_environment
-        .entry("INCAN_OVEN_BAKE_PROFILES".to_string())
-        .or_insert_with(|| "debug".to_string());
     // Apply the exceptional baker capability only after child-local state has been installed. The capability may
     // replace HOME with the caller-approved offline Cargo source cache; ordinary roots retain this child-owned home.
     apply_compiler_suite_target_capabilities(target, &mut target_environment, fixture_cargo)?;
