@@ -1827,9 +1827,9 @@ impl PatternBinding {
 /// f-string interpolations exactly like any other expression use.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum FormatPart {
-    /// Literal text between interpolations, carried through unescaped -- brace/format-string escaping is an
-    /// emission-target concern (see the existing Rust-emission backend's `escape_format_literal`), not something
-    /// this target-agnostic model commits to.
+    /// Literal text between interpolations, carried through unescaped: the lexer has already collapsed `{{` and
+    /// `}}` to one brace, and whether a target needs them escaped again is that target's concern, not something this
+    /// target-agnostic model commits to.
     Literal(String),
     /// An interpolated `{expr}` or `{expr!r}` segment.
     Expr {

@@ -52,6 +52,37 @@ fn nested_empty_first_list_runs_without_a_caller_annotation_issue1471() -> Resul
     Ok(())
 }
 
+/// `{{` and `}}` are the f-string escapes for one literal brace, as in Python, so `f"{{{name}}}"` renders `{x}`. The
+/// lexer collapsed them correctly; emission then brace-escaped every literal segment again for a `format!` string it
+/// no longer builds, and both characters reached the output.
+#[test]
+fn fstring_doubled_braces_render_one_literal_brace() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    write_minimal_project(tmp.path(), "fstring_braces", "")?;
+    fs::write(
+        tmp.path().join("src/main.incn"),
+        r#"def main() -> None:
+    name = "x"
+    assert f"{{" == "{"
+    assert f"}}" == "}"
+    assert f"{{{name}}}" == "{x}"
+    assert f"{{name}}" == "{name}"
+    assert f'{{"name": "{name}"}}' == '{"name": "x"}'
+    println("braces ok")
+"#,
+    )?;
+    let bake = run_explicit_oven_bake(tmp.path())?;
+    assert_success(&bake, "prepare f-string brace fixture");
+    let run = run_incan(tmp.path(), &["run", "src/main.incn"])?;
+    assert_success(&run, "run f-string brace assertions");
+    assert!(
+        String::from_utf8_lossy(&run.stdout).contains("braces ok"),
+        "expected the program to reach its final line:\n{}",
+        String::from_utf8_lossy(&run.stdout)
+    );
+    Ok(())
+}
+
 #[test]
 fn build_assert_string_inequality_in_list_loop_issue739() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
