@@ -7341,21 +7341,22 @@ fn caller_owned_provider_registry_conflict(
     consumer_authority: Option<&OvenRegistryLeafAuthority>,
     closure: &CallerOwnedProviderRegistryClosure,
     plan: &OvenRustcArtifactPlan,
-) -> CliResult<Option<String>> {
+) -> CliResult<Option<(String, Option<PathBuf>)>> {
     for provider_authority in &closure.provider_authorities {
         // A shared package can enter both closures transitively without ever being a named extern of either
         // compile (the reproduced `tokio` duplication was exactly this shape), so the catalogs themselves are
         // compared first; the extern comparison then covers packages the selected plan links directly.
         if let Some(consumer_authority) = consumer_authority
-            && let Some(package) = consumer_authority.first_diverging_shared_package(provider_authority)
+            && let Some((package, pinned_by)) =
+                consumer_authority.first_diverging_shared_package_pin(provider_authority)
         {
-            return Ok(Some(package));
+            return Ok(Some((package, Some(pinned_by))));
         }
         if let Some(package) = provider_authority
             .first_conflicting_package_with(plan)
             .map_err(oven_rustc_error)?
         {
-            return Ok(Some(package));
+            return Ok(Some((package, None)));
         }
     }
     Ok(None)
@@ -7371,16 +7372,31 @@ fn reject_caller_owned_provider_registry_conflict(
     closure: &CallerOwnedProviderRegistryClosure,
     plan: &OvenRustcArtifactPlan,
 ) -> CliResult<()> {
-    if let Some(package) = caller_owned_provider_registry_conflict(consumer_authority, closure, plan)? {
+    if let Some((package, pinned_by)) = caller_owned_provider_registry_conflict(consumer_authority, closure, plan)? {
+        // Name the contributor that pins the package, not just the package. "Two copies of `itoa` exist" leaves a
+        // reader with nowhere to go; "this prebuilt provider was compiled against that copy" says what would have to
+        // change. The distinction is also the boundary of the unimplemented capability: a leaf can be reconciled
+        // wherever every dependent linking it is recompiled against the choice, and a provider consumed from the
+        // store as an already-compiled artifact is exactly the case that cannot be.
+        let obstruction = pinned_by.as_ref().map_or_else(
+            || format!("`{package}` is already linked by this project's own selected plan"),
+            |root| {
+                format!(
+                    "`{package}` is pinned by an already-compiled provider artifact at `{}`, which would have to be \
+                     rebuilt against the reconciled closure to agree",
+                    root.display()
+                )
+            },
+        );
         return Err(CliError::failure(format!(
             "Oven Alpha refuses to build: a caller-owned provider's own registry closure resolves `{package}` to a \
-             different compiled artifact than this project's own closure already links. Linking both would silently \
-             admit two incompatible compiled instances of the same crate into one binary -- for a crate that carries \
-             process-wide runtime state (most dangerously an async runtime), this can produce a runtime panic instead \
-             of a build failure. Oven Alpha does not yet unify a caller-owned provider's independently resolved \
-             registry closure with the consumer's own for library outputs; build this consumer as an executable \
-             project, or prepare an explicit Oven-native closure that reconciles `{package}` to one shared compiled \
-             artifact."
+             different compiled artifact than this project's own closure already links, and {obstruction}. Linking \
+             both would silently admit two incompatible compiled instances of the same crate into one binary -- for a \
+             crate that carries process-wide runtime state (most dangerously an async runtime), this can produce a \
+             runtime panic instead of a build failure. Reconciling a provider that is consumed as a prebuilt artifact \
+             requires re-baking it against the shared closure, which Oven Alpha does not do yet for library outputs; \
+             build this consumer as an executable project, or prepare an explicit Oven-native closure that reconciles \
+             `{package}` to one shared compiled artifact."
         )));
     }
     Ok(())
@@ -10418,7 +10434,7 @@ fn bake_oven_project(
             &closure,
             prepared.plan_selection.artifact_plan(),
         )? {
-            return cargo_fallback_bake_oven_project(prepared, profile, &package);
+            return cargo_fallback_bake_oven_project(prepared, profile, &package.0);
         }
         if !prepared.plan_selection.uses_packaged_provider_closure() {
             extra_dependency_search_paths = closure.dependency_search_paths.clone();
