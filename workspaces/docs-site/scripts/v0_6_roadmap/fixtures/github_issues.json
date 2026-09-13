@@ -39,7 +39,7 @@
   },
   {
     "number": 1139,
-    "title": "chore - v0.6 Slice 7: Canonical source meaning",
+    "title": "chore - v0.6 Slice 8: Canonical source meaning",
     "state": "open",
     "html_url": "https://github.com/encero-systems/incan/issues/1139",
     "issue_dependencies_summary": {
@@ -66,7 +66,7 @@
   },
   {
     "number": 1142,
-    "title": "chore - v0.6 Slice 5: Oven CLI delivery",
+    "title": "chore - v0.6 Slice 6: Oven CLI delivery",
     "state": "open",
     "html_url": "https://github.com/encero-systems/incan/issues/1142",
     "issue_dependencies_summary": {
@@ -75,7 +75,7 @@
   },
   {
     "number": 1143,
-    "title": "chore - v0.6 Slice 6: First-class inspectability",
+    "title": "chore - v0.6 Slice 7: First-class inspectability",
     "state": "open",
     "html_url": "https://github.com/encero-systems/incan/issues/1143",
     "issue_dependencies_summary": {
@@ -84,7 +84,7 @@
   },
   {
     "number": 1144,
-    "title": "chore - v0.6 Slice 9: Cutover and release",
+    "title": "chore - v0.6 Slice 10: Cutover and release",
     "state": "open",
     "html_url": "https://github.com/encero-systems/incan/issues/1144",
     "issue_dependencies_summary": {
@@ -93,7 +93,7 @@
   },
   {
     "number": 1379,
-    "title": "chore - v0.6 Slice 8: Native Windows support",
+    "title": "chore - v0.6 Slice 9: Native Windows support",
     "state": "open",
     "html_url": "https://github.com/encero-systems/incan/issues/1379",
     "issue_dependencies_summary": {
@@ -102,9 +102,18 @@
   },
   {
     "number": 1421,
-    "title": "chore - v0.6 Slice 10: Incan-authored control plane and governed runtime",
+    "title": "chore - v0.6 Slice 11: Incan-authored control plane and governed runtime",
     "state": "open",
     "html_url": "https://github.com/encero-systems/incan/issues/1421",
+    "issue_dependencies_summary": {
+      "blocked_by": 0
+    }
+  },
+  {
+    "number": 1561,
+    "title": "chore - v0.6 Slice 5: Loaf-native ecosystem, build scripts inert",
+    "state": "open",
+    "html_url": "https://github.com/encero-systems/incan/issues/1561",
     "issue_dependencies_summary": {
       "blocked_by": 0
     }

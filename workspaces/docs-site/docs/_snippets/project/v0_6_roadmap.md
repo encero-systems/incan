@@ -28,37 +28,42 @@
       <td>Accepted constructs have parity, diagnostics, inspection, and migration evidence.</td>
     </tr>
     <tr data-v06-slice-target="slice-04-oven-authority-native-rust">
-      <td><button type="button" class="inc-v06-slice-toggle">4. Oven authority and native Rust</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">4 complete</span><span class="inc-v06-status inc-v06-status--open">38 open</span></div></td>
-      <td>Loaf authority, governed providers, and bounded Rust facets.</td>
+      <td><button type="button" class="inc-v06-slice-toggle">4. Oven authority and native Rust</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">5 complete</span><span class="inc-v06-status inc-v06-status--open">37 open</span></div></td>
+      <td>Loaf authority, direct-rustc planning, and bounded Rust facets.</td>
       <td>Incan-only, Rust-only, and mixed Loaves bake without Cargo being authoritative.</td>
     </tr>
-    <tr data-v06-slice-target="slice-05-oven-cli-delivery">
-      <td><button type="button" class="inc-v06-slice-toggle">5. Oven CLI delivery</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">0 complete</span><span class="inc-v06-status inc-v06-status--open">12 open</span></div></td>
+    <tr data-v06-slice-target="slice-05-loaf-native-ecosystem">
+      <td><button type="button" class="inc-v06-slice-toggle">5. Loaf-native ecosystem, build scripts inert</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">0 complete</span><span class="inc-v06-status inc-v06-status--open">1 open</span></div></td>
+      <td>Manifest-declared package needs; no build-script execution.</td>
+      <td>Every dependency in the corpus bakes from its manifest alone, byte-equivalent to its Cargo build.</td>
+    </tr>
+    <tr data-v06-slice-target="slice-06-oven-cli-delivery">
+      <td><button type="button" class="inc-v06-slice-toggle">6. Oven CLI delivery</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">0 complete</span><span class="inc-v06-status inc-v06-status--open">12 open</span></div></td>
       <td>Shared Oven planning for build and bake.</td>
       <td>One plan and receipt model; neither CLI gains a competing planner.</td>
     </tr>
-    <tr data-v06-slice-target="slice-06-first-class-inspectability">
-      <td><button type="button" class="inc-v06-slice-toggle">6. First-class inspectability</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">0 complete</span><span class="inc-v06-status inc-v06-status--open">12 open</span></div></td>
+    <tr data-v06-slice-target="slice-07-first-class-inspectability">
+      <td><button type="button" class="inc-v06-slice-toggle">7. First-class inspectability</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">0 complete</span><span class="inc-v06-status inc-v06-status--open">12 open</span></div></td>
       <td>Shared compiler, package, artifact, and Rust/Oven inspection facts.</td>
       <td>CLI, LSP, Architect, MCP, and Rust inspection agree on identity and provenance.</td>
     </tr>
-    <tr data-v06-slice-target="slice-07-canonical-source-meaning">
-      <td><button type="button" class="inc-v06-slice-toggle">7. Canonical source meaning</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">8 complete</span><span class="inc-v06-status inc-v06-status--open">38 open</span></div></td>
+    <tr data-v06-slice-target="slice-08-canonical-source-meaning">
+      <td><button type="button" class="inc-v06-slice-toggle">8. Canonical source meaning</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">8 complete</span><span class="inc-v06-status inc-v06-status--open">38 open</span></div></td>
       <td>One source identity across compiler, tools, and backend facts.</td>
       <td>Aliases, imports, locals, members, and binders resolve consistently.</td>
     </tr>
-    <tr data-v06-slice-target="slice-08-native-windows">
-      <td><button type="button" class="inc-v06-slice-toggle">8. Native Windows support</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">11 complete</span><span class="inc-v06-status inc-v06-status--open">11 open</span></div></td>
+    <tr data-v06-slice-target="slice-09-native-windows">
+      <td><button type="button" class="inc-v06-slice-toggle">9. Native Windows support</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">11 complete</span><span class="inc-v06-status inc-v06-status--open">11 open</span></div></td>
       <td>A Windows host that builds, bakes, and ships like the others.</td>
       <td>A packaged Windows toolchain builds and runs a project, not merely a bake that exits zero.</td>
     </tr>
-    <tr data-v06-slice-target="slice-09-cutover-release">
-      <td><button type="button" class="inc-v06-slice-toggle">9. Cutover and release</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">1 complete</span><span class="inc-v06-status inc-v06-status--open">14 open</span></div></td>
+    <tr data-v06-slice-target="slice-10-cutover-release">
+      <td><button type="button" class="inc-v06-slice-toggle">10. Cutover and release</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">1 complete</span><span class="inc-v06-status inc-v06-status--open">14 open</span></div></td>
       <td>Corpus-led compatibility reporting and normal-path removal.</td>
       <td>The complete matrix is green or explicitly migrated before generated Rust loses authority.</td>
     </tr>
-    <tr data-v06-slice-target="slice-10-incan-authored-control-plane">
-      <td><button type="button" class="inc-v06-slice-toggle">10. Incan-authored control plane and governed runtime</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">4 complete</span><span class="inc-v06-status inc-v06-status--open">31 open</span></div></td>
+    <tr data-v06-slice-target="slice-11-incan-authored-control-plane">
+      <td><button type="button" class="inc-v06-slice-toggle">11. Incan-authored control plane and governed runtime</button><div class="inc-v06-slice-status"><span class="inc-v06-status inc-v06-status--complete">4 complete</span><span class="inc-v06-status inc-v06-status--open">31 open</span></div></td>
       <td>Incan-authored Oven components and the RFC 104 authority model.</td>
       <td>Components migrate only behind a bridge that exists, and declared authority matches observed receipts.</td>
     </tr>
@@ -355,7 +360,7 @@ flowchart LR
   s1141 -- owns --> i1558
   s1141 -- owns --> i1559
   classDef incv06complete fill:#0b2724,stroke:#66d9a3,color:#e4ebf2,stroke-width:1.7px
-  class i1063,i1149,i1339,i1558 incv06complete
+  class i1063,i1149,i1339,i1495,i1558 incv06complete
   click i429 href "https://github.com/encero-systems/incan/issues/429" "Open #429 on GitHub"
   click i975 href "https://github.com/encero-systems/incan/issues/975" "Open #975 on GitHub"
   click i990 href "https://github.com/encero-systems/incan/issues/990" "Open #990 on GitHub"
@@ -403,8 +408,22 @@ flowchart LR
 
 </details>
 
-<details id="slice-05-oven-cli-delivery" class="inc-v06-slice" markdown="1">
-<summary>5. Oven CLI delivery</summary>
+<details id="slice-05-loaf-native-ecosystem" class="inc-v06-slice" markdown="1">
+<summary>5. Loaf-native ecosystem, build scripts inert</summary>
+
+**Exit evidence:** a build.rs anywhere in a bake produces one warning and nothing else; every package in incan's and IncQL's resolved graphs bakes under Oven from a loaf.toml with no Cargo invocation; adoption writes those manifests from an existing Cargo build.
+
+```mermaid
+flowchart LR
+  s1561["Slice 5<br/>#1561"]
+  click s1561 href "https://github.com/encero-systems/incan/issues/1561" "Open #1561 on GitHub"
+```
+[Open Slice 5 in GitHub](https://github.com/encero-systems/incan/issues/1561)
+
+</details>
+
+<details id="slice-06-oven-cli-delivery" class="inc-v06-slice" markdown="1">
+<summary>6. Oven CLI delivery</summary>
 
 **Exit evidence:** one installation, two non-competing CLIs, one Loaf authority, and one plan/receipt model.
 
@@ -415,7 +434,7 @@ flowchart LR
   i406["#406<br/>RFC 078 - tool execution and typed work…"]
   i1010["#1010<br/>RFC 118: Incan and Oven command-line su…"]
   i1094["#1094<br/>decide how to extract Oven's plan/build…"]
-  s1142["Slice 5<br/>#1142"]
+  s1142["Slice 6<br/>#1142"]
   i1297["#1297<br/>freeze CLI-to-compiler coupling with a …"]
   i1478["#1478<br/>workspace layout rewrite: five rings un…"]
   i1479["#1479<br/>layout step 2: extract incan_driver and…"]
@@ -449,12 +468,12 @@ flowchart LR
   click i1482 href "https://github.com/encero-systems/incan/issues/1482" "Open #1482 on GitHub"
   click i1483 href "https://github.com/encero-systems/incan/issues/1483" "Open #1483 on GitHub"
 ```
-[Open Slice 5 in GitHub](https://github.com/encero-systems/incan/issues/1142)
+[Open Slice 6 in GitHub](https://github.com/encero-systems/incan/issues/1142)
 
 </details>
 
-<details id="slice-06-first-class-inspectability" class="inc-v06-slice" markdown="1">
-<summary>6. First-class inspectability</summary>
+<details id="slice-07-first-class-inspectability" class="inc-v06-slice" markdown="1">
+<summary>7. First-class inspectability</summary>
 
 **Exit evidence:** CLI, LSP, Architect, MCP, and Rust inspection agree on identity, range, provenance, and stale-state semantics.
 
@@ -467,7 +486,7 @@ flowchart LR
   i775["#775<br/>RFC 106 process-risk signals and evalua…"]
   i777["#777<br/>RFC 106 Rust/Incan build and interop gr…"]
   i1019["#1019<br/>RFC 106 full graph/context conformance …"]
-  s1143["Slice 6<br/>#1143"]
+  s1143["Slice 7<br/>#1143"]
   i1201["#1201<br/>vocab-surface diagnostics and completio…"]
   i1346["#1346<br/>persist, log, and index the semantic la…"]
   i1416["#1416<br/>bug - inspect_codegraph identity test i…"]
@@ -501,12 +520,12 @@ flowchart LR
   click i1416 href "https://github.com/encero-systems/incan/issues/1416" "Open #1416 on GitHub"
   click i1500 href "https://github.com/encero-systems/incan/issues/1500" "Open #1500 on GitHub"
 ```
-[Open Slice 6 in GitHub](https://github.com/encero-systems/incan/issues/1143)
+[Open Slice 7 in GitHub](https://github.com/encero-systems/incan/issues/1143)
 
 </details>
 
-<details id="slice-07-canonical-source-meaning" class="inc-v06-slice" markdown="1">
-<summary>7. Canonical source meaning</summary>
+<details id="slice-08-canonical-source-meaning" class="inc-v06-slice" markdown="1">
+<summary>8. Canonical source meaning</summary>
 
 **Exit evidence:** aliases, imports, re-exports, locals, members, and generic binders resolve to one identity across compiler, LSP, graph, and backend facts.
 
@@ -523,7 +542,7 @@ flowchart LR
   i1116["#1116<br/>bug - builtin function name shadowing i…"]
   i1117["#1117<br/>bug - dead code after an unconditional …"]
   i1132["#1132<br/>bug - statement-level tuple unpack of a…"]
-  s1139["Slice 7<br/>#1139"]
+  s1139["Slice 8<br/>#1139"]
   i1168["#1168<br/>bump generated projects to Rust edition…"]
   i1174["#1174<br/>tighten RFC 120 so the emitted-name pro…"]
   i1210["#1210<br/>establish canonical callable-target fac…"]
@@ -656,12 +675,12 @@ flowchart LR
   click i1555 href "https://github.com/encero-systems/incan/issues/1555" "Open #1555 on GitHub"
   click i1557 href "https://github.com/encero-systems/incan/issues/1557" "Open #1557 on GitHub"
 ```
-[Open Slice 7 in GitHub](https://github.com/encero-systems/incan/issues/1139)
+[Open Slice 8 in GitHub](https://github.com/encero-systems/incan/issues/1139)
 
 </details>
 
-<details id="slice-08-native-windows" class="inc-v06-slice" markdown="1">
-<summary>8. Native Windows support</summary>
+<details id="slice-09-native-windows" class="inc-v06-slice" markdown="1">
+<summary>9. Native Windows support</summary>
 
 **Exit evidence:** the release bake produces a Windows archive; that archive, extracted and installed, scaffolds a project and builds it; platform-gated behaviour is implemented or its divergence is stated in code and docs.
 
@@ -686,7 +705,7 @@ flowchart LR
   i1364["#1364<br/>bug - Windows: transient Cargo target p…"]
   i1366["#1366<br/>bug - Windows: std.fs imports unix-only…"]
   i1368["#1368<br/>bug - Windows: shipped Oven store layou…"]
-  s1379["Slice 8<br/>#1379"]
+  s1379["Slice 9<br/>#1379"]
   i1396["#1396<br/>bug - Windows: std.fs disk usage is uni…"]
   i1397["#1397<br/>Windows: contributor prerequisites are …"]
   s1379 -- owns --> i433
@@ -737,12 +756,12 @@ flowchart LR
   click i1396 href "https://github.com/encero-systems/incan/issues/1396" "Open #1396 on GitHub"
   click i1397 href "https://github.com/encero-systems/incan/issues/1397" "Open #1397 on GitHub"
 ```
-[Open Slice 8 in GitHub](https://github.com/encero-systems/incan/issues/1379)
+[Open Slice 9 in GitHub](https://github.com/encero-systems/incan/issues/1379)
 
 </details>
 
-<details id="slice-09-cutover-release" class="inc-v06-slice" markdown="1">
-<summary>9. Cutover and release</summary>
+<details id="slice-10-cutover-release" class="inc-v06-slice" markdown="1">
+<summary>10. Cutover and release</summary>
 
 **Exit evidence:** generated Rust is an inspection/debug projection only; normal compilation, package contracts, and Oven no longer depend on it as semantic authority.
 
@@ -755,7 +774,7 @@ flowchart LR
   i1118["#1118<br/>no test can observe a packaged-only defect"]
   i1119["#1119<br/>make producing a release archive locall…"]
   i1128["#1128<br/>versioned docs never deploy automatical…"]
-  s1144["Slice 9<br/>#1144"]
+  s1144["Slice 10<br/>#1144"]
   i1168["#1168<br/>bump generated projects to Rust edition…"]
   i1173["#1173<br/>migrate #[allow] lint suppressions to #…"]
   i1291["#1291<br/>complete the residual direct language/r…"]
@@ -797,12 +816,12 @@ flowchart LR
   click i1442 href "https://github.com/encero-systems/incan/issues/1442" "Open #1442 on GitHub"
   click i1510 href "https://github.com/encero-systems/incan/issues/1510" "Open #1510 on GitHub"
 ```
-[Open Slice 9 in GitHub](https://github.com/encero-systems/incan/issues/1144)
+[Open Slice 10 in GitHub](https://github.com/encero-systems/incan/issues/1144)
 
 </details>
 
-<details id="slice-10-incan-authored-control-plane" class="inc-v06-slice" markdown="1">
-<summary>10. Incan-authored control plane and governed runtime</summary>
+<details id="slice-11-incan-authored-control-plane" class="inc-v06-slice" markdown="1">
+<summary>11. Incan-authored control plane and governed runtime</summary>
 
 **Exit evidence:** every semantic Oven responsibility with an Incan-authored owner is authored in Incan through a typed, governed host kernel; no migrated component relies on an undocumented bridge; declared authority and observed receipts describe the same run and stay inspectable without executing source or parsing logs.
 
@@ -842,7 +861,7 @@ flowchart LR
   i1212["#1212<br/>establish RFC 104 operation-receipt fac…"]
   i1266["#1266<br/>move Oven's plan/build-unit/artifact/re…"]
   i1409["#1409<br/>provide a TOML surface so Incan can rea…"]
-  s1421["Slice 10<br/>#1421"]
+  s1421["Slice 11<br/>#1421"]
   i1530["#1530<br/>bug - the Oven control plane's Incan te…"]
   s1421 -- owns --> i662
   s1421 -- owns --> i870
@@ -920,6 +939,6 @@ flowchart LR
   click s1421 href "https://github.com/encero-systems/incan/issues/1421" "Open #1421 on GitHub"
   click i1530 href "https://github.com/encero-systems/incan/issues/1530" "Open #1530 on GitHub"
 ```
-[Open Slice 10 in GitHub](https://github.com/encero-systems/incan/issues/1421)
+[Open Slice 11 in GitHub](https://github.com/encero-systems/incan/issues/1421)
 
 </details>
