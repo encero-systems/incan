@@ -3249,12 +3249,39 @@ impl OvenRustcArtifactManifest {
                             .iter()
                             .find(|((_, relative), inventory)| relative == &directory.relative_path && clean(inventory))
                             .map(|(candidate, _)| candidate)
-                            .ok_or_else(|| OvenRustcError::InvalidInput {
-                                field: "materialized source search closure",
-                                message: format!(
-                                    "source evidence `{key}` cannot isolate selected member `{}`: its canonical directory has a missing or co-resident unselected artifact and no clean admitted alternative",
-                                    member.relative_path
-                                ),
+                            .ok_or_else(|| {
+                                // "a co-resident unselected artifact" names a condition, not a cause. Say which
+                                // artifact and why it disqualified the directory, so the reader can look at the one
+                                // file that matters instead of every member of a Cargo deps directory.
+                                let blame = inventories.get(&canonical).map_or_else(
+                                    || "its canonical directory has no recorded inventory".to_string(),
+                                    |inventory| match inventory.get(&member.relative_path) {
+                                        None => format!("`{}` is absent from it", member.relative_path),
+                                        Some(found) if found != &member.digest => {
+                                            format!("`{}` is present with a different digest", member.relative_path)
+                                        }
+                                        Some(_) => {
+                                            let mut intruders = inventory
+                                                .iter()
+                                                .filter(|(path, digest)| selected_members.get(*path) != Some(*digest))
+                                                .map(|(path, _)| path.as_str())
+                                                .collect::<Vec<_>>();
+                                            let total = intruders.len();
+                                            intruders.truncate(3);
+                                            format!(
+                                                "it also holds {total} artifact(s) this role never selected, such as {}",
+                                                intruders.join(", ")
+                                            )
+                                        }
+                                    },
+                                );
+                                OvenRustcError::InvalidInput {
+                                    field: "materialized source search closure",
+                                    message: format!(
+                                        "source evidence `{key}` cannot isolate selected member `{}`: {blame}, and no other admitted directory holds a clean copy",
+                                        member.relative_path
+                                    ),
+                                }
                             })?
                     };
                     if chosen != &canonical {

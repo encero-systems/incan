@@ -1451,12 +1451,40 @@ fn merge_loaf_inspection_sources(
 /// helper roots must remain private to vocabulary extraction: passing their independently built `serde` closure to a
 /// generated library would make Rustc see two incompatible `serde` identities.
 fn record_generated_root_externs(plan: &mut OvenRustcArtifactManifest) -> Result<(), OvenLoafError> {
-    if plan.schema_version == crate::oven::rustc::OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION
-        && !plan.entrypoint_dependency_search_paths.contains_key("generated-root")
-    {
-        let closure = plan.capture_source_search_closure(&plan.dependency_search_paths)?;
-        plan.entrypoint_dependency_search_paths
-            .insert("generated-root".to_string(), closure);
+    if plan.schema_version == crate::oven::rustc::OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION {
+        // Recapture when a directory the role already claims has gained an artifact since the closure was taken,
+        // and only then.
+        //
+        // The bake populates this role before loaf preparation runs, so "already present" no longer means "already
+        // recorded at this stage" — later preparation adds compiler artifacts such as `incan_stdlib` into a deps
+        // directory the role is already bound to, and `bind_source_search_roles` then refuses that directory for
+        // holding a member the role never claimed.
+        //
+        // A helper added on its *own* search path is the case this must not touch: its roots stay private to
+        // vocabulary extraction, because handing a generated library their independently built `serde` closure makes
+        // Rustc see two incompatible `serde` identities. Keying on "an existing path gained an artifact" separates
+        // the two exactly — a private helper arrives under a new path and is left alone.
+        let recaptured = plan.capture_source_search_closure(&plan.dependency_search_paths)?;
+        let stale = plan
+            .entrypoint_dependency_search_paths
+            .get("generated-root")
+            .is_some_and(|current| {
+                let claimed = current.paths().cloned().collect::<BTreeSet<_>>();
+                let held = current
+                    .directories()
+                    .flat_map(|directory| &directory.artifacts)
+                    .map(|artifact| artifact.relative_path.as_str())
+                    .collect::<BTreeSet<_>>();
+                recaptured
+                    .directories()
+                    .filter(|directory| claimed.contains(&directory.relative_path))
+                    .flat_map(|directory| &directory.artifacts)
+                    .any(|artifact| !held.contains(artifact.relative_path.as_str()))
+            });
+        if stale || !plan.entrypoint_dependency_search_paths.contains_key("generated-root") {
+            plan.entrypoint_dependency_search_paths
+                .insert("generated-root".to_string(), recaptured);
+        }
     }
     plan.entrypoint_externs
         .entry("generated-root".to_string())
