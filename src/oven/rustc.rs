@@ -55,14 +55,14 @@ pub(crate) use runtime_foundation::*;
 pub(crate) use selected_unit::*;
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -5572,39 +5572,39 @@ pub fn resolve_active_rustc() -> Result<PathBuf, OvenRustcError> {
     verified_regular_file(Path::new(&reported), "rustc")
 }
 
-/// Read one regular Rust compiler's stable `--version` identity without invoking Cargo.
-pub fn rustc_identity(rustc: &Path) -> Result<String, OvenRustcError> {
+/// The two facts every command asks of the selected compiler, answered by one `rustc -vV`.
+#[derive(Debug, Clone)]
+struct RustcProbe {
+    /// The first `-vV` line, identical to `rustc --version`.
+    identity: String,
+    /// The `host:` line.
+    host_target: String,
+}
+
+/// Process-wide memo of `rustc -vV` answers, keyed by the compiler file's canonical path, length and modification
+/// time so a replaced compiler is probed afresh. Every normal command asked the compiler twice -- once for its
+/// version, once for its host -- and each spawn cost about twenty milliseconds of a warm no-change build (#1111).
+fn rustc_probe_memo() -> &'static Mutex<HashMap<RustcFileStamp, RustcProbe>> {
+    static MEMO: OnceLock<Mutex<HashMap<RustcFileStamp, RustcProbe>>> = OnceLock::new();
+    MEMO.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// What identifies one compiler file for the probe memo: its path, length and modification time.
+type RustcFileStamp = (PathBuf, u64, Option<std::time::SystemTime>);
+
+/// Probe one regular Rust compiler with `-vV`, once per observed compiler file per process.
+fn rustc_probe(rustc: &Path) -> Result<RustcProbe, OvenRustcError> {
     let rustc = verified_regular_file(rustc, "rustc")?;
-    let mut command = Command::new(&rustc);
-    command.arg("--version");
-    clear_inherited_cargo_environment(&mut command);
-    let output = command.output().map_err(|source| OvenRustcError::Io {
+    let metadata = fs::metadata(&rustc).map_err(|source| OvenRustcError::Io {
         path: rustc.clone(),
         source,
     })?;
-    if !output.status.success() {
-        return Err(OvenRustcError::InvalidInput {
-            field: "rustc",
-            message: "must report a successful `--version` identity".to_string(),
-        });
+    let key = (rustc.clone(), metadata.len(), metadata.modified().ok());
+    if let Ok(memo) = rustc_probe_memo().lock()
+        && let Some(probe) = memo.get(&key)
+    {
+        return Ok(probe.clone());
     }
-    let actual = String::from_utf8(output.stdout).map_err(|error| OvenRustcError::InvalidInput {
-        field: "rustc",
-        message: format!("reported non-UTF-8 `--version` output: {error}"),
-    })?;
-    let actual = actual.trim();
-    if actual.is_empty() {
-        return Err(OvenRustcError::InvalidInput {
-            field: "rustc",
-            message: "reported an empty `--version` identity".to_string(),
-        });
-    }
-    Ok(actual.to_string())
-}
-
-/// Read the active compiler's host target from `rustc -vV` without consulting Cargo metadata.
-pub fn rustc_host_target(rustc: &Path) -> Result<String, OvenRustcError> {
-    let rustc = verified_regular_file(rustc, "rustc")?;
     let mut command = Command::new(&rustc);
     command.arg("-vV");
     clear_inherited_cargo_environment(&mut command);
@@ -5615,14 +5615,24 @@ pub fn rustc_host_target(rustc: &Path) -> Result<String, OvenRustcError> {
     if !output.status.success() {
         return Err(OvenRustcError::InvalidInput {
             field: "rustc",
-            message: "must report a successful `-vV` host target".to_string(),
+            message: "must report a successful `-vV` identity and host target".to_string(),
         });
     }
     let output = String::from_utf8(output.stdout).map_err(|error| OvenRustcError::InvalidInput {
         field: "rustc",
         message: format!("reported non-UTF-8 `-vV` output: {error}"),
     })?;
-    output
+    let identity = output
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .ok_or_else(|| OvenRustcError::InvalidInput {
+            field: "rustc",
+            message: "reported an empty `-vV` identity".to_string(),
+        })?
+        .to_string();
+    let host_target = output
         .lines()
         .find_map(|line| line.strip_prefix("host: "))
         .map(str::trim)
@@ -5631,7 +5641,22 @@ pub fn rustc_host_target(rustc: &Path) -> Result<String, OvenRustcError> {
         .ok_or_else(|| OvenRustcError::InvalidInput {
             field: "rustc",
             message: "did not report a host target in `-vV` output".to_string(),
-        })
+        })?;
+    let probe = RustcProbe { identity, host_target };
+    if let Ok(mut memo) = rustc_probe_memo().lock() {
+        memo.insert(key, probe.clone());
+    }
+    Ok(probe)
+}
+
+/// Read one regular Rust compiler's stable `--version` identity without invoking Cargo.
+pub fn rustc_identity(rustc: &Path) -> Result<String, OvenRustcError> {
+    Ok(rustc_probe(rustc)?.identity)
+}
+
+/// Read the active compiler's host target from `rustc -vV` without consulting Cargo metadata.
+pub fn rustc_host_target(rustc: &Path) -> Result<String, OvenRustcError> {
+    Ok(rustc_probe(rustc)?.host_target)
 }
 
 /// Resolve the selected compiler's sysroot without consulting Cargo.
@@ -10980,7 +11005,7 @@ fi
         fs::write(
             &rustc,
             format!(
-                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '%s\\n' 'rustc oven-timeout-fixture'\n  exit 0\nfi\nif [ \"$1\" = \"--print\" ] && [ \"$2\" = \"sysroot\" ]; then\n  printf '%s\\n' \"{}\"\n  exit 0\nfi\nexit 97\n",
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '%s\\n' 'rustc oven-timeout-fixture'\n  exit 0\nfi\nif [ \"$1\" = \"-vV\" ]; then\n  printf '%s\\n' 'rustc oven-timeout-fixture' 'host: fixture-target'\n  exit 0\nfi\nif [ \"$1\" = \"--print\" ] && [ \"$2\" = \"sysroot\" ]; then\n  printf '%s\\n' \"{}\"\n  exit 0\nfi\nexit 97\n",
                 sysroot.display(),
             ),
         )?;

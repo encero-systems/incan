@@ -862,11 +862,16 @@ gate-incql:
 gate-cleanroom:
 	@bash scripts/gate_cleanroom.sh $(if $(DIST),--dist "$(DIST)",) $(if $(MANIFEST),--manifest "$(MANIFEST)",)
 
+# The warm ceiling is the #1111 regression check: a no-change rebuild past it fails the target, but only for a
+# toolchain whose incremental edit verifiably reached the binary, so the ceiling cannot be met by skipping work.
+BENCH_WARM_MAX_MS ?= 400
+
 .PHONY: bench-build-times  ## gate - Record build times across toolchains (TOOLCHAINS="0.4.0=/path/incan 0.5.0=/path/incan")
 bench-build-times:
 	@test -n "$(TOOLCHAINS)" \
 		|| { echo 'usage: make bench-build-times TOOLCHAINS="0.4.0=/path/to/incan 0.5.0=/path/to/incan"' >&2; exit 2; }
-	@bash scripts/bench_build_times.sh $(foreach toolchain,$(TOOLCHAINS),--toolchain "$(toolchain)")
+	@bash scripts/bench_build_times.sh --warm-max-ms "$(BENCH_WARM_MAX_MS)" \
+		$(foreach toolchain,$(TOOLCHAINS),--toolchain "$(toolchain)")
 
 .PHONY: gate-release  ## gate - Every local release gate: IncQL consumer + clean-room installs
 gate-release:

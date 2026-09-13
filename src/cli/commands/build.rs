@@ -216,6 +216,8 @@ struct OvenPreparedProject {
     rust_edition: String,
     caller_owned_libraries: Vec<OvenCallerOwnedRustcLibrary>,
     report: BuildReportDraft,
+    /// Per-phase laps of the prepare step, merged into the report's `timings_ms`.
+    prepare_timings: BTreeMap<String, u64>,
     #[cfg(feature = "rust_inspect")]
     rust_inspect_manifest_dir: Option<PathBuf>,
 }
@@ -6069,6 +6071,10 @@ fn prepare_oven_project(
             "Oven Alpha normal build and run do not accept Cargo feature controls; use Incan package features instead",
         ));
     }
+    // Phase laps of the prepare step, reported in the build report's `timings_ms` so a slow no-change rebuild can be
+    // attributed to the stage that spent the time rather than to "prepare" as a whole (#1111).
+    let mut prepare_timings = BTreeMap::new();
+    let mut lap = Instant::now();
     let normalized_file_path = if Path::new(file_path).is_absolute() {
         PathBuf::from(file_path)
     } else {
@@ -6089,6 +6095,8 @@ fn prepare_oven_project(
     let Some(main_module) = modules.last() else {
         return Err(CliError::failure("No modules found"));
     };
+    record_timing(&mut prepare_timings, "prepare_session_and_modules", lap);
+    lap = Instant::now();
     // ---- Backend selection (#986) — declared before codegen, refused visibly if unavailable ----
     let (backend_selection, backend_executed) = select_and_resolve_backend(backend_options, &modules)?;
     let dep_modules = &modules[..modules.len() - 1];
@@ -6100,7 +6108,11 @@ fn prepare_oven_project(
     let package_feature_plan = compilation_session.package_feature_plan.clone();
     let library_manifest_index = compilation_session.library_manifest_index.clone();
     let mut project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
+    record_timing(&mut prepare_timings, "prepare_backend_selection", lap);
+    lap = Instant::now();
     let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
+    record_timing(&mut prepare_timings, "prepare_provider_plan", lap);
+    lap = Instant::now();
     let mut caller_owned_libraries = oven_caller_owned_libraries(&provider_plan, profile)?;
     let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
@@ -6224,6 +6236,8 @@ fn prepare_oven_project(
         })?;
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     let inline_path_dependencies = oven_source_inline_dependency_specs(&resolved, &source_inline_crates)?;
+    record_timing(&mut prepare_timings, "prepare_resolve_dependencies", lap);
+    lap = Instant::now();
     // Strict flags are Incan lock promises, not authorization to re-enter the Cargo projection path. The Oven
     // validator recomputes the canonical fingerprint from read-only metadata and fails on a missing or stale lock.
     validate_oven_lock_policy(
@@ -6235,6 +6249,8 @@ fn prepare_oven_project(
         package_features,
         sdk_profile_override,
     )?;
+    record_timing(&mut prepare_timings, "prepare_lock_policy", lap);
+    lap = Instant::now();
     let mut oven_build_inputs = oven_build_unit_inputs(&provider_plan, &project_requirements, &resolved)?;
     let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
     let rustc_target = rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
@@ -6242,6 +6258,8 @@ fn prepare_oven_project(
     if oven_plan_mode != OvenProjectPlanMode::InteropBootstrap {
         append_oven_interop_execution_build_inputs(&mut oven_build_inputs, manifest.as_ref(), &rustc_target)?;
     }
+    record_timing(&mut prepare_timings, "prepare_toolchain_identity", lap);
+    lap = Instant::now();
     let oven_store = open_default_oven_store()?;
 
     #[cfg(feature = "rust_inspect")]
@@ -6297,6 +6315,8 @@ fn prepare_oven_project(
         rust_inspect_manifest_dir
     };
 
+    record_timing(&mut prepare_timings, "prepare_store_and_rust_inspect", lap);
+    lap = Instant::now();
     let analysis = compilation_session
         .analyze_modules(
             &modules,
@@ -6335,6 +6355,8 @@ fn prepare_oven_project(
     } else {
         vec![profile]
     };
+    record_timing(&mut prepare_timings, "prepare_typecheck", lap);
+    lap = Instant::now();
     let checked_provider_profiles = checked_packaged_provider_profiles(
         &provider_plan,
         &requested_provider_profiles,
@@ -6354,6 +6376,8 @@ fn prepare_oven_project(
     generator.set_dependencies(resolved.dependencies);
     generator.set_dev_dependencies(resolved.dev_dependencies);
 
+    record_timing(&mut prepare_timings, "prepare_provider_profiles", lap);
+    lap = Instant::now();
     let has_deps = !emitted_dep_modules.is_empty()
         || dep_modules
             .iter()
@@ -6379,6 +6403,8 @@ fn prepare_oven_project(
             .map_err(|error| CliError::failure(format!("Error generating project: {error}")))?;
         digest_output(&[rust_code.as_str()])
     };
+    record_timing(&mut prepare_timings, "prepare_codegen_and_generate", lap);
+    lap = Instant::now();
     let backend_receipt = finalize_backend_receipt(&backend_selection, backend_executed, backend_output_identity)?;
     // Not persisted here: `prepare_oven_project` runs for internal/dependency callers too (see
     // `BackendSelectionOptions::default()` call sites), and real compilation (the Oven plan
@@ -6412,6 +6438,8 @@ fn prepare_oven_project(
     let receipt_path =
         prepared_oven_receipt_path(&project_root, oven_plan_mode, &receipt.intent.target, path, profile)?;
     write_receipt(&receipt, &receipt_path).map_err(|error| CliError::failure(error.to_string()))?;
+    record_timing(&mut prepare_timings, "prepare_receipt", lap);
+    lap = Instant::now();
     let required_registry_dependencies = format_oven_registry_dependency_requirements(&oven_plan_dependencies);
     // An imported package Loaf is sufficient for a consume-only command, and for an explicit bake of a consumer that
     // declares no direct registry root of its own. The explicit baker must otherwise publish the consumer's own
@@ -6465,6 +6493,8 @@ fn prepare_oven_project(
             receipt_path.display(),
         ))
     })?;
+    record_timing(&mut prepare_timings, "prepare_plan_selection", lap);
+    lap = Instant::now();
     let plan_selection = plan_preparation.plan_selection;
     let registry_authority = registry_leaf_authority_for_plan_selection(&plan_selection)?;
     let full_artifact_plan = plan_selection.artifact_plan();
@@ -6505,6 +6535,7 @@ fn prepare_oven_project(
         ));
     }
 
+    record_timing(&mut prepare_timings, "prepare_registry_validation", lap);
     let report = BuildReportDraft {
         mode: BuildReportMode::Executable,
         profile: profile.to_string(),
@@ -6559,6 +6590,7 @@ fn prepare_oven_project(
         rust_edition,
         caller_owned_libraries,
         report,
+        prepare_timings,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_manifest_dir: rust_inspect_manifest_dir
             .as_ref()
@@ -10026,11 +10058,24 @@ fn select_default_project_output(
         .map_err(|error| CliError::failure(error.to_string()))?;
     validate_completed_output_lock_policy(&project_root, &manifest, &entrypoint, policy)?;
     let store = open_default_oven_store()?;
-    let source_authority_digest = digest_baked_project_source_authority(&project_root)?;
+    select_current_sealed_project_output(&store, &project_root, &entrypoint, target, profile)
+}
+
+/// Select the sealed output for exactly this source authority, or `None` when the project must take the source-aware
+/// route. A sealed output left behind by an earlier bake of different sources is reported once and then ignored: it
+/// is not evidence about the current tree, and it must not stop the build.
+fn select_current_sealed_project_output(
+    store: &OvenStore,
+    project_root: &Path,
+    entrypoint: &Path,
+    target: OvenBakeProjectTarget,
+    profile: &str,
+) -> CliResult<Option<OvenStoredProjectOutput>> {
+    let source_authority_digest = digest_baked_project_source_authority(project_root)?;
     if let Some(selected) = select_baked_project_output_with_source_authority(
-        &store,
-        &project_root,
-        &entrypoint,
+        store,
+        project_root,
+        entrypoint,
         target,
         profile,
         &source_authority_digest,
@@ -10038,12 +10083,28 @@ fn select_default_project_output(
     )? {
         return Ok(Some(selected));
     }
-    if has_stale_baked_project_output(&store, &project_root, &entrypoint, target, profile)? {
-        return Err(CliError::failure(
-            "Oven Alpha has no receipt-compatible Loaf for this project's current source authority; its source or lock changed after an explicit bake. Run `incan oven bake --project .` before a normal build or run.",
-        ));
+    if has_stale_baked_project_output(store, project_root, entrypoint, target, profile)? {
+        warn_stale_sealed_project_output("build or run");
     }
     Ok(None)
+}
+
+/// Say once why a baked project is taking the source-aware route instead of replaying its sealed output.
+///
+/// A sealed project-output Loaf is exact replay for one source authority. When the source or lock moved after the
+/// bake, that Loaf is simply not the answer any more; the dependency closure the same bake published still is, and
+/// the normal consume-only route builds the edited project against it through direct `rustc`. Refusing here would
+/// turn every edit of a baked project into a 20-second re-bake, which is the opposite of what the bake is for.
+fn warn_stale_sealed_project_output(command_kind: &str) {
+    // One command selects more than once on its way to the source route; the reader needs the sentence once.
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| {
+        eprintln!(
+            "warning: the sealed project output from the last `incan oven bake --project .` no longer matches this \
+             source tree; this {command_kind} compiles the project from source against the baked dependency \
+             closure. Bake again when you want the sealed output refreshed."
+        );
+    });
 }
 
 /// Validate strict lock promises before a completed-output fast path can return a stale-output diagnostic.
@@ -10160,9 +10221,7 @@ fn select_default_library_project_outputs(
                 OvenBakeProjectTarget::Library,
                 profile,
             )? {
-                return Err(CliError::failure(
-                    "Oven Alpha has no receipt-compatible Loaf for this project's current source authority; its source or lock changed after an explicit bake. Run `incan oven bake --project .` before a normal library build.",
-                ));
+                warn_stale_sealed_project_output("library build");
             }
             return Ok(None);
         };
@@ -10791,11 +10850,11 @@ pub(crate) fn build_file_report(
     if let Some(backend_receipt) = report_draft.backend.as_ref() {
         write_backend_receipt(backend_receipt, &default_backend_receipt_path(&prepared.project_root))?;
     }
-    let report = report_draft.finish(BTreeMap::from([
-        ("prepare".to_string(), prepare_ms),
-        ("oven_build".to_string(), oven_build_ms),
-        ("total".to_string(), elapsed_ms(total_start)),
-    ]));
+    let mut timings_ms = prepared.prepare_timings.clone();
+    timings_ms.insert("prepare".to_string(), prepare_ms);
+    timings_ms.insert("oven_build".to_string(), oven_build_ms);
+    timings_ms.insert("total".to_string(), elapsed_ms(total_start));
+    let report = report_draft.finish(timings_ms);
     serde_json::to_value(report)
         .map_err(|error| CliError::failure(format!("failed to serialize Oven build report: {error}")))
 }
@@ -18086,6 +18145,19 @@ headers = ["interop/include/bridge.h"]
             OvenBakeProjectTarget::Executable,
             "release",
         )?);
+        // The stale sealed output is a fact to mention, never a reason to refuse: the edited project takes the
+        // source-aware route against the dependency closure the same bake published.
+        assert!(
+            select_current_sealed_project_output(
+                &store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                "release",
+            )?
+            .is_none(),
+            "an edited project with a stale sealed output must fall through to the source route"
+        );
 
         let unrelated = tempfile::tempdir()?;
         let unrelated_entrypoint = unrelated.path().join("src/main.incn");

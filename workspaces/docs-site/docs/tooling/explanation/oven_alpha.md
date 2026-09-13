@@ -179,7 +179,7 @@ This Oven receipt selects how already-generated Rust is compiled. A separate, ea
 
 <div class="inc-oven-flow__boundary">
 <div><span>What the proof remembers</span><strong>One receipt answers: “Why does this artifact exist?”</strong><p>Every Loaf is bound to its source, dependency lock, compiler, SDK, target, profile, feature projection, and build intent. Project outputs also name the exact base and extension authority that produced them. The proof travels with the result instead of disappearing into a build cache.</p></div>
-<div><span>Why Oven refuses reuse</span><strong>A miss protects the guarantee.</strong><p>A normal command refuses reuse and asks for an explicit bake—or stops—when the requested environment cannot honestly consume the sealed result.</p><ul><li>the toolchain, target, profile, or features differ;</li><li>semantic lock, dependency, provider, or source evidence changed; or</li><li>the request sits outside the Alpha envelope.</li></ul></div>
+<div><span>Why Oven refuses reuse</span><strong>A miss protects the guarantee.</strong><p>A normal command refuses reuse and asks for an explicit bake—or stops—when the requested environment cannot honestly consume the sealed result.</p><ul><li>the toolchain, target, profile, or features differ;</li><li>semantic lock, dependency, or provider evidence changed; or</li><li>the request sits outside the Alpha envelope.</li></ul><p>Your own source is the one input that never needs a bake: editing a baked project sets its sealed output aside and compiles the edit from source against the dependency closure that same bake published.</p></div>
 </div>
 
 <section id="evidence-you-can-inspect" class="inc-oven-evidence" aria-labelledby="oven-evidence-title">

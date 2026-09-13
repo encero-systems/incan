@@ -27,6 +27,8 @@ Options:
   --repetitions N         Timed repeats per phase, best time wins (default: 3)
   --output PATH           Markdown results file (default: workspaces/benchmarks/results/build_times.md)
   --keep-work             Leave scratch directories for inspection
+  --warm-max-ms N         Fail when a toolchain's no-change rebuild exceeds N ms while its incremental edit
+                          verifiably reached the binary (a `stale` toolchain's warm number proves nothing)
   -h, --help              Show this help
 EOF
 }
@@ -43,6 +45,7 @@ project=""
 repetitions=3
 output="$repo_root/workspaces/benchmarks/results/build_times.md"
 keep_work=0
+warm_max_ms=""
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -57,6 +60,7 @@ while [ "$#" -gt 0 ]; do
         --repetitions) repetitions="${2:-}"; shift 2 ;;
         --output) output="${2:-}"; shift 2 ;;
         --keep-work) keep_work=1; shift ;;
+        --warm-max-ms) warm_max_ms="${2:-}"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; fail "unknown argument: $1" ;;
     esac
@@ -110,6 +114,7 @@ format_ms() {
 
 mkdir -p "$(dirname "$output")"
 results=()
+warm_verdicts=()
 
 for index in "${!labels[@]}"; do
     label="${labels[$index]}"
@@ -185,6 +190,7 @@ PY
         if [ -z "$incremental_best" ] || [ "$elapsed" -lt "$incremental_best" ]; then incremental_best="$elapsed"; fi
     done
 
+    warm_verdicts+=("$label|$warm|$stale")
     if [ "$stale" -eq 1 ]; then
         printf 'STALE - reported success without rebuilding\n'
         results+=("$label|$(format_ms "$cold")|$(format_ms "$warm")|stale")
@@ -218,3 +224,18 @@ done
 
 printf '\nWrote %s\n\n' "$output"
 cat "$output"
+
+# The warm-path regression check: only a toolchain whose incremental edit demonstrably reached the binary has a
+# warm number worth holding to a ceiling, because a no-op "rebuild" is fast for the wrong reason (#1111).
+if [ -n "$warm_max_ms" ]; then
+    regressed=0
+    for verdict in "${warm_verdicts[@]}"; do
+        IFS='|' read -r label warm stale <<<"$verdict"
+        if [ "$stale" -eq 0 ] && [ "$warm" -gt "$warm_max_ms" ]; then
+            printf 'bench_build_times: %s no-change rebuild took %sms, over the %sms ceiling\n' "$label" "$warm" "$warm_max_ms" >&2
+            regressed=1
+        fi
+    done
+    [ "$regressed" -eq 0 ] || exit 1
+    printf 'warm-path ceiling of %sms held\n' "$warm_max_ms"
+fi

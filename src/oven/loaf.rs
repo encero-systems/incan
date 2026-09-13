@@ -635,6 +635,9 @@ struct OvenLoafProviderExcess {
 struct CompatibleLoaf {
     path: PathBuf,
     excess: OvenLoafProviderExcess,
+    /// The candidate's sealed registry catalog, read once with its manifest so registry support can be decided
+    /// without materializing every candidate's artifact closure.
+    registry_leaves: Vec<OvenRustcRegistryLeaf>,
 }
 
 impl OvenLoafCompatibility {
@@ -2916,24 +2919,32 @@ fn select_toolchain_loaf(
         return Ok(None);
     }
 
+    // Deciding which candidate can supply the caller's registry roots needs only its sealed catalog, already read
+    // beside its manifest. Materializing each candidate's whole closure here -- ten thousand file checks per Loaf --
+    // was the single largest cost of a warm no-change build (#1111); the one candidate selected below is still
+    // materialized and validated in full.
     let candidates = compatible_loaf_paths(&loaf_root, receipt)?;
-    let mut supported = Vec::new();
-    for candidate in candidates {
-        let native = loaf_from_loaf(
-            receipt,
-            &candidate.path,
-            OvenLoafSelection::CompilerOwnedProviderSuperset,
-        )?;
-        let candidate_supported = match registry_requirement {
-            OvenLoafRegistryRequirement::LinkableLeaf => {
-                registry_dependencies_supported_by_loaf(&native, &registry_dependencies, &receipt.intent.profile)
-            }
-        };
-        if candidate_supported {
-            supported.push(candidate);
-        }
-    }
-    let Some(candidate) = select_most_specific_compatible_loaf(supported) else {
+    let profile = receipt.intent.profile.as_str();
+    let Some(candidate) =
+        select_compatible_loaf_with_registry_requirement(candidates, &registry_dependencies, |candidate| {
+            let candidate_root = candidate.path.parent().ok_or_else(|| OvenLoafError::InvalidLoaf {
+                path: candidate.path.clone(),
+                message: "loaf file has no parent directory".to_string(),
+            })?;
+            Ok(match registry_requirement {
+                OvenLoafRegistryRequirement::LinkableLeaf => {
+                    let authority = OvenRegistryLeafAuthority::new_with_trusted_dependency_search_paths(
+                        candidate_root.to_path_buf(),
+                        candidate.registry_leaves.clone(),
+                        Vec::new(),
+                    );
+                    registry_dependencies
+                        .iter()
+                        .all(|dependency| validate_sealed_registry_leaf(dependency, Some(&authority), profile).is_ok())
+                }
+            })
+        })?
+    else {
         return Ok(None);
     };
     loaf_from_loaf_with_lock(
@@ -2959,6 +2970,7 @@ fn compatible_loaf_paths(loaf_root: &Path, receipt: &OvenReceipt) -> Result<Vec<
             candidates.push(CompatibleLoaf {
                 path: loaf_path,
                 excess,
+                registry_leaves: loaf.registry_leaves,
             });
         }
     }
@@ -3066,9 +3078,9 @@ fn select_most_specific_compatible_loaf(mut candidates: Vec<CompatibleLoaf>) -> 
 /// Select the narrowest compatible Loaf after satisfying any caller-visible registry requirement.
 ///
 /// A registry-free caller has no catalog predicate to prove, so it must not validate every compatible immutable
-/// closure merely to evaluate an empty conjunction. The final caller validates only the selected Loaf before Rustc
-/// receives any artifact path.
-#[cfg(test)]
+/// closure merely to evaluate an empty conjunction; a caller with registry roots proves them against each
+/// candidate's sealed catalog, which its manifest already carries. The final caller validates only the selected
+/// Loaf, in full, before Rustc receives any artifact path.
 fn select_compatible_loaf_with_registry_requirement(
     candidates: Vec<CompatibleLoaf>,
     registry_dependencies: &[&DependencySpec],
@@ -3086,14 +3098,9 @@ fn select_compatible_loaf_with_registry_requirement(
     Ok(select_most_specific_compatible_loaf(supported))
 }
 
-/// Verify that one Loaf authorizes `receipt` and resolve its compiler-owned direct-Rustc closure.
-///
-/// This is the normal consumer boundary. It verifies the content-addressed manifest, the receipt/compatibility
-/// relationship, the registry catalog, and every declared file used by the resulting Rustc plan. It intentionally
-/// does not recursively inspect unrelated files in the immutable directory: those files cannot become a Rustc input
-/// through the sealed manifest, while walking complete source trees on every command would make a prepared Loaf
-/// behave like a cold cache. [`committed_loaf_paths`] retains the explicit whole-Loaf audit for publication and
-/// inspection flows.
+/// Verify one Loaf for `receipt` without retaining a generation lock; the test-side spelling of the lock-holding
+/// resolver below, which production selection always uses.
+#[cfg(test)]
 fn loaf_from_loaf(
     receipt: &OvenReceipt,
     loaf_path: &Path,
@@ -3102,7 +3109,15 @@ fn loaf_from_loaf(
     loaf_from_loaf_with_lock(receipt, loaf_path, selection, None)
 }
 
-/// Resolve one receipt-authorized Loaf while retaining an optional generation-lifetime lock.
+/// Verify that one Loaf authorizes `receipt` and resolve its compiler-owned direct-Rustc closure, retaining an
+/// optional generation-lifetime lock.
+///
+/// This is the normal consumer boundary. It verifies the content-addressed manifest, the receipt/compatibility
+/// relationship, the registry catalog, and every declared file used by the resulting Rustc plan. It intentionally
+/// does not recursively inspect unrelated files in the immutable directory: those files cannot become a Rustc input
+/// through the sealed manifest, while walking complete source trees on every command would make a prepared Loaf
+/// behave like a cold cache. [`committed_loaf_paths`] retains the explicit whole-Loaf audit for publication and
+/// inspection flows.
 fn loaf_from_loaf_with_lock(
     receipt: &OvenReceipt,
     loaf_path: &Path,
@@ -4636,10 +4651,12 @@ mod tests {
             CompatibleLoaf {
                 path: PathBuf::from("/toolchain/loafs/broad/loaf.json"),
                 excess: broad_excess,
+                registry_leaves: Vec::new(),
             },
             CompatibleLoaf {
                 path: PathBuf::from("/toolchain/loafs/encoding/loaf.json"),
                 excess: encoding_excess,
+                registry_leaves: Vec::new(),
             },
         ])
         .ok_or("a compatible loaf must be selected")?;
@@ -4657,6 +4674,7 @@ mod tests {
                 facets: 1,
                 direct_links: 0,
             },
+            registry_leaves: Vec::new(),
         };
         let broad = CompatibleLoaf {
             path: PathBuf::from("/toolchain/loafs/broad/loaf.json"),
@@ -4666,6 +4684,7 @@ mod tests {
                 facets: 1,
                 direct_links: 0,
             },
+            registry_leaves: Vec::new(),
         };
         let materializations = std::cell::Cell::new(0_u8);
 
@@ -4693,6 +4712,7 @@ mod tests {
                 facets: 1,
                 direct_links: 0,
             },
+            registry_leaves: Vec::new(),
         };
         let broad = CompatibleLoaf {
             path: PathBuf::from("/toolchain/loafs/broad/loaf.json"),
@@ -4702,6 +4722,7 @@ mod tests {
                 facets: 1,
                 direct_links: 0,
             },
+            registry_leaves: Vec::new(),
         };
         let dependency = DependencySpec {
             crate_name: "fixture_registry".to_string(),
