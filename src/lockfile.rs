@@ -816,7 +816,7 @@ fn backend_requirement_name(requirement: &BackendImplementationRequirement) -> S
 /// dependencies, so the same checkout produces the same lock bytes on every machine (#1226). Only when no relative
 /// rendering exists (different Windows path prefixes, or a path that cannot be anchored) does the coordinate stay
 /// absolute, which then genuinely is machine state.
-fn portable_project_path(project_root: &Path, path: &Path) -> String {
+pub(crate) fn portable_project_path(project_root: &Path, path: &Path) -> String {
     let canonical_root = fs::canonicalize(project_root);
     let canonical_path = fs::canonicalize(path);
     let both_canonical = canonical_root.is_ok() && canonical_path.is_ok();

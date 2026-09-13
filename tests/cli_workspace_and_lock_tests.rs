@@ -233,6 +233,67 @@ itoa = "1"
     Ok(())
 }
 
+/// A command's `--features` selection selects what that command builds; it never rewrites the shared workspace lock.
+/// Every member is recorded with its declared activation, so a bake or lock run with `--features json` inside a leaf
+/// neither fails because a sibling without that feature was asked to resolve it, nor leaves the leaf's entry reading
+/// differently from what the next command in another member would write (#1414).
+#[test]
+fn workspace_lock_scopes_command_feature_flags_to_the_invoking_member_issue1414()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("loaf.toml"),
+        "[workspace]\nmembers = [\"leaf\", \"other\"]\n",
+    )?;
+    let leaf = root.path().join("leaf");
+    fs::create_dir_all(leaf.join("src"))?;
+    fs::write(
+        leaf.join("loaf.toml"),
+        "[project]\nname = \"leaf\"\nversion = \"0.1.0\"\n\n[project.features]\ndefault = []\njson = []\n",
+    )?;
+    fs::write(leaf.join("src/lib.incn"), "pub def value() -> int:\n    return 1\n")?;
+    let other = root.path().join("other");
+    fs::create_dir_all(other.join("src"))?;
+    fs::write(
+        other.join("loaf.toml"),
+        "[project]\nname = \"other\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n\
+         [project.features]\ndefault = [\"other\"]\nother = []\n",
+    )?;
+    fs::write(
+        other.join("src/main.incn"),
+        "def main() -> None:\n    println(\"other\")\n",
+    )?;
+
+    let output = run_incan(&leaf, &["lock", "--no-default-features", "--features", "json"])?;
+    assert_success(&output, "incan lock --features json from the leaf member");
+
+    let lock = incan::lockfile::IncanLock::load(&root.path().join("oven.lock"))?;
+    let member_features = lock
+        .semantic
+        .workspace_members
+        .iter()
+        .map(|member| {
+            (
+                member.member_root.clone(),
+                member
+                    .packages
+                    .first()
+                    .map(|package| package.active_features.iter().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        member_features,
+        vec![
+            ("leaf".to_string(), vec!["default".to_string()]),
+            ("other".to_string(), vec!["default".to_string(), "other".to_string()]),
+        ],
+        "every member is locked at its declared activation; the command's flags reach neither entry"
+    );
+    Ok(())
+}
+
 #[test]
 fn workspace_root_library_without_a_script_publishes_the_canonical_lock_issue997()
 -> Result<(), Box<dyn std::error::Error>> {

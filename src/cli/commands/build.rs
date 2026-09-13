@@ -13006,6 +13006,16 @@ impl ProjectSourceAuthorityDigester {
         self.digest_project_node(project_root, &mut HashSet::new())
     }
 
+    /// Drop every memoized project-tree digest so the next scan re-reads each project from disk.
+    ///
+    /// A memoized digest is only as current as the tree it was read from. Publishing the canonical lock writes one
+    /// file that belongs to every member's build inputs at once, so a child digest taken before that write would keep
+    /// describing a tree that no longer exists. Rust crate and source-closure digests are unaffected: a lock
+    /// publication does not touch them.
+    fn forget_project_tree_digests(&mut self) {
+        self.project_digests.clear();
+    }
+
     /// Return how many cache-miss project-tree scans this digester performed for one canonical root.
     #[cfg(test)]
     fn project_scan_count(&self, project_root: &Path) -> usize {
@@ -13274,9 +13284,31 @@ fn baked_project_lock_dependencies_fingerprint(project_root: &Path) -> CliResult
 ///
 /// Lock format 1 and 2 decode into the same semantic authority projection. An explicit bake is allowed to migrate
 /// that representation, so recording the format here would make the publisher reject the state it just wrote.
-fn digest_baked_project_lock_authority(lock_path: &Path) -> CliResult<String> {
+///
+/// A workspace lock is one root file shared by every member, but a member's build authority is only its own entry:
+/// the features, providers, and SDK selections locked for that member, plus the workspace-level Cargo fields. Hashing
+/// every sibling's entry too would change a member's authority each time another member is baked or added, which
+/// refuses every previously baked provider in the workspace and makes staged member bakes impossible (#1414). A member
+/// that has no entry yet is digested as if the lock were absent, so its authority is the same before and after the
+/// root lock first appears without it.
+fn digest_baked_project_lock_authority(lock_path: &Path, project_root: &Path) -> CliResult<Option<String>> {
     let lock = IncanLock::load(lock_path).map_err(|error| CliError::failure(error.to_string()))?;
     let mut semantic = lock.semantic;
+    if !semantic.workspace_members.is_empty() {
+        let workspace_root = lock_path.parent().unwrap_or(lock_path);
+        let member_root = crate::lockfile::portable_project_path(workspace_root, project_root);
+        let Some(member) = semantic
+            .workspace_members
+            .into_iter()
+            .find(|member| member.member_root == member_root)
+        else {
+            return Ok(None);
+        };
+        semantic = crate::lockfile::SemanticLockState {
+            workspace_members: vec![member],
+            ..crate::lockfile::SemanticLockState::default()
+        };
+    }
     // A bake refreshes compiler-owned SDK identity records to the active release cohort. Those records are already
     // bound by the compiler/runtime receipt inputs, so treating them as authored project authority would make the
     // publisher reject its own lock refresh. Package, feature, custom-provider, Oven, workspace, and Cargo-lock
@@ -13297,7 +13329,7 @@ fn digest_baked_project_lock_authority(lock_path: &Path) -> CliResult<String> {
         "cargo_lock_payload": lock.cargo_lock_payload,
     });
     serde_json::to_vec(&projection)
-        .map(|bytes| digest_bytes(&bytes))
+        .map(|bytes| Some(digest_bytes(&bytes)))
         .map_err(|error| CliError::failure(format!("failed to serialize canonical Oven lock authority: {error}")))
 }
 
@@ -13408,10 +13440,9 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
     already_recorded.insert(manifest_path);
     let lockfile = canonical_baked_project_lock_path(project_root)?;
     if lockfile.is_file() {
-        records.insert(
-            LOCK_FILENAME.to_string(),
-            digest_baked_project_lock_authority(&lockfile)?,
-        );
+        if let Some(authority) = digest_baked_project_lock_authority(&lockfile, project_root)? {
+            records.insert(LOCK_FILENAME.to_string(), authority);
+        }
         already_recorded.insert(lockfile);
     }
     let source_root = resolve_source_root(project_root, Some(manifest));
@@ -14527,6 +14558,16 @@ impl OvenProjectBakeAuthorityContext {
         digest_baked_project_source_authority(project_root)
     }
 
+    /// Forget memoized project-tree digests after this bake published the canonical lock.
+    ///
+    /// The root authority is first bound right after that publication, from the same digester that already scanned
+    /// this project's providers while preparing them. In a workspace the published lock is a root file that every
+    /// member's build inputs include, so a provider digest memoized before the write is stale, and binding it would
+    /// make final publication reject the lock this bake just wrote (#1414).
+    fn lock_published(&mut self) {
+        self.source_digester.forget_project_tree_digests();
+    }
+
     /// Return the memoized root authority used while preparing this command's targets.
     fn project_source_authority(&mut self, project_root: &Path) -> CliResult<String> {
         let digest = self.source_digester.digest(project_root)?;
@@ -15132,6 +15173,7 @@ pub(crate) fn bake_oven_project_targets(
                         &dependency_surface_entrypoint,
                         package_features,
                     )?);
+                    authority_context.lock_published();
                     source_authority_digest = Some(authority_context.project_source_authority(&project_root)?);
                     let source_authority_digest = source_authority_digest.as_deref().ok_or_else(|| {
                         CliError::failure("explicit Oven library bake lost its final source authority")
@@ -15195,6 +15237,7 @@ pub(crate) fn bake_oven_project_targets(
                             &dependency_surface_entrypoint,
                             package_features,
                         )?);
+                        authority_context.lock_published();
                         source_authority_digest = Some(authority_context.project_source_authority(&project_root)?);
                     }
                     source_authority_digest.as_deref().ok_or_else(|| {

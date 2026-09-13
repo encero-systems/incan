@@ -259,9 +259,9 @@ fn collect_and_publish_project_lock(
         })?;
         let context = collect_workspace_lock_context(
             &workspace,
+            manifest.project_root(),
             entry_file,
             cargo_features,
-            package_features,
             sdk_profile_override,
             None,
         )?;
@@ -1384,12 +1384,12 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         return resolve_workspace_lock_payload(WorkspaceLockResolutionRequest {
             workspace: &workspace,
             caller_project_name: project_name,
+            caller_root: manifest.project_root(),
             caller_resolved: &caller_resolved,
             caller_project_requirements: project_requirements,
             caller_entry_file: entry_file,
             cargo_features,
             cargo_policy,
-            package_features: package_features.unwrap_or(&default_package_features),
             sdk_profile_override,
         });
     }
@@ -1575,9 +1575,9 @@ fn validate_oven_lock_policy_impl(
     {
         let context = collect_workspace_lock_context(
             &workspace,
+            manifest.project_root(),
             Some(entry_file),
             cargo_features,
-            package_features,
             sdk_profile_override,
             command_session,
         )?;
@@ -1663,12 +1663,12 @@ fn validate_oven_existing_lock(
 struct WorkspaceLockResolutionRequest<'a> {
     workspace: &'a WorkspaceGraph,
     caller_project_name: &'a str,
+    caller_root: &'a Path,
     caller_resolved: &'a ResolvedDependencies,
     caller_project_requirements: &'a ProjectRequirements,
     caller_entry_file: Option<&'a Path>,
     cargo_features: &'a CargoFeatureSelection,
     cargo_policy: &'a CargoPolicy,
-    package_features: &'a FeatureSelection,
     sdk_profile_override: Option<&'a str>,
 }
 
@@ -1677,19 +1677,19 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
     let WorkspaceLockResolutionRequest {
         workspace,
         caller_project_name,
+        caller_root,
         caller_resolved,
         caller_project_requirements,
         caller_entry_file,
         cargo_features,
         cargo_policy,
-        package_features,
         sdk_profile_override,
     } = request;
     let context = collect_workspace_lock_context(
         workspace,
+        caller_root,
         caller_entry_file,
         cargo_features,
-        package_features,
         sdk_profile_override,
         None,
     )?;
@@ -1804,36 +1804,195 @@ pub(crate) fn publish_oven_project_lock(
         .ok_or_else(|| CliError::failure("explicit Oven project bake requires an loaf.toml project"))?;
     enforce_project_toolchain_constraint(&manifest)?;
     let cargo_features = CargoFeatureSelection::default().normalized();
-    let context =
-        collect_and_publish_project_lock(&manifest, Some(entrypoint), &cargo_features, package_features, None)?;
+    let context = match collect_and_publish_project_lock_for_provider_bake(
+        &manifest,
+        entrypoint,
+        &cargo_features,
+        package_features,
+    )? {
+        ProviderBakeLockPublication::Published(context) => context,
+        ProviderBakeLockPublication::Deferred {
+            member,
+            context,
+            reason,
+        } => {
+            eprintln!(
+                "note: workspace lock published without member `{member}`, which cannot resolve until its providers \
+                 are baked ({reason}); the next bake or `incan lock` that can see the whole workspace completes it"
+            );
+            context
+        }
+    };
     Ok(PublishedOvenProjectLock {
         dependency_surface: context.resolved,
     })
 }
 
+/// Outcome of publishing the canonical lock on behalf of one explicit provider bake.
+enum ProviderBakeLockPublication {
+    /// The whole-graph lock was collected and written.
+    Published(ProjectLockContext),
+    /// At least one sibling member could not resolve yet. The root lock was written with every member that could,
+    /// and the whole-graph fingerprint stays stale until the remaining members resolve.
+    Deferred {
+        member: String,
+        context: ProjectLockContext,
+        reason: String,
+    },
+}
+
+/// Collect the canonical lock for an explicit provider bake, tolerating siblings that are not bakeable yet.
+///
+/// RFC 077 makes the root lock a property of the whole workspace, and `incan lock` rightly refuses to publish a
+/// partial one. An explicit provider bake is the step that makes a sibling resolvable in the first place: a leaf
+/// provider is baked so that the member consuming it can be, and that consumer cannot contribute to the root lock
+/// until it is. Requiring the complete root lock before sealing the leaf is therefore a cycle no bake order can break
+/// (#1414). Here a member other than the one being baked may fail to resolve: the root lock is still written with
+/// every member that did, so each baked member's own entry — the part of the lock that is its build authority — is
+/// on disk from its own bake onward, and the whole-graph fingerprint stays stale until the last member resolves. A
+/// single-project bake and a failure in the baked member itself keep the strict path.
+fn collect_and_publish_project_lock_for_provider_bake(
+    manifest: &ProjectManifest,
+    entrypoint: &Path,
+    cargo_features: &CargoFeatureSelection,
+    package_features: &FeatureSelection,
+) -> CliResult<ProviderBakeLockPublication> {
+    let Some(workspace) =
+        WorkspaceGraph::discover(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?
+    else {
+        let context =
+            collect_and_publish_project_lock(manifest, Some(entrypoint), cargo_features, package_features, None)?;
+        return Ok(ProviderBakeLockPublication::Published(context));
+    };
+    let lock_path = workspace.root().join(LOCK_FILENAME);
+    let publication_lock = crate::lockfile::acquire_publication_lock(&lock_path)
+        .map_err(|error| CliError::failure(format!("failed to acquire workspace lock publication guard: {error}")))?;
+    let collection = collect_workspace_lock_context_tolerating(
+        &workspace,
+        manifest.project_root(),
+        Some(entrypoint),
+        cargo_features,
+        None,
+        None,
+        true,
+    )
+    .map_err(|failure| failure.error)?;
+    generate_oven_lockfile(
+        workspace.root(),
+        &collection.context.resolved,
+        &collection.context.project_requirements,
+        cargo_features,
+        &collection.context.semantic,
+        Some(&publication_lock),
+    )?;
+    let mut unresolved = collection.unresolved.into_iter();
+    match unresolved.next() {
+        None => Ok(ProviderBakeLockPublication::Published(collection.context)),
+        Some((member, error)) => Ok(ProviderBakeLockPublication::Deferred {
+            member,
+            context: collection.context,
+            reason: error.message,
+        }),
+    }
+}
+
+/// Why collecting the whole-workspace lock stopped.
+///
+/// The tolerant collection records unresolved siblings on its success path instead, so the failure carries only the
+/// error that ended the collection.
+struct WorkspaceLockMemberFailure {
+    error: CliError,
+}
+
 /// Collect every member's effective dependency inputs before lock generation.
 ///
 /// Crucially, this does not accept command scope: RFC 077 makes the root lock a property of the whole graph, so a
-/// command started in one member cannot narrow the fingerprint or omit another member's feature activation.
+/// command started in one member cannot narrow the fingerprint or omit another member's feature activation. For the
+/// same reason the command's `--features` selection never reaches the lock: every member, the one the command started
+/// in included, is recorded with its declared activation. Flags select what one command builds; a shared root file
+/// cannot carry each member's transient selection, and a member's entry must read the same whichever command last
+/// published the lock, because that entry is part of the member's sealed build authority. Applying one command's
+/// flags across the workspace is how an explicit provider bake failed on a package it was not baking (#1414).
 fn collect_workspace_lock_context(
     workspace: &WorkspaceGraph,
+    command_root: &Path,
     entry_file: Option<&Path>,
     cargo_features: &CargoFeatureSelection,
-    package_features: &FeatureSelection,
     sdk_profile_override: Option<&str>,
     command_session: Option<&CompilationSession>,
 ) -> CliResult<ProjectLockContext> {
-    let explicit_entry = entry_file.map(resolve_explicit_lock_entry).transpose()?;
+    collect_workspace_lock_context_by_member(
+        workspace,
+        command_root,
+        entry_file,
+        cargo_features,
+        sdk_profile_override,
+        command_session,
+    )
+    .map_err(|failure| failure.error)
+}
+
+/// [`collect_workspace_lock_context`] that reports which member stopped the collection.
+///
+/// The explicit provider bake needs the distinction: a failure in a member other than the one being baked is the
+/// ordering case it must tolerate, while a failure in the baked member itself is the bake's own error.
+fn collect_workspace_lock_context_by_member(
+    workspace: &WorkspaceGraph,
+    command_root: &Path,
+    entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+    sdk_profile_override: Option<&str>,
+    command_session: Option<&CompilationSession>,
+) -> Result<ProjectLockContext, WorkspaceLockMemberFailure> {
+    collect_workspace_lock_context_tolerating(
+        workspace,
+        command_root,
+        entry_file,
+        cargo_features,
+        sdk_profile_override,
+        command_session,
+        false,
+    )
+    .map(|collection| collection.context)
+}
+
+/// A workspace lock collection together with the members it had to leave out.
+struct WorkspaceLockCollection {
+    context: ProjectLockContext,
+    /// Members skipped because they could not resolve yet, with the reason each gave. Empty for a strict collection.
+    unresolved: Vec<(String, CliError)>,
+}
+
+/// Collect the workspace lock, optionally keeping members that resolve when a sibling cannot.
+///
+/// In strict mode any member failure ends the collection. In tolerant mode a failure in a member other than the one
+/// the command was started in is recorded and that member is left out, so the lock can carry every member that has
+/// become resolvable so far; the command's own member still fails the whole collection.
+#[allow(clippy::too_many_arguments)]
+fn collect_workspace_lock_context_tolerating(
+    workspace: &WorkspaceGraph,
+    command_root: &Path,
+    entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+    sdk_profile_override: Option<&str>,
+    command_session: Option<&CompilationSession>,
+    tolerate_unresolved_siblings: bool,
+) -> Result<WorkspaceLockCollection, WorkspaceLockMemberFailure> {
+    let outside = |error: CliError| WorkspaceLockMemberFailure { error };
+    let explicit_entry = entry_file
+        .map(resolve_explicit_lock_entry)
+        .transpose()
+        .map_err(outside)?;
     let explicit_entry_owner = explicit_entry
         .as_deref()
         .and_then(|entry| workspace.member_containing_path(entry));
     if let Some(entry) = explicit_entry.as_deref()
         && explicit_entry_owner.is_none()
     {
-        return Err(CliError::failure(format!(
+        return Err(outside(CliError::failure(format!(
             "lock entry {} is not contained by any selected workspace member",
             entry.display()
-        )));
+        ))));
     }
     let mut resolved = ResolvedDependencies {
         dependencies: Vec::new(),
@@ -1842,49 +2001,62 @@ fn collect_workspace_lock_context(
     let mut project_requirements = ProjectRequirements::default();
     let mut member_semantics = Vec::new();
     let mut has_context = false;
+    let mut unresolved = Vec::new();
 
+    let declared_defaults = FeatureSelection::default();
     for member in workspace.members() {
+        let member_is_command_target = project_roots_match(command_root, member.root());
+        let in_member = |error: CliError| WorkspaceLockMemberFailure { error };
         let manifest = workspace
             .effective_member_manifest(member)
-            .map_err(|error| CliError::failure(error.to_string()))?;
-        enforce_project_toolchain_constraint(&manifest)?;
-        let member_entry = explicit_entry
-            .as_deref()
-            .filter(|_| explicit_entry_owner.is_some_and(|owner| owner.root() == member.root()));
-        let Some(member_context) = collect_project_lock_context(
+            .map_err(|error| in_member(CliError::failure(error.to_string())))?;
+        enforce_project_toolchain_constraint(&manifest).map_err(in_member)?;
+        let member_session = command_session.filter(|session| {
+            session
+                .manifest
+                .as_ref()
+                .is_some_and(|session_manifest| project_roots_match(session_manifest.project_root(), member.root()))
+        });
+        let member_entry = explicit_entry.as_deref().filter(|_| member_is_command_target);
+        let member_context = match collect_project_lock_context(
             &manifest,
             member_entry,
             cargo_features,
-            package_features,
+            &declared_defaults,
             sdk_profile_override,
             Some(workspace),
-            command_session.filter(|session| {
-                session
-                    .manifest
-                    .as_ref()
-                    .is_some_and(|session_manifest| project_roots_match(session_manifest.project_root(), member.root()))
-            }),
-        )?
-        else {
-            continue;
+            member_session,
+        ) {
+            Ok(Some(context)) => context,
+            Ok(None) => continue,
+            Err(error) if tolerate_unresolved_siblings && !member_is_command_target => {
+                unresolved.push((member.name().to_string(), error));
+                continue;
+            }
+            Err(error) => return Err(in_member(error)),
         };
         has_context = true;
-        resolved = merge_workspace_resolved_dependencies(&resolved, &member_context.resolved)?;
+        resolved = merge_workspace_resolved_dependencies(&resolved, &member_context.resolved).map_err(outside)?;
         project_requirements =
-            merge_workspace_project_requirements(&project_requirements, &member_context.project_requirements)?;
+            merge_workspace_project_requirements(&project_requirements, &member_context.project_requirements)
+                .map_err(outside)?;
         member_semantics.push((member.root().to_path_buf(), member_context.semantic));
     }
 
     if !has_context {
-        return Err(CliError::failure(
+        return Err(outside(CliError::failure(
             "incan lock requires a FILE argument or at least one [project.scripts] entry across the workspace",
-        ));
+        )));
     }
-    let semantic = workspace_semantic_lock_state(workspace.root(), member_semantics).map_err(CliError::failure)?;
-    Ok(ProjectLockContext {
-        resolved,
-        project_requirements,
-        semantic,
+    let semantic = workspace_semantic_lock_state(workspace.root(), member_semantics)
+        .map_err(|error| outside(CliError::failure(error)))?;
+    Ok(WorkspaceLockCollection {
+        context: ProjectLockContext {
+            resolved,
+            project_requirements,
+            semantic,
+        },
+        unresolved,
     })
 }
 
