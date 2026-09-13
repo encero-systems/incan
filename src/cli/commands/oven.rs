@@ -5,6 +5,7 @@
 //! missing compatibility inputs with Cargo. The compiler self-suite uses the same sealed direct-rustc executor and
 //! may grant a logged Cargo proxy only to roots whose tests explicitly verify Cargo compatibility.
 
+mod case_partition;
 mod options;
 mod support;
 
@@ -1760,13 +1761,36 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
         .filter(|value| !value.is_empty())
         .map(|value| measured_root_millis_from_report(Path::new(&value)))
         .unwrap_or_default();
-    let selected_shard_references = compiler_suite_selected_shard_references(
+    // Per-case durations from the same record weight the slices a divided root is cut into (#1549); with none the
+    // slice spreads cases evenly by name, which is still complete, only less balanced.
+    let measured_case_millis = std::env::var_os("INCAN_OVEN_SUITE_TIMING_RECORD")
+        .filter(|value| !value.is_empty())
+        .map(|value| case_partition::measured_case_millis_from_report(Path::new(&value)))
+        .unwrap_or_default();
+    let selected_units = compiler_suite_selected_shard_units(
         &suite.shard_references,
         &options.targets,
         options.partition_index,
         options.partition_count,
         &measured_root_millis,
+        options.exact_names.is_empty(),
     )?;
+    // A divided root appears once per slice among the units; shards are leased once per root, and each slice becomes
+    // its own child of that shard below.
+    let mut case_slices = BTreeMap::<String, Vec<(usize, usize)>>::new();
+    let mut selected_shard_references = Vec::new();
+    for unit in selected_units {
+        if !selected_shard_references
+            .iter()
+            .any(|reference: &OvenCompilerTestSuiteShardReference| reference.identity == unit.reference.identity)
+        {
+            selected_shard_references.push(unit.reference.clone());
+        }
+        if let Some(slice) = unit.case_slice {
+            case_slices.entry(unit.reference.identity).or_default().push(slice);
+        }
+    }
+    let sliced_root_count = case_slices.len();
     let (selected_shard_references, exact_test_names) = compiler_suite_exact_test_selection(
         &options.exact_names,
         selected_shard_references,
@@ -2185,24 +2209,38 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                     foundations,
                     &mut binary_cache,
                 )?;
-                prepared_children.push(prepare_compiler_suite_child(
-                    &shard.payload.target,
-                    &shard.payload.artifact_closure,
-                    &shard.stored.manifest.intent,
-                    &shard.stored.artifact_root,
-                    &rustc,
-                    &options.compiler_root,
-                    &shard_output,
-                    &environment,
-                    &binary_outputs,
-                    &shard.payload.workspace_libraries,
-                    workspace_library_outputs,
-                    foundation_references,
-                    foundations,
-                    fixture_cargo.as_ref(),
-                )?);
+                // A divided root runs one child per slice, each compiling and inventorying the root itself so
+                // that its slice is derived from the live inventory; every other root runs as one whole child.
+                let slices = case_slices
+                    .get(&shard.stored.manifest.identity)
+                    .map(|slices| slices.iter().map(|slice| Some(*slice)).collect::<Vec<_>>())
+                    .unwrap_or_else(|| vec![None]);
+                for case_slice in slices {
+                    let child_output = match case_slice {
+                        Some((slice_index, _)) => shard_output.with_file_name(format!("{index:04}-slice{slice_index}")),
+                        None => shard_output.clone(),
+                    };
+                    prepared_children.push(prepare_compiler_suite_child(
+                        &shard.payload.target,
+                        &shard.payload.artifact_closure,
+                        &shard.stored.manifest.intent,
+                        &shard.stored.artifact_root,
+                        &rustc,
+                        &options.compiler_root,
+                        &child_output,
+                        &environment,
+                        &binary_outputs,
+                        &shard.payload.workspace_libraries,
+                        workspace_library_outputs.clone(),
+                        foundation_references,
+                        foundations,
+                        fixture_cargo.as_ref(),
+                        case_slice,
+                    )?);
+                }
                 planned_binary_count += shard.payload.binary_targets.len();
             }
+            let planned_child_count = prepared_children.len();
             let target_preparation_elapsed_ms = target_preparation_phase.finish();
             let root_execution_phase = PhaseProgress::start("compiler-suite root execution");
             let suite_report = run_prepared_compiler_suite_children(
@@ -2210,10 +2248,11 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                 &receipt,
                 &rustc,
                 exact_test_names.as_deref(),
+                &measured_case_millis,
             )?;
             Ok((
                 suite_report,
-                shard_executions.len(),
+                planned_child_count,
                 planned_binary_count,
                 CompilerSuiteChildPhaseTimings {
                     target_preparation_elapsed_ms,
@@ -2271,6 +2310,7 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
         options.partition_index,
         options.partition_count,
         planned_target_count,
+        sliced_root_count,
     );
     let complete_root_success = success && selection.complete_root_evidence;
     let complete_suite_success = success && selection.complete_suite_evidence;
@@ -2370,6 +2410,20 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
             native_test_case_totals.failed_roots,
             suite_report.doctest_targets,
             compiler_suite_selection_context(&selection),
+            fixture_cargo_invocations,
+            receipt_path.display(),
+        ),
+        OvenOutputFormat::Text if selection.mode == "joint-coverage-partition" => println!(
+            "Oven executed {} of the compiler-suite root(s) selected for {}: {} native test(s), with {} passed, {} failed, and {} ignored across {} reported child(ren), {} of the roots as case slices, plus {} doctest target(s), through stored direct-Rustc target plans. This partition is joint-coverage evidence only: a sliced root is proven complete when every partition's report reconciles, never by one shard. The explicit compatibility fixture launched Cargo {} time(s) (receipt {}).",
+            selection.selected_root_count,
+            compiler_suite_selection_context(&selection),
+            suite_report.native_test_count,
+            native_test_case_totals.passed,
+            native_test_case_totals.failed,
+            native_test_case_totals.ignored,
+            native_test_case_totals.reported_roots,
+            selection.sliced_root_count,
+            suite_report.doctest_targets,
             fixture_cargo_invocations,
             receipt_path.display(),
         ),
@@ -3048,6 +3102,7 @@ fn prepare_compiler_suite_child<'a>(
     foundation_references: &'a [OvenCompilerTestSuiteFoundationReference],
     foundations: Option<&'a BTreeMap<String, CompilerSuiteFoundationExecution>>,
     fixture_cargo: Option<&CompilerSuiteFixtureCargoProxy>,
+    case_slice: Option<(usize, usize)>,
 ) -> CliResult<PreparedCompilerSuiteChild<'a>> {
     let source = compiler_suite_target_source(compiler_root, target)?;
     let output = output_directory.join(compiler_suite_target_output_name(0, target));
@@ -3114,6 +3169,7 @@ fn prepare_compiler_suite_child<'a>(
         workspace_library_outputs,
         foundation_references,
         foundations,
+        case_slice,
     })
 }
 
@@ -3198,6 +3254,7 @@ fn run_prepared_compiler_suite_children(
     receipt: &OvenReceipt,
     rustc: &Path,
     exact_test_names: Option<&[String]>,
+    measured_case_millis: &BTreeMap<String, BTreeMap<String, u64>>,
 ) -> CliResult<CompilerSuiteChildrenReport> {
     let child_count = children.len();
     if child_count == 0 {
@@ -3227,9 +3284,15 @@ fn run_prepared_compiler_suite_children(
                         let Some(child) = child else {
                             return;
                         };
-                        let result =
-                            run_prepared_compiler_suite_child(child, receipt, rustc, libtest_threads, exact_test_names)
-                                .map_err(|error| error.to_string());
+                        let result = run_prepared_compiler_suite_child(
+                            child,
+                            receipt,
+                            rustc,
+                            libtest_threads,
+                            exact_test_names,
+                            measured_case_millis,
+                        )
+                        .map_err(|error| error.to_string());
                         if let Ok(mut results) = results.lock() {
                             results.push(result);
                         }
@@ -3302,6 +3365,7 @@ fn run_prepared_compiler_suite_child(
     rustc: &Path,
     libtest_threads: usize,
     exact_test_names: Option<&[String]>,
+    measured_case_millis: &BTreeMap<String, BTreeMap<String, u64>>,
 ) -> CliResult<CompilerSuiteChildrenReport> {
     let mut artifacts = child.closure.manifest_for_target(child.target, child.intent.clone());
     for (name, value) in &child.binary_compile_environment {
@@ -3352,15 +3416,28 @@ fn run_prepared_compiler_suite_child(
                     Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
                     Some(&child.target.source_relative_path),
                 ),
-                None => run_native_test_batch_all_for_request(&OvenNativeTestBatchRequest {
-                    executable: &bake.output,
-                    environment: &child.environment,
-                    working_directory: Some(&working_directory),
-                    timeout: Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
-                    test_threads: Some(libtest_threads),
-                    root_label: Some(&child.target.source_relative_path),
-                    progress: None,
-                }),
+                None => {
+                    let empty = BTreeMap::new();
+                    let root_case_millis = measured_case_millis
+                        .get(&child.target.source_relative_path)
+                        .unwrap_or(&empty);
+                    run_native_test_batch_all_for_request(&OvenNativeTestBatchRequest {
+                        executable: &bake.output,
+                        environment: &child.environment,
+                        working_directory: Some(&working_directory),
+                        timeout: Some(OVEN_COMPILER_TEST_ROOT_TIMEOUT),
+                        test_threads: Some(libtest_threads),
+                        root_label: Some(&child.target.source_relative_path),
+                        progress: None,
+                        case_slice: child.case_slice.map(|(index, count)| {
+                            crate::oven::native_test::OvenNativeTestCaseSlice {
+                                index,
+                                count,
+                                measured_case_millis: root_case_millis,
+                            }
+                        }),
+                    })
+                }
             }
             .map_err(oven_error)?;
             announce_oven_progress(
@@ -3381,7 +3458,7 @@ fn run_prepared_compiler_suite_child(
                 )]
             };
             Ok(CompilerSuiteChildrenReport {
-                native_test_count: if exact_test_names.is_some() {
+                native_test_count: if exact_test_names.is_some() || report.case_slice.is_some() {
                     report
                         .case_counts
                         .as_ref()
@@ -3406,6 +3483,7 @@ fn run_prepared_compiler_suite_child(
                     direct_rustc_bake_elapsed_ms,
                     libtest_inventory_elapsed_ms: report.timing.inventory_elapsed_ms,
                     libtest_execution_elapsed_ms: report.timing.execution_elapsed_ms,
+                    case_slice: report.case_slice,
                 }],
                 rustdoc_test_roots: Vec::new(),
             })
@@ -3589,6 +3667,7 @@ fn run_planned_compiler_suite_children(
                     test_threads: None,
                     root_label: Some(&target.source_relative_path),
                     progress: None,
+                    case_slice: None,
                 })
                 .map_err(oven_error)?;
                 suite_report.native_test_count += report.inventory.names.len();
@@ -3606,6 +3685,7 @@ fn run_planned_compiler_suite_children(
                     direct_rustc_bake_elapsed_ms,
                     libtest_inventory_elapsed_ms: report.timing.inventory_elapsed_ms,
                     libtest_execution_elapsed_ms: report.timing.execution_elapsed_ms,
+                    case_slice: None,
                 });
                 let transcript = write_native_test_transcript(&output, &report.output)?;
                 if !report.success {
@@ -3890,6 +3970,9 @@ struct CompilerSuiteNativeTestRootReport {
     libtest_inventory_elapsed_ms: u64,
     /// Time spent executing this root's verified libtest process.
     libtest_execution_elapsed_ms: u64,
+    /// The slice of the root this child covered when the root was divided by case (#1549); absent for a whole root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    case_slice: Option<crate::oven::native_test::OvenNativeTestCaseSliceReport>,
 }
 
 /// One receipt-bound Rustdoc root's timing result.
@@ -3944,7 +4027,7 @@ struct CompilerSuiteChildPhaseTimings {
 /// Explicit coverage boundary for one compiler-suite report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct CompilerSuiteSelectionReport {
-    /// `complete-suite`, `selected-complete-roots`, or `exact-diagnostic`.
+    /// `complete-suite`, `selected-complete-roots`, `joint-coverage-partition`, or `exact-diagnostic`.
     mode: &'static str,
     /// Deterministically normalized exact names; empty for every non-exact run.
     normalized_exact_names: Vec<String>,
@@ -3958,6 +4041,9 @@ struct CompilerSuiteSelectionReport {
     partition_count: Option<usize>,
     /// Number of receipt-bound roots selected by target, partition, or complete-suite selection.
     selected_root_count: usize,
+    /// Roots this partition runs as case slices rather than whole (#1549); their coverage is proven jointly across
+    /// partitions, never by one shard.
+    sliced_root_count: usize,
     /// Whether a green invocation can serve as complete-root evidence for every selected root.
     complete_root_evidence: bool,
     /// Whether a green invocation covers the complete compiler workspace suite.
@@ -3971,6 +4057,7 @@ fn compiler_suite_selection_report(
     partition_index: Option<usize>,
     partition_count: Option<usize>,
     selected_root_count: usize,
+    sliced_root_count: usize,
 ) -> CompilerSuiteSelectionReport {
     let requested_target_paths = requested_target_paths
         .iter()
@@ -3989,6 +4076,21 @@ fn compiler_suite_selection_report(
             partition_index,
             partition_count,
             selected_root_count,
+            sliced_root_count,
+            complete_root_evidence: false,
+            complete_suite_evidence: false,
+        },
+        // A partition that ran any root as a slice proves nothing about that root on its own: completeness is
+        // established once, by the reconciliation of every partition's report (#1549).
+        None if sliced_root_count > 0 => CompilerSuiteSelectionReport {
+            mode: "joint-coverage-partition",
+            normalized_exact_names: Vec::new(),
+            selected_case_count: 0,
+            requested_target_paths,
+            partition_index,
+            partition_count,
+            selected_root_count,
+            sliced_root_count,
             complete_root_evidence: false,
             complete_suite_evidence: false,
         },
@@ -4000,6 +4102,7 @@ fn compiler_suite_selection_report(
             partition_index,
             partition_count,
             selected_root_count,
+            sliced_root_count,
             complete_root_evidence: true,
             complete_suite_evidence: true,
         },
@@ -4011,6 +4114,7 @@ fn compiler_suite_selection_report(
             partition_index,
             partition_count,
             selected_root_count,
+            sliced_root_count,
             complete_root_evidence: true,
             complete_suite_evidence: false,
         },
@@ -4179,6 +4283,8 @@ struct PreparedCompilerSuiteChild<'a> {
     workspace_library_outputs: BTreeMap<OvenCompilerWorkspaceLibraryKey, OvenCallerOwnedRustcLibrary>,
     foundation_references: &'a [OvenCompilerTestSuiteFoundationReference],
     foundations: Option<&'a BTreeMap<String, CompilerSuiteFoundationExecution>>,
+    /// `Some((index, count))` runs one deterministic slice of the root's live inventory (#1549).
+    case_slice: Option<(usize, usize)>,
 }
 
 /// Select receipt-bound suite shards by their unique source-relative paths.
@@ -4314,6 +4420,7 @@ fn compiler_suite_root_weigher<'a>(
 /// `measured_root_millis` carries any per-root durations a previous run recorded; see
 /// [`compiler_suite_root_weigher`] for how a root without one is valued. Passing an empty map reproduces the
 /// original `source_bytes` weighting exactly.
+#[cfg(test)]
 fn compiler_suite_selected_shard_references(
     references: &[OvenCompilerTestSuiteShardReference],
     requested_targets: &[String],
@@ -4321,6 +4428,31 @@ fn compiler_suite_selected_shard_references(
     partition_count: Option<usize>,
     measured_root_millis: &BTreeMap<String, u64>,
 ) -> CliResult<Vec<OvenCompilerTestSuiteShardReference>> {
+    Ok(compiler_suite_selected_shard_units(
+        references,
+        requested_targets,
+        partition_index,
+        partition_count,
+        measured_root_millis,
+        false,
+    )?
+    .into_iter()
+    .map(|unit| unit.reference)
+    .collect())
+}
+
+/// Select the replay units this invocation runs: whole roots, or -- when `divide_giants` is set and a partition is
+/// requested -- case slices of any root whose measured weight exceeds one shard's fair share
+/// (`case_partition::divide_giant_roots`). Slices are packed as units beside whole roots, so the heaviest root no
+/// longer bounds the lane from below. Only a root with a measured duration is ever divided.
+fn compiler_suite_selected_shard_units(
+    references: &[OvenCompilerTestSuiteShardReference],
+    requested_targets: &[String],
+    partition_index: Option<usize>,
+    partition_count: Option<usize>,
+    measured_root_millis: &BTreeMap<String, u64>,
+    divide_giants: bool,
+) -> CliResult<Vec<case_partition::CompilerSuiteShardUnit>> {
     let partition = match (partition_index, partition_count) {
         (None, None) => None,
         (Some(index), Some(count)) if count > 0 && index < count => Some((index, count)),
@@ -4354,49 +4486,40 @@ fn compiler_suite_selected_shard_references(
             )));
         }
         let weight_of = compiler_suite_root_weigher(references, measured_root_millis)?;
-        let mut ordered = references.to_vec();
-        ordered.sort_by(|left, right| {
-            weight_of(right)
-                .cmp(&weight_of(left))
-                .then_with(|| left.target.source_relative_path.cmp(&right.target.source_relative_path))
-                .then_with(|| left.identity.cmp(&right.identity))
-        });
-        let mut partitions = vec![Vec::new(); count];
-        let mut partition_weights = vec![0_u64; count];
-        for reference in ordered {
+        for reference in references {
             if reference.source_bytes == 0 {
                 return Err(CliError::failure(format!(
                     "receipt-bound compiler-suite root `{}` has no digest-verified source footprint; republish the Oven suite",
                     reference.target.source_relative_path
                 )));
             }
-            let selected_partition = partition_weights
-                .iter()
-                .enumerate()
-                .min_by_key(|(partition_index, weight)| (**weight, *partition_index))
-                .map(|(partition_index, _)| partition_index)
-                .ok_or_else(|| CliError::failure("Oven compiler-suite has no partition capacity".to_string()))?;
-            partition_weights[selected_partition] = partition_weights[selected_partition]
-                .checked_add(weight_of(&reference))
-                .ok_or_else(|| {
-                    CliError::failure("Oven compiler-suite partition source footprint overflowed".to_string())
-                })?;
-            partitions[selected_partition].push(reference);
         }
-        let mut selected = partitions
-            .get(index)
-            .cloned()
-            .ok_or_else(|| CliError::failure("Oven compiler-suite partition index is unavailable".to_string()))?;
-        selected.sort_by(|left, right| {
-            left.target
-                .source_relative_path
-                .cmp(&right.target.source_relative_path)
-                .then_with(|| left.identity.cmp(&right.identity))
-        });
-        return Ok(selected);
+        let units = if divide_giants {
+            case_partition::divide_giant_roots(references, count, &weight_of, |reference| {
+                measured_root_millis.contains_key(&reference.target.source_relative_path)
+            })
+        } else {
+            references
+                .iter()
+                .map(|reference| {
+                    (
+                        case_partition::CompilerSuiteShardUnit {
+                            reference: reference.clone(),
+                            case_slice: None,
+                        },
+                        weight_of(reference),
+                    )
+                })
+                .collect()
+        };
+        return Ok(case_partition::pack_units_for_partition(units, index, count));
     }
+    let whole = |reference: &OvenCompilerTestSuiteShardReference| case_partition::CompilerSuiteShardUnit {
+        reference: reference.clone(),
+        case_slice: None,
+    };
     if requested_targets.is_empty() {
-        return Ok(references.to_vec());
+        return Ok(references.iter().map(whole).collect());
     }
 
     let requested = requested_targets
@@ -4423,7 +4546,7 @@ fn compiler_suite_selected_shard_references(
     Ok(references
         .iter()
         .filter(|reference| requested.contains(&reference.target.source_relative_path))
-        .cloned()
+        .map(whole)
         .collect())
 }
 
@@ -6827,6 +6950,7 @@ mod tests {
                 direct_rustc_bake_elapsed_ms: 50,
                 libtest_inventory_elapsed_ms: 6,
                 libtest_execution_elapsed_ms: 7,
+                case_slice: None,
             }],
             "rustdoc_test_roots": [CompilerSuiteRustdocTestRootReport {
                 package_name: "fixture".to_string(),
@@ -6883,6 +7007,7 @@ mod tests {
                     direct_rustc_bake_elapsed_ms: 10,
                     libtest_inventory_elapsed_ms: 1,
                     libtest_execution_elapsed_ms: 2,
+                    case_slice: None,
                 },
                 CompilerSuiteNativeTestRootReport {
                     package_name: "failed".to_string(),
@@ -6905,6 +7030,7 @@ mod tests {
                     direct_rustc_bake_elapsed_ms: 11,
                     libtest_inventory_elapsed_ms: 1,
                     libtest_execution_elapsed_ms: 3,
+                    case_slice: None,
                 },
                 CompilerSuiteNativeTestRootReport {
                     package_name: "unreported".to_string(),
@@ -6920,6 +7046,7 @@ mod tests {
                     direct_rustc_bake_elapsed_ms: 12,
                     libtest_inventory_elapsed_ms: 1,
                     libtest_execution_elapsed_ms: 4,
+                    case_slice: None,
                 },
             ],
             rustdoc_test_roots: Vec::new(),
@@ -7483,6 +7610,18 @@ mod tests {
     }
 
     #[test]
+    fn a_partition_that_sliced_a_root_claims_joint_coverage_and_no_complete_evidence() {
+        let joint = compiler_suite_selection_report(None, &[], Some(1), Some(4), 12, 1);
+        assert_eq!(joint.mode, "joint-coverage-partition");
+        assert_eq!(joint.sliced_root_count, 1);
+        assert!(!joint.complete_root_evidence);
+        assert!(!joint.complete_suite_evidence);
+        let whole = compiler_suite_selection_report(None, &[], Some(1), Some(4), 12, 0);
+        assert_eq!(whole.mode, "selected-complete-roots");
+        assert!(whole.complete_root_evidence);
+    }
+
+    #[test]
     fn compiler_suite_selection_report_distinguishes_full_selected_root_and_exact_evidence()
     -> Result<(), Box<dyn std::error::Error>> {
         let names = vec!["selected::first".to_string(), "selected::second".to_string()];
@@ -7492,11 +7631,12 @@ mod tests {
             None,
             None,
             1,
+            0,
         );
         let selected =
-            compiler_suite_selection_report(None, &["tests/integration_tests.rs".to_string()], None, None, 1);
-        let partition = compiler_suite_selection_report(None, &[], Some(2), Some(4), 9);
-        let complete = compiler_suite_selection_report(None, &[], None, None, 37);
+            compiler_suite_selection_report(None, &["tests/integration_tests.rs".to_string()], None, None, 1, 0);
+        let partition = compiler_suite_selection_report(None, &[], Some(2), Some(4), 9, 0);
+        let complete = compiler_suite_selection_report(None, &[], None, None, 37, 0);
 
         assert_eq!(diagnostic.mode, "exact-diagnostic");
         assert_eq!(diagnostic.normalized_exact_names, names);
@@ -8549,6 +8689,7 @@ fn planned_suite_second_exact_case_keeps_cargo_guarded() -> Result<(), String> {
             &[],
             None,
             None,
+            None,
         )?;
         assert!(
             std::ptr::eq(prepared_child.closure, &closure),
@@ -8608,8 +8749,13 @@ fn planned_suite_second_exact_case_keeps_cargo_guarded() -> Result<(), String> {
             "planned_suite_child_uses_sdk_inventory".to_string(),
             "planned_suite_second_exact_case_keeps_cargo_guarded".to_string(),
         ];
-        let report =
-            run_prepared_compiler_suite_children(vec![prepared_child], &receipt, &rustc, Some(&exact_test_names))?;
+        let report = run_prepared_compiler_suite_children(
+            vec![prepared_child],
+            &receipt,
+            &rustc,
+            Some(&exact_test_names),
+            &BTreeMap::new(),
+        )?;
 
         assert_eq!(report.native_test_count, 2);
         assert_eq!(report.doctest_targets, 0);

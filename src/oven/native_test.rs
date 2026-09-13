@@ -15,7 +15,9 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+mod case_slice;
 mod evidence;
+pub use case_slice::{OvenNativeTestCaseSlice, OvenNativeTestCaseSliceReport, assign_case_slices, select_case_slice};
 use evidence::{CaseResult, NativeTestEvidence, NativeTestLog};
 
 use super::process::{isolate_process_group, terminate_process_group};
@@ -121,6 +123,8 @@ pub struct OvenNativeTestBatchRequest<'a> {
     pub test_threads: Option<usize>,
     /// Name prefixed to this root's progress lines, so concurrent roots stay attributable to their source.
     pub root_label: Option<&'a str>,
+    /// Run only one deterministic slice of the live inventory; `None` runs the whole root.
+    pub case_slice: Option<OvenNativeTestCaseSlice<'a>>,
     /// Where this root's progress goes. `None` means stderr, which is what every real caller wants.
     pub progress: Option<ProgressSink>,
 }
@@ -156,6 +160,8 @@ pub struct OvenNativeTestBatchReport {
     pub timing: OvenNativeTestBatchTiming,
     /// Combined libtest transcript retained for per-test result mapping by the caller.
     pub output: String,
+    /// The slice this execution covered when the root was divided; `None` for a whole-root or exact run.
+    pub case_slice: Option<OvenNativeTestCaseSliceReport>,
 }
 
 /// Wall-clock timings for one all-in-one native libtest batch.
@@ -332,6 +338,7 @@ pub fn run_native_test_batch(
             execution_elapsed_ms,
         },
         output: transcript,
+        case_slice: None,
     })
 }
 
@@ -395,6 +402,7 @@ pub fn run_native_tests_exact_in_directory_with_timeout(
             execution_elapsed_ms: 0,
         },
         output: String::new(),
+        case_slice: None,
     };
     for exact_name in requested {
         let process_timeout = match remaining_native_test_timeout(&selection_started, timeout) {
@@ -550,6 +558,7 @@ pub fn run_native_test_batch_all_in_directory(
         test_threads: None,
         root_label: None,
         progress: None,
+        case_slice: None,
     })
 }
 
@@ -575,9 +584,38 @@ pub fn run_native_test_batch_all_for_request(
     let inventory = inventory_native_tests_with_environment(executable, environment, working_directory, true)?;
     let inventory_elapsed_ms = duration_millis(inventory_started.elapsed());
     let executable = verified_executable(executable)?;
+    // A slice is computed from the live inventory just obtained, so every shard running this root derives the same
+    // bins; see `case_slice`. An empty slice launches nothing: libtest given `--exact` and no names runs everything.
+    let case_slice = request
+        .case_slice
+        .map(|slice| select_case_slice(&inventory.names, slice));
+    let selected = case_slice
+        .as_ref()
+        .map_or_else(|| inventory.names.clone(), |slice| slice.selected.clone());
+    if case_slice.as_ref().is_some_and(|slice| slice.selected.is_empty()) {
+        return Ok(OvenNativeTestBatchReport {
+            inventory,
+            success: true,
+            process_success: true,
+            timed_out: false,
+            case_counts: Some(OvenNativeTestCaseCounts::default()),
+            case_timings: Vec::new(),
+            command_timings: Vec::new(),
+            timing: OvenNativeTestBatchTiming {
+                inventory_elapsed_ms,
+                execution_elapsed_ms: 0,
+            },
+            output: String::new(),
+            case_slice,
+        });
+    }
     let mut command = Command::new(&executable);
     if let Some(test_threads) = test_threads {
         command.arg(format!("--test-threads={test_threads}"));
+    }
+    if case_slice.is_some() {
+        command.arg("--exact");
+        command.args(&selected);
     }
     if let Some(working_directory) = working_directory {
         command.current_dir(working_directory);
@@ -588,7 +626,7 @@ pub fn run_native_test_batch_all_for_request(
     let reporter = Some(NativeTestProgressReporter::for_inventory(
         request.root_label,
         request.progress.clone().unwrap_or_default(),
-        inventory.names.iter().cloned().collect(),
+        selected.iter().cloned().collect(),
     ));
     let execution_started = Instant::now();
     let (output, timed_out, evidence) = run_native_batch_child(command, &executable, timeout, reporter)?;
@@ -630,6 +668,7 @@ pub fn run_native_test_batch_all_for_request(
             execution_elapsed_ms,
         },
         output: transcript,
+        case_slice,
     })
 }
 
@@ -2127,6 +2166,7 @@ mod tests {
             test_threads: Some(1),
             root_label: None,
             progress: None,
+            case_slice: None,
         })?;
         assert!(report.success, "{report:#?}");
         assert_eq!(report.inventory.names, ["scheduled::case"]);
@@ -2195,6 +2235,7 @@ mod tests {
             test_threads: None,
             root_label: None,
             progress: None,
+            case_slice: None,
         })?;
         let executable_display = executable.display().to_string();
         assert!(!report.success, "{report:#?}");
@@ -2242,6 +2283,7 @@ mod tests {
             test_threads: None,
             root_label: None,
             progress: None,
+            case_slice: None,
         })?;
         assert!(report.success, "{report:#?}");
         assert!(!report.timed_out, "{report:#?}");
@@ -2289,6 +2331,7 @@ mod tests {
             test_threads: Some(1),
             root_label: None,
             progress: None,
+            case_slice: None,
         })?;
 
         assert!(report.success, "{report:#?}");
@@ -2325,6 +2368,72 @@ mod tests {
     }
 
     #[test]
+    fn two_slices_of_one_root_run_disjoint_cases_that_add_up_to_its_inventory_issue1549()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::time::Duration;
+
+        let output = tempfile::tempdir()?;
+        let source = output.path().join("sliced-native-test.rs");
+        let executable = output.path().join("sliced-native-test");
+        fs::write(
+            &source,
+            "#[test]\nfn alpha() {}\n#[test]\nfn beta() {}\n#[test]\nfn gamma() {}\n#[test]\nfn delta() {}\n",
+        )?;
+        let status = Command::new(rustc_path()?)
+            .arg("--test")
+            .arg(&source)
+            .arg("-o")
+            .arg(&executable)
+            .status()?;
+        assert!(status.success());
+        // `gamma` was measured as the heavy case last time; the record only balances, the live inventory decides.
+        let measured = BTreeMap::from([("gamma".to_string(), 900_u64), ("alpha".to_string(), 10)]);
+        let mut covered = Vec::new();
+        for index in 0..2 {
+            let report = run_native_test_batch_all_for_request(&OvenNativeTestBatchRequest {
+                executable: &executable,
+                environment: &BTreeMap::new(),
+                working_directory: Some(output.path()),
+                timeout: Some(Duration::from_secs(30)),
+                test_threads: Some(1),
+                root_label: None,
+                progress: None,
+                case_slice: Some(super::OvenNativeTestCaseSlice {
+                    index,
+                    count: 2,
+                    measured_case_millis: &measured,
+                }),
+            })?;
+            assert!(report.success, "slice {index}: {report:#?}");
+            let slice = report.case_slice.as_ref().ok_or("a sliced run must report its slice")?;
+            assert_eq!((slice.index, slice.count, slice.inventory_count), (index, 2, 4));
+            let executed = report
+                .case_timings
+                .iter()
+                .map(|timing| timing.name.clone())
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                executed,
+                slice.selected.iter().cloned().collect::<BTreeSet<_>>(),
+                "exactly the selected cases ran: {report:#?}"
+            );
+            assert_eq!(
+                report.case_counts.as_ref().map(|counts| counts.passed),
+                Some(slice.selected.len()),
+                "evidence is complete for the slice, not the whole inventory: {report:#?}"
+            );
+            covered.extend(slice.selected.iter().cloned());
+        }
+        covered.sort();
+        assert_eq!(
+            covered,
+            vec!["alpha", "beta", "delta", "gamma"],
+            "the two slices cover the root exactly once"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn a_case_that_fails_without_panicking_is_still_named() -> Result<(), Box<dyn std::error::Error>> {
         use std::time::Duration;
 
@@ -2356,6 +2465,7 @@ mod tests {
             test_threads: Some(1),
             root_label: None,
             progress: None,
+            case_slice: None,
         })?;
 
         assert!(!report.success, "{report:#?}");
@@ -2401,6 +2511,7 @@ mod tests {
             test_threads: Some(1),
             root_label: Some("probe"),
             progress: Some(sink.clone()),
+            case_slice: None,
         })?;
         sink.collected()
             .ok_or_else(|| "collecting sink returned nothing".into())
@@ -2576,6 +2687,7 @@ mod tests {
             test_threads: Some(2),
             root_label: Some("root"),
             progress: Some(sink.clone()),
+            case_slice: None,
         })?;
         assert!(report.success && report.process_success, "{report:#?}");
         assert_eq!(
@@ -2634,6 +2746,7 @@ mod tests {
             test_threads: Some(1),
             root_label: None,
             progress: Some(ProgressSink::collecting()),
+            case_slice: None,
         })?;
         assert!(!report.success && !report.process_success);
         assert!(
@@ -2666,6 +2779,7 @@ mod tests {
             test_threads: Some(1),
             root_label: None,
             progress: Some(ProgressSink::collecting()),
+            case_slice: None,
         })?;
         assert!(report.process_success);
         assert!(!report.success);
@@ -2696,6 +2810,7 @@ mod tests {
             test_threads: Some(1),
             root_label: None,
             progress: Some(sink.clone()),
+            case_slice: None,
         })?;
         assert!(report.success, "{report:?}");
         assert!(report.output.contains("distinctive-success-diagnostic"));

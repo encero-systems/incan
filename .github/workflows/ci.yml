@@ -730,6 +730,10 @@ jobs:
     needs: oven-linux-replay
     if: always() && needs.oven-linux-replay.result != 'skipped'
     steps:
+      # Checkout first: it cleans the workspace, and the reports below are downloaded into it.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
       - name: Collect every partition report
         uses: actions/download-artifact@v7
         with:
@@ -756,6 +760,21 @@ jobs:
         with:
           path: target/oven-timing-record
           key: oven-timing-record-v1-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
+      # A partition that ran a root as case slices claims no complete-root evidence of its own (#1549). The run's
+      # completeness is proven here, over every partition's report: each index present, each whole root once, each
+      # sliced root's slices disjoint and adding up to the inventory it observed. This step is what turns four
+      # partial reports into complete-suite evidence, so it fails the job on any gap or overlap.
+      - name: Reconcile joint coverage across partitions
+        run: |
+          python3 scripts/reconcile_oven_partitions.py target/oven-timing-record \
+            --summary target/oven-reconciliation.json
+      - name: Upload the reconciliation summary
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: oven-pr-linux-reconciliation
+          path: target/oven-reconciliation.json
+          if-no-files-found: ignore
 
   oven-release-smoke:
     name: Oven release Loaf guard
