@@ -99,5 +99,14 @@
     "issue_dependencies_summary": {
       "blocked_by": 0
     }
+  },
+  {
+    "number": 1421,
+    "title": "chore - v0.6 Slice 10: Incan-authored control plane and governed runtime",
+    "state": "open",
+    "html_url": "https://github.com/encero-systems/incan/issues/1421",
+    "issue_dependencies_summary": {
+      "blocked_by": 0
+    }
   }
 ]
