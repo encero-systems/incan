@@ -2890,6 +2890,85 @@ fn compatible_loaf_paths(loaf_root: &Path, receipt: &OvenReceipt) -> Result<Vec<
     Ok(candidates)
 }
 
+/// Explain why no compiler-owned Loaf could serve `receipt`.
+///
+/// The nested-build guard reported a missing registry-dependency set whenever compiler-owned selection came back
+/// empty. When the receipt declares no registry dependency that rendered as "Needs: none.", which points a reader at
+/// dependency resolution while the rejection actually happened during Loaf compatibility. This walks the same
+/// committed Loafs `compatible_loaf_paths` walks and tallies which condition rejected each one, so the caller can name
+/// the condition that actually held rather than the one it assumed.
+///
+/// This is diagnostic only: it never selects, locks, or mutates a Loaf, and a read failure degrades to a short note
+/// rather than masking the caller's original error.
+pub fn describe_compiler_owned_loaf_miss(receipt: &OvenReceipt) -> String {
+    let loaf_root = crate::toolchain_layout::resolve_toolchain_data_path(Path::new(TOOLCHAIN_LOAF_RELATIVE_ROOT));
+    if !loaf_root.join("envelope.json").is_file() {
+        return "no committed compiler-owned Loaf envelope exists".to_string();
+    }
+    let paths = match committed_loaf_metadata_paths_for_authority(&loaf_root, OvenLoafMemberRole::CompiledClosure) {
+        Ok(paths) => paths,
+        Err(error) => return format!("committed Loaf metadata could not be read: {error}"),
+    };
+    let (mut schema, mut same_unit, mut intent, mut providers, mut total) = (0_usize, 0_usize, 0_usize, 0_usize, 0_usize);
+    let mut sample_intent = None;
+    for path in paths {
+        let Ok(loaf) = read_loaf(&path) else { continue };
+        total += 1;
+        if loaf.schema_version != OVEN_LOAF_SCHEMA_VERSION {
+            schema += 1;
+        } else if loaf.build_unit_identity == receipt.build_unit_identity {
+            same_unit += 1;
+        } else if loaf.plan.intent != receipt.intent {
+            intent += 1;
+            if sample_intent.is_none() {
+                sample_intent = Some(loaf.plan.intent.clone());
+            }
+        } else if !matches!(loaf.compatibility.provider_subset_excess(receipt), Ok(Some(_))) {
+            providers += 1;
+        }
+    }
+    if total == 0 {
+        return "no committed compiler-owned Loaf exists for this authority".to_string();
+    }
+    let requested = describe_build_intent(&receipt.intent);
+    let mut reasons = Vec::new();
+    if schema > 0 {
+        reasons.push(format!("{schema} on a different Loaf schema"));
+    }
+    if same_unit > 0 {
+        reasons.push(format!("{same_unit} already rejected as this receipt's own build unit"));
+    }
+    if intent > 0 {
+        let sample = sample_intent.as_ref().map_or_else(String::new, |found| {
+            format!(" (one such Loaf declares {})", describe_build_intent(found))
+        });
+        reasons.push(format!("{intent} on a different build intent{sample}"));
+    }
+    if providers > 0 {
+        reasons.push(format!("{providers} on runtime inputs or provider coverage"));
+    }
+    if reasons.is_empty() {
+        return format!("{total} committed compiler-owned Loaf(s) exist and none matched the request for {requested}");
+    }
+    format!(
+        "the request is for {requested}; of {total} committed compiler-owned Loaf(s), {}",
+        reasons.join(", ")
+    )
+}
+
+/// Render one build intent as a short, stable, single-line phrase for diagnostics.
+fn describe_build_intent(intent: &crate::oven::OvenBuildIntent) -> String {
+    let features = if intent.features.is_empty() {
+        "no features".to_string()
+    } else {
+        format!("features [{}]", intent.features.join(", "))
+    };
+    format!(
+        "target `{}`, toolchain `{}`, profile `{}`, {features}",
+        intent.target, intent.toolchain, intent.profile
+    )
+}
+
 /// Select the narrowest compatible compiler-owned loaf, with a path tie-breaker for reproducibility.
 ///
 /// Every candidate has already matched all runtime inputs and contains every requested provider module/facet. The
