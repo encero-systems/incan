@@ -3223,12 +3223,25 @@ fn reusable_manifest_equivalent(left: &OvenArtifactManifest, right: &OvenArtifac
 }
 
 /// Update the LRU selection time without modifying the immutable manifest or payload.
+///
+/// This stamp orders eviction and nothing else. An entry's content is immutable and addressed by its own digest, so
+/// a stamp lost to a crash cannot corrupt anything -- it only makes that entry look slightly less recently used, and
+/// the worst outcome is a prune evicting a cache entry earlier than ideal, which costs a recompute. The write is
+/// therefore published by atomic rename, which is what stops a reader ever seeing a torn timestamp, and it no longer
+/// pays an `fsync` on the staged file plus another on the directory to make a cache hint durable.
+///
+/// That mattered: on a warm `incan build` with nothing changed, `touch_entry` was about a fifth of the entire
+/// command, because selection touches every candidate entry it considers.
 fn touch_entry(root: &Path) -> Result<(), OvenStoreError> {
     let access = root.join(ACCESS_FILE);
     let staged = root.join(format!(".{ACCESS_FILE}.tmp-{}", std::process::id()));
-    write_synced_file(&staged, now_unix_seconds()?.to_string().as_bytes(), true)?;
-    fs::rename(&staged, &access).map_err(|source| OvenStoreError::Io { path: access, source })?;
-    sync_directory(root.to_path_buf())
+    let mut stamp = now_unix_seconds()?.to_string();
+    stamp.push('\n');
+    fs::write(&staged, stamp.as_bytes()).map_err(|source| OvenStoreError::Io {
+        path: staged.clone(),
+        source,
+    })?;
+    fs::rename(&staged, &access).map_err(|source| OvenStoreError::Io { path: access, source })
 }
 
 /// Open one advisory lock file through the shared store error vocabulary.
