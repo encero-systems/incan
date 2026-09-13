@@ -4124,6 +4124,30 @@ struct PreparedCompilerSuiteChild<'a> {
 /// map rather than an error: a missing measurement must degrade to the previous `source_bytes` behaviour, never fail
 /// a run that would otherwise have worked.
 fn measured_root_millis_from_report(report_path: &Path) -> BTreeMap<String, u64> {
+    // A directory merges every report inside it. One partition only measures the roots it ran, so weighting a
+    // four-way split from a single partition's record would leave three quarters of the suite estimated. The union
+    // of the four is the record the partitioner actually wants.
+    if report_path.is_dir() {
+        let Ok(entries) = fs::read_dir(report_path) else {
+            return BTreeMap::new();
+        };
+        let mut merged = BTreeMap::new();
+        let mut paths = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "json"))
+            .collect::<Vec<_>>();
+        paths.sort();
+        for path in paths {
+            for (root, millis) in measured_root_millis_from_report(&path) {
+                // A root that somehow appears in two partitions keeps the larger measurement: the partitioner is
+                // packing against wall clock, and under-stating a root is the failure mode that costs a run.
+                let entry = merged.entry(root).or_insert(0_u64);
+                *entry = (*entry).max(millis);
+            }
+        }
+        return merged;
+    }
     let Ok(bytes) = fs::read(report_path) else {
         return BTreeMap::new();
     };
@@ -7110,6 +7134,59 @@ mod tests {
         let malformed = directory.path().join("malformed.json");
         fs::write(&malformed, b"{ not json")?;
         assert!(super::measured_root_millis_from_report(&malformed).is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_timing_record_directory_merges_every_partition() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let write = |name: &str, roots: serde_json::Value| -> Result<(), Box<dyn std::error::Error>> {
+            fs::write(
+                directory.path().join(name),
+                serde_json::to_vec(&serde_json::json!({ "native_test_roots": roots }))?,
+            )?;
+            Ok(())
+        };
+        write(
+            "partition-0.json",
+            serde_json::json!([{
+                "source_relative_path": "tests/one.rs",
+                "direct_rustc_bake_elapsed_ms": 1_000, "libtest_inventory_elapsed_ms": 0,
+                "libtest_execution_elapsed_ms": 0,
+            }]),
+        )?;
+        write(
+            "partition-1.json",
+            serde_json::json!([{
+                "source_relative_path": "tests/two.rs",
+                "direct_rustc_bake_elapsed_ms": 0, "libtest_inventory_elapsed_ms": 0,
+                "libtest_execution_elapsed_ms": 5_000,
+            }]),
+        )?;
+        // A partition only measures the roots it ran, so one report alone would leave the rest estimated.
+        let merged = super::measured_root_millis_from_report(directory.path());
+        assert_eq!(merged.get("tests/one.rs"), Some(&1_000));
+        assert_eq!(merged.get("tests/two.rs"), Some(&5_000));
+
+        // A root seen twice keeps the larger measurement: under-stating a root is what costs a run.
+        write(
+            "partition-2.json",
+            serde_json::json!([{
+                "source_relative_path": "tests/one.rs",
+                "direct_rustc_bake_elapsed_ms": 9_000, "libtest_inventory_elapsed_ms": 0,
+                "libtest_execution_elapsed_ms": 0,
+            }]),
+        )?;
+        assert_eq!(
+            super::measured_root_millis_from_report(directory.path()).get("tests/one.rs"),
+            Some(&9_000)
+        );
+
+        // Non-JSON files are ignored, and an empty directory degrades to no measurements.
+        fs::write(directory.path().join("notes.txt"), b"ignored")?;
+        assert_eq!(super::measured_root_millis_from_report(directory.path()).len(), 2);
+        let empty = tempfile::tempdir()?;
+        assert!(super::measured_root_millis_from_report(empty.path()).is_empty());
         Ok(())
     }
 
