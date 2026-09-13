@@ -33,6 +33,11 @@ fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Command {
         .args(args)
         .current_dir(current_dir)
         .env("CARGO_NET_OFFLINE", "true")
+        // These cases compare a consumer's optimized artifact against its baseline, so the provider they bake has
+        // to carry the optimized profile too. The compiler suite narrows a child's bake to `debug` by default,
+        // because almost no root executes the other half and producing it is 44% of every bake; a root that does
+        // need it says so, and that default then leaves it alone.
+        .env("INCAN_OVEN_BAKE_PROFILES", "all")
         .env("INCAN_NO_BANNER", "1");
     if !support::oven_compiler_suite_is_active() {
         command
