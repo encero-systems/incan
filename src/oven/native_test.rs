@@ -106,40 +106,6 @@ pub struct OvenNativeTestCommandTiming {
 ///
 /// The scheduler varies four things across roots: where the binary runs, how long it may take, how much of the host
 /// CPU budget it gets, and what to call it in progress output. Carrying them together keeps adding a fifth from
-/// One deterministic share of a root's cases, so a single indivisible test root can still span several shards.
-///
-/// A compiler-suite root is one libtest binary, and a shard runs whole roots. That makes the longest root the floor
-/// for the whole lane no matter how evenly the rest packs. A share lets the same root run on several shards with each
-/// executing a disjoint part of its inventory.
-///
-/// Membership follows a digest of the case name, not its position in the inventory, so adding, removing or renaming
-/// one case moves only that case between shares. An index-based split would reshuffle every case after the edit and
-/// make two runs of the same shard incomparable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OvenNativeTestShare {
-    /// Zero-based share this execution owns.
-    pub index: usize,
-    /// Total number of shares the root is divided into; one means the whole root.
-    pub count: usize,
-}
-
-impl OvenNativeTestShare {
-    /// Return whether this share owns the named case.
-    pub fn owns(&self, name: &str) -> bool {
-        if self.count <= 1 {
-            return true;
-        }
-        let digest = super::digest_bytes(name.as_bytes());
-        // `digest_bytes` returns `sha256:<hex>`; the low hex digits are as uniform as any other slice of it.
-        let tail = digest.as_bytes();
-        let mut accumulator = 0_u64;
-        for byte in tail.iter().rev().take(16) {
-            accumulator = accumulator.wrapping_mul(31).wrapping_add(u64::from(*byte));
-        }
-        usize::try_from(accumulator % self.count as u64).unwrap_or(0) == self.index
-    }
-}
-
 /// growing another wrapper in the batch-runner family.
 #[derive(Debug, Clone)]
 pub struct OvenNativeTestBatchRequest<'a> {
@@ -157,8 +123,6 @@ pub struct OvenNativeTestBatchRequest<'a> {
     pub root_label: Option<&'a str>,
     /// Where this root's progress goes. `None` means stderr, which is what every real caller wants.
     pub progress: Option<ProgressSink>,
-    /// Which share of this root's inventory to execute. `None` runs the whole root, which is the ordinary case.
-    pub share: Option<OvenNativeTestShare>,
 }
 
 /// One verified all-in-one native libtest execution used when fixture scope requires a shared process.
@@ -586,7 +550,6 @@ pub fn run_native_test_batch_all_in_directory(
         test_threads: None,
         root_label: None,
         progress: None,
-        share: None,
     })
 }
 
@@ -611,26 +574,10 @@ pub fn run_native_test_batch_all_for_request(
     let inventory_started = Instant::now();
     let inventory = inventory_native_tests_with_environment(executable, environment, working_directory, true)?;
     let inventory_elapsed_ms = duration_millis(inventory_started.elapsed());
-    // A shared root executes only the cases this share owns. Libtest takes the selection as exact positional
-    // filters, so the whole share still runs in one process with one inventory -- unlike per-case exact selection,
-    // which pays a process per name.
-    let selected = match request.share {
-        Some(share) if share.count > 1 => inventory
-            .names
-            .iter()
-            .filter(|name| share.owns(name))
-            .cloned()
-            .collect::<Vec<_>>(),
-        _ => inventory.names.clone(),
-    };
     let executable = verified_executable(executable)?;
     let mut command = Command::new(&executable);
     if let Some(test_threads) = test_threads {
         command.arg(format!("--test-threads={test_threads}"));
-    }
-    if selected.len() != inventory.names.len() {
-        command.arg("--exact");
-        command.args(&selected);
     }
     if let Some(working_directory) = working_directory {
         command.current_dir(working_directory);
@@ -641,7 +588,7 @@ pub fn run_native_test_batch_all_for_request(
     let reporter = Some(NativeTestProgressReporter::for_inventory(
         request.root_label,
         request.progress.clone().unwrap_or_default(),
-        selected.iter().cloned().collect(),
+        inventory.names.iter().cloned().collect(),
     ));
     let execution_started = Instant::now();
     let (output, timed_out, evidence) = run_native_batch_child(command, &executable, timeout, reporter)?;
@@ -2180,7 +2127,6 @@ mod tests {
             test_threads: Some(1),
             root_label: None,
             progress: None,
-            share: None,
         })?;
         assert!(report.success, "{report:#?}");
         assert_eq!(report.inventory.names, ["scheduled::case"]);
@@ -2249,7 +2195,6 @@ mod tests {
             test_threads: None,
             root_label: None,
             progress: None,
-            share: None,
         })?;
         let executable_display = executable.display().to_string();
         assert!(!report.success, "{report:#?}");
@@ -2297,7 +2242,6 @@ mod tests {
             test_threads: None,
             root_label: None,
             progress: None,
-            share: None,
         })?;
         assert!(report.success, "{report:#?}");
         assert!(!report.timed_out, "{report:#?}");
@@ -2345,7 +2289,6 @@ mod tests {
             test_threads: Some(1),
             root_label: None,
             progress: None,
-            share: None,
         })?;
 
         assert!(report.success, "{report:#?}");
@@ -2382,56 +2325,6 @@ mod tests {
     }
 
     #[test]
-    fn shares_of_one_root_cover_every_case_exactly_once() -> Result<(), Box<dyn std::error::Error>> {
-        use std::time::Duration;
-
-        let output = tempfile::tempdir()?;
-        let source = output.path().join("shared-native-test.rs");
-        let executable = output.path().join("shared-native-test");
-        let cases = (0..12)
-            .map(|index| format!("#[test]\nfn case_{index}() {{}}\n"))
-            .collect::<String>();
-        fs::write(&source, cases)?;
-        let status = Command::new(rustc_path()?)
-            .arg("--test")
-            .arg(&source)
-            .arg("-o")
-            .arg(&executable)
-            .status()?;
-        assert!(status.success());
-
-        let mut executed = Vec::new();
-        for index in 0..3 {
-            let report = run_native_test_batch_all_for_request(&OvenNativeTestBatchRequest {
-                executable: &executable,
-                environment: &BTreeMap::new(),
-                working_directory: Some(output.path()),
-                timeout: Some(Duration::from_secs(60)),
-                test_threads: Some(1),
-                root_label: None,
-                progress: None,
-                share: Some(super::OvenNativeTestShare { index, count: 3 }),
-            })?;
-            assert!(report.success, "{report:#?}");
-            let counts = report.case_counts.as_ref().ok_or("share reported no case evidence")?;
-            assert!(
-                counts.passed < 12,
-                "a share must run part of the root, not all of it: {counts:#?}"
-            );
-            executed.extend(report.case_timings.iter().map(|timing| timing.name.clone()));
-        }
-
-        let inventory = super::inventory_native_tests(&executable)?;
-        assert_eq!(
-            executed.iter().cloned().collect::<BTreeSet<_>>(),
-            inventory.names.iter().cloned().collect::<BTreeSet<_>>(),
-            "the shares together must cover the whole inventory"
-        );
-        assert_eq!(executed.len(), inventory.names.len(), "no case may run in two shares");
-        Ok(())
-    }
-
-    #[test]
     fn a_case_that_fails_without_panicking_is_still_named() -> Result<(), Box<dyn std::error::Error>> {
         use std::time::Duration;
 
@@ -2463,7 +2356,6 @@ mod tests {
             test_threads: Some(1),
             root_label: None,
             progress: None,
-            share: None,
         })?;
 
         assert!(!report.success, "{report:#?}");
@@ -2509,7 +2401,6 @@ mod tests {
             test_threads: Some(1),
             root_label: Some("probe"),
             progress: Some(sink.clone()),
-            share: None,
         })?;
         sink.collected()
             .ok_or_else(|| "collecting sink returned nothing".into())
@@ -2685,7 +2576,6 @@ mod tests {
             test_threads: Some(2),
             root_label: Some("root"),
             progress: Some(sink.clone()),
-            share: None,
         })?;
         assert!(report.success && report.process_success, "{report:#?}");
         assert_eq!(
@@ -2744,7 +2634,6 @@ mod tests {
             test_threads: Some(1),
             root_label: None,
             progress: Some(ProgressSink::collecting()),
-            share: None,
         })?;
         assert!(!report.success && !report.process_success);
         assert!(
@@ -2777,7 +2666,6 @@ mod tests {
             test_threads: Some(1),
             root_label: None,
             progress: Some(ProgressSink::collecting()),
-            share: None,
         })?;
         assert!(report.process_success);
         assert!(!report.success);
@@ -2808,7 +2696,6 @@ mod tests {
             test_threads: Some(1),
             root_label: None,
             progress: Some(sink.clone()),
-            share: None,
         })?;
         assert!(report.success, "{report:?}");
         assert!(report.output.contains("distinctive-success-diagnostic"));
