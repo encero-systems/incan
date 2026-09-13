@@ -8908,17 +8908,54 @@ fi
             .entrypoint_dependency_search_paths
             .insert("generated-root".to_string(), captured);
 
-        let base = OvenRustcArtifactManifest {
+        // The base needs its own role closure: inheriting the project's would claim artifacts the base never
+        // declares, which `validate_shape` rejects before composition even starts.
+        let mut base = OvenRustcArtifactManifest {
             externs: vec![base_runtime.clone()],
             supporting_artifacts: vec![OvenRustcSupportingArtifact {
                 relative_path: "target/debug/deps/libincan_stdlib-base.rmeta".to_string(),
                 digest: "sha256:base-stdlib-meta".to_string(),
             }],
+            entrypoint_dependency_search_paths: Default::default(),
+            entrypoint_externs: BTreeMap::new(),
             ..project.clone()
         };
+        let base_captured = base.capture_source_search_closure(&base.dependency_search_paths)?;
+        base.entrypoint_externs
+            .insert("generated-root".to_string(), vec!["incan_stdlib".to_string()]);
+        base.entrypoint_dependency_search_paths
+            .insert("generated-root".to_string(), base_captured);
 
-        let composed = project.with_release_cohort_from_base(&base, &BTreeSet::new())?;
-        let declared = super::expected_artifacts(&composed)?;
+        assert_role_closures_cover_declared_artifacts(
+            &project.with_release_cohort_from_base(&base, &BTreeSet::new())?,
+        )?;
+
+        // The conservative regime is the one the replay lane actually hits. A root-linked leaf with no release
+        // counterpart makes the composition retain extension-built consumers, so the root keeps the extension's
+        // runtime while the base still contributes its own release execution artifacts. The composed manifest then
+        // declares both runtimes in one directory while the role's closure claims only the extension's.
+        let mut conservative = project.clone();
+        conservative.supporting_artifacts.push(OvenRustcSupportingArtifact {
+            relative_path: "target/debug/deps/libprebuilt-consumer.rlib".to_string(),
+            digest: "sha256:prebuilt-consumer".to_string(),
+        });
+        let conservative_captured =
+            conservative.capture_source_search_closure(&conservative.dependency_search_paths)?;
+        conservative
+            .entrypoint_dependency_search_paths
+            .insert("generated-root".to_string(), conservative_captured);
+        assert_role_closures_cover_declared_artifacts(
+            &conservative.with_release_cohort_from_base(&base, &BTreeSet::new())?,
+        )?;
+        Ok(())
+    }
+
+    /// Assert the invariant `bind_source_search_roles` later enforces: a role that claims a directory claims every
+    /// artifact the manifest declares in it.
+    fn assert_role_closures_cover_declared_artifacts(
+        composed: &OvenRustcArtifactManifest,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let declared = super::expected_artifacts(composed)?;
         for (key, closure) in &composed.entrypoint_dependency_search_paths {
             let claimed_paths = closure.paths().cloned().collect::<BTreeSet<_>>();
             let claimed = closure
@@ -8926,7 +8963,7 @@ fi
                 .flat_map(|directory| &directory.artifacts)
                 .map(|artifact| artifact.relative_path.as_str())
                 .collect::<BTreeSet<_>>();
-            for (relative, _) in &declared {
+            for relative in declared.keys() {
                 let owning = claimed_paths
                     .iter()
                     .any(|path| super::artifact_is_below_search_path(relative, path));
@@ -11984,7 +12021,11 @@ fi
                 .materialize_trusted_store_composed(&missing_inventory, &receipt.intent)
                 .err()
                 .ok_or("co-resident excluded helper was accepted")?;
-            assert!(error.to_string().contains("co-resident"));
+            // The refusal must name the artifact that disqualified the directory, not merely report that one
+            // exists: "a co-resident unselected artifact" is what made this class cost a full bake to diagnose.
+            let message = error.to_string();
+            assert!(message.contains("never selected"), "{message}");
+            assert!(message.contains("cannot isolate selected member"), "{message}");
             // An aggregate copy cannot isolate those two contributions either; no fallback republishing is allowed.
             fs::create_dir_all(second_root.join("target"))?;
             fs::write(second_root.join("target/libruntime.rlib"), b"runtime")?;
@@ -12098,7 +12139,11 @@ fi
             .materialize_trusted_store_composed(&roots, &receipt.intent)
             .err()
             .ok_or("co-resident extension helper must refuse without an admitted clean copy")?;
-        assert!(error.to_string().contains("co-resident"));
+        // The refusal must name the artifact that disqualified the directory, not merely report that one
+        // exists: "a co-resident unselected artifact" is what made this class cost a full bake to diagnose.
+        let message = error.to_string();
+        assert!(message.contains("never selected"), "{message}");
+        assert!(message.contains("cannot isolate selected member"), "{message}");
         let candidates = [super::OvenTrustedRustcSearchRoot {
             artifact_root: clean_extension.path(),
             dependency_search_paths: &extension_fragment.dependency_search_paths,
