@@ -18,6 +18,9 @@ use std::path::Path;
 
 use crate::oven::legacy_cargo::OvenCompilerTestSuiteShardReference;
 
+/// The runner name a receipt-bound native libtest root carries; the only kind of root a slice applies to.
+const NATIVE_LIBTEST_RUNNER: &str = "rustc-test";
+
 /// One unit of replay work: a whole root, or one slice of a root divided by case.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CompilerSuiteShardUnit {
@@ -30,9 +33,11 @@ pub(crate) struct CompilerSuiteShardUnit {
 /// Divide roots whose measured weight exceeds one shard's fair share into slices, keeping every other root whole.
 ///
 /// `weight_of` is the packer's own weight for a root; `is_measured` says whether that weight is a measurement rather
-/// than a proxy, because only a measured giant is worth dividing. A giant is cut into `ceil(weight / share)` slices,
-/// capped at `partition_count` so no shard is asked to compile one root more often than another shard would. The
-/// returned units are in input order, slices ascending, and carry the weight each contributes to packing.
+/// than a proxy, because only a measured giant is worth dividing. Only a native libtest root can be divided: a
+/// Rustdoc root runs its doctests as one process with no case inventory to slice, so it always stays whole. A giant
+/// is cut into `ceil(weight / share)` slices, capped at `partition_count` so no shard is asked to compile one root
+/// more often than another shard would. The returned units are in input order, slices ascending, and carry the
+/// weight each contributes to packing.
 pub(crate) fn divide_giant_roots(
     references: &[OvenCompilerTestSuiteShardReference],
     partition_count: usize,
@@ -50,7 +55,8 @@ pub(crate) fn divide_giant_roots(
     let mut units = Vec::with_capacity(references.len());
     for reference in references {
         let weight = weight_of(reference);
-        let slices = if share > 0 && weight > share && is_measured(reference) {
+        let divisible = reference.target.runner == NATIVE_LIBTEST_RUNNER;
+        let slices = if divisible && share > 0 && weight > share && is_measured(reference) {
             weight.div_ceil(share).min(partition_count as u64).max(2)
         } else {
             1
@@ -239,6 +245,21 @@ mod tests {
         );
         assert_eq!(units.len(), 5);
         assert!(units.iter().filter(|(unit, _)| unit.case_slice.is_none()).count() == 2);
+    }
+
+    #[test]
+    fn a_rustdoc_root_is_never_divided_however_heavy() {
+        let mut doctest = reference("src/lib.rs", 1);
+        doctest.target.runner = "rustdoc-test".to_string();
+        let references = vec![doctest, reference("tests/tiny.rs", 1)];
+        let measured = BTreeMap::from([("src/lib.rs".to_string(), 10_000_u64), ("tests/tiny.rs".to_string(), 1)]);
+        let units = divide_giant_roots(
+            &references,
+            4,
+            |reference| measured[&reference.target.source_relative_path],
+            |_| true,
+        );
+        assert!(units.iter().all(|(unit, _)| unit.case_slice.is_none()));
     }
 
     #[test]
