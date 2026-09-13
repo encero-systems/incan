@@ -1,6 +1,8 @@
 name: "Documentation"
 description: Report missing, confusing, or incorrect documentation; propose doc improvements.
 labels: ["documentation"]
+title: "docs - "
+type: Chore
 body:
   - type: textarea
     id: summary

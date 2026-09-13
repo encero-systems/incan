@@ -1,6 +1,8 @@
 name: "RFC proposal"
 description: Propose a significant language/tooling change that should go through the RFC process.
 labels: ["RFC"]
+title: "RFC proposal - "
+type: Feature
 body:
   - type: markdown
     attributes:
