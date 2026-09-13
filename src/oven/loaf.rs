@@ -649,6 +649,14 @@ impl OvenLoafCompatibility {
         // it as a Loaf compatibility key would require one shipped Loaf per consumer package.
         let _ = runtime_inputs.remove(OVEN_INTEROP_EXECUTION_RECEIPT_INPUT);
         let _ = runtime_inputs.remove(OVEN_INTEROP_PLAN_SCHEMA_INPUT);
+        // A consumer records the macro set its own providers must compile against; a compiler-owned Loaf is sealed
+        // before any consumer exists and so can never carry one. Treating it as a compatibility key therefore asks
+        // the shipped Loaf for a fact only the caller has, which is the same bargain the interop inputs above
+        // decline, and it disqualifies every release Loaf for every consumer that has providers at all. The
+        // requirement itself is not going unchecked: it is derived from checked packaged provider profiles by
+        // `checked_provider_compilation_requirements`, and `provider_compilation_externs` refuses a requirement whose
+        // macro is absent from the selected dependencies.
+        let _ = runtime_inputs.remove("provider-compilation-requirements");
         let provider_plan = runtime_inputs
             .remove("provider-plan")
             .ok_or_else(|| OvenLoafError::Preparation {
@@ -731,6 +739,74 @@ impl OvenLoafCompatibility {
             excess.direct_links += usize::from(candidate.direct_link && !required.direct_link);
         }
         Ok(Some(excess))
+    }
+
+    /// Name the first condition that stops this loaf serving `receipt`, for diagnostics only.
+    ///
+    /// `provider_subset_excess` collapses several distinct rejections into one `None`, which is fine for selection and
+    /// useless in an error message. This mirrors its order exactly and returns the reason, so a caller can say whether
+    /// the runtime inputs differed, a provider was absent, or a present provider lacked a required module or facet.
+    fn provider_subset_rejection(&self, receipt: &OvenReceipt) -> Result<Option<String>, OvenLoafError> {
+        let requested = Self::from_receipt(receipt)?;
+        if self.runtime_inputs != requested.runtime_inputs {
+            // Naming the keys matters more than the fact. `from_receipt` deliberately drops providers,
+            // rust-dependencies, stdlib-features, the interop pair and provider-plan, so a difference here is always
+            // a key nobody decided to exclude, and the key's name is the whole lead.
+            let mut differences = Vec::new();
+            for (key, value) in &requested.runtime_inputs {
+                match self.runtime_inputs.get(key) {
+                    None => differences.push(format!("`{key}` is absent from the Loaf")),
+                    Some(found) if found != value => differences.push(format!("`{key}` differs")),
+                    Some(_) => {}
+                }
+            }
+            for key in self.runtime_inputs.keys() {
+                if !requested.runtime_inputs.contains_key(key) {
+                    differences.push(format!("`{key}` is present only in the Loaf"));
+                }
+            }
+            differences.truncate(4);
+            return Ok(Some(format!(
+                "its runtime inputs differ from the request: {}",
+                differences.join(", ")
+            )));
+        }
+        let mut available = BTreeMap::new();
+        for provider in &self.providers {
+            available.insert(provider.identity.as_str(), provider);
+        }
+        for required in &requested.providers {
+            let Some(candidate) = available.get(required.identity.as_str()) else {
+                return Ok(Some(format!("it does not ship provider `{}`", required.identity)));
+            };
+            if let Some(module) = required
+                .modules
+                .iter()
+                .find(|module| candidate.modules.binary_search(module).is_err())
+            {
+                return Ok(Some(format!(
+                    "provider `{}` is missing module `{module}`",
+                    required.identity
+                )));
+            }
+            if let Some(facet) = required
+                .facets
+                .iter()
+                .find(|facet| candidate.facets.binary_search(facet).is_err())
+            {
+                return Ok(Some(format!(
+                    "provider `{}` is missing facet `{facet}`",
+                    required.identity
+                )));
+            }
+            if required.direct_link && !candidate.direct_link {
+                return Ok(Some(format!(
+                    "provider `{}` is not directly linkable",
+                    required.identity
+                )));
+            }
+        }
+        Ok(None)
     }
 
     /// Return whether this shipped runtime closure can safely satisfy `receipt` under the narrow provider-subset rule.
@@ -2909,8 +2985,10 @@ pub fn describe_compiler_owned_loaf_miss(receipt: &OvenReceipt) -> String {
         Ok(paths) => paths,
         Err(error) => return format!("committed Loaf metadata could not be read: {error}"),
     };
-    let (mut schema, mut same_unit, mut intent, mut providers, mut total) = (0_usize, 0_usize, 0_usize, 0_usize, 0_usize);
+    let (mut schema, mut same_unit, mut intent, mut providers, mut total) =
+        (0_usize, 0_usize, 0_usize, 0_usize, 0_usize);
     let mut sample_intent = None;
+    let mut sample_provider: Option<String> = None;
     for path in paths {
         let Ok(loaf) = read_loaf(&path) else { continue };
         total += 1;
@@ -2923,8 +3001,11 @@ pub fn describe_compiler_owned_loaf_miss(receipt: &OvenReceipt) -> String {
             if sample_intent.is_none() {
                 sample_intent = Some(loaf.plan.intent.clone());
             }
-        } else if !matches!(loaf.compatibility.provider_subset_excess(receipt), Ok(Some(_))) {
+        } else if let Ok(Some(reason)) = loaf.compatibility.provider_subset_rejection(receipt) {
             providers += 1;
+            if sample_provider.is_none() {
+                sample_provider = Some(reason);
+            }
         }
     }
     if total == 0 {
@@ -2945,7 +3026,10 @@ pub fn describe_compiler_owned_loaf_miss(receipt: &OvenReceipt) -> String {
         reasons.push(format!("{intent} on a different build intent{sample}"));
     }
     if providers > 0 {
-        reasons.push(format!("{providers} on runtime inputs or provider coverage"));
+        let sample = sample_provider
+            .as_ref()
+            .map_or_else(String::new, |found| format!(" (one because {found})"));
+        reasons.push(format!("{providers} on runtime inputs or provider coverage{sample}"));
     }
     if reasons.is_empty() {
         return format!("{total} committed compiler-owned Loaf(s) exist and none matched the request for {requested}");
@@ -4483,6 +4567,41 @@ mod tests {
             .build_unit_inputs
             .insert("unrelated-compiler-input".to_string(), "changed".to_string());
         assert!(!compatibility.authorizes_provider_subset(&selected_interop)?);
+        Ok(())
+    }
+
+    #[test]
+    fn a_consumer_provider_compilation_requirement_does_not_fragment_compiler_owned_loaf_compatibility()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let source = project.path().join("main.rs");
+        fs::write(&source, "fn main() {}\n")?;
+        let shipped = runtime_receipt(
+            &source,
+            "incan-stdlib|std.interop|ffi",
+            "empty-rust-dependencies",
+            "interop",
+        )?;
+        let mut consumer = shipped.clone();
+        consumer.sources.build_unit_inputs.insert(
+            "provider-compilation-requirements".to_string(),
+            "sha256:consumer-selected-macro-set".to_string(),
+        );
+
+        // A shipped compiler-owned Loaf is built before any consumer exists, so it can never carry a consumer's
+        // selected macro set. Keying compatibility on it would demand one shipped Loaf per consumer.
+        let compatibility = OvenLoafCompatibility::from_receipt(&shipped)?;
+        assert!(
+            compatibility.authorizes_provider_subset(&consumer)?,
+            "a consumer's provider compilation requirement must not disqualify the shipped Loaf"
+        );
+
+        // The exclusion is narrow: any other differing runtime input still fragments compatibility.
+        consumer
+            .sources
+            .build_unit_inputs
+            .insert("unrelated-compiler-input".to_string(), "changed".to_string());
+        assert!(!compatibility.authorizes_provider_subset(&consumer)?);
         Ok(())
     }
 
