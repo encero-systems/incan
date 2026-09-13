@@ -4358,7 +4358,7 @@ mod tests {
             relative_path: "lib/native.rlib".to_string(),
         });
         let limits = OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000);
-        let source = OvenStore::new(source_root.path(), limits.clone());
+        let source = OvenStore::new(source_root.path(), limits);
         let manifest = source.publish(&publication)?;
         let selected = source.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
         assert_eq!(selected.len(), 1);
@@ -4378,7 +4378,7 @@ mod tests {
             }],
         };
 
-        let first = OvenStore::new(first_destination.path(), limits.clone());
+        let first = OvenStore::new(first_destination.path(), limits);
         first.publish_verified_import(&import(), selected[0].admitted_materialized_files())?;
 
         fs::remove_file(&artifact)?;
