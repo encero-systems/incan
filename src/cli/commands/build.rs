@@ -21493,7 +21493,10 @@ pub model Nested:
             .materialize_trusted_store_composed(&roots, &fixture.receipts[0].intent)
             .err()
             .ok_or("an excluded co-resident helper must still refuse without a clean admitted alternative")?;
-        assert!(error.to_string().contains("co-resident"));
+        // The refusal must name the artifact that disqualified the directory, not merely report that one exists.
+        let message = error.to_string();
+        assert!(message.contains("never selected"), "{message}");
+        assert!(message.contains("cannot isolate selected member"), "{message}");
         Ok(())
     }
 
