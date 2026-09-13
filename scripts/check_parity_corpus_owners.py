@@ -36,13 +36,43 @@ CORPUS = REPO_ROOT / "tests" / "parity_corpus_tests.rs"
 # corpus rejects a missing owner. It is never a real deferral.
 SENTINEL_OWNERS = {0}
 
+# Dispositions that borrow an issue's authority to claim something is *not yet*
+# available. Every other disposition records a decision already made.
+DEFERRING_DISPOSITIONS = {"Unsupported", "Unavailable"}
+
 
 def owning_issues() -> dict[int, int]:
-    """Return every owning issue the corpus cites, mapped to how many rows cite it."""
+    """Return each owning issue cited by a *deferral*, mapped to how many rows cite it.
+
+    Only `Unsupported` and `Unavailable` defer: they claim a capability is not yet
+    available and borrow the named issue's authority for that claim, so the claim
+    expires when the issue does. `IntentionalMigration` and `Preserved` also carry an
+    owning issue, but they record a decision that already happened -- their owner is
+    *expected* to be closed, and flagging them would report seven false positives for
+    every real one.
+    """
     text = CORPUS.read_text(encoding="utf-8")
     counts: dict[int, int] = {}
-    for match in re.finditer(r"owning_issue:\s*(\d+)", text):
-        number = int(match.group(1))
+    for match in re.finditer(r"Disposition::(\w+)\s*\{", text):
+        if match.group(1) not in DEFERRING_DISPOSITIONS:
+            continue
+        # Read only this variant's own braces, so a later row's owner is never
+        # attributed to this one.
+        tail = text[match.end() :]
+        depth = 1
+        end = 0
+        for index, character in enumerate(tail):
+            if character == "{":
+                depth += 1
+            elif character == "}":
+                depth -= 1
+                if depth == 0:
+                    end = index
+                    break
+        owner = re.search(r"owning_issue:\s*(\d+)", tail[:end])
+        if owner is None:
+            continue
+        number = int(owner.group(1))
         if number in SENTINEL_OWNERS:
             continue
         counts[number] = counts.get(number, 0) + 1
