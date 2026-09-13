@@ -1238,6 +1238,23 @@ fn select_packaged_direct_rustc_execution_plan(
     }))
 }
 
+/// Drop project extensions whose base Loaf the active toolchain does not ship, when at least one candidate's base
+/// is available.
+///
+/// When no candidate's base is available nothing is dropped: the caller then reports the ambiguity or the missing
+/// base exactly as before, rather than silently selecting nothing.
+fn retain_project_extensions_with_available_base<T>(
+    selected: &mut Vec<(T, OvenProjectExtensionPayload)>,
+    available_bases: &BTreeSet<String>,
+) {
+    if selected
+        .iter()
+        .any(|(_, payload)| available_bases.contains(&payload.base_loaf_identity))
+    {
+        selected.retain(|(_, payload)| available_bases.contains(&payload.base_loaf_identity));
+    }
+}
+
 /// Select one receipt-bound project extension and reconstitute its exact base-plus-extension execution set.
 ///
 /// The extension payload names the content address of the standard-library Loaf it was partitioned against.  A
@@ -1283,6 +1300,26 @@ fn select_receipt_project_extension_execution_plan(
             receipt.build_unit_identity
         );
         return Ok(None);
+    }
+    if selected.len() != 1 {
+        // A receipt does not name the standard-library Loaf family it was baked against, so a store that retains
+        // extensions from two installed families (a toolchain switch, #1444) offers two distinct candidates for one
+        // receipt. Only the one whose base the active toolchain still ships can execute; the other is stale, not a
+        // rival.
+        let base_identities = selected
+            .iter()
+            .map(|(_, payload)| payload.base_loaf_identity.clone())
+            .collect::<BTreeSet<_>>();
+        let mut available_bases = BTreeSet::new();
+        for base in base_identities {
+            if resolve_compiler_owned_loaf_by_identity(receipt, &base)
+                .map_err(|error| CliError::failure(error.to_string()))?
+                .is_some()
+            {
+                available_bases.insert(base);
+            }
+        }
+        retain_project_extensions_with_available_base(&mut selected, &available_bases);
     }
     if selected.len() != 1 {
         let identities = selected
@@ -15756,6 +15793,49 @@ mod tests {
     use std::fs;
 
     /// Unused macro declarations do not request a build; transitive facade requirements preserve the selected macro.
+    #[test]
+    fn a_retained_extension_from_a_family_the_toolchain_no_longer_ships_is_not_a_rival_issue1444() {
+        let plan = OvenRustcArtifactManifest {
+            schema_version: crate::oven::rustc::OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+            intent: crate::oven::OvenBuildIntent {
+                target: "fixture-target".to_string(),
+                toolchain: "rustc fixture".to_string(),
+                profile: "debug".to_string(),
+                features: Vec::new(),
+            },
+            dependency_search_paths: Vec::new(),
+            native_search_paths: Vec::new(),
+            externs: Vec::new(),
+            entrypoint_dependency_search_paths: Default::default(),
+            entrypoint_externs: BTreeMap::new(),
+            registry_leaves: Vec::new(),
+            registry_sources: Vec::new(),
+            compile_environment: BTreeMap::new(),
+            vocab_auxiliary_targets: Vec::new(),
+            supporting_artifacts: Vec::new(),
+        };
+        let extension = |base: &str| OvenProjectExtensionPayload {
+            schema_version: OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION,
+            base_loaf_identity: base.to_string(),
+            base_build_unit_identity: "sha256:unit".to_string(),
+            publisher_plan: plan.clone(),
+            complete_plan: plan.clone(),
+            registry_source_dependencies: Vec::new(),
+            dev_registry_source_dependencies: Vec::new(),
+            extension_paths: Vec::new(),
+        };
+        // Family A is still installed; family B was the previous toolchain's.
+        let mut selected = vec![("a", extension("sha256:family-a")), ("b", extension("sha256:family-b"))];
+        let available = BTreeSet::from(["sha256:family-a".to_string()]);
+        retain_project_extensions_with_available_base(&mut selected, &available);
+        assert_eq!(selected.iter().map(|(name, _)| *name).collect::<Vec<_>>(), vec!["a"]);
+
+        // Neither base ships: nothing is dropped, so the caller still reports the ambiguity honestly.
+        let mut none_available = vec![("a", extension("sha256:family-a")), ("b", extension("sha256:family-b"))];
+        retain_project_extensions_with_available_base(&mut none_available, &BTreeSet::new());
+        assert_eq!(none_available.len(), 2);
+    }
+
     #[test]
     fn an_unshipped_release_loaf_is_a_cache_miss_not_a_fault_issue1444() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
