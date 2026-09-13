@@ -13666,6 +13666,33 @@ fn restore_reused_library_package(
     Ok(true)
 }
 
+/// Return whether every compiler-shipped release Loaf a project inspection authority names is provided by the
+/// active toolchain.
+///
+/// Only availability is decided here. A Loaf that exists but disagrees with the recorded build unit or intent is
+/// left for [`super::lock::prepare_project_registry_source_authorities`] to reject, so a switched toolchain family
+/// reads as a cache miss while a tampered authority still fails closed.
+fn project_authority_release_loafs_available(authority: &OvenLoadedProjectInspectionAuthority) -> CliResult<bool> {
+    release_loaf_constituents_available(&authority.payload.constituents)
+}
+
+/// Decide [`project_authority_release_loafs_available`] over the bare constituent list, so the rule is testable
+/// without a loaded authority.
+fn release_loaf_constituents_available(constituents: &[OvenProjectInspectionConstituent]) -> CliResult<bool> {
+    for constituent in constituents {
+        if let OvenProjectInspectionConstituent::ReleaseLoaf {
+            loaf_identity, receipt, ..
+        } = constituent
+            && resolve_compiler_owned_loaf_by_identity(receipt, loaf_identity)
+                .map_err(|error| CliError::failure(error.to_string()))?
+                .is_none()
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Return a previously baked project report only when every discovered target/profile remains exact.
 ///
 /// Any stale, absent, or malformed evidence returns a cache miss so the explicit baker can repair it. Selection
@@ -13787,6 +13814,12 @@ fn try_reuse_baked_project(
         INCAN_VERSION,
     )
     .map_err(|error| CliError::failure(error.to_string()))?;
+    // A cache candidate whose release Loaf the active toolchain no longer ships is a miss, not a fault: the
+    // installed family changed underneath a still-valid local receipt (#1444), and an explicit bake exists to
+    // refresh exactly that. Corrupt or mismatched authority still fails below, where the candidate is validated.
+    if !project_authority_release_loafs_available(&authority)? {
+        return Ok(None);
+    }
     let _validated_authority = super::lock::prepare_project_registry_source_authorities(authority)?;
 
     let mut generated_sources = BTreeMap::new();
@@ -15723,6 +15756,33 @@ mod tests {
     use std::fs;
 
     /// Unused macro declarations do not request a build; transitive facade requirements preserve the selected macro.
+    #[test]
+    fn an_unshipped_release_loaf_is_a_cache_miss_not_a_fault_issue1444() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        crate::oven::store::tests::write_project(project.path())?;
+        let receipt = crate::oven::store::tests::request(project.path(), "owner", b"payload")?.receipt;
+        let unshipped = OvenProjectInspectionConstituent::ReleaseLoaf {
+            loaf_identity: format!("sha256:{}", "0".repeat(64)),
+            build_unit_identity: receipt.build_unit_identity.clone(),
+            receipt: receipt.clone(),
+        };
+        assert!(
+            !release_loaf_constituents_available(std::slice::from_ref(&unshipped))?,
+            "a release Loaf the active toolchain does not provide is a miss"
+        );
+        let stored_only = OvenProjectInspectionConstituent::Stored {
+            identity: "sha256:stored".to_string(),
+            artifact_kind: OvenArtifactKind::ProjectOutput,
+            receipt,
+            base_loaf_identity: None,
+        };
+        assert!(
+            release_loaf_constituents_available(std::slice::from_ref(&stored_only))?,
+            "an authority without release Loafs has nothing to be unavailable"
+        );
+        Ok(())
+    }
+
     #[test]
     fn a_closure_refusal_names_the_package_the_pinning_artifact_and_never_offers_cargo() {
         let pinned = provider_registry_conflict_reason("tokio", Some(Path::new("/store/entries/x/artifacts")));
