@@ -1691,6 +1691,7 @@ pub fn prepare_direct_rustc_plan(
         platform_filtered_metadata.as_ref(),
     )?;
     supporting_artifacts.extend(transitive_registry_source_artifacts);
+    deduplicate_identical_supporting_artifacts(&mut supporting_artifacts);
     if !registry_sources.is_empty() {
         let registry_lock_path = staging.join(OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH);
         if let Some(parent) = registry_lock_path.parent() {
@@ -7915,6 +7916,21 @@ pub(crate) fn rustc_commit_hash(rustc: &Path) -> Option<String> {
         .map(|hash| hash.trim().to_string())
 }
 
+/// Collapse supporting artifacts that name the same path with the same bytes, leaving a genuine conflict intact.
+///
+/// Two catalogs stage registry sources into one manifest and a package can be in both: the leaf catalog covers what
+/// the plan links against, and the source catalog covers the transitive closure when sealing against a release
+/// base. Each contributes that package's whole staged tree, so every file in it is named twice, and the publisher
+/// refuses its own manifest with "declares one relative artifact path more than once" -- naming `.cargo-ok`, which
+/// is merely the first file in the directory and says nothing about registry catalogs.
+///
+/// The same bytes named twice is one artifact. Different bytes at one path is still a conflict, and is deliberately
+/// left for `validate_shape` to report rather than silently resolved here.
+fn deduplicate_identical_supporting_artifacts(artifacts: &mut Vec<OvenRustcSupportingArtifact>) {
+    artifacts.sort_by(|left, right| (&left.relative_path, &left.digest).cmp(&(&right.relative_path, &right.digest)));
+    artifacts.dedup_by(|left, right| left.relative_path == right.relative_path && left.digest == right.digest);
+}
+
 /// Copy one registry package into private baker state without Cargo's mutable package-local target cache.
 fn stage_registry_source_directory(
     staging: &Path,
@@ -9192,6 +9208,31 @@ fn round_physical(bytes: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
+
+    /// Two registry catalogs naming the same staged file agree; two naming different bytes do not.
+    #[test]
+    fn identical_supporting_artifacts_collapse_and_a_real_conflict_survives() {
+        let artifact = |path: &str, digest: &str| super::OvenRustcSupportingArtifact {
+            relative_path: path.to_string(),
+            digest: digest.to_string(),
+        };
+        let mut same = vec![
+            artifact("registry-sources/serde/.cargo-ok", "sha256:ok"),
+            artifact("registry-sources/serde/src/lib.rs", "sha256:lib"),
+            artifact("registry-sources/serde/.cargo-ok", "sha256:ok"),
+        ];
+        super::deduplicate_identical_supporting_artifacts(&mut same);
+        assert_eq!(same.len(), 2, "one file named twice is one artifact: {same:?}");
+
+        // A path carrying two different digests is a conflict the publisher must still refuse, so both survive
+        // here and `validate_shape` reports it.
+        let mut conflicting = vec![
+            artifact("registry-sources/serde/src/lib.rs", "sha256:lib"),
+            artifact("registry-sources/serde/src/lib.rs", "sha256:other"),
+        ];
+        super::deduplicate_identical_supporting_artifacts(&mut conflicting);
+        assert_eq!(conflicting.len(), 2);
+    }
 
     /// One registry unit resolved twice contributes its staged tree once, keeping every feature either asked for.
     ///
