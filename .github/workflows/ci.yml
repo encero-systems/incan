@@ -662,10 +662,24 @@ jobs:
           test -d target/oven-alpha-release-toolchain/share/incan/oven/loafs
           test -d target/oven-compiler-suite-store
           test -s target/incan_test_sdk_provider_path
+      # Weight this run's split by the durations the previous run measured (#1065). A partition only measures the
+      # roots it ran, so every partition's record is restored and the loader merges them; a root with no measurement
+      # falls back to the size proxy, which is what every run did before this existed.
+      #
+      # Restore-only: the merge and save happen once, in `oven-timing-record`, because four parallel jobs cannot
+      # share one cache key. A cache miss on a new branch is not a failure -- it is the old behaviour.
+      - name: Restore measured root durations
+        uses: actions/cache/restore@v4
+        with:
+          path: target/oven-timing-record
+          key: oven-timing-record-v1-${{ runner.os }}-${{ github.ref_name }}
+          restore-keys: |
+            oven-timing-record-v1-${{ runner.os }}-
       - name: Run receipt-bound Oven partition
         env:
           INCAN_TEST_COMMAND_TIMINGS: '1'
           INCAN_TEST_OVEN_COMPILER_SUITE_REPORT: target/oven-pr-linux-partition-${{ matrix.partition }}.json
+          INCAN_OVEN_SUITE_TIMING_RECORD: target/oven-timing-record
         run: >-
           CARGO_NET_OFFLINE=true
           INCAN_TEST_COMPILER_ALREADY_BUILT=1
@@ -675,8 +689,8 @@ jobs:
           make -s test-oven-partition
           INCAN_TEST_OVEN_PARTITION_INDEX=${{ matrix.partition }}
           INCAN_TEST_OVEN_PARTITION_COUNT=4
-      # Every partition retains measured root/case durations for future replay weighting (#1065). Consumption is
-      # separate work; publishing these records does not mean this run's partitioner already uses them.
+      # Every partition retains measured root/case durations, which the next run's partitioner weights by (#1065).
+      # `oven-timing-record` below merges the four into the cache this job restores.
       - name: Upload Oven partition report
         if: always()
         uses: actions/upload-artifact@v6
@@ -704,6 +718,44 @@ jobs:
           path: target/oven-compiler-suite-output.*/shards/**/*.libtest-output.txt
           if-no-files-found: warn
           retention-days: 7
+
+  # Merge the four partition records into the one cache the next run's partitioner weights by (#1065).
+  #
+  # This is a separate job because four parallel partitions cannot share a cache key, and because the merge must
+  # happen whether or not the suite was green: a failing run still measured how long its roots took, and throwing
+  # that away would keep the next split guessing.
+  oven-timing-record:
+    name: Oven measured root durations
+    runs-on: ubuntu-latest
+    needs: oven-linux-replay
+    if: always() && needs.oven-linux-replay.result != 'skipped'
+    steps:
+      - name: Collect every partition report
+        uses: actions/download-artifact@v7
+        with:
+          pattern: oven-pr-linux-partition-*
+          merge-multiple: true
+          path: target/oven-timing-incoming
+      # Keep only the per-partition suite reports. The wall-time sidecars and transcript bundles share the prefix
+      # and carry no per-root durations, so admitting them would only add files for the loader to skip.
+      - name: Keep the suite reports
+        run: |
+          set -eu
+          mkdir -p target/oven-timing-record
+          found=0
+          for report in target/oven-timing-incoming/oven-pr-linux-partition-*.json; do
+            case "$report" in *.wall-time.json) continue ;; esac
+            [ -f "$report" ] || continue
+            cp "$report" target/oven-timing-record/
+            found=$((found + 1))
+          done
+          echo "retained $found partition report(s)"
+          [ "$found" -gt 0 ] || echo "no partition reports; the next run falls back to the source-size proxy" >&2
+      - name: Save measured root durations
+        uses: actions/cache/save@v4
+        with:
+          path: target/oven-timing-record
+          key: oven-timing-record-v1-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}
 
   oven-release-smoke:
     name: Oven release Loaf guard
