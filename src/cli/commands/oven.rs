@@ -1675,11 +1675,16 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
             suite.schema_version
         )));
     }
+    // No measured record is loaded yet, so this is `source_bytes` weighting exactly as before. The parameter is what
+    // #1065 was actually missing: the durations are already produced and already written into partition reports, and
+    // nothing fed them back in. Loading the record is the next increment and needs no further change here.
+    let measured_root_millis = BTreeMap::new();
     let selected_shard_references = compiler_suite_selected_shard_references(
         &suite.shard_references,
         &options.targets,
         options.partition_index,
         options.partition_count,
+        &measured_root_millis,
     )?;
     let (selected_shard_references, exact_test_names) = compiler_suite_exact_test_selection(
         &options.exact_names,
@@ -4102,11 +4107,56 @@ struct PreparedCompilerSuiteChild<'a> {
 /// scheduling signal; it never consults prior timings or persists a mutable performance profile. This keeps focused
 /// diagnosis representative of the same direct-Rustc roots that a complete Oven run will execute, while making an
 /// unknown or ambiguous source path fail closed.
+/// Build the per-root weight the partitioner bin-packs on, preferring measured time over source size.
+///
+/// The partitioner has always weighted by `source_bytes`, not because size predicts cost but because size was the
+/// only number it was given. It does not predict: a small root whose single case drives a full Oven bake costs far
+/// more than a large root that only typechecks, and the lane spread of roughly 12, 17, 42 and 42 minutes across four
+/// shards on run 34737188592 is what that mispredict costs on every run, since the longest shard sets the wall clock.
+///
+/// Measured milliseconds are used when they exist. A root without a measurement takes the mean measured duration
+/// rather than an extrapolation from its size, because the premise of this change is that size does not predict
+/// time: deriving a milliseconds-per-byte rate re-introduces the mispredict through the back door, and does so most
+/// severely where it is most wrong. Measured on a three-root fixture, a rate taken from one small expensive root
+/// valued a large cheap root at two hundred times its real cost. "Not measured yet, assume typical" is the honest
+/// estimate.
+///
+/// With no measurements at all the weight is `source_bytes` exactly as before, so a first run on a fresh checkout is
+/// unchanged.
+fn compiler_suite_root_weigher<'a>(
+    references: &'a [OvenCompilerTestSuiteShardReference],
+    measured_root_millis: &'a BTreeMap<String, u64>,
+) -> CliResult<impl Fn(&OvenCompilerTestSuiteShardReference) -> u64 + 'a> {
+    let mut measured_millis = 0_u64;
+    let mut measured_roots = 0_u64;
+    for reference in references {
+        if let Some(millis) = measured_root_millis.get(&reference.target.source_relative_path) {
+            measured_millis = measured_millis.saturating_add(*millis);
+            measured_roots += 1;
+        }
+    }
+    let typical_millis = (measured_roots > 0).then(|| measured_millis / measured_roots);
+    Ok(move |reference: &OvenCompilerTestSuiteShardReference| {
+        measured_root_millis
+            .get(&reference.target.source_relative_path)
+            .copied()
+            .unwrap_or_else(|| typical_millis.unwrap_or(reference.source_bytes))
+    })
+}
+
+/// Select the receipt-bound roots this invocation runs: an explicit `--target` list, one partition of a bin-packed
+/// split, or everything.
+///
+/// Partitioning bin-packs greedily over **whole roots**, because a root is the indivisible unit the suite executes.
+/// `measured_root_millis` carries any per-root durations a previous run recorded; see
+/// [`compiler_suite_root_weigher`] for how a root without one is valued. Passing an empty map reproduces the
+/// original `source_bytes` weighting exactly.
 fn compiler_suite_selected_shard_references(
     references: &[OvenCompilerTestSuiteShardReference],
     requested_targets: &[String],
     partition_index: Option<usize>,
     partition_count: Option<usize>,
+    measured_root_millis: &BTreeMap<String, u64>,
 ) -> CliResult<Vec<OvenCompilerTestSuiteShardReference>> {
     let partition = match (partition_index, partition_count) {
         (None, None) => None,
@@ -4140,11 +4190,11 @@ fn compiler_suite_selected_shard_references(
                 references.len()
             )));
         }
+        let weight_of = compiler_suite_root_weigher(references, measured_root_millis)?;
         let mut ordered = references.to_vec();
         ordered.sort_by(|left, right| {
-            right
-                .source_bytes
-                .cmp(&left.source_bytes)
+            weight_of(right)
+                .cmp(&weight_of(left))
                 .then_with(|| left.target.source_relative_path.cmp(&right.target.source_relative_path))
                 .then_with(|| left.identity.cmp(&right.identity))
         });
@@ -4164,7 +4214,7 @@ fn compiler_suite_selected_shard_references(
                 .map(|(partition_index, _)| partition_index)
                 .ok_or_else(|| CliError::failure("Oven compiler-suite has no partition capacity".to_string()))?;
             partition_weights[selected_partition] = partition_weights[selected_partition]
-                .checked_add(reference.source_bytes)
+                .checked_add(weight_of(&reference))
                 .ok_or_else(|| {
                     CliError::failure("Oven compiler-suite partition source footprint overflowed".to_string())
                 })?;
@@ -6713,21 +6763,36 @@ mod tests {
         ];
 
         assert_eq!(
-            compiler_suite_selected_shard_references(&references, &["tests/second.rs".to_string()], None, None,)?
-                .into_iter()
-                .map(|reference| reference.identity)
-                .collect::<Vec<_>>(),
+            compiler_suite_selected_shard_references(
+                &references,
+                &["tests/second.rs".to_string()],
+                None,
+                None,
+                &BTreeMap::new()
+            )?
+            .into_iter()
+            .map(|reference| reference.identity)
+            .collect::<Vec<_>>(),
             vec!["sha256:second"]
         );
         assert_eq!(
-            compiler_suite_selected_shard_references(&references, &[], None, None)?,
+            compiler_suite_selected_shard_references(&references, &[], None, None, &BTreeMap::new())?,
             references
         );
         assert!(
-            compiler_suite_selected_shard_references(&references, &["tests/missing.rs".to_string()], None, None,)
+            compiler_suite_selected_shard_references(
+                &references,
+                &["tests/missing.rs".to_string()],
+                None,
+                None,
+                &BTreeMap::new()
+            )
+            .is_err()
+        );
+        assert!(
+            compiler_suite_selected_shard_references(&references, &[" ".to_string()], None, None, &BTreeMap::new())
                 .is_err()
         );
-        assert!(compiler_suite_selected_shard_references(&references, &[" ".to_string()], None, None,).is_err());
         Ok(())
     }
 
@@ -6774,12 +6839,22 @@ mod tests {
         references.reverse();
 
         let selected = (0..4)
-            .map(|index| compiler_suite_selected_shard_references(&references, &[], Some(index), Some(4)))
+            .map(|index| {
+                compiler_suite_selected_shard_references(&references, &[], Some(index), Some(4), &BTreeMap::new())
+            })
             .collect::<CliResult<Vec<_>>>()?;
         let mut reordered_references = references.clone();
         reordered_references.reverse();
         let selected_from_reordered = (0..4)
-            .map(|index| compiler_suite_selected_shard_references(&reordered_references, &[], Some(index), Some(4)))
+            .map(|index| {
+                compiler_suite_selected_shard_references(
+                    &reordered_references,
+                    &[],
+                    Some(index),
+                    Some(4),
+                    &BTreeMap::new(),
+                )
+            })
             .collect::<CliResult<Vec<_>>>()?;
         assert_eq!(selected, selected_from_reordered);
         let largest_partition = selected
@@ -6809,16 +6884,120 @@ mod tests {
             shared_identities,
             BTreeSet::from(["sha256:shared_one".to_string(), "sha256:shared_two".to_string()])
         );
-        assert!(compiler_suite_selected_shard_references(&references, &[], Some(0), Some(0)).is_err());
-        assert!(compiler_suite_selected_shard_references(&references, &[], Some(4), Some(4)).is_err());
-        assert!(compiler_suite_selected_shard_references(&references, &[], Some(0), None).is_err());
         assert!(
-            compiler_suite_selected_shard_references(&references, &["tests/largest.rs".to_string()], Some(0), Some(4),)
-                .is_err()
+            compiler_suite_selected_shard_references(&references, &[], Some(0), Some(0), &BTreeMap::new()).is_err()
+        );
+        assert!(
+            compiler_suite_selected_shard_references(&references, &[], Some(4), Some(4), &BTreeMap::new()).is_err()
+        );
+        assert!(compiler_suite_selected_shard_references(&references, &[], Some(0), None, &BTreeMap::new()).is_err());
+        assert!(
+            compiler_suite_selected_shard_references(
+                &references,
+                &["tests/largest.rs".to_string()],
+                Some(0),
+                Some(4),
+                &BTreeMap::new()
+            )
+            .is_err()
         );
         let mut missing_footprint = references.clone();
         missing_footprint[0].source_bytes = 0;
-        assert!(compiler_suite_selected_shard_references(&missing_footprint, &[], Some(0), Some(4)).is_err());
+        assert!(
+            compiler_suite_selected_shard_references(&missing_footprint, &[], Some(0), Some(4), &BTreeMap::new())
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn partitioning_weights_a_measured_root_by_its_time_not_its_size() -> Result<(), Box<dyn std::error::Error>> {
+        // Three roots over two shards, chosen so byte weighting and time weighting disagree about the grouping.
+        // Two roots over two shards always separate whatever the weight is, so that shape would prove nothing.
+        //
+        //   bulky   1000 bytes /  1000 ms  -- large and cheap, the typecheck-only root
+        //   baking   100 bytes / 20000 ms  -- small and expensive, one case driving a full Oven bake
+        //   brisk    100 bytes /  1000 ms
+        //
+        // By bytes: shard 0 = {bulky},  shard 1 = {baking, brisk}
+        // By time:  shard 0 = {baking}, shard 1 = {bulky, brisk}
+        let mut target = OvenCompilerTestSuiteTarget {
+            package_name: "fixture".to_string(),
+            target_name: "root".to_string(),
+            target_kind: "test".to_string(),
+            runner: "rustc-test".to_string(),
+            source_relative_path: "tests/bulky.rs".to_string(),
+            source_evidence_key: "compiler-suite-source:tests/bulky.rs".to_string(),
+            crate_name: "bulky".to_string(),
+            edition: "2024".to_string(),
+            features: Vec::new(),
+            compile_environment: BTreeMap::new(),
+            binary_dependencies: Vec::new(),
+            workspace_library_dependencies: Vec::new(),
+            externs: Vec::new(),
+        };
+        let references = [
+            ("bulky", "tests/bulky.rs", 1_000_u64),
+            ("baking", "tests/baking.rs", 100_u64),
+            ("brisk", "tests/brisk.rs", 100_u64),
+        ]
+        .into_iter()
+        .map(|(name, source_relative_path, source_bytes)| {
+            target.target_name = name.to_string();
+            target.source_relative_path = source_relative_path.to_string();
+            target.source_evidence_key = format!("compiler-suite-source:{source_relative_path}");
+            target.crate_name = name.to_string();
+            OvenCompilerTestSuiteShardReference {
+                identity: format!("sha256:{name}"),
+                target: target.key(),
+                source_bytes,
+            }
+        })
+        .collect::<Vec<_>>();
+        let paths_of = |selected: &[OvenCompilerTestSuiteShardReference]| {
+            selected
+                .iter()
+                .map(|reference| reference.target.source_relative_path.clone())
+                .collect::<BTreeSet<_>>()
+        };
+
+        // Unmeasured: the existing `source_bytes` behaviour, unchanged.
+        let byte_shard_zero =
+            compiler_suite_selected_shard_references(&references, &[], Some(0), Some(2), &BTreeMap::new())?;
+        assert_eq!(
+            paths_of(&byte_shard_zero),
+            BTreeSet::from(["tests/bulky.rs".to_string()])
+        );
+
+        // Measured: the expensive small root gets a shard to itself instead of sharing one with another case.
+        let measured = BTreeMap::from([
+            ("tests/bulky.rs".to_string(), 1_000_u64),
+            ("tests/baking.rs".to_string(), 20_000_u64),
+            ("tests/brisk.rs".to_string(), 1_000_u64),
+        ]);
+        let timed_shard_zero = compiler_suite_selected_shard_references(&references, &[], Some(0), Some(2), &measured)?;
+        let timed_shard_one = compiler_suite_selected_shard_references(&references, &[], Some(1), Some(2), &measured)?;
+        assert_eq!(
+            paths_of(&timed_shard_zero),
+            BTreeSet::from(["tests/baking.rs".to_string()])
+        );
+        assert_eq!(
+            paths_of(&timed_shard_one),
+            BTreeSet::from(["tests/bulky.rs".to_string(), "tests/brisk.rs".to_string()])
+        );
+
+        // A root with no measurement takes the mean measured duration, not an extrapolation from its size. A
+        // per-byte rate derived from one small expensive root valued `bulky` at two hundred times its real cost,
+        // which is the mispredict this change exists to remove.
+        let partial = BTreeMap::from([("tests/baking.rs".to_string(), 20_000_u64)]);
+        let partial_shard_zero =
+            compiler_suite_selected_shard_references(&references, &[], Some(0), Some(2), &partial)?;
+        let partial_shard_one = compiler_suite_selected_shard_references(&references, &[], Some(1), Some(2), &partial)?;
+        assert_eq!(partial_shard_zero.len() + partial_shard_one.len(), 3);
+        assert!(
+            !partial_shard_zero.is_empty() && !partial_shard_one.is_empty(),
+            "an unmeasured root must not leave a shard empty"
+        );
         Ok(())
     }
 
@@ -6889,8 +7068,13 @@ mod tests {
         let rustc_test = exact_selection_reference("rustc-test");
         let rustdoc_test = exact_selection_reference("rustdoc-test");
         let references = vec![rustdoc_test.clone(), rustc_test.clone()];
-        let path_selected =
-            compiler_suite_selected_shard_references(&references, &["src/lib.rs".to_string()], None, None)?;
+        let path_selected = compiler_suite_selected_shard_references(
+            &references,
+            &["src/lib.rs".to_string()],
+            None,
+            None,
+            &BTreeMap::new(),
+        )?;
         assert_eq!(path_selected, references);
         assert_eq!(
             compiler_suite_exact_test_selection(&[], path_selected.clone(), false)?,
