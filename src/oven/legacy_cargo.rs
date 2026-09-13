@@ -37,10 +37,10 @@ use super::rustc::{
 use super::store::{
     OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreError,
 };
+use super::{DEFAULT_OVEN_PUBLISHER_STAGING_FLOOR_BYTES, digest_bytes, digest_source_tree};
 use super::{
     OVEN_COMPILER_TEST_PROFILE, OvenBuildIntent, OvenCompatibilityKind, OvenReceipt, compiler_suite_source_evidence_key,
 };
-use super::{digest_bytes, digest_source_tree};
 use crate::version::{INCAN_VERSION, SDK_PROVIDER_CODEGEN_REVISION};
 
 /// Wire format retained as an immutable supporting artifact alongside every `legacy_cargo`-prepared closure.
@@ -456,6 +456,10 @@ pub struct OvenLegacyCargoPrepareResult {
     pub registry_leaves: Vec<OvenRustcRegistryLeaf>,
     /// Conservative transient publisher allocation high-water mark; this directory is removed before success returns.
     pub transient_reservation_bytes: u64,
+    /// Inactive store entries evicted, oldest first, so this bake could reserve its staging floor (#1230). Empty when
+    /// the store already had room; never names an entry that was under a live lease.
+    #[serde(default)]
+    pub reclaimed_store_entries: Vec<String>,
 }
 
 /// One workspace test root that Oven must execute through a caller-owned Rustc or Rustdoc shard.
@@ -1418,6 +1422,7 @@ fn reused_direct_rustc_plan_result(plan_identity: String) -> OvenLegacyCargoPrep
         cargo_lock_digest: "not-run-existing-plan".to_string(),
         registry_leaves: Vec::new(),
         transient_reservation_bytes: 0,
+        reclaimed_store_entries: Vec::new(),
     }
 }
 
@@ -1566,12 +1571,13 @@ pub fn prepare_direct_rustc_plan(
     reclaim_stale_publisher_staging(&staging_parent)?;
     let publisher_reservation = request
         .store
-        .reserve_legacy_cargo_publisher_capacity(&request.domain)
+        .reserve_legacy_cargo_publisher_capacity(&request.domain, DEFAULT_OVEN_PUBLISHER_STAGING_FLOOR_BYTES)
         .map_err(OvenLegacyCargoError::Store)?;
     let staging = create_publisher_staging(&staging_parent)?;
     let cleanup = PublisherStagingCleanup { path: staging.clone() };
     let target = staging.join("target");
     let transient_limit = publisher_reservation.transient_limit_bytes;
+    let reclaimed_store_entries = publisher_reservation.prune_report.removed_entries;
     let cargo_outputs = run_legacy_cargo(
         &request.cargo,
         &request.rustc,
@@ -1922,6 +1928,7 @@ pub fn prepare_direct_rustc_plan(
         cargo_lock_digest: digest_bytes(&cargo_lock_bytes),
         registry_leaves,
         transient_reservation_bytes,
+        reclaimed_store_entries,
     })
 }
 
@@ -2055,9 +2062,10 @@ pub fn prepare_compiler_test_suite(
     let staging_parent = request.store.root().join("legacy-cargo-staging");
     let publisher_lock = acquire_publisher_lock(&staging_parent)?;
     reclaim_stale_publisher_staging(&staging_parent)?;
+    // The compiler suite owns its store and its 16 GiB policy; nothing of another project's is worth evicting there.
     let publisher_reservation = request
         .store
-        .reserve_legacy_cargo_publisher_capacity(&request.domain)
+        .reserve_legacy_cargo_publisher_capacity(&request.domain, 0)
         .map_err(OvenLegacyCargoError::Store)?;
     let staging = create_publisher_staging(&staging_parent)?;
     let cleanup = PublisherStagingCleanup { path: staging.clone() };

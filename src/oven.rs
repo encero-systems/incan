@@ -111,16 +111,27 @@ pub const DEFAULT_RECEIPT_RELATIVE_PATH: &str = ".incan/oven/receipt.json";
 /// Default aggregate physical allocation retained by an everyday Alpha Oven store.
 ///
 /// A project bake retains independent debug and release plans. A measured IncQL/DataFusion provider retains about
-/// 4.23 GiB while its consumer's compatibility publisher transiently needs about 3.80 GiB. Nine GiB admits that
-/// ordinary provider-to-consumer hand-off with practical headroom while keeping the publisher's private target
-/// bounded.
-pub const DEFAULT_OVEN_MAX_PHYSICAL_BYTES: u64 = 9 * 1024 * 1024 * 1024;
+/// 4.23 GiB while its consumer's compatibility publisher transiently needs about 3.80 GiB, and a Bevy-scale
+/// debug-plus-release pair retains about 3 GiB. Twelve GiB lets two such projects share one home and still leaves
+/// the publisher's staging floor free, so switching between them reuses rather than re-bakes (#1230); the
+/// publisher's private target stays bounded by that floor and the store prunes to this cap, so it is a ceiling on
+/// what is kept, never a reservation.
+pub const DEFAULT_OVEN_MAX_PHYSICAL_BYTES: u64 = 12 * 1024 * 1024 * 1024;
 /// Default physical allocation cap for one compatibility domain.
 ///
-/// A checked IncQL/DataFusion debug plan retains 1.21 GiB while its following release publisher needs a bounded
-/// transient closure. Six GiB covers that serialized two-profile hand-off with practical headroom; callers may
-/// still choose a stricter explicit limit.
-pub const DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES: u64 = 6 * 1024 * 1024 * 1024;
+/// Every project baked by one Incan release shares one compatibility domain, so for the ordinary single-release home
+/// this cap is the aggregate cap under another name; it equals the aggregate so it cannot starve a second project of
+/// staging before the aggregate would. A superseded release's entries are reclaimed at reservation time, which is
+/// what keeps an upgraded home from hoarding; callers may still choose a stricter explicit limit.
+pub const DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES: u64 = 12 * 1024 * 1024 * 1024;
+/// Transient staging the explicit compatibility baker reserves before it runs, reclaiming inactive store entries
+/// oldest-first to reach it.
+///
+/// The consumer of a measured IncQL/DataFusion provider stages about 3.80 GiB and a bare-Bevy bake about 3.2 GB
+/// before publication; four GiB covers both with headroom. A bake that needs less simply leaves the rest unused, and
+/// one that needs more is still bounded by the same monitor as before, so this floor only decides how much of another
+/// project's inactive closure may be evicted to let this one finish.
+pub const DEFAULT_OVEN_PUBLISHER_STAGING_FLOOR_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// Default logical artifact-byte cap for one compatibility domain.
 ///
 /// One explicit bake of a project whose closure is not loadable as independently compiled parts retains two

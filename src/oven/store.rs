@@ -1339,9 +1339,16 @@ impl OvenStore {
     /// Instead, inactive entries are reclaimed as before, active entries stay intact, and Cargo's staging monitor is
     /// capped at the exact remaining aggregate/domain capacity. The publisher lock excludes another staging writer
     /// while that cap is in force, so this remains a hard physical bound rather than post-hoc accounting.
+    ///
+    /// `staging_floor_bytes` is the transient capacity the caller expects the bake to need. When what remains after
+    /// retention is smaller than that, inactive entries are reclaimed oldest-first until the floor fits, so a home
+    /// holding one large project's closure does not make the next project's bake fail on staging it could have had
+    /// (#1230). Entries under a live lease are never candidates; a reservation is refused only when they alone leave
+    /// no staging at all. A floor of zero keeps every entry that fits retention policy.
     pub(crate) fn reserve_legacy_cargo_publisher_capacity(
         &self,
         domain: &str,
+        staging_floor_bytes: u64,
     ) -> Result<OvenLegacyCargoPublisherReservation, OvenStoreError> {
         if domain.trim().is_empty() {
             return Err(OvenStoreError::InvalidInput {
@@ -1367,16 +1374,14 @@ impl OvenStore {
         // below is where the actual pending closure is admitted and any necessary inactive reclamation occurs.
         // The staging monitor still receives only the remaining aggregate/domain allowance, so this preserves the
         // hard transient bound without turning each explicit bake into a cache flush.
-        let report = self.prune_to_limits(None, 0, 0, true)?;
-        let entries = self.collect_entries_for_admission()?;
-        let retained_physical_bytes = entries.iter().map(|entry| entry.physical_bytes).sum::<u64>();
-        let (_, retained_domain_physical_bytes) = domain_totals(&entries, domain);
-        let aggregate_remaining = self.limits.max_physical_bytes.saturating_sub(retained_physical_bytes);
-        let domain_remaining = self
-            .limits
-            .max_domain_physical_bytes
-            .saturating_sub(retained_domain_physical_bytes);
-        let transient_limit_bytes = aggregate_remaining.min(domain_remaining);
+        let mut report = self.prune_to_limits(None, 0, 0, true)?;
+        if self.remaining_publisher_capacity(domain)? < staging_floor_bytes {
+            // The retained closure of some other project is worth less than this bake finishing: reclaim what is
+            // inactive, oldest first, until the floor fits or only live leases are left.
+            let reclaimed = self.prune_to_limits(Some(domain), 0, staging_floor_bytes, true)?;
+            report = merge_prune_reports(report, reclaimed);
+        }
+        let transient_limit_bytes = self.remaining_publisher_capacity(domain)?;
         if transient_limit_bytes == 0 {
             return Err(OvenStoreError::CapacityBlocked {
                 domain: domain.to_string(),
@@ -1390,6 +1395,20 @@ impl OvenStore {
             prune_report: report,
             transient_limit_bytes,
         })
+    }
+
+    /// Measure the transient capacity a publisher may stage right now: the smaller of the aggregate and domain
+    /// allowances after every retained entry is counted.
+    fn remaining_publisher_capacity(&self, domain: &str) -> Result<u64, OvenStoreError> {
+        let entries = self.collect_entries_for_admission()?;
+        let retained_physical_bytes = entries.iter().map(|entry| entry.physical_bytes).sum::<u64>();
+        let (_, retained_domain_physical_bytes) = domain_totals(&entries, domain);
+        let aggregate_remaining = self.limits.max_physical_bytes.saturating_sub(retained_physical_bytes);
+        let domain_remaining = self
+            .limits
+            .max_domain_physical_bytes
+            .saturating_sub(retained_domain_physical_bytes);
+        Ok(aggregate_remaining.min(domain_remaining))
     }
 
     /// Refuse the named publisher's final hand-off when its live private staging plus every new immutable file would
@@ -5055,6 +5074,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// A reservation with no floor keeps every entry, leased or not, and caps staging at what remains.
     #[test]
     fn legacy_publisher_reservation_preserves_active_leases_and_caps_staging() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -5065,7 +5085,7 @@ pub(crate) mod tests {
         let first = store.publish(&request(project.path(), "engine-one", b"first publisher entry")?)?;
         let (_entry, lease) = store.select(&first.identity)?;
 
-        let active_reservation = store.reserve_legacy_cargo_publisher_capacity("engine")?;
+        let active_reservation = store.reserve_legacy_cargo_publisher_capacity("engine", 0)?;
         assert_eq!(store.inspect()?.entries.len(), 1);
         assert!(active_reservation.prune_report.removed_entries.is_empty());
         assert!(
@@ -5074,7 +5094,7 @@ pub(crate) mod tests {
         );
 
         drop(lease);
-        let inactive_reservation = store.reserve_legacy_cargo_publisher_capacity("engine")?;
+        let inactive_reservation = store.reserve_legacy_cargo_publisher_capacity("engine", 0)?;
         assert!(inactive_reservation.prune_report.removed_entries.is_empty());
         assert!(
             inactive_reservation.transient_limit_bytes < store.limits().max_physical_bytes,
@@ -5084,6 +5104,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// When live leases alone leave no staging, the refusal names the inspect-then-prune recovery path.
     #[test]
     fn legacy_publisher_capacity_failure_names_the_safe_prune_recovery_path() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -5100,7 +5121,7 @@ pub(crate) mod tests {
         let (_entry, lease) = bounded.select(&first.identity)?;
 
         let error = bounded
-            .reserve_legacy_cargo_publisher_capacity("engine")
+            .reserve_legacy_cargo_publisher_capacity("engine", 0)
             .err()
             .ok_or("a fully retained active entry must block publisher staging")?;
 
@@ -5110,6 +5131,53 @@ pub(crate) mod tests {
                 .to_string()
                 .contains("incan oven store prune --max-physical-bytes")
         );
+        drop(lease);
+        Ok(())
+    }
+
+    /// A staging floor evicts only inactive entries, oldest first, only as far as needed, and never a live lease.
+    #[test]
+    fn a_staging_floor_reclaims_inactive_entries_oldest_first_and_never_a_live_lease_issue1230()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let older = store.publish(&request(project.path(), "engine-older", b"older inactive closure")?)?;
+        let held = store.publish(&request(project.path(), "engine-held", b"live leased closure")?)?;
+        let newer = store.publish(&request(project.path(), "engine-newer", b"newer inactive closure")?)?;
+        let (_entry, lease) = store.select(&held.identity)?;
+        let physical_bytes = store.inspect()?.physical_bytes;
+        let remaining = store.limits().max_physical_bytes.saturating_sub(physical_bytes);
+
+        // A floor the store already satisfies reclaims nothing.
+        let untouched = store.reserve_legacy_cargo_publisher_capacity("engine", remaining)?;
+        assert!(untouched.prune_report.removed_entries.is_empty());
+        assert_eq!(store.inspect()?.entries.len(), 3);
+
+        // A floor one byte above what remains evicts the oldest inactive entry and nothing else.
+        let reclaimed = store.reserve_legacy_cargo_publisher_capacity("engine", remaining + 1)?;
+        assert_eq!(reclaimed.prune_report.removed_entries, vec![older.identity.clone()]);
+        assert!(reclaimed.transient_limit_bytes > remaining);
+        let retained = store.inspect()?;
+        assert_eq!(retained.entries.len(), 2);
+        assert!(
+            retained
+                .entries
+                .iter()
+                .all(|entry| entry.manifest.identity != older.identity)
+        );
+
+        // A floor nothing inactive can satisfy takes the newer inactive entry too, reports the live lease as
+        // skipped, and still reserves what is left rather than failing.
+        let exhausted = store.reserve_legacy_cargo_publisher_capacity("engine", store.limits().max_physical_bytes)?;
+        assert_eq!(exhausted.prune_report.removed_entries, vec![newer.identity.clone()]);
+        assert_eq!(
+            exhausted.prune_report.skipped_active_entries,
+            vec![held.identity.clone()]
+        );
+        assert!(exhausted.transient_limit_bytes > 0);
+        assert_eq!(store.inspect()?.entries.len(), 1);
         drop(lease);
         Ok(())
     }

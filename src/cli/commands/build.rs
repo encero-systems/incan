@@ -6912,6 +6912,19 @@ fn bake_generated_project_compatibility_plan(
         }),
     })
     .map_err(|error| CliError::failure(error.to_string()))?;
+    if !publication.reclaimed_store_entries.is_empty() {
+        eprintln!(
+            "note: reclaimed {} inactive Oven store entr{} to reserve staging for this bake; entries under a live \
+             lease were kept: {}",
+            publication.reclaimed_store_entries.len(),
+            if publication.reclaimed_store_entries.len() == 1 {
+                "y"
+            } else {
+                "ies"
+            },
+            publication.reclaimed_store_entries.join(", ")
+        );
+    }
     Ok(if publication.cargo_version == "not-run-existing-plan" {
         OvenToolchainMaterialization::Reused
     } else {
@@ -15033,6 +15046,10 @@ pub(crate) fn bake_oven_project_targets(
     // closure, so its constituents stay leased until the authority is sealed; if the policy cannot hold them all,
     // admission fails loudly instead.
     let mut retained_preparations: Vec<PreparedLibraryProject> = Vec::new();
+    // The same holds for an executable target: its debug plan is published one profile before its release plan, and
+    // the release publisher's staging reservation reclaims unleased entries oldest-first (#1230). Dropping the debug
+    // preparation at the end of its loop arm handed that plan to the reclaimer.
+    let mut retained_executable_preparations: Vec<OvenPreparedProject> = Vec::new();
     #[cfg(feature = "rust_inspect")]
     let mut rust_inspect_manifest_dirs = BTreeSet::new();
 
@@ -15348,6 +15365,7 @@ pub(crate) fn bake_oven_project_targets(
                             plan_identity: prepared.plan_selection.report_identity(),
                             action: prepared.materialization.as_str(),
                         });
+                        retained_executable_preparations.push(prepared);
                     }
                 }
             }
