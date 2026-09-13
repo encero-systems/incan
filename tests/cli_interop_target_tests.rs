@@ -4,7 +4,12 @@
 //! `tests/support/cli_project.rs`.
 
 use std::fs;
+// Both are used only by `oven_interop_bake_bootstraps_direct_c_then_locked_run_uses_the_sealed_plan`, which is
+// gated to macOS arm64. Ungated, they are dead imports everywhere else -- and CI lints on Linux, where that test is
+// never compiled, so a macOS-only check cannot see it.
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use std::path::PathBuf;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use std::process::Command;
 
 mod support;
