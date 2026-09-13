@@ -1675,10 +1675,17 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
             suite.schema_version
         )));
     }
-    // No measured record is loaded yet, so this is `source_bytes` weighting exactly as before. The parameter is what
-    // #1065 was actually missing: the durations are already produced and already written into partition reports, and
-    // nothing fed them back in. Loading the record is the next increment and needs no further change here.
-    let measured_root_millis = BTreeMap::new();
+    // Weight the partition by a previous run's measured per-root durations when one is offered, and by
+    // `source_bytes` otherwise. The durations were always produced and always written into
+    // `compiler-suite-report.json`; nothing fed them back in, which is why the partitioner weighted by a size proxy.
+    //
+    // Opt-in by path rather than discovered: a report found by convention could silently be from another machine,
+    // another partition count, or a tree that has moved on, and a stale weight is worse than an honest size proxy
+    // because it looks measured. The caller names the record it trusts.
+    let measured_root_millis = std::env::var_os("INCAN_OVEN_SUITE_TIMING_RECORD")
+        .filter(|value| !value.is_empty())
+        .map(|value| measured_root_millis_from_report(Path::new(&value)))
+        .unwrap_or_default();
     let selected_shard_references = compiler_suite_selected_shard_references(
         &suite.shard_references,
         &options.targets,
@@ -4107,6 +4114,64 @@ struct PreparedCompilerSuiteChild<'a> {
 /// scheduling signal; it never consults prior timings or persists a mutable performance profile. This keeps focused
 /// diagnosis representative of the same direct-Rustc roots that a complete Oven run will execute, while making an
 /// unknown or ambiguous source path fail closed.
+/// Read per-root durations from a previous run's `compiler-suite-report.json`, keyed by source path.
+///
+/// A root's cost to a shard is everything the shard pays for it: the direct-Rustc bake, the libtest inventory, and
+/// the execution. Summing the three is what makes this comparable across roots -- a root that is slow to compile and
+/// quick to run costs the shard just as much as the reverse.
+///
+/// Both libtest and Rustdoc roots are read, since both occupy a shard. A malformed or absent report yields an empty
+/// map rather than an error: a missing measurement must degrade to the previous `source_bytes` behaviour, never fail
+/// a run that would otherwise have worked.
+fn measured_root_millis_from_report(report_path: &Path) -> BTreeMap<String, u64> {
+    let Ok(bytes) = fs::read(report_path) else {
+        return BTreeMap::new();
+    };
+    let Ok(report) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return BTreeMap::new();
+    };
+    let mut measured = BTreeMap::new();
+    let sum_of = |root: &serde_json::Value, fields: &[&str]| -> u64 {
+        fields
+            .iter()
+            .filter_map(|field| root.get(*field).and_then(serde_json::Value::as_u64))
+            .fold(0_u64, |total, value| total.saturating_add(value))
+    };
+    for root in report
+        .get("native_test_roots")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(path) = root.get("source_relative_path").and_then(serde_json::Value::as_str) {
+            let millis = sum_of(
+                root,
+                &[
+                    "direct_rustc_bake_elapsed_ms",
+                    "libtest_inventory_elapsed_ms",
+                    "libtest_execution_elapsed_ms",
+                ],
+            );
+            let entry = measured.entry(path.to_string()).or_insert(0_u64);
+            *entry = entry.saturating_add(millis);
+        }
+    }
+    for root in report
+        .get("rustdoc_test_roots")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(path) = root.get("source_relative_path").and_then(serde_json::Value::as_str) {
+            let millis = sum_of(root, &["execution_elapsed_ms"]);
+            let entry = measured.entry(path.to_string()).or_insert(0_u64);
+            *entry = entry.saturating_add(millis);
+        }
+    }
+    measured.retain(|_, millis| *millis > 0);
+    measured
+}
+
 /// Build the per-root weight the partitioner bin-packs on, preferring measured time over source size.
 ///
 /// The partitioner has always weighted by `source_bytes`, not because size predicts cost but because size was the
@@ -6998,6 +7063,53 @@ mod tests {
             !partial_shard_zero.is_empty() && !partial_shard_one.is_empty(),
             "an unmeasured root must not leave a shard empty"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_timing_record_reports_each_root_total_cost_and_degrades_quietly() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let report_path = directory.path().join("compiler-suite-report.json");
+
+        // A root costs a shard its bake, its inventory and its execution. Summing the three is what makes roots
+        // comparable: one slow to compile and quick to run costs the same as the reverse.
+        fs::write(
+            &report_path,
+            serde_json::to_vec(&serde_json::json!({
+                "native_test_roots": [
+                    {
+                        "source_relative_path": "tests/baking.rs",
+                        "direct_rustc_bake_elapsed_ms": 1_000,
+                        "libtest_inventory_elapsed_ms": 200,
+                        "libtest_execution_elapsed_ms": 18_800,
+                    },
+                    {
+                        "source_relative_path": "tests/quiet.rs",
+                        "direct_rustc_bake_elapsed_ms": 0,
+                        "libtest_inventory_elapsed_ms": 0,
+                        "libtest_execution_elapsed_ms": 0,
+                    },
+                ],
+                "rustdoc_test_roots": [
+                    { "source_relative_path": "src/lib.rs", "execution_elapsed_ms": 4_000 },
+                ],
+            }))?,
+        )?;
+        let measured = super::measured_root_millis_from_report(&report_path);
+        assert_eq!(measured.get("tests/baking.rs"), Some(&20_000));
+        assert_eq!(measured.get("src/lib.rs"), Some(&4_000));
+        assert_eq!(
+            measured.get("tests/quiet.rs"),
+            None,
+            "a root measured at zero carries no information and must not outrank a real measurement"
+        );
+
+        // A missing or malformed record degrades to no measurements rather than failing a run that would otherwise
+        // have worked -- the weight then falls back to `source_bytes`, which is the previous behaviour.
+        assert!(super::measured_root_millis_from_report(&directory.path().join("absent.json")).is_empty());
+        let malformed = directory.path().join("malformed.json");
+        fs::write(&malformed, b"{ not json")?;
+        assert!(super::measured_root_millis_from_report(&malformed).is_empty());
         Ok(())
     }
 
