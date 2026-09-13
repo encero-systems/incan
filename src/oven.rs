@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::library_manifest::digest_cargo_path_source_tree_with_cache;
+use crate::library_manifest::{digest_cargo_path_source_tree_with_cache, digest_provider_artifact};
 use crate::manifest::{DependencySource, DependencySpec, GitReference, ProjectManifest};
 
 pub(crate) mod compiler_suite_env;
@@ -53,6 +53,16 @@ pub fn digest_dependency_specs(dependencies: &[DependencySpec]) -> Result<String
                 GitReference::Tag(tag) => format!("git:{url}:tag:{tag}"),
                 GitReference::Rev(revision) => format!("git:{url}:rev:{revision}"),
             },
+            // A packaged Incan provider is identified by its sealed artifact tree, never by walking the Cargo
+            // edges its generated manifest still spells out: those point at the producer's private Rust sources,
+            // which an admitted package does not need and a source-free consumer does not have (#1469).
+            DependencySource::Path { path } if is_packaged_provider_root(path) => {
+                let digest = digest_provider_artifact(path).map_err(|error| OvenError::InvalidProjectSource {
+                    path: path.clone(),
+                    message: error.to_string(),
+                })?;
+                format!("packaged-provider:{digest}")
+            }
             // A path dependency is selected by its recursive Cargo-semantic source closure, not by compiler output
             // or unrelated repository files. Sharing the package memo also avoids rescanning a common sibling reached
             // through several top-level dependencies.
@@ -80,6 +90,17 @@ pub fn digest_dependency_specs(dependencies: &[DependencySpec]) -> Result<String
     }
     records.sort();
     Ok(digest_bytes(records.join("\n").as_bytes()))
+}
+
+/// Whether a path dependency root is a packaged Incan provider: a generated library crate carrying its `.incnlib`
+/// manifest beside `Cargo.toml`. An authored Rust crate has no such manifest.
+fn is_packaged_provider_root(root: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(root) else {
+        return false;
+    };
+    entries
+        .flatten()
+        .any(|entry| entry.path().extension().is_some_and(|extension| extension == "incnlib"))
 }
 
 /// Current wire format for persisted Oven receipts.
@@ -1563,6 +1584,46 @@ mod tests {
 
         assert_ne!(first.identity, second.identity);
         assert_eq!(first.sources.supplemental_digests.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn a_packaged_provider_is_identified_by_its_sealed_artifact_not_its_private_cargo_edges_issue1469()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = tempfile::tempdir()?;
+        let provider = fixture.path().join("catalog/target/lib");
+        fs::create_dir_all(provider.join("src"))?;
+        // The generated manifest still names a private Rust crate that no longer exists.
+        fs::write(
+            provider.join("Cargo.toml"),
+            "[package]\nname = \"immutable_catalog\"\nversion = \"0.1.0\"\n\n[dependencies.package_store_witness]\npath = \"../../../package-store-witness\"\n",
+        )?;
+        fs::write(provider.join("src/lib.rs"), "pub fn answer() -> i64 { 42 }\n")?;
+        let dependency = DependencySpec {
+            crate_name: "stock".to_string(),
+            version: None,
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Path { path: provider.clone() },
+            optional: false,
+            package: None,
+        };
+        let as_authored_crate = super::digest_dependency_specs(std::slice::from_ref(&dependency));
+        assert!(
+            as_authored_crate.is_err(),
+            "an authored crate's missing path dependency is still a fault: {as_authored_crate:?}"
+        );
+
+        fs::write(provider.join("immutable_catalog.incnlib"), "{}")?;
+        // With its `.incnlib` beside the manifest the same tree is a packaged provider, and the missing private
+        // crate is no longer anyone's business.
+        let sealed = super::digest_dependency_specs(std::slice::from_ref(&dependency))?;
+        fs::write(provider.join("src/lib.rs"), "pub fn answer() -> i64 { 43 }\n")?;
+        assert_ne!(
+            sealed,
+            super::digest_dependency_specs(std::slice::from_ref(&dependency))?,
+            "the sealed artifact's own bytes still decide its identity"
+        );
         Ok(())
     }
 
