@@ -14091,11 +14091,15 @@ fn publish_selected_provider_loaf(
     if let Some(existing) = existing_provider_loaf(destination_store, receipt, entry_identity, entry_kind, operation)? {
         return Ok(existing);
     }
-    selected.verify_materialized_files().map_err(|error| {
+    // The record, payload bytes and witness are proven here; the file closure is proven by the publication below,
+    // which reads every one of these files to describe the destination entry anyway. Verifying it twice cost a second
+    // full hash of the whole provider closure for an answer the describing read already produces.
+    selected.verify_admitted_record().map_err(|error| {
         CliError::failure(format!(
             "failed to verify source provider Loaf during {operation}: {error}"
         ))
     })?;
+    let admitted_files = selected.admitted_materialized_files().to_vec();
     let (manifest, artifact_root, payload, _lease) = selected.into_parts();
     if manifest.kind != entry_kind
         || manifest.build_unit_identity != receipt.build_unit_identity
@@ -14115,13 +14119,16 @@ fn publish_selected_provider_loaf(
         })
         .collect::<Vec<_>>();
     let exported = destination_store
-        .publish_receipt_bound(&OvenArtifactPublishRequest {
-            receipt: receipt.clone(),
-            domain: manifest.domain.clone(),
-            kind: manifest.kind,
-            payload,
-            materialized_files,
-        })
+        .publish_verified_import(
+            &OvenArtifactPublishRequest {
+                receipt: receipt.clone(),
+                domain: manifest.domain.clone(),
+                kind: manifest.kind,
+                payload,
+                materialized_files,
+            },
+            &admitted_files,
+        )
         .map_err(|error| CliError::failure(format!("failed to publish provider Loaf during {operation}: {error}")))?;
     if exported.kind != entry_kind
         || exported.receipt_identity != receipt.identity
