@@ -181,6 +181,8 @@ bake_example_project() {
 }
 
 prebake_example_providers() {
+  # A provider is baked leaf-first: a `leaf/` sibling that `producer/` depends on is published before `producer/`,
+  # because a bake never compiles a sibling on the caller's behalf (`examples/advanced/package_features`).
   local manifest
   while IFS= read -r manifest; do
     [[ -z "$manifest" ]] && continue
@@ -192,6 +194,11 @@ prebake_example_providers() {
       continue
     fi
     if selection_requires_project "$project_dir" || selection_requires_project "$consumer_dir"; then
+      local leaf_dir
+      leaf_dir="$(dirname "$project_dir")/leaf"
+      if [[ -f "$leaf_dir/loaf.toml" ]]; then
+        bake_example_project "$leaf_dir"
+      fi
       bake_example_project "$project_dir"
     fi
   done < <(

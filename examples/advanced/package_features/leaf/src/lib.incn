@@ -1,0 +1,5 @@
+# The leaf provider: a tiny encoder that `reporting` reaches only through its `json` feature.
+
+
+pub def encode_report(name: str, value: int) -> str:
+    return f'{{"name": "{name}", "value": {value}}}'
