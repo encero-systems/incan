@@ -5891,7 +5891,28 @@ fn legacy_cargo_inspection_sources_from_metadata(
             &right.checksum,
         ))
     });
-    Ok(sources)
+    // One registry package can be resolved more than once -- the same crate reached as a normal and a build
+    // dependency, or under two feature resolutions -- and every one of those resolutions stages the same source
+    // tree under the same content identity. Each surviving entry then contributes that tree's files again, and the
+    // publisher refuses its own manifest with "declares one relative artifact path more than once". Fold the
+    // repeats into the one source they name, unioning the features so no resolution loses what it asked for.
+    let mut folded: Vec<OvenLegacyCargoInspectionSource> = Vec::with_capacity(sources.len());
+    for source in sources {
+        match folded.last_mut() {
+            Some(previous)
+                if previous.package == source.package
+                    && previous.version == source.version
+                    && previous.registry == source.registry
+                    && previous.checksum == source.checksum =>
+            {
+                previous.features.extend(source.features);
+                previous.features.sort();
+                previous.features.dedup();
+            }
+            _ => folded.push(source),
+        }
+    }
+    Ok(folded)
 }
 
 /// Stage the private manifest for a future sealed third-party foundation compilation.

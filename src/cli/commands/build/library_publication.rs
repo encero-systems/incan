@@ -17,6 +17,7 @@ pub(super) struct LibraryPublication {
     receipts: Vec<(PathBuf, Option<Vec<u8>>)>,
     retain_package_cache: bool,
     replace_artifact: bool,
+    carried_package_cache: bool,
 }
 
 impl LibraryPublication {
@@ -124,6 +125,7 @@ impl LibraryPublication {
             receipts,
             retain_package_cache: false,
             replace_artifact,
+            carried_package_cache: false,
         };
         if replace_artifact && let Err(error) = fs::create_dir(&publication.output) {
             return publication.finish::<Self>(Err(io_error(error)));
@@ -131,9 +133,33 @@ impl LibraryPublication {
         Ok(publication)
     }
 
-    /// Normal replay keeps the prior immutable package cache when its selected output omits that portable store.
+    /// Keep the prior immutable package cache across this generation, carrying it in before anything is written.
+    ///
+    /// The package Loaf store is content-addressed: an entry lives at `entries/sha256-<digest>.loaf/` and cannot
+    /// change without changing its own directory name. Yet `begin` renames the whole artifact root aside, so an
+    /// explicit bake finds an empty output, re-copies every entry, and `fsync`s each file. Measured on a two-line
+    /// library whose plan the bake reports as reused: 2,905 files, 154 MB, and 15.6 s of wall clock, 74% of it
+    /// inside `fsync`, for a bake that compiles nothing. Four test roots whose every case bakes are 83% of the
+    /// replay lane, so that cost is most of the suite's.
+    ///
+    /// Carrying the store in up front makes the guard that already exists reachable: `existing_provider_loaf` asks
+    /// the destination what it already holds, finds the entry, and the export returns without writing. `finish`
+    /// keeps its own retention for the case it already covered -- a generation that produces no store at all --
+    /// and additionally drops any entry this generation did not publish, so the committed output is exactly what
+    /// it would have been. Rollback moves the store back before the output is removed.
     pub(super) fn retaining_package_cache(mut self) -> Self {
         self.retain_package_cache = true;
+        if self.previous && self.replace_artifact {
+            let previous_cache = self.backup.join("artifact/oven/loafs");
+            let current_cache = self.output.join("oven/loafs");
+            if previous_cache.exists()
+                && !current_cache.exists()
+                && fs::create_dir_all(self.output.join("oven")).is_ok()
+                && fs::rename(&previous_cache, &current_cache).is_ok()
+            {
+                self.carried_package_cache = true;
+            }
+        }
         self
     }
 
@@ -200,6 +226,18 @@ impl LibraryPublication {
         let artifact = (|| -> io::Result<()> {
             if !self.replace_artifact {
                 return Ok(());
+            }
+            if self.carried_package_cache {
+                // The carried store belongs to the generation being restored, so it has to go home before the
+                // failed output is removed with everything in it.
+                let carried = self.output.join("oven/loafs");
+                let home = self.backup.join("artifact/oven/loafs");
+                if carried.exists() && !home.exists() {
+                    if let Some(parent) = home.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    fs::rename(&carried, &home)?;
+                }
             }
             match fs::remove_dir_all(&self.output) {
                 Ok(()) => {}
@@ -463,8 +501,12 @@ mod tests {
             "old native bytes"
         );
 
-        let publication = LibraryPublication::begin(temporary.path(), &output, vec![])?.retaining_package_cache();
+        // The cache is carried in when retention is declared, so the destination has to be blocked between the two
+        // for this case to reach `finish` still needing to move it. The carry declines quietly on a blocked
+        // destination -- it is an optimization, not a contract -- and `finish`'s own retention then reports it.
+        let publication = LibraryPublication::begin(temporary.path(), &output, vec![])?;
         fs::write(output.join("oven"), "blocks cache destination directory")?;
+        let publication = publication.retaining_package_cache();
         assert!(publication.finish(Ok(())).is_err());
         assert_eq!(
             fs::read_to_string(output.join("oven/loafs/entry/object"))?,
