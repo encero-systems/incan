@@ -215,7 +215,7 @@ jobs:
       - name: Run platform C ABI verification
         run: >-
           CARGO_NET_OFFLINE=true
-          cargo test --locked --test cli_integration ${{ matrix.c_abi_test }} -- --exact
+          cargo test --locked --test cli_interop_target_tests ${{ matrix.c_abi_test }} -- --exact
 
   linux-tool-handoff:
     name: Linux compiler and SDK handoff
@@ -427,7 +427,7 @@ jobs:
           CARGO_BIN_EXE_incan: ${{ github.workspace }}/target/debug/incan
         run: |
           sha256sum target/debug/incan > "$RUNNER_TEMP/compiler-handoff.sha256"
-          cargo test --locked --test cli_integration \
+          cargo test --locked --test cli_interop_target_tests \
             check_verifies_c_bindings_against_a_declared_android_interop_target -- --exact
           sha256sum --check "$RUNNER_TEMP/compiler-handoff.sha256"
 

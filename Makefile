@@ -508,7 +508,7 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 test-oven-focused:
 	@echo "\033[1mRunning focused Oven and Loaf regression tests...\033[0m"
 	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked --lib oven::
-	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked --test cli_integration \
+	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked --test cli_interop_target_tests \
 		lock_records_oven_interop_requirements_and_detects_input_drift -- --exact
 	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked --test toolchain_installer_tests \
 		oven_alpha_benchmark_records_a_verified_cargo_guard_verdict -- --exact
@@ -728,7 +728,7 @@ test-timings:
 # Keep single-root diagnostics on the same short, invocation-owned scratch policy as full suite replay.
 .PHONY: test-one  ## test - Run one receipt-bound compiler-suite source root (optional TEST_EXACT=module::case)
 test-one: test-prewarm-oven-loafs
-	@test -n "$(TEST_ROOT)" || { echo "usage: make test-one TEST_ROOT=tests/cli_integration.rs" >&2; exit 2; }
+	@test -n "$(TEST_ROOT)" || { echo "usage: make test-one TEST_ROOT=tests/cli_provider_boundary_tests.rs" >&2; exit 2; }
 	@echo "\033[1mRunning $(TEST_ROOT)$(if $(TEST_EXACT), ($(TEST_EXACT)),) through Oven...\033[0m"
 	@set -e; \
 		root_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
