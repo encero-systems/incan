@@ -12577,24 +12577,7 @@ fi
     }
 }
 
-impl OvenDirectRustcBake {
-    /// Wrap a binary produced by the unified-Cargo fallback compile as a completed bake result.
-    ///
-    /// Downstream run/report consumers only need the output path and its digest; there is no store lease because a
-    /// Cargo-produced binary is published project-locally rather than admitted to the bounded Oven store.
-    /// `cargo_process_started` is `true` here by definition -- this constructor exists precisely because a Cargo
-    /// process performed the compile.
-    pub(crate) fn from_external_cargo_build(source_digest: String, output: PathBuf, output_digest: String) -> Self {
-        Self {
-            source_digest,
-            output,
-            output_digest,
-            cargo_process_started: true,
-            reused: false,
-            lease: None,
-        }
-    }
-}
+impl OvenDirectRustcBake {}
 
 /// Return the Cargo belonging to Incan's own provisioned toolchain, when one exists.
 ///

@@ -527,8 +527,11 @@ impl ProjectGenerator {
         self.generated_cache_identity = identity;
     }
 
-    /// Release a managed target lease once compiler-owned Cargo work and local publication are complete.
-    #[cfg(feature = "cli")]
+    /// Release a managed target lease once the test-only Cargo fixture runner's work and publication are complete.
+    ///
+    /// A production build never launches Cargo, so it never holds this lease past `Drop`; only the fixture runner
+    /// finishes it eagerly.
+    #[cfg(all(test, feature = "cli"))]
     pub(super) fn finish_generated_cache_lease(&self) -> io::Result<()> {
         let lease = self
             .generated_cache_lease
@@ -542,7 +545,7 @@ impl ProjectGenerator {
     }
 
     /// Keep non-CLI library builds independent from cache-management implementation details.
-    #[cfg(not(feature = "cli"))]
+    #[cfg(all(test, not(feature = "cli")))]
     pub(super) fn finish_generated_cache_lease(&self) -> io::Result<()> {
         Ok(())
     }

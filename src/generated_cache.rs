@@ -84,7 +84,11 @@ impl Drop for GeneratedCacheLease {
 }
 
 impl GeneratedCacheLease {
-    /// Finish one compiler-owned Cargo operation before user code may continue outside the cache lease.
+    /// Finish one cache operation eagerly, before the lease would otherwise be released on drop.
+    ///
+    /// Production callers rely on `Drop`, which performs the same release and idle-time pruning; the eager form
+    /// remains for tests that assert pruning at a known point rather than at scope exit.
+    #[cfg(test)]
     pub(crate) fn finish(mut self) -> io::Result<()> {
         self.release_activity_lock();
         let result = self

@@ -10,6 +10,7 @@ use std::collections::BTreeSet;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
+#[cfg(test)]
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -217,6 +218,7 @@ impl ProjectGenerator {
     }
 
     /// Return the extra Cargo CLI args selecting a build profile.
+    #[cfg(test)]
     fn profile_build_args(release: bool) -> &'static [&'static str] {
         if release { &["--release"] } else { &[] }
     }
@@ -258,95 +260,6 @@ impl ProjectGenerator {
         let target_dir = base_dir.join(".cargo-target");
 
         Self::resolve_target_dir(target_dir)
-    }
-
-    /// Build an isolated generated-project fixture using Cargo at the release profile.
-    #[cfg(test)]
-    pub fn build(&self) -> io::Result<BuildResult> {
-        self.cargo_build(true)
-    }
-
-    /// Compile this generated project through one unified Cargo invocation.
-    ///
-    /// This is the fallback compile for the one project shape Oven direct-rustc composition cannot yet build safely:
-    /// a caller-owned `pub::` provider whose own registry closure resolves a shared package (most dangerously an
-    /// async runtime) to a different compiled artifact than the consumer's own closure. Cargo resolves the consumer
-    /// and every provider as one feature-unified dependency graph, so exactly one compiled instance of each package
-    /// exists by construction. The projected `Cargo.lock` (from `oven.lock`) and the caller's Cargo policy flags
-    /// still govern resolution; the successful binary is published to [`Self::cargo_build_binary_path`].
-    pub(crate) fn cargo_build(&self, release: bool) -> io::Result<BuildResult> {
-        self.materialize_cargo_lock_projection()?;
-        let _root_artifact_guard = self.acquire_root_artifact_lock()?;
-        let cargo_target_dir = self.cargo_target_dir();
-        let mut command = cargo_command();
-        sanitize_cargo_environment(&mut command);
-        configure_cargo_target(&mut command, &cargo_target_dir);
-        command.arg("build");
-        command.args(Self::profile_build_args(release));
-        command.arg("--message-format=json-render-diagnostics");
-        for flag in &self.cargo_policy_flags {
-            command.arg(flag);
-        }
-        let output = command
-            // Ensure we don't inherit a broken CA bundle path from the parent env.
-            .env_remove("SSL_CERT_FILE")
-            .env_remove("SSL_CERT_DIR")
-            .env_remove("CURL_CA_BUNDLE")
-            .env_remove("REQUESTS_CA_BUNDLE")
-            .env_remove("CARGO_HTTP_CAINFO")
-            .current_dir(&self.output_dir)
-            .output()?;
-
-        let cargo_messages = parse_cargo_json_build_output(&output.stdout, &self.cargo_target_name());
-        let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        stderr.push_str(&cargo_messages.rendered);
-        let result = BuildResult {
-            success: output.status.success(),
-            stdout: String::new(),
-            stderr,
-        };
-        if result.success {
-            self.record_generated_out_dirs(&cargo_messages.build_script_out_dirs)?;
-        }
-        if result.success && self.is_binary {
-            let executable = cargo_messages.executable.ok_or_else(|| {
-                io::Error::other(format!(
-                    "Cargo reported a successful build without an executable artifact for target `{}`",
-                    self.cargo_target_name()
-                ))
-            })?;
-            self.publish_cargo_binary(&executable, &self.cargo_build_binary_path(release))?;
-        }
-        self.finish_generated_cache_lease()?;
-        Ok(result)
-    }
-
-    /// Persist which package version each executed build script's `OUT_DIR` belongs to.
-    ///
-    /// Cargo reports every executed build script with its package id and output directory. The explicit bake seals
-    /// those directories for Cargo-free inspection and needs the version to seal them under, because one unified
-    /// build can hold several build units of one package. Written beside the generated project, where the bake
-    /// looks for it; a compiler built without Rust inspection has no consumer for it and writes nothing.
-    #[allow(unused_variables)]
-    fn record_generated_out_dirs(&self, out_dirs: &[(String, String, PathBuf)]) -> io::Result<()> {
-        #[cfg(feature = "rust_inspect")]
-        {
-            let records = out_dirs
-                .iter()
-                .map(
-                    |(package, version, out_dir)| crate::rust_inspect::GeneratedOutDirRecord {
-                        package: package.clone(),
-                        version: version.clone(),
-                        out_dir: out_dir.clone(),
-                    },
-                )
-                .collect::<Vec<_>>();
-            if !records.is_empty() {
-                crate::rust_inspect::write_generated_out_dirs_map(&self.output_dir, &records)
-                    .map_err(|error| io::Error::other(error.to_string()))?;
-            }
-        }
-        Ok(())
     }
 
     /// Run an isolated generated-project fixture using Cargo.
@@ -466,6 +379,9 @@ impl ProjectGenerator {
     }
 
     /// Atomically copy one Cargo-built root binary into its stable project-local publication path.
+    ///
+    /// Test-only, like the fixture runner that uses it: a production build publishes direct-rustc output through Oven.
+    #[cfg(test)]
     fn publish_cargo_binary(&self, source: &Path, destination: &Path) -> io::Result<()> {
         if source == destination {
             return Ok(());
@@ -487,6 +403,9 @@ impl ProjectGenerator {
     }
 
     /// Serialize Cargo root-artifact production and publication for one deterministic target name.
+    ///
+    /// Test-only, like the fixture runner that uses it: a production build publishes direct-rustc output through Oven.
+    #[cfg(test)]
     fn acquire_root_artifact_lock(&self) -> io::Result<File> {
         let lock_dir = self.cargo_target_dir().join(".incan-root-locks");
         fs::create_dir_all(&lock_dir)?;
@@ -577,47 +496,10 @@ impl ProjectGenerator {
         Ok(())
     }
 
-    /// Get the project-local publication path of a [`Self::cargo_build`] binary for the given profile.
-    pub(crate) fn cargo_build_binary_path(&self, release: bool) -> PathBuf {
-        self.output_dir
-            .join("target")
-            .join(if release { "release" } else { "debug" })
-            .join(&self.name)
-    }
-
-    /// Path to the `rlib` a unified Cargo build produced for this generated library project.
-    ///
-    /// Cargo names a library artifact after the crate with Rust's `lib` prefix and hyphens normalized to
-    /// underscores, and writes it beside the profile root rather than under `deps`, which holds the
-    /// per-metadata-hash copies. An explicitly targeted build nests that profile root under the target triple,
-    /// so both layouts are searched and the one that exists wins; returning a path that is merely plausible
-    /// would turn a successful build into a confusing "library is unreadable" failure.
-    pub(crate) fn cargo_build_library_path(&self, release: bool) -> PathBuf {
-        let profile = if release { "release" } else { "debug" };
-        let file_name = format!("lib{}.rlib", self.name.replace('-', "_"));
-        // Builds run against the lifecycle-owned target root that `cargo_build` configures, not a `target`
-        // directory beside the sources, so the artifact has to be looked for where it was actually written.
-        let target_root = self.cargo_target_dir();
-        let plain = target_root.join(profile).join(&file_name);
-        if plain.is_file() {
-            return plain;
-        }
-        let triple_nested = fs::read_dir(&target_root).ok().and_then(|entries| {
-            let mut candidates = entries
-                .flatten()
-                .map(|entry| entry.path().join(profile).join(&file_name))
-                .filter(|candidate| candidate.is_file())
-                .collect::<Vec<_>>();
-            candidates.sort();
-            candidates.into_iter().next()
-        });
-        triple_nested.unwrap_or(plain)
-    }
-
     /// Get the project-local path to an isolated fixture build artifact.
     #[cfg(test)]
     pub fn binary_path(&self) -> PathBuf {
-        self.cargo_build_binary_path(true)
+        self.output_dir.join("target").join("release").join(&self.name)
     }
 
     /// Get the path to the binary produced by an isolated runner fixture.
@@ -632,6 +514,7 @@ impl ProjectGenerator {
 
 /// Executable, rendered diagnostics, and executed build scripts selected from a Cargo JSON message stream.
 #[derive(Default)]
+#[cfg(test)]
 struct CargoJsonBuildOutput {
     executable: Option<PathBuf>,
     rendered: String,
@@ -644,6 +527,7 @@ struct CargoJsonBuildOutput {
 /// Cargo 1.77+ spells the id as a package-id spec (`registry+https://…/index#substrait@0.63.0`, or
 /// `path+file:///…/name#0.1.0` when the name is the last path segment); older releases spelled it
 /// `name version (source)`.
+#[cfg(test)]
 fn cargo_package_id_name_version(package_id: &str) -> Option<(String, String)> {
     if let Some((source, fragment)) = package_id.rsplit_once('#') {
         if let Some((name, version)) = fragment.split_once('@') {
@@ -659,6 +543,7 @@ fn cargo_package_id_name_version(package_id: &str) -> Option<(String, String)> {
 }
 
 /// Parse Cargo-reported artifact locations instead of reconstructing profile/target-triple paths.
+#[cfg(test)]
 fn parse_cargo_json_build_output(stdout: &[u8], expected_target_name: &str) -> CargoJsonBuildOutput {
     let mut parsed = CargoJsonBuildOutput::default();
     for line in stdout.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {

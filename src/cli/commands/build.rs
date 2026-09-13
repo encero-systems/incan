@@ -7334,9 +7334,8 @@ fn registry_leaf_authority_for_plan_selection(
 /// from two distinct compiled `tokio` instances silently linked into one binary, discovered only by inspecting the
 /// linked executable's own symbol table after the build otherwise succeeded. Properly unifying a provider's
 /// independently Cargo-resolved registry closure with the consumer's own is out of scope for Oven Alpha's
-/// direct-rustc execution. An executable bake routes this shape through the unified-Cargo fallback
-/// ([`cargo_fallback_bake_oven_project`]); a library bake, which has no Cargo fallback yet, fails closed via
-/// [`reject_caller_owned_provider_registry_conflict`].
+/// direct-rustc execution (#1241). A bake that hits this shape refuses ([`oven_native_closure_refusal`]); there is
+/// no Cargo fallback.
 fn caller_owned_provider_registry_conflict(
     consumer_authority: Option<&OvenRegistryLeafAuthority>,
     closure: &CallerOwnedProviderRegistryClosure,
@@ -7362,105 +7361,41 @@ fn caller_owned_provider_registry_conflict(
     Ok(None)
 }
 
-/// Fail closed on a provider registry conflict for bake paths that have no unified-Cargo fallback.
+/// Describe one provider registry conflict for a refusal, naming the contributor that pins the package.
 ///
-/// See [`caller_owned_provider_registry_conflict`] for why the conflict is dangerous. Refusing to build here, with
-/// the exact conflicting package named, is safer than shipping an artifact whose async runtime state silently
-/// splits across two incompatible copies.
-fn reject_caller_owned_provider_registry_conflict(
-    consumer_authority: Option<&OvenRegistryLeafAuthority>,
-    closure: &CallerOwnedProviderRegistryClosure,
-    plan: &OvenRustcArtifactPlan,
-) -> CliResult<()> {
-    if let Some((package, pinned_by)) = caller_owned_provider_registry_conflict(consumer_authority, closure, plan)? {
-        // Name the contributor that pins the package, not just the package. "Two copies of `itoa` exist" leaves a
-        // reader with nowhere to go; "this prebuilt provider was compiled against that copy" says what would have to
-        // change. The distinction is also the boundary of the unimplemented capability: a leaf can be reconciled
-        // wherever every dependent linking it is recompiled against the choice, and a provider consumed from the
-        // store as an already-compiled artifact is exactly the case that cannot be.
-        let obstruction = pinned_by.as_ref().map_or_else(
-            || format!("`{package}` is already linked by this project's own selected plan"),
-            |root| {
-                format!(
-                    "`{package}` is pinned by an already-compiled provider artifact at `{}`, which would have to be \
-                     rebuilt against the reconciled closure to agree",
-                    root.display()
-                )
-            },
-        );
-        return Err(CliError::failure(format!(
-            "Oven Alpha refuses to build: a caller-owned provider's own registry closure resolves `{package}` to a \
-             different compiled artifact than this project's own closure already links, and {obstruction}. Linking \
-             both would silently admit two incompatible compiled instances of the same crate into one binary -- for a \
-             crate that carries process-wide runtime state (most dangerously an async runtime), this can produce a \
-             runtime panic instead of a build failure. Reconciling a provider that is consumed as a prebuilt artifact \
-             requires re-baking it against the shared closure, which Oven Alpha does not do yet for library outputs; \
-             build this consumer as an executable project, or prepare an explicit Oven-native closure that reconciles \
-             `{package}` to one shared compiled artifact."
-        )));
+/// "Two copies of `itoa` exist" leaves a reader with nowhere to go; "this prebuilt provider was compiled against
+/// that copy" says what would have to change. The distinction is also the boundary of the unimplemented capability:
+/// a leaf can be reconciled wherever every dependent linking it is recompiled against the choice, and a provider
+/// consumed from the store as an already-compiled artifact is exactly the case that cannot be (#1241).
+fn provider_registry_conflict_reason(package: &str, pinned_by: Option<&Path>) -> String {
+    match pinned_by {
+        Some(root) => format!(
+            "a caller-owned provider's own registry closure resolves `{package}` to a different compiled artifact \
+             than this project's own closure already links, and `{package}` is pinned by an already-compiled provider \
+             artifact at `{}`, which would have to be rebuilt against the reconciled closure to agree",
+            root.display()
+        ),
+        None => format!(
+            "a caller-owned provider's own registry closure resolves `{package}` to a different compiled artifact \
+             than this project's own closure already links, and `{package}` is already linked by this project's own \
+             selected plan"
+        ),
     }
-    Ok(())
 }
 
-/// Compile a conflicted-provider project through one unified Cargo invocation instead of direct-rustc composition.
+/// Refuse the one build shape direct-rustc composition cannot finish yet, naming it exactly.
 ///
-/// This is the routing target for the one project shape direct-rustc composition cannot yet build safely (see
-/// [`caller_owned_provider_registry_conflict`]). The generated project on disk already carries the complete Cargo
-/// wiring -- the consumer's manifest, each `pub::` provider as a Cargo path dependency, and the provider's own
-/// registry dependencies -- so one `cargo build` resolves everything as a single feature-unified graph in which
-/// exactly one compiled instance of each package exists by construction. This is the same build path v0.4 shipped
-/// with; only projects that actually hit the conflict pay its cost. The produced binary is published to the same
-/// [`oven_binary_path`] destination a direct-rustc bake uses, so run/report consumers are unaffected.
-fn cargo_fallback_bake_oven_project(
-    prepared: &OvenPreparedProject,
-    profile: &str,
-    conflicting_package: &str,
-) -> CliResult<crate::oven::rustc::OvenDirectRustcBake> {
-    eprintln!(
-        "Oven: building `{}` through unified Cargo resolution: provider registry package `{conflicting_package}` \
-         requires one shared compiled closure.",
-        prepared.crate_name
-    );
-    let release = profile == "release";
-    let result = prepared.generator.cargo_build(release).map_err(|error| {
-        CliError::failure(format!(
-            "unified Cargo fallback build failed to start for `{}`: {error}",
-            prepared.crate_name
-        ))
-    })?;
-    if !result.success {
-        return Err(CliError::failure(format!(
-            "unified Cargo fallback build failed for `{}`:\n{}",
-            prepared.crate_name, result.stderr
-        )));
-    }
-    let built = prepared.generator.cargo_build_binary_path(release);
-    let bytes = fs::read(&built).map_err(|error| {
-        CliError::failure(format!(
-            "unified Cargo fallback build reported success but its binary is unreadable at {}: {error}",
-            built.display()
-        ))
-    })?;
-    let output_digest = crate::oven::digest_bytes(&bytes);
-    let output = oven_binary_path(prepared, profile);
-    if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            CliError::failure(format!(
-                "could not create Oven binary destination {}: {error}",
-                parent.display()
-            ))
-        })?;
-    }
-    fs::copy(&built, &output).map_err(|error| {
-        CliError::failure(format!(
-            "could not publish unified Cargo fallback binary to {}: {error}",
-            output.display()
-        ))
-    })?;
-    Ok(crate::oven::rustc::OvenDirectRustcBake::from_external_cargo_build(
-        prepared.receipt.identity.clone(),
-        output,
-        output_digest,
+/// Oven never launches Cargo during a normal command, and there is no fallback to declare: a project that hits this
+/// shape waits for the Oven-native reconciliation (#1241, one compiled instance of every shared registry package,
+/// every dependent relinked against it) or restructures so the shape does not arise.
+fn oven_native_closure_refusal(crate_name: &str, reason: &str) -> CliError {
+    CliError::failure(format!(
+        "Oven refuses to build `{crate_name}`: {reason}. Linking both would silently admit two incompatible compiled \
+         instances of the same crate into one binary -- for a crate that carries process-wide runtime state (most \
+         dangerously an async runtime), this can produce a runtime panic instead of a build failure. Oven does not \
+         reconcile this shape through direct rustc yet (#1241) and never falls back to Cargo; prepare an explicit \
+         Oven-native closure that reconciles the shared package to one compiled artifact, or consume the provider \
+         from source rather than as a sealed packaged closure."
     ))
 }
 
@@ -10429,12 +10364,15 @@ fn bake_oven_project(
         // The conflict decision must cover every selection path -- including an imported packaged-provider closure,
         // whose composed link carries the SDK base's and the provider's own copies of any shared package exactly
         // like a re-materialized one does.
-        if let Some(package) = caller_owned_provider_registry_conflict(
+        if let Some((package, pinned_by)) = caller_owned_provider_registry_conflict(
             registry_authority.as_ref(),
             &closure,
             prepared.plan_selection.artifact_plan(),
         )? {
-            return cargo_fallback_bake_oven_project(prepared, profile, &package.0);
+            return Err(oven_native_closure_refusal(
+                &prepared.crate_name,
+                &provider_registry_conflict_reason(&package, pinned_by.as_deref()),
+            ));
         }
         if !prepared.plan_selection.uses_packaged_provider_closure() {
             extra_dependency_search_paths = closure.dependency_search_paths.clone();
@@ -10540,11 +10478,16 @@ fn bake_oven_library(
         // The rejection previously ran on every selection path, so the resolvable case never reached the machinery
         // that resolves it.
         if selected.plan_selection.uses_packaged_provider_closure() {
-            reject_caller_owned_provider_registry_conflict(
+            if let Some((package, pinned_by)) = caller_owned_provider_registry_conflict(
                 registry_authority.as_ref(),
                 &closure,
                 selected.plan_selection.artifact_plan(),
-            )?;
+            )? {
+                return Err(oven_native_closure_refusal(
+                    &oven.crate_name,
+                    &provider_registry_conflict_reason(&package, pinned_by.as_deref()),
+                ));
+            }
         } else {
             extra_dependency_search_paths = closure.dependency_search_paths.clone();
             registry_authority = closure.merged_authority(registry_authority);
@@ -10603,12 +10546,15 @@ fn bake_oven_library(
     match direct {
         Ok(bake) => Ok(bake),
         // A crate-loading failure is a composition fault, not a fault in the generated Rust: the sources already
-        // typechecked, so rustc rejecting a dependency means the assembled closure is not mutually loadable. That
-        // is the same shape an executable resolves by rebuilding through one unified Cargo resolution, and it is
-        // what a library needs here too, rather than surfacing raw `E0463`s about crates the user never named.
-        Err(error) if direct_rustc_composition_failure(&error) => {
-            cargo_fallback_bake_oven_library(prepared, oven, profile)
-        }
+        // typechecked, so rustc rejecting a dependency means the assembled closure is not mutually loadable. Name
+        // that, rather than surfacing raw `E0463`s about crates the user never named.
+        Err(error) if direct_rustc_composition_failure(&error) => Err(oven_native_closure_refusal(
+            &oven.crate_name,
+            &format!(
+                "its assembled dependency closure is not loadable as independently compiled parts ({})",
+                oven_rustc_error(error)
+            ),
+        )),
         Err(error) => Err(oven_rustc_error(error)),
     }
 }
@@ -10637,68 +10583,6 @@ fn direct_rustc_composition_failure(error: &OvenRustcError) -> bool {
     CRATE_LOADING_CODES
         .iter()
         .any(|code| report.unstructured_output.contains(code))
-}
-
-/// Rebuild a generated library through one unified Cargo resolution when direct-rustc composition cannot load.
-///
-/// The generated project on disk already carries the complete Cargo manifest, so Cargo resolves every dependency
-/// once and produces an internally consistent closure. Only libraries that actually hit the fault pay this cost;
-/// the produced `rlib` is published to the same path the direct-rustc bake would have written.
-fn cargo_fallback_bake_oven_library(
-    prepared: &PreparedLibraryProject,
-    oven: &OvenPreparedLibrary,
-    profile: &str,
-) -> CliResult<crate::oven::rustc::OvenDirectRustcBake> {
-    eprintln!(
-        "Oven: building library `{}` through unified Cargo resolution: its dependency closure is not loadable as \
-         independently compiled parts.",
-        oven.crate_name
-    );
-    let release = profile == "release";
-    let result = prepared.generator.cargo_build(release).map_err(|error| {
-        CliError::failure(format!(
-            "unified Cargo fallback build failed to start for library `{}`: {error}",
-            oven.crate_name
-        ))
-    })?;
-    if !result.success {
-        return Err(CliError::failure(format!(
-            "unified Cargo fallback build failed for library `{}`:\n{}",
-            oven.crate_name, result.stderr
-        )));
-    }
-    let built = prepared.generator.cargo_build_library_path(release);
-    let bytes = fs::read(&built).map_err(|error| {
-        CliError::failure(format!(
-            "unified Cargo fallback build reported success but its library is unreadable at {}: {error}",
-            built.display()
-        ))
-    })?;
-    let output = oven_library_path(prepared, oven, profile);
-    if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            CliError::failure(format!(
-                "could not create the Oven library output directory {}: {error}",
-                parent.display()
-            ))
-        })?;
-    }
-    fs::write(&output, &bytes).map_err(|error| {
-        CliError::failure(format!(
-            "could not publish the unified Cargo library to {}: {error}",
-            output.display()
-        ))
-    })?;
-    let selected = oven.profiles.get(profile).ok_or_else(|| {
-        CliError::failure(format!(
-            "unified Cargo library fallback has no prepared `{profile}` selection to record provenance against"
-        ))
-    })?;
-    Ok(crate::oven::rustc::OvenDirectRustcBake::from_external_cargo_build(
-        selected.receipt.identity.clone(),
-        output,
-        crate::oven::digest_bytes(&bytes),
-    ))
 }
 
 /// Preserve direct-rustc diagnostics rather than reducing a normal Oven compilation failure to a generic status.
@@ -15839,6 +15723,19 @@ mod tests {
     use std::fs;
 
     /// Unused macro declarations do not request a build; transitive facade requirements preserve the selected macro.
+    #[test]
+    fn a_closure_refusal_names_the_package_the_pinning_artifact_and_never_offers_cargo() {
+        let pinned = provider_registry_conflict_reason("tokio", Some(Path::new("/store/entries/x/artifacts")));
+        assert!(pinned.contains("`tokio`"));
+        assert!(pinned.contains("/store/entries/x/artifacts"));
+        let linked = provider_registry_conflict_reason("tokio", None);
+        assert!(linked.contains("already linked by this project's own selected plan"));
+        let refusal = oven_native_closure_refusal("app", &pinned).to_string();
+        assert!(refusal.contains("Oven refuses to build `app`"));
+        assert!(refusal.contains("never falls back to Cargo"));
+        assert!(!refusal.to_lowercase().contains("cargo-compatibility"));
+    }
+
     #[test]
     fn selected_provider_macro_requirements_follow_named_roots() -> Result<(), Box<dyn std::error::Error>> {
         // The plan declares no physical search paths, but it still has to bind the one source role the manifests
