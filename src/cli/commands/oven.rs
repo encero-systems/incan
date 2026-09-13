@@ -1225,7 +1225,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 specification.label
             )));
         }
-        stage_locked_loaf_fixture(&generated_project, &compiler_lock).map_err(oven_error)?;
+        stage_locked_loaf_fixture(&options.cargo, &generated_project, &compiler_lock).map_err(oven_error)?;
         let receipt = read_receipt(&receipt_path)?;
         let result = prepare_loaf_from_generated_project(
             &staged_root,

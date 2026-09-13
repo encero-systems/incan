@@ -7225,13 +7225,14 @@ fn select_or_bake_generated_project_plan(
         }
         let bootstrap_lock_seeded = if mode == OvenProjectPlanMode::InteropBootstrap {
             // The bootstrap has no caller-owned Rust registry inputs. Seed its generated manifest from the checked
-            // compiler lock and make the later compatibility build unconditionally locked. That closes the
-            // first-plan loop without turning native interop into ambient Cargo or network discovery -- seeding the
-            // lock now computes it directly rather than asking Cargo to re-resolve it. The lock is resolved through
-            // the toolchain layout: an installed release carries it below `crates/Cargo.lock`, and only a
-            // development checkout keeps it at the workspace root.
+            // compiler lock, normalize the local path records offline, and make the later compatibility build
+            // unconditionally locked. That closes the first-plan loop without turning native interop into ambient
+            // Cargo or network discovery. The lock is resolved through the toolchain layout: an installed release
+            // carries it below `crates/Cargo.lock`, and only a development checkout keeps it at the workspace root.
             let compiler_lock = crate::toolchain_layout::resolve_toolchain_runtime_lockfile();
-            stage_locked_loaf_fixture(generated_project, &compiler_lock).map_err(|error| {
+            let cargo = resolved_cargo_executable()
+                .map_err(|error| CliError::failure(format!("cannot resolve Cargo for interop bootstrap: {error}")))?;
+            stage_locked_loaf_fixture(&cargo, generated_project, &compiler_lock).map_err(|error| {
                 CliError::failure(format!("could not seed the interop bootstrap Cargo.lock: {error}"))
             })?;
             true
