@@ -5891,11 +5891,23 @@ fn legacy_cargo_inspection_sources_from_metadata(
             &right.checksum,
         ))
     });
-    // One registry package can be resolved more than once -- the same crate reached as a normal and a build
-    // dependency, or under two feature resolutions -- and every one of those resolutions stages the same source
-    // tree under the same content identity. Each surviving entry then contributes that tree's files again, and the
-    // publisher refuses its own manifest with "declares one relative artifact path more than once". Fold the
-    // repeats into the one source they name, unioning the features so no resolution loses what it asked for.
+    Ok(fold_repeated_inspection_sources(sources))
+}
+
+/// Fold registry sources that name the same staged tree, so each one contributes its files exactly once.
+///
+/// One registry package can be resolved more than once -- the same crate reached as a normal and a build
+/// dependency, or under two feature resolutions -- and every one of those resolutions stages the same source tree
+/// under the same content identity, because that identity is a digest of registry, package, version and checksum.
+/// Each surviving entry then contributes that tree's files again, and the publisher refuses its own manifest with
+/// "declares one relative artifact path more than once".
+///
+/// Features are unioned rather than dropped: the repeats are the same unit seen through different resolutions, and
+/// the compilation observes every feature any of them asked for. The input must already be sorted on the same four
+/// fields, which is what makes an adjacent comparison sufficient.
+fn fold_repeated_inspection_sources(
+    sources: Vec<OvenLegacyCargoInspectionSource>,
+) -> Vec<OvenLegacyCargoInspectionSource> {
     let mut folded: Vec<OvenLegacyCargoInspectionSource> = Vec::with_capacity(sources.len());
     for source in sources {
         match folded.last_mut() {
@@ -5912,7 +5924,7 @@ fn legacy_cargo_inspection_sources_from_metadata(
             _ => folded.push(source),
         }
     }
-    Ok(folded)
+    folded
 }
 
 /// Stage the private manifest for a future sealed third-party foundation compilation.
@@ -9180,6 +9192,46 @@ fn round_physical(bytes: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
+
+    /// One registry unit resolved twice contributes its staged tree once, keeping every feature either asked for.
+    ///
+    /// The publisher refuses a manifest that declares one relative artifact path more than once, and a repeated
+    /// resolution is how that happened: the staged directory is a digest of registry, package, version and
+    /// checksum, so both resolutions name the same tree and both contribute its files.
+    #[test]
+    fn a_registry_unit_resolved_twice_is_folded_with_its_features_unioned() {
+        let source = |features: &[&str]| super::OvenLegacyCargoInspectionSource {
+            package: "serde".to_string(),
+            version: "1.0.0".to_string(),
+            registry: "registry+https://github.com/rust-lang/crates.io-index".to_string(),
+            checksum: "sha256:serde".to_string(),
+            features: features.iter().map(|feature| (*feature).to_string()).collect(),
+            source_root: std::path::PathBuf::from("registry-sources/serde"),
+            source_digest: "sha256:serde-tree".to_string(),
+        };
+        let mut other = source(&["std"]);
+        other.package = "itoa".to_string();
+        other.checksum = "sha256:itoa".to_string();
+
+        let folded = super::fold_repeated_inspection_sources(vec![
+            source(&["derive"]),
+            source(&["std", "derive"]),
+            other.clone(),
+        ]);
+
+        assert_eq!(folded.len(), 2, "the repeated unit must contribute one staged tree");
+        assert_eq!(folded[0].package, "serde");
+        assert_eq!(folded[0].features, vec!["derive".to_string(), "std".to_string()]);
+        assert_eq!(folded[1].package, "itoa");
+
+        // A unit that differs in any identifying field names a different staged tree and must survive on its own.
+        let mut rekeyed = source(&["derive"]);
+        rekeyed.version = "1.0.1".to_string();
+        assert_eq!(
+            super::fold_repeated_inspection_sources(vec![source(&["derive"]), rekeyed]).len(),
+            2
+        );
+    }
     use super::{
         OVEN_PROVIDER_COMPILATION_KEY, OvenCompilerMacroDependency, provider_compilation_externs,
         provider_compilation_requirements_digest, validate_provider_compilation_requirements,
