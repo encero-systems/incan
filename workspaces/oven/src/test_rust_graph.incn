@@ -1,0 +1,160 @@
+"""Graph-wide feature propagation contracts; single-unit activation remains `rust_activation`'s own coverage."""
+
+from rust_source import read_dependency_catalog, RustDependencyCatalog
+from rust_activation import (
+    ActivationContext,
+    ActivationPurpose,
+    CfgSnapshot,
+    DependencyDomain,
+    TargetConfiguration,
+)
+from rust_graph import GraphNode, NodeDemand, propagate_features
+from manifest_errors import IntakeError
+from std.testing import fail, fail_t
+
+
+def require_ok[T](result: Result[T, IntakeError]) -> T:
+    """Keep fixture setup shallow while reporting the original intake diagnostic on failure."""
+    match result:
+        Ok(value) => return value
+        Err(error) => return fail_t[T](error.message())
+
+
+def linux() -> TargetConfiguration:
+    """One explicit test-owned cfg snapshot; nothing here discovers a sysroot."""
+    snapshot = CfgSnapshot(
+        flags=["unix"],
+        values={"target_arch": ["x86_64"], "target_family": ["unix"], "target_os": ["linux"]},
+    )
+    return TargetConfiguration(triple="x86_64-unknown-linux-gnu", cfg=Some(snapshot))
+
+
+def target_node(package: str) -> GraphNode:
+    """A node in the target domain, which is where an ordinary dependency lands."""
+    return GraphNode(package=package, domain=DependencyDomain.Target)
+
+
+def catalogs_from(sources: Dict[str, str]) -> Dict[str, RustDependencyCatalog]:
+    """Parse each fixture manifest once; nothing here reads from disk."""
+    mut parsed: Dict[str, RustDependencyCatalog] = {}
+    for name in sources.keys():
+        parsed[name] = require_ok(read_dependency_catalog(sources[name], "Cargo.toml"))
+    return parsed
+
+
+def base_context() -> ActivationContext:
+    """The host/target identities every node in these fixtures shares."""
+    return ActivationContext(
+        host=linux(),
+        target=linux(),
+        purpose=ActivationPurpose.Normal,
+        requested_features=[],
+        default_features=true,
+        build_unit_present=false,
+    )
+
+
+pub def test_two_dependents_union_their_demands_on_one_package() -> None:
+    """The union across dependents is the whole reason this is a fixed point and not a single pass."""
+    sources = {
+        "root": "\n    [dependencies]\n    left='1'\n    right='1'\n    ",
+        "left": "\n    [dependencies]\n    shared={version='1', features=['alpha'], default-features=false}\n    ",
+        "right": "\n    [dependencies]\n    shared={version='1', features=['beta'], default-features=false}\n    ",
+        "shared": "\n    [features]\n    alpha=[]\n    beta=[]\n    ",
+    }
+    result = require_ok(
+        propagate_features(
+            catalogs_from(sources),
+            base_context(),
+            "Cargo.toml",
+            [target_node("root")],
+            NodeDemand(features=[], default_features=true),
+            64,
+        ),
+    )
+    mut seen = false
+    for index in range(len(result.nodes)):
+        if result.nodes[index].package == "shared":
+            seen = true
+            features = result.activations[index].effective_features
+            assert "alpha" in features
+            assert "beta" in features
+    if not seen:
+        fail("the shared package was never reached")
+
+
+pub def test_host_and_target_demands_do_not_merge() -> None:
+    """A build dependency's features must not reach the unit shipped to the user."""
+    sources = {
+        "root": "\n    [dependencies]\n    shared={version='1', features=['target-only'], default-features=false}\n    [build-dependencies]\n    shared={version='1', features=['host-only'], default-features=false}\n    ",
+        "shared": "\n    [features]\n    target-only=[]\n    host-only=[]\n    ",
+    }
+    result = require_ok(
+        propagate_features(
+            catalogs_from(sources),
+            base_context(),
+            "Cargo.toml",
+            [target_node("root")],
+            NodeDemand(features=[], default_features=true),
+            64,
+        ),
+    )
+    for index in range(len(result.nodes)):
+        node = result.nodes[index]
+        if node.package == "shared" and node.domain == DependencyDomain.Target:
+            assert "host-only" not in result.activations[index].effective_features
+
+
+pub def test_a_package_with_no_catalog_is_a_leaf() -> None:
+    """A package this walk cannot see into contributes no edges rather than pruning a needed unit."""
+    sources = {"root": "\n    [dependencies]\n    opaque='1'\n    "}
+    result = require_ok(
+        propagate_features(
+            catalogs_from(sources),
+            base_context(),
+            "Cargo.toml",
+            [target_node("root")],
+            NodeDemand(features=[], default_features=true),
+            64,
+        ),
+    )
+    for node in result.nodes:
+        assert node.package != "opaque"
+
+
+pub def test_a_cycle_terminates_instead_of_spinning() -> None:
+    """Demands only grow, so a cyclic graph still settles; this pins that rather than trusting it."""
+    sources = {
+        "a": "\n    [dependencies]\n    b='1'\n    ",
+        "b": "\n    [dependencies]\n    a='1'\n    ",
+    }
+    result = require_ok(
+        propagate_features(
+            catalogs_from(sources),
+            base_context(),
+            "Cargo.toml",
+            [target_node("a")],
+            NodeDemand(features=[], default_features=true),
+            64,
+        ),
+    )
+    assert len(result.nodes) == 2
+    assert result.rounds <= 64
+
+
+pub def test_an_unsettled_graph_refuses_within_its_bound() -> None:
+    """The round bound reports a refusal rather than looping when a catalog cannot settle."""
+    sources = {
+        "a": "\n    [dependencies]\n    b='1'\n    ",
+        "b": "\n    [dependencies]\n    a='1'\n    ",
+    }
+    match propagate_features(
+        catalogs_from(sources),
+        base_context(),
+        "Cargo.toml",
+        [target_node("a")],
+        NodeDemand(features=[], default_features=true),
+        1,
+    ):
+        Ok(_) => fail("a one-round bound cannot settle a two-node graph")
+        Err(error) => assert "did not settle" in error.message()
