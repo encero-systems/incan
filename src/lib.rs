@@ -39,8 +39,8 @@ pub mod replacement_compatibility;
 #[cfg(feature = "rust_inspect")]
 pub mod rust_inspect;
 pub(crate) mod semantics_registry;
-pub(crate) use oven_model::toolchain_layout;
 pub use incan_core::version;
+pub(crate) use oven_model::toolchain_layout;
 pub use oven_model::workspace;
 
 pub use frontend::ast;
