@@ -223,6 +223,10 @@ agents-doc-sync:
 agents-doc-sync-ci:
 	@python3 scripts/check_agents_doc_sync.py
 
+.PHONY: check-oven-ring  ## quality - Check the oven_* crates in a workspace with no compiler crates (the ring rule)
+check-oven-ring:
+	@python3 scripts/check_oven_ring.py
+
 .PHONY: cargo-deny  ## quality - Run cargo-deny policy checks
 cargo-deny:
 	@echo "\033[1mRunning cargo-deny...\033[0m"
@@ -269,8 +273,12 @@ pre-commit-fast:
 	$(MAKE) -s check-fast-ci; \
 	echo "\033[32mDONE\033[0m"; \
 	t3=$$(date +%s); \
+	echo "\033[1mChecking the Oven ring without the compiler crates...\033[0m"; \
+	$(MAKE) -s check-oven-ring; \
+	echo "\033[32mDONE\033[0m"; \
+	t4=$$(date +%s); \
 	echo "\033[32m✓ Pre-commit checks passed (fast)\033[0m"; \
-	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, rustdoc=$$((t2-t1))s, version-gate=$$((t2a-t2))s, agents-doc-sync=$$((t2b-t2a))s, check=$$((t3-t2b))s, total=$$((t3-start))s"
+	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, rustdoc=$$((t2-t1))s, version-gate=$$((t2a-t2))s, agents-doc-sync=$$((t2b-t2a))s, check=$$((t3-t2b))s, oven-ring=$$((t4-t3))s, total=$$((t4-start))s"
 
 .PHONY: pre-commit-full-gate  ## quality - Full local gate core: fmt-check + tests + clippy + cargo-deny with phase timing
 pre-commit-full-gate:

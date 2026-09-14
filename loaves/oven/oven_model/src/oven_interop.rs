@@ -22,7 +22,7 @@ use crate::manifest::ProjectManifest;
 pub const INTEROP_C_SCHEMA_VERSION: u32 = 1;
 
 /// Current compatibility format for the locked Oven interop deployment-plan projection.
-pub(crate) const OVEN_INTEROP_DEPLOYMENT_PLAN_SCHEMA_VERSION: u32 = 3;
+pub const OVEN_INTEROP_DEPLOYMENT_PLAN_SCHEMA_VERSION: u32 = 3;
 
 /// The `[interop]` manifest root, holding one table per declared binding kind.
 ///
@@ -145,7 +145,7 @@ impl InteropCSection {
 }
 
 /// Return whether one package-declared shim output safely maps to `lib<name>.a` below an Oven-owned directory.
-pub(crate) fn is_interop_native_library_name(name: &str) -> bool {
+pub fn is_interop_native_library_name(name: &str) -> bool {
     !name.is_empty()
         && name
             .bytes()
@@ -247,7 +247,7 @@ pub enum InteropTargetPlatform {
 
 /// Canonical device-versus-simulator interpretation for the supported iOS target vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IosTargetKind {
+pub enum IosTargetKind {
     /// Arm64 binary linked against the physical-device iPhoneOS SDK.
     Device,
     /// Arm64 binary linked against the iPhoneSimulator SDK.
@@ -256,7 +256,7 @@ pub(crate) enum IosTargetKind {
 
 impl IosTargetKind {
     /// Return the one SDK capability that can satisfy this target kind.
-    pub(crate) fn sdk_capability(self) -> &'static str {
+    pub fn sdk_capability(self) -> &'static str {
         match self {
             Self::Device => "iphoneos",
             Self::Simulator => "iphonesimulator",
@@ -264,7 +264,7 @@ impl IosTargetKind {
     }
 
     /// Return the target portion used by a selected Clang-family compiler.
-    pub(crate) fn clang_target(self) -> &'static str {
+    pub fn clang_target(self) -> &'static str {
         match self {
             Self::Device => "arm64-apple-ios",
             Self::Simulator => "arm64-apple-ios-simulator",
@@ -274,7 +274,7 @@ impl IosTargetKind {
 
 /// Classify the supported Rust target spellings without consulting a host SDK or toolchain.
 #[must_use]
-pub(crate) fn ios_target_kind(target: &str) -> Option<IosTargetKind> {
+pub fn ios_target_kind(target: &str) -> Option<IosTargetKind> {
     match target {
         "aarch64-apple-ios" => Some(IosTargetKind::Device),
         "aarch64-apple-ios-sim" => Some(IosTargetKind::Simulator),
@@ -488,7 +488,7 @@ pub enum InteropShimLanguage {
 
 impl InteropShimLanguage {
     /// Return the stable vocabulary spelling used by inspect output.
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::C => "c",
             Self::Cxx => "cxx",
@@ -599,73 +599,73 @@ pub struct LockedInteropShim {
 /// locked requirements without embedding a Gradle task, Xcode build phase, signing identity, credential, or a
 /// machine-local toolchain path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct InteropDeploymentPlan {
+pub struct InteropDeploymentPlan {
     /// Compatibility version for this deployment-plan shape.
-    pub(crate) schema_version: u32,
+    pub schema_version: u32,
     /// Content-derived identity of the exact locked target requirements behind this handoff.
-    pub(crate) locked_target_identity: String,
+    pub locked_target_identity: String,
     /// Exact compilation and deployment target triple.
-    pub(crate) target: String,
+    pub target: String,
     /// Compatible toolchain requirement retained from the canonical lock.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) toolchain: Option<ToolchainRequirement>,
+    pub toolchain: Option<ToolchainRequirement>,
     /// Compatible SDK requirement retained from the canonical lock.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) sdk: Option<ToolchainRequirement>,
+    pub sdk: Option<ToolchainRequirement>,
     /// Platform version facts needed by a later Gradle or Xcode adapter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) platform: Option<InteropDeploymentPlatform>,
+    pub platform: Option<InteropDeploymentPlatform>,
     /// Locked header files used by verification and future interop compilation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) headers: Vec<LockedInteropInput>,
+    pub headers: Vec<LockedInteropInput>,
     /// Portable package-relative include roots derived from locked headers and shim headers.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) include_roots: Vec<String>,
+    pub include_roots: Vec<String>,
     /// Explicit preprocessor definitions applied to verification and future shim baking.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) definitions: Vec<String>,
+    pub definitions: Vec<String>,
     /// Deterministic dependencies-first static, bundled, and system planning actions.
     ///
     /// Explicit dependency edges remain authoritative. A platform adapter must derive linker argument order rather
     /// than treating this planning sequence as a raw command line.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) artifacts: Vec<InteropDeploymentArtifact>,
+    pub artifacts: Vec<InteropDeploymentArtifact>,
     /// Explicit checked-binding to target-artifact correspondences retained for tooling joins.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) bindings: Vec<InteropDeploymentBindingArtifact>,
+    pub bindings: Vec<InteropDeploymentBindingArtifact>,
     /// Authored shim build inputs and logical outputs required before final platform assembly.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) shims: Vec<InteropShimBuildPlan>,
+    pub shims: Vec<InteropShimBuildPlan>,
 }
 
 /// One dependency-ordered artifact action in an Oven interop deployment plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct InteropDeploymentArtifact {
+pub struct InteropDeploymentArtifact {
     /// Stable package-local artifact name.
-    pub(crate) name: String,
+    pub name: String,
     /// Logical sibling artifacts that must be available before this artifact.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) dependencies: Vec<String>,
+    pub dependencies: Vec<String>,
     /// Structured platform-neutral action for the declared deployment class.
     #[serde(flatten)]
-    pub(crate) action: InteropDeploymentAction,
+    pub action: InteropDeploymentAction,
 }
 
 /// One portable checked-binding to target-artifact correspondence in the deployment handoff.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct InteropDeploymentBindingArtifact {
+pub struct InteropDeploymentBindingArtifact {
     /// Logical Incan module path that declares the checked binding.
-    pub(crate) module: Vec<String>,
+    pub module: Vec<String>,
     /// Source-visible checked binding declaration name in that module.
-    pub(crate) name: String,
+    pub name: String,
     /// Explicit target-artifact names required by this binding.
-    pub(crate) artifacts: Vec<String>,
+    pub artifacts: Vec<String>,
 }
 
 /// Mobile platform facts projected into the JSON handoff independently from manifest field spelling.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum InteropDeploymentPlatform {
+pub enum InteropDeploymentPlatform {
     /// Android arm64 handoff facts.
     Android {
         /// Android API level selected for verification and deployment.
@@ -692,7 +692,7 @@ impl From<&InteropTargetPlatform> for InteropDeploymentPlatform {
 /// Platform-neutral action consumed by a later Gradle, Xcode, or other packager adapter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "deployment", rename_all = "snake_case")]
-pub(crate) enum InteropDeploymentAction {
+pub enum InteropDeploymentAction {
     /// Link one locked package archive into the final product.
     StaticLink {
         /// Portable archive path and digest.
@@ -718,25 +718,25 @@ pub(crate) enum InteropDeploymentAction {
 
 /// One authored shim action that Oven must bake before its deployment plan is ready for final assembly.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct InteropShimBuildPlan {
+pub struct InteropShimBuildPlan {
     /// Stable package-local shim name.
-    pub(crate) name: String,
+    pub name: String,
     /// Selected C or C++ source language.
-    pub(crate) language: InteropShimLanguage,
+    pub language: InteropShimLanguage,
     /// Locked authored source inputs.
-    pub(crate) sources: Vec<LockedInteropInput>,
+    pub sources: Vec<LockedInteropInput>,
     /// Locked headers describing the shim's bounded C contract.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) headers: Vec<LockedInteropInput>,
+    pub headers: Vec<LockedInteropInput>,
     /// Logical artifact name produced by the future managed shim baker.
-    pub(crate) output: String,
+    pub output: String,
 }
 
 /// Project one canonical locked target into a deterministic Oven interop deployment handoff.
 ///
 /// The projection neither reads the package filesystem nor discovers host libraries. Every physical file comes from
 /// an existing locked input receipt, so relocating the package does not change the emitted plan.
-pub(crate) fn interop_deployment_plan(target: &LockedInteropTarget) -> Result<InteropDeploymentPlan, String> {
+pub fn interop_deployment_plan(target: &LockedInteropTarget) -> Result<InteropDeploymentPlan, String> {
     // ---- Validate and order the artifact graph ----
     let artifact_names = ordered_artifact_names(
         &target.target,
@@ -806,7 +806,7 @@ pub(crate) fn interop_deployment_plan(target: &LockedInteropTarget) -> Result<In
 ///
 /// The identity is derived solely from canonical lock data. It neither inspects a local toolchain nor serializes a
 /// package root, so a relocated package with the same locked interop inputs keeps the same join key.
-pub(crate) fn locked_interop_target_identity(target: &LockedInteropTarget) -> Result<String, String> {
+pub fn locked_interop_target_identity(target: &LockedInteropTarget) -> Result<String, String> {
     serde_json::to_vec(target)
         .map(|bytes| format!("sha256:{}", hex::encode(Sha256::digest(bytes))))
         .map_err(|error| format!("failed to serialize locked Oven interop target identity: {error}"))

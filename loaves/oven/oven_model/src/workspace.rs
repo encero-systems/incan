@@ -428,7 +428,7 @@ impl WorkspaceGraph {
     /// Rooted workspaces can contain a non-root member below the root project. In that topology, both member roots
     /// are path prefixes, so callers must use the deepest match rather than allowing the root project to claim a
     /// descendant member's entrypoint or test file.
-    pub(crate) fn member_containing_path(&self, path: &Path) -> Option<&WorkspaceMember> {
+    pub fn member_containing_path(&self, path: &Path) -> Option<&WorkspaceMember> {
         self.member_containing_index(path).map(|index| &self.members[index])
     }
 

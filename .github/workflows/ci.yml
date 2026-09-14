@@ -142,6 +142,10 @@ jobs:
         run: cargo check --no-default-features --lib
       - name: Check the language server without the CLI
         run: cargo check --no-default-features --features lsp --lib --bin incan-lsp
+      # The Oven ring depends on no Incan ring (`loaves/LAYOUT.md`): the `oven_*` crates must check in a workspace
+      # that holds nothing else. `scripts/check_oven_ring.py` builds that workspace from the root manifest's tables.
+      - name: Check the Oven ring without the compiler crates
+        run: python3 scripts/check_oven_ring.py
       # These source-free checks run independently of SDK publication so its consumers never wait for test linking.
       - name: Compile and run SDK transport and CI contract regressions
         run: |

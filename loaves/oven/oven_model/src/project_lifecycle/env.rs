@@ -308,7 +308,7 @@ impl ResolveState {
 }
 
 /// Resolve a configured cwd against the project root for display and execution.
-pub(crate) fn resolve_cwd(project_root: &Path, cwd: Option<&str>) -> PathBuf {
+pub fn resolve_cwd(project_root: &Path, cwd: Option<&str>) -> PathBuf {
     match cwd {
         Some(value) => {
             let path = PathBuf::from(value);

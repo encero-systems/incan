@@ -683,7 +683,7 @@ fn print_summary_table(summaries: &[EnvSummary]) {
 /// Compute current-toolchain compatibility for CLI display.
 fn toolchain_compatibility(constraints: &ToolchainConstraintSet) -> CliResult<ToolchainCompatibility> {
     constraints
-        .compatibility_current()
+        .compatibility_with(crate::version::INCAN_VERSION)
         .map_err(|error| CliError::failure(error.to_string()))
 }
 

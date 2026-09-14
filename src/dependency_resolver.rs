@@ -9,27 +9,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use semver::VersionReq;
-
 use crate::frontend::ast::Span;
 use crate::frontend::diagnostics::CompileError;
 use crate::lockfile::CargoFeatureSelection;
+use crate::manifest::validate_cargo_version_req;
 use crate::manifest::{DependencySource, DependencySpec, ProjectManifest};
 use incan_core::lang::stdlib::{self, StdlibExtraCrateSource};
-
-/// Validate that a version requirement string uses Cargo SemVer syntax.
-///
-/// Returns `Ok(())` if valid, or an error message describing the problem.
-/// This catches PEP 440 specifiers, typos, and other invalid strings early (RFC 013, Phase 1.2).
-pub(crate) fn validate_cargo_version_req(version: &str) -> Result<(), String> {
-    match VersionReq::parse(version) {
-        Ok(_) => Ok(()),
-        Err(e) => Err(format!(
-            "invalid Cargo SemVer requirement `{version}`: {e}. \
-             Use Cargo syntax (e.g. \"1.0\", \"^1.2\", \"~0.5\", \">=1.0, <2.0\", \"=1.2.3\")"
-        )),
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct InlineRustImport {
@@ -1147,26 +1132,6 @@ legacy_rust = { path = "../legacy_rust" }
             err.error.hints
         );
         Ok(())
-    }
-
-    // ---- SemVer validation (RFC 013, Phase 1.2) ----
-
-    #[test]
-    fn validate_cargo_version_req_accepts_valid_specs() {
-        assert!(validate_cargo_version_req("1.0").is_ok());
-        assert!(validate_cargo_version_req("^1.2").is_ok());
-        assert!(validate_cargo_version_req("~0.5").is_ok());
-        assert!(validate_cargo_version_req(">=1.0, <2.0").is_ok());
-        assert!(validate_cargo_version_req("=1.2.3").is_ok());
-        assert!(validate_cargo_version_req("1.0.195").is_ok());
-    }
-
-    #[test]
-    fn validate_cargo_version_req_rejects_invalid_specs() {
-        assert!(validate_cargo_version_req("banana").is_err());
-        assert!(validate_cargo_version_req("~=1.2").is_err()); // PEP 440
-        assert!(validate_cargo_version_req("==1.2.*").is_err()); // PEP 440
-        assert!(validate_cargo_version_req("!=1.3").is_err()); // PEP 440
     }
 
     #[test]

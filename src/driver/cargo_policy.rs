@@ -100,7 +100,7 @@ pub(crate) fn enforce_project_toolchain_constraint(manifest: &ProjectManifest) -
 /// Enforce an already-resolved effective `requires-incan` constraint set.
 pub(crate) fn enforce_toolchain_constraints(constraints: &ToolchainConstraintSet) -> CliResult<()> {
     constraints
-        .enforce_current()
+        .enforce(crate::version::INCAN_VERSION)
         .map_err(|error| CliError::failure(error.to_string()))
 }
 

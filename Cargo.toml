@@ -11,6 +11,7 @@ members = [
     "crates/incan_semantics_stdlib",
     "crates/incan_web_macros",
     "crates/rust_inspect",
+    "loaves/oven/oven_model",
 ]
 exclude = ["target/incan"]
 resolver = "2"
@@ -122,6 +123,7 @@ sha1 = "0.10"
 hmac = { version = "0.12", features = ["reset"] }
 hex = "0.4.3"
 semver = "1.0.27"
+oven_model = { path = "loaves/oven/oven_model" }
 globset = "0.4.18"
 # Safe, capability-oriented filesystem primitives for no-replace Oven publications.
 rustix = { version = "1.1.4", features = ["fs"] }
