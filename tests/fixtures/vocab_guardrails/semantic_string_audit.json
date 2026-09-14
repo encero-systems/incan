@@ -57,8 +57,8 @@
     {
       "path": "crates/rust_inspect/src/loader.rs",
       "category": "rust-inspect Rust edition compatibility for compiler-authored direct projects",
-      "expected_count": 1,
-      "expected_fingerprint": "0x35f272a8fd839ee3"
+      "expected_count": 2,
+      "expected_fingerprint": "0xfec68511646db439"
     },
     {
       "path": "crates/rust_inspect/src/receiver_contract.rs",
