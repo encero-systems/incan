@@ -6,15 +6,17 @@ use std::path::{Path, PathBuf};
 use clap::ValueEnum;
 use serde::Serialize;
 
-use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
+use crate::frontend::parsed_module::ParsedModule;
 use crate::manifest::ProjectManifest;
 use crate::provider::{
     ComponentSelectionReason, FeatureActivationReason, FeatureSelection, ProviderParticipation, ProviderPlan,
     ProviderProvenance,
 };
 
-use super::common::{CompilationSession, collect_modules_detailed_with_session, resolve_project_root};
+use crate::driver::modules::collect_modules_detailed_with_session;
+use crate::driver::project::resolve_project_root;
+use crate::driver::session::CompilationSession;
 
 /// Human or JSON output for provider and feature inspection.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]

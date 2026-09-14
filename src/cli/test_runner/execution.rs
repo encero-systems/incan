@@ -6,16 +6,15 @@ use std::time::{Duration, Instant};
 
 use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::cli::commands;
-use crate::cli::commands::common::{self, CargoPolicy, ProjectRequirements};
 #[cfg(feature = "rust_inspect")]
 use crate::cli::commands::lock::{
     OvenRustInspectSourceAuthorityRequest, PreparedOvenProjectRegistrySourceAuthorities, RustInspectWorkspaceRequest,
     prepare_project_registry_source_authorities, prepare_rust_inspect_workspace,
 };
-use crate::cli::prelude::ParsedModule;
 use crate::compiled_sdk::CompiledSdkModules;
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::resolve_reachable_dependencies;
+use crate::driver::cargo_policy::CargoPolicy;
 use crate::frontend::ast::{
     AssertKind, AssertStmt, CallArg, Declaration, DictEntry, Expr, ImportItem, ImportKind, ListEntry, ParamKind,
     Program, Span, Spanned, Statement, Type,
@@ -23,6 +22,7 @@ use crate::frontend::ast::{
 use crate::frontend::decorator_resolution;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::logical_module_segments_from_file;
+use crate::frontend::parsed_module::ParsedModule;
 use crate::frontend::testing_markers::{TestingMarkerKind, TestingMarkerSemantics, resolve_testing_marker_kind};
 use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{lexer, parser};
@@ -40,6 +40,7 @@ use crate::oven::{
     OvenGeneratedProjectRequest, default_receipt_path, digest_dependency_specs, receipt_generated_project,
     write_receipt,
 };
+use crate::provider::requirements::ProjectRequirements;
 use crate::provider::{FeatureSelection, ProviderPlan};
 use sha2::{Digest, Sha256};
 
@@ -64,14 +65,14 @@ pub(super) struct TestExecutionOptions {
 pub(super) struct OvenTestCommandContext {
     project_root: PathBuf,
     planned_test_files: BTreeSet<PathBuf>,
-    session: Arc<common::CompilationSession>,
+    session: Arc<crate::driver::session::CompilationSession>,
     store: crate::oven::store::OvenStore,
     project_source_authorities: Option<Arc<PreparedOvenProjectRegistrySourceAuthorities>>,
 }
 
 /// Select source-current completed-project authority before any parallel test unit starts.
 pub(super) fn prepare_oven_test_command_context(
-    session: Arc<common::CompilationSession>,
+    session: Arc<crate::driver::session::CompilationSession>,
     representative_test: &Path,
     planned_test_files: &[PathBuf],
 ) -> crate::cli::CliResult<Arc<OvenTestCommandContext>> {
@@ -108,7 +109,7 @@ pub(super) fn prepare_oven_test_command_context(
 fn command_session_for_execution_unit<'a>(
     command_context: &'a OvenTestCommandContext,
     representative_test: &Path,
-) -> Result<&'a common::CompilationSession, String> {
+) -> Result<&'a crate::driver::session::CompilationSession, String> {
     let canonical_test = canonical_path_for_cache_key(representative_test);
     if !command_context.planned_test_files.contains(&canonical_test) {
         return Err(format!(
@@ -126,7 +127,7 @@ fn command_session_for_execution_unit<'a>(
 /// Cargo. Validation uses the Oven read-only resolver: a missing or stale lock fails before scheduling, and a
 /// normal test command never publishes SDK/provider or dependency artifacts.
 pub(super) fn validate_oven_test_lock_policy(
-    session: &common::CompilationSession,
+    session: &crate::driver::session::CompilationSession,
     representative_test: &Path,
     cargo_policy: &CargoPolicy,
     package_features: &FeatureSelection,
@@ -162,9 +163,9 @@ fn collect_test_dependency_inline_imports(
     test_module: &ParsedModule,
     source_modules: &[ParsedModule],
 ) -> Vec<crate::dependency_resolver::InlineRustImport> {
-    let mut inline_imports = common::collect_rust_dependency_uses(test_module, true);
+    let mut inline_imports = crate::driver::modules::collect_rust_dependency_uses(test_module, true);
     for module in source_modules {
-        inline_imports.extend(common::collect_rust_dependency_uses(module, false));
+        inline_imports.extend(crate::driver::modules::collect_rust_dependency_uses(module, false));
     }
     inline_imports
 }
@@ -339,7 +340,7 @@ fn parse_test_batch_sources(
     batch_sources: &[(PathBuf, String)],
     library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
     library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
-    compilation_session: &common::CompilationSession,
+    compilation_session: &crate::driver::session::CompilationSession,
 ) -> Result<Program, String> {
     let mut declarations = Vec::new();
     let mut warnings = Vec::new();
@@ -437,7 +438,7 @@ fn parse_and_desugar_test_sources(
     library_manifest_index: &LibraryManifestIndex,
     library_imported_vocab: &parser::ImportedLibraryVocab,
     library_imported_dsl_surfaces: &parser::ImportedLibraryDslSurfaces,
-    compilation_session: &common::CompilationSession,
+    compilation_session: &crate::driver::session::CompilationSession,
 ) -> Result<Program, String> {
     let mut ast = parse_test_batch_sources(
         batch_sources,
@@ -525,7 +526,7 @@ fn prepare_isolated_source_module_batch(
     library_manifest_index: &LibraryManifestIndex,
     library_imported_vocab: &parser::ImportedLibraryVocab,
     library_imported_dsl_surfaces: &parser::ImportedLibraryDslSurfaces,
-    compilation_session: &common::CompilationSession,
+    compilation_session: &crate::driver::session::CompilationSession,
     testing_marker_semantics: Option<&TestingMarkerSemantics>,
 ) -> Result<Option<IsolatedSourceModuleBatch>, String> {
     if sources_by_file.len() <= 1 {
@@ -2229,7 +2230,7 @@ fn run_file_tests_batch_oven(
         Ok(semantics) => semantics,
         Err(error) => return failure(error.message),
     };
-    let source_root = common::resolve_source_root(&project_root, manifest.as_ref());
+    let source_root = crate::driver::project::resolve_source_root(&project_root, manifest.as_ref());
     let isolated_batch = match prepare_isolated_source_module_batch(
         &sources_by_file,
         conftest_files_by_file,
@@ -2302,20 +2303,22 @@ fn run_file_tests_batch_oven(
     let mut dependency_modules = Vec::with_capacity(1 + source_dependency_modules.len());
     dependency_modules.push(module_for_imports.clone());
     dependency_modules.extend(source_dependency_modules.clone());
-    let mut requirements = match common::collect_project_requirements(&dependency_modules, &library_manifest_index) {
-        Ok(requirements) => requirements,
-        Err(error) => return failure(error.message),
-    };
+    let mut requirements =
+        match crate::provider::requirements::collect_project_requirements(&dependency_modules, &library_manifest_index)
+        {
+            Ok(requirements) => requirements,
+            Err(error) => return failure(error.message),
+        };
     let feature_selection = CargoFeatureSelection::default().normalized();
     let mut resolved =
         match resolve_reachable_dependencies(manifest.as_ref(), &inline_imports, true, &feature_selection) {
             Ok(resolved) => resolved,
             Err(errors) => {
-                let sources = common::build_source_map(&dependency_modules);
+                let sources = crate::driver::modules::build_source_map(&dependency_modules);
                 return failure(
                     errors
                         .iter()
-                        .map(|error| common::format_dependency_error(error, &sources))
+                        .map(|error| crate::driver::modules::format_dependency_error(error, &sources))
                         .collect::<String>(),
                 );
             }
@@ -2333,10 +2336,14 @@ fn run_file_tests_batch_oven(
             Ok(libraries) => libraries,
             Err(error) => return failure(error.message),
         };
-    if let Err(error) = common::extend_requirements_with_provider_plan(&mut requirements, &provider_plan) {
+    if let Err(error) =
+        crate::provider::inventory::extend_requirements_with_provider_plan(&mut requirements, &provider_plan)
+    {
         return failure(error.message);
     }
-    if let Err(error) = common::merge_project_requirement_dependencies(&mut resolved, &requirements) {
+    if let Err(error) =
+        crate::provider::requirements::merge_project_requirement_dependencies(&mut resolved, &requirements)
+    {
         return failure(error.message);
     }
     let inline_path_dependencies = oven_test_inline_dependency_specs(&resolved, &inline_imports);
@@ -2387,7 +2394,8 @@ fn run_file_tests_batch_oven(
     }
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = {
-        let metadata_query_paths = common::collect_rust_inspect_query_paths(&dependency_modules);
+        let metadata_query_paths =
+            crate::driver::rust_inspect_workspace::collect_rust_inspect_query_paths(&dependency_modules);
         match prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
             project_root: &project_root,
             project_name: project_name.as_str(),
@@ -2404,7 +2412,9 @@ fn run_file_tests_batch_oven(
                 .join(&dir_suffix)
                 .join("oven/rust-inspect"),
             rust_inspect_query_paths: &metadata_query_paths,
-            rust_derive_probe_paths: &common::collect_rust_inspect_derive_probe_paths(&dependency_modules),
+            rust_derive_probe_paths: &crate::driver::rust_inspect_workspace::collect_rust_inspect_derive_probe_paths(
+                &dependency_modules,
+            ),
             prepare_when_empty: false,
             direct_oven_inspection: true,
             force_direct_prewarm: false,
@@ -2815,7 +2825,7 @@ fn oven_test_build_unit_inputs(
 ) -> Result<BTreeMap<String, String>, String> {
     let records = crate::cli::commands::build::oven_native_provider_records(
         provider_plan,
-        &common::semantic_sdk_path_dependencies(requirements),
+        &crate::provider::requirements::semantic_sdk_path_dependencies(requirements),
     )
     .map_err(|error| error.message)?;
     let mut dependencies = resolved.dependencies.clone();
@@ -3047,7 +3057,11 @@ def captured_resource() -> int:
         )?;
         let test_file = tests.join("test_lock.incn");
         fs::write(&test_file, "def test_lock() -> None:\n  assert True\n")?;
-        let session = common::CompilationSession::discover_for_oven(&test_file, &FeatureSelection::default(), None)?;
+        let session = crate::driver::session::CompilationSession::discover_for_oven(
+            &test_file,
+            &FeatureSelection::default(),
+            None,
+        )?;
 
         let error = match validate_oven_test_lock_policy(
             &session,
@@ -3078,7 +3092,7 @@ def captured_resource() -> int:
         fs::write(&first_test, "def test_first() -> None:\n  assert True\n")?;
         fs::write(&second_test, "def test_second() -> None:\n  assert True\n")?;
 
-        let session = Arc::new(common::CompilationSession::discover_for_oven(
+        let session = Arc::new(crate::driver::session::CompilationSession::discover_for_oven(
             &first_test,
             &FeatureSelection::default(),
             None,

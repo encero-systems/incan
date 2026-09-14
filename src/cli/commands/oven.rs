@@ -142,7 +142,7 @@ pub fn oven_bake_project(
     package_features: FeatureSelection,
     format: OvenOutputFormat,
 ) -> CliResult<ExitCode> {
-    super::common::warn_once_about_ignored_cargo_manifest(&project);
+    crate::driver::project::warn_once_about_ignored_cargo_manifest(&project);
     let report = super::build::bake_oven_project_targets(&project, &package_features)?;
     match format {
         OvenOutputFormat::Text => {

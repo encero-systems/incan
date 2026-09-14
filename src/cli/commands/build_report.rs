@@ -21,7 +21,7 @@ use crate::provider::{
 };
 use crate::version::INCAN_VERSION;
 
-use super::common::CargoPolicy;
+use crate::driver::cargo_policy::CargoPolicy;
 
 /// Schema version for build and generated Rust inspection reports.
 pub(crate) const BUILD_REPORT_SCHEMA_VERSION: u32 = 1;

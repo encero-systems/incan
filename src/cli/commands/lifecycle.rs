@@ -187,7 +187,7 @@ pub fn env_run(
         print_run_preview(&preview)?;
         return Ok(ExitCode::SUCCESS);
     }
-    crate::cli::commands::common::enforce_toolchain_constraints(&preview.resolved_env.requires_incan)?;
+    crate::driver::cargo_policy::enforce_toolchain_constraints(&preview.resolved_env.requires_incan)?;
     reject_recursive_env_run(&preview)?;
 
     let Some((program, args)) = preview.argv.split_first() else {
@@ -279,7 +279,7 @@ fn load_env_context(project: Option<&Path>) -> CliResult<EnvContext> {
         let project_root = explicit_project_root(project)?;
         let manifest_path = project_root.join(LOAF_MANIFEST_FILENAME);
         let manifest_content = read_manifest_content(&manifest_path)?;
-        let manifest = crate::cli::commands::common::discover_effective_project_manifest(&project_root)?
+        let manifest = crate::driver::project::discover_effective_project_manifest(&project_root)?
             .ok_or_else(|| CliError::failure(format!("No loaf.toml found at {}", manifest_path.display())))?;
         (project_root, manifest_path, manifest_content, manifest)
     } else {
@@ -325,7 +325,7 @@ fn explicit_project_root(path: &Path) -> CliResult<PathBuf> {
 fn discover_lifecycle_manifest() -> CliResult<ProjectManifest> {
     let cwd = env::current_dir()
         .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?;
-    crate::cli::commands::common::discover_effective_project_manifest(&cwd)?.ok_or_else(|| {
+    crate::driver::project::discover_effective_project_manifest(&cwd)?.ok_or_else(|| {
         CliError::failure("No loaf.toml found; run `incan init` or `incan new <name>` to create a project")
     })
 }

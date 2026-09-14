@@ -13,9 +13,9 @@ use incan_core::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
 use serde::Serialize;
 
 use crate::cli::commands::interop_plan::locked_interop_plan_target;
-use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::frontend::ast::{Span, Visibility};
+use crate::frontend::parsed_module::ParsedModule;
 use crate::frontend::typechecker::{
     CBindingBuffer, CBindingDescriptor, CBindingOutcome, CBindingType, COutputMode, CResourceAccess,
     c_binding_descriptor_identity,
@@ -26,7 +26,8 @@ use crate::oven::interop::{
 use crate::oven_interop::locked_interop_target_identity;
 use crate::provider::FeatureSelection;
 
-use super::common::{CompilationAnalysis, CompilationSession, collect_modules_detailed_with_session};
+use crate::driver::modules::collect_modules_detailed_with_session;
+use crate::driver::session::{CompilationAnalysis, CompilationSession};
 
 /// Compatibility version for the checked C binding inspection report.
 const BINDING_INSPECTION_SCHEMA_VERSION: u32 = 2;

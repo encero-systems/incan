@@ -6,7 +6,6 @@
 //! ## Submodules
 //!
 //! - `build` — Build and run pipelines
-//! - `common` — Shared utilities (module collection, dependency helpers, etc.)
 //! - `debug` — Debug commands (lex, parse, check, emit)
 //! - `format` — Source formatting
 //! - `init` — Project scaffolding
@@ -20,7 +19,6 @@ pub mod build;
 pub mod build_report;
 pub mod cache;
 pub mod codegraph;
-pub mod common;
 pub mod debug;
 pub mod diagnostics;
 pub mod format;
@@ -34,16 +32,16 @@ pub mod representation_inspect;
 pub(crate) mod shadow_support;
 pub mod stdlib_loader;
 pub mod tools;
-pub(crate) mod vocab_extraction;
 pub mod workspace;
 
 // Re-export public API so callers can use `commands::build_file()` etc.
+pub use crate::driver::modules::collect_modules;
+pub use crate::driver::project::read_source;
+pub(crate) use crate::provider::sdk_store::sdk_provider_store_identity_for_compiler_root;
 pub use binding_inspect::{BindingInspectionFormat, inspect_bindings};
 pub use build::{build_file, build_library, inspect_rust, run_file, run_inline_source};
 pub use cache::{inspect_generated_cache, prune_generated_cache};
 pub use codegraph::{CodegraphInspectionFormat, inspect_codegraph};
-pub(crate) use common::sdk_provider_store_identity_for_compiler_root;
-pub use common::{collect_modules, read_source};
 pub use debug::{check_file, emit_rust, lex_file, parse_file};
 pub use diagnostics::{
     DiagnosticOutputFormat, check_path, check_path_with_features, check_path_with_selections, explain_diagnostic,

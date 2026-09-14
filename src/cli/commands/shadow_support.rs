@@ -13,17 +13,18 @@ use crate::backend::shadow::{
     compare_source_observable_with_materialization, unavailable_source_observable_comparison,
     validate_source_observable_profile,
 };
-use crate::cli::prelude::ParsedModule;
 use crate::dependency_resolver::resolve_reachable_dependencies;
+use crate::frontend::parsed_module::ParsedModule;
 use crate::lockfile::CargoFeatureSelection;
 use crate::oven::loaf::OVEN_LOAF_ENV;
 use crate::provider::{FeatureSelection, ProviderPlan};
 
-use super::common::{
-    CompilationSession, build_source_map, collect_modules_detailed_with_session, collect_project_requirements,
-    collect_rust_dependency_uses, extend_requirements_with_provider_plan, format_dependency_error,
-    merge_project_requirement_dependencies,
+use crate::driver::modules::{
+    build_source_map, collect_modules_detailed_with_session, collect_rust_dependency_uses, format_dependency_error,
 };
+use crate::driver::session::CompilationSession;
+use crate::provider::inventory::extend_requirements_with_provider_plan;
+use crate::provider::requirements::{collect_project_requirements, merge_project_requirement_dependencies};
 
 /// Run one bounded comparison using provider authority selected from the exact profile source session.
 ///
