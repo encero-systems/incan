@@ -239,7 +239,7 @@ test = ["incan", "test", "tests/"]
 [tool.incan.envs.release]
 extends = ["default"]
 requires-incan = ">=0.3,<0.4"
-env-vars = { INCAN_FANCY_ERRORS = "1" }
+env-vars = { INCAN_NO_BANNER = "1" }
 
 [tool.incan.envs.release.scripts]
 build = ["incan", "build", "src/main.incn", "--locked"]

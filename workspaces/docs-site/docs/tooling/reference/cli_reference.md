@@ -936,7 +936,6 @@ rm -rf target/incan/
 ## Environment variables
 
 - **`INCAN_STDLIB`**: override the stdlib directory (usually auto-detected; set only if detection fails).
-- **`INCAN_FANCY_ERRORS`**: enable “fancy” diagnostics rendering (presence-based; output may change).
 - **`INCAN_EMIT_SERVICE=1`**: toggle codegen emit mode (internal/debug; not stable).
 - **`INCAN_NO_BANNER=1`**: disable the ASCII logo banner.
 - **`NO_COLOR`**: disable ANSI color output (standard convention).

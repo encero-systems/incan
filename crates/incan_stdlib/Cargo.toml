@@ -12,10 +12,10 @@ homepage.workspace = true
 [dependencies]
 incan_core = { path = "../incan_core" }
 incan_derive = { path = "../incan_derive" }
-serde = { version = "1.0", optional = true, features = ["derive"] }
-serde_json = { version = "1.0", optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 axum = { version = "0.8", optional = true }
-tokio = { version = "1", optional = true, features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
+tokio = { workspace = true, optional = true, features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
 inventory = { version = "0.3", optional = true }
 xxhash_rust = { package = "xxhash-rust", version = "0.8", optional = true, features = ["xxh3"] }
 

@@ -15,14 +15,14 @@ path = "src/lib.rs"
 
 [dependencies]
 incan_core = { path = "../incan_core" }
-thiserror = "2.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 sha2 = "0.10.9"
 hex = "0.4.3"
 toml = "0.9"
 semver = "1.0"
-tracing = "0.1"
+tracing = { workspace = true }
 ra_ap_hir = "0.0.325"
 ra_ap_hir_def = "0.0.325"
 ra_ap_hir_expand = "0.0.325"
@@ -35,9 +35,9 @@ ra_ap_syntax = "0.0.325"
 ra_ap_vfs = "0.0.325"
 # Token-level Rust parsing for the declaration digest, pinned to the versions the compiler crate already builds so
 # the digest sees the same token model the Rust code generator emits against.
-syn = { version = "2.0", features = ["full", "parsing", "printing"] }
-proc-macro2 = "1.0"
-quote = "1.0"
+syn = { workspace = true, features = ["printing"] }
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

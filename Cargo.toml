@@ -35,6 +35,18 @@ readme = "README.md"
 keywords = ["programming-language", "compiler", "rust", "python"]
 categories = ["compilers", "development-tools"]
 
+# One version per shared dependency, declared once; members write `workspace = true` and add only the features they
+# need on top. Every manifest the layout rewrite (#1478) writes starts from this table.
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = "1"
+syn = { version = "2.0", features = ["full", "parsing"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+
 [package]
 name = "incan"
 version.workspace = true
@@ -74,10 +86,12 @@ incan_semantics_stdlib = { path = "crates/incan_semantics_stdlib", optional = tr
 
 # LSP server implementation
 tower-lsp = { version = "0.20", optional = true }
-# Async runtime (for LSP and generated async code)
-tokio = { version = "1", features = ["full"], optional = true }
+# Async runtime for the LSP server: a multi-thread runtime, stdio transport, `spawn_blocking`, and the
+# `RwLock`/`spawn` surface `lsp/backend.rs` uses. Nothing else in `full` is reached, and the full set made
+# `wasmtime`, `wasmtime-wasi` and `rustix` recompile whenever a build altered tokio's feature set.
+tokio = { workspace = true, features = ["rt-multi-thread", "io-std", "io-util", "sync", "macros"], optional = true }
 # JSON serialization (for LSP protocol)
-serde_json = "1.0"
+serde_json = { workspace = true }
 
 # CLI parsing with typed subcommands
 clap = { version = "4.4", features = ["derive"], optional = true }
@@ -85,17 +99,15 @@ clap = { version = "4.4", features = ["derive"], optional = true }
 # a uniquely named sibling, so it needs the same crate at runtime under `cli`.
 tempfile = { version = "3", optional = true }
 # Composable error types
-thiserror = "2.0"
-# Rich error diagnostics with source context
-miette = { version = "7.0", features = ["fancy"] }
+thiserror = { workspace = true }
 
 # AST-based Rust code generation
-syn = { version = "2.0", features = ["full", "parsing", "printing"] }
-quote = "1.0"
-proc-macro2 = "1.0"
+syn = { workspace = true, features = ["printing"] }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
 # Code formatting for generated Rust
 prettyplease = "0.2"
-tracing = "0.1"
+tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 # TOML parsing for loaf.toml manifests (RFC 013/023)
@@ -103,12 +115,11 @@ toml = "0.9"
 # Span-preserving TOML parsing for manifest diagnostics.
 toml_edit = { version = "0.25", features = ["parse", "serde"] }
 # Serde derive for manifest deserialization
-serde = { version = "1.0", features = ["derive"] }
+serde = { workspace = true }
 sha2 = "0.10.9"
 sha1 = "0.10"
 # Keyed MAC primitives for std.hash (#1075); 0.12 is the line matching digest 0.10.
 hmac = { version = "0.12", features = ["reset"] }
-blake3 = "1"
 hex = "0.4.3"
 semver = "1.0.27"
 globset = "0.4.18"
@@ -145,6 +156,7 @@ snap = "1"
 crc32fast = "1"
 # Runtime crates used by std.hash generated-project offline smoke tests.
 blake2 = "0.10"
+blake3 = "1"
 md5_010 = { package = "md-5", version = "0.10" }
 sha1 = "0.10"
 sha3 = "0.10"
