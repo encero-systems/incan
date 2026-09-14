@@ -6,7 +6,7 @@
 # build output — a worktree working under a storage budget, a cache shared between worktrees — otherwise has cargo
 # writing to one directory while make reads from another. The symptom is not a missing file but a misleading one:
 # every target needing the compiler binary fails claiming the project's dependencies were never baked.
-TARGET_DIR := $(abspath $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),$(CURDIR)/target))
+TARGET_DIR := $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),$(CURDIR)/target)
 
 # Nested generated-project and named-publisher work is constrained so one local test command does not consume every
 # core. The cap used to be a flat 2 regardless of the machine, which meant the SDK prewarm compiled its ten
