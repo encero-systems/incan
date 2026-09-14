@@ -113,9 +113,10 @@ impl OvenRustcArtifactManifest {
     /// Materialize a sealed closure whose full shape check one process has already written down (#1546).
     ///
     /// `closure_identity` names the closure — for a Loaf, the digest of its manifest — and `proof_path` is where its
-    /// [`OvenClosureProof`] lives. With a matching proof the per-file shape checks are skipped: relative paths are
-    /// still normalized and contained, parents are still canonicalized below the root, but the ten thousand
-    /// `symlink_metadata` calls that re-established a constant every process are not made. Without one, this is the
+    /// [`OvenClosureProof`] lives. With a matching proof the per-file shape checks are skipped: each relative path
+    /// is still normalized (no absolute or parent-escaping segment) and joined below the canonical root, but the ten
+    /// thousand `symlink_metadata` and per-directory `canonicalize` calls that re-established a constant every
+    /// process are not made. Without one, this is the
     /// full trusted materialization, and on success the proof is written for the next process. A proof that cannot
     /// be written costs nothing but the next process's full walk.
     pub(crate) fn materialize_proven_store(
