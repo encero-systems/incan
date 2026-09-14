@@ -67,6 +67,12 @@
       "expected_fingerprint": "0x1dc2b536c0293d40"
     },
     {
+      "path": "src/backend/ir/checked_program/sdk_module_derives.rs",
+      "category": "checked SDK metadata derive-module assertions",
+      "expected_count": 1,
+      "expected_fingerprint": "0x85e10189cee98b1e"
+    },
+    {
       "path": "src/backend/ir/codegen.rs",
       "category": "codegen facade compatibility and Rust serde fallback",
       "expected_count": 4,

@@ -1279,7 +1279,7 @@ pub struct CallArtifacts {
     /// ## Span stability
     ///
     /// Keys use the same `(start, end)` byte range the typechecker records for the call/`MethodCall` expression and
-    /// that [`AstLowering::lower_expr`](crate::backend::ir::lower::AstLowering::lower_expr) receives as `expr_span`
+    /// that the backend's `AstLowering::lower_expr` receives as `expr_span`
     /// for those nodes, so lookup stays consistent across phases without holding AST node identities.
     pub call_site_monomorph_type_args: HashMap<(usize, usize), Vec<ResolvedType>>,
     /// Checked target facts for compiler-owned `isinstance(value, Target)` calls, keyed by the full call span.

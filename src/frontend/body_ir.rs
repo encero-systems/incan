@@ -169,7 +169,7 @@ pub fn build_body_ir_module_v0_with_executable_context(
 /// package-feature selection rather than using this helper to approximate one.
 ///
 /// Ordering matters beyond the pair itself. The caller applies this immediately after parsing, ahead of
-/// [`crate::backend::replacement::validate_direct_body_profile`] and typechecking, because both of those must see the
+/// the backend's `validate_direct_body_profile` and typechecking, because both of those must see the
 /// projected program: an import behind an inactive feature is not part of this compilation, and refusing it as an
 /// unsupported profile boundary would report a declaration the build does not contain.
 ///
@@ -996,70 +996,6 @@ const fn lower_unary_op(op: ast::UnaryOp) -> bir::UnOp {
         ast::UnaryOp::Not => bir::UnOp::Not,
         ast::UnaryOp::Invert => bir::UnOp::Invert,
     }
-}
-
-/// Register the callable-value contracts and private mechanisms owned by Body IR lowering.
-///
-/// This is deliberately adjacent to [`BodyBuilder::lower_closure`] and [`BodyBuilder::lower_partial`], rather than
-/// a row in the compatibility collector. The replacement executor still refuses local callable targets; that fact
-/// stays explicit in the collected evidence and does not make either feature execution-complete.
-pub(crate) fn replacement_compatibility_body_ir_contribution()
--> crate::replacement_compatibility::ReplacementCompatibilityContribution {
-    use crate::replacement_compatibility::{
-        feature_requirement_link, implementation_requirement, local_implementation_contribution,
-        planned_feature_at_boundary,
-    };
-
-    local_implementation_contribution(
-        "frontend.body-ir.callable-values",
-        "src/frontend/body_ir.rs",
-        "fn replacement_compatibility_body_ir_contribution",
-        vec![
-            planned_feature_at_boundary(
-                "call.partial-binding",
-                "Partial presets capture at construction, remain overrideable defaults, and preserve named/positional binding rules.",
-                988,
-                "Body IR and closed #1152 carry the source and callable-runtime substrate; open #988 owns the direct local callable forms that remain visibly refused.",
-                "src/frontend/typechecker/check_expr/calls.rs",
-                "fn check_call",
-                "fn lower_call",
-                "fn execute_call",
-            ),
-            planned_feature_at_boundary(
-                "call.stored-callables",
-                "Stored closures and partials retain lexical capture timing, ownership, and isolated local call frames.",
-                988,
-                "Closed #1152 delivered the coherent callable-frame substrate; open #988 owns broadening the local callable targets that direct execution still refuses.",
-                "src/frontend/typechecker/check_expr/calls.rs",
-                "fn check_call",
-                "fn lower_call",
-                "fn execute_call",
-            ),
-        ],
-        vec![
-            implementation_requirement(
-                "call.argument-binder",
-                "Parameter binding preserves positional, named, default, preset, variadic, and diagnostic rules.",
-                "typechecker partial projection and replacement call runtime",
-                "partial/default typechecker and Body-IR tests",
-                "Binding slots are shared call machinery, not a user feature.",
-            ),
-            implementation_requirement(
-                "captures.lexical-environments",
-                "Closure and partial capture reads occur at construction time with explicit ownership.",
-                "Body IR closure lowering and replacement runtime",
-                "closure/partial capture timing regressions",
-                "Lexical environments are private runtime state.",
-            ),
-        ],
-        Vec::new(),
-        vec![
-            feature_requirement_link("call.partial-binding", "call.argument-binder"),
-            feature_requirement_link("call.partial-binding", "captures.lexical-environments"),
-            feature_requirement_link("call.stored-callables", "call.frames"),
-            feature_requirement_link("call.stored-callables", "captures.lexical-environments"),
-        ],
-    )
 }
 
 mod match_;
