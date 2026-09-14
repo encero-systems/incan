@@ -1098,6 +1098,22 @@ impl SymbolTable {
         None
     }
 
+    /// Query the accepted module type binding of a resolved nominal type, independently of local value shadowing.
+    ///
+    /// Nominal declarations are module declarations, not statement-local declarations. A checked ResolvedType
+    /// retains that binding's key; looking through the current value scope could instead select a parameter or local.
+    pub(crate) fn module_type_identity(&self, name: &str) -> Option<&CanonicalSymbolId> {
+        let id = self
+            .dependency_interface_bindings
+            .as_ref()
+            .and_then(|bindings| bindings.get(name))
+            .or_else(|| self.scopes[0].symbols.get(name))?;
+        let symbol = self.get(*id)?;
+        matches!(symbol.kind, SymbolKind::Type(_) | SymbolKind::Trait(_))
+            .then(|| self.identities.get(id))
+            .flatten()
+    }
+
     /// Look up a symbol only in the current scope (no parent lookup)
     pub fn lookup_local(&self, name: &str) -> Option<SymbolId> {
         if self.current_scope == 0

@@ -1,0 +1,16 @@
+"""Product identity, availability and unit price."""
+
+
+pub enum StockState:
+    """Availability recorded with a catalog item."""
+
+    Available
+    Backorder
+
+
+pub model Product:
+    """One item offered by the catalog, with prices stored in whole cents."""
+
+    pub sku: str
+    pub price_cents: int
+    pub state: StockState

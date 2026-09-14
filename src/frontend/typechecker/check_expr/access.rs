@@ -51,6 +51,19 @@ use super::TypeChecker;
 /// before a following inspected inherent call can be resolved.
 const RUST_DEFAULT_ASSOCIATED_METHOD: &str = "default";
 
+/// One `Enum.Variant(...)` construction resolved against the destination type it is being built for.
+///
+/// Both halves are kept together because they are needed at different points of the same method-call pass: the
+/// substituted payload types must exist before the arguments are checked, since that is the only time they are
+/// checked, while the enum's own arguments are what the construction's result type reports afterwards.
+#[derive(Debug, Clone)]
+struct EnumVariantInstantiation {
+    /// The enum's type arguments, taken from the destination type.
+    arguments: Vec<ResolvedType>,
+    /// The variant's declared payload types, substituted through those arguments.
+    payloads: Vec<ResolvedType>,
+}
+
 #[derive(Debug, Clone)]
 struct MethodCandidate {
     info: MethodInfo,
@@ -1298,13 +1311,18 @@ impl TypeChecker {
 
     /// Record one compiler-generated member without classifying its generated Rust helper as a source declaration.
     fn record_compiler_generated_member_identity(&mut self, owner_name: &str, member: &str, span: Span) {
-        let Some(identity) =
-            self.synthetic_member_identity_for_named_owner(owner_name, member, SemanticSourceTargetKind::Method)
+        let Some(owner) = self
+            .symbols
+            .lookup(owner_name)
+            .and_then(|symbol| self.symbols.identity_of(symbol))
+            .cloned()
         else {
             return;
         };
+        let identity = Self::synthetic_member_identity(&owner, member, SemanticSourceTargetKind::Method);
         self.type_info.record_resolved_identity(span, identity.clone());
-        self.type_info.record_compiler_generated_member_identity(identity);
+        self.type_info
+            .record_compiler_generated_member_identity(identity, owner);
     }
 
     /// Resolve a builtin method through its receiver and method registries, preserving owner discrimination.
@@ -2171,6 +2189,7 @@ impl TypeChecker {
         receiver_display: &str,
     ) -> RustFunctionSig {
         RustFunctionSig {
+            receiver_contract: sig.receiver_contract,
             type_params: sig.type_params.clone(),
             params: sig
                 .params
@@ -3627,14 +3646,60 @@ impl TypeChecker {
     /// and recorded no identity for the call. Lowering then had nothing to project with and emitted the source
     /// spelling, while the declaration was emitted under its projection. Keeping the nominal type gives the
     /// subscripted spelling the same receiver the bare `FactoryBox.make(...)` form already has.
-    fn resolve_type_index_expression(&self, base_ty: &ResolvedType, base: &Spanned<Expr>) -> Option<ResolvedType> {
-        let ResolvedType::Named(_) = base_ty else {
+    fn resolve_type_index_expression(
+        &self,
+        base_ty: &ResolvedType,
+        base: &Spanned<Expr>,
+        index: &Spanned<Expr>,
+    ) -> Option<ResolvedType> {
+        let ResolvedType::Named(name) = base_ty else {
             return None;
         };
         if !matches!(self.type_info.ident_kind(base.span), Some(IdentKind::TypeName)) {
             return None;
         }
-        Some(base_ty.clone())
+        // `Deque[str]` applies a type argument; dropping it here left the receiver generic over nothing, so a
+        // classmethod returning `Self` produced `Deque[Unknown]` and every later substitution carried the
+        // unknown forward. See #1494, where it surfaced as a string literal reaching a `String` parameter
+        // unconverted -- the literal was correct for the element type it had been given.
+        match self.type_arguments_from_index_expression(index) {
+            Some(args) if !args.is_empty() => Some(ResolvedType::Generic(name.clone(), args)),
+            _ => Some(base_ty.clone()),
+        }
+    }
+
+    /// Read one type application's arguments out of the expression the parser produced for its brackets.
+    ///
+    /// A type application and a subscript are the same syntax, so the arguments arrive as an expression rather
+    /// than as types: `Deque[str]` is an index whose index is an identifier, and `Dict[str, int]` one whose index
+    /// is a tuple. Only identifiers and nested applications are read; anything else is a genuine subscript and
+    /// returns `None` so the caller keeps its existing behaviour rather than inventing a type from a value.
+    fn type_arguments_from_index_expression(&self, index: &Spanned<Expr>) -> Option<Vec<ResolvedType>> {
+        let elements: Vec<&Spanned<Expr>> = match &index.node {
+            Expr::Tuple(items) => items.iter().collect(),
+            _ => vec![index],
+        };
+        let mut args = Vec::new();
+        for element in elements {
+            args.push(self.type_argument_from_expression(element)?);
+        }
+        Some(args)
+    }
+
+    /// Resolve one type argument spelled as an expression, including a nested application such as `list[str]`.
+    fn type_argument_from_expression(&self, expr: &Spanned<Expr>) -> Option<ResolvedType> {
+        match &expr.node {
+            Expr::Ident(name) => Some(resolve_type(&Type::Simple(name.clone()), &self.symbols)),
+            Expr::Paren(inner) => self.type_argument_from_expression(inner),
+            Expr::Index(base, index) => {
+                let Expr::Ident(name) = &base.node else {
+                    return None;
+                };
+                let args = self.type_arguments_from_index_expression(index)?;
+                Some(ResolvedType::Generic(name.clone(), args))
+            }
+            _ => None,
+        }
     }
 
     /// Return whether `ty` is the compiler-owned `std.json.JsonValue` wrapper over the raw runtime carrier.
@@ -3669,7 +3734,7 @@ impl TypeChecker {
         span: Span,
     ) -> ResolvedType {
         let base_ty = self.check_type_receiver_expr(base);
-        if let Some(ty) = self.resolve_type_index_expression(&base_ty, base) {
+        if let Some(ty) = self.resolve_type_index_expression(&base_ty, base, index) {
             return ty;
         }
         let index_ty = self.check_expr(index);
@@ -4345,6 +4410,83 @@ impl TypeChecker {
     }
 
     /// Type-check a method call with an optional expected result type for overload disambiguation.
+    /// Resolve one `Enum.Variant(...)` construction against the destination type it is being built for.
+    ///
+    /// A variant payload is declared in the enum's own vocabulary — `Items(list[Elem])` — and that vocabulary is bound
+    /// nowhere at a construction site. A model constructor can recover from this by falling back to the supplied
+    /// value's own checked type, because the site inferred one. A variant payload has nothing to fall back to:
+    /// `Holder.Items([])` checks the literal as `Unknown`, and only the destination says what `Elem` is here. So the
+    /// declared payload must be substituted through the enum's arguments instead.
+    ///
+    /// The destination is the *immediate* expected type, never the enclosing function's return type read directly.
+    /// That distinction is what keeps this sound: a function returning `Holder[Picked]` may legitimately build a
+    /// `Holder[str]` for a local, and there the local's own annotation is the expectation. Only a same-name,
+    /// arity-matching instantiation is usable — anything else would substitute one declaration's parameters with
+    /// another's arguments — so every other shape yields `None` and leaves the unsubstituted behavior in place.
+    ///
+    /// See #1516, and #1507 for the model half of the same defect.
+    fn enum_variant_construction_instantiation(
+        &self,
+        base_ty: &ResolvedType,
+        method: &str,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> Option<EnumVariantInstantiation> {
+        let ResolvedType::Named(enum_name) = base_ty else {
+            return None;
+        };
+        let Some(TypeInfo::Enum(enum_info)) = self.lookup_semantic_type_info(enum_name) else {
+            return None;
+        };
+        if !enum_info.variants.iter().any(|variant| variant == method)
+            && !enum_info.variant_aliases.contains_key(method)
+        {
+            return None;
+        }
+        if enum_info.type_params.is_empty() {
+            return None;
+        }
+        let ResolvedType::Generic(expected_name, arguments) = expected_return_ty? else {
+            return None;
+        };
+        if expected_name != enum_name || arguments.len() != enum_info.type_params.len() {
+            return None;
+        }
+        // An alias shares its target's payload, and `variant_fields` is keyed by the canonical name only.
+        let canonical_variant = enum_info
+            .variant_aliases
+            .get(method)
+            .map(String::as_str)
+            .unwrap_or(method);
+        let substitutions = type_param_subst_map(&enum_info.type_params, arguments);
+        let payloads = enum_info
+            .variant_fields
+            .get(canonical_variant)
+            .map(|declared| {
+                declared
+                    .iter()
+                    .map(|payload| substitute_resolved_type(payload, &substitutions))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(EnumVariantInstantiation {
+            arguments: arguments.clone(),
+            payloads,
+        })
+    }
+
+    /// Type-check `receiver.method(...)` once the receiver, method name, explicit type arguments, and value arguments
+    /// have been identified, against an optional type for the destination the result is being produced for.
+    ///
+    /// This is the shared arrival point for far more than ordinary user methods: C ABI constructors, `Result` and
+    /// `Option` combinators, string and collection surfaces, iterator protocol methods, Rust-receiver calls resolved
+    /// through inspected metadata, and `Enum.Variant(...)` construction all resolve here. Two consequences shape the
+    /// body. The receiver type is established first, because nearly every later decision keys off it; and the
+    /// arguments are checked exactly once, part-way through, so any contextual expectation an argument needs — a
+    /// closure's parameter types, an enum variant's substituted payload — must be resolved before that point rather
+    /// than corrected afterwards.
+    ///
+    /// `expected_return_ty` is the destination type, not the enclosing function's return type. Passing the immediate
+    /// destination is what lets a construction be checked against the instantiation it is actually built for.
     pub(in crate::frontend::typechecker::check_expr) fn check_method_call_with_expected(
         &mut self,
         base: &Spanned<Expr>,
@@ -4676,10 +4818,16 @@ impl TypeChecker {
         let rust_receiver_path = self.rust_canonical_path_for_receiver_type(&base_ty);
         let defer_rust_closures = rust_receiver_path.is_some();
 
+        // `Enum.Variant(payload)` reaches this shared method-call path, and this is the only place its arguments are
+        // checked, so the payload expectation has to be resolved before the loop below rather than corrected after it.
+        let enum_variant_construction =
+            self.enum_variant_construction_instantiation(&base_ty, method, expected_return_ty);
+
         // Collect arg types for method-specific validation.
         let arg_types: Vec<ResolvedType> = args
             .iter()
-            .map(|arg| {
+            .enumerate()
+            .map(|(index, arg)| {
                 let arg_expr = match arg {
                     CallArg::Positional(expr)
                     | CallArg::Named(_, expr)
@@ -4687,7 +4835,25 @@ impl TypeChecker {
                     | CallArg::KeywordUnpack(expr) => expr,
                 };
                 let is_closure = matches!(arg_expr.node, Expr::Closure(_, _));
+                let variant_payload_ty = enum_variant_construction
+                    .as_ref()
+                    .and_then(|construction| construction.payloads.get(index))
+                    .filter(|payload| !matches!(payload, ResolvedType::Unknown));
                 if defer_rust_closures && contextual_rust_callable.is_none() && is_closure {
+                    // The closure's parameter types are not known until the Rust method signature is selected,
+                    // so checking it here reports those parameters as unknowns. Those diagnostics are noise and
+                    // are discarded, which is what the deferral exists for.
+                    //
+                    // What must not be discarded with them is everything the body records on the way, above all
+                    // the resolved identity of any call inside it. Lowering reads that identity to emit a callee
+                    // by its projected name; without it the emitter has no fact to act on and falls back to the
+                    // source spelling, which is not declared in the generated Rust at all. Skipping the body
+                    // entirely is what made a local function called inside such a closure emit an undeclared
+                    // bare name. The result type stays `Unknown` exactly as before -- this records facts, it
+                    // does not resolve the closure early. See #1492.
+                    let diagnostics_before = self.errors.len();
+                    self.check_expr(arg_expr);
+                    self.errors.truncate(diagnostics_before);
                     ResolvedType::Unknown
                 } else if let Some(input_ty) = result_callback_input.as_ref()
                     && is_closure
@@ -4697,6 +4863,8 @@ impl TypeChecker {
                         Box::new(ResolvedType::Unknown),
                     );
                     self.check_expr_with_expected(arg_expr, Some(&expected))
+                } else if let Some(payload_ty) = variant_payload_ty {
+                    self.check_expr_with_expected(arg_expr, Some(payload_ty))
                 } else {
                     self.check_method_arg_with_rust_callable_alias(arg, contextual_rust_callable.as_ref())
                 }
@@ -4806,7 +4974,13 @@ impl TypeChecker {
             if let Some(identity) = variant_identity {
                 self.type_info.record_resolved_identity(span, identity);
             }
-            return ResolvedType::Named(enum_name.clone());
+            // Report the instantiation the destination supplied rather than the bare enum name. The bare name erases
+            // the arguments this construction was checked against, and every later stage then has to guess them. See
+            // #1516.
+            return match enum_variant_construction {
+                Some(construction) => ResolvedType::Generic(enum_name.clone(), construction.arguments),
+                None => ResolvedType::Named(enum_name.clone()),
+            };
         }
 
         // External/runtime-provided concurrency primitives: be permissive for surface types that have no local Incan

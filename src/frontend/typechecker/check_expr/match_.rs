@@ -28,6 +28,43 @@ fn sorted_binding_names(bindings: &HashMap<String, PatternBinding>) -> Vec<Strin
     names
 }
 
+/// Default payload binding mode after matching through explicit Rust references.
+#[derive(Clone, Copy)]
+enum PatternBorrow {
+    Shared,
+    Mutable,
+}
+
+/// Peel reference layers for constructor lookup while preserving Rust match ergonomics for payload bindings.
+/// A shared reference fixes shared binding mode even when another reference layer is mutable.
+fn borrowed_pattern_subject(mut subject: &ResolvedType) -> (&ResolvedType, Option<PatternBorrow>) {
+    let mut borrow = None;
+    loop {
+        match subject {
+            ResolvedType::Ref(inner) => {
+                borrow = Some(PatternBorrow::Shared);
+                subject = inner;
+            }
+            ResolvedType::RefMut(inner) => {
+                if borrow.is_none() {
+                    borrow = Some(PatternBorrow::Mutable);
+                }
+                subject = inner;
+            }
+            _ => return (subject, borrow),
+        }
+    }
+}
+
+/// Apply the inherited match binding mode to a payload before checking its nested pattern.
+fn borrowed_pattern_payload(field: ResolvedType, borrow: Option<PatternBorrow>) -> ResolvedType {
+    match borrow {
+        Some(PatternBorrow::Shared) => ResolvedType::Ref(Box::new(field)),
+        Some(PatternBorrow::Mutable) => ResolvedType::RefMut(Box::new(field)),
+        None => field,
+    }
+}
+
 impl TypeChecker {
     /// Split a constructor pattern name into its optional enum qualifier and variant segment.
     ///
@@ -69,7 +106,7 @@ impl TypeChecker {
 
         members
             .iter()
-            .find(|member| self.types_compatible(member, &target_ty) && self.types_compatible(&target_ty, member))
+            .find(|member| self.match_union_member_matches(member, &target_ty))
             .cloned()
     }
 
@@ -164,9 +201,53 @@ impl TypeChecker {
         }
     }
 
-    /// Whether two union member candidates are equivalent for match-arm narrowing.
+    /// Compare exact checked union alternatives for both narrowing and exhaustiveness.
+    ///
+    /// Public nominal aliases share their selected artifact and canonical declaration. Assignment conversions do
+    /// not prove coverage: even mutually compatible numeric types remain separate union alternatives.
     fn match_union_member_matches(&self, member: &ResolvedType, target: &ResolvedType) -> bool {
-        self.types_compatible(member, target) && self.types_compatible(target, member)
+        match (
+            self.public_library_type_identity_for_type(member),
+            self.public_library_type_identity_for_type(target),
+        ) {
+            (Some((left, left_args)), Some((right, right_args))) => {
+                return left == right
+                    && left_args.len() == right_args.len()
+                    && left_args
+                        .iter()
+                        .zip(right_args)
+                        .all(|(left, right)| self.match_union_member_matches(left, right));
+            }
+            (Some(_), None) | (None, Some(_)) => return false,
+            (None, None) => {}
+        }
+        match (member, target) {
+            (ResolvedType::Generic(left, left_args), ResolvedType::Generic(right, right_args)) => {
+                left == right
+                    && left_args.len() == right_args.len()
+                    && left_args
+                        .iter()
+                        .zip(right_args)
+                        .all(|(left, right)| self.match_union_member_matches(left, right))
+            }
+            (ResolvedType::Tuple(left), ResolvedType::Tuple(right)) => {
+                left.len() == right.len()
+                    && left
+                        .iter()
+                        .zip(right)
+                        .all(|(left, right)| self.match_union_member_matches(left, right))
+            }
+            (ResolvedType::FrozenList(left), ResolvedType::FrozenList(right))
+            | (ResolvedType::FrozenSet(left), ResolvedType::FrozenSet(right))
+            | (ResolvedType::TypeToken(left), ResolvedType::TypeToken(right))
+            | (ResolvedType::Ref(left), ResolvedType::Ref(right))
+            | (ResolvedType::RefMut(left), ResolvedType::RefMut(right)) => self.match_union_member_matches(left, right),
+            (ResolvedType::FrozenDict(left_key, left_value), ResolvedType::FrozenDict(right_key, right_value)) => {
+                self.match_union_member_matches(left_key, right_key)
+                    && self.match_union_member_matches(left_value, right_value)
+            }
+            _ => member == target,
+        }
     }
 
     /// Remove the union members covered by a pattern from the remaining-arm accumulator.
@@ -261,6 +342,7 @@ impl TypeChecker {
             }
             Pattern::Literal(_) => {}
             Pattern::Constructor(name, sub_patterns) => {
+                let (subject_ty, borrow) = borrowed_pattern_subject(expected_ty);
                 let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.node.as_str());
                 if enum_qualifier_opt.is_none()
                     && let Some(member_ty) = self.union_pattern_target_type(expected_ty, ctor_name)
@@ -286,12 +368,12 @@ impl TypeChecker {
                 }
 
                 let qualifier_matches_expected = enum_qualifier_opt
-                    .is_none_or(|qualifier| Self::pattern_qualifier_matches_expected_type(expected_ty, qualifier));
+                    .is_none_or(|qualifier| Self::pattern_qualifier_matches_expected_type(subject_ty, qualifier));
 
                 if qualifier_matches_expected && let Some(cid) = constructors::from_str(ctor_name) {
                     match cid {
                         ConstructorId::Ok => {
-                            if let ResolvedType::Generic(type_name, args) = expected_ty
+                            if let ResolvedType::Generic(type_name, args) = subject_ty
                                 && type_name == collections::as_str(CollectionTypeId::Result)
                                 && !args.is_empty()
                             {
@@ -310,13 +392,13 @@ impl TypeChecker {
                                     }
                                 }
                                 if let Some(pat) = positional {
-                                    self.check_pattern(pat, &args[0]);
+                                    self.check_pattern(pat, &borrowed_pattern_payload(args[0].clone(), borrow));
                                 }
                                 return;
                             }
                         }
                         ConstructorId::Err => {
-                            if let ResolvedType::Generic(type_name, args) = expected_ty
+                            if let ResolvedType::Generic(type_name, args) = subject_ty
                                 && type_name == collections::as_str(CollectionTypeId::Result)
                                 && args.len() >= 2
                             {
@@ -335,13 +417,13 @@ impl TypeChecker {
                                     }
                                 }
                                 if let Some(pat) = positional {
-                                    self.check_pattern(pat, &args[1]);
+                                    self.check_pattern(pat, &borrowed_pattern_payload(args[1].clone(), borrow));
                                 }
                                 return;
                             }
                         }
                         ConstructorId::Some => {
-                            if let ResolvedType::Generic(type_name, args) = expected_ty
+                            if let ResolvedType::Generic(type_name, args) = subject_ty
                                 && type_name == collections::as_str(CollectionTypeId::Option)
                                 && !args.is_empty()
                             {
@@ -360,7 +442,7 @@ impl TypeChecker {
                                     }
                                 }
                                 if let Some(pat) = positional {
-                                    self.check_pattern(pat, &args[0]);
+                                    self.check_pattern(pat, &borrowed_pattern_payload(args[0].clone(), borrow));
                                 }
                                 return;
                             }
@@ -469,6 +551,7 @@ impl TypeChecker {
                             name.node.as_str(),
                             sub_patterns,
                             Some(fields.as_slice()),
+                            self.pattern_subject_is_rust_backed(expected_ty),
                         );
                     }
                     None => {
@@ -484,14 +567,20 @@ impl TypeChecker {
                                 pattern.span,
                             ));
                         }
-                        self.check_constructor_subpatterns_enum_like(name.node.as_str(), sub_patterns, None);
+                        self.check_constructor_subpatterns_enum_like(
+                            name.node.as_str(),
+                            sub_patterns,
+                            None,
+                            self.pattern_subject_is_rust_backed(expected_ty),
+                        );
                     }
                 }
             }
             Pattern::Tuple(sub_patterns) => {
-                if let ResolvedType::Tuple(elem_types) = expected_ty {
+                let (subject_ty, borrow) = borrowed_pattern_subject(expected_ty);
+                if let ResolvedType::Tuple(elem_types) = subject_ty {
                     for (pat, elem_ty) in sub_patterns.iter().zip(elem_types.iter()) {
-                        self.check_pattern(pat, elem_ty);
+                        self.check_pattern(pat, &borrowed_pattern_payload(elem_ty.clone(), borrow));
                     }
                 }
             }
@@ -608,6 +697,7 @@ impl TypeChecker {
         ctor_label: &str,
         sub_patterns: &[PatternArg],
         known_fields: Option<&[ResolvedType]>,
+        rust_backed: bool,
     ) {
         let mut idx = 0usize;
         for arg in sub_patterns {
@@ -623,10 +713,38 @@ impl TypeChecker {
                     idx += 1;
                 }
                 PatternArg::Named(_, pat) => {
-                    self.errors
-                        .push(errors::named_pattern_not_supported(ctor_label, pat.span));
+                    // A Rust enum may use struct variants, whose fields are named and cannot be destructured
+                    // positionally. Rust variant metadata records payload shapes in declaration order but not field
+                    // names, so the payload is checked permissively here and `rustc` validates the names, matching
+                    // how the rest of Rust-interop payload checking already behaves.
+                    if rust_backed {
+                        self.check_pattern(pat, &ResolvedType::Unknown);
+                    } else {
+                        self.errors
+                            .push(errors::named_pattern_not_supported(ctor_label, pat.span));
+                    }
                 }
             }
+        }
+    }
+
+    /// Return whether a match subject is backed by a Rust type, directly or through a `rusttype` newtype.
+    ///
+    /// Rust-backed subjects get permissive payload treatment throughout pattern checking, because Rust metadata
+    /// records payload shapes without the detail an Incan declaration would carry.
+    fn pattern_subject_is_rust_backed(&self, expected_ty: &ResolvedType) -> bool {
+        let (expected_ty, _) = borrowed_pattern_subject(expected_ty);
+        match expected_ty {
+            ResolvedType::RustPath(_) => true,
+            ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => {
+                self.lookup_type_info(type_name).is_some_and(|info| {
+                    matches!(
+                        info,
+                        TypeInfo::Newtype(nt) if nt.is_rusttype && matches!(&nt.underlying, ResolvedType::RustPath(_))
+                    )
+                })
+            }
+            _ => false,
         }
     }
 
@@ -639,19 +757,7 @@ impl TypeChecker {
         pattern_full_name: &str,
         rust_resolution: Option<&RustEnumPatternResolution>,
     ) -> bool {
-        let is_rust_backed = match expected_ty {
-            ResolvedType::RustPath(_) => true,
-            ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => {
-                self.lookup_type_info(type_name).is_some_and(|info| {
-                    matches!(
-                        info,
-                        TypeInfo::Newtype(nt) if nt.is_rusttype && matches!(&nt.underlying, ResolvedType::RustPath(_))
-                    )
-                })
-            }
-            _ => false,
-        };
-        if !is_rust_backed {
+        if !self.pattern_subject_is_rust_backed(expected_ty) {
             return false;
         }
 
@@ -720,6 +826,8 @@ impl TypeChecker {
         pattern_full_name: &str,
         positional_count: usize,
     ) -> Option<RustEnumPatternResolution> {
+        let (expected_ty, borrow) = borrowed_pattern_subject(expected_ty);
+        let bind_payload = |field| borrowed_pattern_payload(field, borrow);
         let (enum_qualifier_opt, variant_segment) = match pattern_full_name.rsplit_once("::") {
             Some((e, v)) => (Some(e), v),
             None => (None, pattern_full_name),
@@ -746,23 +854,26 @@ impl TypeChecker {
         };
 
         let (metadata_rust_path, _) = self.rust_path_base_and_args(base_rust_path.as_str());
-        if let Some(meta) = self.rust_item_metadata_for_path(metadata_rust_path.as_str())
+        if let Some(meta) = self.known_rust_metadata_for_path(metadata_rust_path.as_str())
             && let RustItemKind::Type(info) = meta.kind
             && let Some(variant) = info.variants.iter().find(|variant| variant.name == variant_segment)
         {
             let fields: Vec<ResolvedType> = variant
                 .fields
                 .iter()
-                .map(|field| self.resolved_type_from_rust_shape(field))
+                .map(|field| bind_payload(self.resolved_type_from_rust_shape(field)))
                 .collect();
             return Some(RustEnumPatternResolution::payloads(fields));
         }
 
-        Some(RustEnumPatternResolution::payloads(match positional_count {
+        let fields = match positional_count {
             0 => vec![],
             1 => vec![ResolvedType::RustPath(format!("{base_rust_path}::{variant_segment}"))],
             n => (0..n).map(|_| ResolvedType::Unknown).collect(),
-        }))
+        };
+        Some(RustEnumPatternResolution::payloads(
+            fields.into_iter().map(bind_payload).collect(),
+        ))
     }
 
     /// Check that a match expression covers all possible cases.
@@ -771,15 +882,32 @@ impl TypeChecker {
     /// (`_`) satisfy all remaining cases. Emits a [`non_exhaustive_match`](errors::non_exhaustive_match)
     /// error if patterns are missing.
     fn check_match_exhaustiveness(&mut self, subject_ty: &ResolvedType, arms: &[Spanned<MatchArm>], span: Span) {
-        let variants = if let Some(members) = subject_ty.union_members() {
-            Some(members.iter().map(ToString::to_string).collect())
-        } else if let Some(inner) = subject_ty.option_inner_type()
-            && let Some(members) = inner.union_members()
-        {
-            let mut variants: Vec<String> = members.iter().map(ToString::to_string).collect();
-            variants.push(constructors::as_str(ConstructorId::None).to_string());
-            Some(variants)
-        } else if let ResolvedType::Named(name) = subject_ty {
+        if let Some(members) = Self::expected_union_members(subject_ty) {
+            let mut remaining = members.to_vec();
+            let mut option_variants = HashSet::new();
+            let mut has_wildcard = false;
+            for arm in arms.iter().filter(|arm| arm.node.guard.is_none()) {
+                self.remove_covered_union_members(&mut remaining, &arm.node.pattern, subject_ty);
+                if subject_ty.is_option() {
+                    self.collect_pattern_coverage(
+                        &arm.node.pattern.node,
+                        subject_ty,
+                        &mut option_variants,
+                        &mut has_wildcard,
+                    );
+                }
+            }
+            let mut missing = remaining.iter().map(ToString::to_string).collect::<Vec<_>>();
+            let none = constructors::as_str(ConstructorId::None);
+            if subject_ty.is_option() && !has_wildcard && !option_variants.contains(none) {
+                missing.push(none.to_string());
+            }
+            if !missing.is_empty() {
+                self.errors.push(errors::non_exhaustive_match(&missing, span));
+            }
+            return;
+        }
+        let variants = if let ResolvedType::Named(name) = subject_ty {
             match self.lookup_type_info(name) {
                 Some(TypeInfo::Enum(enum_info)) => Some(enum_info.variants.clone()),
                 _ => None,
@@ -837,21 +965,7 @@ impl TypeChecker {
                 covered.insert(constructors::as_str(ConstructorId::None).to_string());
             }
             Pattern::Constructor(name, _) => {
-                let variant_name = if subject_ty.union_members().is_some()
-                    || subject_ty
-                        .option_inner_type()
-                        .is_some_and(|inner| inner.union_members().is_some())
-                {
-                    let target_ty =
-                        self.expand_type_aliases(resolve_type(&Type::Simple(name.node.clone()), &self.symbols));
-                    if let Some(target_members) = target_ty.union_members() {
-                        for member in target_members {
-                            covered.insert(member.to_string());
-                        }
-                        return;
-                    }
-                    target_ty.to_string()
-                } else if name.node.contains("::") {
+                let variant_name = if name.node.contains("::") {
                     name.node.split("::").last().unwrap_or(&name.node).to_string()
                 } else {
                     name.node.clone()

@@ -1,0 +1,181 @@
+"""Invocation decision contracts, independent of process environment and native admission."""
+
+from invocation import EnvironmentInput, InvocationInputs, InvocationConstraints, InvocationErrorKind, decide_invocation
+from std.testing import fail
+
+
+def require_constraints(inputs: InvocationInputs, expected: InvocationConstraints) -> None:
+    """Compare the complete decision with a literal expected result."""
+    match decide_invocation(inputs):
+        Err(error) => fail(error.message())
+        Ok(actual) =>
+            assert actual == expected
+
+
+def require_conflict(inputs: InvocationInputs, flags: tuple[str, str]) -> None:
+    """Require the exact conflicting flags without accepting an unrelated refusal."""
+    match decide_invocation(inputs):
+        Ok(_) => fail("conflicting invocation flags were accepted")
+        Err(error) =>
+            assert error.kind == InvocationErrorKind.ConflictingFlags
+            assert error.flags == flags
+
+
+pub def test_absent_inputs_add_no_restrictions() -> None:
+    """Omitted controls do not silently require a lock or offline preparation."""
+    require_constraints(InvocationInputs(), InvocationConstraints(offline=false, locked=false, frozen=false))
+
+
+pub def test_cli_enables_override_false_environment() -> None:
+    """Each enable flag takes precedence over absent and explicitly false defaults."""
+    for value in [EnvironmentInput.Missing, EnvironmentInput.Text("false"), EnvironmentInput.Text("")]:
+        require_constraints(
+            InvocationInputs(offline=true, env_offline=value),
+            InvocationConstraints(offline=true, locked=false, frozen=false),
+        )
+        require_constraints(
+            InvocationInputs(locked=true, env_locked=value),
+            InvocationConstraints(offline=false, locked=true, frozen=false),
+        )
+        require_constraints(
+            InvocationInputs(frozen=true, env_frozen=value),
+            InvocationConstraints(offline=true, locked=true, frozen=true),
+        )
+
+
+pub def test_cli_disables_override_matching_environment() -> None:
+    """Disables override either true or false defaults without enabling another restriction."""
+    for value in ["1", "false"]:
+        require_constraints(
+            InvocationInputs(no_offline=true, env_offline=EnvironmentInput.Text(value)),
+            InvocationConstraints(offline=false, locked=false, frozen=false),
+        )
+        require_constraints(
+            InvocationInputs(no_locked=true, env_locked=EnvironmentInput.Text(value)),
+            InvocationConstraints(offline=false, locked=false, frozen=false),
+        )
+        require_constraints(
+            InvocationInputs(no_frozen=true, env_frozen=EnvironmentInput.Text(value)),
+            InvocationConstraints(offline=false, locked=false, frozen=false),
+        )
+
+
+pub def test_environment_truth_spellings_are_exact() -> None:
+    """Preserve every previously accepted true spelling for all three controls."""
+    for value in ["1", "true", "TRUE", "on", "ON"]:
+        require_constraints(
+            InvocationInputs(env_offline=EnvironmentInput.Text(value)),
+            InvocationConstraints(offline=true, locked=false, frozen=false),
+        )
+        require_constraints(
+            InvocationInputs(env_locked=EnvironmentInput.Text(value)),
+            InvocationConstraints(offline=false, locked=true, frozen=false),
+        )
+        require_constraints(
+            InvocationInputs(env_frozen=EnvironmentInput.Text(value)),
+            InvocationConstraints(offline=true, locked=true, frozen=true),
+        )
+
+
+pub def test_other_environment_text_is_false() -> None:
+    """Do not add trimming, case folding, numeric coercion or new truth spellings."""
+    for value in ["", "0", "false", "FALSE", "off", "yes", "True", "On", " true", "true ", "1\n", "１"]:
+        require_constraints(
+            InvocationInputs(
+                env_offline=EnvironmentInput.Text(value),
+                env_locked=EnvironmentInput.Text(value),
+                env_frozen=EnvironmentInput.Text(value),
+            ),
+            InvocationConstraints(offline=false, locked=false, frozen=false),
+        )
+
+
+pub def test_non_unicode_stays_distinct_and_does_not_enable() -> None:
+    """Keep the observed presence while preserving the original non-Unicode false decision."""
+    inputs = InvocationInputs(
+        env_offline=EnvironmentInput.NonUnicode,
+        env_locked=EnvironmentInput.NonUnicode,
+        env_frozen=EnvironmentInput.NonUnicode,
+    )
+    require_constraints(inputs, InvocationConstraints(offline=false, locked=false, frozen=false))
+    match inputs.env_frozen:
+        EnvironmentInput.NonUnicode => pass
+        _ => fail("the non-Unicode observation was discarded")
+    require_constraints(
+        InvocationInputs(locked=true, env_locked=EnvironmentInput.NonUnicode),
+        InvocationConstraints(offline=false, locked=true, frozen=false),
+    )
+
+
+pub def test_environment_frozen_applies_after_individual_disables() -> None:
+    """Disabling an individual default does not disable the still-selected frozen compound."""
+    for inputs in [InvocationInputs(no_offline=true, env_frozen=EnvironmentInput.Text("1")), InvocationInputs(
+        no_locked=true,
+        env_frozen=EnvironmentInput.Text("1"),
+    ), InvocationInputs(no_offline=true, no_locked=true, env_frozen=EnvironmentInput.Text("1"))]:
+        require_constraints(inputs, InvocationConstraints(offline=true, locked=true, frozen=true))
+
+
+pub def test_disabling_frozen_keeps_independent_defaults() -> None:
+    """Removing frozen's implication leaves independent environment restrictions intact."""
+    require_constraints(
+        InvocationInputs(no_frozen=true, env_frozen=EnvironmentInput.Text("1"), env_locked=EnvironmentInput.Text("1")),
+        InvocationConstraints(offline=false, locked=true, frozen=false),
+    )
+    require_constraints(
+        InvocationInputs(no_frozen=true, env_frozen=EnvironmentInput.Text("1"), env_offline=EnvironmentInput.Text("1")),
+        InvocationConstraints(offline=true, locked=false, frozen=false),
+    )
+    require_constraints(
+        InvocationInputs(
+            no_frozen=true,
+            no_locked=true,
+            no_offline=true,
+            env_frozen=EnvironmentInput.Text("1"),
+            env_locked=EnvironmentInput.Text("1"),
+            env_offline=EnvironmentInput.Text("1"),
+        ),
+        InvocationConstraints(offline=false, locked=false, frozen=false),
+    )
+
+
+pub def test_raw_conflicts_match_the_cli_surface() -> None:
+    """Raw callers must observe all five existing CLI conflicts before getting a decision."""
+    require_conflict(InvocationInputs(locked=true, no_locked=true), ("--locked", "--no-locked"))
+    require_conflict(InvocationInputs(offline=true, no_offline=true), ("--offline", "--no-offline"))
+    require_conflict(InvocationInputs(frozen=true, no_frozen=true), ("--frozen", "--no-frozen"))
+    require_conflict(InvocationInputs(frozen=true, no_locked=true), ("--frozen", "--no-locked"))
+    require_conflict(InvocationInputs(frozen=true, no_offline=true), ("--frozen", "--no-offline"))
+
+
+pub def test_compatible_explicit_controls_are_not_conflicts() -> None:
+    """Independent enables, redundant enables and disabling frozen remain valid combinations."""
+    require_constraints(
+        InvocationInputs(offline=true, locked=true, frozen=true),
+        InvocationConstraints(offline=true, locked=true, frozen=true),
+    )
+    require_constraints(
+        InvocationInputs(offline=true, locked=true, no_frozen=true),
+        InvocationConstraints(offline=true, locked=true, frozen=false),
+    )
+    require_constraints(
+        InvocationInputs(offline=true, no_locked=true),
+        InvocationConstraints(offline=true, locked=false, frozen=false),
+    )
+    require_constraints(
+        InvocationInputs(locked=true, no_offline=true),
+        InvocationConstraints(offline=false, locked=true, frozen=false),
+    )
+
+
+pub def test_decisions_repeat_and_diagnostics_exclude_values() -> None:
+    """Repeated decisions retain their inputs and errors render only fixed flag names."""
+    inputs = InvocationInputs(no_offline=true, env_frozen=EnvironmentInput.Text("1"))
+    for _ in range(3):
+        require_constraints(inputs, InvocationConstraints(offline=true, locked=true, frozen=true))
+    match decide_invocation(
+        InvocationInputs(locked=true, no_locked=true, env_locked=EnvironmentInput.Text("private-value")),
+    ):
+        Ok(_) => fail("conflict with a private environment value was accepted")
+        Err(error) =>
+            assert error.message() == "conflicting invocation flags: --locked and --no-locked"

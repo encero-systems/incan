@@ -53,3 +53,5 @@ The schema already has a `rust` language value because Rust is Incan's host, gen
 - a process-risk scoring engine
 
 Those capabilities can consume or extend codegraph records, but they should not replace the compiler-owned schema contract.
+
+Checked call and reference records also carry an optional `canonical_owner`, projected from the same semantic relationship query used for package execution requirements. It identifies the closest checked declaration even when the export has no navigation record for a method or field. A missing owner remains unproven; syntax-only containment is not execution authority. This is an additive schema 7 field: older records deserialize with `None`, and readers must tolerate unknown optional fields.

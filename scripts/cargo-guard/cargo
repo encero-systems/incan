@@ -1,0 +1,6 @@
+#!/bin/sh
+# The Oven suite's Cargo guard. Installed at the front of PATH by the `test-oven-replay`, `test-oven-release-smoke`
+# and `test-one` recipes so that any `cargo` a normal command reaches is refused with exit 97 and recorded, with the
+# working directory and the parent command that reached for it, in `$INCAN_OVEN_CARGO_GUARD_LOG`.
+printf '%s\n' "unexpected Cargo invocation (cwd $PWD; parent $(ps -o args= -p $PPID 2>/dev/null | cut -c1-300)): $*" >> "$INCAN_OVEN_CARGO_GUARD_LOG"
+exit 97

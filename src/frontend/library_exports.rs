@@ -147,6 +147,9 @@ pub struct CheckedExportIdentity {
     pub projection: CheckedExportProjection,
     /// Canonical declaration identity selected by the frontend, absent only when resolution stayed unproven.
     pub canonical: Option<CanonicalSymbolId>,
+    /// Checked foreign nominal bindings available while this export was projected; only referenced type leaves
+    /// are serialized, so unrelated implementation imports do not become artifact metadata.
+    pub(crate) type_origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
 }
 
 impl CheckedExportIdentity {
@@ -156,6 +159,7 @@ impl CheckedExportIdentity {
             source_path,
             projection: CheckedExportProjection::Direct,
             canonical: None,
+            type_origins: Default::default(),
         }
     }
 
@@ -165,6 +169,7 @@ impl CheckedExportIdentity {
             source_path,
             projection: CheckedExportProjection::Alias { target_path },
             canonical: None,
+            type_origins: Default::default(),
         }
     }
 
@@ -174,6 +179,7 @@ impl CheckedExportIdentity {
             source_path,
             projection: CheckedExportProjection::Reexport { target_path },
             canonical: None,
+            type_origins: Default::default(),
         }
     }
 
@@ -186,6 +192,7 @@ impl CheckedExportIdentity {
                 target_kind,
             },
             canonical: None,
+            type_origins: Default::default(),
         }
     }
 
@@ -309,6 +316,8 @@ pub struct CheckedAliasExport {
     pub name: String,
     pub target_path: Vec<String>,
     pub projected_function: Option<CheckedFunctionExport>,
+    /// Checked nominal target retained by a public type re-export.
+    pub projected_type: Option<ResolvedType>,
 }
 
 #[derive(Debug, Clone)]
@@ -424,6 +433,75 @@ pub struct CheckedNamedExport {
     pub name: String,
     pub identity: CheckedExportIdentity,
     pub kind: CheckedExportKind,
+}
+
+impl CheckedNamedExport {
+    /// Rename this export for the public name a re-export binds it to, preserving its semantic export kind.
+    ///
+    /// Every kind carries its own copy of the name, so the rename is applied kind by kind here, beside the enum, and
+    /// a new kind cannot be added without deciding what renaming means for it. The callable an alias projects is
+    /// renamed with the alias: the projection describes the binding a consumer resolves under this public name.
+    /// Only `emitted_name` stays put, because the declaration behind the rename is unchanged.
+    pub fn renamed(&self, exported_name: &str) -> Self {
+        let mut renamed = self.clone();
+        renamed.name = exported_name.to_string();
+
+        match &mut renamed.kind {
+            CheckedExportKind::Function(function_export) => function_export.name = exported_name.to_string(),
+            CheckedExportKind::Partial(partial_export) => partial_export.name = exported_name.to_string(),
+            CheckedExportKind::Alias(alias_export) => {
+                alias_export.name = exported_name.to_string();
+                if let Some(projected_function) = alias_export.projected_function.as_mut() {
+                    projected_function.name = exported_name.to_string();
+                }
+            }
+            CheckedExportKind::TypeAlias(type_alias_export) => type_alias_export.name = exported_name.to_string(),
+            CheckedExportKind::Model(model_export) => model_export.name = exported_name.to_string(),
+            CheckedExportKind::Class(class_export) => class_export.name = exported_name.to_string(),
+            CheckedExportKind::Trait(trait_export) => trait_export.name = exported_name.to_string(),
+            CheckedExportKind::Enum(enum_export) => enum_export.name = exported_name.to_string(),
+            CheckedExportKind::Newtype(newtype_export) => newtype_export.name = exported_name.to_string(),
+            CheckedExportKind::Const(const_export) => const_export.name = exported_name.to_string(),
+            CheckedExportKind::Static(static_export) => static_export.name = exported_name.to_string(),
+        }
+
+        renamed
+    }
+
+    /// Project this provider export through the entrypoint binding that actually re-exports it.
+    ///
+    /// The provider export retains the concrete declaration shape (model, trait, function, and so on), while the
+    /// entrypoint's checked export owns the re-export path and target identity. Combining those two checked products
+    /// avoids relabeling a renamed declaration as a direct export whose public name no longer matches its canonical
+    /// declaration. The entrypoint candidate is matched by canonical identity; a lone candidate under the name is
+    /// adopted without one, and with no candidate at all the renamed provider identity stands.
+    pub fn projected_through_reexport(
+        &self,
+        exported_name: &str,
+        entrypoint_exports: Option<&HashMap<String, Vec<CheckedNamedExport>>>,
+    ) -> Self {
+        let mut projected = self.renamed(exported_name);
+        let Some(candidates) = entrypoint_exports.and_then(|exports| exports.get(exported_name)) else {
+            return projected;
+        };
+        let checked_projection = candidates
+            .iter()
+            .find(|candidate| candidate.identity.canonical == self.identity.canonical)
+            .or_else(|| (candidates.len() == 1).then(|| &candidates[0]));
+        if let Some(checked_projection) = checked_projection {
+            projected.identity = checked_projection.identity.clone();
+        }
+        projected
+    }
+}
+
+/// Group checked exports by public source name while preserving same-name function overload entries.
+pub fn checked_exports_by_name(exports: Vec<CheckedNamedExport>) -> HashMap<String, Vec<CheckedNamedExport>> {
+    let mut grouped: HashMap<String, Vec<CheckedNamedExport>> = HashMap::new();
+    for export in exports {
+        grouped.entry(export.name.clone()).or_default().push(export);
+    }
+    grouped
 }
 
 /// Frontend-owned registry for names projected through a library entrypoint.
@@ -555,6 +633,10 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
         }
     }
 
+    let type_origins = checker.checked_nominal_type_origins();
+    for export in &mut exports {
+        export.identity.type_origins.clone_from(&type_origins);
+    }
     exports.sort_by(|a, b| a.name.cmp(&b.name));
     exports
 }
@@ -608,6 +690,7 @@ fn checked_alias_exports(alias: &AliasDecl, checker: &TypeChecker) -> Vec<Checke
         kind: CheckedExportKind::Alias(CheckedAliasExport {
             name: alias.name.clone(),
             target_path,
+            projected_type: matches!(symbol.kind, SymbolKind::Type(_)).then(|| ResolvedType::Named(alias.name.clone())),
             projected_function,
         }),
     }]
@@ -665,7 +748,7 @@ fn checked_source_import_item_exports(
                         .lookup_symbol(exported_name.as_str())
                         .map(|symbol| symbol.kind.clone())
                 });
-            checked_import_export_from_symbol_kind(exported_name, target_path, symbol_kind.as_ref(), identity)
+            checked_import_export_from_symbol_kind(exported_name, target_path, symbol_kind.as_ref(), identity, checker)
         })
         .collect()
 }
@@ -685,7 +768,7 @@ fn checked_import_item_exports(
             let symbol_kind = checker.lookup_symbol(exported_name.as_str()).map(|symbol| &symbol.kind);
             let identity = CheckedExportIdentity::reexport(target_path.clone(), target_path.clone())
                 .with_canonical(checked_binding_canonical(checker, &exported_name));
-            checked_import_export_from_symbol_kind(exported_name, target_path, symbol_kind, identity)
+            checked_import_export_from_symbol_kind(exported_name, target_path, symbol_kind, identity, checker)
         })
         .collect()
 }
@@ -696,17 +779,23 @@ fn checked_import_export_from_symbol_kind(
     target_path: Vec<String>,
     symbol_kind: Option<&SymbolKind>,
     identity: CheckedExportIdentity,
+    checker: &TypeChecker,
 ) -> Vec<CheckedNamedExport> {
     if let Some(SymbolKind::FunctionOverloads(overloads)) = symbol_kind {
         return checked_overload_function_exports(exported_name, overloads, identity);
     }
     let projected_function = symbol_kind.and_then(|kind| checked_projected_function_export(&exported_name, kind));
+    let projected_type = checker
+        .checked_nominal_type_origins()
+        .contains_key(&exported_name)
+        .then(|| ResolvedType::Named(exported_name.clone()));
     vec![CheckedNamedExport {
         name: exported_name.clone(),
         identity,
         kind: CheckedExportKind::Alias(CheckedAliasExport {
             name: exported_name,
             target_path,
+            projected_type,
             projected_function,
         }),
     }]
@@ -1411,7 +1500,9 @@ fn checked_spanned_trait_bounds(bounds: &[Spanned<TraitBound>], checker: &TypeCh
 /// Resolve one source trait bound into checked export metadata.
 fn checked_trait_bound(bound: &TraitBound, checker: &TypeChecker) -> CheckedTypeBound {
     CheckedTypeBound {
-        name: bound.name.clone(),
+        name: checker
+            .imported_generic_rust_bound_path(&bound.name)
+            .unwrap_or_else(|| bound.name.clone()),
         source_name: checker.trait_bound_source_name(&bound.name),
         type_args: bound
             .type_args
@@ -1841,6 +1932,33 @@ mod tests {
     use super::*;
     use crate::frontend::ast::{Span, Spanned};
 
+    /// Exported free-function bounds retain their resolved Rust identity after the provider's alias leaves scope.
+    #[test]
+    fn checked_foreign_generic_bound_retains_import_identity() {
+        use crate::frontend::symbols::{RustImportBindingKind, RustItemInfo, Symbol, SymbolKind};
+
+        let mut checker = TypeChecker::new();
+        checker.symbols.define(Symbol {
+            name: "Owned".to_string(),
+            kind: SymbolKind::RustItem(RustItemInfo {
+                crate_name: "serde".to_string(),
+                path: "serde::de::DeserializeOwned".to_string(),
+                binding: RustImportBindingKind::FromImport,
+                metadata: None,
+            }),
+            span: Span::default(),
+            scope: 0,
+        });
+        let bound = checked_trait_bound(
+            &TraitBound {
+                name: "Owned".to_string(),
+                type_args: vec![],
+            },
+            &checker,
+        );
+        assert_eq!(bound.name, "::serde::de::DeserializeOwned");
+    }
+
     fn spanned(expr: Expr) -> Spanned<Expr> {
         Spanned::new(expr, Span::default())
     }
@@ -1868,6 +1986,106 @@ mod tests {
         assert!(is_exported_method_name("_checked_current_unit"));
         assert!(is_exported_method_name("_checked_package"));
         assert!(!is_exported_method_name("_private_helper"));
+    }
+
+    /// One checked export with the given name and kind, with an unresolved canonical identity unless one is given.
+    fn named_export(name: &str, kind: CheckedExportKind, canonical: Option<CanonicalSymbolId>) -> CheckedNamedExport {
+        let mut identity = CheckedExportIdentity::direct(vec!["lib".to_string(), name.to_string()]);
+        identity.canonical = canonical;
+        CheckedNamedExport {
+            name: name.to_string(),
+            identity,
+            kind,
+        }
+    }
+
+    /// A canonical identity for a module-level declaration in `lib`.
+    fn canonical(name: &str) -> CanonicalSymbolId {
+        CanonicalSymbolId::module_declaration(
+            vec!["lib".to_string()],
+            name,
+            SemanticSourceTargetKind::Function,
+            incan_semantics_core::HirSourceSpan::new(0, 1),
+        )
+    }
+
+    /// Renaming rewrites the public name on the export and on its kind, and an alias's projected callable follows
+    /// the alias while its emitted name stays with the declaration.
+    #[test]
+    fn a_renamed_export_keeps_its_kind_and_renames_the_projected_callable_issue1298() -> Result<(), String> {
+        let function = CheckedFunctionExport {
+            name: "compute".to_string(),
+            emitted_name: Some("compute".to_string()),
+            type_params: Vec::new(),
+            params: Vec::new(),
+            param_defaults: Vec::new(),
+            return_type: ResolvedType::Unit,
+            is_async: false,
+        };
+        let alias = named_export(
+            "compute",
+            CheckedExportKind::Alias(CheckedAliasExport {
+                name: "compute".to_string(),
+                target_path: vec!["math".to_string(), "compute".to_string()],
+                projected_function: Some(function.clone()),
+                projected_type: None,
+            }),
+            None,
+        );
+        let renamed = alias.renamed("calc");
+        assert_eq!(renamed.name, "calc");
+        let CheckedExportKind::Alias(kind) = &renamed.kind else {
+            return Err("renaming must preserve the alias kind".to_string());
+        };
+        assert_eq!(kind.name, "calc");
+        assert_eq!(kind.projected_function.as_ref().map(|f| f.name.as_str()), Some("calc"));
+        assert_eq!(
+            kind.projected_function.as_ref().and_then(|f| f.emitted_name.as_deref()),
+            Some("compute")
+        );
+
+        let plain = named_export("compute", CheckedExportKind::Function(function), None).renamed("calc");
+        let CheckedExportKind::Function(kind) = &plain.kind else {
+            return Err("renaming must preserve the function kind".to_string());
+        };
+        assert_eq!(
+            (plain.name.as_str(), kind.name.as_str(), kind.emitted_name.as_deref()),
+            ("calc", "calc", Some("compute"))
+        );
+        Ok(())
+    }
+
+    /// A re-exported provider export adopts the entrypoint identity whose canonical id matches it; a lone candidate
+    /// is adopted without a match; with no candidate the renamed provider identity stands.
+    #[test]
+    fn a_reexport_adopts_the_matching_entrypoint_identity_issue1298() {
+        let constant = |name: &str, canonical: Option<CanonicalSymbolId>| {
+            named_export(
+                name,
+                CheckedExportKind::Const(CheckedConstExport {
+                    name: name.to_string(),
+                    ty: ResolvedType::Int,
+                }),
+                canonical,
+            )
+        };
+        let provider = constant("limit", Some(canonical("limit")));
+        let mut matching = constant("cap", Some(canonical("limit")));
+        matching.identity.source_path = vec!["entry".to_string(), "cap".to_string()];
+        let other = constant("cap", Some(canonical("other")));
+        let entrypoint = HashMap::from([("cap".to_string(), vec![other.clone(), matching.clone()])]);
+
+        let projected = provider.projected_through_reexport("cap", Some(&entrypoint));
+        assert_eq!(projected.name, "cap");
+        assert_eq!(projected.identity.source_path, matching.identity.source_path);
+
+        let lone = HashMap::from([("cap".to_string(), vec![other.clone()])]);
+        let projected = provider.projected_through_reexport("cap", Some(&lone));
+        assert_eq!(projected.identity.canonical, other.identity.canonical);
+
+        let projected = provider.projected_through_reexport("cap", None);
+        assert_eq!(projected.identity.source_path, provider.identity.source_path);
+        assert_eq!(projected.identity.canonical, provider.identity.canonical);
     }
 
     #[test]

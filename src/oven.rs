@@ -18,17 +18,23 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::library_manifest::digest_cargo_path_source_tree_with_cache;
+use crate::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
+use crate::library_manifest::{digest_cargo_path_source_tree_with_cache, digest_provider_artifact};
 use crate::manifest::{DependencySource, DependencySpec, GitReference, ProjectManifest};
 
+pub(crate) mod closure_proof;
 pub(crate) mod compiler_suite_env;
 pub(crate) mod interop;
 pub mod legacy_cargo;
 pub mod loaf;
+pub(crate) mod loaf_mirror;
+pub(crate) mod native_contract;
 pub mod native_test;
 mod process;
+pub(crate) mod progress;
 pub mod rustc;
 pub mod store;
+pub(crate) mod store_mirror;
 
 /// Digest the portable dependency facts that select a native Oven closure.
 ///
@@ -49,6 +55,16 @@ pub fn digest_dependency_specs(dependencies: &[DependencySpec]) -> Result<String
                 GitReference::Tag(tag) => format!("git:{url}:tag:{tag}"),
                 GitReference::Rev(revision) => format!("git:{url}:rev:{revision}"),
             },
+            // A packaged Incan provider is identified by its sealed artifact tree, never by walking the Cargo
+            // edges its generated manifest still spells out: those point at the producer's private Rust sources,
+            // which an admitted package does not need and a source-free consumer does not have (#1469).
+            DependencySource::Path { path } if is_packaged_provider_root(path) => {
+                let digest = digest_provider_artifact(path).map_err(|error| OvenError::InvalidProjectSource {
+                    path: path.clone(),
+                    message: error.to_string(),
+                })?;
+                format!("packaged-provider:{digest}")
+            }
             // A path dependency is selected by its recursive Cargo-semantic source closure, not by compiler output
             // or unrelated repository files. Sharing the package memo also avoids rescanning a common sibling reached
             // through several top-level dependencies.
@@ -78,6 +94,20 @@ pub fn digest_dependency_specs(dependencies: &[DependencySpec]) -> Result<String
     Ok(digest_bytes(records.join("\n").as_bytes()))
 }
 
+/// Whether a path dependency root is a packaged Incan provider: a generated library crate carrying its `.incnlib`
+/// manifest beside `Cargo.toml`. An authored Rust crate has no such manifest.
+fn is_packaged_provider_root(root: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(root) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == LIBRARY_MANIFEST_EXTENSION)
+    })
+}
+
 /// Current wire format for persisted Oven receipts.
 pub const OVEN_RECEIPT_SCHEMA_VERSION: u32 = 3;
 /// Compiler-owned, project-relative destination for a default Oven receipt.
@@ -86,23 +116,34 @@ pub const DEFAULT_RECEIPT_RELATIVE_PATH: &str = ".incan/oven/receipt.json";
 /// Default aggregate physical allocation retained by an everyday Alpha Oven store.
 ///
 /// A project bake retains independent debug and release plans. A measured IncQL/DataFusion provider retains about
-/// 4.23 GiB while its consumer's compatibility publisher transiently needs about 3.80 GiB. Nine GiB admits that
-/// ordinary provider-to-consumer hand-off with practical headroom while keeping the publisher's private target
-/// bounded.
-pub const DEFAULT_OVEN_MAX_PHYSICAL_BYTES: u64 = 9 * 1024 * 1024 * 1024;
+/// 4.23 GiB while its consumer's compatibility publisher transiently needs about 3.80 GiB, and a Bevy-scale
+/// debug-plus-release pair retains about 3 GiB. Twelve GiB lets two such projects share one home and still leaves
+/// the publisher's staging floor free, so switching between them reuses rather than re-bakes (#1230); the
+/// publisher's private target stays bounded by that floor and the store prunes to this cap, so it is a ceiling on
+/// what is kept, never a reservation.
+pub const DEFAULT_OVEN_MAX_PHYSICAL_BYTES: u64 = 12 * 1024 * 1024 * 1024;
 /// Default physical allocation cap for one compatibility domain.
 ///
-/// A checked IncQL/DataFusion debug plan retains 1.21 GiB while its following release publisher needs a bounded
-/// transient closure. Six GiB covers that serialized two-profile hand-off with practical headroom; callers may
-/// still choose a stricter explicit limit.
-pub const DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES: u64 = 6 * 1024 * 1024 * 1024;
+/// Every project baked by one Incan release shares one compatibility domain, so for the ordinary single-release home
+/// this cap is the aggregate cap under another name; it equals the aggregate so it cannot starve a second project of
+/// staging before the aggregate would. A superseded release's entries are reclaimed at reservation time, which is
+/// what keeps an upgraded home from hoarding; callers may still choose a stricter explicit limit.
+pub const DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES: u64 = 12 * 1024 * 1024 * 1024;
+/// Transient staging the explicit compatibility baker reserves before it runs, reclaiming inactive store entries
+/// oldest-first to reach it.
+///
+/// The consumer of a measured IncQL/DataFusion provider stages about 3.80 GiB and a bare-Bevy bake about 3.2 GB
+/// before publication; four GiB covers both with headroom. A bake that needs less simply leaves the rest unused, and
+/// one that needs more is still bounded by the same monitor as before, so this floor only decides how much of another
+/// project's inactive closure may be evicted to let this one finish.
+pub const DEFAULT_OVEN_PUBLISHER_STAGING_FLOOR_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// Default logical artifact-byte cap for one compatibility domain.
 ///
 /// One explicit bake of a project whose closure is not loadable as independently compiled parts retains two
 /// extensions of a compiler Loaf: the library's delta and the test-dependency envelope's, each carrying the unified
 /// closure, its re-rooted copies of shared units, and the extension's own runtime. Measured for IncQL/DataFusion on
 /// Linux, each is 1.5 GiB, so a single debug-profile bake retains 3.0 GiB before its outputs and authority. Six GiB,
-/// the same as the physical allowance, admits that bake with the release profile or a second project beside it;
+/// half the physical allowance, admits that bake with the release profile or a second project beside it;
 /// callers may still choose a stricter explicit limit.
 pub const DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES: u64 = 6 * 1024 * 1024 * 1024;
 /// Aggregate physical allowance for the complete compiler-suite Loaf and repository-test closure.
@@ -317,7 +358,7 @@ pub struct OvenSourceEvidence {
     /// SHA-256 digest of normalized `Cargo.lock` content when a frozen Cargo package was explicitly imported.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cargo_lock_digest: Option<String>,
-    /// SHA-256 digest of normalized `incan.toml` content when present.
+    /// SHA-256 digest of normalized `loaf.toml` content when present.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub incan_manifest_digest: Option<String>,
     /// Additional content-derived inputs from the source closure; local paths are deliberately excluded.
@@ -416,7 +457,7 @@ pub enum OvenError {
     #[error("Oven Alpha compatibility miss: Cargo.toml at {path} {message}")]
     UnsupportedCargoPackage { path: PathBuf, message: String },
     /// An optional Incan declaration could not support shared project identity validation.
-    #[error("Oven Alpha compatibility miss: failed to read incan.toml at {path}: {message}")]
+    #[error("Oven Alpha compatibility miss: failed to read loaf.toml at {path}: {message}")]
     InvalidIncanManifest { path: PathBuf, message: String },
     /// Cargo and Incan declarations disagreed on one shared identity field.
     #[error(
@@ -434,6 +475,24 @@ pub enum OvenError {
     /// Supplemental source evidence cannot identify a portable build unit.
     #[error("Oven import requires a non-empty supplemental source {field}")]
     EmptySupplementalSource { field: &'static str },
+    /// A selected build unit has no compatible native dependency closure retained for it.
+    ///
+    /// Distinct from an ordinary cache miss: the closure is a selection the Incan Oven control plane supplies, and
+    /// its absence is a refusal rather than a reason to rebuild.
+    #[error(
+        "Oven selected native plan unavailable for build unit {build_unit_identity}; execution requires a compatible dependency closure"
+    )]
+    SelectedNativePlanUnavailable { build_unit_identity: String },
+    /// The store holds a native plan for this build unit that this compiler cannot read.
+    ///
+    /// Deliberately distinct from [`OvenError::SelectedNativePlanUnavailable`]: something *is* published and
+    /// reading it failed. The two ask for opposite responses — bake, or look at the store — so reporting a corrupt
+    /// or newer-than-this-build record as an absence sends a reader to rebuild something that already exists.
+    #[error("Oven selected native plan for build unit {build_unit_identity} cannot be read: {message}")]
+    SelectedNativePlanUnreadable {
+        build_unit_identity: String,
+        message: String,
+    },
     /// A requested receipt transformation named a build-unit input that was not present.
     #[error("Oven receipt has no build-unit input `{input}`")]
     MissingBuildUnitInput { input: String },
@@ -827,7 +886,7 @@ fn validate_optional_incan_identity(
     project_root: &Path,
     cargo_project: &OvenProjectIdentity,
 ) -> Result<Option<String>, OvenError> {
-    let path = project_root.join("incan.toml");
+    let path = project_root.join("loaf.toml");
     if !path.exists() {
         return Ok(None);
     }
@@ -1545,6 +1604,46 @@ mod tests {
     }
 
     #[test]
+    fn a_packaged_provider_is_identified_by_its_sealed_artifact_not_its_private_cargo_edges_issue1469()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = tempfile::tempdir()?;
+        let provider = fixture.path().join("catalog/target/lib");
+        fs::create_dir_all(provider.join("src"))?;
+        // The generated manifest still names a private Rust crate that no longer exists.
+        fs::write(
+            provider.join("Cargo.toml"),
+            "[package]\nname = \"immutable_catalog\"\nversion = \"0.1.0\"\n\n[dependencies.package_store_witness]\npath = \"../../../package-store-witness\"\n",
+        )?;
+        fs::write(provider.join("src/lib.rs"), "pub fn answer() -> i64 { 42 }\n")?;
+        let dependency = DependencySpec {
+            crate_name: "stock".to_string(),
+            version: None,
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Path { path: provider.clone() },
+            optional: false,
+            package: None,
+        };
+        let as_authored_crate = super::digest_dependency_specs(std::slice::from_ref(&dependency));
+        assert!(
+            as_authored_crate.is_err(),
+            "an authored crate's missing path dependency is still a fault: {as_authored_crate:?}"
+        );
+
+        fs::write(provider.join("immutable_catalog.incnlib"), "{}")?;
+        // With its `.incnlib` beside the manifest the same tree is a packaged provider, and the missing private
+        // crate is no longer anyone's business.
+        let sealed = super::digest_dependency_specs(std::slice::from_ref(&dependency))?;
+        fs::write(provider.join("src/lib.rs"), "pub fn answer() -> i64 { 43 }\n")?;
+        assert_ne!(
+            sealed,
+            super::digest_dependency_specs(std::slice::from_ref(&dependency))?,
+            "the sealed artifact's own bytes still decide its identity"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn path_dependency_identity_ignores_mutable_project_output_but_tracks_authored_files()
     -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
@@ -1881,7 +1980,7 @@ mod tests {
         )?;
         fs::write(root.join("Cargo.lock"), "version = 4\n")?;
         fs::write(
-            root.join("incan.toml"),
+            root.join("loaf.toml"),
             "[project]\nname = \"oven_fixture\"\nversion = \"0.1.0\"\n",
         )?;
         Ok(())

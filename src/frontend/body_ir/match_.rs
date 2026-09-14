@@ -292,19 +292,21 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         let mut field_place = place.clone();
                         field_place
                             .projection
-                            .push(bir::PlaceElem::synthetic_field(index.to_string()));
+                            .push(bir::PlaceElem::structural_field(index.to_string()));
                         self.lower_match_pattern(item, element_ty, &field_place, arm_scope, reads, seen, saved_bindings)
                     })
                     .collect();
                 bir::Pattern::Tuple(fields)
             }
             ast::Pattern::Constructor(name, args) => {
-                // Preserve exact source-local pattern targets instead of asking the executor to recover a
-                // declaration from the printed constructor spelling. The direct profile accepts only canonical
+                // Retain the checked pattern target from local or imported declaration context. Source aliases
+                // never participate in declaration or layout equality. The direct profile accepts only canonical
                 // named fields of a plain model; every other structurally lowered constructor remains the
                 // name-only fallback below and is visibly refused by replacement execution.
-                if let Some(declaration) = self.local_nominal_declarations.get(&name.node)
-                    && matches!(expected_ty, IncanType::Named(type_name) if type_name == &name.node)
+                if let Some(declaration) = self
+                    .local_nominal_declarations
+                    .values()
+                    .find(|declaration| self.type_info.resolved_identity(name.span) == Some(&declaration.canonical))
                     && args.iter().all(|arg| matches!(arg, ast::PatternArg::Named(_, _)))
                     && self.type_info.resolved_identity(name.span) == Some(&declaration.canonical)
                 {
@@ -343,13 +345,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     };
                 }
 
-                if let Some((enum_name, variant_name)) =
-                    name.node.rsplit_once("::").or_else(|| name.node.rsplit_once('.'))
-                    && args.is_empty()
-                    && matches!(expected_ty, IncanType::Named(type_name) if type_name == enum_name)
-                    && let Some(declaration) = self.local_fieldless_enum_declarations.get(enum_name)
-                    && let Some(variant) = declaration.variants.iter().find(|variant| variant.name == variant_name)
-                    && self.type_info.resolved_identity(name.span) == Some(&variant.canonical)
+                if args.is_empty()
+                    && let Some(declaration) = self.local_fieldless_enum_declarations.values().find(|declaration| {
+                        declaration
+                            .variants
+                            .iter()
+                            .any(|variant| self.type_info.resolved_identity(name.span) == Some(&variant.canonical))
+                    })
+                    && let Some(variant) = declaration
+                        .variants
+                        .iter()
+                        .find(|variant| self.type_info.resolved_identity(name.span) == Some(&variant.canonical))
                 {
                     return bir::Pattern::FieldlessEnumVariant(bir::FieldlessEnumVariantTarget {
                         enum_declaration_id: declaration.direct_declaration_id.clone(),
@@ -410,7 +416,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                             let mut field_place = place.clone();
                             field_place
                                 .projection
-                                .push(bir::PlaceElem::synthetic_field(positional_index.to_string()));
+                                .push(bir::PlaceElem::structural_field(positional_index.to_string()));
                             positional_index += 1;
                             let lowered = self.lower_match_pattern(
                                 pat,

@@ -5,6 +5,26 @@ use super::refusals::*;
 use super::*;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
+    /// Classify source-written tuple projections from the checked base type, preserving nominal field authority.
+    ///
+    /// Numeric spelling alone proves nothing: only an in-bounds element of the existing checked tuple shape is
+    /// structural. Other fields retain their checked canonical identity, including an explicit unresolved value.
+    fn lower_checked_field_projection(
+        &self,
+        base: &ast::Spanned<ast::Expr>,
+        name: &str,
+        span: ast::Span,
+    ) -> bir::PlaceElem {
+        let ty = self.resolve_ty(base.span);
+        if tuple_type_elements(&ty)
+            .is_some_and(|elements| name.parse::<usize>().is_ok_and(|index| index < elements.len()))
+        {
+            bir::PlaceElem::structural_field(name)
+        } else {
+            bir::PlaceElem::field(name, self.type_info.resolved_identity(span).cloned())
+        }
+    }
+
     /// Lower one expression into an [`bir::Operand`], dispatching on its AST kind and, where evaluation has side
     /// effects or must be flattened (calls, binary/unary ops, aggregates), pushing supporting statements into `out`
     /// first. Expression kinds outside v0's covered subset fall through to [`Self::unsupported_operand`] rather than
@@ -69,10 +89,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     );
                 }
                 let mut place = self.lower_expr_to_place(base, scope, out);
-                place.projection.push(bir::PlaceElem::field(
-                    name.clone(),
-                    self.type_info.resolved_identity(expr.span).cloned(),
-                ));
+                place
+                    .projection
+                    .push(self.lower_checked_field_projection(base, name, expr.span));
                 let ty = self.resolve_ty(expr.span);
                 let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
                 bir::Operand::place(place, fact, last_use)
@@ -166,10 +185,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             ast::Expr::Field(base, name) => {
                 let mut place = self.lower_expr_to_place(base, scope, out);
-                place.projection.push(bir::PlaceElem::field(
-                    name.clone(),
-                    self.type_info.resolved_identity(expr.span).cloned(),
-                ));
+                place
+                    .projection
+                    .push(self.lower_checked_field_projection(base, name, expr.span));
                 place
             }
             ast::Expr::Index(base, index) => {

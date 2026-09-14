@@ -8,7 +8,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn test_collections() {
-    let _empty_list: Vec<i64> = vec![];
+    let _empty_list: Vec<i64> = Vec::<i64>::new();
     let _empty_dict: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     let numbers: Vec<i64> = vec![1, 2, 3, 4, 5];
     let _strings: Vec<String> = vec!["a".to_string(), "b".to_string(), "c".to_string()];

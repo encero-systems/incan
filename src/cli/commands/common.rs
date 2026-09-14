@@ -41,15 +41,17 @@ use crate::frontend::testing_markers::{
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::frontend::typechecker::{CBindingDescriptor, TypeCheckInfo};
 use crate::frontend::{ast_walk, diagnostics, lexer, parser, typechecker, vocab_desugar_pass};
+use crate::inspect::effect_digest::{COMPILER_RUST_EFFECT_ROOTS, COMPILER_STDLIB_ROOT, compiler_effect_digest};
 use crate::library_manifest::{
     LibraryManifest, ProviderCargoDependency, ProviderCargoDependencySource, ProviderModuleClaim,
     digest_provider_artifact,
 };
 use crate::lockfile::CargoFeatureSelection;
-use crate::manifest::{DependencySource, DependencySpec};
 use crate::manifest::{
-    INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV, MANIFEST_FILENAME, ProjectManifest,
+    CARGO_MANIFEST_FILENAME, DiscoveredManifest, INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV,
+    LOAF_MANIFEST_FILENAME, ManifestError, ProjectManifest, discovered_manifest_kind,
 };
+use crate::manifest::{DependencySource, DependencySpec};
 use crate::project_lifecycle::toolchain::ToolchainConstraintSet;
 use crate::provider::{
     BackendImplementationRequirement, FeatureSelection, PackageFeatureGraph, PackageFeaturePlan,
@@ -76,6 +78,14 @@ static PREPARED_LIBRARY_DEPENDENCIES: LazyLock<Mutex<HashMap<PathBuf, BTreeSet<S
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static SDK_PROVIDER_COMPILER_DIGESTS: LazyLock<Mutex<HashMap<PathBuf, [u8; 32]>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Project roots already told that their `Cargo.toml` is ignored, so one command warns once.
+///
+/// Oven prepares a project more than once per command — once per selected profile, and again for a caller-owned
+/// library graph — so emitting at the preparation boundary without this would repeat the same line several times for
+/// a single `incan build`. Keyed by project root rather than a global flag, so a workspace build still reports each
+/// member that has one.
+static IGNORED_CARGO_MANIFESTS_REPORTED: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 /// Shared immutable provider projections indexed by the canonical modules an invocation uses.
 type ProviderPlanCache = Arc<Mutex<BTreeMap<BTreeSet<Vec<String>>, Arc<ProviderPlan>>>>;
 pub(crate) const INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV: &str = "INCAN_INTERNAL_LIBRARY_ARTIFACT_ONLY";
@@ -84,6 +94,8 @@ pub(crate) const INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV: &str = "INCAN_INTERNAL_LIBR
 /// Unlike artifact-only mode, an Oven direct-rustc dependency build must emit caller-owned rlibs. It still targets
 /// exactly the dependency project selected by the parent, even if that project is the root of a larger workspace.
 pub(crate) const INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV: &str = "INCAN_INTERNAL_LIBRARY_DEPENDENCY_PREPARATION";
+/// Optional external directory for SDK publication timing evidence.
+const INTERNAL_SDK_BUILD_REPORT_DIR_ENV: &str = "INCAN_INTERNAL_SDK_BUILD_REPORT_DIR";
 /// Internal provider-store override used by isolated compiler and packaging tests.
 const INTERNAL_SDK_PROVIDER_STORE_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_STORE";
 /// Internal file through which release packaging receives the exact immutable SDK provider root.
@@ -309,24 +321,15 @@ fn sdk_provider_workspace_lock(stdlib_root: &Path) -> Option<PathBuf> {
         .map(|path| fs::canonicalize(&path).unwrap_or(path))
 }
 
-/// Seed a development SDK provider build from the verified enclosing workspace lockfile.
-fn seed_sdk_provider_workspace_lock(workspace_lock: Option<&Path>, artifact_root: &Path) -> CliResult<()> {
+/// Pass the verified SDK lock to the child that owns generated output publication.
+///
+/// The child's lock resolver and project generator materialize this payload inside its library transaction. Writing
+/// Cargo.lock into the output beforehand would create a nonempty directory without generated-library ownership.
+fn configure_sdk_provider_workspace_lock(command: &mut Command, workspace_lock: Option<&Path>) {
     let Some(workspace_lock) = workspace_lock else {
-        return Ok(());
+        return;
     };
-    fs::create_dir_all(artifact_root).map_err(|error| {
-        CliError::failure(format!(
-            "failed to create SDK provider artifact directory {}: {error}",
-            artifact_root.display()
-        ))
-    })?;
-    fs::copy(workspace_lock, artifact_root.join("Cargo.lock")).map_err(|error| {
-        CliError::failure(format!(
-            "failed to seed SDK provider artifact lock from {}: {error}",
-            workspace_lock.display()
-        ))
-    })?;
-    Ok(())
+    command.env(INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, workspace_lock);
 }
 
 /// Keep the bootstrap artifact lock alive for the whole preparation/publish transaction.
@@ -354,12 +357,23 @@ fn acquire_sdk_provider_store_lock(store_root: &Path) -> CliResult<SdkProviderSt
         .truncate(false)
         .open(&lock_path)
         .map_err(|error| CliError::failure(format!("failed to open artifact lock {}: {error}", lock_path.display())))?;
-    file.lock().map_err(|error| {
-        CliError::failure(format!(
-            "failed to acquire artifact lock {}: {error}",
-            lock_path.display()
-        ))
-    })?;
+    // Try first, and say something before settling in to wait. Serializing the store is correct — two processes
+    // publishing providers at once is what this lock exists to prevent — but an unannounced block is
+    // indistinguishable from a hang, and preparing providers can take minutes. A command that has stopped printing
+    // for no stated reason gets misread as a compiler defect on whatever project happened to be open. See #1514.
+    if file.try_lock().is_err() {
+        eprintln!(
+            "Waiting for the SDK provider store at {}. Another Incan process holds its lock; this command \
+             continues as soon as that one releases it.",
+            store_root.display()
+        );
+        file.lock().map_err(|error| {
+            CliError::failure(format!(
+                "failed to acquire artifact lock {}: {error}",
+                lock_path.display()
+            ))
+        })?;
+    }
     Ok(SdkProviderStoreLock { _file: file })
 }
 
@@ -428,8 +442,22 @@ fn hash_sdk_provider_source_tree(root: &Path, current: &Path, hasher: &mut Sha25
 /// closure. The identity is content based, so a stale provider set is never accepted because a directory exists.
 ///
 /// Development binaries are rebuilt when test-only Rust changes, and their raw bytes are not a stable description of
-/// compiler behavior. A checkout therefore contributes its compiler source closure; an installed toolchain, which has
-/// no source closure to inspect, falls back to the executable digest.
+/// compiler behavior. A checkout therefore contributes an effect digest — what this compiler *produces* for this
+/// standard library — while an installed toolchain, which has no source to inspect, falls back to the executable
+/// digest.
+///
+/// # Why the effect digest replaced the source closure
+///
+/// Through v3 a checkout folded a hash of its whole `src/`, `crates/` and `tests/` tree, so editing the language
+/// server, a CLI command or an inspection module rebuilt all ten SDK components at a cost of roughly seventeen
+/// minutes (#1495). Hashing the source answers "did the compiler change", and what the cache needs to know is
+/// "would this compiler produce different components", which is a different question for almost every edit anyone
+/// makes. [`compiler_effect_digest`] answers the second one directly.
+///
+/// [`crate::version::SDK_PROVIDER_CODEGEN_REVISION`] is folded alongside it. Publication code can change the shape
+/// of the store without changing any component's content, and that constant is the declared mechanism for saying
+/// so; the inventory already validates it on every cache hit, and folding it here means a bump also partitions the
+/// store rather than only rejecting what is in it.
 fn sdk_provider_store_identity(
     stdlib_root: &Path,
     executable: &Path,
@@ -437,18 +465,20 @@ fn sdk_provider_store_identity(
     distribution_profile: &str,
 ) -> CliResult<String> {
     let mut hasher = Sha256::new();
-    hasher.update(b"incan-sdk-provider-store-v3\0");
-    hash_sdk_provider_source_tree(stdlib_root, stdlib_root, &mut hasher)?;
+    hasher.update(b"incan-sdk-provider-store-v4\0");
     hasher.update(b"compiler-version\0");
     hasher.update(crate::version::INCAN_VERSION.as_bytes());
+    hasher.update(b"provider-codegen-revision\0");
+    hasher.update(crate::version::SDK_PROVIDER_CODEGEN_REVISION.to_le_bytes());
     hasher.update(b"distribution-profile\0");
     hasher.update(distribution_profile.as_bytes());
 
     let executable = fs::canonicalize(executable).unwrap_or_else(|_| executable.to_path_buf());
     if let Some(checkout_root) = sdk_provider_compiler_checkout_root(stdlib_root) {
-        hasher.update(b"compiler-source-closure\0");
-        hash_sdk_provider_compiler_source_tree(&checkout_root, &checkout_root, &mut hasher)?;
+        hasher.update(b"compiler-effect\0");
+        hasher.update(sdk_provider_effect_digest(&checkout_root)?.as_bytes());
     } else {
+        hash_sdk_provider_source_tree(stdlib_root, stdlib_root, &mut hasher)?;
         hasher.update(b"compiler-executable-content\0");
         hasher.update(sdk_provider_compiler_digest(&executable)?);
     }
@@ -462,6 +492,156 @@ fn sdk_provider_store_identity(
             ))
         })?);
     }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Digest what the compiler in `checkout_root` produces for its standard library, memoized on its inputs' bytes.
+///
+/// The digest itself costs about 1.8 seconds over all 104 standard-library sources, which is three orders of
+/// magnitude below the rebuild it prevents but far too much to pay on every command that resolves the provider
+/// store. So it is computed once per distinct input content and read back afterwards.
+///
+/// The memo key is a plain byte hash of the same roots the digest reads, folded with a stamp of the compiler
+/// executable doing the reading. The digest is a pure function of those bytes *and* of the frontend that lexes,
+/// parses, checks and lowers them, so a key over the bytes alone would let a rebuilt compiler read the previous
+/// compiler's answer back from disk and leave the store identity where it was. Any edit to the roots — even one the
+/// digest would forgive, like a comment — and any rebuild of the compiler miss the memo and recompute rather than
+/// returning a stale answer; a compiler that cannot stamp its own executable does not memoize at all. Entries are
+/// published by rename, because `make -j` puts many processes on one cache and a half-written digest is still a
+/// well-formed cache key.
+///
+/// # The memo changes the cost, never the value
+///
+/// An environment with nowhere to put the memo recomputes the digest each time and gets the same answer. That is
+/// deliberate rather than an omission: the identity must be a function of the compiler and its standard library
+/// alone. Substituting the cheaper byte hash where no cache exists would make two machines with identical source
+/// publish to two different store paths, which is exactly what
+/// [`sdk_provider_store_identity_for_compiler_root`] exists to prevent.
+fn sdk_provider_effect_digest(checkout_root: &Path) -> CliResult<String> {
+    let cached_path = match running_compiler_stamp() {
+        Some(compiler_stamp) => {
+            let content_key = sdk_provider_effect_input_key(checkout_root, &compiler_stamp)?;
+            sdk_provider_effect_digest_cache_root().map(|root| root.join(&content_key))
+        }
+        None => None,
+    };
+    if let Some(cached_path) = &cached_path
+        && let Ok(cached) = fs::read_to_string(cached_path)
+        && cached.starts_with("sha256:")
+    {
+        return Ok(cached.trim().to_string());
+    }
+
+    let root = checkout_root.to_path_buf();
+    let digest = crate::compiler_stack::run_on_compiler_stack(move || {
+        compiler_effect_digest(&root).map_err(|error| error.to_string())
+    })
+    .map_err(|message| {
+        CliError::failure(format!(
+            "failed to digest compiler effect for the standard library: {message}"
+        ))
+    })?;
+
+    if let Some(cached_path) = &cached_path {
+        write_effect_digest_memo(cached_path, &digest);
+    }
+    Ok(digest)
+}
+
+/// Publish one memoized digest by rename, so a concurrent reader never sees a partially written one.
+///
+/// `make -j` runs many `incan` processes against one cache, and every one of them computes this digest on a miss.
+/// A plain write can be read mid-flight, and a truncated digest is still a well-formed cache key — it would
+/// partition the store under a value no compiler will ever produce again. Writing beside the target and renaming
+/// makes the file appear whole or not at all; two processes racing write byte-identical content, so whichever
+/// rename lands last is correct either way.
+///
+/// Every failure here is ignored deliberately. This is a cache: an unwritable directory, a full disk or a losing
+/// race costs the next command a recomputation, which the caller already handles.
+fn write_effect_digest_memo(cached_path: &Path, digest: &str) {
+    let Some(parent) = cached_path.parent() else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let Some(name) = cached_path.file_name().and_then(|name| name.to_str()) else {
+        return;
+    };
+    let staged = parent.join(format!(".{name}.{}.staged", std::process::id()));
+    if fs::write(&staged, digest).is_ok() && fs::rename(&staged, cached_path).is_err() {
+        let _ = fs::remove_file(&staged);
+    }
+}
+
+/// Resolve where effect digests are memoized, or `None` when this environment has nowhere durable to put them.
+///
+/// A test harness that redirects the provider store gets its memo redirected with it, and a unit test gets a
+/// target-directory memo of its own, so neither ever reads or writes the developer's own cache.
+fn sdk_provider_effect_digest_cache_root() -> Option<PathBuf> {
+    if cfg!(test) {
+        return Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_effect_digest"));
+    }
+    if let Some(store) = env::var_os(INTERNAL_SDK_PROVIDER_STORE_ENV).filter(|path| !path.is_empty()) {
+        return Some(PathBuf::from(store).join(".effect-digest-v1"));
+    }
+    env::var_os("INCAN_HOME")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("HOME")
+                .or_else(|| env::var_os("USERPROFILE"))
+                .filter(|path| !path.is_empty())
+                .map(|path| PathBuf::from(path).join(".incan"))
+        })
+        .map(|root| root.join("cache").join("effect-digest-v1"))
+}
+
+/// Stamp the compiler executable computing the effect digest: its path, length and modification time.
+///
+/// This is the same observed-stamp shape the `rustc -vV` probe and the artifact digest memo use. A rebuilt
+/// compiler has a new length or a new mtime, so the stamp moves with it; identical checkouts on two machines
+/// produce different stamps and different memo entries, which costs each machine one digest and never changes
+/// the digest's value. `None` means the executable cannot be observed, and the caller then does not memoize.
+fn running_compiler_stamp() -> Option<String> {
+    let executable = env::current_exe().ok()?;
+    let metadata = fs::metadata(&executable).ok()?;
+    let modified = metadata.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some(format!(
+        "{}:{}:{}.{:09}",
+        executable.display(),
+        metadata.len(),
+        modified.as_secs(),
+        modified.subsec_nanos()
+    ))
+}
+
+/// Hash the bytes of every root the effect digest reads, folded with the computing compiler's stamp, as the memo
+/// key for its result.
+///
+/// Roots are folded in their declared order under their declared labels so two checkouts with the same content
+/// agree, and a root that is absent is recorded as absent rather than skipped — a missing tree is a different
+/// compiler, not the same one. The compiler stamp is folded last, so a rebuilt compiler misses every entry the
+/// previous one wrote.
+fn sdk_provider_effect_input_key(checkout_root: &Path, compiler_stamp: &str) -> CliResult<String> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"incan-effect-inputs-v2\0");
+    let stdlib_root = checkout_root.join(COMPILER_STDLIB_ROOT);
+    hasher.update(b"stdlib\0");
+    hash_sdk_provider_source_tree(&stdlib_root, &stdlib_root, &mut hasher)?;
+    for (label, relative) in COMPILER_RUST_EFFECT_ROOTS {
+        let root = checkout_root.join(relative);
+        hasher.update(label.as_bytes());
+        hasher.update([0]);
+        if root.is_dir() {
+            hash_sdk_provider_source_tree(&root, &root, &mut hasher)?;
+        } else {
+            hasher.update(b"absent\0");
+        }
+    }
+    hasher.update(b"compiler\0");
+    hasher.update(compiler_stamp.as_bytes());
+    hasher.update([0]);
     Ok(hex::encode(hasher.finalize()))
 }
 
@@ -511,88 +691,6 @@ fn is_sdk_provider_compiler_checkout(candidate: &Path, stdlib_root: &Path) -> bo
     }
     let expected_stdlib_root = candidate.join("crates/incan_stdlib/stdlib");
     fs::canonicalize(&expected_stdlib_root).ok() == fs::canonicalize(stdlib_root).ok()
-}
-
-/// Hash only compiler-authoritative checkout inputs, excluding generated output and test-only trees.
-fn hash_sdk_provider_compiler_source_tree(root: &Path, current: &Path, hasher: &mut Sha256) -> CliResult<()> {
-    let mut entries = fs::read_dir(current)
-        .map_err(|error| {
-            CliError::failure(format!(
-                "failed to read compiler source directory {}: {error}",
-                current.display()
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| {
-            CliError::failure(format!(
-                "failed to enumerate compiler source directory {}: {error}",
-                current.display()
-            ))
-        })?;
-    entries.sort_by_key(|entry| entry.file_name());
-
-    for entry in entries {
-        let path = entry.path();
-        let relative = path.strip_prefix(root).map_err(|error| {
-            CliError::failure(format!(
-                "failed to make compiler source path {} relative: {error}",
-                path.display()
-            ))
-        })?;
-        let file_type = entry.file_type().map_err(|error| {
-            CliError::failure(format!(
-                "failed to inspect compiler source path {}: {error}",
-                path.display()
-            ))
-        })?;
-        if file_type.is_dir()
-            && relative.components().any(|component| {
-                matches!(
-                    component.as_os_str().to_str(),
-                    Some(
-                        ".agents"
-                            | ".git"
-                            | ".incan"
-                            | "benches"
-                            | "docs"
-                            | "examples"
-                            | "target"
-                            | "tests"
-                            | "workspaces"
-                    )
-                )
-            })
-        {
-            continue;
-        }
-
-        hasher.update(relative.to_string_lossy().as_bytes());
-        hasher.update([0]);
-        if file_type.is_dir() {
-            hasher.update(b"directory\0");
-            hash_sdk_provider_compiler_source_tree(root, &path, hasher)?;
-        } else if file_type.is_file() {
-            hasher.update(b"file\0");
-            let bytes = fs::read(&path).map_err(|error| {
-                CliError::failure(format!(
-                    "failed to read compiler source file {}: {error}",
-                    path.display()
-                ))
-            })?;
-            hasher.update(bytes);
-        } else if file_type.is_symlink() {
-            hasher.update(b"symlink\0");
-            let target = fs::read_link(&path).map_err(|error| {
-                CliError::failure(format!(
-                    "failed to read compiler source symlink {}: {error}",
-                    path.display()
-                ))
-            })?;
-            hasher.update(target.to_string_lossy().as_bytes());
-        }
-        hasher.update([0xff]);
-    }
-    Ok(())
 }
 
 /// Hash the running compiler once per process with BLAKE3's optimized implementation, independent of its path.
@@ -788,6 +886,10 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
         &distribution_profile,
     )?;
     let _lock = acquire_sdk_provider_store_lock(&store_root)?;
+    let mut build_reports = env::var_os(INTERNAL_SDK_BUILD_REPORT_DIR_ENV)
+        .filter(|path| !path.is_empty())
+        .map(|path| SdkBuildReports::new(Path::new(&path), &store_root, &identity))
+        .transpose()?;
     let artifact_root = store_root.join(&identity);
     let inventory_path = artifact_root.join(SDK_INVENTORY_FILE);
     if inventory_path.is_file() {
@@ -800,6 +902,9 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
             )
             .map_err(|error| CliError::failure(error.to_string()))?;
         record_sdk_provider_root(&artifact_root)?;
+        if let Some(reports) = &mut build_reports {
+            reports.finish("cache_hit");
+        }
         return Ok(Arc::new(inventory));
     }
     if artifact_root.exists() {
@@ -816,8 +921,8 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
         workspace_lock.as_deref(),
         &staging_root,
         &distribution_profile,
-        source_root_override,
-        &stdlib_root,
+        source_root_override.map(|source_root| (source_root, stdlib_root.as_path())),
+        build_reports.as_ref(),
     ) {
         Ok(inventory) => inventory,
         Err(error) => {
@@ -842,7 +947,125 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
         ))
     })?;
     record_sdk_provider_root(&artifact_root)?;
+    if let Some(reports) = &mut build_reports {
+        reports.finish("published");
+    }
     Ok(Arc::new(published))
+}
+
+/// Optional operational evidence kept outside the immutable provider store.
+struct SdkBuildReports {
+    directory: PathBuf,
+    identity: String,
+    started: std::time::Instant,
+    completed: bool,
+}
+
+impl SdkBuildReports {
+    /// Require an existing external directory before creating a unique publication report session.
+    fn new(directory: &Path, store: &Path, identity: &str) -> CliResult<Self> {
+        let directory = fs::canonicalize(directory).map_err(|error| {
+            CliError::failure(format!(
+                "SDK build report directory must already exist: {}: {error}",
+                directory.display()
+            ))
+        })?;
+        let store = fs::canonicalize(store).map_err(|error| CliError::failure(error.to_string()))?;
+        if directory.starts_with(&store) || store.starts_with(&directory) {
+            return Err(CliError::failure(
+                "SDK build report directory must be separate from the provider store",
+            ));
+        }
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| CliError::failure(error.to_string()))?
+            .as_nanos();
+        let directory = directory.join(format!("sdk-build-{}-{nonce}", std::process::id()));
+        fs::create_dir(&directory).map_err(|error| CliError::failure(error.to_string()))?;
+        let reports = Self {
+            directory,
+            identity: identity.to_string(),
+            started: std::time::Instant::now(),
+            completed: false,
+        };
+        reports.summary("preparing");
+        Ok(reports)
+    }
+
+    /// Persist telemetry without changing the compiler's publication result or original failure diagnostic.
+    fn write(&self, name: &str, value: &serde_json::Value) {
+        let result = serde_json::to_vec_pretty(value)
+            .map_err(std::io::Error::other)
+            .and_then(|bytes| fs::write(self.directory.join(name), bytes));
+        if let Err(error) = result {
+            eprintln!("warning: SDK build timing report unavailable: {error}");
+        }
+    }
+
+    /// Describe work after acquiring the store lock; source identity calculation and lock waiting precede this scope.
+    fn summary(&self, status: &str) {
+        self.write(
+            "summary.json",
+            &serde_json::json!({
+                "schema_version": 1, "status": status, "sdk_store_identity": self.identity,
+                "elapsed_scope": "after_store_lock",
+                "elapsed_ms": self.started.elapsed().as_millis()
+            }),
+        );
+    }
+
+    /// Mark a successfully validated cache acquisition or completed publication.
+    fn finish(&mut self, status: &str) {
+        self.summary(status);
+        self.completed = true;
+    }
+
+    /// Select a component-specific child output; the SDK environment helper disables descendant report sessions.
+    fn configure(&self, command: &mut Command, component: &str) {
+        command
+            .args(["--report", "json", "--report-output"])
+            .arg(self.directory.join(format!("{component}.build.json")));
+    }
+
+    /// Retain bounded successful phase data and an explicit unavailable reason on missing or malformed child output.
+    fn component(&self, component: &str, elapsed: std::time::Duration, output: &std::process::Output) {
+        let path = self.directory.join(format!("{component}.build.json"));
+        let parsed = (|| -> Result<serde_json::Value, String> {
+            let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
+            if metadata.len() > 4 * 1024 * 1024 {
+                return Err("child report exceeds 4 MiB".to_string());
+            }
+            let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+            let report: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+            let timings = report
+                .get("timings_ms")
+                .and_then(serde_json::Value::as_object)
+                .filter(|timings| !timings.is_empty() && timings.values().all(|value| value.as_u64().is_some()))
+                .ok_or("child report has no valid timings_ms")?;
+            Ok(serde_json::Value::Object(timings.clone()))
+        })();
+        let (status, timings, reason) = match parsed {
+            Ok(timings) => ("available", timings, None),
+            Err(reason) => ("unavailable", serde_json::Value::Null, Some(reason)),
+        };
+        self.write(
+            &format!("{component}.timing.json"),
+            &serde_json::json!({
+                "schema_version": 1, "component": component, "elapsed_ms": elapsed.as_millis(),
+                "success": output.status.success(), "exit_code": output.status.code(),
+                "report_status": status, "timings_ms": timings, "unavailable_reason": reason,
+                "timings_semantics": "inclusive_nested_scopes"
+            }),
+        );
+    }
+}
+
+impl Drop for SdkBuildReports {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.summary("failed");
+        }
+    }
 }
 
 /// Report the exact immutable provider root to release packaging when requested.
@@ -865,8 +1088,8 @@ fn build_sdk_components_into_staging(
     workspace_lock: Option<&Path>,
     staging_root: &Path,
     distribution_profile: &str,
-    source_root_override: Option<&Path>,
-    stdlib_root: &Path,
+    toolchain_source: Option<(&Path, &Path)>,
+    build_reports: Option<&SdkBuildReports>,
 ) -> CliResult<SdkInventory> {
     fs::create_dir_all(staging_root).map_err(|error| {
         CliError::failure(format!(
@@ -890,12 +1113,11 @@ fn build_sdk_components_into_staging(
 
     for component in catalog.publication_order() {
         let output_root = staging_root.join("components").join(&component.id);
-        seed_sdk_provider_workspace_lock(workspace_lock, &output_root)?;
         let manifest = ProjectManifest::discover(&component.project_root)
             .map_err(|error| CliError::failure(error.to_string()))?
             .ok_or_else(|| {
                 CliError::failure(format!(
-                    "SDK component `{}` has no incan.toml at {}",
+                    "SDK component `{}` has no loaf.toml at {}",
                     component.id,
                     component.project_root.display()
                 ))
@@ -921,7 +1143,7 @@ fn build_sdk_components_into_staging(
             &component.id,
             &cargo_target_dir,
             caller_cargo_target.as_deref(),
-            source_root_override.map(|source_root| (source_root, stdlib_root)),
+            toolchain_source,
         );
         if built_any {
             inventory
@@ -931,9 +1153,11 @@ fn build_sdk_components_into_staging(
         } else {
             command.env_remove(SDK_INVENTORY_OVERRIDE_ENV);
         }
-        if let Some(workspace_lock) = workspace_lock {
-            command.env(INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, workspace_lock);
+        configure_sdk_provider_workspace_lock(&mut command, workspace_lock);
+        if let Some(reports) = build_reports {
+            reports.configure(&mut command, &component.id);
         }
+        let component_started = std::time::Instant::now();
         let output = command.output().map_err(|error| {
             CliError::failure(format!(
                 "failed to run SDK component build for `{}` at {}: {error}",
@@ -941,6 +1165,9 @@ fn build_sdk_components_into_staging(
                 component.project_root.display()
             ))
         })?;
+        if let Some(reports) = build_reports {
+            reports.component(&component.id, component_started.elapsed(), &output);
+        }
         if !output.status.success() {
             return Err(nested_sdk_component_build_error(
                 component.id.as_str(),
@@ -1021,6 +1248,7 @@ fn configure_sdk_provider_build_environment(
     command
         .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
         .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
+        .env_remove(INTERNAL_SDK_BUILD_REPORT_DIR_ENV)
         .env(SDK_PROVIDER_BUILD_ENV, component_id)
         .env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1")
         // Share transient Cargo artifacts across components, then remove them before immutable provider publication.
@@ -1621,6 +1849,19 @@ pub(crate) fn provider_used_module_paths(modules: &[ParsedModule]) -> BTreeSet<V
             let crate::frontend::ast::Declaration::Import(import) = &declaration.node else {
                 continue;
             };
+            // Root imports name their provider module in each imported item, not in the `std` path itself.
+            if let ImportKind::From { module: path, items } = &import.kind
+                && path.parent_levels == 0
+                && !path.is_absolute
+                && path.segments.as_slice() == [stdlib::STDLIB_ROOT]
+            {
+                used.extend(
+                    items
+                        .iter()
+                        .map(|item| vec![stdlib::STDLIB_ROOT.to_string(), item.name.clone()]),
+                );
+                continue;
+            }
             let path = match &import.kind {
                 ImportKind::Module(path) | ImportKind::From { module: path, .. }
                     if path.parent_levels == 0
@@ -1682,7 +1923,7 @@ pub(crate) fn discover_effective_project_manifest(start_dir: &Path) -> CliResult
 /// that root could honor a nested command override and silently bind a different project, so this boundary loads the
 /// named manifest directly while sharing the same workspace resolution as ordinary command discovery.
 pub(crate) fn effective_project_manifest_for_exact_root(project_root: &Path) -> CliResult<ProjectManifest> {
-    let manifest = ProjectManifest::load(&project_root.join(MANIFEST_FILENAME))
+    let manifest = ProjectManifest::load(&project_root.join(LOAF_MANIFEST_FILENAME))
         .map_err(|error| CliError::failure(error.to_string()))?;
     effective_project_manifest(manifest)
 }
@@ -2420,7 +2661,7 @@ pub(crate) fn parser_only_library_manifest_index(
             }
             Some(LibraryManifestIndexEntry::Failed(failure))
                 if failure.kind == LibraryManifestFailureKind::ArtifactMissing
-                    && dependency.path.join(MANIFEST_FILENAME).is_file() =>
+                    && dependency.path.join(LOAF_MANIFEST_FILENAME).is_file() =>
             {
                 entries.insert(
                     dependency_key.clone(),
@@ -2443,7 +2684,7 @@ fn parser_only_library_manifest_entry(
     dependency_root: &Path,
 ) -> CliResult<LibraryManifestIndexEntry> {
     let dependency_root = fs::canonicalize(dependency_root).unwrap_or_else(|_| dependency_root.to_path_buf());
-    let manifest_path = dependency_root.join(MANIFEST_FILENAME);
+    let manifest_path = dependency_root.join(LOAF_MANIFEST_FILENAME);
     let manifest_content = fs::read_to_string(&manifest_path)
         .map_err(|error| CliError::failure(format!("failed to read {}: {error}", manifest_path.display())))?;
     let dependency_manifest = ProjectManifest::from_str(&manifest_content, &manifest_path)
@@ -2511,7 +2752,7 @@ fn prepare_library_dependency_artifacts(
             .and_then(|plan| plan.package(&dependency.path))
             .map(|package| package.features.active_features.clone())
             .unwrap_or_default();
-        let has_source_manifest = dependency.path.join(MANIFEST_FILENAME).is_file();
+        let has_source_manifest = dependency.path.join(LOAF_MANIFEST_FILENAME).is_file();
         let needs_build = match initial_index.get(dependency_key) {
             Some(LibraryManifestIndexEntry::Loaded {
                 manifest: artifact_manifest,
@@ -4501,6 +4742,42 @@ pub(crate) fn topologically_sort_modules(
     Ok(sorted)
 }
 
+/// Report an ignored `Cargo.toml` beside a Loaf manifest, at most once per project root per invocation.
+///
+/// RFC 117 rule 11: a `loaf.toml` project containing `Cargo.toml` must warn and ignore the Cargo configuration, and
+/// the diagnostic must name the ignored file and explain that Cargo compatibility is selected explicitly. Both are
+/// carried by [`ManifestError::CargoIgnored`], which renders the text; this decides only when it reaches the user.
+///
+/// It warns rather than fails, and never inspects the Cargo file: the RFC requires Oven to "continue as a Loaf
+/// project" and say what it ignored, and reading the file to describe it better would be the parsing rule 11
+/// forbids. A directory that holds no `loaf.toml` is silent here — a Cargo-only project is Cargo-compatibility
+/// mode's subject, not an ignored file.
+///
+/// Callers are the project-scale command entry points rather than one deep shared helper, because Oven's cached
+/// paths return a completed output without preparing the project at all; a warning behind preparation would appear
+/// on a cold build and vanish on a warm one, which is worse than not having it.
+pub(crate) fn warn_once_about_ignored_cargo_manifest(project_root: &Path) {
+    let DiscoveredManifest::Loaf(_) = discovered_manifest_kind(project_root) else {
+        return;
+    };
+    let cargo_manifest = project_root.join(CARGO_MANIFEST_FILENAME);
+    if !cargo_manifest.is_file() {
+        return;
+    }
+    let key = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    let Ok(mut reported) = IGNORED_CARGO_MANIFESTS_REPORTED.lock() else {
+        // A poisoned registry means another thread panicked mid-report. Losing the deduplication is the right
+        // failure here: a repeated warning is noise, a dropped one hides that Cargo configuration was ignored.
+        eprintln!("warning: {}", ManifestError::CargoIgnored { path: cargo_manifest });
+        return;
+    };
+    if reported.insert(key) {
+        eprintln!("warning: {}", ManifestError::CargoIgnored { path: cargo_manifest });
+    }
+}
+
 /// Resolve the project root from a source file path.
 ///
 /// If the file is inside a `src/` directory (e.g. `src/main.incn` or `projects/foo/src/main.incn`), the project root
@@ -5191,7 +5468,7 @@ fn verify_checked_c_bindings(
 ///
 /// Checked bindings keep the authored, package-relative header spelling in their public descriptor and lock identity.
 /// The verifier alone needs a concrete file location. Restricting this translation to a header declared under
-/// `[oven.interop]` prevents an arbitrary relative binding path from becoming an ambient include-directory search.
+/// `[interop.c]` prevents an arbitrary relative binding path from becoming an ambient include-directory search.
 fn resolve_package_owned_c_binding_header(
     manifest: Option<&ProjectManifest>,
     binding: &CBindingDescriptor,
@@ -5202,7 +5479,7 @@ fn resolve_package_owned_c_binding_header(
     if Path::new(&binding.header).is_absolute() {
         return binding.clone();
     }
-    let declared = manifest.oven_interop().is_some_and(|interop| {
+    let declared = manifest.interop_c().is_some_and(|interop| {
         interop.targets.iter().any(|target| {
             target.headers.iter().any(|header| header == &binding.header)
                 || target
@@ -5335,8 +5612,8 @@ mod tests {
     #[test]
     fn package_declared_c_header_is_resolved_only_for_verification() -> Result<(), Box<dyn std::error::Error>> {
         let manifest = ProjectManifest::from_str(
-            "[project]\nname = \"c_header_fixture\"\n\n[oven.interop]\nschema = 1\n\n[[oven.interop.targets]]\ntarget = \"aarch64-apple-darwin\"\nheaders = [\"interop/include/bridge.h\"]\n",
-            Path::new("/workspace/c_header_fixture/incan.toml"),
+            "[project]\nname = \"c_header_fixture\"\n\n[interop.c]\nschema = 1\n\n[[interop.c.targets]]\ntarget = \"aarch64-apple-darwin\"\nheaders = [\"interop/include/bridge.h\"]\n",
+            Path::new("/workspace/c_header_fixture/loaf.toml"),
         )?;
         let binding = CBindingDescriptor {
             span: Span::new(0, 0),
@@ -5354,6 +5631,81 @@ mod tests {
 
         assert_eq!(binding.header, "interop/include/bridge.h");
         assert_eq!(resolved.header, "/workspace/c_header_fixture/interop/include/bridge.h");
+        Ok(())
+    }
+
+    #[test]
+    fn sdk_build_reports_reject_store_paths_and_distinguish_cache_hits() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let store = root.path().join("store");
+        let reports_root = root.path().join("reports");
+        fs::create_dir_all(store.join("artifact"))?;
+        fs::create_dir(&reports_root)?;
+        assert!(SdkBuildReports::new(&store.join("artifact"), &store, "identity").is_err());
+        let mut reports = SdkBuildReports::new(&reports_root, &store, "identity")?;
+        reports.finish("cache_hit");
+        let summary: serde_json::Value = serde_json::from_slice(&fs::read(reports.directory.join("summary.json"))?)?;
+        assert_eq!(summary["status"], "cache_hit");
+        assert_eq!(summary["elapsed_scope"], "after_store_lock");
+        assert_eq!(fs::read_dir(&reports.directory)?.count(), 1);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sdk_build_reports_transport_mock_children_without_replacing_failures() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        let store = root.path().join("store");
+        let reports_root = root.path().join("reports");
+        fs::create_dir(&store)?;
+        fs::create_dir(&reports_root)?;
+        let reports = SdkBuildReports::new(&reports_root, &store, "identity")?;
+        let mut child = Command::new("sh");
+        child.args([
+            "-c",
+            r#"printf '%s' '{"timings_ms":{"library_prepare_total":7}}' > "$4""#,
+            "mock",
+        ]);
+        configure_sdk_provider_build_environment(&mut child, "stdlib-data", root.path(), None, None);
+        reports.configure(&mut child, "stdlib-data");
+        assert!(
+            child
+                .get_envs()
+                .any(|(name, value)| name == INTERNAL_SDK_BUILD_REPORT_DIR_ENV && value.is_none())
+        );
+        let output = child.output()?;
+        assert!(output.status.success());
+        assert!(output.stdout.is_empty());
+        reports.component("stdlib-data", std::time::Duration::from_millis(11), &output);
+        let value: serde_json::Value =
+            serde_json::from_slice(&fs::read(reports.directory.join("stdlib-data.timing.json"))?)?;
+        assert_eq!(value["report_status"], "available");
+        assert_eq!(value["timings_semantics"], "inclusive_nested_scopes");
+        assert_eq!(value["timings_ms"]["library_prepare_total"], 7);
+        let failed = Command::new("sh")
+            .args(["-c", "printf original-diagnostic >&2; exit 9"])
+            .output()?;
+        reports.component("missing", std::time::Duration::ZERO, &failed);
+        fs::write(reports.directory.join("malformed.build.json"), "not-json")?;
+        reports.component("malformed", std::time::Duration::ZERO, &output);
+        for component in ["missing", "malformed"] {
+            let value: serde_json::Value =
+                serde_json::from_slice(&fs::read(reports.directory.join(format!("{component}.timing.json")))?)?;
+            assert_eq!(value["report_status"], "unavailable");
+            assert!(value["timings_ms"].is_null());
+        }
+        assert_eq!(failed.status.code(), Some(9));
+        assert_eq!(failed.stderr, b"original-diagnostic");
+        assert!(
+            nested_sdk_component_build_error("missing", root.path(), &failed)
+                .to_string()
+                .contains("original-diagnostic")
+        );
+        let directory = reports.directory.clone();
+        drop(reports);
+        let summary: serde_json::Value = serde_json::from_slice(&fs::read(directory.join("summary.json"))?)?;
+        assert_eq!(summary["status"], "failed");
         Ok(())
     }
 
@@ -5466,7 +5818,7 @@ mod tests {
     #[test]
     fn explicit_sdk_selection_rejects_legacy_inventoryless_toolchains() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
-        let manifest_path = project.path().join("incan.toml");
+        let manifest_path = project.path().join("loaf.toml");
         fs::write(
             &manifest_path,
             "[project]\nname = \"demo\"\n\n[sdk]\nprofile = \"minimal\"\n",
@@ -5478,7 +5830,7 @@ mod tests {
 
         assert!(error.message.contains("no component inventory"));
         assert!(
-            error.message.contains("incan.toml:4:1"),
+            error.message.contains("loaf.toml:4:1"),
             "expected the explicit SDK table location, got: {}",
             error.message
         );
@@ -5489,7 +5841,7 @@ mod tests {
     #[test]
     fn sdk_selection_errors_retain_manifest_or_command_provenance() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
-        let manifest_path = project.path().join("incan.toml");
+        let manifest_path = project.path().join("loaf.toml");
         fs::write(
             &manifest_path,
             "[project]\nname = \"demo\"\n\n[sdk]\nprofile = \"minimal\"\ncomponents = [\"stdlib-web\"]\n",
@@ -5503,7 +5855,7 @@ mod tests {
 
         let rendered = format_sdk_selection_error(&component_error, &selection, Some(&manifest), None);
         assert!(
-            rendered.contains("incan.toml:6:15"),
+            rendered.contains("loaf.toml:6:15"),
             "expected exact SDK component location, got: {rendered}"
         );
 
@@ -5529,11 +5881,17 @@ mod tests {
         fs::write(workspace.join("Cargo.lock"), "workspace lock payload")?;
 
         let workspace_lock = sdk_provider_workspace_lock(&stdlib_root);
-        seed_sdk_provider_workspace_lock(workspace_lock.as_deref(), &artifact_root)?;
-
-        assert_eq!(
-            fs::read_to_string(artifact_root.join("Cargo.lock"))?,
-            "workspace lock payload"
+        let mut command = Command::new("incan");
+        configure_sdk_provider_workspace_lock(&mut command, workspace_lock.as_deref());
+        let selected = command
+            .get_envs()
+            .find(|(name, _)| *name == INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV)
+            .and_then(|(_, path)| path)
+            .ok_or("SDK lock authority absent from child command")?;
+        assert_eq!(fs::read_to_string(selected)?, "workspace lock payload");
+        assert!(
+            !artifact_root.exists(),
+            "the child's output transaction owns lock materialization"
         );
         Ok(())
     }
@@ -5543,7 +5901,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let stdlib_root = temp_dir.path().join("stdlib");
         fs::create_dir_all(stdlib_root.join("nested"))?;
-        fs::write(stdlib_root.join("incan.toml"), "[project]\nname = \"stdlib\"\n")?;
+        fs::write(stdlib_root.join("loaf.toml"), "[project]\nname = \"stdlib\"\n")?;
         fs::write(
             stdlib_root.join("nested").join("module.incn"),
             "pub def value() -> int:\n  return 1\n",
@@ -5599,9 +5957,47 @@ mod tests {
         Ok(())
     }
 
+    /// The memo key over this repository's own effect roots stays cheap enough to pay on every command.
+    ///
+    /// This is the cost the fix actually charges. The digest behind it costs seconds and is paid once per distinct
+    /// input content; what a warm command pays is this byte hash, and it reads a small named set of roots rather
+    /// than the whole `src/`, `crates/` and `tests/` tree v3 walked.
     #[test]
-    fn sdk_provider_store_identity_ignores_rebuilt_development_executable_bytes()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn the_effect_memo_key_over_this_checkout_stays_cheap() -> Result<(), Box<dyn std::error::Error>> {
+        let checkout = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let compiler_stamp = running_compiler_stamp().ok_or("the test executable must be stampable")?;
+        let started = std::time::Instant::now();
+        let key = sdk_provider_effect_input_key(&checkout, &compiler_stamp)?;
+        let elapsed = started.elapsed();
+        println!("EFFECT-MEMO-KEY {key} in {} ms", elapsed.as_millis());
+        assert_eq!(key.len(), 64, "the memo key is a hex sha256");
+        assert_eq!(
+            key,
+            sdk_provider_effect_input_key(&checkout, &compiler_stamp)?,
+            "the memo key must not depend on directory iteration order"
+        );
+        assert_ne!(
+            key,
+            sdk_provider_effect_input_key(&checkout, "another-compiler-build")?,
+            "a rebuilt compiler must miss the memo the previous build wrote"
+        );
+        // Generous enough to survive a loaded machine and a cold page cache, tight enough to fail if the key ever
+        // starts walking the whole checkout again.
+        assert!(
+            elapsed.as_secs() < 5,
+            "the memo key took {} ms, which is no longer a per-command cost",
+            elapsed.as_millis()
+        );
+        Ok(())
+    }
+
+    /// The store identity keys on what the compiler produces, not on what the compiler is made of (#1495).
+    ///
+    /// Each assertion below is one row of that contract. The two that changed in v4 are the ones that used to cost
+    /// seventeen minutes: an edit to a compiler subsystem no component's compilation can reach now reuses the
+    /// store, and a comment added to a standard-library source does too.
+    #[test]
+    fn sdk_provider_store_identity_keys_on_what_the_compiler_produces() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = tempfile::tempdir()?;
         let checkout = temp_dir.path().join("checkout");
         let stdlib_root = checkout.join("crates/incan_stdlib/stdlib");
@@ -5647,15 +6043,90 @@ mod tests {
             "test-only source must not republish SDK providers"
         );
 
+        let workflow_dir = checkout.join(".github/workflows");
+        fs::create_dir_all(&workflow_dir)?;
+        fs::write(workflow_dir.join("ci.yml"), "name: original CI\n")?;
+        let with_workflow =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_eq!(
+            initial, with_workflow,
+            "CI configuration does not change SDK compilation inputs"
+        );
+        fs::write(workflow_dir.join("ci.yml"), "name: reordered CI\n")?;
+        fs::rename(workflow_dir.join("ci.yml"), workflow_dir.join("renamed.yml"))?;
+        let changed_workflow =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_eq!(
+            initial, changed_workflow,
+            "CI edits and administrative path changes must reuse SDK providers"
+        );
+
+        // The seventeen minutes. `src/compiler.rs` stands for every subsystem outside the effect roots — the
+        // language server, an inspection module, a CLI command — none of which can change what a component
+        // contains, and all of which rebuilt all ten components through v3.
         fs::write(
             checkout.join("src/compiler.rs"),
             "pub fn compile() { let changed = true; }\n",
         )?;
-        let changed_source =
+        let unreachable_subsystem =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_eq!(
+            initial, unreachable_subsystem,
+            "an edit no component's compilation can reach must reuse the provider store"
+        );
+
+        // A comment cannot change what the compiler emits, so it cannot change the store. This is the property the
+        // byte hash could not express at any granularity, and the reason the key is a digest of meaning.
+        fs::write(
+            stdlib_root.join("components/core.incn"),
+            "# a comment the compiler cannot emit\npub def core() -> int:\n  return 1\n",
+        )?;
+        let commented_stdlib =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_eq!(
+            initial, commented_stdlib,
+            "a comment in a standard-library source must reuse the provider store"
+        );
+
+        fs::write(
+            stdlib_root.join("components/core.incn"),
+            "pub def core() -> int:\n  return 2\n",
+        )?;
+        let changed_stdlib =
             sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
         assert_ne!(
-            initial, changed_source,
-            "a compiler source change must still invalidate SDK provider artifacts"
+            initial, changed_stdlib,
+            "a changed standard-library body is a changed component"
+        );
+
+        // The transitional half. Lowering and emission change generated Rust without moving any HIR, so their
+        // source is folded until direct-HIR removes the need.
+        let backend = checkout.join("src/backend/ir/emit");
+        fs::create_dir_all(&backend)?;
+        fs::write(backend.join("decls.rs"), "pub fn emit() -> u8 { 1 }\n")?;
+        let with_backend =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        fs::write(backend.join("decls.rs"), "pub fn emit() -> u8 { 2 }\n")?;
+        let changed_backend =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_ne!(
+            with_backend, changed_backend,
+            "an emission change alters generated Rust without moving any HIR"
+        );
+
+        // The Rust half is mandatory rather than an enhancement: every component links this runtime, so an
+        // Incan-only key would report a hit for a change the consumer can observe.
+        let runtime = checkout.join("crates/incan_stdlib/src");
+        fs::create_dir_all(&runtime)?;
+        fs::write(runtime.join("frozen.rs"), "pub fn limit() -> u8 { 1 }\n")?;
+        let with_runtime =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        fs::write(runtime.join("frozen.rs"), "pub fn limit() -> u8 { 2 }\n")?;
+        let changed_runtime =
+            sdk_provider_store_identity(&stdlib_root, &executable, Some(&checkout.join("Cargo.lock")), "full")?;
+        assert_ne!(
+            with_runtime, changed_runtime,
+            "every component links the Rust runtime, so a change to it must invalidate"
         );
         Ok(())
     }
@@ -5798,7 +6269,7 @@ mod tests {
         let project_root = tmp.path();
         std::fs::create_dir_all(project_root.join("src"))?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"deps/widgets\" }\n",
         )?;
 
@@ -5822,7 +6293,7 @@ mod tests {
         });
         std::fs::create_dir_all(project_root.join("deps/widgets"))?;
         std::fs::write(
-            project_root.join("deps/widgets/incan.toml"),
+            project_root.join("deps/widgets/loaf.toml"),
             "[project]\nname = \"widgets\"\nversion = \"0.1.0\"\n",
         )?;
         write_minimal_library_artifact(project_root, "widgets", "widgets_core", &manifest)?;
@@ -6034,7 +6505,7 @@ model RightValue:
     fn rust_inspect_workspace_does_not_emit_an_undeclared_derive_probe() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         fs::write(
-            tmp.path().join("incan.toml"),
+            tmp.path().join("loaf.toml"),
             "[project]\nname = \"derive_probe\"\nversion = \"0.1.0\"\n",
         )?;
         let requirements = ProjectRequirements {
@@ -6207,10 +6678,36 @@ model RightValue:
 [build]
 source-root = "lib"
 "#;
-        let manifest = ProjectManifest::from_str(manifest_content, &project.join("incan.toml"))?;
+        let manifest = ProjectManifest::from_str(manifest_content, &project.join("loaf.toml"))?;
 
         let root = resolve_source_root(&project, Some(&manifest));
         assert_eq!(root, project.join("lib"));
+        Ok(())
+    }
+
+    #[test]
+    fn root_std_imports_select_the_same_provider_modules_as_qualified_imports() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = parsed_module_for_test("from std import math as arithmetic, serde\n")?;
+        let qualified = parsed_module_for_test("import std.math\nimport std.serde\n")?;
+        let root_paths = provider_used_module_paths(&[root]);
+        assert_eq!(root_paths, provider_used_module_paths(&[qualified]));
+        assert!(root_paths.contains(&vec!["std".to_string(), "math".to_string()]));
+        assert!(root_paths.contains(&vec!["std".to_string(), "serde".to_string()]));
+        assert!(!root_paths.contains(&vec!["std".to_string()]));
+        Ok(())
+    }
+
+    #[test]
+    fn root_std_provider_discovery_excludes_external_and_relative_imports() -> Result<(), Box<dyn std::error::Error>> {
+        let external = parsed_module_for_test(
+            "from rust::std import cmp\nfrom pub::std import math\nfrom ..std import serde\nfrom crate.std import json\n",
+        )?;
+        let empty = parsed_module_for_test("def main() -> None:\n    pass\n")?;
+        assert_eq!(
+            provider_used_module_paths(&[external]),
+            provider_used_module_paths(&[empty])
+        );
         Ok(())
     }
 
@@ -6254,7 +6751,7 @@ model User:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n",
         )?;
 
@@ -6326,7 +6823,7 @@ model User:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n",
         )?;
 
@@ -6409,7 +6906,7 @@ from std.io import BytesIO
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "demo"
 version = "0.1.0"
@@ -6450,7 +6947,7 @@ def main() -> None:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "dep_order_demo"
 version = "0.1.0"
@@ -6526,7 +7023,7 @@ pub def probe() -> SubstraitPlan:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "dep_check_demo"
 version = "0.1.0"
@@ -6640,7 +7137,7 @@ pub def probe() -> SubstraitPlan:
         let pkg_dir = src_dir.join("pkg");
         std::fs::create_dir_all(&pkg_dir)?;
         std::fs::write(
-            tmp.path().join("incan.toml"),
+            tmp.path().join("loaf.toml"),
             "[project]\nname = \"sibling_private_class\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(
@@ -6702,7 +7199,7 @@ def leak() -> str:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "absolute_crate_public_types"
 version = "0.1.0"
@@ -6799,7 +7296,7 @@ import crate.module_consumer
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "cycle_dep_resolver_demo"
 version = "0.1.0"
@@ -6855,7 +7352,7 @@ pub def main() -> int:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "transitive_signature_dep_demo"
 version = "0.1.0"
@@ -6926,7 +7423,7 @@ def main() -> Result[None, str]:
         let session_root = source_root.join("session");
         std::fs::create_dir_all(&session_root)?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"crate_root_facade\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(session_root.join("types.incn"), "pub class Session:\n    pub id: int\n")?;
@@ -6983,7 +7480,7 @@ def main() -> Result[None, str]:
         let types_root = source_root.join("types");
         std::fs::create_dir_all(&types_root)?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"crate_root_module_import\"\nversion = \"0.1.0\"\n",
         )?;
         std::fs::write(types_root.join("user.incn"), "pub class User:\n    pub id: int\n")?;
@@ -7023,7 +7520,7 @@ def main() -> Result[None, str]:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "example_cycle_demo"
 version = "0.1.0"
@@ -7124,7 +7621,7 @@ def main() -> Result[None, SessionError]:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "example_directory_cycle_demo"
 version = "0.1.0"
@@ -7213,7 +7710,7 @@ def main() -> Result[None, SessionError]:
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "cycle_demo"
 version = "0.1.0"
@@ -7412,7 +7909,7 @@ pub def main() -> int:
     fn rust_inspect_lock_projection_updates_only_the_local_package_version() -> Result<(), Box<dyn std::error::Error>> {
         let manifest = ProjectManifest::from_str(
             "[project]\nname = \"probe\"\nversion = \"1.2.3\"\n",
-            Path::new("probe/incan.toml"),
+            Path::new("probe/loaf.toml"),
         )?;
         let payload = r#"version = 4
 
@@ -7616,7 +8113,7 @@ checksum = "fixture-checksum"
         let used_plan = ProviderPlan::new(
             crate::frontend::library_manifest_index::LibraryManifestIndex::default(),
             vec![record],
-            [vec!["std".to_string(), "issue911_unused".to_string()]],
+            provider_used_module_paths(&[parsed_module_for_test("from std import issue911_unused as selected\n")?]),
         )?;
         let mut used_requirements = ProjectRequirements::default();
         extend_requirements_with_provider_plan(&mut used_requirements, &used_plan)?;
@@ -8036,7 +8533,7 @@ def main() -> None:
         let source_root = tmp.path().join("src");
         std::fs::create_dir_all(&source_root)?;
         std::fs::write(
-            tmp.path().join("incan.toml"),
+            tmp.path().join("loaf.toml"),
             "[project]\nname = \"feature_projection\"\n\n[project.features]\ndefault = [\"json\"]\njson = []\n",
         )?;
         let source_path = source_root.join("main.incn");
@@ -8092,7 +8589,7 @@ def main() -> None:
         std::fs::create_dir_all(entrypoint.parent().ok_or("entrypoint must have a parent")?)?;
         std::fs::create_dir_all(operations.parent().ok_or("operations must have a parent")?)?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"core\"\n\n[build]\nsource-root = \"../..\"\n",
         )?;
         std::fs::write(&entrypoint, "import traits.ops\n")?;
@@ -8164,7 +8661,7 @@ def main() -> None:
         let consumer_root = tmp.path().join("consumer");
         fs::create_dir_all(&consumer_root)?;
         fs::write(
-            consumer_root.join(MANIFEST_FILENAME),
+            consumer_root.join(LOAF_MANIFEST_FILENAME),
             "[project]\nname = \"consumer\"\n\n[dependencies]\nfeature_library = { path = \"../feature_library\", features = [\"beta\"], default-features = false }\n",
         )?;
         let consumer = ProjectManifest::discover(&consumer_root)?.ok_or("missing consumer manifest")?;
@@ -8241,7 +8738,7 @@ def main() -> None:
         let source_root = project_root.join("src");
         std::fs::create_dir_all(&source_root)?;
         std::fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             "[project]\nname = \"analysis_consumer\"\n",
         )?;
         let main_path = source_root.join("main.incn");
@@ -8298,7 +8795,7 @@ def main() -> None:
         let source_root = tmp.path().join("src");
         std::fs::create_dir_all(&source_root)?;
         std::fs::write(
-            tmp.path().join("incan.toml"),
+            tmp.path().join("loaf.toml"),
             "[project]\nname = \"identity_consumer\"\n",
         )?;
         let shared_path = source_root.join("shared.incn");
@@ -8350,6 +8847,58 @@ def main() -> None:
             relative,
             vec![PathBuf::from("nested/module.incn"), PathBuf::from("root.incn")]
         );
+        Ok(())
+    }
+
+    /// The store lock serializes, and a waiter is a waiter rather than a failure.
+    ///
+    /// This pins the behaviour the diagnostic sits on top of: a second acquirer blocks and then succeeds, instead
+    /// of failing or taking the lock. Timing distinguishes blocking from erroring; it does not assert a duration,
+    /// since the wait ends when the holder releases.
+    ///
+    /// It does **not** cover the message itself. Replacing the `try_lock` guard with `if false` leaves this test
+    /// passing, because the outer `lock()` blocks either way — so the diagnostic is verified by reading it, not by
+    /// this test. Covering it would mean routing one `eprintln!` through an injectable sink, which is more
+    /// structure than a single diagnostic earns. Recorded so the next reader does not assume otherwise.
+    #[test]
+    fn a_held_store_lock_makes_the_next_acquirer_wait_rather_than_fail() -> Result<(), Box<dyn std::error::Error>> {
+        let store = tempfile::tempdir()?;
+        let store_root = store.path().to_path_buf();
+
+        let held = acquire_sdk_provider_store_lock(&store_root)?;
+
+        let waiting_root = store_root.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            let acquired = acquire_sdk_provider_store_lock(&waiting_root);
+            let _ = tx.send(acquired.is_ok());
+        });
+
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_millis(250)).is_err(),
+            "a second acquirer must wait while the first holds the lock, not take it"
+        );
+
+        drop(held);
+        assert_eq!(
+            rx.recv_timeout(std::time::Duration::from_secs(10)),
+            Ok(true),
+            "releasing the lock must let the waiter through"
+        );
+        waiter
+            .join()
+            .map_err(|_| std::io::Error::other("lock waiter panicked"))?;
+        Ok(())
+    }
+
+    /// An uncontended lock is the common path and must stay silent and immediate.
+    #[test]
+    fn an_uncontended_store_lock_is_acquired_without_waiting() -> Result<(), Box<dyn std::error::Error>> {
+        let store = tempfile::tempdir()?;
+        let first = acquire_sdk_provider_store_lock(store.path())?;
+        drop(first);
+        let second = acquire_sdk_provider_store_lock(store.path())?;
+        drop(second);
         Ok(())
     }
 }

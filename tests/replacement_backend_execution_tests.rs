@@ -920,7 +920,7 @@ def main() -> bool:
     assert!(
         error
             .to_string()
-            .contains("fieldless-enum member declaration identity is not scoped to this Body-IR module"),
+            .contains("declaration context is absent from the execution graph"),
         "the refusal must name the foreign declaration identity: {error}"
     );
     Ok(())
@@ -1037,7 +1037,7 @@ def main() -> int:
     assert!(
         error
             .to_string()
-            .contains("value-enum member declaration identity is not scoped to this Body-IR module"),
+            .contains("declaration context is absent from the execution graph"),
         "the refusal must name the foreign declaration identity: {error}"
     );
     Ok(())
@@ -1125,10 +1125,7 @@ fn replacement_refuses_a_foreign_nominal_constructor_identity_at_the_original_sp
     pair_constructor_target_mut(&mut module)?.direct_declaration_id =
         Some(CompilerNodeId::declaration_span("foreign", 0, 12));
 
-    assert_malformed_pair_constructor_refusal(
-        &module,
-        "constructor canonical target disagrees with its physical Body-IR declaration",
-    )
+    assert_malformed_pair_constructor_refusal(&module, "declaration context is absent from the execution graph")
 }
 
 #[test]
@@ -3049,7 +3046,7 @@ fn replacement_cli_executes_a_facade_chain_whose_bindings_share_one_declaration(
     let source_dir = temporary.path().join("src");
     fs::create_dir_all(&source_dir)?;
     fs::write(
-        temporary.path().join("incan.toml"),
+        temporary.path().join("loaf.toml"),
         "[project]\nname = \"facade_chain\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(
@@ -3351,7 +3348,7 @@ fn replacement_cli_uses_session_feature_projection_and_persists_semantic_module_
     fs::create_dir_all(&source_root)?;
     let entrypoint = source_root.join("main.incn");
     fs::write(
-        temporary.path().join("incan.toml"),
+        temporary.path().join("loaf.toml"),
         "[project]\nname = \"replacement_session_projection\"\n\n[project.features]\nbeta = []\n",
     )?;
     fs::write(

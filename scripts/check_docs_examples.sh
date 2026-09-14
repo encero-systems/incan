@@ -4,10 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Honour CARGO_TARGET_DIR. A caller that redirects cargo's output — a worktree under a storage budget, a cache shared
+# between worktrees — otherwise has cargo writing one binary while this script silently runs an older one from the
+# default location, or falls through to whatever `incan` is on PATH.
+TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}"
 INCAN_BIN="${INCAN_BIN:-}"
 if [[ -z "$INCAN_BIN" ]]; then
-  if [[ -x "./target/release/incan" ]]; then
-    INCAN_BIN="./target/release/incan"
+  if [[ -x "$TARGET_DIR/release/incan" ]]; then
+    INCAN_BIN="$TARGET_DIR/release/incan"
   else
     INCAN_BIN="incan"
   fi

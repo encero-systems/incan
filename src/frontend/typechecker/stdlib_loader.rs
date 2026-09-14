@@ -707,12 +707,13 @@ fn find_stdlib_file(relative: &str) -> Option<PathBuf> {
 fn extract_function_entries(program: &ast::Program) -> Vec<StdlibFunctionEntry> {
     let mut fns = Vec::new();
     let stdlib_imports = stdlib_import_aliases(program);
+    let rust_imports = rust_import_aliases(program);
     for decl in &program.declarations {
         if let ast::Declaration::Function(func) = &decl.node {
             if !matches!(func.visibility, ast::Visibility::Public) {
                 continue;
             }
-            let info = function_decl_to_info(func, &stdlib_imports);
+            let info = function_decl_to_info(func, &stdlib_imports, &rust_imports);
             fns.push(StdlibFunctionEntry {
                 name: func.name.clone(),
                 info,
@@ -912,12 +913,22 @@ fn extract_derivable_traits(program: &ast::Program) -> Vec<String> {
 /// Map one `with` supertrait bound to `(trait_name, type_arguments)` for stdlib trait metadata (RFC 042).
 ///
 /// Uses the declaring trait's type parameter names so bounds like `DataSet[T]` become generic supertrait entries with
-/// [`ResolvedType::TypeVar`] arguments. Bounds that do not resolve to a plain trait name or generic trait application
-/// are skipped (malformed stdlib sources are treated as having no edge for that bound).
+/// [`ResolvedType::TypeVar`] arguments. Foreign import aliases retain their absolute Rust identity and resolved type
+/// arguments before the declaring module's local bindings disappear. Bounds that do not resolve to a plain trait name
+/// or generic trait application are skipped (malformed stdlib sources are treated as having no edge for that bound).
 fn supertrait_entry_from_trait_bound(
     bound: &ast::TraitBound,
     declaring_trait_type_params: &[String],
+    rust_imports: &HashMap<String, String>,
 ) -> Option<(String, Vec<ResolvedType>)> {
+    if let Some(path) = rust_imports.get(&bound.name) {
+        let arguments = bound
+            .type_args
+            .iter()
+            .map(|arg| ast_type_to_resolved_with_rust_imports(&arg.node, declaring_trait_type_params, rust_imports))
+            .collect();
+        return Some((format!("::{}", path.trim_start_matches("::")), arguments));
+    }
     let ty = if bound.type_args.is_empty() {
         ast::Type::Simple(bound.name.clone())
     } else {
@@ -935,6 +946,7 @@ fn supertrait_entry_from_trait_bound(
 /// Top-level `trait` declarations are extracted with their method signatures and `with` supertrait bounds. `@requires`
 /// decorators are not resolved (`requires` stays empty) since stdlib traits typically don't use them.
 fn extract_trait_signatures(program: &ast::Program, module_path: &[String]) -> Vec<(String, TraitInfo)> {
+    let rust_imports = rust_import_aliases(program);
     let stdlib_imports = stdlib_import_aliases(program);
     let mut traits = Vec::new();
     for decl in &program.declarations {
@@ -952,7 +964,7 @@ fn extract_trait_signatures(program: &ast::Program, module_path: &[String]) -> V
             let supertraits: Vec<(String, Vec<ResolvedType>)> = tr
                 .traits
                 .iter()
-                .filter_map(|b| supertrait_entry_from_trait_bound(&b.node, &tp_names))
+                .filter_map(|b| supertrait_entry_from_trait_bound(&b.node, &tp_names, &rust_imports))
                 .collect();
             traits.push((
                 tr.name.clone(),
@@ -1357,6 +1369,14 @@ fn apply_method_aliases(
     method_aliases
 }
 
+/// Retain imported Rust trait identities when extracting callable signatures without a live declaring scope.
+fn generic_bound_name(name: &str, rust_imports: &HashMap<String, String>) -> String {
+    rust_imports.get(name).map_or_else(
+        || name.to_string(),
+        |path| format!("::{}", path.trim_start_matches("::")),
+    )
+}
+
 /// Convert one AST method declaration into lightweight semantic method metadata.
 fn method_info_from_ast_method(
     method: &ast::Spanned<ast::MethodDecl>,
@@ -1373,7 +1393,10 @@ fn method_info_from_ast_method(
         .map(|tp| {
             (
                 tp.name.clone(),
-                tp.bounds.iter().map(|bound| bound.name.clone()).collect(),
+                tp.bounds
+                    .iter()
+                    .map(|bound| generic_bound_name(&bound.name, rust_imports))
+                    .collect(),
             )
         })
         .collect();
@@ -1388,7 +1411,7 @@ fn method_info_from_ast_method(
                 tp.bounds
                     .iter()
                     .map(|bound| crate::frontend::symbols::TypeBoundInfo {
-                        name: bound.name.clone(),
+                        name: generic_bound_name(&bound.name, rust_imports),
                         source_name: None,
                         type_args: bound
                             .type_args
@@ -1451,7 +1474,11 @@ fn method_info_from_ast_method(
 }
 
 /// Convert an AST `FunctionDecl` to a typechecker `FunctionInfo`.
-fn function_decl_to_info(func: &ast::FunctionDecl, stdlib_imports: &HashMap<String, Vec<String>>) -> FunctionInfo {
+fn function_decl_to_info(
+    func: &ast::FunctionDecl,
+    stdlib_imports: &HashMap<String, Vec<String>>,
+    rust_imports: &HashMap<String, String>,
+) -> FunctionInfo {
     // Extract just the type parameter names for type resolution.
     let tp_names: Vec<String> = func.type_params.iter().map(|tp| tp.name.clone()).collect();
     let tp_bounds: HashMap<String, Vec<String>> = func
@@ -1460,7 +1487,10 @@ fn function_decl_to_info(func: &ast::FunctionDecl, stdlib_imports: &HashMap<Stri
         .map(|tp| {
             (
                 tp.name.clone(),
-                tp.bounds.iter().map(|bound| bound.name.clone()).collect(),
+                tp.bounds
+                    .iter()
+                    .map(|bound| generic_bound_name(&bound.name, rust_imports))
+                    .collect(),
             )
         })
         .collect();
@@ -1473,7 +1503,7 @@ fn function_decl_to_info(func: &ast::FunctionDecl, stdlib_imports: &HashMap<Stri
                 tp.bounds
                     .iter()
                     .map(|bound| TypeBoundInfo {
-                        name: bound.name.clone(),
+                        name: generic_bound_name(&bound.name, rust_imports),
                         source_name: None,
                         type_args: bound
                             .type_args
@@ -1932,6 +1962,85 @@ fn extract_stdlib_imported_type_paths(
 
 #[cfg(test)]
 mod tests {
+    /// Imported source trait signatures keep foreign aliases valid outside their declaring module.
+    #[test]
+    fn rust_supertrait_alias_survives_source_signature_extraction() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+from rust::serde::de import DeserializeOwned as Owned
+from rust::std::convert import From as Convert
+from rust::std::string import String as Text
+
+pub trait Decode with Owned:
+    pass
+
+pub trait ConvertText with Convert[Text]:
+    pass
+"#;
+        let tokens = crate::frontend::lexer::lex(source).map_err(|errors| format!("lex: {errors:?}"))?;
+        let program = crate::frontend::parser::parse(&tokens).map_err(|errors| format!("parse: {errors:?}"))?;
+        let traits = super::extract_trait_signatures(&program, &["std".to_string(), "example".to_string()]);
+        assert_eq!(
+            traits[0].1.supertraits,
+            vec![("::serde::de::DeserializeOwned".to_string(), vec![])]
+        );
+        assert_eq!(
+            traits[1].1.supertraits,
+            vec![(
+                "::std::convert::From".to_string(),
+                vec![crate::frontend::symbols::ResolvedType::RustPath(
+                    "std::string::String".to_string()
+                )]
+            )]
+        );
+        Ok(())
+    }
+
+    /// Lightweight signatures must not leave foreign generic bounds dependent on the declaring module's aliases.
+    #[test]
+    fn imported_rust_generic_bounds_survive_signature_extraction() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+from rust::serde::de import DeserializeOwned as Owned
+
+pub def identity[T with Owned](value: T) -> T:
+    return value
+
+pub class Reader:
+    def identity[T with Owned](self, value: T) -> T:
+        return value
+"#;
+        let tokens = crate::frontend::lexer::lex(source).map_err(|errors| format!("lex: {errors:?}"))?;
+        let program = crate::frontend::parser::parse(&tokens).map_err(|errors| format!("parse: {errors:?}"))?;
+        let functions = extract_function_entries(&program);
+        let function = &functions.first().ok_or("missing exported function")?.info;
+        assert_eq!(function.type_param_bounds["T"], vec!["::serde::de::DeserializeOwned"]);
+        assert_eq!(
+            function.type_param_bound_details["T"][0].name,
+            "::serde::de::DeserializeOwned"
+        );
+        let rust_imports = rust_import_aliases(&program);
+        let class = program
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                ast::Declaration::Class(class) => Some(class),
+                _ => None,
+            })
+            .ok_or("missing class")?;
+        let method = method_info_from_ast_method(
+            class.methods.first().ok_or("missing method")?,
+            &[],
+            &rust_imports,
+            &HashMap::new(),
+            &[],
+        );
+        assert_eq!(method.type_param_bounds["T"], vec!["::serde::de::DeserializeOwned"]);
+        assert_eq!(
+            method.type_param_bound_details["T"][0].name,
+            "::serde::de::DeserializeOwned"
+        );
+        Ok(())
+    }
+
     use super::*;
 
     #[test]

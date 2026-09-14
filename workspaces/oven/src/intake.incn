@@ -1,0 +1,381 @@
+"""Read local Loaf intent without selecting Rust versions or authorizing compilation."""
+
+from std import toml
+from std.toml import TomlValue, TomlKind
+from std.fs import Path
+from std.hash import sha256
+from std.graph import Dag, NodeId
+from rust::std::str import from_utf8
+from manifest_errors import IntakeError, IntakeErrorKind
+
+
+pub model ManifestEvidence:
+    """Physical source evidence, excluded from effective intent and unit identity."""
+
+    pub path: str
+    pub raw_bytes: bytes
+    pub source: str
+    pub sha256_digest: bytes
+
+
+@derive(Eq)
+pub model LocalDependency:
+    """An authored alias and relative path; neither is a resolved symbol name."""
+
+    pub alias: str
+    pub path: str
+
+
+@derive(Eq)
+pub model RustInputRequest:
+    """An unresolved crate requirement, not an admitted source or host/target unit."""
+
+    pub alias: str
+    pub package: str
+    pub version: str
+    pub features: list[str]
+    pub default_features: bool
+    pub optional: bool
+
+
+@derive(Eq)
+pub model ProjectIntent:
+    """Supported authored fields, independent of comments and source locations."""
+
+    pub name: str
+    pub version: str
+    pub scripts: Dict[str, str]
+    pub dependencies: list[LocalDependency]
+    pub rust_inputs: list[RustInputRequest]
+    pub target: Option[str]
+    pub profile: Option[str]
+    pub rust_edition: Option[str]
+
+
+pub model LocalProject:
+    """One canonical local root and its separate evidence and effective intent."""
+
+    pub root: str
+    pub evidence: ManifestEvidence
+    pub intent: ProjectIntent
+
+
+pub model DependencyEdge:
+    """Preserve requester and authored alias even when two aliases reach one package."""
+
+    pub requester_root: str
+    pub alias: str
+    pub dependency_root: str
+
+
+pub model LocalIntake:
+    """A local topology only; every native selection still needs admitted compiler facts."""
+
+    pub projects: list[LocalProject]
+    pub edges: list[DependencyEdge]
+    pub dependency_order: list[str]
+
+
+def refusal(manifest: str, field: list[str], kind: IntakeErrorKind, detail: str) -> IntakeError:
+    """Create an unlocated refusal before a source-bearing caller attaches its span."""
+    return IntakeError(kind=kind, manifest=manifest, field=field, detail=detail, location=None)
+
+
+def table(value: TomlValue, manifest: str, field: list[str]) -> Result[Dict[str, TomlValue], IntakeError]:
+    """Require a TOML table while preserving the caller's literal field path."""
+    return value.as_table().map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))
+
+
+def text(value: TomlValue, manifest: str, field: list[str]) -> Result[str, IntakeError]:
+    """Require a TOML string without coercing another value kind."""
+    return value.as_str().map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))
+
+
+def allowed(
+    values: Dict[str, TomlValue],
+    keys: list[str],
+    manifest: str,
+    field: list[str],
+) -> Result[None, IntakeError]:
+    """Reject the first unsupported literal key in deterministic order."""
+    # TODO: sort the iterator directly once #1461 and #1464 are fixed. Sorting `values.keys()` emits an
+    # unsortable Rust iterator, and a list of keys emits an undefined function, so the keys are materialized.
+    for key in sorted([key for key in values.keys()]):
+        if key not in keys:
+            return Err(refusal(manifest, field + [key], IntakeErrorKind.Unsupported, "intent is outside local intake"))
+    return Ok(None)
+
+
+def required(values: Dict[str, TomlValue], key: str, manifest: str, field: list[str]) -> Result[str, IntakeError]:
+    """Read a required nonempty string, distinguishing missing fields from invalid values."""
+    if key not in values:
+        return Err(refusal(manifest, field, IntakeErrorKind.Missing, f"required field {key}"))
+    value = text(values[key], manifest, field)?
+    if value == "":
+        return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "empty value"))
+    return Ok(value)
+
+
+pub def parse_intent(source: str, manifest: str) -> Result[ProjectIntent, IntakeError]:
+    """Parse effective intent and retain source spans for literal diagnostic key paths."""
+    return parse_raw_intent(source, manifest).map_err((error) => error.with_source(source))
+
+
+pub model ManifestDocument:
+    """One byte snapshot and its independently comparable normalized intent."""
+
+    pub evidence: ManifestEvidence
+    pub intent: ProjectIntent
+
+
+pub def parse_document(raw: bytes, manifest: str) -> Result[ManifestDocument, IntakeError]:
+    """
+    Decode one immutable manifest snapshot and separate evidence from normalized intent.
+
+        Raw bytes, their digest and the source location describe what was read. They do not become an action or unit
+        identity. The normalized intent contains supported declarations only; unknown semantic fields refuse explicitly.
+
+        Args:
+            raw: Exact UTF-8 manifest bytes, including original comments and line endings.
+            manifest: Diagnostic provenance path, not a selected package identity.
+
+        Returns:
+            The source evidence and normalized intent, or a structured decoding/schema refusal.
+
+        Example:
+            document = parse_document(b"[project]
+    name='catalog'
+    version='0.1.0'
+    ", "loaf.toml")?
+            assert document.intent.name == "catalog"
+    """
+    source = str(from_utf8(raw).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, str(error)))?)
+    # TODO: inline this binding once #1462 is fixed. Named constructor arguments reorder evaluation and can
+    # move a value before an earlier argument reads it, so the parse is sequenced explicitly.
+    intent = parse_intent(source, manifest)?
+    digest = sha256.digest(raw)
+    evidence = ManifestEvidence(path=manifest, raw_bytes=raw, source=source, sha256_digest=digest)
+    return Ok(ManifestDocument(intent=intent, evidence=evidence))
+
+
+def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, IntakeError]:
+    """Validate every supported table before projecting effective local intent."""
+    parsed = toml.parse(source).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, error.message()))?
+    root = table(parsed, manifest, [])?
+    allowed(root, ["project", "dependencies", "rust-dependencies", "build"], manifest, [])?
+    if "project" not in root:
+        return Err(refusal(manifest, ["project"], IntakeErrorKind.Missing, "project identity is required"))
+    project = table(root["project"], manifest, ["project"])?
+    allowed(project, ["name", "version", "scripts"], manifest, ["project"])?
+    name = required(project, "name", manifest, ["project", "name"])?
+    version = required(project, "version", manifest, ["project", "version"])?
+    mut scripts: Dict[str, str] = {}
+    if "scripts" in project:
+        values = table(project["scripts"], manifest, ["project", "scripts"])?
+        for key in sorted([key for key in values.keys()]):
+            scripts[key] = required(values, key, manifest, ["project", "scripts", key])?
+    mut dependencies: list[LocalDependency] = []
+    if "dependencies" in root:
+        values = table(root["dependencies"], manifest, ["dependencies"])?
+        for alias in sorted([key for key in values.keys()]):
+            entry = table(values[alias], manifest, ["dependencies", alias])?
+            allowed(entry, ["path"], manifest, ["dependencies", alias])?
+            path = required(entry, "path", manifest, ["dependencies", alias, "path"])?
+            dependencies.append(LocalDependency(alias=alias, path=path))
+    mut rust_inputs: list[RustInputRequest] = []
+    if "rust-dependencies" in root:
+        values = table(root["rust-dependencies"], manifest, ["rust-dependencies"])?
+        for alias in sorted([key for key in values.keys()]):
+            rust_inputs.append(rust_request(alias, values[alias], manifest)?)
+    mut target: Option[str] = None
+    mut profile: Option[str] = None
+    mut edition: Option[str] = None
+    if "build" in root:
+        build = table(root["build"], manifest, ["build"])?
+        allowed(build, ["target", "profile", "rust-edition"], manifest, ["build"])?
+        if "target" in build:
+            target = Some(required(build, "target", manifest, ["build", "target"])?)
+        if "profile" in build:
+            profile = Some(required(build, "profile", manifest, ["build", "profile"])?)
+        if "rust-edition" in build:
+            edition = Some(required(build, "rust-edition", manifest, ["build", "rust-edition"])?)
+    return Ok(
+        ProjectIntent(
+            name=name,
+            version=version,
+            scripts=scripts,
+            dependencies=dependencies,
+            rust_inputs=rust_inputs,
+            target=target,
+            profile=profile,
+            rust_edition=edition,
+        ),
+    )
+
+
+def rust_request(alias: str, value: TomlValue, manifest: str) -> Result[RustInputRequest, IntakeError]:
+    """Retain a registry crate requirement and normalize its requested features without selecting a version."""
+    field = ["rust-dependencies", alias]
+    mut package = alias
+    mut version = ""
+    mut features: list[str] = []
+    mut default_features = true
+    mut optional = false
+    if value.kind() == TomlKind.String:
+        version = text(value, manifest, field)?
+    else:
+        entry = table(value, manifest, field)?
+        allowed(entry, ["version", "package", "features", "default-features", "optional"], manifest, field)?
+        version = required(entry, "version", manifest, field + ["version"])?
+        if "package" in entry:
+            package = required(entry, "package", manifest, field + ["package"])?
+        if "features" in entry:
+            array = entry["features"]
+                .as_array()
+                .map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))?
+            for item in array:
+                feature = text(item, manifest, field + ["features"])?
+                if feature not in features:
+                    features.append(feature)
+            features = sorted(features)
+        if "default-features" in entry:
+            default_features = entry["default-features"]
+                .as_bool()
+                .map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))?
+        if "optional" in entry:
+            optional = entry["optional"]
+                .as_bool()
+                .map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))?
+    if version == "":
+        return Err(refusal(manifest, field, IntakeErrorKind.Missing, "version requirement is required"))
+    return Ok(
+        RustInputRequest(
+            alias=alias,
+            package=package,
+            version=version,
+            features=features,
+            default_features=default_features,
+            optional=optional,
+        ),
+    )
+
+
+def load_project(root: Path) -> Result[LocalProject, IntakeError]:
+    """Read one byte snapshot and validate existing conventional library or explicitly declared script paths."""
+    manifest = root.joinpath("loaf.toml")
+    raw = manifest.read_bytes().map_err((error) => refusal(manifest.0, [], IntakeErrorKind.Missing, error.message()))?
+    document = parse_document(raw, manifest.0)?
+    intent = document.intent
+    source = document.evidence.source
+    for script in intent.scripts.keys():
+        path = root.joinpath(intent.scripts[script])
+        if not path.is_file():
+            return Err(
+                refusal(manifest.0, ["project", "scripts", script], IntakeErrorKind.Missing, path.0).with_source(source),
+            )
+        resolved = path
+            .resolve()
+            .map_err(
+                (error) => refusal(manifest.0, ["project", "scripts", script], IntakeErrorKind.Invalid, error.message()),
+            )?
+        library = root.joinpath("src/lib.incn")
+        if library.is_file():
+            canonical = library
+                .resolve()
+                .map_err(
+                    (error) => refusal(
+                        manifest.0,
+                        ["project", "scripts", script],
+                        IntakeErrorKind.Invalid,
+                        error.message(),
+                    ),
+                )?
+            if resolved.0 == canonical.0:
+                return Err(
+                    refusal(
+                        manifest.0,
+                        ["project", "scripts", script],
+                        IntakeErrorKind.Invalid,
+                        "script resolves to conventional library",
+                    ).with_source(source),
+                )
+    if len(intent.scripts) == 0 and not root.joinpath("src/lib.incn").is_file():
+        return Err(
+            refusal(
+                manifest.0,
+                ["project", "scripts"],
+                IntakeErrorKind.Missing,
+                "expected a conventional library or explicit script",
+            ),
+        )
+    return Ok(LocalProject(root=root.0, intent=intent, evidence=document.evidence))
+
+
+pub def intake(root: Path) -> Result[LocalIntake, IntakeError]:
+    """
+    Read reachable local package requests and return their dependency-first topology.
+
+    Authored aliases remain separate edges even when they select the same canonical local path. Graph handles are
+    temporary traversal state. The returned request packet contains no selected Rust version, admitted compiler
+    inputs or build plan; those require checked provider facts from the host boundary.
+
+    Args:
+        root: Existing project directory whose loaf.toml starts the local dependency closure.
+
+    Returns:
+        Local projects, alias-bearing edges and dependency order, or a refusal for unsupported or missing intent.
+
+    Example:
+        packet = intake(Path("../../workbench/app"))?
+        assert len(packet.projects) == 3
+    """
+    canonical = root.resolve().map_err((error) => refusal(root.0, [], IntakeErrorKind.Missing, error.message()))?
+    mut roots: list[str] = [canonical.0]
+    mut projects: list[LocalProject] = []
+    mut edges: list[DependencyEdge] = []
+    mut index = 0
+    while index < len(roots):
+        project = load_project(Path(roots[index]))?
+        for dependency in project.intent.dependencies:
+            path = Path(project.root).joinpath(dependency.path)
+            selected = path
+                .resolve()
+                .map_err(
+                    (error) => refusal(
+                        project.evidence.path,
+                        ["dependencies", dependency.alias, "path"],
+                        IntakeErrorKind.Missing,
+                        error.message(),
+                    ).with_source(project.evidence.source),
+                )?
+            edges.append(DependencyEdge(requester_root=project.root, alias=dependency.alias, dependency_root=selected.0))
+            if selected.0 not in roots:
+                roots.append(selected.0)
+        projects.append(project)
+        index += 1
+    mut graph = Dag[str]()
+    mut nodes: Dict[str, NodeId] = {}
+    mut sources: Dict[str, str] = {}
+    for project in projects:
+        nodes[project.root] = graph.add_node(project.root)
+        sources[project.root] = project.evidence.source
+    for edge in edges:
+        if not graph.graph.contains_edge(nodes[edge.dependency_root], nodes[edge.requester_root]):
+            graph
+                .add_edge(nodes[edge.dependency_root], nodes[edge.requester_root])
+                .map_err(
+                    (error) => refusal(
+                        Path(edge.requester_root).joinpath("loaf.toml").0,
+                        ["dependencies", edge.alias],
+                        IntakeErrorKind.Cycle,
+                        error.message(),
+                    ).with_source(sources[edge.requester_root]),
+                )?
+    mut order: list[str] = []
+    for node in graph.topological_order():
+        order.append(
+            graph
+                .node_payload(node)
+                .map_err((error) => refusal(canonical.0, [], IntakeErrorKind.Invalid, error.message()))?,
+        )
+    return Ok(LocalIntake(projects=projects, edges=edges, dependency_order=order))

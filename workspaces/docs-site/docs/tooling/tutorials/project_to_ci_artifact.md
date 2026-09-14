@@ -10,7 +10,7 @@ This tutorial prepares a working Incan project for reproducible artifact deliver
     <div><dt>Verified</dt><dd>Commands verified with Incan <code>&gt;=0.5.0-0,&lt;0.6.0</code>; hosted CI installation remains a 0.5 packaging preview</dd></div>
     <div><dt>Status</dt><dd>Source-verified delivery preview</dd></div>
     <div><dt>Outcome</dt><dd>A locked local artifact gate and an honest hosted source-check lane</dd></div>
-    <div><dt>Artifacts</dt><dd><code>incan.lock</code>, local build report, and native binary</dd></div>
+    <div><dt>Artifacts</dt><dd><code>oven.lock</code>, local build report, and native binary</dd></div>
   </dl>
 </aside>
 
@@ -27,10 +27,10 @@ From the project root, resolve dependencies and commit the result with the manif
 
 ```bash
 incan lock
-git add incan.toml incan.lock
+git add loaf.toml oven.lock
 ```
 
-`incan.lock` is the reproducibility authority for `--locked` commands. Regenerate it intentionally after dependency changes; do not let CI silently resolve a different graph.
+`oven.lock` is the reproducibility authority for `--locked` commands. Regenerate it intentionally after dependency changes; do not let CI silently resolve a different graph.
 
 ## Step 2: run the local gate
 

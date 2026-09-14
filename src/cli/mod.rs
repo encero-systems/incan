@@ -15,7 +15,7 @@
 //! - `new [name]` - Create a new Incan project directory, prompting when no name is provided
 //! - `fmt <file|dir>` - Format Incan source files
 //! - `test [path]` - Run tests (pytest-style)
-//! - `version <bump>|--set <version>` - Update `[project].version` in `incan.toml`
+//! - `version <bump>|--set <version>` - Update `[project].version` in `loaf.toml`
 //! - `env <subcommand>` - Inspect and run named project environments
 //! - `tools doctor` - Inspect local CLI/LSP/editor toolchain resolution
 //!
@@ -60,6 +60,7 @@ use commands::diagnostics::DiagnosticOutputFormat;
 use commands::interop_plan::InteropPlanInspectionFormat;
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
 use commands::provider_inspect::ProviderInspectionFormat;
+use commands::representation_inspect::RepresentationInspectionFormat;
 use commands::tools::{ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat};
 use commands::workspace::WorkspaceInspectFormat;
 
@@ -327,7 +328,7 @@ pub enum Command {
         /// Select a non-persistent SDK profile for this compilation
         #[command(flatten)]
         sdk_profile: SdkProfileCliFlags,
-        /// Require up-to-date incan.lock; does not authorize a Cargo command
+        /// Require up-to-date oven.lock; does not authorize a Cargo command
         #[arg(long, hide = true)]
         locked: bool,
         /// Disable INCAN_LOCKED for this invocation
@@ -339,7 +340,7 @@ pub enum Command {
         /// Disable INCAN_OFFLINE for this invocation
         #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"], hide = true)]
         no_offline: bool,
-        /// Require an up-to-date frozen incan.lock; does not authorize a Cargo command
+        /// Require an up-to-date frozen oven.lock; does not authorize a Cargo command
         #[arg(long, hide = true)]
         frozen: bool,
         /// Disable INCAN_FROZEN for this invocation
@@ -365,8 +366,9 @@ pub enum Command {
         #[arg(long)]
         release: bool,
         /// Select the compiler backend for this build. Defaults to the legacy Rust-emission backend, declared
-        /// explicitly even when this flag is omitted. The `replacement` profile is source-only and partial: it
-        /// executes supported free functions from Body IR and refuses unsupported input visibly.
+        /// explicitly even when this flag is omitted. The `replacement` profile is partial: it executes supported
+        /// declarations from Body IR, including methods and declarations resolved from a published package's
+        /// executable representation, and refuses unsupported input visibly.
         #[arg(long = "backend", value_enum)]
         backend: Option<BackendCliKind>,
         /// Request a source-observable shadow comparison against the replacement backend. Recorded explicitly as
@@ -445,7 +447,7 @@ pub enum Command {
         /// Select a non-persistent SDK profile for this compilation
         #[command(flatten)]
         sdk_profile: SdkProfileCliFlags,
-        /// Require up-to-date incan.lock; does not authorize a Cargo command
+        /// Require up-to-date oven.lock; does not authorize a Cargo command
         #[arg(long, hide = true)]
         locked: bool,
         /// Disable INCAN_LOCKED for this invocation
@@ -457,7 +459,7 @@ pub enum Command {
         /// Disable INCAN_OFFLINE for this invocation
         #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"], hide = true)]
         no_offline: bool,
-        /// Require an up-to-date frozen incan.lock; does not authorize a Cargo command
+        /// Require an up-to-date frozen oven.lock; does not authorize a Cargo command
         #[arg(long, hide = true)]
         frozen: bool,
         /// Disable INCAN_FROZEN for this invocation
@@ -508,7 +510,7 @@ pub enum Command {
         members: Vec<String>,
     },
 
-    /// Update the project version in incan.toml
+    /// Update the project version in loaf.toml
     Version {
         /// Version bump to apply
         #[arg(value_enum)]
@@ -516,13 +518,13 @@ pub enum Command {
         /// Explicit SemVer version to set
         #[arg(long = "set", value_name = "VERSION")]
         set: Option<String>,
-        /// Print the planned change without writing incan.toml
+        /// Print the planned change without writing loaf.toml
         #[arg(long)]
         dry_run: bool,
         /// Keep prerelease metadata when applying major/minor/patch bumps
         #[arg(long)]
         keep_prerelease: bool,
-        /// Project root containing incan.toml
+        /// Project root containing loaf.toml
         #[arg(long = "project", value_name = "PATH")]
         project: Option<PathBuf>,
         /// Select every member in the active workspace (only valid when it resolves to one member)
@@ -634,7 +636,7 @@ pub enum Command {
         /// Run xfail tests as ordinary tests
         #[arg(long = "run-xfail")]
         run_xfail: bool,
-        /// Require up-to-date incan.lock; does not authorize a Cargo command
+        /// Require up-to-date oven.lock; does not authorize a Cargo command
         #[arg(long, hide = true)]
         locked: bool,
         /// Disable INCAN_LOCKED for this invocation
@@ -646,7 +648,7 @@ pub enum Command {
         /// Disable INCAN_OFFLINE for this invocation
         #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"], hide = true)]
         no_offline: bool,
-        /// Require an up-to-date frozen incan.lock; does not authorize a Cargo command
+        /// Require an up-to-date frozen oven.lock; does not authorize a Cargo command
         #[arg(long, hide = true)]
         frozen: bool,
         /// Disable INCAN_FROZEN for this invocation
@@ -700,9 +702,9 @@ pub enum Command {
         yes: bool,
     },
 
-    /// Initialize a new incan.toml manifest
+    /// Initialize a new loaf.toml manifest
     Init {
-        /// Directory to create incan.toml in
+        /// Directory to create loaf.toml in
         #[arg(value_name = "PATH", default_value = ".")]
         path: PathBuf,
         /// Project name (defaults to directory name)
@@ -731,7 +733,7 @@ pub enum Command {
         yes: bool,
     },
 
-    /// Generate or update incan.lock for a project
+    /// Generate or update oven.lock for a project
     Lock {
         /// Entry file used to resolve inline dependencies
         #[arg(value_name = "FILE")]
@@ -854,6 +856,15 @@ pub enum InspectCommand {
         #[arg(long, value_name = "TRIPLE")]
         target: Option<String>,
     },
+    /// Inspect a package's published executable representation: its version and the declarations it covers
+    Representation {
+        /// Package manifest, generated artifact root, or project root to inspect
+        #[arg(value_name = "PATH", default_value = ".")]
+        path: PathBuf,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: RepresentationInspectionFormat,
+    },
     /// Inspect one locked Oven interop deployment handoff
     InteropPlan {
         /// Project path containing the Oven interop declaration and canonical lock
@@ -887,7 +898,7 @@ pub enum EnvCommand {
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: EnvOutputFormat,
-        /// Project root containing incan.toml
+        /// Project root containing loaf.toml
         #[arg(long = "project", value_name = "PATH")]
         project: Option<PathBuf>,
     },
@@ -898,7 +909,7 @@ pub enum EnvCommand {
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: EnvOutputFormat,
-        /// Project root containing incan.toml
+        /// Project root containing loaf.toml
         #[arg(long = "project", value_name = "PATH")]
         project: Option<PathBuf>,
     },
@@ -914,7 +925,7 @@ pub enum EnvCommand {
         /// Extra arguments passed to the configured script
         #[arg(last = true)]
         args: Vec<String>,
-        /// Project root containing incan.toml
+        /// Project root containing loaf.toml
         #[arg(long = "project", value_name = "PATH")]
         project: Option<PathBuf>,
     },
@@ -1014,7 +1025,7 @@ pub enum CacheCommand {
 pub enum OvenCommand {
     /// Explicitly materialize or reuse sealed toolchain Loafs for an Incan project
     Bake {
-        /// Project root containing incan.toml and src/lib.incn and/or src/main.incn
+        /// Project root containing loaf.toml and src/lib.incn and/or src/main.incn
         #[arg(long, value_name = "PATH", default_value = ".")]
         project: PathBuf,
         /// Select Incan package features for the baked project Loaf
@@ -1201,7 +1212,7 @@ pub enum OvenCommand {
 pub enum OvenInteropCommand {
     /// Select declared native tools, compile locked shims, and publish one complete direct-rustc interop plan
     Bake {
-        /// Package root containing incan.toml and the locked interop inputs
+        /// Package root containing loaf.toml and the locked interop inputs
         #[arg(long, value_name = "PATH", default_value = ".")]
         project: PathBuf,
         /// Exact locked target triple to bake
@@ -1240,7 +1251,7 @@ pub enum OvenInteropCommand {
     },
     /// Atomically stage a baked interop plan's bundled runtime files without starting a platform build tool
     Stage {
-        /// Package root containing incan.toml, incan.lock, and the selected interop receipt
+        /// Package root containing loaf.toml, oven.lock, and the selected interop receipt
         #[arg(long, value_name = "PATH", default_value = ".")]
         project: PathBuf,
         /// Exact locked target triple whose already baked plan will be staged
@@ -1609,6 +1620,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 sdk_profile.profile(),
                 target.as_deref(),
             ),
+            InspectCommand::Representation { path, format } => commands::inspect_representation(&path, format),
             InspectCommand::InteropPlan { path, target, format } => {
                 commands::inspect_interop_plan(&path, &target, format)
             }
@@ -3138,7 +3150,7 @@ mod tests {
             "oven",
             "compiler-libtests",
             "--target",
-            "tests/integration_tests.rs",
+            "tests/rfc031_pub_import_integration_tests.rs",
             "--exact",
             "rfc031_pub_import_integration_tests::compiled_parent_fields_lower_into_consumer_subclasses_issue885",
             "--exact",
@@ -3152,7 +3164,7 @@ mod tests {
         else {
             return Err(expected_command("oven compiler-libtests"));
         };
-        assert_eq!(targets, ["tests/integration_tests.rs"]);
+        assert_eq!(targets, ["tests/rfc031_pub_import_integration_tests.rs"]);
         assert_eq!(
             exact_names,
             [

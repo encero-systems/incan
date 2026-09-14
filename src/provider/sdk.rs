@@ -74,7 +74,7 @@ pub struct SdkInventory {
 pub struct SdkSourceComponent {
     /// Stable component id.
     pub id: String,
-    /// Project root containing the component's `incan.toml`.
+    /// Project root containing the component's `loaf.toml`.
     pub project_root: PathBuf,
     /// Whether this component is mandatory in every profile.
     pub mandatory: bool,
@@ -1177,7 +1177,7 @@ mod tests {
         let inventory = SdkInventory::from_json(INVENTORY, Path::new("/sdk"))?;
 
         let error = inventory
-            .validate_compiler_compatibility("0.5.0-dev.5", 6)
+            .validate_compiler_compatibility("0.5.0-dev.5", crate::version::SDK_PROVIDER_CODEGEN_REVISION)
             .err()
             .ok_or("expected incompatible provider codegen revision")?;
         assert!(error.to_string().contains("provider codegen revision 5"));
@@ -1239,7 +1239,7 @@ profile = "default"
 components = ["stdlib-web"]
 exclude-components = ["stdlib-data"]
 "#,
-            Path::new("/project/incan.toml"),
+            Path::new("/project/loaf.toml"),
         )?;
 
         let selection = SdkComponentSelection::from_manifest_with_profile_override(Some(&manifest), Some("minimal"));

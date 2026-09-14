@@ -1,12 +1,12 @@
 # Project lifecycle
 
-This guide shows the practical project workflow: create a project, keep project metadata in `incan.toml`, bump the project version, and run repeatable commands through named environments.
+This guide shows the practical project workflow: create a project, keep project metadata in `loaf.toml`, bump the project version, and run repeatable commands through named environments.
 
 For repositories containing several Incan projects, use [Work with a multi-project workspace](workspaces.md) to configure members, select command scope, share dependency declarations, and publish one root lock.
 
 ```mermaid
 flowchart LR
-  A["new or init"] --> B["incan.toml + source + tests"]
+  A["new or init"] --> B["loaf.toml + source + tests"]
   B --> C["run and test"]
   C --> D["lock and build"]
   D --> E["version bump"]
@@ -59,7 +59,7 @@ greeter/
 |   `-- test_main.incn
 |-- README.md
 |-- .gitignore
-`-- incan.toml
+`-- loaf.toml
 ```
 
 Run the generated entry point and starter tests:
@@ -69,13 +69,13 @@ incan run
 incan test
 ```
 
-`incan.toml` marks the project root. Project-aware commands discover it by walking upward from your current directory. File and directory arguments are still shell paths, so write them relative to the directory you are running the command from.
+`loaf.toml` marks the project root. Project-aware commands discover it by walking upward from your current directory. File and directory arguments are still shell paths, so write them relative to the directory you are running the command from.
 
 ## Fill in project metadata
 
-Open `incan.toml` and treat `[project]` as the user-facing metadata for the project:
+Open `loaf.toml` and treat `[project]` as the user-facing metadata for the project:
 
-```toml title="incan.toml"
+```toml title="loaf.toml"
 [project]
 name = "greeter"
 version = "0.1.0"
@@ -105,7 +105,7 @@ Use scripts for stable entry-point names, not shell automation. Shell-style life
 
 ## Bump the project version
 
-Use `incan version` to update the project version in `incan.toml`:
+Use `incan version` to update the project version in `loaf.toml`:
 
 ```bash
 incan version patch
@@ -171,7 +171,7 @@ If all you want is "run the app" or "run the tests", plain `incan run` and `inca
 
 This is a realistic small-project setup:
 
-```toml title="incan.toml"
+```toml title="loaf.toml"
 [tool.incan.envs.default]
 env-vars = { INCAN_NO_BANNER = "1" }
 
@@ -313,7 +313,7 @@ For a typical application:
 1. Create the scaffold with `incan new` or `incan init`.
 2. Fill in `[project]` metadata before sharing the repo.
 3. Keep `[project.scripts].main` pointed at the default entry point.
-4. Commit `incan.toml` and `incan.lock`.
+4. Commit `loaf.toml` and `oven.lock`.
 5. Use `incan version --dry-run` before bumping releases.
 6. Put repeatable local and CI commands under `incan env`, then inspect them with `incan env show` or `--dry-run`.
 
@@ -321,5 +321,5 @@ For a typical application:
 
 - [Project lifecycle reference](../reference/project_lifecycle.md)
 - [Imports and modules](imports_and_modules.md)
-- [Project configuration (`incan.toml`)](../../tooling/reference/project_configuration.md)
+- [Project configuration (`loaf.toml`)](../../tooling/reference/project_configuration.md)
 - [CLI reference](../../tooling/reference/cli_reference.md)

@@ -164,7 +164,7 @@ fn generated_application_artifact_matches_baseline() -> Result<(), Box<dyn std::
     let src_dir = project_root.join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        project_root.join("incan.toml"),
+        project_root.join("loaf.toml"),
         r#"[project]
 name = "artifact_app_baseline"
 version = "2.3.4"
@@ -222,7 +222,7 @@ fn generated_application_without_package_metadata_uses_compiler_defaults() -> Re
     let src_dir = project_root.join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        project_root.join("incan.toml"),
+        project_root.join("loaf.toml"),
         "[project]\nname = \"artifact_default_metadata\"\n",
     )?;
     write_fixture(&src_dir.join("main.incn"), "app_main.incn")?;
@@ -255,7 +255,7 @@ fn generated_library_and_pub_dependency_consumer_artifacts_match_baseline() -> R
     let src_dir = project_root.join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
-        project_root.join("incan.toml"),
+        project_root.join("loaf.toml"),
         r#"[project]
 name = "artifact_widgets_core"
 version = "4.5.6"
@@ -326,7 +326,7 @@ license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
     let consumer_src = consumer_root.join("src");
     fs::create_dir_all(&consumer_src)?;
     fs::write(
-        consumer_root.join("incan.toml"),
+        consumer_root.join("loaf.toml"),
         "[project]\nname = \"artifact_consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\nwidgets = { path = \"../artifact_widgets_project\" }\n",
     )?;
     write_fixture(&consumer_src.join("main.incn"), "consumer_main.incn")?;
@@ -382,7 +382,7 @@ fn path_dependency_artifact_rebuilds_for_a_b_a_feature_projections() -> Result<(
     let library_src = library_root.join("src");
     fs::create_dir_all(&library_src)?;
     fs::write(
-        library_root.join("incan.toml"),
+        library_root.join("loaf.toml"),
         r#"[project]
 name = "feature_library"
 version = "0.1.0"
@@ -408,7 +408,7 @@ when feature("beta"):
     let consumer_src = consumer_root.join("src");
     fs::create_dir_all(&consumer_src)?;
     fs::write(
-        consumer_root.join("incan.toml"),
+        consumer_root.join("loaf.toml"),
         r#"[project]
 name = "feature_consumer"
 version = "0.1.0"
@@ -554,7 +554,7 @@ fn a_package_projects_a_call_into_its_own_sibling_module() -> Result<(), Box<dyn
     let src = root.join("src");
     fs::create_dir_all(&src)?;
     fs::write(
-        root.join("incan.toml"),
+        root.join("loaf.toml"),
         "[project]\nname = \"pkgprobe\"\nversion = \"0.1.0\"\n",
     )?;
     fs::write(

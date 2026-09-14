@@ -1,0 +1,9 @@
+"""Negative frontend fixture: omission of required NativeContext.features must fail construction."""
+
+from plan import NativeContext
+
+
+pub def main() -> None:
+    """Do not silently assume empty features for a transport caller that omitted this native intent axis."""
+    context = NativeContext(target="target", toolchain="rustc", profile="debug")
+    assert context.target == "target"

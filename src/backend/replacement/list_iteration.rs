@@ -206,7 +206,13 @@ fn list_operand_element<'a>(
     let operand_type = match operand.place.projection.as_slice() {
         [] => Some(local_type),
         [PlaceElem::Index(_)] => list_element_type(local_type),
-        [PlaceElem::Field { name, canonical: None }] => match local_type {
+        [
+            PlaceElem::Field {
+                name,
+                canonical: None,
+                structural: true,
+            },
+        ] => match local_type {
             IncanType::Tuple(elements) => name.parse::<usize>().ok().and_then(|index| elements.get(index)),
             _ => None,
         },

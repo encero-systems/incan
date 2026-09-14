@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 /// Start one opt-in nested Incan-command measurement for an integration-test diagnostic run.
@@ -71,10 +72,89 @@ pub(crate) fn report_build_phase_timing(label: &str, output: &Output) {
 /// instead of embedding the archive producer's absolute `target/debug/incan` path in the test executable.
 #[allow(dead_code)]
 pub(crate) fn incan_binary() -> PathBuf {
-    std::env::var_os("CARGO_BIN_EXE_incan")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/incan"))
+    incan_debug_binary()
+}
+
+/// Locate the `incan` binary for subprocess tests.
+///
+/// Uses `CARGO_BIN_EXE_incan` when present (integration tests under `cargo test`) so we always run the artifact from
+/// the current build, including when `CARGO_TARGET_DIR` is not the default `target/`.
+#[allow(dead_code)]
+pub(crate) fn incan_debug_binary() -> PathBuf {
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_incan") {
+        let path = PathBuf::from(path);
+        if path.exists() {
+            return path;
+        }
+    }
+    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
+        let p = PathBuf::from(&target_dir).join("debug/incan");
+        if p.exists() {
+            return p;
+        }
+    }
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/incan")
+}
+
+/// Report whether the compiler suite handed this root a direct-Rustc consumer.
+///
+/// This is deliberately narrower than [`oven_compiler_suite_is_active`]: it asks only whether a suite-selected
+/// `RUSTC` is present, not whether any sealed-inventory execution form is. `incan_command` has always keyed the
+/// provider-store decision on the narrow question, and widening it would change which lane the legacy generated-Cargo
+/// provider store reaches.
+fn suite_selected_consumer_rustc() -> bool {
+    std::env::var_os("INCAN_OVEN_COMPILER_SUITE_RUSTC").is_some()
+}
+
+/// Build one `incan` subprocess wired to the generated Cargo target and SDK provider store the harness selected.
+///
+/// Every nested build a subprocess test drives must land in the harness-selected target rather than the repository's
+/// default `target/`, and must inherit the prepared provider store unless the compiler suite already sealed one.
+#[allow(dead_code)]
+pub(crate) fn incan_command() -> Command {
+    let mut command = Command::new(incan_debug_binary());
+    command
+        .env("INCAN_GENERATED_CARGO_TARGET_DIR", generated_cargo_target_dir())
+        .env("CARGO_NET_OFFLINE", "true");
+    if !suite_selected_consumer_rustc() {
+        command.env("INCAN_INTERNAL_SDK_PROVIDER_STORE", sdk_provider_store());
+    }
+    command
+}
+
+/// Strip SGR escape sequences so an assertion can match diagnostic text rather than its colouring.
+///
+/// Incan colours CLI diagnostics whenever the child inherits a terminal, and CI runners differ on whether they do.
+/// Tests assert on the text, so they decolour first instead of depending on the runner's terminal detection.
+#[allow(dead_code)]
+pub(crate) fn strip_ansi_escapes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            let _ = chars.next();
+            for c in chars.by_ref() {
+                if c == 'm' {
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+static TEST_PROJECT_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Create a throwaway project name that does not collide under parallel nextest workers.
+///
+/// Several CLI tests rely on the default `target/incan/<name>` output location. The generated project name includes
+/// both the current process id and a local counter so those tests do not trample each other's generated Cargo projects.
+#[allow(dead_code)]
+pub(crate) fn unique_test_project_name(prefix: &str) -> String {
+    let unique = TEST_PROJECT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}_{}_{}", std::process::id(), unique)
 }
 
 /// Return whether this test binary is executing with the scheduler-owned Oven Loaf closure.

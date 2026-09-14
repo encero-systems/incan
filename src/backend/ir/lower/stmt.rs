@@ -102,7 +102,10 @@ impl AstLowering {
                     reference_kind: super::super::expr::IrStaticReferenceKind::Source,
                 };
             }
-            return AssignTarget::Var(name.to_string());
+            return AssignTarget::Var {
+                name: name.to_string(),
+                ty: self.lookup_var(name),
+            };
         }
 
         if direct_static {
@@ -111,7 +114,10 @@ impl AstLowering {
                 reference_kind: super::super::expr::IrStaticReferenceKind::Source,
             }
         } else {
-            AssignTarget::Var(name.to_string())
+            AssignTarget::Var {
+                name: name.to_string(),
+                ty: self.lookup_var(name),
+            }
         }
     }
 
@@ -1495,7 +1501,7 @@ impl AstLowering {
                         },
                         lhs_ty.clone(),
                     ),
-                    AssignTarget::Var(_) => TypedExpr::new(
+                    AssignTarget::Var { .. } => TypedExpr::new(
                         IrExprKind::Var {
                             name: ca.name.clone(),
                             access: VarAccess::Move,

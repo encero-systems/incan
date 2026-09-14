@@ -77,9 +77,10 @@ quickstart="$incql/examples/quickstart"
 # compiler under test, and a pass proves nothing about the released consumer either. Refuse rather than produce a
 # result that reads like evidence. `--allow-dirty` is for deliberately testing a work-in-progress consumer.
 if [ "$allow_dirty" -eq 0 ] && git -C "$incql" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    # `incan.lock` is rewritten by the compiler itself, so a modified lockfile is evidence that the tool ran, not
-    # that someone edited the consumer. Flagging it would make this guard fire on every ordinary checkout.
-    dirty="$(git -C "$incql" status --porcelain --untracked-files=no | grep -v ' incan\.lock$' || true)"
+    # `oven.lock` is rewritten by the compiler itself, so a modified lockfile is evidence that the tool ran, not
+    # that someone edited the consumer. Flagging it would make this guard fire on every ordinary checkout. The
+    # pre-rename spelling stays filtered so a consumer checkout that still tracks one is not read as edited.
+    dirty="$(git -C "$incql" status --porcelain --untracked-files=no | grep -Ev ' (oven|incan)\.lock$' || true)"
     if [ -n "$dirty" ]; then
         printf 'gate_incql: the IncQL checkout has uncommitted changes, so a gate result would not be attributable:\n' >&2
         printf '%s\n' "$dirty" >&2
@@ -118,7 +119,7 @@ ln -sfn "$incan_source" "$incql/incan"
 
 # Residual consumer state can mask a broken selection path: the packaged-provider bug reproduced only from clean.
 printf '== Resetting consumer state ==\n'
-rm -rf "$quickstart/.incan" "$quickstart/target" "$quickstart/incan.lock"
+rm -rf "$quickstart/.incan" "$quickstart/target" "$quickstart/oven.lock" "$quickstart/incan.lock"
 
 run_stage() {
     local label="$1"

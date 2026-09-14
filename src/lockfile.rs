@@ -1,4 +1,4 @@
-//! `incan.lock` parsing, validation, and fingerprinting.
+//! `oven.lock` parsing, validation, and fingerprinting.
 //!
 //! The lockfile embeds a Cargo.lock payload and records a dependency fingerprint for strict `--locked` / `--frozen`
 //! builds.
@@ -12,16 +12,32 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+/// Layout version of the kept sealed-SDK semantic readings.
+///
+/// Bump this whenever the semantic digest itself changes meaning, so a compiler never reads a reading an earlier
+/// one computed under different rules. Old directories are inert once nothing names them.
+const SEALED_SEMANTIC_READING_LAYOUT: &str = "sealed-semantic-reading-v1";
+
 use crate::library_manifest::{
     ProviderSemanticToolchainDependency, digest_provider_semantic_artifact_with_context_and_cache,
     digest_toolchain_source_tree_with_cache,
 };
 use crate::manifest::{DependencySource, DependencySpec, GitReference};
-use crate::oven_interop::{LockedInteropTarget, OvenInteropSection, locked_oven_interop_targets_from_section};
+use crate::oven_interop::{InteropCSection, LockedInteropTarget, locked_interop_targets_from_section};
 use crate::provider::{
     BackendImplementationRequirement, ComponentSelectionReason, PackageFeaturePlan, ProviderParticipation,
     ProviderPlan, ProviderProvenance, ProviderRecord, ResolvedSdkComponents, SdkInventory,
 };
+
+/// The generated project lockfile's filename, resolved relative to a project or workspace root.
+///
+/// This names the *project* lock that records the resolved dependency, provider, and interop graph. RFC 117 makes
+/// `oven.lock` that file and states plainly that `incan.lock` is not read afterwards, so there is no compatibility
+/// path: a lock left behind by an older toolchain is inert state, not an input.
+///
+/// It is distinct from the artifact-store coordination lock and from the publication sibling this module derives from
+/// a lock's own filename; renaming this constant must not be taken to rename either of those.
+pub const LOCK_FILENAME: &str = "oven.lock";
 
 const LOCKFILE_FORMAT_VERSION: u32 = 2;
 const LEGACY_LOCKFILE_FORMAT_VERSION: u32 = 1;
@@ -252,14 +268,14 @@ impl IncanLock {
 /// Snapshot the shared provider, SDK-component, and package-feature plans into portable canonical lock state.
 pub fn semantic_lock_state(
     project_root: &Path,
-    interop: Option<&OvenInteropSection>,
+    interop: Option<&InteropCSection>,
     sdk_inventory: Option<&SdkInventory>,
     sdk_components: Option<&ResolvedSdkComponents>,
     package_features: Option<&PackageFeaturePlan>,
     provider_plan: &ProviderPlan,
     sdk_path_dependencies: &[DependencySpec],
 ) -> Result<SemanticLockState, String> {
-    let interop = locked_oven_interop_targets_from_section(project_root, interop)?;
+    let interop = locked_interop_targets_from_section(project_root, interop)?;
     let oven = (!interop.is_empty()).then_some(LockedOvenState { interop });
     let provider_identity_map = provider_semantic_identities(provider_plan, sdk_path_dependencies)?;
     let provider_semantic_identities = provider_plan
@@ -466,6 +482,24 @@ fn provider_dependency_semantic_digests(
     provider_plan: &ProviderPlan,
     semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
 ) -> Result<BTreeMap<String, String>, String> {
+    let key = provider_semantic_digest_key(provider_plan, semantic_toolchain_dependencies);
+    static DIGESTS: std::sync::OnceLock<std::sync::Mutex<BTreeMap<String, BTreeMap<String, String>>>> =
+        std::sync::OnceLock::new();
+    let memo = DIGESTS.get_or_init(|| std::sync::Mutex::new(BTreeMap::new()));
+    if let Ok(cached) = memo.lock()
+        && let Some(digests) = cached.get(&key)
+    {
+        return Ok(digests.clone());
+    }
+    let sealed = sealed_reading_path(provider_plan, &key);
+    if let Some(path) = sealed.as_ref()
+        && let Some(digests) = read_sealed_semantic_digests(path)
+    {
+        if let Ok(mut cached) = memo.lock() {
+            cached.insert(key, digests.clone());
+        }
+        return Ok(digests);
+    }
     let mut candidates = BTreeMap::<String, BTreeSet<String>>::new();
     let mut resolved_artifacts = BTreeMap::new();
     for provider in provider_plan.records() {
@@ -487,12 +521,132 @@ fn provider_dependency_semantic_digests(
             .or_default()
             .insert(semantic_digest);
     }
-    Ok(candidates
+    let digests = candidates
         .into_iter()
         .filter_map(|(physical, semantic)| {
             (semantic.len() == 1).then(|| semantic.into_iter().next().map(|semantic| (physical, semantic)))?
         })
-        .collect())
+        .collect::<BTreeMap<_, _>>();
+    if let Some(path) = sealed.as_ref() {
+        write_sealed_semantic_digests(path, &digests);
+    }
+    if let Ok(mut cached) = memo.lock() {
+        cached.insert(key, digests.clone());
+    }
+    Ok(digests)
+}
+
+/// Where this reading may be kept between runs, when the reading describes only Incan's own sealed SDK.
+///
+/// A reading over project dependencies is not a candidate: those roots are ordinary source the author edits, and a
+/// suite that bakes in temporary directories would leave one file behind per fixture. A reading over SDK providers
+/// alone is the opposite — the SDK arrives prebuilt in a content-addressed directory, so there is exactly one such
+/// reading per installed SDK and toolchain pairing, and it is correct until one of them is replaced.
+fn sealed_reading_path(provider_plan: &ProviderPlan, key: &str) -> Option<PathBuf> {
+    sealed_reading_path_under(sealed_reading_root()?, provider_plan, key)
+}
+
+/// Resolve the Incan home that keeps readings, matching how every other Incan-owned cache is placed.
+fn sealed_reading_root() -> Option<PathBuf> {
+    std::env::var_os("INCAN_HOME")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .filter(|path| !path.is_empty())
+                .map(|path| PathBuf::from(path).join(".incan"))
+        })
+}
+
+/// Place one reading under a given home, or refuse when the reading is not one that may be kept.
+fn sealed_reading_path_under(root: PathBuf, provider_plan: &ProviderPlan, key: &str) -> Option<PathBuf> {
+    let mut described_any = false;
+    for provider in provider_plan.records() {
+        if provider.manifest.is_none() || provider.artifact.is_none() {
+            continue;
+        }
+        if !matches!(provider.provenance, ProviderProvenance::Sdk { .. }) {
+            return None;
+        }
+        described_any = true;
+    }
+    if !described_any {
+        return None;
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(key.as_bytes());
+    let name = format!("{:x}.json", hasher.finalize());
+    Some(root.join("cache").join(SEALED_SEMANTIC_READING_LAYOUT).join(name))
+}
+
+/// Read one kept reading, treating anything unreadable as simply absent.
+///
+/// A cache may never fail a build. Every failure here — no file, a partial write from a killed process, a layout
+/// this compiler does not understand — falls through to computing the reading, which is always correct.
+fn read_sealed_semantic_digests(path: &Path) -> Option<BTreeMap<String, String>> {
+    serde_json::from_slice(&fs::read(path).ok()?).ok()
+}
+
+/// Keep one reading for later runs, atomically, and give up silently if the filesystem will not take it.
+///
+/// The rename is what makes a concurrent reader safe: many baker processes share one store, and a reader either
+/// sees the previous complete file or the new complete file, never a half-written one.
+fn write_sealed_semantic_digests(path: &Path, digests: &BTreeMap<String, String>) {
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let Ok(encoded) = serde_json::to_vec(digests) else {
+        return;
+    };
+    let staged = parent.join(format!(
+        "{}.{}.staging",
+        path.file_name().unwrap_or_default().to_string_lossy(),
+        std::process::id()
+    ));
+    if fs::write(&staged, encoded).is_err() {
+        let _ = fs::remove_file(&staged);
+        return;
+    }
+    if fs::rename(&staged, path).is_err() {
+        let _ = fs::remove_file(&staged);
+    }
+}
+
+/// Name the exact inputs one semantic-digest pass would read.
+///
+/// The pass walks every present provider artifact and hashes its semantic content. Its answer depends on nothing
+/// but which providers are in the plan — each already carrying the content digest the SDK recorded for it — and
+/// the exact support-crate roots the toolchain resolved, each likewise carrying its own content digest. Two passes
+/// agreeing on all of those are hashing the same bytes.
+fn provider_semantic_digest_key(
+    provider_plan: &ProviderPlan,
+    semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
+) -> String {
+    let mut key = String::new();
+    for provider in provider_plan.records() {
+        let (Some(_), Some(artifact)) = (provider.manifest.as_deref(), provider.artifact.as_ref()) else {
+            continue;
+        };
+        key.push('\u{1e}');
+        key.push_str(&provider.identity.digest);
+        key.push('\u{1d}');
+        key.push_str(&artifact.crate_root.to_string_lossy());
+    }
+    for dependency in semantic_toolchain_dependencies {
+        key.push('\u{1c}');
+        key.push_str(&dependency.crate_name);
+        key.push('\u{1d}');
+        key.push_str(&dependency.package_name);
+        key.push('\u{1d}');
+        key.push_str(&dependency.content_digest);
+        key.push('\u{1d}');
+        key.push_str(&dependency.artifact_root.to_string_lossy());
+    }
+    key
 }
 
 /// Hash the relocatable SDK inventory after replacing physical provider digests with semantic lock identities.
@@ -662,7 +816,7 @@ fn backend_requirement_name(requirement: &BackendImplementationRequirement) -> S
 /// dependencies, so the same checkout produces the same lock bytes on every machine (#1226). Only when no relative
 /// rendering exists (different Windows path prefixes, or a path that cannot be anchored) does the coordinate stay
 /// absolute, which then genuinely is machine state.
-fn portable_project_path(project_root: &Path, path: &Path) -> String {
+pub(crate) fn portable_project_path(project_root: &Path, path: &Path) -> String {
     let canonical_root = fs::canonicalize(project_root);
     let canonical_path = fs::canonicalize(path);
     let both_canonical = canonical_root.is_ok() && canonical_path.is_ok();
@@ -758,10 +912,13 @@ pub(crate) fn compiler_lock_state_dir(project_root: &Path) -> PathBuf {
 /// Retain the compiler-owned lock descriptor for the entire publication critical section.
 ///
 /// The persistent advisory-lock file lives below `target/incan_lock`, which is already compiler-owned ignored state,
-/// rather than beside `incan.lock` in the project root. When an older compiler has already created the legacy sibling,
-/// new compilers acquire that inode first and retain it alongside the active guard. This preserves mixed-version
-/// exclusion without creating or unlinking legacy project-root state on clean projects. A project with no legacy inode
-/// is an intentional protocol cutover: an older compiler started later cannot discover the new hidden guard.
+/// rather than beside `oven.lock` in the project root. When an older compiler has already created the legacy sibling
+/// for this lock, new compilers acquire that inode first and retain it alongside the active guard, preserving
+/// mixed-version exclusion without creating or unlinking legacy project-root state on clean projects.
+///
+/// Since the project lock's rename that sibling cannot exist for an `oven.lock` target — see
+/// [`legacy_publication_lock_path`] — so the acquisition is a no-op there and mixed-version exclusion is instead
+/// provided by the rename itself: a compiler from before it publishes `incan.lock` and never contends for this file.
 pub(crate) fn acquire_publication_lock(path: &Path) -> io::Result<PublicationLock> {
     let legacy = acquire_legacy_publication_lock_if_present(path)?;
     let lock_path = publication_lock_path(path)?;
@@ -810,6 +967,13 @@ fn acquire_legacy_publication_lock_if_present(path: &Path) -> io::Result<Option<
 }
 
 /// Resolve the sibling advisory-lock path used by compilers predating issue #912.
+///
+/// The `.incan.lock` suffix is the toolchain's generic advisory-lock sidecar convention — `std.fs` derives the same
+/// `.<name>.incan.lock` identity for any protected path — and not a spelling of the project lock, so it does not
+/// follow the project lock's rename. The prefix does, because it comes from the caller's own file name. That is what
+/// keeps the guard correct rather than merely inherited: for `oven.lock` it resolves to a path no compiler predating
+/// this guard can have created, so the guard is inert exactly where mixed-version exclusion no longer has anything to
+/// exclude — a compiler from before the rename publishes `incan.lock` and never contends for this target.
 fn legacy_publication_lock_path(path: &Path) -> io::Result<PathBuf> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path.file_name().ok_or_else(|| {
@@ -1444,7 +1608,7 @@ mod tests {
         create_legacy_identity: bool,
     ) -> TestResult {
         let project = tempfile::tempdir()?;
-        let lock_path = project.path().join("incan.lock");
+        let lock_path = project.path().join("oven.lock");
         if create_legacy_identity {
             fs::write(legacy_publication_lock_path(&lock_path)?, [])?;
         }
@@ -1740,8 +1904,8 @@ mod tests {
             semantic.clone(),
             "version = 4\n".to_string(),
         );
-        let first_lock_path = temp.path().join("first/incan.lock");
-        let second_lock_path = temp.path().join("second/incan.lock");
+        let first_lock_path = temp.path().join("first/oven.lock");
+        let second_lock_path = temp.path().join("second/oven.lock");
         fs::create_dir_all(first_lock_path.parent().ok_or("first lock path has no parent")?)?;
         fs::create_dir_all(second_lock_path.parent().ok_or("second lock path has no parent")?)?;
         first_lock.write(&first_lock_path)?;
@@ -1905,6 +2069,65 @@ mod tests {
             &second_specs,
         );
         assert_ne!(second_fingerprint, changed_fingerprint);
+        Ok(())
+    }
+
+    #[test]
+    fn a_sealed_sdk_reading_is_kept_between_runs_and_a_partial_one_reads_as_absent() -> TestResult {
+        // Keeping a reading is only correct for providers that arrive prebuilt, and a kept reading may never fail
+        // a build: anything unreadable has to look like nothing was kept at all.
+        let temp = tempfile::tempdir()?;
+        let home = temp.path().join("incan-home");
+        let fixture = production_toolchain_semantic_fixture(&temp.path().join("sealed"))?;
+
+        let Some(kept) = sealed_reading_path_under(home.clone(), &fixture.provider_plan, "reading-key") else {
+            return Err("an SDK-only reading must be keepable".into());
+        };
+        assert!(kept.starts_with(&home), "a kept reading belongs under the Incan home");
+        assert_eq!(
+            Some(kept.clone()),
+            sealed_reading_path_under(home.clone(), &fixture.provider_plan, "reading-key"),
+            "one reading must always land on one path"
+        );
+        assert_ne!(
+            Some(kept.clone()),
+            sealed_reading_path_under(home, &fixture.provider_plan, "another-key"),
+            "a different reading must land somewhere else"
+        );
+
+        let digests = BTreeMap::from([("sha256:physical".to_string(), "sha256:semantic".to_string())]);
+        write_sealed_semantic_digests(&kept, &digests);
+        assert_eq!(read_sealed_semantic_digests(&kept), Some(digests));
+
+        fs::write(&kept, b"{ not json")?;
+        assert_eq!(
+            read_sealed_semantic_digests(&kept),
+            None,
+            "a partial write from a killed process must read as absent, not as an error"
+        );
+        assert_eq!(read_sealed_semantic_digests(&temp.path().join("absent.json")), None);
+        Ok(())
+    }
+
+    #[test]
+    fn repeating_a_semantic_identity_pass_answers_from_the_first_one() -> TestResult {
+        // The pass hashes every present provider artifact, and a bake asks for it twice. Repeating it must answer
+        // identically, and a relocated SDK must not be served the earlier reading: its provider artifacts sit at
+        // different roots, which is exactly what the surrounding relocation test distinguishes.
+        let temp = tempfile::tempdir()?;
+        let sealed = production_toolchain_semantic_fixture(&temp.path().join("sealed"))?;
+        let relocated = production_toolchain_semantic_fixture(&temp.path().join("relocated"))?;
+
+        let first = provider_semantic_identities(&sealed.provider_plan, &sealed.specs)?;
+        let repeated = provider_semantic_identities(&sealed.provider_plan, &sealed.specs)?;
+        assert_eq!(first, repeated, "a repeated pass over one plan must answer identically");
+
+        let elsewhere = provider_semantic_identities(&relocated.provider_plan, &relocated.specs)?;
+        assert_ne!(
+            first.keys().collect::<Vec<_>>(),
+            elsewhere.keys().collect::<Vec<_>>(),
+            "a second SDK root is a separate reading, not a repeat of the first"
+        );
         Ok(())
     }
 
@@ -2176,9 +2399,9 @@ mod tests {
             "int bridge(void) { return 7; }\n",
         )?;
         fs::write(project.path().join("interop/lib/libfixture.a"), b"fixture archive")?;
-        let mut interop = OvenInteropSection {
-            schema: crate::oven_interop::OVEN_INTEROP_SCHEMA_VERSION,
-            targets: vec![crate::oven_interop::OvenInteropTarget {
+        let mut interop = InteropCSection {
+            schema: crate::oven_interop::INTEROP_C_SCHEMA_VERSION,
+            targets: vec![crate::oven_interop::InteropCTarget {
                 target: "aarch64-apple-ios".to_string(),
                 toolchain: Some(crate::oven_interop::ToolchainRequirement {
                     capability: "apple-clang".to_string(),
@@ -2307,7 +2530,7 @@ mod tests {
         );
 
         let dir = tempfile::tempdir()?;
-        let path = dir.path().join("incan.lock");
+        let path = dir.path().join("oven.lock");
         lock.write(&path)?;
 
         let content = std::fs::read_to_string(&path)?;
@@ -2325,7 +2548,7 @@ mod tests {
     #[test]
     fn publication_lock_lives_in_compiler_owned_target_state() -> TestResult {
         let project = tempfile::tempdir()?;
-        let lock_path = project.path().join("incan.lock");
+        let lock_path = project.path().join("oven.lock");
 
         drop(acquire_publication_lock(&lock_path)?);
         drop(acquire_publication_lock(&lock_path)?);
@@ -2333,11 +2556,11 @@ mod tests {
         assert!(
             project
                 .path()
-                .join("target/incan_lock/.incan.lock.publication.lock")
+                .join("target/incan_lock/.oven.lock.publication.lock")
                 .is_file()
         );
         assert!(
-            !project.path().join(".incan.lock.incan.lock").exists(),
+            !project.path().join(".oven.lock.incan.lock").exists(),
             "lock publication must not create a persistent project-root sidecar"
         );
         Ok(())
@@ -2346,8 +2569,8 @@ mod tests {
     #[test]
     fn publication_lock_does_not_unlink_a_legacy_lock_inode() -> TestResult {
         let project = tempfile::tempdir()?;
-        let lock_path = project.path().join("incan.lock");
-        let legacy_lock_path = project.path().join(".incan.lock.incan.lock");
+        let lock_path = project.path().join("oven.lock");
+        let legacy_lock_path = project.path().join(".oven.lock.incan.lock");
         fs::write(&legacy_lock_path, [])?;
 
         drop(acquire_publication_lock(&lock_path)?);
@@ -2370,7 +2593,7 @@ mod tests {
         );
 
         let dir = tempfile::tempdir()?;
-        let path = dir.path().join("incan.lock");
+        let path = dir.path().join("oven.lock");
         lock.write(&path)?;
 
         let loaded = IncanLock::load(&path)?;
@@ -2424,7 +2647,7 @@ mod tests {
     #[test]
     fn legacy_generated_timestamp_is_accepted_on_load() -> TestResult {
         let dir = tempfile::tempdir()?;
-        let path = dir.path().join("incan.lock");
+        let path = dir.path().join("oven.lock");
         let legacy_toml = r#"
 [incan]
 format = 1
@@ -2526,7 +2749,7 @@ lock = "payload"
     #[test]
     fn lockfile_format_version_checked() -> TestResult {
         let dir = tempfile::tempdir()?;
-        let path = dir.path().join("incan.lock");
+        let path = dir.path().join("oven.lock");
 
         // Write a lockfile with an incompatible format version
         let bad_toml = r#"

@@ -123,6 +123,18 @@ def greet(name: str) -> str:
             "comment reattachment is not a fixed point",
         ),
         (
+            "advanced/package_features/consumer/src/main.incn",
+            "comment reattachment is not a fixed point",
+        ),
+        (
+            "advanced/package_features/leaf/src/lib.incn",
+            "comment reattachment is not a fixed point",
+        ),
+        (
+            "advanced/package_features/producer/src/lib.incn",
+            "comment reattachment is not a fixed point",
+        ),
+        (
             "advanced/using_rust_crates.incn",
             "formatter refuses: would drop comments",
         ),

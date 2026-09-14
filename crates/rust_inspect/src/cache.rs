@@ -174,7 +174,7 @@ struct DiskCacheEnvelope {
 }
 
 // Bump when extracted metadata semantics change in a way that makes previously persisted items unsafe to reuse.
-const DISK_CACHE_FORMAT: u32 = 38;
+const DISK_CACHE_FORMAT: u32 = 40;
 const DISK_CACHE_FILE: &str = ".incan_rust_inspect_cache.json";
 // Backward-compatibility read path for caches written before the crate/module rename.
 const LEGACY_DISK_CACHE_FILE: &str = ".incan_rust_metadata_cache.json";
@@ -2077,6 +2077,7 @@ fn source_function_metadata(
         definition_path: Some(definition),
         visibility: RustVisibility::Public,
         kind: RustItemKind::Function(RustFunctionSig {
+            receiver_contract: None,
             type_params: source_function_type_params(&function),
             params,
             return_type,
@@ -2133,6 +2134,7 @@ fn source_function_signature(
         .map(|ty| ctx.type_display(ty.syntax().text().to_string().as_str()))
         .unwrap_or_else(|| "()".to_string());
     RustFunctionSig {
+        receiver_contract: crate::receiver_contract::receiver_contract(function),
         type_params: source_function_type_params(function),
         params,
         return_type,
@@ -2381,7 +2383,48 @@ fn collect_source_public_reexport_paths(
     public_reexports
 }
 
-/// Collect public inherent methods recursively from one source item list without loading rust-analyzer.
+/// Recognize a source-written implementation of an admitted Rust prelude trait without guessing a method contract.
+/// Unqualified names require an unshadowed module; imports, macros, and local declarations can shadow the prelude.
+fn source_prelude_trait_is_unshadowed(
+    trait_type: &ast::Type,
+    items: &[ast::Item],
+    ctx: &SourceMetadataContext<'_>,
+) -> bool {
+    use incan_core::lang::traits::{self, TraitId};
+    let spelling = trait_type.syntax().text().to_string();
+    let resolved = ctx.type_display(&spelling);
+    let head = spelling.trim_start_matches("::").split("::").next().unwrap_or_default();
+    if matches!(head, "std" | "core")
+        && (ctx.aliases.get(head).is_some_and(|target| target != head)
+            || items.iter().any(|item| {
+                item.syntax()
+                    .children()
+                    .filter_map(ast::Name::cast)
+                    .any(|name| name.to_string() == head)
+            }))
+    {
+        return false;
+    }
+    // Extend this trait inventory only with source-backed receiver tests. No method names or signatures are invented.
+    [TraitId::Clone].into_iter().any(|id| {
+        if traits::rust_paths(id).contains(&resolved.as_str()) || traits::rust_paths(id).contains(&spelling.as_str()) {
+            return true;
+        }
+        spelling == traits::as_str(id)
+            && !ctx.aliases.contains_key(&spelling)
+            && !items.iter().any(|item| {
+                matches!(item, ast::Item::MacroCall(_))
+                    || item
+                        .syntax()
+                        .children()
+                        .filter_map(ast::Name::cast)
+                        .any(|name| name.to_string() == spelling)
+                    || matches!(item, ast::Item::Use(import) if import.syntax().text().to_string().contains('*'))
+            })
+    })
+}
+
+/// Collect inherent methods first, then source-written prelude methods whose actual receiver signatures are known.
 #[allow(clippy::too_many_arguments)]
 fn collect_source_inherent_methods_in_items<'a>(
     items: impl Iterator<Item = ast::Item> + Clone + 'a,
@@ -2393,6 +2436,7 @@ fn collect_source_inherent_methods_in_items<'a>(
     public_reexports: &HashMap<String, String>,
     methods_by_type: &mut HashMap<String, Vec<RustMethodSig>>,
     seen: &mut HashSet<(String, String)>,
+    prelude_phase: bool,
 ) {
     let items = items.collect::<Vec<_>>();
     let aliases = source_items_import_aliases(
@@ -2411,9 +2455,17 @@ fn collect_source_inherent_methods_in_items<'a>(
         preferred_external_paths,
         source_public_reexports: public_reexports,
     };
-    for item in items {
+    for item in &items {
         match item {
-            ast::Item::Impl(impl_item) if impl_item.trait_().is_none() => {
+            ast::Item::Impl(impl_item)
+                if if prelude_phase {
+                    impl_item
+                        .trait_()
+                        .is_some_and(|trait_type| source_prelude_trait_is_unshadowed(&trait_type, &items, &ctx))
+                } else {
+                    impl_item.trait_().is_none()
+                } =>
+            {
                 let Some(self_ty) = impl_item.self_ty() else {
                     continue;
                 };
@@ -2425,7 +2477,7 @@ fn collect_source_inherent_methods_in_items<'a>(
                     let ast::AssocItem::Fn(function) = assoc else {
                         continue;
                     };
-                    if !ast_visibility_is_public(function.visibility()) {
+                    if !prelude_phase && !ast_visibility_is_public(function.visibility()) {
                         continue;
                     }
                     let Some(name) = function.name() else {
@@ -2463,6 +2515,7 @@ fn collect_source_inherent_methods_in_items<'a>(
                     public_reexports,
                     methods_by_type,
                     seen,
+                    prelude_phase,
                 );
             }
             _ => {}
@@ -2501,18 +2554,27 @@ fn build_source_metadata_indexes(
         collect_source_public_reexport_paths(crate_name, external_crates, preferred_external_paths, files.as_slice());
     let mut methods_by_type: HashMap<String, Vec<RustMethodSig>> = HashMap::new();
     let mut seen = HashSet::new();
-    for file in &files {
-        collect_source_inherent_methods_in_items(
-            file.parsed.items(),
-            &file.module_path,
-            &file.aliases,
-            crate_name,
-            external_crates,
-            preferred_external_paths,
-            &public_reexports,
-            &mut methods_by_type,
-            &mut seen,
-        );
+    let implicit_prelude = !files
+        .iter()
+        .any(|file| file.parsed.syntax().text().to_string().contains("no_implicit_prelude"));
+    for prelude_phase in [false, true] {
+        if prelude_phase && !implicit_prelude {
+            continue;
+        }
+        for file in &files {
+            collect_source_inherent_methods_in_items(
+                file.parsed.items(),
+                &file.module_path,
+                &file.aliases,
+                crate_name,
+                external_crates,
+                preferred_external_paths,
+                &public_reexports,
+                &mut methods_by_type,
+                &mut seen,
+                prelude_phase,
+            );
+        }
     }
     for methods in methods_by_type.values_mut() {
         methods.sort_by(|left, right| left.name.cmp(&right.name));
@@ -3016,6 +3078,7 @@ fn source_macro_function_metadata(
         definition_path: Some(definition.join("::")),
         visibility: RustVisibility::Public,
         kind: RustItemKind::Function(RustFunctionSig {
+            receiver_contract: None,
             type_params: Vec::new(),
             params,
             return_type: expr_display,

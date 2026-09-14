@@ -1,0 +1,13 @@
+# Package features across a three-member workspace: `report_app` -> `reporting` (with `json`) -> `json_support`.
+#
+# Bake the providers leaf-first, then run the consumer:
+#     incan oven bake --project leaf
+#     incan oven bake --project producer
+#     incan run consumer/src/main.incn
+
+from pub::reporting import report_json, report_value
+
+
+def main() -> None:
+    println(f"value: {report_value()}")
+    println(f"json:  {report_json('report')}")

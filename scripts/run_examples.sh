@@ -5,13 +5,13 @@ set -euo pipefail
 #Use: `bash scripts/run_examples.sh` or `make examples`.
 
 # Smoke-test examples:
-# - Pre-build nested example library projects (`incan.toml` + `src/lib.incn`)
+# - Pre-build nested example library projects (`loaf.toml` + `src/lib.incn`)
 # - Typecheck every example file under examples/ (recursively)
 # - Run only entrypoints (files that define `def main(...)`)
 # - Skip long-running examples (web examples) and anything that times out
 #
 # Configuration:
-#   INCAN_BIN               path to the incan binary (default: ./target/release/incan if present, else `incan`)
+#   INCAN_BIN               path to the incan binary (default: $CARGO_TARGET_DIR/release/incan if present, else `incan`)
 #   INCAN_EXAMPLES_TIMEOUT  per-example timeout in seconds for `incan run` (default: 30)
 #   INCAN_EXAMPLES_ONLY     colon-separated repository-relative example paths to run (default: every example)
 #   INCAN_EXAMPLES_TIMEOUT_MODE
@@ -22,10 +22,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Honour CARGO_TARGET_DIR. A caller that redirects cargo's output — a worktree under a storage budget, a cache shared
+# between worktrees — otherwise has cargo writing one binary while this script silently runs an older one from the
+# default location, or falls through to whatever `incan` is on PATH.
+TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}"
 INCAN_BIN="${INCAN_BIN:-}"
 if [[ -z "$INCAN_BIN" ]]; then
-  if [[ -x "./target/release/incan" ]]; then
-    INCAN_BIN="./target/release/incan"
+  if [[ -x "$TARGET_DIR/release/incan" ]]; then
+    INCAN_BIN="$TARGET_DIR/release/incan"
   else
     INCAN_BIN="incan"
   fi
@@ -140,6 +144,18 @@ is_runnable_entrypoint() {
   grep -Eq '^[[:space:]]*def[[:space:]]+main[[:space:]]*[(]' "$file"
 }
 
+is_check_only_example() {
+  # These RFC 081 conformance consumers deliberately have no runtime lowering hook (see their READMEs).
+  case "$1" in
+    examples/pro/vocab_markform/consumer/src/main.incn|\
+    examples/pro/vocab_scriptkit/consumer/src/main.incn|\
+    examples/pro/vocab_styleforge/consumer/src/main.incn)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 should_skip_run() {
   local file="$1"
   # Skip web examples (typically start a server)
@@ -165,6 +181,8 @@ bake_example_project() {
 }
 
 prebake_example_providers() {
+  # A provider is baked leaf-first: a `leaf/` sibling that `producer/` depends on is published before `producer/`,
+  # because a bake never compiles a sibling on the caller's behalf (`examples/advanced/package_features`).
   local manifest
   while IFS= read -r manifest; do
     [[ -z "$manifest" ]] && continue
@@ -176,12 +194,17 @@ prebake_example_providers() {
       continue
     fi
     if selection_requires_project "$project_dir" || selection_requires_project "$consumer_dir"; then
+      local leaf_dir
+      leaf_dir="$(dirname "$project_dir")/leaf"
+      if [[ -f "$leaf_dir/loaf.toml" ]]; then
+        bake_example_project "$leaf_dir"
+      fi
       bake_example_project "$project_dir"
     fi
   done < <(
     find examples \
       \( -type d -name target -o -type d -name __pycache__ \) -prune -o \
-      -type f -name 'incan.toml' -print | sort
+      -type f -name 'loaf.toml' -print | sort
   )
 }
 
@@ -205,7 +228,8 @@ prebuild_example_libraries() {
     if grep -q -e '^\[rust-dependencies\]' -e '^\[dependencies\]' "$manifest"; then
       needs_explicit_bake=true
     fi
-    if [[ "$needs_explicit_bake" == true ]]; then
+    # Their producer still needs publication, but frontend-only conformance consumers cannot be baked.
+    if [[ "$needs_explicit_bake" == true ]] && ! is_check_only_example "$project_dir/src/main.incn"; then
       bake_example_project "$project_dir"
     fi
 
@@ -228,7 +252,7 @@ prebuild_example_libraries() {
   done < <(
     find examples \
       \( -type d -name target -o -type d -name __pycache__ \) -prune -o \
-      -type f -name 'incan.toml' -print | sort
+      -type f -name 'loaf.toml' -print | sort
   )
 }
 
@@ -250,7 +274,7 @@ while IFS= read -r f; do
     continue
   fi
   found_any=1
-  if is_runnable_entrypoint "$f" && ! should_skip_run "$f"; then
+  if is_runnable_entrypoint "$f" && ! should_skip_run "$f" && ! is_check_only_example "$f"; then
     # For runnable entrypoints, `incan run` already performs compile-time validation,
     # so we avoid a redundant prior `--check`.
     echo "==> run:   $f"
@@ -287,7 +311,10 @@ while IFS= read -r f; do
   log_file="$(log_file_for "check" "$f")"
   if "$INCAN_BIN" --check "$f" >"$log_file" 2>&1; then
     checked=$((checked + 1))
-    if is_runnable_entrypoint "$f" && should_skip_run "$f"; then
+    if is_check_only_example "$f"; then
+      echo "==> skip:  $f (check-only: no runtime lowering hook)"
+      skipped=$((skipped + 1))
+    elif is_runnable_entrypoint "$f" && should_skip_run "$f"; then
       echo "==> skip:  $f (excluded: long-running)"
       skipped=$((skipped + 1))
     fi

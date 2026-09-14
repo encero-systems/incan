@@ -362,7 +362,7 @@ impl<'a> IrEmitter<'a> {
 
     // ---- Import emission ----
 
-    /// Return whether an import path refers to the source-authored Incan stdlib namespace.
+    /// Return whether an import targets the Incan stdlib, including module imports from its root.
     pub(super) fn is_incan_source_stdlib_import(
         origin: &IrImportOrigin,
         qualifier: &IrImportQualifier,
@@ -370,7 +370,7 @@ impl<'a> IrEmitter<'a> {
     ) -> bool {
         !matches!(origin, IrImportOrigin::PubLibrary { .. })
             && !matches!(qualifier, IrImportQualifier::None)
-            && stdlib::is_any_stdlib_path(path)
+            && path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
     }
 
     /// Convert an IR import path into Rust path segments using the same qualification rules for imports and aliases.
@@ -852,7 +852,9 @@ impl<'a> IrEmitter<'a> {
                 })
                 .collect();
             Ok(quote! { #(#item_stmts)* })
-        } else if path.len() == 1 && !is_incan_source_stdlib {
+        } else if path.len() == 1 {
+            // Unaliased root modules are already defined by the project. This also covers `std.prelude`, whose
+            // canonical import path is the SDK facade root; reimporting it would duplicate `__incan_std`.
             Ok(quote! {})
         } else if export_module_import {
             Ok(quote! {
@@ -996,7 +998,8 @@ mod tests {
     };
 
     #[test]
-    fn stdlib_import_through_a_facade_finds_the_provider_by_the_declaring_module() {
+    fn stdlib_import_through_a_facade_finds_the_provider_by_the_declaring_module()
+    -> Result<(), Box<dyn std::error::Error>> {
         // A provider publishes the module that declares an item, not every facade re-exporting it. `from std.datetime
         // import utc` looks up `std.datetime.utc`, which the graph does not carry; the declaration lives at
         // `std.datetime.civil.naive.utc`, which it does.
@@ -1034,7 +1037,7 @@ mod tests {
 
         let registry = FunctionRegistry::new();
         let mut emitter = IrEmitter::new(&registry);
-        emitter.seed_sdk_provider_manifest_metadata(&manifest);
+        emitter.seed_sdk_provider_manifest_metadata(&manifest, None, None)?;
 
         // Import resolution proved the declaring module even though the facade path is not published.
         let item = IrImportItem {
@@ -1063,10 +1066,12 @@ mod tests {
             encode_incan_symbol_identity(&provider_identity),
             "a facade import must resolve to the provider's declaration, not a source-shaped stand-in"
         );
+        Ok(())
     }
 
     #[test]
-    fn stdlib_import_reexports_the_providers_identity_over_a_same_named_source_declaration() {
+    fn stdlib_import_reexports_the_providers_identity_over_a_same_named_source_declaration()
+    -> Result<(), Box<dyn std::error::Error>> {
         let provider_identity = CanonicalSymbolId {
             namespace: SymbolNamespace::OrdinaryLexical,
             origin: SymbolOrigin::Package {
@@ -1119,7 +1124,7 @@ mod tests {
         );
 
         let mut emitter = IrEmitter::new(&registry);
-        emitter.seed_sdk_provider_manifest_metadata(&manifest);
+        emitter.seed_sdk_provider_manifest_metadata(&manifest, None, None)?;
 
         let item = IrImportItem {
             name: "utc".to_string(),
@@ -1138,6 +1143,7 @@ mod tests {
             encode_incan_symbol_identity(&provider_identity),
             "a stdlib re-export must name the linked provider's declaration, not a same-named source one"
         );
+        Ok(())
     }
 
     #[test]

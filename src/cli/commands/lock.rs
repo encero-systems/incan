@@ -1,6 +1,6 @@
 //! Lock file generation and resolution for Incan projects.
 //!
-//! Handles creating and validating `incan.lock` files that pin dependency versions for reproducible builds.
+//! Handles creating and validating `oven.lock` files that pin dependency versions for reproducible builds.
 //! Used by both `incan lock` and the build pipeline.
 
 #[cfg(test)]
@@ -38,8 +38,8 @@ use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::generated_cache::{GeneratedCacheLease, resolve_generated_cargo_target};
 use crate::lockfile::{
-    CargoFeatureSelection, IncanLock, PublicationLock, SemanticLockState, compute_resolved_fingerprint_with_sdk_paths,
-    semantic_lock_state, workspace_semantic_lock_state,
+    CargoFeatureSelection, IncanLock, LOCK_FILENAME, PublicationLock, SemanticLockState,
+    compute_resolved_fingerprint_with_sdk_paths, semantic_lock_state, workspace_semantic_lock_state,
 };
 use crate::manifest::{DependencySpec, ProjectManifest};
 use crate::oven::legacy_cargo::OvenLegacyCargoInspectionPackage;
@@ -190,7 +190,7 @@ pub(crate) struct GeneratedLibraryDependencyPreheatRequest<'a> {
     pub cargo_policy: &'a CargoPolicy,
     /// Cargo target directory shared with the real generated library build.
     pub target_dir: &'a Path,
-    /// Embedded Cargo.lock payload from `incan.lock`.
+    /// Embedded Cargo.lock payload from `oven.lock`.
     pub cargo_lock_payload: &'a str,
     /// Exact canonical root authorizing Cargo-owned projection for the generated dependency workspace.
     pub cargo_lock_projection_root: Option<&'a str>,
@@ -207,7 +207,7 @@ struct DependencyPreheatContext<'a> {
     cargo_policy_flags: &'a [String],
 }
 
-/// Generate or update incan.lock for a project.
+/// Generate or update oven.lock for a project.
 pub fn lock_project(
     entry_file: Option<&PathBuf>,
     package_features: &FeatureSelection,
@@ -221,7 +221,7 @@ pub fn lock_project(
         .unwrap_or_else(|| PathBuf::from("."));
     let manifest = ProjectManifest::discover(&start_dir)
         .map_err(|e| CliError::failure(e.to_string()))?
-        .ok_or_else(|| CliError::failure("No incan.toml found (run `incan init`)"))?;
+        .ok_or_else(|| CliError::failure("No loaf.toml found (run `incan init`)"))?;
     enforce_project_toolchain_constraint(&manifest)?;
 
     let cargo_features = CargoFeatureSelection {
@@ -253,15 +253,15 @@ fn collect_and_publish_project_lock(
     if let Some(workspace) =
         WorkspaceGraph::discover(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?
     {
-        let lock_path = workspace.root().join("incan.lock");
+        let lock_path = workspace.root().join(LOCK_FILENAME);
         let publication_lock = crate::lockfile::acquire_publication_lock(&lock_path).map_err(|error| {
             CliError::failure(format!("failed to acquire workspace lock publication guard: {error}"))
         })?;
         let context = collect_workspace_lock_context(
             &workspace,
+            manifest.project_root(),
             entry_file,
             cargo_features,
-            package_features,
             sdk_profile_override,
             None,
         )?;
@@ -890,7 +890,7 @@ pub(crate) fn prepare_project_registry_source_authorities(
     for source in &authority.payload.registry_sources {
         let (root, catalog) = match source.owner {
             OvenProjectInspectionSourceOwner::Authority => {
-                (authority.artifact_root.as_path(), std::slice::from_ref(&source.package))
+                (authority.artifact_root(), std::slice::from_ref(&source.package))
             }
             OvenProjectInspectionSourceOwner::Constituent { index } => {
                 let owner = owners.get(index).ok_or_else(|| {
@@ -920,7 +920,7 @@ pub(crate) fn prepare_project_registry_source_authorities(
     let registry_lock_source = if sources.is_empty() {
         None
     } else {
-        let path = authority.artifact_root.join(OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH);
+        let path = authority.artifact_root().join(OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH);
         let metadata = fs::symlink_metadata(&path).map_err(|error| {
             CliError::failure(format!(
                 "project inspection authority lacks its sealed Cargo.lock at {}: {error}",
@@ -942,7 +942,7 @@ pub(crate) fn prepare_project_registry_source_authorities(
         .generated_out_dirs
         .iter()
         .map(|dir| crate::rust_inspect::SealedGeneratedOutDir {
-            out_dir: authority.artifact_root.join(&dir.relative_root),
+            out_dir: authority.artifact_root().join(&dir.relative_root),
             version: dir.version.clone(),
         })
         .collect::<Vec<_>>();
@@ -1036,7 +1036,7 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
 
     /// Bind generated test receipts to the exact project authority selected once for this command.
     pub(crate) fn authority_identity(&self) -> &str {
-        &self.authority.identity
+        self.authority.identity()
     }
 
     /// Project the one complete exact authority for one generated test batch.
@@ -1071,7 +1071,7 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
 #[cfg(feature = "rust_inspect")]
 fn project_inspection_selection_mismatch(requested_surface: &str) -> CliError {
     CliError::failure(format!(
-        "Oven Alpha project inspection authority does not cover {requested_surface}. The command selected registry roots outside the completed project Loaf's baked dependency surface. A command-local `--sdk-profile` or package-feature selection cannot reuse a Loaf baked for different roots. Use the baked selection; for a different SDK profile, persist it in `[sdk]` in `incan.toml` and rebake; for different package features, rerun `incan oven bake --project .` with the same feature flags."
+        "Oven Alpha project inspection authority does not cover {requested_surface}. The command selected registry roots outside the completed project Loaf's baked dependency surface. A command-local `--sdk-profile` or package-feature selection cannot reuse a Loaf baked for different roots. Use the baked selection; for a different SDK profile, persist it in `[sdk]` in `loaf.toml` and rebake; for different package features, rerun `incan oven bake --project .` with the same feature flags."
     ))
 }
 
@@ -1384,12 +1384,12 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         return resolve_workspace_lock_payload(WorkspaceLockResolutionRequest {
             workspace: &workspace,
             caller_project_name: project_name,
+            caller_root: manifest.project_root(),
             caller_resolved: &caller_resolved,
             caller_project_requirements: project_requirements,
             caller_entry_file: entry_file,
             cargo_features,
             cargo_policy,
-            package_features: package_features.unwrap_or(&default_package_features),
             sdk_profile_override,
         });
     }
@@ -1411,7 +1411,7 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
     } else {
         (caller_resolved.clone(), project_requirements.clone())
     };
-    let lock_path = project_root.join("incan.lock");
+    let lock_path = project_root.join(LOCK_FILENAME);
     let mut canonical_resolved_with_requirements = canonical_resolved;
     merge_project_requirement_dependencies(
         &mut canonical_resolved_with_requirements,
@@ -1444,24 +1444,24 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         if lock.deps_fingerprint != fingerprint {
             if strict {
                 return Err(CliError::failure(format!(
-                    "incan.lock is out of date\n\n\
+                    "oven.lock is out of date\n\n\
                      \x20 expected deps-fingerprint: {fingerprint}\n\
                      \x20   actual deps-fingerprint: {actual}\n\n\
                      This usually means your dependency inputs changed since the lock was generated:\n\n\
-                     \x20 - incan.toml dependency entries changed, and/or\n\
+                     \x20 - loaf.toml dependency entries changed, and/or\n\
                      \x20 - inline rust::... annotations changed, and/or\n\
                      \x20 - toolchain known-good defaults changed (if you rely on defaults)\n\
                      \x20 - Incan package-feature or SDK-profile selection changed, and/or\n\
                      \x20 - Cargo feature selection changed\n\n\
                      Fix:\n\n\
                      \x20   incan lock\n\n\
-                     Tip: Pin crate versions/features explicitly in incan.toml for stability \
+                     Tip: Pin crate versions/features explicitly in loaf.toml for stability \
                      across toolchain upgrades.",
                     actual = lock.deps_fingerprint,
                 )));
             }
             eprintln!(
-                "warning: incan.lock is out of date; continuing without using it as Oven lock authority or \
+                "warning: oven.lock is out of date; continuing without using it as Oven lock authority or \
                  rewriting it. Run `incan lock` to refresh it."
             );
             return Ok(LockResolution {
@@ -1473,7 +1473,7 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         }
         return Ok(LockResolution {
             // Normal Oven execution must not materialize a generated Cargo.lock from the compatibility payload
-            // retained in incan.lock. The payload is inert for this route; the semantic fingerprint above is the
+            // retained in oven.lock. The payload is inert for this route; the semantic fingerprint above is the
             // authority that was just verified.
             cargo_lock_authority: CargoLockAuthority::None,
             cargo_package_name: project_name.to_string(),
@@ -1483,7 +1483,7 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
     }
 
     if strict {
-        return Err(CliError::failure("incan.lock is missing; run `incan lock`".to_string()));
+        return Err(CliError::failure("oven.lock is missing; run `incan lock`".to_string()));
     }
 
     generate_oven_lockfile(
@@ -1575,9 +1575,9 @@ fn validate_oven_lock_policy_impl(
     {
         let context = collect_workspace_lock_context(
             &workspace,
+            manifest.project_root(),
             Some(entry_file),
             cargo_features,
-            package_features,
             sdk_profile_override,
             command_session,
         )?;
@@ -1595,10 +1595,10 @@ fn validate_oven_lock_policy_impl(
             &semantic_sdk_path_dependencies(&context.project_requirements),
         );
         return validate_oven_existing_lock(
-            &workspace.root().join("incan.lock"),
+            &workspace.root().join(LOCK_FILENAME),
             &fingerprint,
-            "workspace incan.lock is missing; run `incan lock` from any workspace member or the workspace root",
-            "workspace incan.lock",
+            "workspace oven.lock is missing; run `incan lock` from any workspace member or the workspace root",
+            "workspace oven.lock",
         );
     }
 
@@ -1626,10 +1626,10 @@ fn validate_oven_lock_policy_impl(
         &semantic_sdk_path_dependencies(&context.project_requirements),
     );
     validate_oven_existing_lock(
-        &project_root.join("incan.lock"),
+        &project_root.join(LOCK_FILENAME),
         &fingerprint,
-        "incan.lock is missing; run `incan lock`",
-        "incan.lock",
+        "oven.lock is missing; run `incan lock`",
+        "oven.lock",
     )
 }
 
@@ -1663,12 +1663,12 @@ fn validate_oven_existing_lock(
 struct WorkspaceLockResolutionRequest<'a> {
     workspace: &'a WorkspaceGraph,
     caller_project_name: &'a str,
+    caller_root: &'a Path,
     caller_resolved: &'a ResolvedDependencies,
     caller_project_requirements: &'a ProjectRequirements,
     caller_entry_file: Option<&'a Path>,
     cargo_features: &'a CargoFeatureSelection,
     cargo_policy: &'a CargoPolicy,
-    package_features: &'a FeatureSelection,
     sdk_profile_override: Option<&'a str>,
 }
 
@@ -1677,19 +1677,19 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
     let WorkspaceLockResolutionRequest {
         workspace,
         caller_project_name,
+        caller_root,
         caller_resolved,
         caller_project_requirements,
         caller_entry_file,
         cargo_features,
         cargo_policy,
-        package_features,
         sdk_profile_override,
     } = request;
     let context = collect_workspace_lock_context(
         workspace,
+        caller_root,
         caller_entry_file,
         cargo_features,
-        package_features,
         sdk_profile_override,
         None,
     )?;
@@ -1712,13 +1712,13 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
 
     let caller_resolved = caller_resolved.clone();
 
-    let lock_path = workspace.root().join("incan.lock");
+    let lock_path = workspace.root().join(LOCK_FILENAME);
     if lock_path.exists() {
         let lock = IncanLock::load(&lock_path).map_err(|error| CliError::failure(error.to_string()))?;
         if lock.deps_fingerprint != fingerprint {
             if strict {
                 return Err(CliError::failure(format!(
-                    "workspace incan.lock is out of date\n\n\
+                    "workspace oven.lock is out of date\n\n\
                      \x20 expected deps-fingerprint: {fingerprint}\n\
                      \x20   actual deps-fingerprint: {}\n\n\
                      Run `incan lock` from any workspace member or the workspace root to refresh the canonical lock.",
@@ -1726,7 +1726,7 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
                 )));
             }
             eprintln!(
-                "warning: workspace incan.lock is out of date; continuing without using it as Oven lock authority \
+                "warning: workspace oven.lock is out of date; continuing without using it as Oven lock authority \
                  or rewriting it. Run `incan lock` to refresh it."
             );
             return Ok(LockResolution {
@@ -1746,11 +1746,11 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
 
     if strict {
         return Err(CliError::failure(
-            "workspace incan.lock is missing; run `incan lock` from any workspace member or the workspace root",
+            "workspace oven.lock is missing; run `incan lock` from any workspace member or the workspace root",
         ));
     }
 
-    let publication_lock = crate::lockfile::acquire_publication_lock(&workspace.root().join("incan.lock"))
+    let publication_lock = crate::lockfile::acquire_publication_lock(&workspace.root().join(LOCK_FILENAME))
         .map_err(|error| CliError::failure(format!("failed to acquire workspace lock publication guard: {error}")))?;
     generate_oven_lockfile(
         workspace.root(),
@@ -1777,7 +1777,7 @@ struct ProjectLockContext {
 
 /// Canonical lock publication retained by one explicit project bake.
 ///
-/// The dependency surface is the exact normal and test closure used to publish `incan.lock`. Keeping it behind this
+/// The dependency surface is the exact normal and test closure used to publish `oven.lock`. Keeping it behind this
 /// immutable projection prevents source-authority publication from rediscovering the same project graph.
 pub(crate) struct PublishedOvenProjectLock {
     dependency_surface: ResolvedDependencies,
@@ -1801,39 +1801,198 @@ pub(crate) fn publish_oven_project_lock(
 ) -> CliResult<PublishedOvenProjectLock> {
     let manifest = ProjectManifest::discover(project_root)
         .map_err(|error| CliError::failure(error.to_string()))?
-        .ok_or_else(|| CliError::failure("explicit Oven project bake requires an incan.toml project"))?;
+        .ok_or_else(|| CliError::failure("explicit Oven project bake requires a loaf.toml project"))?;
     enforce_project_toolchain_constraint(&manifest)?;
     let cargo_features = CargoFeatureSelection::default().normalized();
-    let context =
-        collect_and_publish_project_lock(&manifest, Some(entrypoint), &cargo_features, package_features, None)?;
+    let context = match collect_and_publish_project_lock_for_provider_bake(
+        &manifest,
+        entrypoint,
+        &cargo_features,
+        package_features,
+    )? {
+        ProviderBakeLockPublication::Published(context) => context,
+        ProviderBakeLockPublication::Deferred {
+            member,
+            context,
+            reason,
+        } => {
+            eprintln!(
+                "note: workspace lock published without member `{member}`, which cannot resolve until its providers \
+                 are baked ({reason}); the next bake or `incan lock` that can see the whole workspace completes it"
+            );
+            context
+        }
+    };
     Ok(PublishedOvenProjectLock {
         dependency_surface: context.resolved,
     })
 }
 
+/// Outcome of publishing the canonical lock on behalf of one explicit provider bake.
+enum ProviderBakeLockPublication {
+    /// The whole-graph lock was collected and written.
+    Published(ProjectLockContext),
+    /// At least one sibling member could not resolve yet. The root lock was written with every member that could,
+    /// and the whole-graph fingerprint stays stale until the remaining members resolve.
+    Deferred {
+        member: String,
+        context: ProjectLockContext,
+        reason: String,
+    },
+}
+
+/// Collect the canonical lock for an explicit provider bake, tolerating siblings that are not bakeable yet.
+///
+/// RFC 077 makes the root lock a property of the whole workspace, and `incan lock` rightly refuses to publish a
+/// partial one. An explicit provider bake is the step that makes a sibling resolvable in the first place: a leaf
+/// provider is baked so that the member consuming it can be, and that consumer cannot contribute to the root lock
+/// until it is. Requiring the complete root lock before sealing the leaf is therefore a cycle no bake order can break
+/// (#1414). Here a member other than the one being baked may fail to resolve: the root lock is still written with
+/// every member that did, so each baked member's own entry — the part of the lock that is its build authority — is
+/// on disk from its own bake onward, and the whole-graph fingerprint stays stale until the last member resolves. A
+/// single-project bake and a failure in the baked member itself keep the strict path.
+fn collect_and_publish_project_lock_for_provider_bake(
+    manifest: &ProjectManifest,
+    entrypoint: &Path,
+    cargo_features: &CargoFeatureSelection,
+    package_features: &FeatureSelection,
+) -> CliResult<ProviderBakeLockPublication> {
+    let Some(workspace) =
+        WorkspaceGraph::discover(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?
+    else {
+        let context =
+            collect_and_publish_project_lock(manifest, Some(entrypoint), cargo_features, package_features, None)?;
+        return Ok(ProviderBakeLockPublication::Published(context));
+    };
+    let lock_path = workspace.root().join(LOCK_FILENAME);
+    let publication_lock = crate::lockfile::acquire_publication_lock(&lock_path)
+        .map_err(|error| CliError::failure(format!("failed to acquire workspace lock publication guard: {error}")))?;
+    let collection = collect_workspace_lock_context_tolerating(
+        &workspace,
+        manifest.project_root(),
+        Some(entrypoint),
+        cargo_features,
+        None,
+        None,
+        true,
+    )
+    .map_err(|failure| failure.error)?;
+    generate_oven_lockfile(
+        workspace.root(),
+        &collection.context.resolved,
+        &collection.context.project_requirements,
+        cargo_features,
+        &collection.context.semantic,
+        Some(&publication_lock),
+    )?;
+    let mut unresolved = collection.unresolved.into_iter();
+    match unresolved.next() {
+        None => Ok(ProviderBakeLockPublication::Published(collection.context)),
+        Some((member, error)) => Ok(ProviderBakeLockPublication::Deferred {
+            member,
+            context: collection.context,
+            reason: error.message,
+        }),
+    }
+}
+
+/// Why collecting the whole-workspace lock stopped.
+///
+/// The tolerant collection records unresolved siblings on its success path instead, so the failure carries only the
+/// error that ended the collection.
+struct WorkspaceLockMemberFailure {
+    error: CliError,
+}
+
 /// Collect every member's effective dependency inputs before lock generation.
 ///
 /// Crucially, this does not accept command scope: RFC 077 makes the root lock a property of the whole graph, so a
-/// command started in one member cannot narrow the fingerprint or omit another member's feature activation.
+/// command started in one member cannot narrow the fingerprint or omit another member's feature activation. For the
+/// same reason the command's `--features` selection never reaches the lock: every member, the one the command started
+/// in included, is recorded with its declared activation. Flags select what one command builds; a shared root file
+/// cannot carry each member's transient selection, and a member's entry must read the same whichever command last
+/// published the lock, because that entry is part of the member's sealed build authority. Applying one command's
+/// flags across the workspace is how an explicit provider bake failed on a package it was not baking (#1414).
 fn collect_workspace_lock_context(
     workspace: &WorkspaceGraph,
+    command_root: &Path,
     entry_file: Option<&Path>,
     cargo_features: &CargoFeatureSelection,
-    package_features: &FeatureSelection,
     sdk_profile_override: Option<&str>,
     command_session: Option<&CompilationSession>,
 ) -> CliResult<ProjectLockContext> {
-    let explicit_entry = entry_file.map(resolve_explicit_lock_entry).transpose()?;
+    collect_workspace_lock_context_by_member(
+        workspace,
+        command_root,
+        entry_file,
+        cargo_features,
+        sdk_profile_override,
+        command_session,
+    )
+    .map_err(|failure| failure.error)
+}
+
+/// [`collect_workspace_lock_context`] that reports which member stopped the collection.
+///
+/// The explicit provider bake needs the distinction: a failure in a member other than the one being baked is the
+/// ordering case it must tolerate, while a failure in the baked member itself is the bake's own error.
+fn collect_workspace_lock_context_by_member(
+    workspace: &WorkspaceGraph,
+    command_root: &Path,
+    entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+    sdk_profile_override: Option<&str>,
+    command_session: Option<&CompilationSession>,
+) -> Result<ProjectLockContext, WorkspaceLockMemberFailure> {
+    collect_workspace_lock_context_tolerating(
+        workspace,
+        command_root,
+        entry_file,
+        cargo_features,
+        sdk_profile_override,
+        command_session,
+        false,
+    )
+    .map(|collection| collection.context)
+}
+
+/// A workspace lock collection together with the members it had to leave out.
+struct WorkspaceLockCollection {
+    context: ProjectLockContext,
+    /// Members skipped because they could not resolve yet, with the reason each gave. Empty for a strict collection.
+    unresolved: Vec<(String, CliError)>,
+}
+
+/// Collect the workspace lock, optionally keeping members that resolve when a sibling cannot.
+///
+/// In strict mode any member failure ends the collection. In tolerant mode a failure in a member other than the one
+/// the command was started in is recorded and that member is left out, so the lock can carry every member that has
+/// become resolvable so far; the command's own member still fails the whole collection.
+#[allow(clippy::too_many_arguments)]
+fn collect_workspace_lock_context_tolerating(
+    workspace: &WorkspaceGraph,
+    command_root: &Path,
+    entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+    sdk_profile_override: Option<&str>,
+    command_session: Option<&CompilationSession>,
+    tolerate_unresolved_siblings: bool,
+) -> Result<WorkspaceLockCollection, WorkspaceLockMemberFailure> {
+    let outside = |error: CliError| WorkspaceLockMemberFailure { error };
+    let explicit_entry = entry_file
+        .map(resolve_explicit_lock_entry)
+        .transpose()
+        .map_err(outside)?;
     let explicit_entry_owner = explicit_entry
         .as_deref()
         .and_then(|entry| workspace.member_containing_path(entry));
     if let Some(entry) = explicit_entry.as_deref()
         && explicit_entry_owner.is_none()
     {
-        return Err(CliError::failure(format!(
+        return Err(outside(CliError::failure(format!(
             "lock entry {} is not contained by any selected workspace member",
             entry.display()
-        )));
+        ))));
     }
     let mut resolved = ResolvedDependencies {
         dependencies: Vec::new(),
@@ -1842,49 +2001,62 @@ fn collect_workspace_lock_context(
     let mut project_requirements = ProjectRequirements::default();
     let mut member_semantics = Vec::new();
     let mut has_context = false;
+    let mut unresolved = Vec::new();
 
+    let declared_defaults = FeatureSelection::default();
     for member in workspace.members() {
+        let member_is_command_target = project_roots_match(command_root, member.root());
+        let in_member = |error: CliError| WorkspaceLockMemberFailure { error };
         let manifest = workspace
             .effective_member_manifest(member)
-            .map_err(|error| CliError::failure(error.to_string()))?;
-        enforce_project_toolchain_constraint(&manifest)?;
-        let member_entry = explicit_entry
-            .as_deref()
-            .filter(|_| explicit_entry_owner.is_some_and(|owner| owner.root() == member.root()));
-        let Some(member_context) = collect_project_lock_context(
+            .map_err(|error| in_member(CliError::failure(error.to_string())))?;
+        enforce_project_toolchain_constraint(&manifest).map_err(in_member)?;
+        let member_session = command_session.filter(|session| {
+            session
+                .manifest
+                .as_ref()
+                .is_some_and(|session_manifest| project_roots_match(session_manifest.project_root(), member.root()))
+        });
+        let member_entry = explicit_entry.as_deref().filter(|_| member_is_command_target);
+        let member_context = match collect_project_lock_context(
             &manifest,
             member_entry,
             cargo_features,
-            package_features,
+            &declared_defaults,
             sdk_profile_override,
             Some(workspace),
-            command_session.filter(|session| {
-                session
-                    .manifest
-                    .as_ref()
-                    .is_some_and(|session_manifest| project_roots_match(session_manifest.project_root(), member.root()))
-            }),
-        )?
-        else {
-            continue;
+            member_session,
+        ) {
+            Ok(Some(context)) => context,
+            Ok(None) => continue,
+            Err(error) if tolerate_unresolved_siblings && !member_is_command_target => {
+                unresolved.push((member.name().to_string(), error));
+                continue;
+            }
+            Err(error) => return Err(in_member(error)),
         };
         has_context = true;
-        resolved = merge_workspace_resolved_dependencies(&resolved, &member_context.resolved)?;
+        resolved = merge_workspace_resolved_dependencies(&resolved, &member_context.resolved).map_err(outside)?;
         project_requirements =
-            merge_workspace_project_requirements(&project_requirements, &member_context.project_requirements)?;
+            merge_workspace_project_requirements(&project_requirements, &member_context.project_requirements)
+                .map_err(outside)?;
         member_semantics.push((member.root().to_path_buf(), member_context.semantic));
     }
 
     if !has_context {
-        return Err(CliError::failure(
+        return Err(outside(CliError::failure(
             "incan lock requires a FILE argument or at least one [project.scripts] entry across the workspace",
-        ));
+        )));
     }
-    let semantic = workspace_semantic_lock_state(workspace.root(), member_semantics).map_err(CliError::failure)?;
-    Ok(ProjectLockContext {
-        resolved,
-        project_requirements,
-        semantic,
+    let semantic = workspace_semantic_lock_state(workspace.root(), member_semantics)
+        .map_err(|error| outside(CliError::failure(error)))?;
+    Ok(WorkspaceLockCollection {
+        context: ProjectLockContext {
+            resolved,
+            project_requirements,
+            semantic,
+        },
+        unresolved,
     })
 }
 
@@ -2224,7 +2396,7 @@ fn collect_project_lock_context(
     let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
     let semantic = semantic_lock_state(
         session_manifest.project_root(),
-        session_manifest.oven_interop(),
+        session_manifest.interop_c(),
         session.sdk_inventory.as_deref(),
         session.sdk_components.as_ref(),
         session.package_feature_plan.as_ref(),
@@ -2577,12 +2749,12 @@ fn materialize_dependency_preheat_workspace(
 
 /// Cargo projection text held in an Oven-native lock.
 ///
-/// `incan.lock` retains this structurally valid inert payload for compatibility with the existing lockfile format,
+/// `oven.lock` retains this structurally valid inert payload for compatibility with the existing lockfile format,
 /// but normal command execution neither materializes nor consumes it. The explicit `legacy_cargo` publisher owns
 /// the historical exact Cargo projection below.
 const INERT_CARGO_LOCK_PAYLOAD: &str = "version = 4\n";
 
-/// Generate an Oven-native `incan.lock` without constructing a generated Cargo project.
+/// Generate an Oven-native `oven.lock` without constructing a generated Cargo project.
 ///
 /// The semantic provider graph and dependency fingerprint are the normal-command lock authority. A project that
 /// needs an actual Cargo resolution is outside this path and must enter the named `legacy_cargo` publisher.
@@ -2594,7 +2766,7 @@ fn generate_oven_lockfile(
     semantic: &SemanticLockState,
     publication_lock: Option<&PublicationLock>,
 ) -> CliResult<IncanLock> {
-    let lock_path = project_root.join("incan.lock");
+    let lock_path = project_root.join(LOCK_FILENAME);
     let owned_publication_lock = if publication_lock.is_none() {
         Some(
             crate::lockfile::acquire_publication_lock(&lock_path)
@@ -2622,7 +2794,7 @@ fn generate_oven_lockfile(
     let publication_lock = publication_lock
         .ok_or_else(|| CliError::failure("internal error: lock generation lost its publication guard"))?;
     lock.write_while_locked(&lock_path, publication_lock)
-        .map_err(|error| CliError::failure(format!("failed to write incan.lock: {error}")))?;
+        .map_err(|error| CliError::failure(format!("failed to write oven.lock: {error}")))?;
     Ok(lock)
 }
 
@@ -2927,7 +3099,7 @@ mod tests {
         let diagnostic = project_inspection_selection_mismatch("the requested registry dependencies").to_string();
 
         assert!(diagnostic.contains("command-local `--sdk-profile` or package-feature selection"));
-        assert!(diagnostic.contains("persist it in `[sdk]` in `incan.toml` and rebake"));
+        assert!(diagnostic.contains("persist it in `[sdk]` in `loaf.toml` and rebake"));
         assert!(diagnostic.contains("with the same feature flags"));
     }
 
@@ -2939,7 +3111,7 @@ mod tests {
         fs::create_dir_all(project.path().join("library"))?;
         fs::create_dir_all(project.path().join("bin"))?;
         fs::write(
-            project.path().join("incan.toml"),
+            project.path().join("loaf.toml"),
             "[project]\nname = \"custom-layout\"\n\n[project.scripts]\nworker = \"bin/worker.incn\"\n\n[build]\nsource-root = \"library\"\n",
         )?;
         fs::write(
@@ -3009,7 +3181,7 @@ mod tests {
         )?;
 
         assert_eq!(lock.cargo_lock_payload, INERT_CARGO_LOCK_PAYLOAD);
-        assert!(temp_dir.path().join("incan.lock").is_file());
+        assert!(temp_dir.path().join("oven.lock").is_file());
         let state_dir = crate::lockfile::compiler_lock_state_dir(temp_dir.path());
         assert!(
             !state_dir.join("Cargo.toml").exists() && !state_dir.join("target").exists(),
@@ -3026,7 +3198,7 @@ mod tests {
         fs::create_dir_all(project_root.join("src"))?;
         fs::create_dir_all(project_root.join("tests"))?;
         fs::write(
-            project_root.join("incan.toml"),
+            project_root.join("loaf.toml"),
             r#"[project]
 name = "single_lock_collection"
 version = "0.1.0"
@@ -3091,7 +3263,7 @@ regex = "1"
             "serde_json",
         ])));
         assert_eq!(dev_dependencies, BTreeSet::from(["regex"]));
-        let lock = IncanLock::load(&project_root.join("incan.lock"))?;
+        let lock = IncanLock::load(&project_root.join("oven.lock"))?;
         assert!(!lock.deps_fingerprint.is_empty());
         assert_eq!(lock.cargo_lock_payload, INERT_CARGO_LOCK_PAYLOAD);
         Ok(())
@@ -3102,7 +3274,7 @@ regex = "1"
     {
         let temp_dir = tempfile::tempdir()?;
         let project_root = temp_dir.path();
-        let manifest_path = project_root.join("incan.toml");
+        let manifest_path = project_root.join("loaf.toml");
         let entry_path = project_root.join("src/main.incn");
         fs::create_dir_all(entry_path.parent().ok_or("entry path has no parent")?)?;
         fs::write(
@@ -3130,7 +3302,7 @@ regex = "1"
 
         assert!(matches!(resolution.cargo_lock_authority, CargoLockAuthority::None));
         assert_eq!(
-            IncanLock::load(&project_root.join("incan.lock"))?.cargo_lock_payload,
+            IncanLock::load(&project_root.join("oven.lock"))?.cargo_lock_payload,
             INERT_CARGO_LOCK_PAYLOAD
         );
         let state_dir = crate::lockfile::compiler_lock_state_dir(project_root);
@@ -3186,7 +3358,7 @@ regex = "1"
         fs::create_dir_all(root.join("tests/nested"))?;
         fs::create_dir_all(consumer_root.join("tests"))?;
         fs::write(
-            root.join("incan.toml"),
+            root.join("loaf.toml"),
             r#"
 [project]
 name = "root"
@@ -3196,7 +3368,7 @@ members = ["packages/consumer"]
 "#,
         )?;
         fs::write(
-            consumer_root.join("incan.toml"),
+            consumer_root.join("loaf.toml"),
             r#"
 [project]
 name = "consumer"

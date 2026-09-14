@@ -19,9 +19,9 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | Feature | Category | Since | Activation | Canonical forms | Summary | Prefer over | References |
 |---|---|---:|---|---|---|---|---|
 | Namespaced stdlib imports and decorators | Stdlib | 0.2 | Import the relevant `std.*` module. | `from std.testing import assert_eq`<br>`from std.web.routing import route`<br>`@route("/hello")` | Standard-library APIs and compiler-owned decorators resolve through explicit `std.*` module paths. | Bare pre-0.2 stdlib names and ambient decorator magic. | [Imports and modules](imports_and_modules.md), [Standard library](stdlib/index.md), [Release 0.2](../../release_notes/0_2.md) |
-| Rust interop boundary | Interop | 0.2 | Declare Rust dependencies in `incan.toml`; import through `rust` / `rust::` paths. | `from rust import uuid`<br>`from rust::std::time import Instant`<br>`type UserId = rusttype i64` | Incan can import Rust crates, bind Rust paths, declare `rusttype` wrappers, and model explicit interop edges. | Custom Rust backend modules used when ordinary Rust imports or wrappers are sufficient. | [Rust interop](../how-to/rust_interop.md), [Rust types for Python developers](../how-to/rust_types_for_python_devs.md), [Release 0.2](../../release_notes/0_2.md) |
+| Rust interop boundary | Interop | 0.2 | Declare Rust dependencies in `loaf.toml`; import through `rust` / `rust::` paths. | `from rust import uuid`<br>`from rust::std::time import Instant`<br>`type UserId = rusttype i64` | Incan can import Rust crates, bind Rust paths, declare `rusttype` wrappers, and model explicit interop edges. | Custom Rust backend modules used when ordinary Rust imports or wrappers are sufficient. | [Rust interop](../how-to/rust_interop.md), [Rust types for Python developers](../how-to/rust_types_for_python_devs.md), [Release 0.2](../../release_notes/0_2.md) |
 | Checked C binding foundation | Interop | 0.5 | Import `c` from `std.interop`, then declare a `binding` in the importing module. | `from std.interop import c`<br>`binding LibC:`<br>`text = c.cstr(value)?`<br>`unsafe:     LibC.absolute(-7)` | Explicit C headers, exact scalar signatures (`i8`–`i128`, `u8`–`u128`, `usize`, `f32`, `f64`), opaque resources, output positions, paired byte or `f32` spans, bounded C-string text bridges, enum carriers, and plain layouts are verified before private generated C ABI calls. | Unverified Rust wrappers, ambient header discovery, string-based dynamic symbol lookup, or general raw-pointer access. | [std.interop](stdlib/interop.md), [RFC 116](../../RFCs/closed/implemented/116_typed_c_abi_interop.md), [Release 0.5](../../release_notes/0_5.md) |
-| Locked Oven interop requirements | Interop | 0.5 | Declare target-specific `[oven.interop]` requirements in `incan.toml`, then run `incan lock`. | `[oven.interop]`<br>`[[oven.interop.targets]]`<br>`incan lock` | Package-owned headers, artifacts, system capabilities, and C/C++ shim sources are declared explicitly alongside toolchain and SDK compatibility requirements, then frozen in the semantic lock. | Ambient host discovery, untracked interop source trees, or package manifests that claim a concrete local compiler or SDK has already been selected. | [Project configuration](../../tooling/reference/project_configuration.md#oveninterop), [Checked C bindings](../how-to/checked_c_bindings.md), [std.interop](stdlib/interop.md), [RFC 116](../../RFCs/closed/implemented/116_typed_c_abi_interop.md) |
+| Locked Oven interop requirements | Interop | 0.5 | Declare target-specific `[interop.c]` requirements in `loaf.toml`, then run `incan lock`. | `[interop.c]`<br>`[[interop.c.targets]]`<br>`incan lock` | Package-owned headers, artifacts, system capabilities, and C/C++ shim sources are declared explicitly alongside toolchain and SDK compatibility requirements, then frozen in the semantic lock. | Ambient host discovery, untracked interop source trees, or package manifests that claim a concrete local compiler or SDK has already been selected. | [Project configuration](../../tooling/reference/project_configuration.md#interopc), [Checked C bindings](../how-to/checked_c_bindings.md), [std.interop](stdlib/interop.md), [RFC 116](../../RFCs/closed/implemented/116_typed_c_abi_interop.md) |
 | Incan libraries and `pub::` imports | Libraries | 0.2 | Build libraries with `incan build --lib`; consume dependencies through `pub::` imports. | `from pub::mylib import my_module`<br>`from pub::mylib.my_module import my_function`<br>`pub from session import Session` | Projects publish checked APIs through explicit root facades and source-derived module namespaces. | Copying source files between projects or relying on private module paths. | [Imports and modules](imports_and_modules.md), [Release 0.2](../../release_notes/0_2.md), [Release 0.5](../../release_notes/0_5.md) |
 | Module static storage | Syntax | 0.2 | None. | `static hits: int = 0`<br>`pub static registry: dict[str, int] = {}` | `static` declares live module-owned runtime storage, distinct from deeply immutable `const` values. | Module-level mutable state hidden behind ad hoc helper functions. | [Static storage](static_storage.md), [Module state](../how-to/module_state.md), [Release 0.2](../../release_notes/0_2.md) |
 | First-class function references | TypeSystem | 0.2 | None. | `handler: Callable[int, str] = label`<br>`callbacks = [on_success, on_error]`<br>`Mapper with Callable1[int, str]` | Named functions and closures can be passed, stored, typed, and accepted through `CallableN` bounds. | Closures or wrappers whose only job is to pass through an existing named function. | [Functions and calls](functions.md), [Callable objects](stdlib_traits/callable.md), [Release 0.2](../../release_notes/0_2.md), [Release 0.5](../../release_notes/0_5.md) |
@@ -64,6 +64,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | `std.hash` hashing primitives | Stdlib | 0.3 | Import from `std.hash`. | `from std.hash import Sha256Hasher, sha256, file_digest`<br>`sink: Sha256Hasher = sha256.new()`<br>`sha256.digest(payload)`<br>`xxh3_64.new()`<br>`from std.hash import hmac_sha256`<br>`hmac_sha256.verify(key, payload, tag)` | `std.hash` provides deterministic byte, file, reader, and incremental hashing through explicit cryptographic, compatibility, and non-cryptographic algorithm namespaces. `Sha256Hasher` is a public stored-state handle for byte streams owned across model or class methods. `hmac_sha256` adds keyed authentication with constant-time verification, for values that arrive across a boundary the caller does not trust. | Ad hoc hashing shims, hidden default algorithms, `std.checksum` when the caller needs hash rather than checksum semantics, or an unkeyed digest where the caller actually needs to authenticate a value rather than detect corruption. | [std.hash](stdlib/hash.md), [Hashing data](../how-to/hashing_data.md), [RFC 065](../../RFCs/closed/implemented/065_std_hash.md), [Release 0.3](../../release_notes/0_3.md), [Release 0.5](../../release_notes/0_5.md), [Release 0.6](../../release_notes/0_6.md) |
 | `std.environ` runtime environment access | Stdlib | 0.5 | Import from `std.environ`. | `from std.environ import get, get_optional, get_or, get_as`<br>`token = get("API_TOKEN")?`<br>`port = get_as[Port]("PORT", default=8080)?` | `std.environ` provides redacted, read-only Unicode environment access through string helpers and typed `TryFrom[str]` reads for primitives, explicit adopters, and validated newtypes. | Direct `rust::std::env` imports or shell glue for ordinary runtime environment reads. | [std.environ](stdlib/environ.md), [RFC 089](../../RFCs/closed/implemented/089_std_environ.md), [Release 0.5](../../release_notes/0_5.md) |
 | `std.json` dynamic JSON values | Stdlib | 0.3 | Import from `std.json`. | `from std.json import JsonValue`<br>`JsonValue.parse(source)`<br>`value["key"]`<br>`value[0]` | `JsonValue` provides dynamic parse-inspect-transform JSON workflows with checked optional indexing, explicit shape inspection, mutation helpers, traversal, and typed-model interop. | Ad hoc dictionaries or over-modeled schemas for payloads whose shape is intentionally open. | [std.json](stdlib/json.md), [Derives: Serialization](derives/serialization.md), [Release 0.3](../../release_notes/0_3.md) |
+| `std.toml` project documents | Stdlib | 0.6 | Import from `std.toml`. | `from std import toml`<br>`document = toml.parse(source)?`<br>`document.get[str]("project.name")?`<br>`document.get_optional[str]("project.version")?`<br>`toml.deserialize[Manifest](source)`<br>`toml.serialize_pretty(lock)` | Read typed TOML values and declared models with located diagnostics, and serialize generated documents while retaining date/time kinds. Locate table values for application-owned validation diagnostics. | JSON conversion that discards TOML date/time kinds or structural-error source locations. | [std.toml](stdlib/toml.md), [API contract: issue #1409](https://github.com/encero-systems/incan/issues/1409) |
 | `std.tempfile` temporary resources | Stdlib | 0.3 | Import from `std.tempfile`. | `NamedTemporaryFile.try_new()`<br>`TemporaryDirectory.try_new()`<br>`tmp.persist()` | Temporary files and directories are explicit resources with cleanup and persist semantics. | Manual random path generation or unchecked cleanup around temporary files. | [std.tempfile](stdlib/tempfile.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.datetime` temporal values | Stdlib | 0.3 | Import from `std.datetime` modules or prelude. | `Date.utc_today()`<br>`DateTime.utc_now()`<br>`TimeDelta(days=1)` | Temporal APIs cover runtime timing, civil dates/times, fixed offsets, parsing/formatting, intervals, and calendar arithmetic. | Raw strings or integer timestamps inside code that has date/time semantics. | [std.datetime](stdlib/datetime.md), [Dates and times](../tutorials/dates_and_times.md), [Dates and times how-to](../how-to/dates_and_times.md) |
 | `std.telemetry.core` data model | Stdlib | 0.3 | Import from `std.telemetry.core` or the `std.telemetry` prelude. | `from std.telemetry.core import TelemetryValue, Attributes`<br>`TelemetryValue.string("ready")`<br>`Attributes.from_string_fields(fields)` | Telemetry core provides structured values, attributes, resources, scopes, and trace context identifiers without configuring providers or exporters. | Stringifying structured observability fields before they reach logging or telemetry boundaries. | [std.logging](stdlib/logging.md), [Release 0.3](../../release_notes/0_3.md) |
@@ -73,7 +74,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | `incan test` runner | Testing | 0.3 | Run `incan test`. | `module tests:`<br>`incan test --list`<br>`incan test --format json --junit report.xml` | The runner owns discovery, inline test modules, stable ids, selection, fixtures, parametrization, reporting, shuffling, and scheduling. | Project-local scripts that duplicate core test discovery and reporting behavior. | [Tooling: testing](../../tooling/how-to/testing.md), [std.testing](stdlib/testing.md), [Release 0.3](../../release_notes/0_3.md) |
 | Async and await | Async | 0.2 | Import `std.async` or one of its submodules. | `from std.async.time import sleep`<br>`async def main() -> None:`<br>`await sleep(1)` | `async` and `await` are import-activated soft-keyword surfaces backed by `std.async` modules. The 0.5 toolchain ships the checked async closure in its full-standard-library Loaf, so task, timeout, and supported runtime paths can build and run without invoking Cargo on the consumer path. | Threading async behavior through synchronous wrappers or relying on pre-0.2 ambient async syntax. | [Async programming](../how-to/async_programming.md), [std.async](stdlib/async.md), [Release 0.2](../../release_notes/0_2.md) |
 | Async race and awaitability | Async | 0.3 | Import `std.async.race` or the relevant async prelude helpers. | `race for value:`<br>`arm(task)`<br>`race(arms)` | `Awaitable[T]`, `race for`, and helper-style race composition support first-ready async workflows. | Legacy `std.async.select` or hand-rolled polling loops. | [Awaitable trait](stdlib_traits/awaitable.md), [Async programming](../how-to/async_programming.md), [Release 0.3](../../release_notes/0_3.md) |
-| Project lifecycle tooling | Tooling | 0.3 | Use `incan init`, `incan new`, `incan version`, or `incan env`. | `incan new greeter --yes`<br>`incan version patch`<br>`incan env run dev test` | Project commands create scaffolds, manage versions, and run configured environments from `incan.toml`. | One-off project scaffolding scripts or manual version-file edits. | [Project lifecycle](project_lifecycle.md), [Project lifecycle how-to](../how-to/project_lifecycle.md), [Release 0.3](../../release_notes/0_3.md) |
+| Project lifecycle tooling | Tooling | 0.3 | Use `incan init`, `incan new`, `incan version`, or `incan env`. | `incan new greeter --yes`<br>`incan version patch`<br>`incan env run dev test` | Project commands create scaffolds, manage versions, and run configured environments from `loaf.toml`. | One-off project scaffolding scripts or manual version-file edits. | [Project lifecycle](project_lifecycle.md), [Project lifecycle how-to](../how-to/project_lifecycle.md), [Release 0.3](../../release_notes/0_3.md) |
 | Workspace and multi-package projects | Tooling | 0.5 | Declare `[workspace]` in the repository root and inspect or select members through the CLI. | `incan workspace inspect --format json`<br>`incan test --workspace`<br>`incan build --member packages/api --report json` | Workspaces supply explicit rooted/virtual member topology, deterministic scope selection, explicit shared dependency and environment inheritance, one durable root lock, and member-scoped command reports. | Ad hoc directory conventions, member-local locks, or implicit cross-project dependency activation. | [Project lifecycle](project_lifecycle.md), [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.5](../../release_notes/0_5.md) |
 | Toolchain installer and release manifest | Tooling | 0.4 | Use the GitHub Release installer, Homebrew formula, npm package, pipx package, or versioned toolchain manifest. | `curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh \| bash`<br>`brew tap encero-systems/tap && brew install incan`<br>`npm install -g @incan/toolchain`<br>`pipx install incan` | The toolchain install path is manifest-driven, checksum-verified, and installs `incan` plus `incan-lsp` from the same release archives across direct and package-manager channels. Direct and pipx installation can provision pinned Rust 1.98.0 and `wasm32-wasip1`; npm and Homebrew install prebuilt command binaries and leave Rust management to the user. | Treating Cargo, repository checkouts, and package-manager adapters as separate sources of install truth. | [Install and run](../../tooling/how-to/install_and_run.md), [Release 0.4](../../release_notes/0_4.md) |
 | Zero-clone starter project flow | Tooling | 0.4 | Use `incan new`, then run project commands from the generated directory. | `incan new hello --yes`<br>`cd hello`<br>`incan run`<br>`incan test`<br>`incan build --release` | `incan new` creates a runnable, testable project with a manifest, entrypoint, starter test, README, `.gitignore`, and release-line toolchain constraint. | Cloning the compiler repository or copying examples manually before a first run. | [Getting started](../../tooling/tutorials/getting_started.md), [Project lifecycle](project_lifecycle.md), [Release 0.4](../../release_notes/0_4.md) |
@@ -114,7 +115,7 @@ Canonical forms:
 - **Since:** `0.2`
 - **RFC:** `RFC 041`
 - **Stability:** `Stable`
-- **Activation:** Declare Rust dependencies in `incan.toml`; import through `rust` / `rust::` paths.
+- **Activation:** Declare Rust dependencies in `loaf.toml`; import through `rust` / `rust::` paths.
 - **Use instead of:** Custom Rust backend modules used when ordinary Rust imports or wrappers are sufficient.
 - **References:** [Rust interop](../how-to/rust_interop.md), [Rust types for Python developers](../how-to/rust_types_for_python_devs.md), [Release 0.2](../../release_notes/0_2.md)
 
@@ -154,16 +155,16 @@ Canonical forms:
 - **Since:** `0.5`
 - **RFC:** `RFC 116`
 - **Stability:** `Experimental`
-- **Activation:** Declare target-specific `[oven.interop]` requirements in `incan.toml`, then run `incan lock`.
+- **Activation:** Declare target-specific `[interop.c]` requirements in `loaf.toml`, then run `incan lock`.
 - **Use instead of:** Ambient host discovery, untracked interop source trees, or package manifests that claim a concrete local compiler or SDK has already been selected.
-- **References:** [Project configuration](../../tooling/reference/project_configuration.md#oveninterop), [Checked C bindings](../how-to/checked_c_bindings.md), [std.interop](stdlib/interop.md), [RFC 116](../../RFCs/closed/implemented/116_typed_c_abi_interop.md)
+- **References:** [Project configuration](../../tooling/reference/project_configuration.md#interopc), [Checked C bindings](../how-to/checked_c_bindings.md), [std.interop](stdlib/interop.md), [RFC 116](../../RFCs/closed/implemented/116_typed_c_abi_interop.md)
 
 Package-owned headers, artifacts, system capabilities, and C/C++ shim sources are declared explicitly alongside toolchain and SDK compatibility requirements, then frozen in the semantic lock.
 
 Canonical forms:
 
-- `[oven.interop]`
-- `[[oven.interop.targets]]`
+- `[interop.c]`
+- `[[interop.c.targets]]`
 - `incan lock`
 
 ### Incan libraries and `pub::` imports
@@ -958,6 +959,28 @@ Canonical forms:
 - `value["key"]`
 - `value[0]`
 
+### `std.toml` project documents
+
+- **Id:** `StdToml`
+- **Category:** `Stdlib`
+- **Since:** `0.6`
+- **RFC:** `None (API contract: issue #1409)`
+- **Stability:** `Stable`
+- **Activation:** Import from `std.toml`.
+- **Use instead of:** JSON conversion that discards TOML date/time kinds or structural-error source locations.
+- **References:** [std.toml](stdlib/toml.md), [API contract: issue #1409](https://github.com/encero-systems/incan/issues/1409)
+
+Read typed TOML values and declared models with located diagnostics, and serialize generated documents while retaining date/time kinds. Locate table values for application-owned validation diagnostics.
+
+Canonical forms:
+
+- `from std import toml`
+- `document = toml.parse(source)?`
+- `document.get[str]("project.name")?`
+- `document.get_optional[str]("project.version")?`
+- `toml.deserialize[Manifest](source)`
+- `toml.serialize_pretty(lock)`
+
 ### `std.tempfile` temporary resources
 
 - **Id:** `StdTempfile`
@@ -1140,7 +1163,7 @@ Canonical forms:
 - **Use instead of:** One-off project scaffolding scripts or manual version-file edits.
 - **References:** [Project lifecycle](project_lifecycle.md), [Project lifecycle how-to](../how-to/project_lifecycle.md), [Release 0.3](../../release_notes/0_3.md)
 
-Project commands create scaffolds, manage versions, and run configured environments from `incan.toml`.
+Project commands create scaffolds, manage versions, and run configured environments from `loaf.toml`.
 
 Canonical forms:
 
