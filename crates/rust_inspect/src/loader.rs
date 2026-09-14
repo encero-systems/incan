@@ -43,6 +43,67 @@ pub struct RustWorkspace {
 /// tree or in Cargo's cache.
 static OVEN_PROJECT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+/// The standard-library crates a sysroot source tree carries, as the paths below `library/` and the dependency
+/// edges rust-analyzer itself stitches when Cargo is not consulted. Declaring them as a `sysroot_project` gives
+/// rust-analyzer the same graph its own fallback would build, without the `cargo metadata` it tries first.
+const SYSROOT_LIBRARY_CRATES: &[(&str, &str, &[&str])] = &[
+    ("core", "core", &[]),
+    ("alloc", "alloc", &["core"]),
+    ("unwind", "unwind", &[]),
+    ("panic_abort", "panic_abort", &[]),
+    ("panic_unwind", "panic_unwind", &[]),
+    ("profiler_builtins", "profiler_builtins", &[]),
+    ("std_detect", "stdarch/crates/std_detect", &[]),
+    ("backtrace", "backtrace", &[]),
+    ("test", "test", &[]),
+    (
+        "std",
+        "std",
+        &[
+            "alloc",
+            "panic_unwind",
+            "panic_abort",
+            "core",
+            "profiler_builtins",
+            "unwind",
+            "std_detect",
+            "test",
+        ],
+    ),
+    ("proc_macro", "proc_macro", &["std", "core"]),
+];
+
+/// Describe the sysroot's library crates as a `rust-project.json` graph rooted at `sysroot_src`.
+///
+/// Only crates whose `src/lib.rs` exists in this toolchain are listed, and a dependency on an absent crate is
+/// dropped, so a toolchain that ships fewer library crates still yields a graph rust-analyzer accepts.
+fn sysroot_project_graph(sysroot_src: &Path) -> serde_json::Value {
+    let present = SYSROOT_LIBRARY_CRATES
+        .iter()
+        .filter(|(_, relative, _)| sysroot_src.join(relative).join("src/lib.rs").is_file())
+        .collect::<Vec<_>>();
+    let index_of = |name: &str| present.iter().position(|(candidate, _, _)| *candidate == name);
+    let crates = present
+        .iter()
+        .map(|(name, relative, deps)| {
+            let deps = deps
+                .iter()
+                .filter_map(|dep| index_of(dep).map(|index| serde_json::json!({ "crate": index, "name": dep })))
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "display_name": name,
+                "root_module": format!("{relative}/src/lib.rs"),
+                "edition": "2024",
+                "deps": deps,
+                "is_workspace_member": false,
+                "is_proc_macro": false,
+                "cfg": [],
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({ "crates": crates })
+}
+
 /// Resolve the active toolchain's sysroot, for declaring it in a build-system-neutral project graph.
 ///
 /// A `rust-project.json` graph contains exactly the crates it lists. Unlike the Cargo loader, nothing discovers
@@ -1203,12 +1264,16 @@ impl RustWorkspace {
             .collect::<Vec<_>>();
         // Declare the sysroot so `std`, `core` and `alloc` are in the graph. Their absence is not a property of
         // this project: a `rust-project.json` contains exactly what it lists, and nothing discovers them for it.
+        // The sysroot's own graph is declared too: given only `sysroot_src`, rust-analyzer runs `cargo metadata`
+        // on the library workspace to learn it, which is a Cargo invocation inside a normal command; given a
+        // `sysroot_project` it reads the graph as written and asks nothing.
         let mut graph = serde_json::json!({ "crates": crates });
         if let Some(sysroot) = active_sysroot() {
             let sysroot_src = sysroot.join("lib/rustlib/src/rust/library");
             graph["sysroot"] = serde_json::json!(sysroot.to_string_lossy());
             if sysroot_src.is_dir() {
                 graph["sysroot_src"] = serde_json::json!(sysroot_src.to_string_lossy());
+                graph["sysroot_project"] = sysroot_project_graph(&sysroot_src);
             }
         }
         serde_json::to_vec(&graph).map_err(|error| RustMetadataError::LoadWorkspace {

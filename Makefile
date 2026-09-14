@@ -372,7 +372,7 @@ test-oven-replay:
 		rustc_path="$$(rustup which --toolchain "$(INCAN_TEST_SUITE_TOOLCHAIN)" rustc)"; \
 		fixture_cargo_path="$$(rustup which --toolchain "$(INCAN_TEST_FIXTURE_CARGO_TOOLCHAIN)" cargo)"; \
 		mkdir -p "$$suite_output/cargo-guard"; \
-		printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "unexpected Cargo invocation (cwd $$PWD): $$*" >> "$$INCAN_OVEN_CARGO_GUARD_LOG"' 'exit 97' \
+		printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "unexpected Cargo invocation (cwd $$PWD; parent $$(ps -o args= -p $$PPID 2>/dev/null | cut -c1-300)): $$*" >> "$$INCAN_OVEN_CARGO_GUARD_LOG"' 'exit 97' \
 			> "$$suite_output/cargo-guard/cargo"; \
 		chmod +x "$$suite_output/cargo-guard/cargo"; \
 		: > "$$suite_output/cargo-guard/invocations.log"; \
@@ -533,7 +533,7 @@ test-oven-release-smoke: test-prewarm-oven-release-loafs
 		cleanup_smoke_root() { rm -rf -- "$$smoke_root"; }; \
 		trap cleanup_smoke_root EXIT; \
 		mkdir -p "$$smoke_root/cargo-guard" "$$smoke_root/incan-home"; \
-		printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "unexpected Cargo invocation (cwd $$PWD): $$*" >> "$$INCAN_OVEN_CARGO_GUARD_LOG"' 'exit 97' \
+		printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "unexpected Cargo invocation (cwd $$PWD; parent $$(ps -o args= -p $$PPID 2>/dev/null | cut -c1-300)): $$*" >> "$$INCAN_OVEN_CARGO_GUARD_LOG"' 'exit 97' \
 			> "$$smoke_root/cargo-guard/cargo"; \
 		chmod +x "$$smoke_root/cargo-guard/cargo"; \
 		: > "$$smoke_root/cargo-guard/invocations.log"; \
@@ -749,7 +749,7 @@ test-one: test-prewarm-oven-loafs
 		rustc_path="$$(rustup which --toolchain "$(INCAN_TEST_SUITE_TOOLCHAIN)" rustc)"; \
 		fixture_cargo_path="$$(rustup which --toolchain "$(INCAN_TEST_FIXTURE_CARGO_TOOLCHAIN)" cargo)"; \
 		mkdir -p "$$root_output/cargo-guard"; \
-		printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "unexpected Cargo invocation (cwd $$PWD): $$*" >> "$$INCAN_OVEN_CARGO_GUARD_LOG"' 'exit 97' \
+		printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "unexpected Cargo invocation (cwd $$PWD; parent $$(ps -o args= -p $$PPID 2>/dev/null | cut -c1-300)): $$*" >> "$$INCAN_OVEN_CARGO_GUARD_LOG"' 'exit 97' \
 			> "$$root_output/cargo-guard/cargo"; \
 		chmod +x "$$root_output/cargo-guard/cargo"; \
 		: > "$$root_output/cargo-guard/invocations.log"; \
