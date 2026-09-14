@@ -8597,10 +8597,10 @@ fi
             .pop()
             .ok_or("direct plan disappeared after authority selection")?;
         let selection =
-            crate::cli::commands::build::project_test_dependency_plan_from_constituent(selected, &second_receipt)?;
+            crate::oven::plan::selection::project_test_dependency_plan_from_constituent(selected, &second_receipt)?;
         assert!(matches!(
             selection,
-            crate::cli::commands::build::OvenDirectRustcPlanSelection::Stored(_)
+            crate::oven::plan::OvenDirectRustcPlanSelection::Stored(_)
         ));
 
         let loaded = load_project_inspection_authority(

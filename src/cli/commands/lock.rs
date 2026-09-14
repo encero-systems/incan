@@ -476,7 +476,7 @@ pub(crate) struct PreparedOvenProjectRegistrySourceAuthorities {
     /// Build-script output directories the explicit bake sealed below the authority root, with their package
     /// versions where the bake recorded them.
     generated_out_dirs: Vec<crate::rust_inspect::SealedGeneratedOutDir>,
-    test_dependency_plan: Option<crate::cli::commands::build::OvenDirectRustcPlanSelection>,
+    test_dependency_plan: Option<crate::oven::plan::OvenDirectRustcPlanSelection>,
     _release_loafs: Vec<OvenToolchainLoaf>,
 }
 
@@ -966,17 +966,18 @@ pub(crate) fn prepare_project_registry_source_authorities(
             }
         };
         let selected = authority.stored_constituents.remove(stored_index);
-        Some(crate::cli::commands::build::project_test_dependency_plan_from_constituent(selected, &receipt)?)
+        Some(
+            crate::oven::plan::selection::project_test_dependency_plan_from_constituent(selected, &receipt)
+                .map_err(super::build::oven_plan_error)?,
+        )
     } else if let Some(identity) = test_dependency_release_identity {
         let index = release_loafs
             .iter()
             .position(|loaf| loaf.loaf_identity == identity)
             .ok_or_else(|| CliError::failure("project inspection authority lost its role-bearing release Loaf"))?;
-        Some(
-            crate::cli::commands::build::OvenDirectRustcPlanSelection::ToolchainLoaf(Box::new(
-                release_loafs.remove(index),
-            )),
-        )
+        Some(crate::oven::plan::OvenDirectRustcPlanSelection::ToolchainLoaf(
+            Box::new(release_loafs.remove(index)),
+        ))
     } else {
         if authority.payload.test_dependency_envelope.is_some() {
             return Err(CliError::failure(
@@ -1001,7 +1002,7 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
     pub(crate) fn test_dependency_plan(
         &self,
         dependencies: &[DependencySpec],
-    ) -> CliResult<Option<&crate::cli::commands::build::OvenDirectRustcPlanSelection>> {
+    ) -> CliResult<Option<&crate::oven::plan::OvenDirectRustcPlanSelection>> {
         if self.authority.payload.test_dependency_envelope.is_none() {
             return Ok(None);
         }
