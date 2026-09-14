@@ -2462,10 +2462,10 @@ impl<'a> IrEmitter<'a> {
         // replaces it with `Unknown` where no route matches, and an SDK provider has no foreign type routes — so
         // applying it would erase the very metadata this function exists to seed. That is a dependency-path step
         // for a dependency-path input, and the seeding path needs neither it nor the nominal-origin overlay.
-        let manifest = &crate::library_manifest::with_self_owned_native_unions(manifest.clone(), &provider_crate);
-        let manifest =
-            &crate::library_manifest::with_checked_native_unions(manifest.clone(), &manifest.name, plan, routes)
-                .map_err(EmitError::InternalInvariant)?;
+        let self_owned = crate::library_manifest::with_self_owned_native_unions(manifest.clone(), &provider_crate);
+        let library = self_owned.name.clone();
+        let manifest = &crate::library_manifest::with_checked_native_unions(self_owned, &library, plan, routes)
+            .map_err(EmitError::InternalInvariant)?;
         for entry in &manifest.contract_metadata.identity_graph.exports {
             if entry.kind != ExportIdentityKind::Function || entry.public_path.first() != Some(&manifest.name) {
                 continue;

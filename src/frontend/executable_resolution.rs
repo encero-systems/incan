@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
 
-use incan_semantics_core::body_ir::{Body, BodyIrModule};
+use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::executable_representation::{
     DeclarationCoverage, ExecutableDeclaration, ExecutableRepresentationError, SurfaceIndex, require_supported_version,
 };
@@ -114,22 +114,6 @@ impl PackageArtifact {
             reason: error.to_string(),
         }
     }
-}
-
-/// Resolve one callable through the same complete admission path used by the CLI graph.
-pub fn resolve_executable_declaration(
-    plan: &ProviderPlan,
-    identity: &CanonicalSymbolId,
-) -> Result<Body, ExecutableResolutionError> {
-    let resolved = resolve_executable_requirements(plan, &BTreeSet::from([identity.clone()]))?;
-    resolved
-        .modules
-        .into_iter()
-        .flat_map(|module| module.bodies)
-        .find(|body| body.canonical.as_ref() == Some(identity))
-        .ok_or_else(|| ExecutableResolutionError::NotAPackageDeclaration {
-            declaration: identity.declaration_name.clone(),
-        })
 }
 
 /// Resolve every statically required package call and its published public closure before execution begins.
