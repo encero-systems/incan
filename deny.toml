@@ -41,11 +41,7 @@ workspace-default-features = "allow"
 external-default-features = "allow"
 allow = []
 deny = []
-skip = [
-    # Upstream currently pins two unicode-width lines through miette/textwrap and wat/wast.
-    # Keep bans output clean while we track upstream convergence separately.
-    { name = "unicode-width", version = "0.1.14" },
-]
+skip = []
 skip-tree = [
     # Upstream-locked duplicate trees:
     # - rust-analyzer crates (ra_ap_*) pull older hashbrown/foldhash/winnow lines

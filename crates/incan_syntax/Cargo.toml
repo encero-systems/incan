@@ -13,10 +13,8 @@ authors.workspace = true
 incan_core = { path = "../incan_core" }
 incan_vocab = { path = "../incan_vocab" }
 incan_semantics_core = { path = "../incan_semantics_core" }
-thiserror = "2.0"
-miette = { version = "7.0", features = ["fancy"] }
-tracing = "0.1"
-serde = { version = "1.0", features = ["derive"] }
+# The `Diagnostic` implementation only; the `fancy` reporter had no caller and carried fifteen crates.
+miette = "7.0"
+tracing = { workspace = true }
+serde = { workspace = true }
 
-[dev-dependencies]
-insta = { version = "1.45", features = ["glob"] }
