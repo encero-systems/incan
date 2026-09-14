@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::cli::commands;
-use crate::cli::commands::common::{self, CargoPolicy, ProjectRequirements};
+use crate::cli::commands::common::{self, CargoPolicy};
 #[cfg(feature = "rust_inspect")]
 use crate::cli::commands::lock::{
     OvenRustInspectSourceAuthorityRequest, PreparedOvenProjectRegistrySourceAuthorities, RustInspectWorkspaceRequest,
@@ -29,18 +29,15 @@ use crate::frontend::{lexer, parser};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::DependencySpec;
 use crate::oven::legacy_cargo::direct_rustc_compile_environment;
-use crate::oven::loaf::{OVEN_LOAF_MISS_GUIDANCE, OVEN_NO_IMPLICIT_DEPENDENCY_BUILD, runtime_build_unit_inputs};
+use crate::oven::loaf::{OVEN_LOAF_MISS_GUIDANCE, OVEN_NO_IMPLICIT_DEPENDENCY_BUILD};
 use crate::oven::native_test::{OvenNativeTestRequest, run_native_test_batch};
 use crate::oven::rustc::{
     OvenTrustedDirectRustcTargetRequest, attach_caller_owned_rustc_libraries, bake_trusted_direct_rustc_test,
     materialize_declared_rust_libraries_with_selected_path_authority, resolve_active_rustc, rustc_host_target,
     rustc_identity,
 };
-use crate::oven::{
-    OvenGeneratedProjectRequest, default_receipt_path, digest_dependency_specs, receipt_generated_project,
-    write_receipt,
-};
-use crate::provider::{FeatureSelection, ProviderPlan};
+use crate::oven::{OvenGeneratedProjectRequest, default_receipt_path, receipt_generated_project, write_receipt};
+use crate::provider::FeatureSelection;
 use sha2::{Digest, Sha256};
 
 use super::infer_test_project_root_without_manifest;
@@ -2363,10 +2360,11 @@ fn run_file_tests_batch_oven(
         Ok(identity) => identity,
         Err(error) => return failure(error.to_string()),
     };
-    let mut build_unit_inputs = match oven_test_build_unit_inputs(&provider_plan, &requirements, &resolved) {
-        Ok(inputs) => inputs,
-        Err(error) => return failure(error),
-    };
+    let mut build_unit_inputs =
+        match crate::cli::commands::build::oven_build_unit_inputs(&provider_plan, &requirements, &resolved) {
+            Ok(inputs) => inputs,
+            Err(error) => return failure(error.message),
+        };
     if let Err(error) = crate::cli::commands::build::append_oven_interop_execution_build_inputs(
         &mut build_unit_inputs,
         manifest.as_ref(),
@@ -2807,23 +2805,6 @@ fn run_file_tests_batch_oven(
     )
 }
 
-/// Build the portable native-closure identity used by Oven test batches.
-fn oven_test_build_unit_inputs(
-    provider_plan: &ProviderPlan,
-    requirements: &ProjectRequirements,
-    resolved: &ResolvedDependencies,
-) -> Result<BTreeMap<String, String>, String> {
-    let records = crate::cli::commands::build::oven_native_provider_records(
-        provider_plan,
-        &common::semantic_sdk_path_dependencies(requirements),
-    )
-    .map_err(|error| error.message)?;
-    let mut dependencies = resolved.dependencies.clone();
-    dependencies.extend(resolved.dev_dependencies.clone());
-    let dependency_digest = digest_dependency_specs(&dependencies).map_err(|error| error.to_string())?;
-    runtime_build_unit_inputs(records, &requirements.stdlib_features, dependency_digest)
-}
-
 /// Select only caller-imported Rust dependencies for the direct path-crate materializer.
 ///
 /// Compiler-owned standard-library/provider imports are satisfied by the selected Loaf. The materializer must
@@ -2930,9 +2911,10 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
 
+    use crate::cli::commands::common::ProjectRequirements;
     use crate::frontend::library_manifest_index::LibraryManifestIndex;
     use crate::library_manifest::LibraryManifest;
-    use crate::provider::{NamespaceAuthority, ProviderIdentity, ProviderProvenance, ProviderRecord};
+    use crate::provider::{NamespaceAuthority, ProviderIdentity, ProviderPlan, ProviderProvenance, ProviderRecord};
 
     #[test]
     fn one_teardown_is_generated_when_a_batch_carries_a_fixture_twice() -> Result<(), Box<dyn std::error::Error>> {
@@ -3020,7 +3002,7 @@ def captured_resource() -> int:
             vec![sdk, project],
             [vec!["std".to_string(), "testing".to_string()]],
         )?;
-        let inputs = oven_test_build_unit_inputs(
+        let inputs = crate::cli::commands::build::oven_build_unit_inputs(
             &provider_plan,
             &ProjectRequirements::default(),
             &ResolvedDependencies {
