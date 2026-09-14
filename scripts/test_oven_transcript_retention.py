@@ -232,9 +232,10 @@ sys.exit(retention.retain(sys.argv[1:]))
         for compiler_status in (0, 9):
             with self.subTest(compiler_status=compiler_status), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
-                (root / "scripts").mkdir()
-                for filename in ("retain_oven_suite_output.py", "retain_oven_suite_output.sh"):
-                    shutil.copyfile(SCRIPT.parent / filename, root / "scripts" / filename)
+                (root / "scripts" / "cargo-guard").mkdir(parents=True)
+                # The recipe reads its helpers from `$(CURDIR)/scripts`, so the fixture root carries the same three.
+                for filename in ("retain_oven_suite_output.py", "retain_oven_suite_output.sh", "cargo-guard/cargo"):
+                    shutil.copy2(SCRIPT.parent / filename, root / "scripts" / filename)
                 binary = root / "target" / "debug" / "incan"
                 binary.parent.mkdir(parents=True)
                 binary.write_text(
