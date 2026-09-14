@@ -2359,14 +2359,37 @@ cargo:rerun-if-env-changed=PROVIDER_VALUE\n",
 
     /// Unsupported or malformed stdout cannot silently vanish before provider receipt sealing.
     #[test]
-    fn runtime_foundation_provider_parser_refuses_unmodelled_output() {
-        for stdout in [
-            b"provider diagnostic\n".as_slice(),
-            b"cargo:rustc-flags=-C target-cpu=native\n".as_slice(),
-            b"cargo:rustc-env=PROVIDER_VALUE=first\ncargo::rustc-env=PROVIDER_VALUE=second\n".as_slice(),
+    fn runtime_foundation_provider_parser_refuses_unmodelled_output() -> Result<(), Box<dyn std::error::Error>> {
+        // Each input is refused for its own reason; a refusal for some other reason would let a parser that
+        // accepted the unmodelled shape pass.
+        for (stdout, field, reason) in [
+            (
+                b"provider diagnostic\n".as_slice(),
+                "runtime foundation provider stdout",
+                "contains a non-directive output line",
+            ),
+            (
+                b"cargo:rustc-flags=-C target-cpu=native\n".as_slice(),
+                "runtime foundation provider directive",
+                "does not support `rustc-flags`",
+            ),
+            (
+                b"cargo:rustc-env=PROVIDER_VALUE=first\ncargo::rustc-env=PROVIDER_VALUE=second\n".as_slice(),
+                "runtime foundation provider rustc-env",
+                "has an empty, malformed or repeated environment name",
+            ),
         ] {
-            assert!(parse_runtime_foundation_provider_directives(stdout).is_err());
+            let Err(OvenRustcError::InvalidInput {
+                field: refused_field,
+                message,
+            }) = parse_runtime_foundation_provider_directives(stdout)
+            else {
+                return Err(format!("{stdout:?} must be refused as invalid input").into());
+            };
+            assert_eq!(refused_field, field, "{stdout:?}");
+            assert_eq!(message, reason, "{stdout:?}");
         }
+        Ok(())
     }
 
     /// A repository-controlled zero-dependency script compiles and runs through direct Rustc with no Cargo runtime.

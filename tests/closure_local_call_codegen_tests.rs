@@ -63,6 +63,17 @@ fn a_closure_argument_to_a_rust_method_keeps_its_callee_identity_issue1492() -> 
         "`{DECLARATION}` was called by its bare source name, which is not declared in the generated Rust.\n\
          The direct call in the same function resolved to `{projected}`, so the two sites disagree.\n\n{rust}"
     );
+    // The closure site must name the same projection as the direct call, not merely some projected identity: the
+    // closure body is the text between `map(` and the end of the function, and the declaration's projection has
+    // to appear inside it.
+    let closure_body = rust
+        .split_once(".map(")
+        .map(|(_, rest)| rest)
+        .ok_or("the closure should be emitted as a `map` argument")?;
+    assert!(
+        closure_body.contains(&projected),
+        "the closure site must call `{projected}`, the identity the direct call resolved to:\n{closure_body}"
+    );
     Ok(())
 }
 

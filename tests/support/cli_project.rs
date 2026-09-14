@@ -25,21 +25,10 @@ pub(crate) fn read_generated_rust(path: &std::path::Path) -> Result<String, Box<
     Ok(canonical_projection::reformatted_after_decode(&decoded).unwrap_or(decoded))
 }
 
+/// The compiler under test, resolved once in `support::incan_debug_binary` for every root.
 #[allow(dead_code)]
 pub(crate) fn incan_binary() -> PathBuf {
-    if let Ok(path) = std::env::var("CARGO_BIN_EXE_incan") {
-        return PathBuf::from(path);
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
-        let path = PathBuf::from(target_dir).join("debug").join("incan");
-        if path.exists() {
-            return path;
-        }
-    }
-
-    manifest_dir.join("target").join("debug").join("incan")
+    support::incan_debug_binary()
 }
 
 #[allow(dead_code)]
