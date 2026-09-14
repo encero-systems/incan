@@ -98,11 +98,6 @@ impl ToolchainConstraintSet {
         }
     }
 
-    /// Check the active compiler version from [`crate::version::INCAN_VERSION`].
-    pub fn compatibility_current(&self) -> Result<ToolchainCompatibility, ToolchainConstraintError> {
-        self.compatibility_with(crate::version::INCAN_VERSION)
-    }
-
     /// Check compatibility against one SemVer version string.
     pub fn compatibility_with(&self, active_version: &str) -> Result<ToolchainCompatibility, ToolchainConstraintError> {
         let active =
@@ -135,9 +130,9 @@ impl ToolchainConstraintSet {
         })
     }
 
-    /// Fail if the active compiler version does not satisfy this effective constraint.
-    pub fn enforce_current(&self) -> Result<(), ToolchainConstraintError> {
-        let compatibility = self.compatibility_current()?;
+    /// Fail if `active_version`, the compiler's own version, does not satisfy this effective constraint.
+    pub fn enforce(&self, active_version: &str) -> Result<(), ToolchainConstraintError> {
+        let compatibility = self.compatibility_with(active_version)?;
         if compatibility.satisfied {
             Ok(())
         } else {

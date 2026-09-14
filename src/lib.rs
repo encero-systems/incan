@@ -28,20 +28,20 @@ pub mod library_manifest;
 pub mod lockfile;
 #[cfg(feature = "lsp")]
 pub mod lsp;
-pub mod manifest;
+pub use oven_model::manifest;
 pub mod numeric;
 pub mod numeric_adapters;
 pub mod oven;
-pub mod oven_interop;
-pub mod project_lifecycle;
+pub use oven_model::oven_interop;
+pub use oven_model::project_lifecycle;
 pub mod provider;
 pub mod replacement_compatibility;
 #[cfg(feature = "rust_inspect")]
 pub mod rust_inspect;
 pub(crate) mod semantics_registry;
-pub(crate) mod toolchain_layout;
+pub(crate) use oven_model::toolchain_layout;
 pub mod version;
-pub mod workspace;
+pub use oven_model::workspace;
 
 pub use frontend::ast;
 pub use frontend::diagnostics;

@@ -47,12 +47,26 @@ struct ToolchainPathSearchPaths {
     executable_bases: Vec<PathBuf>,
 }
 
+/// The repository checkout this crate was compiled from: the workspace root three directories above the crate.
+///
+/// Every crate under `loaves/` lives at `loaves/<ring>/<crate>`, so the workspace root — where `crates/`,
+/// `Cargo.lock` and the stdlib sources sit during development — is the manifest directory's third ancestor. The
+/// root crate used its own manifest directory for this before the crate split; a development build resolves
+/// support crates and stdlib sources against this path when neither an installed layout nor an override applies.
+pub fn development_root() -> PathBuf {
+    let mut root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for _ in 0..3 {
+        root.pop();
+    }
+    root
+}
+
 /// Return candidate base directories around the current executable.
 ///
 /// The list includes the executable directory, its parent, and its grandparent for both the raw executable path and its
 /// canonical path. This covers development builds, installed toolchains, and user-facing symlinks such as
 /// `~/.local/bin/incan -> ~/.incan/toolchains/<version>/bin/incan`.
-pub(crate) fn current_executable_search_bases() -> Vec<PathBuf> {
+pub fn current_executable_search_bases() -> Vec<PathBuf> {
     let Ok(exe_path) = std::env::current_exe() else {
         return Vec::new();
     };
@@ -60,12 +74,12 @@ pub(crate) fn current_executable_search_bases() -> Vec<PathBuf> {
 }
 
 /// Resolve one compiler-owned support crate through release staging, an installed SDK, or the development checkout.
-pub(crate) fn resolve_toolchain_crate_path(crate_name: &str) -> PathBuf {
+pub fn resolve_toolchain_crate_path(crate_name: &str) -> PathBuf {
     resolve_toolchain_relative_path(&Path::new("crates").join(crate_name))
 }
 
 /// Resolve one toolchain-relative path through the same layout policy used by generated Cargo and lock semantics.
-pub(crate) fn resolve_toolchain_relative_path(relative_path: &Path) -> PathBuf {
+pub fn resolve_toolchain_relative_path(relative_path: &Path) -> PathBuf {
     let sealed_sdk_runtime_root = sealed_sdk_runtime_root();
     resolve_toolchain_relative_path_in(
         relative_path,
@@ -78,7 +92,7 @@ pub(crate) fn resolve_toolchain_relative_path(relative_path: &Path) -> PathBuf {
                 sealed_sdk_runtime_root.is_some(),
             ),
             sealed_sdk_runtime_crates: sealed_sdk_runtime_root.map(|root| root.join("crates")),
-            development_root: PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            development_root: development_root(),
             executable_bases: current_executable_search_bases(),
         },
     )
@@ -112,7 +126,7 @@ fn scheduler_loaf_execution() -> bool {
 /// Unlike support crates, immutable Oven Loafs are ordinary data directories and do not contain a `Cargo.toml`.
 /// This resolver deliberately accepts only compiler-relative paths; normal commands never accept an artifact-root path
 /// from a project or from a generated Cargo target.
-pub(crate) fn resolve_toolchain_data_path(relative_path: &Path) -> PathBuf {
+pub fn resolve_toolchain_data_path(relative_path: &Path) -> PathBuf {
     resolve_toolchain_data_path_in(
         relative_path,
         scheduler_toolchain_data_root(
@@ -131,7 +145,7 @@ pub(crate) fn resolve_toolchain_data_path(relative_path: &Path) -> PathBuf {
 /// needs to carry its already-selected data into caller-owned direct-rustc output. The override is accepted only
 /// through the internal scheduler environment and must name a complete compiler-owned Loaf layout; no public
 /// command accepts a data-root argument from a project.
-pub(crate) fn compiler_owned_oven_data_root() -> Option<PathBuf> {
+pub fn compiler_owned_oven_data_root() -> Option<PathBuf> {
     compiler_owned_oven_data_root_in(
         scheduler_toolchain_data_root(
             env::var_os(INTERNAL_TOOLCHAIN_DATA_ROOT_ENV)
@@ -172,7 +186,7 @@ fn resolve_toolchain_data_path_in(
             return canonical_toolchain_path(candidate);
         }
     }
-    canonical_toolchain_path(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative_path))
+    canonical_toolchain_path(development_root().join(relative_path))
 }
 
 /// Prefer a scheduler-leased compiler data root, then the installed executable layout, when locating Loafs.
@@ -199,7 +213,7 @@ fn compiler_owned_oven_data_root_in(
 /// Release archives keep this below `crates/Cargo.lock`, alongside the checked support-crate sources. Development
 /// checkouts retain the workspace lock at the repository root. Loaf identity must use the installed
 /// representation when one exists, rather than the checkout from which a compiler binary happened to be built.
-pub(crate) fn resolve_toolchain_runtime_lockfile() -> PathBuf {
+pub fn resolve_toolchain_runtime_lockfile() -> PathBuf {
     if let Some(runtime_root) = sealed_sdk_runtime_root() {
         let lockfile = runtime_root.join("Cargo.lock");
         if lockfile.is_file() {
@@ -212,7 +226,7 @@ pub(crate) fn resolve_toolchain_runtime_lockfile() -> PathBuf {
             return canonical_toolchain_path(candidate);
         }
     }
-    canonical_toolchain_path(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))
+    canonical_toolchain_path(development_root().join("Cargo.lock"))
 }
 
 /// Apply the canonical support-path search order to injected, testable layout inputs.
@@ -301,7 +315,7 @@ fn toolchain_relative_path_exists(candidate: &Path, crate_relative: &Path) -> bo
 }
 
 /// Return candidate base directories around `exe_path`.
-pub(crate) fn executable_search_bases_for(exe_path: &Path) -> Vec<PathBuf> {
+pub fn executable_search_bases_for(exe_path: &Path) -> Vec<PathBuf> {
     let mut bases = Vec::new();
     push_executable_bases(&mut bases, exe_path);
     if let Ok(canonical_exe_path) = fs::canonicalize(exe_path) {
@@ -315,7 +329,7 @@ pub(crate) fn executable_search_bases_for(exe_path: &Path) -> Vec<PathBuf> {
 /// `INCAN_STDLIB` and `INCAN_STDLIB_DIR` are explicit overrides and therefore take precedence over every
 /// auto-detected development or installed layout. Keeping this policy here ensures parsing, typechecking, testing
 /// metadata, and compiled-provider publication cannot silently select different stdlib source trees.
-pub(crate) fn find_stdlib_source_dir() -> Option<PathBuf> {
+pub fn find_stdlib_source_dir() -> Option<PathBuf> {
     find_stdlib_source_dir_in(StdlibSearchPaths {
         override_roots: [env::var_os("INCAN_STDLIB"), env::var_os("INCAN_STDLIB_DIR")]
             .into_iter()
@@ -323,7 +337,7 @@ pub(crate) fn find_stdlib_source_dir() -> Option<PathBuf> {
             .filter(|root| !root.is_empty())
             .map(PathBuf::from)
             .collect(),
-        development_root: PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+        development_root: development_root(),
         current_dir: env::current_dir().ok(),
         executable_bases: current_executable_search_bases(),
         installed_roots: [env::var_os("INCAN_STDLIB_PATH")]
@@ -336,7 +350,7 @@ pub(crate) fn find_stdlib_source_dir() -> Option<PathBuf> {
 }
 
 /// Resolve one `stdlib/...` source path through the active toolchain's canonical stdlib root.
-pub(crate) fn find_stdlib_source_file(relative_path: &str) -> Option<PathBuf> {
+pub fn find_stdlib_source_file(relative_path: &str) -> Option<PathBuf> {
     stdlib_source_file_from_dir(&find_stdlib_source_dir()?, relative_path)
 }
 
@@ -436,13 +450,13 @@ fn push_unique(paths: &mut Vec<PathBuf>, path: PathBuf) {
 }
 
 /// Cargo dependency key for the toolchain-owned runtime support crate used by generated Rust projects.
-pub(crate) const INCAN_STDLIB_CRATE_NAME: &str = "incan_stdlib";
+pub const INCAN_STDLIB_CRATE_NAME: &str = "incan_stdlib";
 /// Cargo dependency key for the toolchain-owned derive crate used by every generated Rust project.
-pub(crate) const INCAN_DERIVE_CRATE_NAME: &str = "incan_derive";
+pub const INCAN_DERIVE_CRATE_NAME: &str = "incan_derive";
 /// Complete generator-owned support-crate set emitted unconditionally into generated Cargo projects.
-pub(crate) const GENERATED_TOOLCHAIN_SUPPORT_CRATES: [&str; 2] = [INCAN_STDLIB_CRATE_NAME, INCAN_DERIVE_CRATE_NAME];
+pub const GENERATED_TOOLCHAIN_SUPPORT_CRATES: [&str; 2] = [INCAN_STDLIB_CRATE_NAME, INCAN_DERIVE_CRATE_NAME];
 /// Environment variable that redirects every generated project's Cargo target directory.
-pub(crate) const GENERATED_CARGO_TARGET_DIR_ENV: &str = "INCAN_GENERATED_CARGO_TARGET_DIR";
+pub const GENERATED_CARGO_TARGET_DIR_ENV: &str = "INCAN_GENERATED_CARGO_TARGET_DIR";
 
 #[cfg(test)]
 mod tests {

@@ -656,7 +656,7 @@ impl ProjectManifest {
     /// The compiler's existing project pipeline consumes one `ProjectManifest`; workspace orchestration therefore
     /// materializes its effective view at this explicit boundary instead of teaching every downstream stage a second
     /// dependency schema. The source path and all non-dependency project metadata remain member-local.
-    pub(crate) fn with_effective_dependencies(
+    pub fn with_effective_dependencies(
         &self,
         library_dependencies: impl IntoIterator<Item = (String, LibraryDependencySpec)>,
         rust_dependencies: impl IntoIterator<Item = (String, DependencySpec)>,
@@ -1963,7 +1963,7 @@ fn dependency_from_entry(
             ));
         }
 
-        if let Err(msg) = crate::dependency_resolver::validate_cargo_version_req(version) {
+        if let Err(msg) = validate_cargo_version_req(version) {
             return Err(manifest_invalid(path, location, format!("dependency `{name}`: {msg}")));
         }
     }
@@ -2109,6 +2109,20 @@ fn dependency_source_key(source: &DependencySource) -> String {
 // ============================================================================
 // Tests
 // ============================================================================
+
+/// Validate that a version requirement string uses Cargo SemVer syntax.
+///
+/// Returns `Ok(())` if valid, or an error message describing the problem.
+/// This catches PEP 440 specifiers, typos, and other invalid strings early (RFC 013, Phase 1.2).
+pub fn validate_cargo_version_req(version: &str) -> Result<(), String> {
+    match VersionReq::parse(version) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!(
+            "invalid Cargo SemVer requirement `{version}`: {e}. \
+             Use Cargo syntax (e.g. \"1.0\", \"^1.2\", \"~0.5\", \">=1.0, <2.0\", \"=1.2.3\")"
+        )),
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -2344,7 +2358,7 @@ mod tests {
         // RFC 117 settles both spellings. Asserted against literals rather than the constants so a capitalized
         // reintroduction fails here instead of passing quietly on a case-insensitive filesystem.
         assert_eq!(LOAF_MANIFEST_FILENAME, "loaf.toml");
-        assert_eq!(crate::lockfile::LOCK_FILENAME, "oven.lock");
+        assert_eq!(crate::lock::LOCK_FILENAME, "oven.lock");
     }
 
     #[test]
@@ -2945,5 +2959,23 @@ exclude-components = ["stdlib-web"]
         let dir = tempfile::tempdir()?;
         fs::write(dir.path().join(LOAF_MANIFEST_FILENAME), content)?;
         Ok(dir)
+    }
+
+    #[test]
+    fn validate_cargo_version_req_accepts_valid_specs() {
+        assert!(validate_cargo_version_req("1.0").is_ok());
+        assert!(validate_cargo_version_req("^1.2").is_ok());
+        assert!(validate_cargo_version_req("~0.5").is_ok());
+        assert!(validate_cargo_version_req(">=1.0, <2.0").is_ok());
+        assert!(validate_cargo_version_req("=1.2.3").is_ok());
+        assert!(validate_cargo_version_req("1.0.195").is_ok());
+    }
+
+    #[test]
+    fn validate_cargo_version_req_rejects_invalid_specs() {
+        assert!(validate_cargo_version_req("banana").is_err());
+        assert!(validate_cargo_version_req("~=1.2").is_err()); // PEP 440
+        assert!(validate_cargo_version_req("==1.2.*").is_err()); // PEP 440
+        assert!(validate_cargo_version_req("!=1.3").is_err()); // PEP 440
     }
 }

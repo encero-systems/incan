@@ -1080,7 +1080,7 @@ fn digest_generated_source_file(path: &Path) -> Result<String, OvenError> {
 /// Return the portable source-to-digest records that make up one native compiler-suite receipt.
 fn compiler_suite_source_records(project_root: &Path) -> Result<BTreeMap<String, String>, OvenError> {
     let mut records = BTreeMap::new();
-    for root_name in ["src", "tests", "crates"] {
+    for root_name in ["src", "tests", "crates", "loaves"] {
         let root = project_root.join(root_name);
         if !root.exists() {
             continue;

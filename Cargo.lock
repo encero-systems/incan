@@ -1443,6 +1443,7 @@ dependencies = [
  "insta",
  "libc",
  "md-5",
+ "oven_model",
  "prettyplease",
  "proc-macro2",
  "proptest",
@@ -2060,6 +2061,22 @@ name = "oorandom"
 version = "11.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
+
+[[package]]
+name = "oven_model"
+version = "0.6.0-dev.4"
+dependencies = [
+ "globset",
+ "hex",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+ "toml_edit",
+]
 
 [[package]]
 name = "parking_lot"
