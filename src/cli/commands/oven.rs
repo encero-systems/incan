@@ -33,10 +33,10 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-use crate::cli::commands::interop_plan::locked_interop_plan_target;
 use crate::cli::{
     CliError, CliResult, ExitCode, OvenInteropAdapterArgument, OvenLoafEnvelopeArgument, OvenOutputFormat,
 };
+use crate::driver::interop_plan::locked_interop_plan_target;
 use crate::oven::compiler_suite_env::{
     OVEN_COMPILER_SUITE_CAPABILITY_ENV, OVEN_COMPILER_SUITE_EXPLICIT_BAKE_CARGO_ENV,
     OVEN_COMPILER_SUITE_EXPLICIT_BAKE_HOME_ENV, OVEN_COMPILER_SUITE_FIXTURE_CARGO_LOG_ENV,
@@ -106,12 +106,9 @@ use crate::provider::FeatureSelection;
 use crate::rust_inspect::{OvenInspectionRegistrySource, write_sealed_oven_inspection_source_authority};
 use crate::version::INCAN_VERSION;
 
-/// Environment override for aggregate physical allocation policy.
-pub const OVEN_MAX_PHYSICAL_BYTES_ENV: &str = "INCAN_OVEN_MAX_PHYSICAL_BYTES";
-/// Environment override for per-domain physical allocation policy.
-pub const OVEN_MAX_DOMAIN_PHYSICAL_BYTES_ENV: &str = "INCAN_OVEN_MAX_DOMAIN_PHYSICAL_BYTES";
-/// Environment override for per-domain logical artifact-byte policy.
-pub const OVEN_MAX_DOMAIN_LOGICAL_BYTES_ENV: &str = "INCAN_OVEN_MAX_DOMAIN_LOGICAL_BYTES";
+pub use crate::driver::oven_store::{
+    OVEN_MAX_DOMAIN_LOGICAL_BYTES_ENV, OVEN_MAX_DOMAIN_PHYSICAL_BYTES_ENV, OVEN_MAX_PHYSICAL_BYTES_ENV,
+};
 /// Optional bounded worker count for independent compiler-suite roots after the shared direct-Rustc DAG is ready.
 pub const OVEN_COMPILER_TEST_JOBS_ENV: &str = "INCAN_OVEN_COMPILER_TEST_JOBS";
 /// Maximum wall-clock time for one stored compiler-suite root before the scheduler records a bounded failure.
@@ -143,7 +140,7 @@ pub fn oven_bake_project(
     format: OvenOutputFormat,
 ) -> CliResult<ExitCode> {
     crate::driver::project::warn_once_about_ignored_cargo_manifest(&project);
-    let report = super::build::bake_oven_project_targets(&project, &package_features)?;
+    let report = crate::driver::build::bake::bake_oven_project_targets(&project, &package_features)?;
     match format {
         OvenOutputFormat::Text => {
             for profile in &report.profiles {
@@ -347,7 +344,7 @@ pub fn oven_interop_bake(options: OvenInteropBakeCommandOptions) -> CliResult<Ex
             Some(path) => (read_receipt(path)?, path.clone(), false, false),
             None => {
                 let (receipt, path, cargo_process_started) =
-                    crate::cli::commands::build::prepare_oven_interop_bootstrap(
+                    crate::driver::build::oven_project::prepare_oven_interop_bootstrap(
                         &locked.project_root,
                         &locked.target.target,
                     )?;
@@ -3360,15 +3357,16 @@ mod tests {
         compiler_suite_remove_generated_rust_closure, compiler_suite_selected_shard_references,
         compiler_suite_selection_context, compiler_suite_selection_report, compiler_suite_temporary_directory,
         compiler_suite_uses_indexed_foundations, compiler_suite_workspace_library_dependency_closure,
-        default_rustup_home, default_store_root, import_loaf_envelope_from_mirror_roots, interop_bake_terminal_message,
+        default_rustup_home, import_loaf_envelope_from_mirror_roots, interop_bake_terminal_message,
         loaf_envelope_compatibility_map, loaf_envelope_default_limits, loaf_envelope_evidence,
         loaf_fixture_action_name, loaf_generation_identity, native_test_failure_summary, oven_import,
         oven_publish_direct_rustc_plan, oven_run, oven_test, parse_named_path, prepare_compiler_suite_child,
-        resolve_limits_with_environment_and_defaults, reuse_complete_loaf_envelope,
-        run_compiler_suite_children_with_leases_retained, run_prepared_compiler_suite_children,
-        select_compiler_suite_shards, write_compiler_suite_report, write_native_test_transcript,
+        reuse_complete_loaf_envelope, run_compiler_suite_children_with_leases_retained,
+        run_prepared_compiler_suite_children, select_compiler_suite_shards, write_compiler_suite_report,
+        write_native_test_transcript,
     };
     use crate::cli::{CliResult, OvenLoafEnvelopeArgument, OvenOutputFormat};
+    use crate::driver::oven_store::{default_store_root, resolve_limits_with_environment_and_defaults};
     use crate::oven::legacy_cargo::{
         OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1,
         OvenCompilerTestSuiteArtifactClosure, OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload,

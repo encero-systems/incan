@@ -43,6 +43,7 @@ use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process;
 
+use crate::driver::build_report::{BuildReportFormat, BuildReportOptions, RustInspectionFormat};
 use crate::driver::cargo_policy::{CargoPolicy, CargoPolicyCliFlags};
 use crate::manifest::ProjectManifest;
 use crate::provider::FeatureSelection;
@@ -50,7 +51,6 @@ use crate::provider::requirements::{INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, INTERNAL
 use crate::workspace::{ResolvedWorkspaceScope, WorkspaceGraph, WorkspaceMember, WorkspaceScopeRequest};
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use commands::binding_inspect::BindingInspectionFormat;
-use commands::build_report::{BuildReportFormat, BuildReportOptions, RustInspectionFormat};
 use commands::codegraph::CodegraphInspectionFormat;
 use commands::diagnostics::DiagnosticOutputFormat;
 use commands::interop_plan::InteropPlanInspectionFormat;
@@ -1454,7 +1454,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 file,
                 lib_mode,
                 output_dir: output_dir.map(|path| path.to_string_lossy().to_string()),
-                options: commands::build::BuildCommandOptions {
+                options: crate::driver::build::BuildCommandOptions {
                     cargo_policy: CargoPolicy::from_cli_and_env(
                         CargoPolicyCliFlags {
                             offline,
@@ -1473,7 +1473,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                     cargo_no_default_features,
                     cargo_all_features,
                     generated_cargo_target_dir,
-                    backend: commands::build::BackendSelectionOptions {
+                    backend: crate::driver::build::BackendSelectionOptions {
                         requested: backend
                             .map(Into::into)
                             .unwrap_or(crate::backend::selection::BackendKind::Legacy),
@@ -2102,7 +2102,7 @@ struct BuildCommandRequest {
     file: Option<PathBuf>,
     lib_mode: bool,
     output_dir: Option<String>,
-    options: commands::build::BuildCommandOptions,
+    options: crate::driver::build::BuildCommandOptions,
     report_options: BuildReportOptions,
 }
 
@@ -2142,7 +2142,7 @@ fn build_uses_workspace_scope(lib_mode: bool, artifact_only: bool, dependency_pr
 /// Attach compiler-owned workspace context to either a freshly prepared or sealed completed-output report.
 fn build_report_with_workspace_context(
     mut report: serde_json::Value,
-    workspace: commands::build_report::BuildWorkspaceContext,
+    workspace: crate::driver::build_report::BuildWorkspaceContext,
 ) -> CliResult<serde_json::Value> {
     let workspace = serde_json::to_value(workspace)
         .map_err(|error| CliError::failure(format!("failed to serialize workspace build context: {error}")))?;
@@ -2266,7 +2266,7 @@ fn execute_build(
             continue;
         }
 
-        let workspace_context = commands::build_report::BuildWorkspaceContext {
+        let workspace_context = crate::driver::build_report::BuildWorkspaceContext {
             root: scope.workspace_root().display().to_string(),
             scope_origin: scope.origin().as_str().to_string(),
             member_name: member.name().to_string(),
@@ -2343,7 +2343,7 @@ fn execute_build(
         "ok": failures.is_empty(),
         "results": results,
     });
-    commands::build_report::emit_workspace_build_report(&aggregate, &request.report_options)?;
+    crate::cli::commands::build_report::emit_workspace_build_report(&aggregate, &request.report_options)?;
 
     if failures.is_empty() {
         Ok(ExitCode::SUCCESS)

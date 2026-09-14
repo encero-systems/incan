@@ -11,30 +11,11 @@
     {
       "path": "src/cli/commands/build.rs",
       "reaches": [
-        "crate::backend::project",
-        "crate::backend::replacement",
         "crate::backend::selection",
-        "crate::backend::shadow",
         "crate::frontend::api_metadata",
         "crate::frontend::ast",
-        "crate::frontend::body_ir",
-        "crate::frontend::contract_metadata",
         "crate::frontend::diagnostics",
-        "crate::frontend::executable_resolution",
-        "crate::frontend::lexer",
-        "crate::frontend::library_exports",
-        "crate::frontend::library_manifest_index",
-        "crate::frontend::module",
-        "crate::frontend::parser",
-        "crate::frontend::registry_metadata",
-        "crate::frontend::symbols",
-        "crate::frontend::typechecker"
-      ]
-    },
-    {
-      "path": "src/cli/commands/build_report.rs",
-      "reaches": [
-        "crate::backend::selection"
+        "crate::frontend::registry_metadata"
       ]
     },
     {

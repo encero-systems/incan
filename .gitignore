@@ -30,6 +30,7 @@ venv/
 env/
 dist/
 build/
+!src/driver/build/
 
 # Node.js / VS Code extension (editors/vscode)
 node_modules/

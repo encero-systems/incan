@@ -265,6 +265,96 @@
       "expected_fingerprint": "0x12d230c26526632c"
     },
     {
+      "path": "src/driver/build/bake.rs",
+      "category": "Oven bake profile selection",
+      "expected_count": 3,
+      "expected_fingerprint": "0xf643e2ca93edf3f7"
+    },
+    {
+      "path": "src/driver/build/library_project.rs",
+      "category": "library build profile selection and stdlib crate exclusion",
+      "expected_count": 2,
+      "expected_fingerprint": "0x3d486da99b66d880"
+    },
+    {
+      "path": "src/driver/build/output_materialization.rs",
+      "category": "completed-output profile selection",
+      "expected_count": 1,
+      "expected_fingerprint": "0x6c28a9bbc1a5bab9"
+    },
+    {
+      "path": "src/driver/build/output_paths.rs",
+      "category": "host target-triple table, Cargo out-dir and build-script layout compatibility",
+      "expected_count": 7,
+      "expected_fingerprint": "0x4aebd9d8ae316bd9"
+    },
+    {
+      "path": "src/driver/build/output_selection.rs",
+      "category": "baked-output profile selection and path-source dependency projection",
+      "expected_count": 3,
+      "expected_fingerprint": "0x548c43ec45825911"
+    },
+    {
+      "path": "src/driver/build/oven_project.rs",
+      "category": "stdlib namespace and crate exclusion, Oven Loaf execution environment flags, existing-plan publication marker",
+      "expected_count": 7,
+      "expected_fingerprint": "0xdd7ed5f77dea21c2"
+    },
+    {
+      "path": "src/driver/build/plan_authority.rs",
+      "category": "Oven Loaf execution environment flag",
+      "expected_count": 1,
+      "expected_fingerprint": "0x0f4d3698de00fc78"
+    },
+    {
+      "path": "src/driver/build/plan_selection.rs",
+      "category": "plan profile selection, existing-plan publication marker and test-dependency envelope version",
+      "expected_count": 3,
+      "expected_fingerprint": "0x6a7bfcf5ee6e1393"
+    },
+    {
+      "path": "src/driver/build/provider_compilation.rs",
+      "category": "incan_derive macro-dependency compatibility",
+      "expected_count": 7,
+      "expected_fingerprint": "0xa5538e05fb162812"
+    },
+    {
+      "path": "src/driver/build/provider_metadata.rs",
+      "category": "describe decorator fact projection",
+      "expected_count": 1,
+      "expected_fingerprint": "0x3737e4b5aaef1e61"
+    },
+    {
+      "path": "src/driver/build/publication.rs",
+      "category": "Rust source extension check for inspection authority",
+      "expected_count": 1,
+      "expected_fingerprint": "0x7a60930e105ab2a0"
+    },
+    {
+      "path": "src/driver/build/replacement.rs",
+      "category": "replacement backend main-function selection",
+      "expected_count": 1,
+      "expected_fingerprint": "0x6fe760297364f1c3"
+    },
+    {
+      "path": "src/driver/build/reuse.rs",
+      "category": "packaged-Loaf store relative path compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0x499c85fb4eca755f"
+    },
+    {
+      "path": "src/driver/build/rust_extern.rs",
+      "category": "rust.extern decorator path matching",
+      "expected_count": 1,
+      "expected_fingerprint": "0xbed7f3dadd6d0868"
+    },
+    {
+      "path": "src/driver/build_report.rs",
+      "category": "Rust source extension check for report source files",
+      "expected_count": 1,
+      "expected_fingerprint": "0x408c977e67bf511f"
+    },
+    {
       "path": "src/driver/cargo_policy.rs",
       "category": "environment flag truthiness for Cargo policy",
       "expected_count": 1,

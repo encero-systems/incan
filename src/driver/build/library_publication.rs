@@ -5,13 +5,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::cli::{CliError, CliResult};
+use crate::driver::error::{CliError, CliResult};
 use crate::library_manifest::published_layout::{LIBRARY_ARTIFACT_DIRECTORY, LIBRARY_MANIFEST_EXTENSION};
 
 /// One generated output generation, retained at the same absolute path while new source is compiled.
 ///
 /// This is an ordinary-error transaction. It provides no concurrent-reader or process-crash atomicity guarantee.
-pub(super) struct LibraryPublication {
+pub(crate) struct LibraryPublication {
     output: PathBuf,
     backup: PathBuf,
     previous: bool,
@@ -23,12 +23,12 @@ pub(super) struct LibraryPublication {
 
 impl LibraryPublication {
     /// Preserve an existing generated artifact before any generator, compiler or receipt writer can change it.
-    pub(super) fn begin(project: &Path, output: &Path, receipts: Vec<PathBuf>) -> CliResult<Self> {
+    pub(crate) fn begin(project: &Path, output: &Path, receipts: Vec<PathBuf>) -> CliResult<Self> {
         Self::begin_mode(project, output, receipts, true)
     }
 
     /// A current artifact needs only its external receipt captured, with no directory move or payload copy.
-    pub(super) fn begin_receipt_update(project: &Path, receipts: Vec<PathBuf>) -> CliResult<Self> {
+    pub(crate) fn begin_receipt_update(project: &Path, receipts: Vec<PathBuf>) -> CliResult<Self> {
         Self::begin_mode(project, &project.join(LIBRARY_ARTIFACT_DIRECTORY), receipts, false)
     }
 
@@ -148,7 +148,7 @@ impl LibraryPublication {
     /// keeps its own retention for the case it already covered -- a generation that produces no store at all --
     /// and additionally drops any entry this generation did not publish, so the committed output is exactly what
     /// it would have been. Rollback moves the store back before the output is removed.
-    pub(super) fn retaining_package_cache(mut self) -> Self {
+    pub(crate) fn retaining_package_cache(mut self) -> Self {
         self.retain_package_cache = true;
         if self.previous && self.replace_artifact {
             let previous_cache = self.backup.join("artifact/oven/loafs");
@@ -165,7 +165,7 @@ impl LibraryPublication {
     }
 
     /// Complete the build or restore its entire prior generation, surfacing any failed restoration and backup path.
-    pub(super) fn finish<T>(self, result: CliResult<T>) -> CliResult<T> {
+    pub(crate) fn finish<T>(self, result: CliResult<T>) -> CliResult<T> {
         let result = result.and_then(|value| {
             if self.previous {
                 // Retain unrelated custom-output files, while never resurrecting an obsolete generated module,
@@ -206,7 +206,7 @@ impl LibraryPublication {
     }
 
     /// A cache miss after provisional materialization must restore the prior generation before a fresh bake starts.
-    pub(super) fn finish_reuse<T>(self, result: CliResult<Option<T>>) -> CliResult<Option<T>> {
+    pub(crate) fn finish_reuse<T>(self, result: CliResult<Option<T>>) -> CliResult<Option<T>> {
         if matches!(result, Ok(None)) {
             self.restore().map_err(|error| {
                 CliError::failure(format!(
@@ -393,7 +393,7 @@ mod tests {
     use std::fs;
 
     use super::LibraryPublication;
-    use crate::cli::CliError;
+    use crate::driver::error::CliError;
 
     /// A failure after overwriting one native profile restores Rust, metadata, stale files and external receipts.
     #[test]
