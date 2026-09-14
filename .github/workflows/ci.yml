@@ -710,12 +710,16 @@ jobs:
           path: target/oven-pr-linux-partition-${{ matrix.partition }}.json.transcripts.tar.gz
           if-no-files-found: warn
           retention-days: 7
+      # The Cargo guard's log names every invocation that reached it; without it a guard failure cannot be
+      # attributed to the shard that made the call.
       - name: Upload retained caller transcripts after a failure
         if: failure()
         uses: actions/upload-artifact@v6
         with:
           name: oven-pr-linux-partition-${{ matrix.partition }}-raw-transcripts
-          path: target/oven-compiler-suite-output.*/shards/**/*.libtest-output.txt
+          path: |
+            target/oven-compiler-suite-output.*/shards/**/*.libtest-output.txt
+            target/oven-compiler-suite-output.*/cargo-guard/invocations.log
           if-no-files-found: warn
           retention-days: 7
 
