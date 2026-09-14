@@ -134,6 +134,14 @@ jobs:
       - uses: ./.github/actions/setup-rust-sccache
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+      # The compiler library and the language server must compile without the `cli` feature (#1479): the LSP links
+      # the driver, never the CLI, and the bare library is what every other consumer of the compiler sees. Both are
+      # `cargo check`, not clippy — without the CLI most driver and Oven items are unreachable and warn as dead, which
+      # is the shape the crate split removes rather than a defect to gate on here.
+      - name: Check the compiler library without the CLI
+        run: cargo check --no-default-features --lib
+      - name: Check the language server without the CLI
+        run: cargo check --no-default-features --features lsp --lib --bin incan-lsp
       # These source-free checks run independently of SDK publication so its consumers never wait for test linking.
       - name: Compile and run SDK transport and CI contract regressions
         run: |

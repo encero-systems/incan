@@ -63,7 +63,7 @@ readme.workspace = true
 
 [features]
 default = ["cli", "std_testing", "std_async", "std_decorators"]
-cli = ["dep:clap", "dep:tracing-subscriber", "dep:tempfile", "rust_inspect"]
+cli = ["dep:clap", "dep:tracing-subscriber", "rust_inspect"]
 lsp = ["dep:tower-lsp", "dep:tokio"]
 std_testing = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_testing"]
 std_async = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_async"]
@@ -71,7 +71,7 @@ std_decorators = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_deco
 # Rust dependency inspection via rust-analyzer (`ra_ap_*`) in the `rust_inspect` crate.
 # Kept optional for non-CLI/library builds; the CLI enables it so ordinary `rust::` imports can preserve
 # real function/type signatures.
-rust_inspect = ["dep:rust_inspect"]
+rust_inspect = ["rust_inspect/inspector"]
 
 [dependencies]
 # Shared language/semantic helpers (canonical vocab)
@@ -97,7 +97,7 @@ serde_json = { workspace = true }
 clap = { version = "4.4", features = ["derive"], optional = true }
 # Already a dev-dependency below. The direct-rustc reuse path publishes a verified copy of a retained output through
 # a uniquely named sibling, so it needs the same crate at runtime under `cli`.
-tempfile = { version = "3", optional = true }
+tempfile = "3"
 # Composable error types
 thiserror = { workspace = true }
 
@@ -125,7 +125,7 @@ semver = "1.0.27"
 globset = "0.4.18"
 # Safe, capability-oriented filesystem primitives for no-replace Oven publications.
 rustix = { version = "1.1.4", features = ["fs"] }
-rust_inspect = { path = "crates/rust_inspect", optional = true }
+rust_inspect = { path = "crates/rust_inspect", default-features = false }
 # WASM runtime for desugarer packaging
 # 36.0.14 is the patched RUSTSEC-2026-0222/RUSTSEC-2026-0269 line compatible with Incan's Rust 1.93 MSRV.
 # Wasmtime 45 remains vulnerable, while the patched 46.0.2 release requires Rust 1.94.
