@@ -1112,6 +1112,7 @@ fn build_pending_desugarer_artifact_with_direct_rustc(
     build_pending_desugarer_artifact(target_dir, package_name, Some(desugarer))
 }
 
+/// Refuse a companion crate whose vocab metadata carries a version this compiler cannot read.
 fn ensure_supported_vocab_metadata_version(
     metadata: &incan_vocab::VocabMetadata,
     companion_crate_root: &Path,
@@ -1133,6 +1134,8 @@ fn ensure_supported_vocab_metadata_version(
     Ok(())
 }
 
+/// Create a fresh, process-unique scratch directory for one vocab extraction build so concurrent extractions never
+/// share a Cargo workspace.
 fn create_extraction_workspace_dir() -> ProviderResult<PathBuf> {
     static EXTRACTION_COUNTER: AtomicU64 = AtomicU64::new(0);
     let nonce = format!(
@@ -1267,6 +1270,8 @@ fn build_pending_desugarer_artifact(
     }))
 }
 
+/// Instantiate the desugarer module under a fuel limit and check that its entrypoint and the memory and globals
+/// the vocab contract names are exported with the shapes the compiler will call.
 fn validate_wasm_desugarer_entrypoint(path: &Path, bytes: &[u8], entrypoint: &str) -> ProviderResult<()> {
     let mut config = Config::new();
     config.consume_fuel(true);
@@ -1287,6 +1292,7 @@ fn validate_wasm_desugarer_entrypoint(path: &Path, bytes: &[u8], entrypoint: &st
     Ok(())
 }
 
+/// Refuse a desugarer module whose exported memory is missing or is not a memory, naming the artifact path.
 fn validate_wasm_memory_export(module: &Module, path: &Path) -> ProviderResult<()> {
     let Some(export) = module.get_export(incan_vocab::WASM_DESUGAR_MEMORY_EXPORT) else {
         return Err(ProviderError::failure(format!(
@@ -1306,6 +1312,7 @@ fn validate_wasm_memory_export(module: &Module, path: &Path) -> ProviderResult<(
     }
 }
 
+/// Refuse a desugarer module whose named export is missing or is not a function of the expected signature.
 fn validate_wasm_func_export(
     module: &Module,
     path: &Path,
@@ -1341,6 +1348,7 @@ fn validate_wasm_func_export(
     }
 }
 
+/// Refuse a desugarer module whose named export is missing or is not an `i32` global.
 fn validate_wasm_i32_global_export(module: &Module, path: &Path, export_name: &str) -> ProviderResult<()> {
     let Some(export) = module.get_export(export_name) else {
         return Err(ProviderError::failure(format!(
