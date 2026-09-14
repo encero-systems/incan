@@ -11,6 +11,8 @@ members = [
     "crates/incan_semantics_stdlib",
     "crates/incan_web_macros",
     "crates/rust_inspect",
+    "loaves/compiler/incan_format",
+    "loaves/compiler/incan_frontend",
     "loaves/oven/oven_model",
 ]
 exclude = ["target/incan"]
@@ -65,18 +67,20 @@ readme.workspace = true
 [features]
 default = ["cli", "std_testing", "std_async", "std_decorators"]
 cli = ["dep:clap", "dep:tracing-subscriber", "rust_inspect"]
-lsp = ["dep:tower-lsp", "dep:tokio"]
-std_testing = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_testing"]
-std_async = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_async"]
-std_decorators = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_decorators"]
+lsp = ["dep:tower-lsp", "dep:tokio", "incan_frontend/lsp"]
+std_testing = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_testing", "incan_frontend/std_testing"]
+std_async = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_async", "incan_frontend/std_async"]
+std_decorators = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_decorators", "incan_frontend/std_decorators"]
 # Rust dependency inspection via rust-analyzer (`ra_ap_*`) in the `rust_inspect` crate.
 # Kept optional for non-CLI/library builds; the CLI enables it so ordinary `rust::` imports can preserve
 # real function/type signatures.
-rust_inspect = ["rust_inspect/inspector"]
+rust_inspect = ["rust_inspect/inspector", "incan_frontend/rust_inspect"]
 
 [dependencies]
 # Shared language/semantic helpers (canonical vocab)
 incan_core = { path = "crates/incan_core" }
+incan_format = { path = "loaves/compiler/incan_format" }
+incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = false }
 incan_codegraph = { path = "crates/incan_codegraph" }
 incan_vocab = { path = "crates/incan_vocab" }
 # Shared syntax frontend (lexer, parser, AST, diagnostics)
@@ -170,6 +174,8 @@ proptest = "1"
 # Runtime crate for parity tests
 incan_stdlib = { path = "crates/incan_stdlib" }
 # Temporary directories for manifest discovery tests
+incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = false, features = ["test_support"] }
+rust_inspect = { path = "crates/rust_inspect", default-features = false, features = ["test_fixtures"] }
 tempfile = "3"
 wat = "1"
 

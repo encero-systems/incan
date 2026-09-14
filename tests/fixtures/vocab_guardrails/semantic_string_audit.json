@@ -67,6 +67,126 @@
       "expected_fingerprint": "0x1dc2b536c0293d40"
     },
     {
+      "path": "loaves/compiler/incan_frontend/src/provider/features.rs",
+      "category": "manifest feature-section spelling",
+      "expected_count": 2,
+      "expected_fingerprint": "0x50c3a16c468f3c51"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/provider/plan.rs",
+      "category": "std and pub namespace authority claims",
+      "expected_count": 4,
+      "expected_fingerprint": "0x08c1bc0bf8f6ab34"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/testing_markers.rs",
+      "category": "metadata-loaded testing marker inventory",
+      "expected_count": 13,
+      "expected_fingerprint": "0x4d4acefa2e275e14"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/canonical_identity_tests.rs",
+      "category": "RFC 120 canonical identity conformance assertions",
+      "expected_count": 35,
+      "expected_fingerprint": "0x6564955906f965ce"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_decl.rs",
+      "category": "declaration-level stdlib, derive, and checked registry compatibility",
+      "expected_count": 24,
+      "expected_fingerprint": "0xb3c5a0a6bf8d7881"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/access.rs",
+      "category": "method/type access, contextual Rust receiver specialization, public modules, checked registry, and C output-slot boundary classification",
+      "expected_count": 51,
+      "expected_fingerprint": "0x880792af30221e0b"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/basics.rs",
+      "category": "basic expression Rust/stdlib escape compatibility",
+      "expected_count": 4,
+      "expected_fingerprint": "0xf0b6fe14e6b2b9a8"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs",
+      "category": "enum constructor, public-module member, and checked C output/string-constructor compatibility",
+      "expected_count": 16,
+      "expected_fingerprint": "0x9a95063b42aca948"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/constructors.rs",
+      "category": "constructor named-argument compatibility",
+      "expected_count": 3,
+      "expected_fingerprint": "0x90ea26ed761933dc"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs",
+      "category": "Rust-boundary borrowed display recognition",
+      "expected_count": 2,
+      "expected_fingerprint": "0x2c33eb1e16ffe7d2"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs",
+      "category": "async guard method control-flow policy",
+      "expected_count": 3,
+      "expected_fingerprint": "0x2893f90138d3e39f"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/mod.rs",
+      "category": "expression-level pub/rust namespace compatibility",
+      "expected_count": 3,
+      "expected_fingerprint": "0x2cba3072b14a1ec2"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs",
+      "category": "statement-level runtime exception compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0xe98b9ff171b2c549"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/collect.rs",
+      "category": "derive and public-module collection compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0x7f4b804370839554"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/collect/decorators.rs",
+      "category": "decorator and Rust module collection compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0xcfcbc25e50c8fd42"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs",
+      "category": "stdlib import, checked API target paths, exact provider Rust reexports, provider-bound roots, and extension-trait compatibility",
+      "expected_count": 13,
+      "expected_fingerprint": "0x06a60de7f5265c7f"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/const_eval.rs",
+      "category": "Rust module const classification compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x654cd60a41fc2f2f"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/mod.rs",
+      "category": "Rust display type parsing, provider ABI lookup, shared nominal String canonicalization, source type-name validation, stdlib derive compatibility, and dependency registry owner paths",
+      "expected_count": 43,
+      "expected_fingerprint": "0x1a1160a72917c035"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs",
+      "category": "stdlib loader primitive compatibility",
+      "expected_count": 7,
+      "expected_fingerprint": "0x892edd99ae071c7f"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/validate_rust_module.rs",
+      "category": "Rust module validation compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x3814274efdb9fae2"
+    },
+    {
       "path": "src/backend/ir/checked_program/sdk_module_derives.rs",
       "category": "checked SDK metadata derive-module assertions",
       "expected_count": 1,
@@ -409,136 +529,16 @@
       "expected_fingerprint": "0x7dc8ae981cbf9965"
     },
     {
-      "path": "src/frontend/testing_markers.rs",
-      "category": "metadata-loaded testing marker inventory",
-      "expected_count": 13,
-      "expected_fingerprint": "0x4d4acefa2e275e14"
-    },
-    {
-      "path": "src/frontend/typechecker/canonical_identity_tests.rs",
-      "category": "RFC 120 canonical identity conformance assertions",
-      "expected_count": 35,
-      "expected_fingerprint": "0x6564955906f965ce"
-    },
-    {
-      "path": "src/frontend/typechecker/check_decl.rs",
-      "category": "declaration-level stdlib, derive, and checked registry compatibility",
-      "expected_count": 24,
-      "expected_fingerprint": "0xb3c5a0a6bf8d7881"
-    },
-    {
-      "path": "src/frontend/typechecker/check_expr/access.rs",
-      "category": "method/type access, contextual Rust receiver specialization, public modules, checked registry, and C output-slot boundary classification",
-      "expected_count": 51,
-      "expected_fingerprint": "0x880792af30221e0b"
-    },
-    {
-      "path": "src/frontend/typechecker/check_expr/basics.rs",
-      "category": "basic expression Rust/stdlib escape compatibility",
-      "expected_count": 4,
-      "expected_fingerprint": "0xf0b6fe14e6b2b9a8"
-    },
-    {
-      "path": "src/frontend/typechecker/check_expr/calls.rs",
-      "category": "enum constructor, public-module member, and checked C output/string-constructor compatibility",
-      "expected_count": 16,
-      "expected_fingerprint": "0x9a95063b42aca948"
-    },
-    {
-      "path": "src/frontend/typechecker/check_expr/calls/constructors.rs",
-      "category": "constructor named-argument compatibility",
-      "expected_count": 3,
-      "expected_fingerprint": "0x90ea26ed761933dc"
-    },
-    {
-      "path": "src/frontend/typechecker/check_expr/calls/rust_boundary.rs",
-      "category": "Rust-boundary borrowed display recognition",
-      "expected_count": 2,
-      "expected_fingerprint": "0x2c33eb1e16ffe7d2"
-    },
-    {
-      "path": "src/frontend/typechecker/check_expr/control_flow.rs",
-      "category": "async guard method control-flow policy",
-      "expected_count": 3,
-      "expected_fingerprint": "0x2893f90138d3e39f"
-    },
-    {
-      "path": "src/frontend/typechecker/check_expr/mod.rs",
-      "category": "expression-level pub/rust namespace compatibility",
-      "expected_count": 3,
-      "expected_fingerprint": "0x2cba3072b14a1ec2"
-    },
-    {
-      "path": "src/frontend/typechecker/check_stmt.rs",
-      "category": "statement-level runtime exception compatibility",
-      "expected_count": 1,
-      "expected_fingerprint": "0xe98b9ff171b2c549"
-    },
-    {
-      "path": "src/frontend/typechecker/collect.rs",
-      "category": "derive and public-module collection compatibility",
-      "expected_count": 2,
-      "expected_fingerprint": "0x7f4b804370839554"
-    },
-    {
-      "path": "src/frontend/typechecker/collect/decorators.rs",
-      "category": "decorator and Rust module collection compatibility",
-      "expected_count": 2,
-      "expected_fingerprint": "0xcfcbc25e50c8fd42"
-    },
-    {
-      "path": "src/frontend/typechecker/collect/stdlib_imports.rs",
-      "category": "stdlib import, checked API target paths, exact provider Rust reexports, provider-bound roots, and extension-trait compatibility",
-      "expected_count": 13,
-      "expected_fingerprint": "0x06a60de7f5265c7f"
-    },
-    {
-      "path": "src/frontend/typechecker/const_eval.rs",
-      "category": "Rust module const classification compatibility",
-      "expected_count": 1,
-      "expected_fingerprint": "0x654cd60a41fc2f2f"
-    },
-    {
-      "path": "src/frontend/typechecker/mod.rs",
-      "category": "Rust display type parsing, provider ABI lookup, shared nominal String canonicalization, source type-name validation, stdlib derive compatibility, and dependency registry owner paths",
-      "expected_count": 43,
-      "expected_fingerprint": "0x1a1160a72917c035"
-    },
-    {
-      "path": "src/frontend/typechecker/stdlib_loader.rs",
-      "category": "stdlib loader primitive compatibility",
-      "expected_count": 7,
-      "expected_fingerprint": "0x892edd99ae071c7f"
-    },
-    {
-      "path": "src/frontend/typechecker/validate_rust_module.rs",
-      "category": "Rust module validation compatibility",
-      "expected_count": 1,
-      "expected_fingerprint": "0x3814274efdb9fae2"
-    },
-    {
       "path": "src/provider/effect_digest.rs",
       "category": "effect-digest source-tree target exclusion",
       "expected_count": 1,
       "expected_fingerprint": "0xb9e5e7e7fc4c5038"
     },
     {
-      "path": "src/provider/features.rs",
-      "category": "manifest feature-section spelling",
-      "expected_count": 2,
-      "expected_fingerprint": "0x50c3a16c468f3c51"
-    },
-    {
       "path": "src/provider/inventory.rs",
       "category": "SDK inventory manifest section",
       "expected_count": 1,
       "expected_fingerprint": "0x12ad1d34129ad869"
-    },
-    {
-      "path": "src/provider/plan.rs",
-      "category": "std and pub namespace authority claims",
-      "expected_count": 4,
-      "expected_fingerprint": "0x08c1bc0bf8f6ab34"
     },
     {
       "path": "src/provider/sdk_store.rs",

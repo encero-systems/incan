@@ -1,0 +1,3761 @@
+//! Checked public API metadata extraction for RFC 048.
+//!
+//! This module builds a JSON-ready model from parsed and typechecked Incan semantics. It deliberately reuses the
+//! manifest type vocabulary instead of stringifying checked types, so package artifacts, CLI output, and later docs
+//! tooling can share one structural representation.
+
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+use crate::ast::{
+    CallArg, ClassDecl, Declaration, Decorator, DecoratorArg, DecoratorArgValue, DictEntry, EnumDecl, Expr, FieldDecl,
+    FunctionDecl, ImportDecl, ImportItem, ImportKind, ListEntry, MethodAliasDecl, MethodDecl, ModelDecl, NewtypeDecl,
+    Program, Span, Spanned, Statement, TraitDecl, TypeAliasDecl, Visibility,
+};
+use crate::decorator_resolution;
+use crate::diagnostics::CompileError;
+use crate::library_exports::{
+    CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedExportKind, CheckedField, CheckedFunctionExport,
+    CheckedMethod, CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport, CheckedPartialExport,
+    CheckedPartialTargetKind, CheckedPresetValue, CheckedProperty, CheckedTraitExport, CheckedTypeAliasExport,
+    CheckedTypeBound, CheckedTypeParam, collect_checked_public_exports,
+};
+use crate::library_manifest::{
+    CanonicalIdentityExport, ClassExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantAliasExport,
+    EnumVariantExport, FieldExport, FieldRequirementExport, FunctionExport, ImplementationAssociatedTypeExport,
+    ImplementationTraitBoundExport, ImplementationTraitBoundOriginExport, ImplementationTypeParamExport, MethodExport,
+    ModelExport, NewtypeConstraintExport, NewtypeExport, ParamExport, PartialExport, PartialPresetExport,
+    PartialTargetKindExport, PresetDictEntryExport, PresetModelFieldExport, PresetValueExport, PropertyExport,
+    ReceiverExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport, TypeRef,
+    param_default_from_checked, params_from_checked, type_ref_from_resolved,
+};
+use crate::module::canonicalize_source_module_segments;
+use crate::symbols::{ImplementationTraitBoundInfo, ImplementationTraitBoundOriginInfo, ImplementationTypeParamInfo};
+use crate::typechecker::{ConstValue, TypeChecker};
+use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
+
+pub const CHECKED_API_METADATA_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CheckedApiMetadataPackage {
+    pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<CheckedApiPackageIdentity>,
+    pub modules: Vec<CheckedApiMetadata>,
+    /// Materialized public namespace projection consumed at package boundaries.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub public_namespaces: Vec<CheckedApiPublicNamespace>,
+}
+
+/// One public package namespace materialized by the producer from its checked source-module graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckedApiPublicNamespace {
+    pub path: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<CheckedApiPublicNamespaceMember>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub child_modules: Vec<String>,
+}
+
+/// One declaration exposed through a materialized public package namespace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckedApiPublicNamespaceMember {
+    pub name: String,
+    /// Exact producer-local module path followed by the declaration name.
+    pub source_path: Vec<String>,
+}
+
+/// Failure while materializing or validating one checked package's public namespace graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckedApiPublicNamespaceError {
+    DuplicateSourceModule { module_path: Vec<String> },
+    MissingMaterializedNamespace { module_path: Vec<String> },
+    SerializedProjectionMismatch,
+}
+
+impl fmt::Display for CheckedApiPublicNamespaceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateSourceModule { module_path } => write!(
+                formatter,
+                "multiple source files resolve to checked module `{}`",
+                module_path.join(".")
+            ),
+            Self::MissingMaterializedNamespace { module_path } => write!(
+                formatter,
+                "checked module `{}` is missing from its materialized public namespace graph",
+                module_path.join(".")
+            ),
+            Self::SerializedProjectionMismatch => {
+                formatter.write_str("serialized public namespace projection does not match checked API modules")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CheckedApiPublicNamespaceError {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckedApiPackageIdentity {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CheckedApiMetadata {
+    pub schema_version: u32,
+    /// Exact module-owned RFC 024 derive membership; names resolve in this module's checked declarations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub derivable_traits: Vec<String>,
+    pub module_path: Vec<String>,
+    pub declarations: Vec<ApiDeclaration>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceSpan {
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceAnchor {
+    pub id: String,
+    pub span: SourceSpan,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ApiDeclaration {
+    Function(ApiFunction),
+    Model(ApiModel),
+    Class(ApiClass),
+    Trait(ApiTrait),
+    Enum(ApiEnum),
+    Newtype(ApiNewtype),
+    TypeAlias(ApiTypeAlias),
+    Const(ApiConst),
+    Static(ApiStatic),
+    Alias(ApiAlias),
+    Partial(ApiPartial),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiFunction {
+    pub name: String,
+    pub anchor: SourceAnchor,
+    pub docstring: Option<String>,
+    /// Parsed structured docstring sections, when a docstring is present.
+    pub docstring_sections: Option<ApiDocstring>,
+    pub decorators: Vec<DecoratorMetadata>,
+    pub type_params: Vec<TypeParamExport>,
+    pub params: Vec<ParamExport>,
+    pub return_type: TypeRef,
+    pub is_async: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiModel {
+    pub name: String,
+    pub anchor: SourceAnchor,
+    pub docstring: Option<String>,
+    /// Parsed structured docstring sections, when a docstring is present.
+    pub docstring_sections: Option<ApiDocstring>,
+    pub decorators: Vec<DecoratorMetadata>,
+    pub type_params: Vec<TypeParamExport>,
+    pub traits: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trait_adoptions: Vec<TypeBoundExport>,
+    pub derives: Vec<String>,
+    pub fields: Vec<FieldExport>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<ApiProperty>,
+    pub methods: Vec<ApiMethod>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiClass {
+    pub name: String,
+    pub anchor: SourceAnchor,
+    pub docstring: Option<String>,
+    /// Parsed structured docstring sections, when a docstring is present.
+    pub docstring_sections: Option<ApiDocstring>,
+    pub decorators: Vec<DecoratorMetadata>,
+    pub type_params: Vec<TypeParamExport>,
+    pub extends: Option<String>,
+    pub traits: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trait_adoptions: Vec<TypeBoundExport>,
+    pub derives: Vec<String>,
+    pub fields: Vec<FieldExport>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<ApiProperty>,
+    pub methods: Vec<ApiMethod>,
+}
+
+/// Public computed-property metadata in checked API output.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiProperty {
+    pub name: String,
+    /// Canonical member declaration identity, absent only for legacy or non-package metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical: Option<CanonicalIdentityExport>,
+    pub return_type: TypeRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiTrait {
+    pub name: String,
+    pub anchor: SourceAnchor,
+    pub docstring: Option<String>,
+    /// Parsed structured docstring sections, when a docstring is present.
+    pub docstring_sections: Option<ApiDocstring>,
+    pub decorators: Vec<DecoratorMetadata>,
+    pub type_params: Vec<TypeParamExport>,
+    pub supertraits: Vec<TypeBoundExport>,
+    pub requires: Vec<FieldExport>,
+    pub methods: Vec<ApiMethod>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiEnum {
+    pub name: String,
+    pub anchor: SourceAnchor,
+    pub docstring: Option<String>,
+    /// Parsed structured docstring sections, when a docstring is present.
+    pub docstring_sections: Option<ApiDocstring>,
+    pub decorators: Vec<DecoratorMetadata>,
+    pub type_params: Vec<TypeParamExport>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub traits: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trait_adoptions: Vec<TypeBoundExport>,
+    pub value_type: Option<EnumValueTypeExport>,
+    pub variants: Vec<ApiEnumVariant>,
+    pub variant_aliases: Vec<ApiEnumVariantAlias>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub methods: Vec<ApiMethod>,
+    pub derives: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiEnumVariant {
+    pub name: String,
+    /// Canonical variant declaration identity, absent only for legacy or non-package metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical: Option<CanonicalIdentityExport>,
+    pub fields: Vec<TypeRef>,
+    pub value: Option<EnumValueExport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiEnumVariantAlias {
+    pub name: String,
+    pub target: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiNewtype {
+    pub name: String,
+    pub anchor: SourceAnchor,
+    pub docstring: Option<String>,
+    /// Parsed structured docstring sections, when a docstring is present.
+    pub docstring_sections: Option<ApiDocstring>,
+    pub decorators: Vec<DecoratorMetadata>,
+    pub type_params: Vec<TypeParamExport>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub traits: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trait_adoptions: Vec<TypeBoundExport>,
+    /// Source-level `@derive(...)` names declared by this newtype.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub derives: Vec<String>,
+    pub is_rusttype: bool,
+    pub underlying: TypeRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_constructor: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub constraints: Vec<NewtypeConstraintExport>,
+    #[serde(default = "default_newtype_implicit_coercion")]
+    pub implicit_coercion_enabled: bool,
+    pub methods: Vec<ApiMethod>,
+}
+
+/// Preserve the pre-field API metadata behavior when older payloads omit the coercion flag.
+fn default_newtype_implicit_coercion() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiTypeAlias {
+    pub name: String,
+    pub anchor: SourceAnchor,
+    pub type_alias: TypeAliasExport,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiConst {
+    pub name: String,
+    pub anchor: SourceAnchor,
+    pub ty: TypeRef,
+    pub value: Option<SafeMetadataValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiStatic {
+    pub name: String,
+    pub anchor: SourceAnchor,
+    pub ty: TypeRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiAlias {
+    pub name: String,
+    pub anchor: SourceAnchor,
+    pub target_path: Vec<String>,
+    /// Whether the source import or alias explicitly participates in the package's public API.
+    #[serde(default)]
+    pub is_public: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projected_function: Option<ApiProjectedFunction>,
+    /// Checked nominal target retained by a public type re-export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projected_type: Option<TypeRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiPartial {
+    pub name: String,
+    pub anchor: SourceAnchor,
+    pub target_path: Vec<String>,
+    pub target_kind: PartialTargetKindExport,
+    pub presets: Vec<PartialPresetExport>,
+    pub type_params: Vec<TypeParamExport>,
+    pub params: Vec<ParamExport>,
+    pub return_type: TypeRef,
+    pub is_async: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiMethod {
+    pub name: String,
+    /// Canonical member declaration identity, distinct for same-name overloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical: Option<CanonicalIdentityExport>,
+    /// Canonical method targeted by this same-type alias, when this entry projects an alias rather than a body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias_of: Option<String>,
+    pub anchor: SourceAnchor,
+    pub docstring: Option<String>,
+    /// Parsed structured docstring sections, when a docstring is present.
+    pub docstring_sections: Option<ApiDocstring>,
+    pub decorators: Vec<DecoratorMetadata>,
+    pub type_params: Vec<TypeParamExport>,
+    pub receiver: Option<ReceiverExport>,
+    pub params: Vec<ParamExport>,
+    pub return_type: TypeRef,
+    pub is_async: bool,
+    pub has_body: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecoratorMetadata {
+    pub path: Vec<String>,
+    pub source_name: String,
+    pub anchor: SourceSpan,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub type_args: Vec<TypeRef>,
+    pub args: Vec<DecoratorArgMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decorated_callable: Option<ApiCallableMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiProjectedFunction {
+    pub source_path: Vec<String>,
+    pub callable: ApiCallableMetadata,
+    pub decorators: Vec<DecoratorMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiCallableMetadata {
+    pub name: String,
+    pub anchor: SourceAnchor,
+    pub type_params: Vec<TypeParamExport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receiver: Option<ReceiverExport>,
+    pub params: Vec<ParamExport>,
+    pub return_type: TypeRef,
+    pub is_async: bool,
+}
+
+/// Convert a checked API function into manifest-style callable metadata.
+pub fn function_export_from_api(function: &ApiFunction) -> FunctionExport {
+    FunctionExport {
+        name: function.name.clone(),
+        emitted_name: None,
+        type_params: function.type_params.clone(),
+        params: function.params.clone(),
+        return_type: function.return_type.clone(),
+        is_async: function.is_async,
+    }
+}
+
+/// Convert a projected alias callable into manifest-style callable metadata while preserving source callable identity.
+pub fn function_export_from_api_projected(function: &ApiProjectedFunction) -> FunctionExport {
+    FunctionExport {
+        name: function.callable.name.clone(),
+        emitted_name: None,
+        type_params: function.callable.type_params.clone(),
+        params: function.callable.params.clone(),
+        return_type: function.callable.return_type.clone(),
+        is_async: function.callable.is_async,
+    }
+}
+
+/// Convert a checked API partial into manifest-style partial metadata.
+pub fn partial_export_from_api(partial: &ApiPartial) -> PartialExport {
+    PartialExport {
+        name: partial.name.clone(),
+        target_path: partial.target_path.clone(),
+        target_kind: partial.target_kind,
+        presets: partial.presets.clone(),
+        type_params: partial.type_params.clone(),
+        params: partial.params.clone(),
+        return_type: partial.return_type.clone(),
+        is_async: partial.is_async,
+    }
+}
+
+/// Convert a checked API method into manifest-style method metadata.
+pub fn method_export_from_api(method: &ApiMethod) -> MethodExport {
+    MethodExport {
+        name: method.name.clone(),
+        canonical: method.canonical.clone(),
+        alias_of: method.alias_of.clone(),
+        type_params: method.type_params.clone(),
+        receiver: method.receiver.clone(),
+        params: method.params.clone(),
+        return_type: method.return_type.clone(),
+        is_async: method.is_async,
+        has_body: method.has_body,
+    }
+}
+
+/// Convert a checked API computed property into manifest-style metadata.
+fn property_export_from_api(property: &ApiProperty) -> PropertyExport {
+    PropertyExport {
+        name: property.name.clone(),
+        canonical: property.canonical.clone(),
+        return_type: property.return_type.clone(),
+    }
+}
+
+/// Convert a checked API model into manifest-style model metadata for public boundary consumers.
+pub fn model_export_from_api(model: &ApiModel) -> ModelExport {
+    ModelExport {
+        name: model.name.clone(),
+        type_params: model.type_params.clone(),
+        traits: model.traits.clone(),
+        trait_adoptions: model.trait_adoptions.clone(),
+        derives: model.derives.clone(),
+        fields: model.fields.clone(),
+        properties: model.properties.iter().map(property_export_from_api).collect(),
+        methods: model.methods.iter().map(method_export_from_api).collect(),
+    }
+}
+
+/// Convert a checked API class into manifest-style class metadata for public boundary consumers.
+pub fn class_export_from_api(class: &ApiClass) -> ClassExport {
+    ClassExport {
+        name: class.name.clone(),
+        type_params: class.type_params.clone(),
+        extends: class.extends.clone(),
+        traits: class.traits.clone(),
+        trait_adoptions: class.trait_adoptions.clone(),
+        derives: class.derives.clone(),
+        fields: class.fields.clone(),
+        properties: class.properties.iter().map(property_export_from_api).collect(),
+        methods: class.methods.iter().map(method_export_from_api).collect(),
+    }
+}
+
+/// Convert a checked API trait into manifest-style trait metadata for public boundary consumers.
+pub fn trait_export_from_api(trait_decl: &ApiTrait) -> TraitExport {
+    TraitExport {
+        name: trait_decl.name.clone(),
+        source_name: None,
+        type_params: trait_decl.type_params.clone(),
+        supertraits: trait_decl.supertraits.clone(),
+        requires: trait_decl
+            .requires
+            .iter()
+            .map(|field| FieldRequirementExport {
+                name: field.name.clone(),
+                ty: field.ty.clone(),
+            })
+            .collect(),
+        methods: trait_decl.methods.iter().map(method_export_from_api).collect(),
+    }
+}
+
+/// Convert a checked API enum into manifest-style enum metadata for public boundary consumers.
+pub fn enum_export_from_api(enum_decl: &ApiEnum) -> EnumExport {
+    EnumExport {
+        name: enum_decl.name.clone(),
+        type_params: enum_decl.type_params.clone(),
+        traits: enum_decl.traits.clone(),
+        trait_adoptions: enum_decl.trait_adoptions.clone(),
+        value_type: enum_decl.value_type,
+        ordinal_type_identity: None,
+        variants: enum_decl
+            .variants
+            .iter()
+            .map(|variant| EnumVariantExport {
+                name: variant.name.clone(),
+                canonical: variant.canonical.clone(),
+                fields: variant.fields.clone(),
+                value: variant.value.clone(),
+            })
+            .collect(),
+        variant_aliases: enum_decl
+            .variant_aliases
+            .iter()
+            .map(|alias| EnumVariantAliasExport {
+                name: alias.name.clone(),
+                target: alias.target.clone(),
+            })
+            .collect(),
+        methods: enum_decl.methods.iter().map(method_export_from_api).collect(),
+        derives: enum_decl.derives.clone(),
+    }
+}
+
+/// Convert a checked API newtype into manifest-style newtype metadata for public boundary consumers.
+pub fn newtype_export_from_api(newtype: &ApiNewtype) -> NewtypeExport {
+    NewtypeExport {
+        name: newtype.name.clone(),
+        type_params: newtype.type_params.clone(),
+        traits: newtype.traits.clone(),
+        trait_adoptions: newtype.trait_adoptions.clone(),
+        derives: newtype.derives.clone(),
+        is_rusttype: newtype.is_rusttype,
+        underlying: newtype.underlying.clone(),
+        checked_constructor: newtype.checked_constructor.clone(),
+        constraints: newtype.constraints.clone(),
+        implicit_coercion_enabled: newtype.implicit_coercion_enabled,
+        methods: newtype.methods.iter().map(method_export_from_api).collect(),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DecoratorArgMetadata {
+    Positional { value: DecoratorValue },
+    Named { name: String, value: DecoratorValue },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DecoratorValue {
+    Literal {
+        value: SafeMetadataValue,
+    },
+    ConstRef {
+        name: String,
+        value: Option<SafeMetadataValue>,
+    },
+    SymbolRef {
+        path: Vec<String>,
+    },
+    List {
+        items: Vec<DecoratorValue>,
+    },
+    Dict {
+        entries: Vec<DecoratorDictEntry>,
+    },
+    Call {
+        callee: Vec<String>,
+        type_args: Vec<TypeRef>,
+        args: Vec<DecoratorCallArgMetadata>,
+    },
+    Type {
+        ty: TypeRef,
+    },
+    Unsupported {
+        reason: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecoratorDictEntry {
+    pub key: DecoratorValue,
+    pub value: DecoratorValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DecoratorCallArgMetadata {
+    Positional { value: DecoratorValue },
+    Named { name: String, value: DecoratorValue },
+    PositionalUnpack { value: DecoratorValue },
+    KeywordUnpack { value: DecoratorValue },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum SafeMetadataValue {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    String(String),
+    Bytes(Vec<u8>),
+    None,
+}
+
+/// Parsed Incan docstring sections attached to a checked API declaration or method.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiDocstring {
+    /// Free-form summary text before the first recognized section heading.
+    pub summary: Option<String>,
+    /// Documented callable parameters from `Args:` or `Parameters:`.
+    pub params: Vec<ApiDocstringEntry>,
+    /// Documented return section from `Returns:`.
+    pub returns: Option<ApiDocstringReturn>,
+    /// Documented model, class, or trait fields from `Fields:`.
+    pub fields: Vec<ApiDocstringEntry>,
+    /// Documented public aliases from `Aliases:`.
+    pub aliases: Vec<ApiDocstringEntry>,
+    /// Documented decorators from `Decorators:`.
+    pub decorators: Vec<ApiDocstringEntry>,
+}
+
+/// One named docstring entry from a mechanically checkable section.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiDocstringEntry {
+    /// The documented parameter, field, alias, or decorator name.
+    pub name: String,
+    /// Human-readable prose associated with the documented name.
+    pub description: String,
+}
+
+/// Parsed return documentation, optionally carrying an authored type spelling.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiDocstringReturn {
+    /// Optional type spelling from a `Returns:` line of the form `type: description`.
+    pub ty: Option<String>,
+    /// Human-readable return prose.
+    pub description: String,
+}
+
+/// One actionable docstring drift diagnostic associated with a metadata module.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ApiDocstringDiagnostic {
+    /// Logical module path for the declaration that emitted the diagnostic.
+    pub module_path: Vec<String>,
+    /// Source diagnostic anchored to the declaration or method span.
+    pub error: CompileError,
+}
+
+/// Collect checked public API metadata for one parsed and typechecked module.
+pub fn collect_checked_api_metadata(
+    program: &Program,
+    checker: &TypeChecker,
+    module_path: Vec<String>,
+) -> CheckedApiMetadata {
+    let checked_exports = collect_checked_public_exports(program, checker);
+    let checked_by_name: HashMap<String, CheckedNamedExport> = checked_exports
+        .into_iter()
+        .map(|export| (export.name.clone(), export))
+        .collect();
+
+    let mut declarations = Vec::new();
+    for decl in &program.declarations {
+        match &decl.node {
+            Declaration::Function(function) if public(function.visibility) => {
+                if let Some(CheckedExportKind::Function(export)) = checked_kind(&checked_by_name, &function.name) {
+                    declarations.push(ApiDeclaration::Function(api_function(
+                        function,
+                        decl.span,
+                        export,
+                        checker,
+                        &module_path,
+                    )));
+                }
+            }
+            Declaration::Model(model) if public(model.visibility) => {
+                if let Some(CheckedExportKind::Model(export)) = checked_kind(&checked_by_name, &model.name) {
+                    declarations.push(ApiDeclaration::Model(api_model(
+                        model,
+                        decl.span,
+                        export,
+                        checker,
+                        &module_path,
+                    )));
+                }
+            }
+            Declaration::Class(class) if public(class.visibility) => {
+                if let Some(CheckedExportKind::Class(export)) = checked_kind(&checked_by_name, &class.name) {
+                    declarations.push(ApiDeclaration::Class(api_class(
+                        class,
+                        decl.span,
+                        export,
+                        checker,
+                        &module_path,
+                    )));
+                }
+            }
+            Declaration::Trait(trait_decl) if public(trait_decl.visibility) => {
+                if let Some(CheckedExportKind::Trait(export)) = checked_kind(&checked_by_name, &trait_decl.name) {
+                    declarations.push(ApiDeclaration::Trait(api_trait(
+                        trait_decl,
+                        decl.span,
+                        export,
+                        checker,
+                        &module_path,
+                    )));
+                }
+            }
+            Declaration::Enum(enum_decl) if public(enum_decl.visibility) => {
+                if let Some(CheckedExportKind::Enum(export)) = checked_kind(&checked_by_name, &enum_decl.name) {
+                    declarations.push(ApiDeclaration::Enum(api_enum(
+                        enum_decl,
+                        decl.span,
+                        export,
+                        checker,
+                        &module_path,
+                    )));
+                }
+            }
+            Declaration::Newtype(newtype) if public(newtype.visibility) => {
+                if let Some(CheckedExportKind::Newtype(export)) = checked_kind(&checked_by_name, &newtype.name) {
+                    declarations.push(ApiDeclaration::Newtype(api_newtype(
+                        newtype,
+                        decl.span,
+                        export,
+                        checker,
+                        &module_path,
+                    )));
+                }
+            }
+            Declaration::TypeAlias(alias) if public(alias.visibility) => {
+                if let Some(CheckedExportKind::TypeAlias(export)) = checked_kind(&checked_by_name, &alias.name) {
+                    declarations.push(ApiDeclaration::TypeAlias(api_type_alias(
+                        alias,
+                        decl.span,
+                        export,
+                        &module_path,
+                    )));
+                }
+            }
+            Declaration::Const(konst) if public(konst.visibility) => {
+                if let Some(CheckedExportKind::Const(export)) = checked_kind(&checked_by_name, &konst.name) {
+                    declarations.push(ApiDeclaration::Const(api_const(
+                        &konst.name,
+                        decl.span,
+                        export,
+                        checker,
+                        &module_path,
+                    )));
+                }
+            }
+            Declaration::Static(static_decl) if public(static_decl.visibility) => {
+                if let Some(CheckedExportKind::Static(export)) = checked_kind(&checked_by_name, &static_decl.name) {
+                    declarations.push(ApiDeclaration::Static(ApiStatic {
+                        name: export.name.clone(),
+                        anchor: anchor(&module_path, &export.name, decl.span),
+                        ty: type_ref_from_resolved(&export.ty),
+                    }));
+                }
+            }
+            Declaration::Partial(partial) if public(partial.visibility) => {
+                if let Some(CheckedExportKind::Partial(export)) = checked_kind(&checked_by_name, &partial.name) {
+                    declarations.push(ApiDeclaration::Partial(api_partial(export, decl.span, &module_path)));
+                }
+            }
+            // Module-level `from ... import ...` bindings are part of a module's public surface, including facade
+            // modules such as `std.web` whose `prelude.incn` consists entirely of re-exports. Rust imports remain an
+            // implementation detail unless explicitly declared `pub`.
+            Declaration::Alias(_) | Declaration::Import(_) => declarations.extend(
+                checked_api_aliases_for_declaration(&decl.node, decl.span, &module_path)
+                    .into_iter()
+                    .map(ApiDeclaration::Alias),
+            ),
+            _ => {}
+        }
+    }
+
+    for declaration in &mut declarations {
+        if let ApiDeclaration::Alias(alias) = declaration
+            && let Some(CheckedExportKind::Alias(checked)) = checked_kind(&checked_by_name, &alias.name)
+        {
+            alias.projected_type = checked.projected_type.as_ref().map(type_ref_from_resolved);
+        }
+    }
+
+    crate::library_manifest::with_checked_type_origins(
+        CheckedApiMetadata {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            derivable_traits: TypeChecker::derivable_traits_from_program(program),
+            module_path,
+            declarations,
+        },
+        &checker.checked_nominal_type_origins(),
+    )
+}
+
+/// Collect only the checked public alias projection for one parsed module.
+///
+/// Callers use this after the owning compilation session has successfully checked the module. Keeping this projection
+/// separate lets registry inspection attach facade paths without constructing a second typechecker merely to recover
+/// import spellings that are already present in the checked source program.
+pub fn collect_checked_api_alias_metadata(program: &Program, module_path: Vec<String>) -> CheckedApiMetadata {
+    let declarations = program
+        .declarations
+        .iter()
+        .flat_map(|declaration| {
+            checked_api_aliases_for_declaration(&declaration.node, declaration.span, &module_path)
+                .into_iter()
+                .map(ApiDeclaration::Alias)
+        })
+        .collect();
+    CheckedApiMetadata {
+        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        derivable_traits: TypeChecker::derivable_traits_from_program(program),
+        module_path,
+        declarations,
+    }
+}
+
+/// Attach checked function projections to public aliases that target decorated or ordinary public functions.
+///
+/// Metadata package consumers should not need to force producer module initialization just to discover declaration-side
+/// decorator facts. This projection pass resolves aliases across the already checked API package and carries the target
+/// function's decorators and checked callable shape onto facade aliases.
+pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
+    let mut projections = HashMap::new();
+    let mut type_projections = HashMap::new();
+    let mut aliases = Vec::new();
+
+    for module in modules.iter() {
+        for declaration in &module.declarations {
+            match declaration {
+                ApiDeclaration::Function(function) => {
+                    projections.insert(
+                        declaration_path(&module.module_path, &function.name),
+                        ApiProjectedFunction {
+                            source_path: declaration_path(&module.module_path, &function.name),
+                            callable: callable_from_function(function),
+                            decorators: function.decorators.clone(),
+                        },
+                    );
+                }
+                ApiDeclaration::TypeAlias(alias) if alias.type_alias.target.has_native_union() => {
+                    type_projections.insert(
+                        declaration_path(&module.module_path, &alias.name),
+                        alias.type_alias.target.clone(),
+                    );
+                }
+                ApiDeclaration::Alias(alias) => {
+                    let path = declaration_path(&module.module_path, &alias.name);
+                    // External projections are already bound to admitted artifacts. Local aliases are refreshed
+                    // from their current declaration after native representation publication updates that target.
+                    if alias.target_path.first().is_some_and(|root| root == "pub") {
+                        if let Some(function) = &alias.projected_function {
+                            projections.insert(path.clone(), function.clone());
+                        }
+                        if let Some(ty) = &alias.projected_type
+                            && ty.has_native_union()
+                        {
+                            type_projections.insert(path.clone(), ty.clone());
+                        }
+                    }
+                    aliases.push(ApiAliasProjectionRequest {
+                        path: declaration_path(&module.module_path, &alias.name),
+                        target_path: normalized_api_target_path(&alias.target_path),
+                        module_path: module.module_path.clone(),
+                        name: alias.name.clone(),
+                        anchor: alias.anchor.clone(),
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for alias in &aliases {
+            if projections.contains_key(&alias.path) && type_projections.contains_key(&alias.path) {
+                continue;
+            }
+            // An alias whose target lives in its own module records that target unqualified, because that is how the
+            // source writes it: `pub run = alias helper` inside `provider` records `["helper"]`. Projections are
+            // keyed by resolved declaration path, `["provider", "helper"]`, so the two never met and every
+            // same-module alias published no callable metadata at all.
+            //
+            // Resolve against the alias's own module first, then fall back to the path as written for a target that
+            // really is module-qualified. The recorded `target_path` is deliberately left alone: it is compared
+            // against the identity graph downstream, and rewriting it here would move that comparison rather than
+            // fix this one.
+            let qualified =
+                (alias.target_path.len() == 1).then(|| declaration_path(&alias.module_path, &alias.target_path[0]));
+            let resolved = qualified
+                .as_ref()
+                .and_then(|path| projections.get(path))
+                .or_else(|| projections.get(&alias.target_path));
+            if !projections.contains_key(&alias.path)
+                && let Some(target) = resolved
+            {
+                let projection = projected_function_for_alias(alias, target);
+                projections.insert(alias.path.clone(), projection);
+                changed = true;
+            }
+            if !type_projections.contains_key(&alias.path) {
+                let target = qualified
+                    .as_ref()
+                    .and_then(|path| type_projections.get(path))
+                    .or_else(|| type_projections.get(&alias.target_path))
+                    .cloned();
+                if let Some(target) = target {
+                    type_projections.insert(alias.path.clone(), target);
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    for module in modules {
+        for declaration in &mut module.declarations {
+            if let ApiDeclaration::Alias(alias) = declaration {
+                let alias_path = declaration_path(&module.module_path, &alias.name);
+                alias.projected_function = projections.get(&alias_path).cloned();
+                if let Some(ty) = type_projections.get(&alias_path) {
+                    alias.projected_type = Some(ty.clone());
+                }
+            }
+        }
+    }
+}
+
+/// Materialize the deterministic public namespace graph owned by one checked package API.
+pub fn materialize_checked_api_public_namespaces(
+    api: &mut CheckedApiMetadataPackage,
+) -> Result<(), CheckedApiPublicNamespaceError> {
+    let mut module_paths = HashSet::new();
+    for module in &api.modules {
+        if !module_paths.insert(module.module_path.clone()) {
+            return Err(CheckedApiPublicNamespaceError::DuplicateSourceModule {
+                module_path: module.module_path.clone(),
+            });
+        }
+    }
+
+    let mut namespaces = HashMap::<Vec<String>, CheckedApiPublicNamespace>::new();
+    for module in &api.modules {
+        if matches!(module.module_path.as_slice(), [root] if root == "lib" || root == "main") {
+            continue;
+        }
+        for len in 1..=module.module_path.len() {
+            let path = module.module_path[..len].to_vec();
+            namespaces
+                .entry(path.clone())
+                .or_insert_with(|| CheckedApiPublicNamespace {
+                    path,
+                    members: Vec::new(),
+                    child_modules: Vec::new(),
+                });
+            if len > 1 {
+                let parent = module.module_path[..len - 1].to_vec();
+                let child = module.module_path[len - 1].clone();
+                namespaces
+                    .entry(parent.clone())
+                    .or_insert_with(|| CheckedApiPublicNamespace {
+                        path: parent,
+                        members: Vec::new(),
+                        child_modules: Vec::new(),
+                    })
+                    .child_modules
+                    .push(child);
+            }
+        }
+        for declaration in module
+            .declarations
+            .iter()
+            .filter(|declaration| checked_api_declaration_is_public_namespace_member(declaration))
+        {
+            let Some(name) = api_declaration_public_name(declaration) else {
+                continue;
+            };
+            let mut source_path = module.module_path.clone();
+            source_path.push(name.to_string());
+            let member = CheckedApiPublicNamespaceMember {
+                name: name.to_string(),
+                source_path,
+            };
+            let namespace = namespaces.get_mut(&module.module_path).ok_or_else(|| {
+                CheckedApiPublicNamespaceError::MissingMaterializedNamespace {
+                    module_path: module.module_path.clone(),
+                }
+            })?;
+            namespace.members.push(member.clone());
+            if module.module_path.len() > 1 {
+                let parent_path = module.module_path[..module.module_path.len() - 1].to_vec();
+                let parent = namespaces.get_mut(parent_path.as_slice()).ok_or({
+                    CheckedApiPublicNamespaceError::MissingMaterializedNamespace {
+                        module_path: parent_path,
+                    }
+                })?;
+                parent.members.push(member);
+            }
+        }
+    }
+    let mut namespaces = namespaces.into_values().collect::<Vec<_>>();
+    for namespace in &mut namespaces {
+        namespace
+            .members
+            .sort_by(|left, right| (&left.name, &left.source_path).cmp(&(&right.name, &right.source_path)));
+        namespace.members.dedup();
+        namespace.child_modules.sort();
+        namespace.child_modules.dedup();
+    }
+    namespaces.sort_by(|left, right| left.path.cmp(&right.path));
+    api.public_namespaces = namespaces;
+    Ok(())
+}
+
+/// Validate that a serialized namespace projection exactly matches its checked declaration modules.
+pub fn validate_checked_api_public_namespaces(
+    api: &CheckedApiMetadataPackage,
+) -> Result<(), CheckedApiPublicNamespaceError> {
+    if api.public_namespaces.is_empty() {
+        return Ok(());
+    }
+    let serialized = api.public_namespaces.clone();
+    let mut derived = api.clone();
+    derived.public_namespaces.clear();
+    materialize_checked_api_public_namespaces(&mut derived)?;
+    if serialized != derived.public_namespaces {
+        return Err(CheckedApiPublicNamespaceError::SerializedProjectionMismatch);
+    }
+    Ok(())
+}
+
+/// Return every materialized public module path carried by one checked package API.
+pub fn checked_api_public_module_paths(api: &CheckedApiMetadataPackage) -> Vec<Vec<String>> {
+    if !api.public_namespaces.is_empty() {
+        return api
+            .public_namespaces
+            .iter()
+            .map(|namespace| namespace.path.clone())
+            .collect();
+    }
+    let mut compatibility = api.clone();
+    materialize_checked_api_public_namespaces(&mut compatibility)
+        .map(|()| {
+            compatibility
+                .public_namespaces
+                .into_iter()
+                .map(|namespace| namespace.path)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Return source API modules whose public declarations participate directly in one materialized namespace.
+pub fn checked_api_modules_for_public_namespace<'a>(
+    api: &'a CheckedApiMetadataPackage,
+    module_path: &[String],
+) -> Vec<&'a CheckedApiMetadata> {
+    let source_modules = checked_api_public_namespace(api, module_path)
+        .map(|namespace| {
+            namespace
+                .members
+                .iter()
+                .filter_map(|member| member.source_path.get(..member.source_path.len().saturating_sub(1)))
+                .map(<[String]>::to_vec)
+                .collect::<HashSet<_>>()
+        })
+        .unwrap_or_default();
+    api.modules
+        .iter()
+        .filter(|module| source_modules.contains(&module.module_path))
+        .collect()
+}
+
+/// Return one materialized namespace, deriving a compatibility projection only for older artifacts.
+pub fn checked_api_public_namespace(
+    api: &CheckedApiMetadataPackage,
+    module_path: &[String],
+) -> Option<CheckedApiPublicNamespace> {
+    if let Some(namespace) = api
+        .public_namespaces
+        .iter()
+        .find(|namespace| namespace.path == module_path)
+    {
+        return Some(namespace.clone());
+    }
+    let mut compatibility = api.clone();
+    materialize_checked_api_public_namespaces(&mut compatibility).ok()?;
+    compatibility
+        .public_namespaces
+        .into_iter()
+        .find(|namespace| namespace.path == module_path)
+}
+
+/// Return whether checked metadata authorizes a declaration in an automatic package namespace.
+pub fn checked_api_declaration_is_public_namespace_member(declaration: &ApiDeclaration) -> bool {
+    match declaration {
+        ApiDeclaration::Alias(alias) => alias.is_public,
+        _ => true,
+    }
+}
+
+/// Return the public spelling carried by one checked API declaration.
+pub fn api_declaration_public_name(declaration: &ApiDeclaration) -> Option<&str> {
+    match declaration {
+        ApiDeclaration::Function(item) => Some(&item.name),
+        ApiDeclaration::Model(item) => Some(&item.name),
+        ApiDeclaration::Class(item) => Some(&item.name),
+        ApiDeclaration::Trait(item) => Some(&item.name),
+        ApiDeclaration::Enum(item) => Some(&item.name),
+        ApiDeclaration::Newtype(item) => Some(&item.name),
+        ApiDeclaration::TypeAlias(item) => Some(&item.name),
+        ApiDeclaration::Const(item) => Some(&item.name),
+        ApiDeclaration::Static(item) => Some(&item.name),
+        ApiDeclaration::Alias(item) => Some(&item.name),
+        ApiDeclaration::Partial(item) => Some(&item.name),
+    }
+}
+
+#[derive(Debug)]
+struct ApiAliasProjectionRequest {
+    path: Vec<String>,
+    target_path: Vec<String>,
+    /// The module the alias is declared in, used to resolve a target written without a module qualifier.
+    module_path: Vec<String>,
+    name: String,
+    anchor: SourceAnchor,
+}
+
+/// Build the API declaration path for a module-local name.
+fn declaration_path(module_path: &[String], name: &str) -> Vec<String> {
+    let mut path = module_path.to_vec();
+    path.push(name.to_string());
+    path
+}
+
+/// Normalize an API target path by removing a leading `crate` segment.
+fn normalized_api_target_path(path: &[String]) -> Vec<String> {
+    if path.first().is_some_and(|segment| segment == "crate") {
+        return path[1..].to_vec();
+    }
+    path.to_vec()
+}
+
+/// Build callable metadata from a checked API function export.
+fn callable_from_function(function: &ApiFunction) -> ApiCallableMetadata {
+    ApiCallableMetadata {
+        name: function.name.clone(),
+        anchor: function.anchor.clone(),
+        type_params: function.type_params.clone(),
+        receiver: None,
+        params: function.params.clone(),
+        return_type: function.return_type.clone(),
+        is_async: function.is_async,
+    }
+}
+
+/// Build projected callable metadata for an alias re-export.
+fn projected_function_for_alias(
+    alias: &ApiAliasProjectionRequest,
+    target: &ApiProjectedFunction,
+) -> ApiProjectedFunction {
+    let mut projected = target.clone();
+    projected.callable.name = alias.name.clone();
+    projected.callable.anchor = alias.anchor.clone();
+    projected
+}
+
+/// Look up the checked export kind for a public name.
+fn checked_kind<'a>(exports: &'a HashMap<String, CheckedNamedExport>, name: &str) -> Option<&'a CheckedExportKind> {
+    exports.get(name).map(|export| &export.kind)
+}
+
+/// Return whether a declaration visibility is public.
+fn public(visibility: Visibility) -> bool {
+    matches!(visibility, Visibility::Public)
+}
+
+/// Convert checked partial export metadata into the checked API package shape.
+fn api_partial(export: &CheckedPartialExport, span: Span, module_path: &[String]) -> ApiPartial {
+    ApiPartial {
+        name: export.name.clone(),
+        anchor: anchor(module_path, &export.name, span),
+        target_path: export.target_path.clone(),
+        target_kind: api_partial_target_kind(export.target_kind),
+        presets: export
+            .presets
+            .iter()
+            .map(|preset| PartialPresetExport {
+                name: preset.name.clone(),
+                ty: type_ref_from_resolved(&preset.ty),
+                value: api_preset_value(&preset.value),
+            })
+            .collect(),
+        type_params: type_params(&export.type_params),
+        params: params_from_checked(&export.params, &[]),
+        return_type: type_ref_from_resolved(&export.return_type),
+        is_async: export.is_async,
+    }
+}
+
+/// Convert frontend partial target kind metadata into manifest/API vocabulary.
+fn api_partial_target_kind(kind: CheckedPartialTargetKind) -> PartialTargetKindExport {
+    match kind {
+        CheckedPartialTargetKind::Function => PartialTargetKindExport::Function,
+        CheckedPartialTargetKind::ModelConstructor => PartialTargetKindExport::ModelConstructor,
+        CheckedPartialTargetKind::ClassConstructor => PartialTargetKindExport::ClassConstructor,
+        CheckedPartialTargetKind::NewtypeConstructor => PartialTargetKindExport::NewtypeConstructor,
+        CheckedPartialTargetKind::Partial => PartialTargetKindExport::Partial,
+        CheckedPartialTargetKind::Unknown => PartialTargetKindExport::Unknown,
+    }
+}
+
+/// Convert checked preset values into the serialized API metadata representation.
+fn api_preset_value(value: &CheckedPresetValue) -> PresetValueExport {
+    match value {
+        CheckedPresetValue::Int(value) => PresetValueExport::Int(*value),
+        CheckedPresetValue::Float(value) => PresetValueExport::Float(value.to_string()),
+        CheckedPresetValue::Bool(value) => PresetValueExport::Bool(*value),
+        CheckedPresetValue::String(value) => PresetValueExport::String(value.clone()),
+        CheckedPresetValue::Bytes(value) => PresetValueExport::Bytes(value.clone()),
+        CheckedPresetValue::None => PresetValueExport::None,
+        CheckedPresetValue::List(values) => PresetValueExport::List(values.iter().map(api_preset_value).collect()),
+        CheckedPresetValue::Dict(entries) => PresetValueExport::Dict(
+            entries
+                .iter()
+                .map(|(key, value)| PresetDictEntryExport {
+                    key: api_preset_value(key),
+                    value: api_preset_value(value),
+                })
+                .collect(),
+        ),
+        CheckedPresetValue::ConstRef(path) => PresetValueExport::ConstRef(path.clone()),
+        CheckedPresetValue::ModelLiteral { name, fields } => PresetValueExport::ModelLiteral {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|(field, value)| PresetModelFieldExport {
+                    name: field.clone(),
+                    value: api_preset_value(value),
+                })
+                .collect(),
+        },
+        CheckedPresetValue::Unsupported => PresetValueExport::Unsupported,
+    }
+}
+
+/// Convert a source function declaration into API metadata.
+fn api_function(
+    function: &FunctionDecl,
+    span: Span,
+    export: &CheckedFunctionExport,
+    checker: &TypeChecker,
+    module_path: &[String],
+) -> ApiFunction {
+    let docstring = function_docstring(&function.body);
+    let callable = api_callable_for_function(function, span, export, checker, module_path);
+    ApiFunction {
+        name: callable.name.clone(),
+        anchor: callable.anchor.clone(),
+        docstring_sections: parse_docstring(docstring.as_deref()),
+        docstring,
+        decorators: decorators_metadata(&function.decorators, checker, Some(&callable)),
+        type_params: callable.type_params,
+        params: callable.params,
+        return_type: callable.return_type,
+        is_async: callable.is_async,
+    }
+}
+
+/// Convert a source function declaration into callable API metadata.
+fn api_callable_for_function(
+    function: &FunctionDecl,
+    span: Span,
+    export: &CheckedFunctionExport,
+    checker: &TypeChecker,
+    module_path: &[String],
+) -> ApiCallableMetadata {
+    ApiCallableMetadata {
+        name: export.name.clone(),
+        anchor: anchor(module_path, &export.name, span),
+        type_params: type_params(&export.type_params),
+        receiver: None,
+        params: params_from_checked(&source_function_params(function, checker), &export.param_defaults),
+        return_type: source_function_return_type(function, checker),
+        is_async: function.is_async(),
+    }
+}
+
+/// Resolve the source return type used by function API metadata.
+fn source_function_return_type(function: &FunctionDecl, checker: &TypeChecker) -> TypeRef {
+    type_ref_from_resolved(&crate::symbols::resolve_type(
+        &function.return_type.node,
+        &checker.symbols,
+    ))
+}
+
+/// Resolve the source-declared callable parameters used by API documentation metadata.
+fn source_function_params(function: &FunctionDecl, checker: &TypeChecker) -> Vec<crate::symbols::CallableParam> {
+    function
+        .params
+        .iter()
+        .map(|param| {
+            crate::symbols::CallableParam::named_with_default(
+                param.node.name.clone(),
+                crate::symbols::resolve_type(&param.node.ty.node, &checker.symbols),
+                param.node.kind,
+                param.node.default.is_some(),
+            )
+        })
+        .collect()
+}
+
+/// Convert a source model declaration into API metadata.
+fn api_model(
+    model: &ModelDecl,
+    span: Span,
+    export: &CheckedModelExport,
+    checker: &TypeChecker,
+    module_path: &[String],
+) -> ApiModel {
+    let docstring = model.docstring.clone();
+    ApiModel {
+        name: export.name.clone(),
+        anchor: anchor(module_path, &export.name, span),
+        docstring_sections: parse_docstring(docstring.as_deref()),
+        docstring,
+        decorators: decorators_metadata(&model.decorators, checker, None),
+        type_params: type_params(&export.type_params),
+        traits: export.traits.clone(),
+        trait_adoptions: export.trait_adoptions.iter().map(type_bound).collect(),
+        derives: export.derives.clone(),
+        fields: fields_in_source_order(&model.fields, &export.fields),
+        properties: properties(&export.properties),
+        methods: methods(
+            &model.methods,
+            &model.method_aliases,
+            &export.methods,
+            checker,
+            module_path,
+            &export.name,
+        ),
+    }
+}
+
+/// Convert a source class declaration into API metadata.
+fn api_class(
+    class: &ClassDecl,
+    span: Span,
+    export: &CheckedClassExport,
+    checker: &TypeChecker,
+    module_path: &[String],
+) -> ApiClass {
+    let docstring = class.docstring.clone();
+    ApiClass {
+        name: export.name.clone(),
+        anchor: anchor(module_path, &export.name, span),
+        docstring_sections: parse_docstring(docstring.as_deref()),
+        docstring,
+        decorators: decorators_metadata(&class.decorators, checker, None),
+        type_params: type_params(&export.type_params),
+        extends: export.extends.clone(),
+        traits: export.traits.clone(),
+        trait_adoptions: export.trait_adoptions.iter().map(type_bound).collect(),
+        derives: export.derives.clone(),
+        // Class export order is the provider's constructor ABI: inherited fields first, then the class's own fields.
+        // Reordering the checked sequence to the child's AST declaration order would make manifest-backed consumers
+        // pass positional bridge arguments in a different order than the generated Rust constructor.
+        fields: export.fields.iter().map(field).collect(),
+        properties: properties(&export.properties),
+        methods: methods(
+            &class.methods,
+            &class.method_aliases,
+            &export.methods,
+            checker,
+            module_path,
+            &export.name,
+        ),
+    }
+}
+
+/// Convert a checked trait export into API metadata.
+fn api_trait(
+    trait_decl: &TraitDecl,
+    span: Span,
+    export: &CheckedTraitExport,
+    checker: &TypeChecker,
+    module_path: &[String],
+) -> ApiTrait {
+    let docstring = trait_decl.docstring.clone();
+    ApiTrait {
+        name: export.name.clone(),
+        anchor: anchor(module_path, &export.name, span),
+        docstring_sections: parse_docstring(docstring.as_deref()),
+        docstring,
+        decorators: decorators_metadata(&trait_decl.decorators, checker, None),
+        type_params: type_params(&export.type_params),
+        supertraits: export.supertraits.iter().map(type_bound).collect(),
+        requires: export
+            .requires
+            .iter()
+            .map(|(name, ty)| FieldExport {
+                name: name.clone(),
+                canonical: None,
+                ty: type_ref_from_resolved(ty),
+                surface_type_name: Some(ty.to_string()),
+                visibility: crate::library_manifest::FieldVisibilityExport::Public,
+                has_default: false,
+                default: None,
+                alias: None,
+                description: None,
+            })
+            .collect(),
+        methods: methods(
+            &trait_decl.methods,
+            &trait_decl.method_aliases,
+            &export.methods,
+            checker,
+            module_path,
+            &export.name,
+        ),
+    }
+}
+
+/// Convert a checked enum export into API metadata, preserving canonical variants and public aliases.
+fn api_enum(
+    enum_decl: &EnumDecl,
+    span: Span,
+    export: &CheckedEnumExport,
+    checker: &TypeChecker,
+    module_path: &[String],
+) -> ApiEnum {
+    let docstring = enum_decl.docstring.clone();
+    ApiEnum {
+        name: export.name.clone(),
+        anchor: anchor(module_path, &export.name, span),
+        docstring_sections: parse_docstring(docstring.as_deref()),
+        docstring,
+        decorators: decorators_metadata(&enum_decl.decorators, checker, None),
+        type_params: type_params(&export.type_params),
+        traits: export.traits.clone(),
+        trait_adoptions: export.trait_adoptions.iter().map(type_bound).collect(),
+        value_type: export.value_type.map(|value_type| match value_type {
+            crate::symbols::ValueEnumBacking::Str => EnumValueTypeExport::Str,
+            crate::symbols::ValueEnumBacking::Int => EnumValueTypeExport::Int,
+        }),
+        variants: export
+            .variants
+            .iter()
+            .map(|variant| ApiEnumVariant {
+                name: variant.name.clone(),
+                canonical: canonical_identity_export(variant.canonical.as_ref()),
+                fields: variant.fields.iter().map(type_ref_from_resolved).collect(),
+                value: variant.value.as_ref().map(|value| match value {
+                    crate::symbols::ValueEnumValue::Str(value) => EnumValueExport::Str(value.clone()),
+                    crate::symbols::ValueEnumValue::Int(value) => EnumValueExport::Int(*value),
+                }),
+            })
+            .collect(),
+        variant_aliases: export
+            .variant_aliases
+            .iter()
+            .map(|alias| ApiEnumVariantAlias {
+                name: alias.name.clone(),
+                target: alias.target.clone(),
+            })
+            .collect(),
+        methods: methods(
+            &enum_decl.methods,
+            &[],
+            &export.methods,
+            checker,
+            module_path,
+            &export.name,
+        ),
+        derives: export.derives.clone(),
+    }
+}
+
+/// Convert a source newtype declaration into API metadata.
+fn api_newtype(
+    newtype: &NewtypeDecl,
+    span: Span,
+    export: &CheckedNewtypeExport,
+    checker: &TypeChecker,
+    module_path: &[String],
+) -> ApiNewtype {
+    let docstring = newtype.docstring.clone();
+    ApiNewtype {
+        name: export.name.clone(),
+        anchor: anchor(module_path, &export.name, span),
+        docstring_sections: parse_docstring(docstring.as_deref()),
+        docstring,
+        decorators: decorators_metadata(&newtype.decorators, checker, None),
+        type_params: type_params(&export.type_params),
+        traits: export.traits.clone(),
+        trait_adoptions: export.trait_adoptions.iter().map(type_bound).collect(),
+        derives: export.derives.clone(),
+        is_rusttype: export.is_rusttype,
+        underlying: type_ref_from_resolved(&export.underlying),
+        checked_constructor: export.checked_constructor.clone(),
+        constraints: export
+            .constraints
+            .iter()
+            .map(NewtypeConstraintExport::from_checked)
+            .collect(),
+        implicit_coercion_enabled: export.implicit_coercion_enabled,
+        methods: methods(
+            &newtype.methods,
+            &newtype.method_aliases,
+            &export.methods,
+            checker,
+            module_path,
+            &export.name,
+        ),
+    }
+}
+
+/// Convert a source type alias declaration into API metadata.
+fn api_type_alias(
+    alias: &TypeAliasDecl,
+    span: Span,
+    export: &CheckedTypeAliasExport,
+    module_path: &[String],
+) -> ApiTypeAlias {
+    ApiTypeAlias {
+        name: alias.name.clone(),
+        anchor: anchor(module_path, &alias.name, span),
+        type_alias: TypeAliasExport {
+            name: export.name.clone(),
+            type_params: type_params(&export.type_params),
+            target: type_ref_from_resolved(&export.target),
+        },
+    }
+}
+
+/// Convert a checked constant declaration into API metadata.
+fn api_const(
+    name: &str,
+    span: Span,
+    export: &CheckedConstExport,
+    checker: &TypeChecker,
+    module_path: &[String],
+) -> ApiConst {
+    ApiConst {
+        name: export.name.clone(),
+        anchor: anchor(module_path, name, span),
+        ty: type_ref_from_resolved(&export.ty),
+        value: checker.type_info().const_value(name).map(safe_value_from_const),
+    }
+}
+
+/// Convert an import declaration into API alias metadata.
+fn api_aliases(import: &ImportDecl, span: Span, module_path: &[String]) -> Vec<ApiAlias> {
+    let is_public = public(import.visibility);
+    match &import.kind {
+        ImportKind::From { module, items } => {
+            let base_path =
+                canonicalize_source_module_segments(&decorator_resolution::path_segments_with_prefix(module));
+            aliases_from_items(items, base_path, span, module_path, is_public)
+        }
+        ImportKind::RustFrom {
+            crate_name,
+            path,
+            items,
+            ..
+        } => {
+            let mut base_path = vec!["rust".to_string(), crate_name.clone()];
+            base_path.extend(path.iter().cloned());
+            aliases_from_items(items, base_path, span, module_path, is_public)
+        }
+        ImportKind::PubFrom { library, path, items } => {
+            let mut base_path = vec!["pub".to_string(), library.clone()];
+            base_path.extend(path.iter().cloned());
+            aliases_from_items(items, base_path, span, module_path, is_public)
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Convert one checked declaration into the public aliases it contributes.
+fn checked_api_aliases_for_declaration(declaration: &Declaration, span: Span, module_path: &[String]) -> Vec<ApiAlias> {
+    match declaration {
+        Declaration::Alias(alias) if public(alias.visibility) => vec![ApiAlias {
+            name: alias.name.clone(),
+            anchor: anchor(module_path, &alias.name, span),
+            target_path: alias.target.segments.clone(),
+            is_public: true,
+            projected_type: None,
+            projected_function: None,
+        }],
+        // Module-level `from ... import ...` bindings are part of a module's public surface, including facade modules
+        // such as `std.web` whose `prelude.incn` consists entirely of reexports. Rust imports remain implementation
+        // details unless explicitly declared public.
+        Declaration::Import(import) if matches!(import.kind, ImportKind::From { .. }) || public(import.visibility) => {
+            api_aliases(import, span, module_path)
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Convert import items into API alias metadata rooted at a base path.
+fn aliases_from_items(
+    items: &[ImportItem],
+    base_path: Vec<String>,
+    span: Span,
+    module_path: &[String],
+    is_public: bool,
+) -> Vec<ApiAlias> {
+    items
+        .iter()
+        .map(|item| {
+            let name = item.alias.as_ref().unwrap_or(&item.name).clone();
+            let mut target_path = base_path.clone();
+            target_path.push(item.name.clone());
+            ApiAlias {
+                anchor: anchor(module_path, &name, span),
+                name,
+                target_path,
+                is_public,
+                projected_type: None,
+                projected_function: None,
+            }
+        })
+        .collect()
+}
+
+/// Pair AST method declarations with checked method metadata for documentation output.
+fn methods(
+    ast_methods: &[Spanned<MethodDecl>],
+    ast_aliases: &[Spanned<MethodAliasDecl>],
+    checked_methods: &[CheckedMethod],
+    checker: &TypeChecker,
+    module_path: &[String],
+    owner: &str,
+) -> Vec<ApiMethod> {
+    let mut checked_by_name: HashMap<&str, VecDeque<&CheckedMethod>> = HashMap::new();
+    for method in checked_methods {
+        checked_by_name
+            .entry(method.name.as_str())
+            .or_default()
+            .push_back(method);
+    }
+    let mut out = Vec::new();
+    for method in ast_methods {
+        let Some(candidates) = checked_by_name.get_mut(method.node.name.as_str()) else {
+            continue;
+        };
+        let Some(checked) = take_checked_method_for_ast(&method.node, candidates, checker) else {
+            continue;
+        };
+        let docstring = method.node.body.as_ref().and_then(|body| function_docstring(body));
+        let callable = ApiCallableMetadata {
+            name: checked.name.clone(),
+            anchor: anchor(module_path, &format!("{owner}.{}", checked.name), method.span),
+            type_params: type_params(&checked.type_params),
+            receiver: checked.receiver.map(|receiver| match receiver {
+                crate::ast::Receiver::Immutable => ReceiverExport::Immutable,
+                crate::ast::Receiver::Mutable => ReceiverExport::Mutable,
+            }),
+            params: params_from_checked(&checked.params, &checked.param_defaults),
+            return_type: type_ref_from_resolved(&checked.return_type),
+            is_async: checked.is_async,
+        };
+        out.push(ApiMethod {
+            name: callable.name.clone(),
+            canonical: canonical_identity_export(checked.canonical.as_ref()),
+            alias_of: checked.alias_of.clone(),
+            anchor: callable.anchor.clone(),
+            docstring_sections: parse_docstring(docstring.as_deref()),
+            docstring,
+            decorators: decorators_metadata(&method.node.decorators, checker, Some(&callable)),
+            type_params: callable.type_params,
+            receiver: callable.receiver,
+            params: callable.params,
+            return_type: callable.return_type,
+            is_async: callable.is_async,
+            has_body: checked.has_body,
+        });
+    }
+    for alias in ast_aliases {
+        let Some(candidates) = checked_by_name.get_mut(alias.node.name.as_str()) else {
+            continue;
+        };
+        while let Some(checked) = candidates.pop_front() {
+            if checked.alias_of.as_deref() != Some(alias.node.target.as_str()) {
+                continue;
+            }
+            out.push(ApiMethod {
+                name: checked.name.clone(),
+                canonical: canonical_identity_export(checked.canonical.as_ref()),
+                alias_of: checked.alias_of.clone(),
+                anchor: anchor(module_path, &format!("{owner}.{}", checked.name), alias.span),
+                docstring: None,
+                docstring_sections: None,
+                decorators: Vec::new(),
+                type_params: type_params(&checked.type_params),
+                receiver: checked.receiver.map(|receiver| match receiver {
+                    crate::ast::Receiver::Immutable => ReceiverExport::Immutable,
+                    crate::ast::Receiver::Mutable => ReceiverExport::Mutable,
+                }),
+                params: params_from_checked(&checked.params, &checked.param_defaults),
+                return_type: type_ref_from_resolved(&checked.return_type),
+                is_async: checked.is_async,
+                has_body: checked.has_body,
+            });
+        }
+    }
+    out
+}
+
+/// Remove the checked method that best matches one AST method declaration.
+fn take_checked_method_for_ast<'a>(
+    ast_method: &MethodDecl,
+    candidates: &mut VecDeque<&'a CheckedMethod>,
+    checker: &TypeChecker,
+) -> Option<&'a CheckedMethod> {
+    if let Some(index) = candidates
+        .iter()
+        .position(|checked| checked_method_shape_matches(ast_method, checked, checker))
+    {
+        return candidates.remove(index);
+    }
+    if let Some(index) = candidates
+        .iter()
+        .position(|checked| checked_method_param_names_match(ast_method, checked))
+    {
+        return candidates.remove(index);
+    }
+    candidates.pop_front()
+}
+
+/// Return whether an AST method and checked method have the same parameter names.
+fn checked_method_param_names_match(ast_method: &MethodDecl, checked: &CheckedMethod) -> bool {
+    ast_method.params.len() == checked.params.len()
+        && ast_method
+            .params
+            .iter()
+            .zip(checked.params.iter())
+            .all(|(ast_param, checked_param)| checked_param.name() == Some(ast_param.node.name.as_str()))
+}
+
+/// Return whether an AST method and checked method have the same callable shape.
+fn checked_method_shape_matches(ast_method: &MethodDecl, checked: &CheckedMethod, checker: &TypeChecker) -> bool {
+    let ast_type_params: Vec<&str> = ast_method
+        .type_params
+        .iter()
+        .map(|type_param| type_param.name.as_str())
+        .collect();
+    ast_method.params.len() == checked.params.len()
+        && ast_method.receiver == checked.receiver
+        && ast_method.is_async() == checked.is_async
+        && ast_type_params
+            == checked
+                .type_params
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>()
+        && ast_method
+            .params
+            .iter()
+            .zip(checked.params.iter())
+            .all(|(ast_param, checked_param)| {
+                checked_param.name() == Some(ast_param.node.name.as_str())
+                    && checked_param.kind == ast_param.node.kind
+                    && checked_param.has_default == ast_param.node.default.is_some()
+                    && type_ref_from_resolved(&checked_param.ty)
+                        == type_ref_from_resolved(&crate::symbols::resolve_type(
+                            &ast_param.node.ty.node,
+                            &checker.symbols,
+                        ))
+            })
+        && type_ref_from_resolved(&checked.return_type)
+            == type_ref_from_resolved(&crate::symbols::resolve_type(
+                &ast_method.return_type.node,
+                &checker.symbols,
+            ))
+}
+
+/// Convert checked type parameters into API metadata exports.
+fn type_params(type_params: &[CheckedTypeParam]) -> Vec<TypeParamExport> {
+    type_params
+        .iter()
+        .map(|type_param| TypeParamExport {
+            name: type_param.name.clone(),
+            bounds: type_param.bounds.iter().map(type_bound).collect(),
+        })
+        .collect()
+}
+
+/// Convert a checked trait bound into the exported API metadata representation.
+fn type_bound(bound: &CheckedTypeBound) -> TypeBoundExport {
+    TypeBoundExport {
+        name: bound.name.clone(),
+        source_name: bound.source_name.clone(),
+        module_path: bound.module_path.clone(),
+        type_args: bound.type_args.iter().map(type_ref_from_resolved).collect(),
+        implementation_type_params: bound
+            .implementation_type_params
+            .iter()
+            .map(implementation_type_param)
+            .collect(),
+    }
+}
+
+/// Convert one checked implementation parameter into API manifest metadata.
+fn implementation_type_param(type_param: &ImplementationTypeParamInfo) -> ImplementationTypeParamExport {
+    ImplementationTypeParamExport {
+        name: type_param.name.clone(),
+        bounds: type_param.bounds.iter().map(implementation_trait_bound).collect(),
+    }
+}
+
+/// Convert one checked implementation requirement into API manifest metadata.
+fn implementation_trait_bound(bound: &ImplementationTraitBoundInfo) -> ImplementationTraitBoundExport {
+    ImplementationTraitBoundExport {
+        trait_path: bound.trait_path.clone(),
+        type_args: bound.type_args.iter().map(type_ref_from_resolved).collect(),
+        associated_types: bound
+            .associated_types
+            .iter()
+            .map(|(name, ty)| ImplementationAssociatedTypeExport {
+                name: name.clone(),
+                ty: type_ref_from_resolved(ty),
+            })
+            .collect(),
+        origin: match bound.origin {
+            ImplementationTraitBoundOriginInfo::Standard => ImplementationTraitBoundOriginExport::Standard,
+            ImplementationTraitBoundOriginInfo::RustCapability => ImplementationTraitBoundOriginExport::RustCapability,
+            ImplementationTraitBoundOriginInfo::SourceCallable => ImplementationTraitBoundOriginExport::SourceCallable,
+        },
+    }
+}
+
+/// Convert a checked field into API metadata.
+fn field(field: &crate::library_exports::CheckedField) -> FieldExport {
+    let default = field.default.as_ref().and_then(param_default_from_checked);
+    FieldExport {
+        name: field.name.clone(),
+        canonical: canonical_identity_export(field.canonical.as_ref()),
+        ty: type_ref_from_resolved(&field.ty),
+        surface_type_name: field.surface_type_name.clone(),
+        visibility: match field.visibility {
+            Visibility::Private => crate::library_manifest::FieldVisibilityExport::Private,
+            Visibility::Public => crate::library_manifest::FieldVisibilityExport::Public,
+        },
+        has_default: field.has_default,
+        default,
+        alias: field.alias.clone(),
+        description: field.description.clone(),
+    }
+}
+
+/// Convert checked computed properties into API metadata.
+fn properties(properties: &[CheckedProperty]) -> Vec<ApiProperty> {
+    properties
+        .iter()
+        .map(|property| ApiProperty {
+            name: property.name.clone(),
+            canonical: canonical_identity_export(property.canonical.as_ref()),
+            return_type: type_ref_from_resolved(&property.return_type),
+        })
+        .collect()
+}
+
+/// Convert a package-owned checked identity into its stable manifest representation.
+///
+/// API metadata is also produced for editor-only module checks that have no package owner. Those retain the legacy
+/// absence rather than inventing a package name; compiled-library producers assign package origins before collection.
+fn canonical_identity_export(identity: Option<&CanonicalSymbolId>) -> Option<CanonicalIdentityExport> {
+    let identity = identity?;
+    let SymbolOrigin::Package { library, .. } = &identity.origin else {
+        return None;
+    };
+    CanonicalIdentityExport::from_canonical(library, identity)
+}
+
+/// Return checked fields ordered to match the source declaration.
+fn fields_in_source_order(ast_fields: &[Spanned<FieldDecl>], checked_fields: &[CheckedField]) -> Vec<FieldExport> {
+    let checked_by_name: HashMap<&str, &CheckedField> = checked_fields
+        .iter()
+        .map(|field| (field.name.as_str(), field))
+        .collect();
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+
+    for ast_field in ast_fields {
+        if let Some(checked) = checked_by_name.get(ast_field.node.name.as_str()) {
+            seen.insert(checked.name.as_str());
+            out.push(field(checked));
+        }
+    }
+
+    for checked in checked_fields {
+        if seen.insert(checked.name.as_str()) {
+            out.push(field(checked));
+        }
+    }
+
+    out
+}
+
+/// Convert source decorators into checked API metadata entries.
+fn decorators_metadata(
+    decorators: &[Spanned<Decorator>],
+    checker: &TypeChecker,
+    decorated_callable: Option<&ApiCallableMetadata>,
+) -> Vec<DecoratorMetadata> {
+    decorators
+        .iter()
+        .map(|decorator| {
+            let resolved = decorator_resolution::resolve_decorator_path(&decorator.node, &checker.symbols);
+            DecoratorMetadata {
+                path: resolved,
+                source_name: decorator.node.path.segments.join("."),
+                anchor: source_span(decorator.span),
+                type_args: decorator
+                    .node
+                    .type_args
+                    .iter()
+                    .map(|type_arg| {
+                        type_ref_from_resolved(&crate::symbols::resolve_type(&type_arg.node, &checker.symbols))
+                    })
+                    .collect(),
+                args: decorator
+                    .node
+                    .args
+                    .iter()
+                    .map(|arg| decorator_arg_metadata(arg, checker))
+                    .collect(),
+                decorated_callable: decorated_callable.cloned(),
+            }
+        })
+        .collect()
+}
+
+/// Convert a decorator argument into API metadata.
+fn decorator_arg_metadata(arg: &DecoratorArg, checker: &TypeChecker) -> DecoratorArgMetadata {
+    match arg {
+        DecoratorArg::Positional(expr) => DecoratorArgMetadata::Positional {
+            value: decorator_expr_value(expr, checker),
+        },
+        DecoratorArg::Named(name, DecoratorArgValue::Expr(expr)) => DecoratorArgMetadata::Named {
+            name: name.clone(),
+            value: decorator_expr_value(expr, checker),
+        },
+        DecoratorArg::Named(name, DecoratorArgValue::Type(ty)) => DecoratorArgMetadata::Named {
+            name: name.clone(),
+            value: DecoratorValue::Type {
+                ty: type_ref_from_resolved(&crate::symbols::resolve_type(&ty.node, &checker.symbols)),
+            },
+        },
+    }
+}
+
+/// Convert a decorator expression into a safe metadata value.
+fn decorator_expr_value(expr: &Spanned<Expr>, checker: &TypeChecker) -> DecoratorValue {
+    match &expr.node {
+        Expr::Literal(literal) => DecoratorValue::Literal {
+            value: safe_value_from_literal(literal),
+        },
+        Expr::Ident(name) => DecoratorValue::ConstRef {
+            name: name.clone(),
+            value: checker.type_info().const_value(name).map(safe_value_from_const),
+        },
+        Expr::Field(base, field) => {
+            let mut path = decorator_expr_path(&base.node);
+            if path.is_empty() {
+                DecoratorValue::Unsupported {
+                    reason: "decorator field expression is not a symbolic path".to_string(),
+                }
+            } else {
+                path.push(field.clone());
+                DecoratorValue::SymbolRef { path }
+            }
+        }
+        Expr::List(entries) => DecoratorValue::List {
+            items: entries
+                .iter()
+                .map(|entry| match entry {
+                    ListEntry::Element(value) => decorator_expr_value(value, checker),
+                    ListEntry::Spread(value) => DecoratorValue::Unsupported {
+                        reason: format!(
+                            "decorator list spread `{}` is not declaration-safe metadata",
+                            decorator_expr_label(&value.node)
+                        ),
+                    },
+                })
+                .collect(),
+        },
+        Expr::Dict(entries) => {
+            let mut metadata_entries = Vec::new();
+            for entry in entries {
+                match entry {
+                    DictEntry::Pair(key, value) => metadata_entries.push(DecoratorDictEntry {
+                        key: decorator_expr_value(key, checker),
+                        value: decorator_expr_value(value, checker),
+                    }),
+                    DictEntry::Spread(value) => metadata_entries.push(DecoratorDictEntry {
+                        key: DecoratorValue::Unsupported {
+                            reason: "decorator dict spread has no declaration-safe key".to_string(),
+                        },
+                        value: decorator_expr_value(value, checker),
+                    }),
+                }
+            }
+            DecoratorValue::Dict {
+                entries: metadata_entries,
+            }
+        }
+        Expr::Call(callee, type_args, args) => {
+            let path = decorator_expr_path(&callee.node);
+            if path.is_empty() {
+                return DecoratorValue::Unsupported {
+                    reason: "decorator call callee is not a symbolic path".to_string(),
+                };
+            }
+            DecoratorValue::Call {
+                callee: path,
+                type_args: type_args
+                    .iter()
+                    .map(|type_arg| {
+                        type_ref_from_resolved(&crate::symbols::resolve_type(&type_arg.node, &checker.symbols))
+                    })
+                    .collect(),
+                args: args
+                    .iter()
+                    .map(|arg| decorator_call_arg_metadata(arg, checker))
+                    .collect(),
+            }
+        }
+        Expr::Constructor(name, args) => DecoratorValue::Call {
+            callee: vec![name.clone()],
+            type_args: Vec::new(),
+            args: args
+                .iter()
+                .map(|arg| decorator_call_arg_metadata(arg, checker))
+                .collect(),
+        },
+        _ => DecoratorValue::Unsupported {
+            reason: "decorator argument is not a literal, const reference, or type".to_string(),
+        },
+    }
+}
+
+/// Convert a decorator call argument into API metadata.
+fn decorator_call_arg_metadata(arg: &CallArg, checker: &TypeChecker) -> DecoratorCallArgMetadata {
+    match arg {
+        CallArg::Positional(value) => DecoratorCallArgMetadata::Positional {
+            value: decorator_expr_value(value, checker),
+        },
+        CallArg::Named(name, value) => DecoratorCallArgMetadata::Named {
+            name: name.node.clone(),
+            value: decorator_expr_value(value, checker),
+        },
+        CallArg::PositionalUnpack(value) => DecoratorCallArgMetadata::PositionalUnpack {
+            value: decorator_expr_value(value, checker),
+        },
+        CallArg::KeywordUnpack(value) => DecoratorCallArgMetadata::KeywordUnpack {
+            value: decorator_expr_value(value, checker),
+        },
+    }
+}
+
+/// Return the source path represented by a decorator expression.
+fn decorator_expr_path(expr: &Expr) -> Vec<String> {
+    match expr {
+        Expr::Ident(name) => vec![name.clone()],
+        Expr::Field(base, field) => {
+            let mut path = decorator_expr_path(&base.node);
+            if path.is_empty() {
+                return Vec::new();
+            }
+            path.push(field.clone());
+            path
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Return a stable label for a decorator expression shape.
+fn decorator_expr_label(expr: &Expr) -> &'static str {
+    match expr {
+        Expr::Ident(_) => "identifier",
+        Expr::Literal(_) => "literal",
+        Expr::Call(_, _, _) | Expr::Constructor(_, _) => "call",
+        Expr::List(_) => "list",
+        Expr::Dict(_) => "dict",
+        Expr::Field(_, _) => "field",
+        _ => "expression",
+    }
+}
+
+/// Convert a literal into the safe metadata subset used by checked API output.
+fn safe_value_from_literal(literal: &crate::ast::Literal) -> SafeMetadataValue {
+    match literal {
+        crate::ast::Literal::Int(value) => SafeMetadataValue::Int(value.value),
+        crate::ast::Literal::Float(value) => SafeMetadataValue::Float(value.value),
+        crate::ast::Literal::Decimal(value) => SafeMetadataValue::String(value.repr.clone()),
+        crate::ast::Literal::String(value) => SafeMetadataValue::String(value.clone()),
+        crate::ast::Literal::Bytes(value) => SafeMetadataValue::Bytes(value.clone()),
+        crate::ast::Literal::Bool(value) => SafeMetadataValue::Bool(*value),
+        crate::ast::Literal::None => SafeMetadataValue::None,
+    }
+}
+
+/// Convert a constant value into a safe metadata value.
+fn safe_value_from_const(value: &ConstValue) -> SafeMetadataValue {
+    match value {
+        ConstValue::Int(value) => SafeMetadataValue::Int(*value),
+        ConstValue::Float(value) => SafeMetadataValue::Float(*value),
+        ConstValue::Bool(value) => SafeMetadataValue::Bool(*value),
+        ConstValue::FrozenStr(value) => SafeMetadataValue::String(value.clone()),
+        ConstValue::FrozenBytes(value) => SafeMetadataValue::Bytes(value.clone()),
+    }
+}
+
+/// Extract the leading function docstring expression, when present.
+fn function_docstring(body: &[Spanned<Statement>]) -> Option<String> {
+    let first = body.first()?;
+    let Statement::Expr(expr) = &first.node else {
+        return None;
+    };
+    let Expr::Literal(crate::ast::Literal::String(docstring)) = &expr.node else {
+        return None;
+    };
+    Some(docstring.clone())
+}
+
+/// Validate parsed API docstrings across a checked metadata package.
+pub fn validate_checked_api_docstrings(package: &[CheckedApiMetadata]) -> Vec<ApiDocstringDiagnostic> {
+    let aliases = package_aliases(package);
+    let mut diagnostics = Vec::new();
+    for module in package {
+        validate_module_docstrings(module, &aliases, &mut diagnostics);
+    }
+    diagnostics
+}
+
+/// Parse a source docstring into structured API documentation.
+fn parse_docstring(docstring: Option<&str>) -> Option<ApiDocstring> {
+    let docstring = docstring?;
+    let lines = normalized_docstring_lines(docstring);
+    if lines.is_empty() {
+        return None;
+    }
+
+    let mut parsed = DocstringBuilder::default();
+    let mut section = DocstringSection::Summary;
+    for line in lines {
+        if let Some(next_section) = DocstringSection::from_heading(&line) {
+            section = next_section;
+            continue;
+        }
+        parsed.push_line(section, &line);
+    }
+    Some(parsed.finish())
+}
+
+/// Return normalized docstring body lines.
+fn normalized_docstring_lines(docstring: &str) -> Vec<String> {
+    docstring
+        .lines()
+        .map(str::trim)
+        .skip_while(|line| line.is_empty())
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .skip_while(|line| line.is_empty())
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(str::to_string)
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DocstringSection {
+    Summary,
+    Params,
+    Returns,
+    Fields,
+    Aliases,
+    Decorators,
+}
+
+impl DocstringSection {
+    /// Map a docstring section heading to its parser state.
+    fn from_heading(line: &str) -> Option<Self> {
+        match line {
+            "Args:" | "Parameters:" => Some(Self::Params),
+            "Returns:" => Some(Self::Returns),
+            "Fields:" => Some(Self::Fields),
+            "Aliases:" => Some(Self::Aliases),
+            "Decorators:" => Some(Self::Decorators),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct DocstringBuilder {
+    summary_lines: Vec<String>,
+    params: Vec<ApiDocstringEntry>,
+    returns: Vec<String>,
+    fields: Vec<ApiDocstringEntry>,
+    aliases: Vec<ApiDocstringEntry>,
+    decorators: Vec<ApiDocstringEntry>,
+}
+
+impl DocstringBuilder {
+    /// Add a normalized docstring line to the active section.
+    fn push_line(&mut self, section: DocstringSection, line: &str) {
+        match section {
+            DocstringSection::Summary => push_prose_line(&mut self.summary_lines, line),
+            DocstringSection::Params => push_entry_line(&mut self.params, line),
+            DocstringSection::Returns => push_prose_line(&mut self.returns, line),
+            DocstringSection::Fields => push_entry_line(&mut self.fields, line),
+            DocstringSection::Aliases => push_entry_line(&mut self.aliases, line),
+            DocstringSection::Decorators => push_entry_line(&mut self.decorators, line),
+        }
+    }
+
+    /// Build the completed structured docstring from accumulated lines.
+    fn finish(self) -> ApiDocstring {
+        ApiDocstring {
+            summary: joined_non_empty(self.summary_lines),
+            params: self.params,
+            returns: parse_return_section(self.returns),
+            fields: self.fields,
+            aliases: self.aliases,
+            decorators: self.decorators,
+        }
+    }
+}
+
+/// Append a normalized prose line to a docstring section.
+fn push_prose_line(lines: &mut Vec<String>, line: &str) {
+    if line.is_empty() {
+        if !lines.last().is_some_and(String::is_empty) {
+            lines.push(String::new());
+        }
+        return;
+    }
+    lines.push(line.to_string());
+}
+
+/// Append a normalized entry line to a docstring section.
+fn push_entry_line(entries: &mut Vec<ApiDocstringEntry>, line: &str) {
+    if line.is_empty() {
+        return;
+    }
+    if let Some((name, description)) = line.split_once(':') {
+        let name = name.trim();
+        if !name.is_empty() {
+            entries.push(ApiDocstringEntry {
+                name: name.to_string(),
+                description: description.trim().to_string(),
+            });
+            return;
+        }
+    }
+    if let Some(last) = entries.last_mut() {
+        if !last.description.is_empty() {
+            last.description.push(' ');
+        }
+        last.description.push_str(line.trim());
+    }
+}
+
+/// Parse a docstring return section into structured API documentation.
+fn parse_return_section(lines: Vec<String>) -> Option<ApiDocstringReturn> {
+    let description = joined_non_empty(lines)?;
+    if let Some((ty, rest)) = description.split_once(':') {
+        let ty = ty.trim();
+        if looks_like_type_spelling(ty) {
+            return Some(ApiDocstringReturn {
+                ty: Some(ty.to_string()),
+                description: rest.trim().to_string(),
+            });
+        }
+    }
+    Some(ApiDocstringReturn { ty: None, description })
+}
+
+/// Join non-empty docstring lines into a single paragraph.
+fn joined_non_empty(lines: Vec<String>) -> Option<String> {
+    let joined = lines.join("\n").trim().to_string();
+    if joined.is_empty() { None } else { Some(joined) }
+}
+
+/// Return whether a docstring fragment looks like a type spelling.
+fn looks_like_type_spelling(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | ':' | '[' | ']' | ',' | ' ' | '&'))
+}
+
+/// Validate docstring coverage for declarations in one API metadata module.
+fn validate_module_docstrings(
+    module: &CheckedApiMetadata,
+    aliases: &[ApiAlias],
+    diagnostics: &mut Vec<ApiDocstringDiagnostic>,
+) {
+    for declaration in &module.declarations {
+        match declaration {
+            ApiDeclaration::Function(function) => validate_callable_docstring(
+                &module.module_path,
+                &function.name,
+                &function.anchor,
+                function.docstring_sections.as_ref(),
+                CallableDocFacts {
+                    params: &function.params,
+                    return_type: &function.return_type,
+                    decorators: &function.decorators,
+                    aliases: aliases_for_declaration(aliases, &module.module_path, &function.name),
+                },
+                diagnostics,
+            ),
+            ApiDeclaration::Model(model) => validate_type_docstring(
+                &module.module_path,
+                &model.name,
+                &model.anchor,
+                model.docstring_sections.as_ref(),
+                TypeDocFacts {
+                    fields: &model.fields,
+                    decorators: &model.decorators,
+                    aliases: aliases_for_declaration(aliases, &module.module_path, &model.name),
+                },
+                diagnostics,
+            ),
+            ApiDeclaration::Class(class) => validate_type_docstring(
+                &module.module_path,
+                &class.name,
+                &class.anchor,
+                class.docstring_sections.as_ref(),
+                TypeDocFacts {
+                    fields: &class.fields,
+                    decorators: &class.decorators,
+                    aliases: aliases_for_declaration(aliases, &module.module_path, &class.name),
+                },
+                diagnostics,
+            ),
+            ApiDeclaration::Trait(trait_decl) => validate_type_docstring(
+                &module.module_path,
+                &trait_decl.name,
+                &trait_decl.anchor,
+                trait_decl.docstring_sections.as_ref(),
+                TypeDocFacts {
+                    fields: &trait_decl.requires,
+                    decorators: &trait_decl.decorators,
+                    aliases: aliases_for_declaration(aliases, &module.module_path, &trait_decl.name),
+                },
+                diagnostics,
+            ),
+            ApiDeclaration::Enum(enum_decl) => validate_declaration_docstring(
+                &module.module_path,
+                &enum_decl.name,
+                &enum_decl.anchor,
+                enum_decl.docstring_sections.as_ref(),
+                DeclarationDocFacts {
+                    decorators: &enum_decl.decorators,
+                    aliases: aliases_for_declaration(aliases, &module.module_path, &enum_decl.name),
+                },
+                diagnostics,
+            ),
+            ApiDeclaration::Newtype(newtype) => validate_declaration_docstring(
+                &module.module_path,
+                &newtype.name,
+                &newtype.anchor,
+                newtype.docstring_sections.as_ref(),
+                DeclarationDocFacts {
+                    decorators: &newtype.decorators,
+                    aliases: aliases_for_declaration(aliases, &module.module_path, &newtype.name),
+                },
+                diagnostics,
+            ),
+            _ => {}
+        }
+
+        for method in declaration_methods(declaration) {
+            validate_callable_docstring(
+                &module.module_path,
+                &method.name,
+                &method.anchor,
+                method.docstring_sections.as_ref(),
+                CallableDocFacts {
+                    params: &method.params,
+                    return_type: &method.return_type,
+                    decorators: &method.decorators,
+                    aliases: Vec::new(),
+                },
+                diagnostics,
+            );
+        }
+    }
+}
+
+struct CallableDocFacts<'a> {
+    params: &'a [ParamExport],
+    return_type: &'a TypeRef,
+    decorators: &'a [DecoratorMetadata],
+    aliases: Vec<&'a str>,
+}
+
+struct TypeDocFacts<'a> {
+    fields: &'a [FieldExport],
+    decorators: &'a [DecoratorMetadata],
+    aliases: Vec<&'a str>,
+}
+
+struct DeclarationDocFacts<'a> {
+    decorators: &'a [DecoratorMetadata],
+    aliases: Vec<&'a str>,
+}
+
+/// Validate a callable docstring against its exported API shape.
+fn validate_callable_docstring(
+    module_path: &[String],
+    declaration_name: &str,
+    anchor: &SourceAnchor,
+    docstring: Option<&ApiDocstring>,
+    facts: CallableDocFacts<'_>,
+    diagnostics: &mut Vec<ApiDocstringDiagnostic>,
+) {
+    let Some(docstring) = docstring else {
+        return;
+    };
+    validate_named_entries(
+        module_path,
+        anchor,
+        declaration_name,
+        "parameter",
+        &docstring.params,
+        facts.params.iter().map(|param| param.name.as_str()).collect(),
+        diagnostics,
+    );
+    validate_return_docstring(
+        module_path,
+        anchor,
+        declaration_name,
+        docstring,
+        facts.return_type,
+        diagnostics,
+    );
+    validate_decorator_entries(
+        module_path,
+        anchor,
+        declaration_name,
+        &docstring.decorators,
+        facts.decorators,
+        diagnostics,
+    );
+    validate_alias_entries(
+        module_path,
+        anchor,
+        declaration_name,
+        &docstring.aliases,
+        facts.aliases,
+        diagnostics,
+    );
+}
+
+/// Validate a type docstring against its exported API shape.
+fn validate_type_docstring(
+    module_path: &[String],
+    declaration_name: &str,
+    anchor: &SourceAnchor,
+    docstring: Option<&ApiDocstring>,
+    facts: TypeDocFacts<'_>,
+    diagnostics: &mut Vec<ApiDocstringDiagnostic>,
+) {
+    let Some(docstring) = docstring else {
+        return;
+    };
+    validate_named_entries(
+        module_path,
+        anchor,
+        declaration_name,
+        "field",
+        &docstring.fields,
+        facts.fields.iter().map(|field| field.name.as_str()).collect(),
+        diagnostics,
+    );
+    validate_decorator_entries(
+        module_path,
+        anchor,
+        declaration_name,
+        &docstring.decorators,
+        facts.decorators,
+        diagnostics,
+    );
+    validate_alias_entries(
+        module_path,
+        anchor,
+        declaration_name,
+        &docstring.aliases,
+        facts.aliases,
+        diagnostics,
+    );
+}
+
+/// Validate one exported declaration docstring.
+fn validate_declaration_docstring(
+    module_path: &[String],
+    declaration_name: &str,
+    anchor: &SourceAnchor,
+    docstring: Option<&ApiDocstring>,
+    facts: DeclarationDocFacts<'_>,
+    diagnostics: &mut Vec<ApiDocstringDiagnostic>,
+) {
+    let Some(docstring) = docstring else {
+        return;
+    };
+    validate_decorator_entries(
+        module_path,
+        anchor,
+        declaration_name,
+        &docstring.decorators,
+        facts.decorators,
+        diagnostics,
+    );
+    validate_alias_entries(
+        module_path,
+        anchor,
+        declaration_name,
+        &docstring.aliases,
+        facts.aliases,
+        diagnostics,
+    );
+}
+
+/// Validate the return section for a callable docstring.
+fn validate_return_docstring(
+    module_path: &[String],
+    anchor: &SourceAnchor,
+    declaration_name: &str,
+    docstring: &ApiDocstring,
+    return_type: &TypeRef,
+    diagnostics: &mut Vec<ApiDocstringDiagnostic>,
+) {
+    let Some(returns) = &docstring.returns else {
+        return;
+    };
+    let Some(documented_type) = &returns.ty else {
+        return;
+    };
+    let checked_type = type_ref_doc_name(return_type);
+    if documented_type != &checked_type {
+        push_docstring_diagnostic(
+            diagnostics,
+            module_path,
+            anchor,
+            format!(
+                "API docstring drift for `{declaration_name}`: documented return type `{documented_type}` does not match checked return type `{checked_type}`"
+            ),
+            "Update the `Returns:` section or the checked function signature.",
+        );
+    }
+}
+
+/// Validate decorator documentation entries for an exported callable.
+fn validate_decorator_entries(
+    module_path: &[String],
+    anchor: &SourceAnchor,
+    declaration_name: &str,
+    documented: &[ApiDocstringEntry],
+    checked: &[DecoratorMetadata],
+    diagnostics: &mut Vec<ApiDocstringDiagnostic>,
+) {
+    let names = checked
+        .iter()
+        .flat_map(|decorator| {
+            [
+                decorator.source_name.as_str(),
+                decorator.path.last().map(String::as_str).unwrap_or_default(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    validate_named_entries(
+        module_path,
+        anchor,
+        declaration_name,
+        "decorator",
+        documented,
+        names,
+        diagnostics,
+    );
+}
+
+/// Validate alias documentation entries for exported declarations.
+fn validate_alias_entries(
+    module_path: &[String],
+    anchor: &SourceAnchor,
+    declaration_name: &str,
+    documented: &[ApiDocstringEntry],
+    checked_aliases: Vec<&str>,
+    diagnostics: &mut Vec<ApiDocstringDiagnostic>,
+) {
+    validate_named_entries(
+        module_path,
+        anchor,
+        declaration_name,
+        "alias",
+        documented,
+        checked_aliases,
+        diagnostics,
+    );
+}
+
+/// Validate named docstring entries against checked metadata names and report stale or missing entries.
+fn validate_named_entries(
+    module_path: &[String],
+    anchor: &SourceAnchor,
+    declaration_name: &str,
+    noun: &str,
+    documented: &[ApiDocstringEntry],
+    checked_names: Vec<&str>,
+    diagnostics: &mut Vec<ApiDocstringDiagnostic>,
+) {
+    if documented.is_empty() {
+        return;
+    }
+
+    let checked: HashSet<&str> = checked_names.into_iter().filter(|name| !name.is_empty()).collect();
+    let mut seen = HashSet::new();
+    for entry in documented {
+        if !seen.insert(entry.name.as_str()) {
+            push_docstring_diagnostic(
+                diagnostics,
+                module_path,
+                anchor,
+                format!(
+                    "API docstring drift for `{declaration_name}`: docstring documents {noun} `{}` more than once",
+                    entry.name
+                ),
+                format!(
+                    "Keep one `{}` entry in the `{}` section.",
+                    entry.name,
+                    section_name_for_noun(noun)
+                ),
+            );
+            continue;
+        }
+        if !checked.contains(entry.name.as_str()) {
+            push_docstring_diagnostic(
+                diagnostics,
+                module_path,
+                anchor,
+                format!(
+                    "API docstring drift for `{declaration_name}`: documented {noun} `{}` does not exist in checked metadata",
+                    entry.name
+                ),
+                format!(
+                    "Remove `{}` from the `{}` section or update the checked declaration.",
+                    entry.name,
+                    section_name_for_noun(noun)
+                ),
+            );
+        }
+    }
+
+    if matches!(noun, "parameter" | "field") {
+        for checked_name in checked {
+            if !seen.contains(checked_name) {
+                push_docstring_diagnostic(
+                    diagnostics,
+                    module_path,
+                    anchor,
+                    format!(
+                        "API docstring drift for `{declaration_name}`: checked {noun} `{checked_name}` is missing from the docstring"
+                    ),
+                    format!(
+                        "Add `{checked_name}: ...` to the `{}` section or remove the stale section.",
+                        section_name_for_noun(noun)
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// Return the expected docstring section name for a documented noun.
+fn section_name_for_noun(noun: &str) -> &'static str {
+    match noun {
+        "parameter" => "Args:",
+        "field" => "Fields:",
+        "alias" => "Aliases:",
+        "decorator" => "Decorators:",
+        _ => "docstring",
+    }
+}
+
+/// Record an API docstring diagnostic anchored to a source span.
+fn push_docstring_diagnostic(
+    diagnostics: &mut Vec<ApiDocstringDiagnostic>,
+    module_path: &[String],
+    anchor: &SourceAnchor,
+    message: String,
+    hint: impl Into<String>,
+) {
+    diagnostics.push(ApiDocstringDiagnostic {
+        module_path: module_path.to_vec(),
+        error: CompileError::new(message, Span::new(anchor.span.start, anchor.span.end)).with_hint(hint),
+    });
+}
+
+/// Return method metadata attached to a class-like declaration.
+fn declaration_methods(declaration: &ApiDeclaration) -> &[ApiMethod] {
+    match declaration {
+        ApiDeclaration::Model(model) => &model.methods,
+        ApiDeclaration::Class(class) => &class.methods,
+        ApiDeclaration::Trait(trait_decl) => &trait_decl.methods,
+        ApiDeclaration::Newtype(newtype) => &newtype.methods,
+        _ => &[],
+    }
+}
+
+/// Return alias metadata exported by a checked package.
+fn package_aliases(package: &[CheckedApiMetadata]) -> Vec<ApiAlias> {
+    package
+        .iter()
+        .flat_map(|module| module.declarations.iter())
+        .filter_map(|declaration| match declaration {
+            ApiDeclaration::Alias(alias) => Some(alias.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Return aliases that target a specific exported declaration.
+fn aliases_for_declaration<'a>(aliases: &'a [ApiAlias], module_path: &[String], name: &str) -> Vec<&'a str> {
+    aliases
+        .iter()
+        .filter(|alias| alias_targets_declaration(alias, module_path, name))
+        .map(|alias| alias.name.as_str())
+        .collect()
+}
+
+/// Return whether an alias path names a specific exported declaration.
+fn alias_targets_declaration(alias: &ApiAlias, module_path: &[String], name: &str) -> bool {
+    let mut declaration_path = module_path.to_vec();
+    declaration_path.push(name.to_string());
+    if alias.target_path == declaration_path {
+        return true;
+    }
+    if alias.target_path.first().is_some_and(|segment| segment == "crate") && alias.target_path[1..] == declaration_path
+    {
+        return true;
+    }
+    false
+}
+
+/// Render a type reference as a docstring-facing type name.
+fn type_ref_doc_name(ty: &TypeRef) -> String {
+    match ty {
+        TypeRef::Named { name, .. } => name.clone(),
+        TypeRef::Applied { name, args, .. } => {
+            let args = args.iter().map(type_ref_doc_name).collect::<Vec<_>>().join(", ");
+            format!("{name}[{args}]")
+        }
+        TypeRef::Function { params, return_type } => {
+            let params = params.iter().map(type_ref_doc_name).collect::<Vec<_>>().join(", ");
+            format!("({params}) -> {}", type_ref_doc_name(return_type))
+        }
+        TypeRef::TypeToken { inner } => format!("Type[{}]", type_ref_doc_name(inner)),
+        TypeRef::Tuple { elements } => {
+            let elements = elements.iter().map(type_ref_doc_name).collect::<Vec<_>>().join(", ");
+            format!("({elements})")
+        }
+        TypeRef::TypeParam { name } => name.clone(),
+        TypeRef::SelfType => "Self".to_string(),
+        TypeRef::Ref { inner } => format!("&{}", type_ref_doc_name(inner)),
+        TypeRef::RustPath { path } => path.clone(),
+        TypeRef::NativeUnion(native) => native
+            .members
+            .iter()
+            .map(type_ref_doc_name)
+            .collect::<Vec<_>>()
+            .join(" | "),
+        TypeRef::Unknown => "Unknown".to_string(),
+    }
+}
+
+/// Build a source anchor for an API metadata span.
+fn anchor(module_path: &[String], name: &str, span: Span) -> SourceAnchor {
+    let mut parts = module_path.to_vec();
+    parts.push(name.to_string());
+    SourceAnchor {
+        id: parts.join("::"),
+        span: source_span(span),
+    }
+}
+
+/// Convert a concrete span into an API metadata source span.
+fn source_span(span: Span) -> SourceSpan {
+    SourceSpan {
+        start: span.start,
+        end: span.end,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{lexer, parser, typechecker};
+
+    fn metadata_for(source: &str) -> Result<CheckedApiMetadata, Vec<crate::diagnostics::CompileError>> {
+        let tokens = lexer::lex(source)?;
+        let program = parser::parse(&tokens)?;
+        let mut checker = typechecker::TypeChecker::new();
+        checker.check_program(&program)?;
+        Ok(collect_checked_api_metadata(
+            &program,
+            &checker,
+            vec!["demo".to_string()],
+        ))
+    }
+
+    fn metadata_for_src_lib(source: &str) -> Result<CheckedApiMetadata, Vec<crate::diagnostics::CompileError>> {
+        let tokens = lexer::lex(source)?;
+        let program = parser::parse_with_module_path(&tokens, Some("project/src/lib.incn"))?;
+        let mut checker = typechecker::TypeChecker::new();
+        checker.check_program(&program)?;
+        Ok(collect_checked_api_metadata(
+            &program,
+            &checker,
+            vec!["lib".to_string()],
+        ))
+    }
+
+    #[test]
+    fn checked_api_preserves_package_owned_method_identity() -> Result<(), String> {
+        let source = r#"
+pub class Buffer:
+    def getvalue(self) -> int:
+        return 1
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = typechecker::TypeChecker::new();
+        checker.set_current_package_identity(Some("incan_stdlib_system".to_string()));
+        checker.set_current_module_path(Some(vec!["io".to_string()]));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let metadata = collect_checked_api_metadata(&program, &checker, vec!["io".to_string()]);
+        let method = metadata
+            .declarations
+            .iter()
+            .find_map(|declaration| match declaration {
+                ApiDeclaration::Class(class) if class.name == "Buffer" => {
+                    class.methods.iter().find(|method| method.name == "getvalue")
+                }
+                _ => None,
+            })
+            .ok_or("missing checked Buffer.getvalue metadata")?;
+        let canonical = method.canonical.as_ref().ok_or("missing canonical method identity")?;
+
+        assert_eq!(canonical.declaration_name, "getvalue");
+        assert_eq!(canonical.kind, "method");
+        assert_eq!(
+            canonical.origin,
+            crate::library_manifest::CanonicalIdentityOriginExport::Package {
+                library: "incan_stdlib_system".to_string(),
+                module_path: vec!["io".to_string()],
+            }
+        );
+        assert_eq!(method_export_from_api(method).canonical.as_ref(), Some(canonical));
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_metadata_extracts_function_decorator_and_docstring() -> Result<(), String> {
+        let source = r#"
+@rust.allow("dead_code")
+pub def avg(values: List[float]) -> float:
+    """
+    Return the arithmetic mean.
+
+    Args:
+        values: Input values.
+
+    Returns:
+        float: Mean value.
+
+    Decorators:
+        rust.allow: Allows generated Rust lint suppression.
+    """
+    return 0.0
+"#;
+        let metadata = metadata_for(source).map_err(|errs| format!("{errs:?}"))?;
+        let function = metadata
+            .declarations
+            .iter()
+            .find_map(|decl| match decl {
+                ApiDeclaration::Function(function) => Some(function),
+                _ => None,
+            })
+            .ok_or_else(|| "expected function metadata".to_string())?;
+
+        assert_eq!(function.name, "avg");
+        assert_eq!(function.anchor.id, "demo::avg");
+        assert_eq!(
+            function.docstring.as_deref().map(str::trim),
+            Some(
+                "Return the arithmetic mean.\n\n    Args:\n        values: Input values.\n\n    Returns:\n        float: Mean value.\n\n    Decorators:\n        rust.allow: Allows generated Rust lint suppression."
+            )
+        );
+        let docstring = function
+            .docstring_sections
+            .as_ref()
+            .ok_or_else(|| "expected parsed docstring sections".to_string())?;
+        assert_eq!(docstring.summary.as_deref(), Some("Return the arithmetic mean."));
+        assert_eq!(
+            docstring.params,
+            vec![ApiDocstringEntry {
+                name: "values".to_string(),
+                description: "Input values.".to_string(),
+            }]
+        );
+        assert_eq!(
+            docstring.returns,
+            Some(ApiDocstringReturn {
+                ty: Some("float".to_string()),
+                description: "Mean value.".to_string(),
+            })
+        );
+        assert_eq!(
+            docstring.decorators,
+            vec![ApiDocstringEntry {
+                name: "rust.allow".to_string(),
+                description: "Allows generated Rust lint suppression.".to_string(),
+            }]
+        );
+        assert_eq!(function.params.len(), 1);
+        assert_eq!(function.decorators.len(), 1);
+        assert_eq!(
+            function.decorators[0].path,
+            vec!["rust".to_string(), "allow".to_string()]
+        );
+        assert_eq!(
+            function.decorators[0].args,
+            vec![DecoratorArgMetadata::Positional {
+                value: DecoratorValue::Literal {
+                    value: SafeMetadataValue::String("dead_code".to_string()),
+                },
+            }]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_docstring_validation_reports_signature_drift() -> Result<(), String> {
+        let source = r#"
+pub def avg(values: List[float]) -> float:
+    """
+    Return the arithmetic mean.
+
+    Args:
+        missing: Stale argument.
+
+    Returns:
+        str: Wrong return type.
+
+    Decorators:
+        rust.allow: Stale decorator.
+    """
+    return 0.0
+"#;
+        let metadata = metadata_for(source).map_err(|errs| format!("{errs:?}"))?;
+        let diagnostics = validate_checked_api_docstrings(&[metadata]);
+        let messages = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.error.message.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("documented parameter `missing` does not exist")),
+            "expected unknown parameter diagnostic, got {messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("checked parameter `values` is missing")),
+            "expected missing checked parameter diagnostic, got {messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message
+                    .contains("documented return type `str` does not match checked return type `float`")),
+            "expected return type drift diagnostic, got {messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("documented decorator `rust.allow` does not exist")),
+            "expected decorator drift diagnostic, got {messages:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_metadata_preserves_decorated_function_source_signature() -> Result<(), String> {
+        let source = r#"
+def keep(func: (int) -> int) -> (int) -> int:
+    return func
+
+@keep
+pub def decorated(value: int) -> int:
+    """Return the input value.
+
+    Args:
+        value: Input value.
+    """
+    return value
+"#;
+        let metadata = metadata_for(source).map_err(|errs| format!("{errs:?}"))?;
+        let function = metadata
+            .declarations
+            .iter()
+            .find_map(|decl| match decl {
+                ApiDeclaration::Function(function) if function.name == "decorated" => Some(function),
+                _ => None,
+            })
+            .ok_or_else(|| "expected decorated function metadata".to_string())?;
+
+        assert_eq!(function.params.len(), 1);
+        assert_eq!(function.params[0].name, "value");
+        assert_eq!(
+            function.params[0].ty,
+            TypeRef::Named {
+                origin: None,
+                name: "int".to_string(),
+            }
+        );
+
+        let diagnostics = validate_checked_api_docstrings(&[metadata]);
+        assert!(
+            diagnostics.is_empty(),
+            "expected decorated source signature to satisfy docstring validation, got {diagnostics:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_metadata_preserves_generic_decorator_factory_source_signature() -> Result<(), String> {
+        let source = r#"
+model ColumnExpr:
+    name: str
+
+def registered[F](name: str) -> ((F) -> F):
+    return (func) => func
+
+@registered("incql.functions.col")
+pub def col(name: str) -> ColumnExpr:
+    """Build a column expression.
+
+    Args:
+        name: Column name.
+    """
+    return ColumnExpr(name=name)
+"#;
+        let metadata = metadata_for(source).map_err(|errs| format!("{errs:?}"))?;
+        let function = metadata
+            .declarations
+            .iter()
+            .find_map(|decl| match decl {
+                ApiDeclaration::Function(function) if function.name == "col" => Some(function),
+                _ => None,
+            })
+            .ok_or_else(|| "expected decorated function metadata".to_string())?;
+
+        assert_eq!(function.params.len(), 1);
+        assert_eq!(function.params[0].name, "name");
+        assert_eq!(
+            function.params[0].ty,
+            TypeRef::Named {
+                origin: None,
+                name: "str".to_string(),
+            }
+        );
+        assert_eq!(
+            function.return_type,
+            TypeRef::Named {
+                origin: None,
+                name: "ColumnExpr".to_string(),
+            }
+        );
+
+        let diagnostics = validate_checked_api_docstrings(&[metadata]);
+        assert!(
+            diagnostics.is_empty(),
+            "expected generic decorator factory source signature to satisfy docstring validation, got {diagnostics:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_metadata_projects_decorated_callable_context_issue694() -> Result<(), String> {
+        let source = r#"
+const EQUAL_FUNCTION_ANCHOR = "substrait.equal"
+
+model ColumnExpr:
+    name: str
+
+model FunctionLifecycle:
+    since: str
+    changed: List[str]
+    deprecated: Option[str]
+
+def extension_mapping(name: str, anchor: str) -> str:
+    return name
+
+def deterministic_spec(kind: str, lifecycle: FunctionLifecycle, mapping: str) -> str:
+    return kind
+
+def registered[F](spec: str) -> ((F) -> F):
+    return (func) => func
+
+@registered(deterministic_spec("scalar", FunctionLifecycle(since="v0.3", changed=[], deprecated=None), extension_mapping("equal", EQUAL_FUNCTION_ANCHOR)))
+pub def eq(left: ColumnExpr, right: ColumnExpr) -> ColumnExpr:
+    return left
+"#;
+        let metadata = metadata_for(source).map_err(|errs| format!("{errs:?}"))?;
+        let function = metadata
+            .declarations
+            .iter()
+            .find_map(|decl| match decl {
+                ApiDeclaration::Function(function) if function.name == "eq" => Some(function),
+                _ => None,
+            })
+            .ok_or_else(|| "expected decorated function metadata".to_string())?;
+        let decorator = function
+            .decorators
+            .first()
+            .ok_or_else(|| "expected decorator metadata".to_string())?;
+        let callable = decorator
+            .decorated_callable
+            .as_ref()
+            .ok_or_else(|| "expected decorated callable context".to_string())?;
+
+        assert_eq!(callable.name, "eq");
+        assert_eq!(
+            callable
+                .params
+                .iter()
+                .map(|param| (param.name.as_str(), &param.ty))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    "left",
+                    &TypeRef::Named {
+                        origin: None,
+                        name: "ColumnExpr".to_string(),
+                    },
+                ),
+                (
+                    "right",
+                    &TypeRef::Named {
+                        origin: None,
+                        name: "ColumnExpr".to_string(),
+                    },
+                ),
+            ]
+        );
+        assert_eq!(
+            callable.return_type,
+            TypeRef::Named {
+                origin: None,
+                name: "ColumnExpr".to_string(),
+            }
+        );
+
+        let [
+            DecoratorArgMetadata::Positional {
+                value: DecoratorValue::Call { callee, args, .. },
+            },
+        ] = decorator.args.as_slice()
+        else {
+            return Err(format!(
+                "expected structured decorator call metadata, got {decorator:?}"
+            ));
+        };
+        assert_eq!(callee, &vec!["deterministic_spec".to_string()]);
+        let lifecycle_args = args
+            .iter()
+            .find_map(|arg| match arg {
+                DecoratorCallArgMetadata::Positional {
+                    value: DecoratorValue::Call { callee, args, .. },
+                } if callee == &vec!["FunctionLifecycle".to_string()] => Some(args),
+                _ => None,
+            })
+            .ok_or_else(|| format!("expected nested lifecycle constructor call metadata, got {args:?}"))?;
+        assert!(
+            lifecycle_args.iter().any(|arg| matches!(
+                arg,
+                DecoratorCallArgMetadata::Named {
+                    name,
+                    value: DecoratorValue::List { items },
+                } if name == "changed" && items.is_empty()
+            )),
+            "expected lifecycle `changed=[]` metadata, got {lifecycle_args:?}"
+        );
+        assert!(
+            lifecycle_args.iter().any(|arg| matches!(
+                arg,
+                DecoratorCallArgMetadata::Named {
+                    name,
+                    value: DecoratorValue::Literal {
+                        value: SafeMetadataValue::None,
+                    },
+                } if name == "deprecated"
+            )),
+            "expected lifecycle `deprecated=None` metadata, got {lifecycle_args:?}"
+        );
+        assert!(
+            args.iter().any(|arg| matches!(
+                arg,
+                DecoratorCallArgMetadata::Positional {
+                    value: DecoratorValue::Call { callee, args, .. },
+                } if callee == &vec!["extension_mapping".to_string()]
+                    && args.iter().any(|arg| matches!(
+                        arg,
+                        DecoratorCallArgMetadata::Positional {
+                            value: DecoratorValue::ConstRef {
+                                name,
+                                value: Some(SafeMetadataValue::String(value)),
+                            },
+                        } if name == "EQUAL_FUNCTION_ANCHOR" && value == "substrait.equal"
+                    ))
+            )),
+            "expected nested extension mapping call metadata with checked const ref, got {args:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_metadata_rejects_non_symbolic_decorator_field_metadata() -> Result<(), String> {
+        let source = r#"
+model Holder:
+    value: str
+
+def holder() -> Holder:
+    return Holder(value="equal")
+
+def registered[F](name: str) -> ((F) -> F):
+    return (func) => func
+
+@registered(holder().value)
+pub def eq(left: int, right: int) -> int:
+    return left
+"#;
+        let metadata = metadata_for(source).map_err(|errs| format!("{errs:?}"))?;
+        let function = metadata
+            .declarations
+            .iter()
+            .find_map(|decl| match decl {
+                ApiDeclaration::Function(function) if function.name == "eq" => Some(function),
+                _ => None,
+            })
+            .ok_or_else(|| "expected decorated function metadata".to_string())?;
+        let [
+            DecoratorArgMetadata::Positional {
+                value: DecoratorValue::Unsupported { reason },
+            },
+        ] = function.decorators[0].args.as_slice()
+        else {
+            return Err(format!(
+                "expected non-symbolic field decorator argument to stay unsupported, got {:?}",
+                function.decorators[0].args
+            ));
+        };
+
+        assert_eq!(reason, "decorator field expression is not a symbolic path");
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_docstring_validation_matches_overloaded_method_by_params() -> Result<(), String> {
+        let source = r#"
+pub class Writer:
+    def write(self, data: bytes) -> Result[int, str]:
+        """
+        Write raw bytes.
+
+        Args:
+            data: Bytes to write.
+        """
+        return Ok(len(data))
+
+    def write(self, value: u8, _endian: str) -> Result[None, str]:
+        return Ok(None)
+"#;
+        let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+        let class = program
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Declaration::Class(class) => Some(class),
+                _ => None,
+            })
+            .ok_or_else(|| "expected class declaration".to_string())?;
+        let checked_methods = vec![
+            CheckedMethod {
+                name: "write".to_string(),
+                canonical: None,
+                alias_of: None,
+                type_params: Vec::new(),
+                receiver: Some(crate::ast::Receiver::Immutable),
+                params: vec![
+                    crate::symbols::CallableParam::named(
+                        "value",
+                        crate::symbols::ResolvedType::Int,
+                        crate::ast::ParamKind::Normal,
+                    ),
+                    crate::symbols::CallableParam::named(
+                        "_endian",
+                        crate::symbols::ResolvedType::Str,
+                        crate::ast::ParamKind::Normal,
+                    ),
+                ],
+                param_defaults: vec![None, None],
+                return_type: crate::symbols::ResolvedType::Unit,
+                is_async: false,
+                has_body: true,
+            },
+            CheckedMethod {
+                name: "write".to_string(),
+                canonical: None,
+                alias_of: None,
+                type_params: Vec::new(),
+                receiver: Some(crate::ast::Receiver::Immutable),
+                params: vec![crate::symbols::CallableParam::named(
+                    "data",
+                    crate::symbols::ResolvedType::Bytes,
+                    crate::ast::ParamKind::Normal,
+                )],
+                param_defaults: vec![None],
+                return_type: crate::symbols::ResolvedType::Int,
+                is_async: false,
+                has_body: true,
+            },
+        ];
+        let checker = typechecker::TypeChecker::new();
+        let api_methods = methods(
+            &class.methods,
+            &class.method_aliases,
+            &checked_methods,
+            &checker,
+            &["demo".to_string()],
+            "Writer",
+        );
+        assert_eq!(api_methods.len(), 2);
+        assert_eq!(
+            api_methods[0]
+                .params
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["data"]
+        );
+        assert_eq!(
+            api_methods[1]
+                .params
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["value", "_endian"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_docstring_validation_matches_overloaded_method_by_type_shape() -> Result<(), String> {
+        let source = r#"
+pub class Parser:
+    def parse(self, value: str) -> str:
+        """
+        Parse text.
+        """
+        return value
+
+    def parse(self, value: bytes) -> bytes:
+        """
+        Parse bytes.
+        """
+        return value
+"#;
+        let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+        let class = program
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Declaration::Class(class) => Some(class),
+                _ => None,
+            })
+            .ok_or_else(|| "expected class declaration".to_string())?;
+        let checked_methods = vec![
+            CheckedMethod {
+                name: "parse".to_string(),
+                canonical: None,
+                alias_of: None,
+                type_params: Vec::new(),
+                receiver: Some(crate::ast::Receiver::Immutable),
+                params: vec![crate::symbols::CallableParam::named(
+                    "value",
+                    crate::symbols::ResolvedType::Bytes,
+                    crate::ast::ParamKind::Normal,
+                )],
+                param_defaults: vec![None],
+                return_type: crate::symbols::ResolvedType::Bytes,
+                is_async: false,
+                has_body: true,
+            },
+            CheckedMethod {
+                name: "parse".to_string(),
+                canonical: None,
+                alias_of: None,
+                type_params: Vec::new(),
+                receiver: Some(crate::ast::Receiver::Immutable),
+                params: vec![crate::symbols::CallableParam::named(
+                    "value",
+                    crate::symbols::ResolvedType::Str,
+                    crate::ast::ParamKind::Normal,
+                )],
+                param_defaults: vec![None],
+                return_type: crate::symbols::ResolvedType::Str,
+                is_async: false,
+                has_body: true,
+            },
+        ];
+        let checker = typechecker::TypeChecker::new();
+        let api_methods = methods(
+            &class.methods,
+            &class.method_aliases,
+            &checked_methods,
+            &checker,
+            &["demo".to_string()],
+            "Parser",
+        );
+        assert_eq!(api_methods.len(), 2);
+        assert_eq!(
+            api_methods[0].return_type,
+            TypeRef::Named {
+                origin: None,
+                name: "str".to_string()
+            }
+        );
+        assert_eq!(
+            api_methods[0].docstring.as_deref().unwrap_or_default().trim(),
+            "Parse text."
+        );
+        assert_eq!(
+            api_methods[1].return_type,
+            TypeRef::Named {
+                origin: None,
+                name: "bytes".to_string()
+            }
+        );
+        assert_eq!(
+            api_methods[1].docstring.as_deref().unwrap_or_default().trim(),
+            "Parse bytes."
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_docstring_validation_reports_field_drift() -> Result<(), String> {
+        let source = r#"
+pub model Order:
+    """
+    Order contract.
+
+    Fields:
+        missing: Stale field documentation.
+    """
+    pub id: int
+"#;
+        let metadata = metadata_for(source).map_err(|errs| format!("{errs:?}"))?;
+        let diagnostics = validate_checked_api_docstrings(&[metadata]);
+        let messages = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.error.message.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("documented field `missing` does not exist")),
+            "expected unknown field diagnostic, got {messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("checked field `id` is missing")),
+            "expected missing checked field diagnostic, got {messages:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_metadata_extracts_model_fields_methods_and_const_values() -> Result<(), String> {
+        let source = r#"
+pub const DEFAULT_LABEL = "none"
+
+pub trait Labelled:
+    def label(self) -> str: ...
+
+
+@derive(Clone)
+pub model Order with Labelled:
+    """
+    Order contract.
+    """
+    pub id [description="Stable id"] as "orderId": int
+    pub fallback_label: str = DEFAULT_LABEL
+
+    def label(self) -> str:
+        """
+        Return the display label.
+        """
+        return DEFAULT_LABEL
+"#;
+        let metadata = metadata_for(source).map_err(|errs| format!("{errs:?}"))?;
+        let konst = metadata
+            .declarations
+            .iter()
+            .find_map(|decl| match decl {
+                ApiDeclaration::Const(konst) => Some(konst),
+                _ => None,
+            })
+            .ok_or_else(|| "expected const metadata".to_string())?;
+        assert_eq!(konst.value, Some(SafeMetadataValue::String("none".to_string())));
+
+        let model = metadata
+            .declarations
+            .iter()
+            .find_map(|decl| match decl {
+                ApiDeclaration::Model(model) => Some(model),
+                _ => None,
+            })
+            .ok_or_else(|| "expected model metadata".to_string())?;
+        assert_eq!(model.docstring.as_deref().map(str::trim), Some("Order contract."));
+        assert_eq!(model.traits, vec!["Labelled".to_string()]);
+        assert_eq!(model.trait_adoptions.len(), 1);
+        assert_eq!(model.trait_adoptions[0].name, "Labelled");
+        assert_eq!(
+            model.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(),
+            vec!["id", "fallback_label"]
+        );
+        assert_eq!(model.fields[0].alias.as_deref(), Some("orderId"));
+        assert_eq!(model.fields[0].description.as_deref(), Some("Stable id"));
+        assert_eq!(
+            model.methods[0].docstring.as_deref().map(str::trim),
+            Some("Return the display label.")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_metadata_preserves_same_type_method_aliases() -> Result<(), String> {
+        let source = r#"
+pub model Measurements:
+    pub value: int
+
+    def average(self) -> int:
+        return self.value
+
+    mean = alias average
+"#;
+        let metadata = metadata_for(source).map_err(|errs| format!("{errs:?}"))?;
+        let model = metadata
+            .declarations
+            .iter()
+            .find_map(|declaration| match declaration {
+                ApiDeclaration::Model(model) => Some(model),
+                _ => None,
+            })
+            .ok_or_else(|| "expected model metadata".to_string())?;
+        let mean = model
+            .methods
+            .iter()
+            .find(|method| method.name == "mean")
+            .ok_or_else(|| "expected method alias metadata".to_string())?;
+        assert_eq!(mean.alias_of.as_deref(), Some("average"));
+        assert_eq!(mean.anchor.id, "demo::Measurements.mean");
+        assert_eq!(mean.params.len(), 0);
+        assert_eq!(
+            mean.return_type,
+            TypeRef::Named {
+                origin: None,
+                name: "int".to_string()
+            }
+        );
+        assert_eq!(
+            model_export_from_api(model)
+                .methods
+                .iter()
+                .find(|method| method.name == "mean")
+                .and_then(|method| method.alias_of.as_deref()),
+            Some("average")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_metadata_extracts_public_import_alias_targets() -> Result<(), String> {
+        let source = r#"
+pub from crate.widgets import Widget as PublicWidget
+"#;
+        let metadata = metadata_for_src_lib(source).map_err(|errs| format!("{errs:?}"))?;
+        let alias = metadata
+            .declarations
+            .iter()
+            .find_map(|decl| match decl {
+                ApiDeclaration::Alias(alias) => Some(alias),
+                _ => None,
+            })
+            .ok_or_else(|| "expected alias metadata".to_string())?;
+
+        assert_eq!(alias.name, "PublicWidget");
+        assert_eq!(alias.anchor.id, "lib::PublicWidget");
+        assert!(alias.is_public);
+        assert_eq!(
+            alias.target_path,
+            vec!["crate".to_string(), "widgets".to_string(), "Widget".to_string()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_materializes_public_namespace_members_and_children_issue948() -> Result<(), String> {
+        let mut index =
+            metadata_for("pub def build() -> int:\n  return 1\n").map_err(|errors| format!("{errors:?}"))?;
+        index.module_path = vec!["hyperquant".to_string(), "index".to_string()];
+        let mut package = CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![index],
+            public_namespaces: Vec::new(),
+        };
+
+        materialize_checked_api_public_namespaces(&mut package).map_err(|error| error.to_string())?;
+
+        let parent = checked_api_public_namespace(&package, &["hyperquant".to_string()])
+            .ok_or_else(|| "missing parent namespace".to_string())?;
+        assert_eq!(parent.child_modules, vec!["index".to_string()]);
+        assert_eq!(parent.members.len(), 1);
+        assert_eq!(parent.members[0].name, "build");
+        assert_eq!(
+            parent.members[0].source_path,
+            vec!["hyperquant".to_string(), "index".to_string(), "build".to_string()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_rejects_duplicate_logical_source_modules_issue948() -> Result<(), String> {
+        let mut first = metadata_for("pub def left() -> int:\n  return 1\n").map_err(|errors| format!("{errors:?}"))?;
+        first.module_path = vec!["hyperquant".to_string()];
+        let mut second =
+            metadata_for("pub def right() -> int:\n  return 2\n").map_err(|errors| format!("{errors:?}"))?;
+        second.module_path = vec!["hyperquant".to_string()];
+        let mut package = CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![first, second],
+            public_namespaces: Vec::new(),
+        };
+
+        let Err(error) = materialize_checked_api_public_namespaces(&mut package) else {
+            return Err("duplicate logical modules unexpectedly produced a public namespace graph".to_string());
+        };
+
+        assert!(error.to_string().contains("multiple source files"));
+        assert!(error.to_string().contains("hyperquant"));
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_metadata_marks_implementation_imports_private() -> Result<(), String> {
+        let source = "from crate.widgets import Widget\n";
+        let metadata = metadata_for_src_lib(source).map_err(|errs| format!("{errs:?}"))?;
+        let alias = metadata
+            .declarations
+            .iter()
+            .find_map(|declaration| match declaration {
+                ApiDeclaration::Alias(alias) => Some(alias),
+                _ => None,
+            })
+            .ok_or_else(|| "expected internal alias metadata for registry projection".to_string())?;
+
+        assert_eq!(alias.name, "Widget");
+        assert!(!alias.is_public);
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_metadata_extracts_public_partial_callable_preset() -> Result<(), String> {
+        let source = r#"
+pub def route(method: str, path: str = "/") -> str:
+    return path
+
+pub get = partial route(method="GET")
+"#;
+        let metadata = metadata_for(source).map_err(|errs| format!("{errs:?}"))?;
+        let partial = metadata
+            .declarations
+            .iter()
+            .find_map(|decl| match decl {
+                ApiDeclaration::Partial(partial) => Some(partial),
+                _ => None,
+            })
+            .ok_or_else(|| "expected partial metadata".to_string())?;
+
+        assert_eq!(partial.name, "get");
+        assert_eq!(partial.anchor.id, "demo::get");
+        assert_eq!(partial.target_path, vec!["route".to_string()]);
+        assert_eq!(partial.target_kind, PartialTargetKindExport::Function);
+        assert_eq!(partial.presets.len(), 1);
+        assert_eq!(partial.presets[0].name, "method");
+        assert_eq!(
+            partial
+                .params
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["method", "path"]
+        );
+        assert!(
+            partial.params[0].has_default,
+            "partial-projected callable params should preserve ordinary default display metadata"
+        );
+        assert!(
+            partial.params[1].has_default,
+            "ordinary target defaults should remain visually distinct on partial metadata"
+        );
+        Ok(())
+    }
+}

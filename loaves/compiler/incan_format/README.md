@@ -12,4 +12,4 @@ Source formatter.
 
 `kernel`
 
-This directory is a layout skeleton. It holds no code yet; `src/` is a placeholder for the conventional crate root.
+The formatter lives here and depends on the syntax crate alone, which is why the frontend can format source for its contract metadata without a cycle.

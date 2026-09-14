@@ -29,6 +29,8 @@ mod loader;
 mod mir_digest;
 #[cfg(feature = "inspector")]
 mod receiver_contract;
+#[cfg(feature = "test_fixtures")]
+pub mod test_fixtures;
 
 #[cfg(feature = "inspector")]
 pub use cache::RustMetadataCache;
