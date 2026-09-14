@@ -12,6 +12,7 @@ pub mod error;
 pub mod metadata_packages;
 pub mod modules;
 pub mod project;
+#[cfg(feature = "rust_inspect")]
 pub mod rust_inspect_workspace;
 pub mod session;
 pub mod typecheck;

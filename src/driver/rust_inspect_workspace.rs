@@ -3,6 +3,9 @@
 //!
 //! Everything here is about producing and prewarming that workspace. Reading Rust metadata out of it is the
 //! `rust_inspect` crate's job.
+//!
+//! The whole module rides the `rust_inspect` feature: without the inspector there is no workspace to prepare, and
+//! every caller already gates on the same feature.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
@@ -10,7 +13,6 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-#[cfg(feature = "rust_inspect")]
 use crate::backend::ProjectGenerator;
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::driver::error::{CliError, CliResult};
@@ -21,16 +23,12 @@ use crate::manifest::{DependencySource, DependencySpec, ProjectManifest};
 use crate::provider::inventory::{normalize_sdk_artifact_projections, normalize_sdk_dependency_rebindings};
 use crate::provider::requirements::ProjectRequirements;
 use crate::provider::{SdkArtifactProjection, SdkDependencyRebinding};
-#[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::Inspector;
-#[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::InspectorConfig;
 const RUST_INSPECT_WORKSPACE_FINGERPRINT_FILE: &str = ".incan_rust_inspect_fingerprint";
 
-#[cfg(feature = "rust_inspect")]
 const RUST_INSPECT_WORKSPACE_FINGERPRINT_PREFIX: &str = "v1:";
 
-#[cfg(feature = "rust_inspect")]
 const RUST_INSPECT_OUT_DIRS_FINGERPRINT_FILE: &str = ".incan_rust_inspect_out_dirs_fingerprint";
 
 /// Counts how many times each rust-inspect stub workspace is fully regenerated instead of skipped via fingerprint.
@@ -61,7 +59,6 @@ fn test_rust_inspect_workspace_generations(workspace_dir: &Path) -> u64 {
 }
 
 /// Trim, sort and dedupe the stdlib feature list so the workspace fingerprint does not change with spelling order.
-#[cfg(feature = "rust_inspect")]
 fn normalized_stdlib_features_for_rust_inspect_fingerprint(features: &[String]) -> Vec<String> {
     let mut normalized: Vec<String> = features
         .iter()
@@ -76,7 +73,6 @@ fn normalized_stdlib_features_for_rust_inspect_fingerprint(features: &[String]) 
 /// Fold one dependency spec into the workspace fingerprint — crate name, version, features, the default-features
 /// and optional flags, package rename, and source — with NUL separators and tagged absences so two specs cannot
 /// collide by concatenation.
-#[cfg(feature = "rust_inspect")]
 fn hash_dependency_spec_for_rust_inspect(hasher: &mut Sha256, spec: &DependencySpec) {
     use crate::manifest::GitReference;
 
@@ -140,7 +136,6 @@ fn hash_dependency_spec_for_rust_inspect(hasher: &mut Sha256, spec: &DependencyS
 }
 
 /// Stable fingerprint for inputs that define one generated rust-inspect Cargo workspace.
-#[cfg(feature = "rust_inspect")]
 #[allow(clippy::too_many_arguments)]
 fn rust_inspect_workspace_fingerprint(
     project_name: &str,
@@ -294,7 +289,6 @@ fn rust_inspect_workspace_fingerprint(
 ///
 /// SDK path catalogs and dependency rebindings may also describe private or transitive artifact edges, so they are
 /// deliberately not namespace authority for source-level `@rust.derive(...)` paths.
-#[cfg(feature = "rust_inspect")]
 fn declared_rust_derive_probe_paths(
     resolved: &ResolvedDependencies,
     rust_derive_probe_paths: &[String],
@@ -318,7 +312,6 @@ fn declared_rust_derive_probe_paths(
 }
 
 /// Return the workspace directory used for Rust inspection metadata.
-#[cfg(feature = "rust_inspect")]
 fn rust_inspect_workspace_dir(project_root: &Path, project_name: &str, fingerprint: &str) -> PathBuf {
     let mut safe_name = project_name
         .chars()
@@ -345,7 +338,6 @@ fn rust_inspect_workspace_dir(project_root: &Path, project_name: &str, fingerpri
         .join(format!("{safe_name}-{suffix}"))
 }
 
-#[cfg(feature = "rust_inspect")]
 /// Build a deterministic fingerprint for generated build-script metadata prewarm inputs and requested Rust paths.
 fn rust_inspect_out_dirs_fingerprint(
     manifest_dir: &Path,
@@ -388,7 +380,6 @@ fn rust_inspect_out_dirs_fingerprint(
     ))
 }
 
-#[cfg(feature = "rust_inspect")]
 /// Return whether the stored out-dir prewarm stamp matches the current fingerprint and the shared target still exists.
 fn rust_inspect_out_dirs_stamp_matches(stamp_path: &Path, fingerprint: &str, target_dir: &Path) -> bool {
     target_dir.is_dir()
@@ -397,7 +388,6 @@ fn rust_inspect_out_dirs_stamp_matches(stamp_path: &Path, fingerprint: &str, tar
             .unwrap_or(false)
 }
 
-#[cfg(feature = "rust_inspect")]
 /// Write a Cargo config that points the generated rust-inspect workspace at the shared target directory.
 fn write_rust_inspect_cargo_config(manifest_dir: &Path, target_dir: &Path) -> CliResult<()> {
     let cargo_dir = manifest_dir.join(".cargo");
@@ -420,13 +410,11 @@ fn write_rust_inspect_cargo_config(manifest_dir: &Path, target_dir: &Path) -> Cl
     })
 }
 
-#[cfg(feature = "rust_inspect")]
 /// Point one generated rust-inspect workspace at its selected Cargo target.
 pub(crate) fn configure_rust_inspect_cargo_target(manifest_dir: &Path, target_dir: &Path) -> CliResult<()> {
     write_rust_inspect_cargo_config(manifest_dir, target_dir)
 }
 
-#[cfg(feature = "rust_inspect")]
 /// Detect Cargo's stale-lockfile failure so prewarm can retry with an offline lock refresh instead of silently
 /// skipping.
 fn rust_inspect_locked_prewarm_needs_lock_update(stderr: &str) -> bool {
@@ -435,7 +423,6 @@ fn rust_inspect_locked_prewarm_needs_lock_update(stderr: &str) -> bool {
         && (stderr.contains("cannot update") || stderr.contains("needs to be updated"))
 }
 
-#[cfg(feature = "rust_inspect")]
 /// Run the Cargo command that warms generated build-script output for rust-inspect metadata extraction.
 fn run_rust_inspect_out_dirs_prewarm_command(
     manifest_dir: &Path,
@@ -466,14 +453,12 @@ fn run_rust_inspect_out_dirs_prewarm_command(
         .map_err(|err| CliError::failure(format!("Failed to run rust-inspect build-script prewarm: {err}")))
 }
 
-#[cfg(feature = "rust_inspect")]
 #[derive(Debug, Clone, Copy)]
 enum RustInspectPrewarmCargoMode {
     Locked,
     Offline,
 }
 
-#[cfg(feature = "rust_inspect")]
 /// Prewarm generated build-script output directories for rust-inspect lookups and stamp successful runs for reuse.
 fn prewarm_rust_inspect_out_dirs(manifest_dir: &Path, target_dir: &Path, query_paths: &[String]) -> CliResult<()> {
     write_rust_inspect_cargo_config(manifest_dir, target_dir)?;
@@ -550,7 +535,6 @@ pub(crate) fn ensure_rust_inspect_workspace(
 }
 
 /// Generate a rust-inspect workspace whose Cargo package identity matches the canonical lock owner.
-#[cfg(feature = "rust_inspect")]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
     project_root: &Path,
@@ -668,7 +652,6 @@ pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
 /// inspection projection. Rewrite only that source-less root record to the current manifest version; registry package
 /// entries, checksums, and dependency edges remain selected from the canonical lock. This stays a projection, never
 /// a lock publication or dependency resolver.
-#[cfg(feature = "rust_inspect")]
 fn project_rust_inspect_lock_projection(
     cargo_lock_payload: Option<String>,
     cargo_package_name: &str,
@@ -715,7 +698,6 @@ fn project_rust_inspect_lock_projection(
 }
 
 /// Collect canonical rust-inspect query paths from parsed `rust::` imports.
-#[cfg(feature = "rust_inspect")]
 pub(crate) fn collect_rust_inspect_query_paths(modules: &[ParsedModule]) -> Vec<String> {
     collect_rust_inspect_query_paths_from_programs(modules.iter().map(|module| &module.ast))
 }
@@ -725,7 +707,6 @@ pub(crate) fn collect_rust_inspect_query_paths(modules: &[ParsedModule]) -> Vec<
 /// Loaf publication also parses compiler-owned provider source that is metadata-only in the consumer module
 /// graph. Keeping the import walk program-based lets that explicit publisher preserve Rust ownership signatures
 /// without making normal Oven consumers re-emit provider source.
-#[cfg(feature = "rust_inspect")]
 pub(crate) fn collect_rust_inspect_query_paths_from_programs<'a>(
     programs: impl IntoIterator<Item = &'a Program>,
 ) -> Vec<String> {
@@ -797,7 +778,6 @@ pub(crate) fn collect_rust_inspect_query_paths_from_programs<'a>(
 /// Incan-authored declaration. This collector admits direct `rust::` item imports used by `@derive(...)` or
 /// `@rust.derive(...)` plus syntactically valid explicit Rust macro paths. The preparation boundary later limits those
 /// paths to declared dependency namespaces before generating the probe workspace.
-#[cfg(feature = "rust_inspect")]
 pub(crate) fn collect_rust_inspect_derive_probe_paths(modules: &[ParsedModule]) -> Vec<String> {
     use crate::frontend::ast::{Declaration, Decorator, DecoratorArg, Expr, Literal};
 
@@ -897,7 +877,6 @@ pub(crate) fn collect_rust_inspect_derive_probe_paths(modules: &[ParsedModule]) 
 }
 
 /// Return whether rust-inspect prewarm should run for the supplied environment value.
-#[cfg(feature = "rust_inspect")]
 fn parse_rust_inspect_prewarm_env(raw: Option<&str>) -> bool {
     let Some(raw) = raw else {
         return false;
@@ -906,19 +885,16 @@ fn parse_rust_inspect_prewarm_env(raw: Option<&str>) -> bool {
 }
 
 /// Return whether Rust inspection prewarming is enabled.
-#[cfg(feature = "rust_inspect")]
 fn rust_inspect_prewarm_enabled() -> bool {
     parse_rust_inspect_prewarm_env(std::env::var("INCAN_RUST_INSPECT_PREWARM").ok().as_deref())
 }
 
 /// Return whether rust-inspect should eagerly run Cargo to materialize every generated build-script `OUT_DIR`.
-#[cfg(feature = "rust_inspect")]
 fn parse_rust_inspect_eager_out_dirs_prewarm_env(raw: Option<&str>) -> bool {
     raw.is_some_and(|raw| matches!(raw.trim(), "1" | "true" | "TRUE" | "on" | "ON" | "yes" | "YES"))
 }
 
 /// Return whether rust-inspect should eagerly run Cargo to materialize every generated build-script `OUT_DIR`.
-#[cfg(feature = "rust_inspect")]
 fn rust_inspect_eager_out_dirs_prewarm_enabled() -> bool {
     parse_rust_inspect_eager_out_dirs_prewarm_env(
         std::env::var("INCAN_RUST_INSPECT_EAGER_OUT_DIRS_PREWARM")
@@ -928,7 +904,6 @@ fn rust_inspect_eager_out_dirs_prewarm_enabled() -> bool {
 }
 
 /// Surface rust-inspect preparation progress from explicit CLI prewarm phases.
-#[cfg(feature = "rust_inspect")]
 fn print_rust_inspect_prewarm_progress(message: String) {
     if message.starts_with("rust-inspect prewarm") {
         eprintln!("{message}");
@@ -938,7 +913,6 @@ fn print_rust_inspect_prewarm_progress(message: String) {
 /// Marker understood by `rust_inspect` that selects its build-system-neutral `rust-project.json` loader.
 ///
 /// Mark one compiler-authored Rust inspection projection for receipt-bound direct-Rustc loading.
-#[cfg(feature = "rust_inspect")]
 pub(crate) fn mark_oven_direct_rust_inspection(manifest_dir: &Path) -> CliResult<()> {
     let bootstrap_marker = manifest_dir.join(crate::rust_inspect::OVEN_CARGO_BOOTSTRAP_INSPECTION_MARKER);
     if bootstrap_marker.is_file() {
@@ -963,7 +937,6 @@ pub(crate) fn mark_oven_direct_rust_inspection(manifest_dir: &Path) -> CliResult
 /// The publisher already owns Cargo authority while preparing a new dependency closure. Letting rust-analyzer load
 /// real proc-macro output here records generated trait implementations without teaching ordinary build/run paths to
 /// invoke Cargo or infer macro behavior from source text.
-#[cfg(feature = "rust_inspect")]
 pub(crate) fn mark_oven_cargo_bootstrap_rust_inspection(manifest_dir: &Path) -> CliResult<()> {
     let direct_marker = manifest_dir.join(crate::rust_inspect::OVEN_DIRECT_INSPECTION_MARKER);
     if direct_marker.is_file() {
@@ -983,7 +956,6 @@ pub(crate) fn mark_oven_cargo_bootstrap_rust_inspection(manifest_dir: &Path) -> 
     })
 }
 
-#[cfg(feature = "rust_inspect")]
 /// Return whether this generated manifest carries the direct-Oven rust-inspect marker.
 fn oven_direct_rust_inspection_marked(manifest_dir: &Path) -> bool {
     manifest_dir
@@ -998,7 +970,6 @@ fn oven_direct_rust_inspection_marked(manifest_dir: &Path) -> bool {
 /// is still prepared up front so lazy build-script `OUT_DIR` routes share the generated-project target directory. Set
 /// `INCAN_RUST_INSPECT_PREWARM=1` to opt into eager metadata prewarm, and set
 /// `INCAN_RUST_INSPECT_EAGER_OUT_DIRS_PREWARM=1` only when debugging a suspected out-dir cache regression.
-#[cfg(feature = "rust_inspect")]
 pub(crate) fn prewarm_rust_inspect_workspace(
     manifest_dir: &Path,
     target_dir: &Path,
@@ -1052,7 +1023,6 @@ mod tests {
     use crate::provider::test_support::parsed_module_for_test;
     use std::process::Command;
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_prewarm_env_defaults_to_disabled() {
         assert!(!parse_rust_inspect_prewarm_env(None));
@@ -1068,7 +1038,6 @@ mod tests {
         assert!(!parse_rust_inspect_prewarm_env(Some("unexpected")));
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_eager_out_dir_prewarm_env_defaults_to_disabled() {
         assert!(!parse_rust_inspect_eager_out_dirs_prewarm_env(None));
@@ -1082,7 +1051,6 @@ mod tests {
         assert!(!parse_rust_inspect_eager_out_dirs_prewarm_env(Some("unexpected")));
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_query_paths_include_explicit_rust_item_imports() -> Result<(), Box<dyn std::error::Error>> {
         let module = parsed_module_for_test(
@@ -1117,7 +1085,6 @@ from rust::rustix::fs import flock
         Ok(())
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_derive_probes_include_only_used_direct_rust_imports() -> Result<(), Box<dyn std::error::Error>> {
         let module = parsed_module_for_test(
@@ -1146,7 +1113,6 @@ model ExplicitVelocity:
         Ok(())
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_derive_probe_aliases_remain_module_scoped() -> Result<(), Box<dyn std::error::Error>> {
         let left = parsed_module_for_test(
@@ -1179,7 +1145,6 @@ model RightValue:
         Ok(())
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_derive_probes_are_limited_to_declared_dependency_namespaces() {
         let resolved = ResolvedDependencies {
@@ -1201,7 +1166,6 @@ model RightValue:
         assert_eq!(probes, vec!["provider::Component"]);
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_workspace_does_not_emit_an_undeclared_derive_probe() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
@@ -1263,7 +1227,6 @@ model RightValue:
         Ok(())
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_workspace_fingerprint_is_deterministic() {
         let requirements = ProjectRequirements::default();
@@ -1345,7 +1308,6 @@ model RightValue:
         assert!(fp_a.starts_with(super::RUST_INSPECT_WORKSPACE_FINGERPRINT_PREFIX));
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_workspace_fingerprint_changes_when_lock_payload_changes() {
         let requirements = ProjectRequirements::default();
@@ -1386,7 +1348,6 @@ model RightValue:
         assert_ne!(fp_one, fp_two);
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_workspace_fingerprint_changes_when_derive_probes_change() {
         let requirements = ProjectRequirements::default();
@@ -1414,7 +1375,6 @@ model RightValue:
         assert_ne!(fingerprint("provider::A"), fingerprint("provider::B"));
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_lock_projection_updates_only_the_local_package_version() -> Result<(), Box<dyn std::error::Error>> {
         let manifest = ProjectManifest::from_str(
@@ -1461,7 +1421,6 @@ checksum = "fixture-checksum"
         Ok(())
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_workspace_without_a_lock_projection_never_launches_cargo() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -1511,7 +1470,6 @@ checksum = "fixture-checksum"
         Ok(())
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_fingerprint_tracks_same_path_projection_rebuild_issue911() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -1569,7 +1527,6 @@ checksum = "fixture-checksum"
         Ok(())
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_helper_materializes_sdk_projection_issue911() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = tempfile::tempdir()?;
@@ -1766,7 +1723,6 @@ checksum = "fixture-checksum"
         Ok(())
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_workspace_dir_is_namespaced_by_input_fingerprint() {
         let root = Path::new("/workspace");
@@ -1778,7 +1734,6 @@ checksum = "fixture-checksum"
         assert!(second.ends_with(Path::new("target/incan_lock/rust_inspect/demo-bbbbbbbbbbbbbbbb")));
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_out_dirs_fingerprint_tracks_query_surface() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
@@ -1802,7 +1757,6 @@ checksum = "fixture-checksum"
         Ok(())
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_locked_prewarm_detects_stale_generated_lockfile() {
         let cannot_update = "error: cannot update the lock file /tmp/target/incan_lock/rust_inspect/demo/Cargo.lock because --locked was passed to prevent this";
@@ -1819,7 +1773,6 @@ checksum = "fixture-checksum"
         ));
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn ensure_rust_inspect_workspace_uses_rust_safe_dependency_keys() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
@@ -1876,7 +1829,6 @@ checksum = "fixture-checksum"
         Ok(())
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn ensure_rust_inspect_workspace_skips_regeneration_when_unchanged() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;

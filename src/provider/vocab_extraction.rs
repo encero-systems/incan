@@ -491,6 +491,7 @@ fn resolve_companion_crate_root(project_root: &Path, declared_crate_path: &str) 
     }
 }
 
+/// Refuse a companion crate root that does not exist or is not a directory with a Cargo manifest.
 fn validate_companion_crate_root(crate_root: &Path) -> ProviderResult<()> {
     if !crate_root.exists() {
         return Err(ProviderError::failure(format!(
@@ -524,6 +525,7 @@ fn validate_companion_crate_root(crate_root: &Path) -> ProviderResult<()> {
     Ok(())
 }
 
+/// Read the companion crate's package name from its Cargo manifest; the desugarer artifact is named after it.
 fn read_companion_package_name(cargo_manifest_path: &Path) -> ProviderResult<String> {
     let content = std::fs::read_to_string(cargo_manifest_path)
         .map_err(|err| ProviderError::failure(format!("failed to read {}: {err}", cargo_manifest_path.display())))?;
@@ -577,6 +579,7 @@ fn run_cargo_build_for_target(
     )))
 }
 
+/// Refuse a companion crate whose manifest does not declare the `cdylib` crate type the desugarer build needs.
 fn ensure_companion_supports_cdylib(cargo_manifest_path: &Path) -> ProviderResult<()> {
     let content = fs::read_to_string(cargo_manifest_path)
         .map_err(|err| ProviderError::failure(format!("failed to read {}: {err}", cargo_manifest_path.display())))?;

@@ -9,9 +9,8 @@ mod artifact;
 
 pub use crate::frontend::library_manifest::published_layout;
 pub use crate::frontend::library_manifest::*;
-pub use artifact::{ProviderArtifactDigestError, digest_provider_artifact};
+pub use artifact::{ProviderArtifactDigestError, digest_provider_artifact, digest_provider_source_inputs};
 pub(crate) use artifact::{
     ProviderSemanticToolchainDependency, digest_cargo_path_source_tree_with_cache,
-    digest_provider_semantic_artifact_with_context_and_cache, digest_provider_source_inputs,
-    digest_toolchain_source_tree_with_cache,
+    digest_provider_semantic_artifact_with_context_and_cache, digest_toolchain_source_tree_with_cache,
 };

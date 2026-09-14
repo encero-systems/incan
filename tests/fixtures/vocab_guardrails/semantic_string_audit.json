@@ -49,7 +49,7 @@
       "expected_fingerprint": "0xba1b1488249dc03e"
     },
     {
-      "path": "crates/rust_inspect/src/lib.rs",
+      "path": "crates/rust_inspect/src/inspector.rs",
       "category": "rust-inspect environment and unknown-display normalization",
       "expected_count": 2,
       "expected_fingerprint": "0xd1080e9767292290"
