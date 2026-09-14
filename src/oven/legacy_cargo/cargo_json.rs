@@ -83,7 +83,7 @@ pub(super) struct CargoUnitGraphDependency {
 /// The unit graph is authoritative for the resolved feature set and dependency edges; Cargo metadata supplies the
 /// stable package name/version for a synthetic legacy publisher manifest. Neither record reaches an Oven consumer.
 #[derive(Clone, Deserialize)]
-pub(super) struct CargoMetadata {
+pub(crate) struct CargoMetadata {
     pub(super) packages: Vec<CargoMetadataPackage>,
     #[serde(default)]
     pub(super) resolve: Option<CargoMetadataResolve>,
@@ -126,7 +126,7 @@ pub(super) struct CargoMetadataResolveDependency {
 /// Package names are not sufficient: a valid lock can contain two versions of one crate name. The resolved Cargo
 /// package ID is therefore consumed at the explicit baker boundary and never guessed by a normal Oven command.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ResolvedDirectDependency {
+pub(crate) struct ResolvedDirectDependency {
     pub(super) package: String,
     pub(super) package_id: String,
 }
