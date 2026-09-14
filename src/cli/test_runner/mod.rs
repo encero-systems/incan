@@ -225,8 +225,6 @@ fn stable_id_root(path: &Path) -> PathBuf {
     }
 }
 
-/// Infer the command-owned root for a manifest-less test run.
-
 /// Discover and enforce project-level toolchain constraints for a test path, when it belongs to a project.
 fn enforce_test_path_toolchain_constraint(path: &Path) -> CliResult<()> {
     let start = if path.is_file() {

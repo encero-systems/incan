@@ -52,13 +52,6 @@
       ]
     },
     {
-      "path": "src/cli/commands/lock.rs",
-      "reaches": [
-        "crate::frontend::ast",
-        "crate::frontend::library_manifest_index"
-      ]
-    },
-    {
       "path": "src/cli/commands/shadow_support.rs",
       "reaches": [
         "crate::backend::selection",
@@ -82,15 +75,6 @@
       ]
     },
     {
-      "path": "src/cli/test_runner/discovery.rs",
-      "reaches": [
-        "crate::frontend::ast",
-        "crate::frontend::ast_walk",
-        "crate::frontend::decorator_resolution",
-        "crate::frontend::testing_markers"
-      ]
-    },
-    {
       "path": "src/cli/test_runner/execution.rs",
       "reaches": [
         "crate::frontend::ast",
@@ -100,15 +84,6 @@
         "crate::frontend::module",
         "crate::frontend::parser",
         "crate::frontend::testing_markers",
-        "crate::frontend::vocab_desugar_pass"
-      ]
-    },
-    {
-      "path": "src/cli/test_runner/module_graph.rs",
-      "reaches": [
-        "crate::frontend::ast",
-        "crate::frontend::library_manifest_index",
-        "crate::frontend::module",
         "crate::frontend::vocab_desugar_pass"
       ]
     }

@@ -3,6 +3,10 @@
 //!
 //! Test-only since the direct-rustc path became the normal one: the module rides `cfg(test)` as a whole rather
 //! than gating each item, and its callers are the lock tests.
+#![allow(
+    dead_code,
+    reason = "the preheat path is retained for the Cargo-compatibility baker while the direct-rustc path is the normal one"
+)]
 
 use std::fs;
 use std::path::Path;
@@ -316,6 +320,7 @@ fn materialize_dependency_preheat_workspace(
     Ok(())
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 

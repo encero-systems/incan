@@ -1,9 +1,10 @@
 //! The registry source authorities an explicit project bake installs and a normal command consumes: which sealed
 //! inspection sources a project's dependencies resolve to, and the Oven registry lock they must agree with.
+//!
+//! The whole module rides the `rust_inspect` feature: without the inspector there is nothing here to prepare.
 
 use std::fs;
 use std::path::{Path, PathBuf};
-#[cfg(feature = "rust_inspect")]
 use std::sync::Arc;
 
 use crate::dependency_resolver::ResolvedDependencies;
@@ -12,29 +13,18 @@ use crate::driver::lock::PreparedOvenProjectRegistrySourceAuthorities;
 use crate::driver::lock::rust_inspect::registry_source_is_owned_by_catalog;
 use crate::manifest::DependencySpec;
 use crate::oven::legacy_cargo::OvenLegacyCargoInspectionPackage;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::legacy_cargo::cargo_process::resolved_cargo_executable;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::legacy_cargo::explicit_project_bake_inspection_sources;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::loaf::resolve_compiler_owned_loaf_by_identity;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::rustc::OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::rustc::OvenLoadedProjectInspectionAuthority;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::rustc::OvenProjectInspectionConstituent;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::rustc::OvenProjectInspectionSourceOwner;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::rustc::project_inspection_authority_supports_dependencies;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::rustc::project_inspection_test_dependency_envelope_supports_dependencies;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::rustc::validate_project_extension_payload_against_base;
 
 /// Resolve one exact project authority and all named constituents once for the complete test command.
-#[cfg(feature = "rust_inspect")]
 pub(crate) fn prepare_project_registry_source_authorities(
     mut authority: OvenLoadedProjectInspectionAuthority,
 ) -> CliResult<Arc<PreparedOvenProjectRegistrySourceAuthorities>> {
@@ -255,7 +245,6 @@ pub(crate) fn prepare_project_registry_source_authorities(
     }))
 }
 
-#[cfg(feature = "rust_inspect")]
 impl PreparedOvenProjectRegistrySourceAuthorities {
     /// Return the exact role-bearing dependency envelope after validating this generated batch's complete surface.
     pub(crate) fn test_dependency_plan(
@@ -336,7 +325,6 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
 }
 
 /// Build the diagnostic for a completed project Loaf that does not cover the requested inspection surface.
-#[cfg(feature = "rust_inspect")]
 fn project_inspection_selection_mismatch(requested_surface: &str) -> CliError {
     CliError::failure(format!(
         "Oven Alpha project inspection authority does not cover {requested_surface}. The command selected registry roots outside the completed project Loaf's baked dependency surface. A command-local `--sdk-profile` or package-feature selection cannot reuse a Loaf baked for different roots. Use the baked selection; for a different SDK profile, persist it in `[sdk]` in `loaf.toml` and rebake; for different package features, rerun `incan oven bake --project .` with the same feature flags."
@@ -375,7 +363,6 @@ pub(crate) fn inspection_packages_for_dependencies(
 /// This is deliberately a metadata-only, locked/offline Cargo invocation. Its copied, digested source trees drive
 /// the immediate direct inspection pass; the following project publisher seals the same checked package closure into
 /// the receipt-bound plan. Normal build, run, and test never reach this helper.
-#[cfg(feature = "rust_inspect")]
 pub(crate) fn acquire_explicit_project_inspection_sources(
     manifest_dir: &Path,
     features: &[String],
@@ -423,7 +410,6 @@ pub(crate) fn acquire_explicit_project_inspection_sources(
 /// Loaf artifacts are intentionally read-only. Copying their filesystem permissions into the mutable inspection
 /// workspace makes the first projection impossible to replace on reuse, so only the verified bytes cross this
 /// ownership boundary.
-#[cfg(feature = "rust_inspect")]
 fn install_oven_registry_lock(source: &Path, destination: &Path) -> CliResult<()> {
     let payload = fs::read(source).map_err(|error| {
         CliError::failure(format!(
@@ -451,7 +437,6 @@ fn install_oven_registry_lock(source: &Path, destination: &Path) -> CliResult<()
 ///
 /// The Rust-inspection loader may otherwise see the copied source directories while resolving their dependencies
 /// against ambient state. A missing lock is an invalid Loaf, not permission to consult Cargo or a local registry.
-#[cfg(feature = "rust_inspect")]
 pub(crate) fn install_required_oven_registry_lock(
     has_registry_sources: bool,
     artifact_root: &Path,
@@ -480,7 +465,6 @@ pub(crate) fn install_required_oven_registry_lock(
 mod tests {
     use super::*;
     #[cfg(test)]
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn sealed_oven_registry_lock_can_replace_a_prior_projection() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = tempfile::tempdir()?;
@@ -502,7 +486,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn registry_sources_refuse_a_loaf_without_its_sealed_lock() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = tempfile::tempdir()?;
@@ -517,7 +500,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn project_inspection_selection_mismatch_explains_the_transient_selection_boundary() {
         let diagnostic = project_inspection_selection_mismatch("the requested registry dependencies").to_string();

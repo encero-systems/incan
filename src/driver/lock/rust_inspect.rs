@@ -1,59 +1,45 @@
 //! Preparing the rust-inspect workspace a lock resolution or a typecheck needs, under Oven's inspection authority
 //! where one is installed.
+//!
+//! The whole module rides the `rust_inspect` feature: without the inspector there is nothing here to prepare.
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-#[cfg(feature = "rust_inspect")]
 use std::sync::Arc;
 
 use crate::dependency_resolver::resolve_reachable_dependencies;
 use crate::driver::cargo_policy::cargo_command_flags;
 use crate::driver::error::{CliError, CliResult};
+use crate::driver::lock::LockResolutionRequest;
 use crate::driver::lock::registry_sources::{
     acquire_explicit_project_inspection_sources, install_required_oven_registry_lock,
 };
 use crate::driver::lock::resolution::resolve_lock_context;
 use crate::driver::lock::{
-    LockResolutionRequest, OvenRustInspectSourceAuthorityRequest, PreparedRustInspectTypecheckWorkspace,
-    PreparedRustInspectWorkspace, RustInspectTypecheckRequest, RustInspectWorkspaceRequest,
+    OvenRustInspectSourceAuthorityRequest, PreparedRustInspectTypecheckWorkspace, PreparedRustInspectWorkspace,
+    RustInspectTypecheckRequest, RustInspectWorkspaceRequest,
 };
 use crate::driver::modules::{build_source_map, collect_rust_dependency_uses, format_dependency_error};
-#[cfg(feature = "rust_inspect")]
 use crate::driver::rust_inspect_workspace::collect_rust_inspect_derive_probe_paths;
-#[cfg(feature = "rust_inspect")]
 use crate::driver::rust_inspect_workspace::collect_rust_inspect_query_paths;
-#[cfg(feature = "rust_inspect")]
 use crate::driver::rust_inspect_workspace::ensure_rust_inspect_workspace_with_cargo_package_name;
-#[cfg(feature = "rust_inspect")]
 use crate::driver::rust_inspect_workspace::mark_oven_cargo_bootstrap_rust_inspection;
-#[cfg(feature = "rust_inspect")]
 use crate::driver::rust_inspect_workspace::mark_oven_direct_rust_inspection;
-#[cfg(feature = "rust_inspect")]
 use crate::driver::rust_inspect_workspace::prewarm_rust_inspect_workspace;
 use crate::generated_cache::resolve_generated_cargo_target;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::OvenGeneratedProjectRequest;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::legacy_cargo::OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::loaf::resolve_compiler_owned_loaf_for_registry_dependencies;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::loaf::resolve_toolchain_loaf_for_registry_sources;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::receipt_generated_project;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::rustc::OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::rustc::resolve_active_rustc;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::rustc::rustc_host_target;
-#[cfg(feature = "rust_inspect")]
 use crate::oven::rustc::rustc_identity;
 use crate::provider::requirements::{collect_project_requirements, merge_project_requirement_dependencies};
 
 /// Prepare and prewarm the generated Rust workspace used for rust-inspect metadata queries.
-#[cfg(feature = "rust_inspect")]
 pub(crate) fn prepare_rust_inspect_workspace(
     request: RustInspectWorkspaceRequest<'_>,
 ) -> CliResult<Option<PreparedRustInspectWorkspace>> {
@@ -239,7 +225,6 @@ pub(crate) fn prepare_rust_inspect_workspace(
 /// projects with a custom source root or scripts outside `src`. Conventional source paths retain the earlier defensive
 /// check for callers that have not yet propagated that authority. Explicit baking and true standalone files may still
 /// select release-owned inspection sources.
-#[cfg(feature = "rust_inspect")]
 fn normal_inspection_requires_installed_project_authority(
     project_root: &Path,
     explicit_oven_bake: bool,
@@ -252,7 +237,6 @@ fn normal_inspection_requires_installed_project_authority(
 }
 
 /// Install one sealed registry-source catalog into a direct Oven inspection workspace.
-#[cfg(feature = "rust_inspect")]
 fn install_oven_inspection_source_authority(
     manifest_dir: &Path,
     packages: &[crate::oven::rustc::OvenRustcRegistrySourcePackage],
@@ -267,7 +251,6 @@ fn install_oven_inspection_source_authority(
 }
 
 /// Resolve a sealed registry catalog to immutable source roots without writing caller-owned projection state.
-#[cfg(feature = "rust_inspect")]
 fn oven_inspection_sources(
     packages: &[crate::oven::rustc::OvenRustcRegistrySourcePackage],
     artifact_root: &Path,
@@ -328,7 +311,6 @@ fn oven_inspection_sources(
 ///
 /// This check guards source-root hand-off only; it does not authorize reuse of compiled Rust artifacts, whose
 /// feature-sensitive receipts are validated by the direct-rustc plan.
-#[cfg(feature = "rust_inspect")]
 pub(crate) fn registry_source_is_owned_by_catalog(
     source: &crate::oven::rustc::OvenRustcRegistrySourcePackage,
     catalog: &[crate::oven::rustc::OvenRustcRegistrySourcePackage],
@@ -339,7 +321,6 @@ pub(crate) fn registry_source_is_owned_by_catalog(
 }
 
 /// Prepare the rust-inspect workspace needed before metadata-backed typechecking.
-#[cfg(feature = "rust_inspect")]
 pub(crate) fn prepare_rust_inspect_typecheck_workspace(
     request: RustInspectTypecheckRequest<'_>,
 ) -> CliResult<Option<PreparedRustInspectTypecheckWorkspace>> {
@@ -462,7 +443,6 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
 mod tests {
     use super::*;
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn registry_source_ownership_unifies_feature_variants_with_the_same_source_archive() {
         let source = crate::oven::rustc::OvenRustcRegistrySource {
@@ -493,7 +473,6 @@ mod tests {
         assert!(!registry_source_is_owned_by_catalog(&different_archive, &[requested]));
     }
 
-    #[cfg(feature = "rust_inspect")]
     #[test]
     fn custom_project_layout_cannot_fall_through_after_command_authority_mismatch()
     -> Result<(), Box<dyn std::error::Error>> {

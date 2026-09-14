@@ -7,18 +7,23 @@
 
 #[cfg(test)]
 pub mod preheat;
+#[cfg(feature = "rust_inspect")]
 pub mod registry_sources;
 pub mod resolution;
+#[cfg(feature = "rust_inspect")]
 pub mod rust_inspect;
 pub mod test_inputs;
 pub mod workspace;
 
 #[cfg(test)]
 use std::cell::Cell;
+#[cfg(feature = "rust_inspect")]
 use std::collections::BTreeMap;
 #[cfg(test)]
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(any(feature = "rust_inspect", test))]
+use std::path::PathBuf;
 #[cfg(feature = "rust_inspect")]
 use std::sync::Arc;
 
@@ -26,16 +31,22 @@ use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies};
 use crate::driver::cargo_policy::CargoPolicy;
 use crate::driver::error::CliError;
 use crate::frontend::ParsedModule;
+#[cfg(feature = "rust_inspect")]
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
+#[cfg(feature = "rust_inspect")]
 use crate::generated_cache::GeneratedCacheLease;
 use crate::lockfile::{CargoFeatureSelection, SemanticLockState};
-use crate::manifest::{DependencySpec, ProjectManifest};
+#[cfg(feature = "rust_inspect")]
+use crate::manifest::DependencySpec;
+use crate::manifest::ProjectManifest;
 #[cfg(feature = "rust_inspect")]
 use crate::oven::loaf::OvenToolchainLoaf;
 #[cfg(feature = "rust_inspect")]
 use crate::oven::rustc::OvenLoadedProjectInspectionAuthority;
+use crate::provider::FeatureSelection;
+#[cfg(feature = "rust_inspect")]
+use crate::provider::ProviderPlan;
 use crate::provider::requirements::ProjectRequirements;
-use crate::provider::{FeatureSelection, ProviderPlan};
 use crate::workspace::WorkspaceGraph;
 
 #[cfg(test)]
@@ -568,6 +579,7 @@ pub(crate) mod test_support {
     use crate::manifest::DependencySpec;
     use crate::provider::requirements::ProjectRequirements;
 
+    /// A resolution with no dependencies at all.
     pub(crate) fn empty_resolved() -> ResolvedDependencies {
         ResolvedDependencies {
             dependencies: Vec::new(),
@@ -575,6 +587,7 @@ pub(crate) mod test_support {
         }
     }
 
+    /// Project requirements with nothing selected.
     pub(crate) fn empty_project_requirements() -> ProjectRequirements {
         ProjectRequirements {
             stdlib_features: Vec::new(),
@@ -585,6 +598,7 @@ pub(crate) mod test_support {
         }
     }
 
+    /// A registry dependency spec for `name` at `version`.
     pub(crate) fn registry_dependency(crate_name: &str) -> DependencySpec {
         DependencySpec {
             crate_name: crate_name.to_string(),

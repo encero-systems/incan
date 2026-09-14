@@ -271,6 +271,18 @@
       "expected_fingerprint": "0x7b43ebb63741a15c"
     },
     {
+      "path": "src/driver/lock/preheat.rs",
+      "category": "lock dependency preheat environment flag",
+      "expected_count": 1,
+      "expected_fingerprint": "0xbd292725401e28e3"
+    },
+    {
+      "path": "src/driver/lock/rust_inspect.rs",
+      "category": "Oven Loaf environment flag for rust-inspect preparation",
+      "expected_count": 1,
+      "expected_fingerprint": "0xc4d2b453dd4ea8f1"
+    },
+    {
       "path": "src/driver/modules.rs",
       "category": "package entrypoint stem",
       "expected_count": 1,
@@ -287,6 +299,18 @@
       "category": "rust-inspect workspace prewarm flags, lock-projection and primitive-namespace compatibility",
       "expected_count": 5,
       "expected_fingerprint": "0x2149b316c851f3d0"
+    },
+    {
+      "path": "src/driver/testing/discovery.rs",
+      "category": "test discovery marker, fixture, conftest and parametrize vocabulary",
+      "expected_count": 26,
+      "expected_fingerprint": "0xe266ad39aa22ecd4"
+    },
+    {
+      "path": "src/driver/testing/mod.rs",
+      "category": "test file discovery root directories",
+      "expected_count": 1,
+      "expected_fingerprint": "0x7dc8ae981cbf9965"
     },
     {
       "path": "src/frontend/testing_markers.rs",
