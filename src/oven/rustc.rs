@@ -5650,8 +5650,8 @@ pub fn resolve_active_rustc() -> Result<PathBuf, OvenRustcError> {
 struct RustcProbe {
     /// The first `-vV` line, identical to `rustc --version`.
     identity: String,
-    /// The `host:` line.
-    host_target: String,
+    /// The `host:` line, absent when the compiler (a test double, typically) printed none.
+    host_target: Option<String>,
 }
 
 /// Process-wide memo of `rustc -vV` answers, keyed by the compiler file's canonical path, length and modification
@@ -5710,11 +5710,7 @@ fn rustc_probe(rustc: &Path) -> Result<RustcProbe, OvenRustcError> {
         .find_map(|line| line.strip_prefix("host: "))
         .map(str::trim)
         .filter(|target| !target.is_empty())
-        .map(ToString::to_string)
-        .ok_or_else(|| OvenRustcError::InvalidInput {
-            field: "rustc",
-            message: "did not report a host target in `-vV` output".to_string(),
-        })?;
+        .map(ToString::to_string);
     let probe = RustcProbe { identity, host_target };
     if let Ok(mut memo) = rustc_probe_memo().lock() {
         memo.insert(key, probe.clone());
@@ -5729,7 +5725,12 @@ pub fn rustc_identity(rustc: &Path) -> Result<String, OvenRustcError> {
 
 /// Read the active compiler's host target from `rustc -vV` without consulting Cargo metadata.
 pub fn rustc_host_target(rustc: &Path) -> Result<String, OvenRustcError> {
-    Ok(rustc_probe(rustc)?.host_target)
+    rustc_probe(rustc)?
+        .host_target
+        .ok_or_else(|| OvenRustcError::InvalidInput {
+            field: "rustc",
+            message: "did not report a host target in `-vV` output".to_string(),
+        })
 }
 
 /// Resolve the selected compiler's sysroot without consulting Cargo.
