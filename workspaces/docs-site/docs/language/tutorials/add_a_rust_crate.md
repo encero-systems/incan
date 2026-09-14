@@ -52,7 +52,7 @@ Only this helper needs to know the Rust crate's constructor and methods. Callers
 
 `main()` now owns the one-time Rust-facing construction, while `contains_number(...)` remains a small ordinary predicate over a prepared value.
 
-For a project, move the version into `incan.toml` and make the source import versionless:
+For a project, move the version into `loaf.toml` and make the source import versionless:
 
 ```toml
 [rust-dependencies]
@@ -76,7 +76,7 @@ incan oven bake --project . --format json
 incan run --locked
 ```
 
-`incan lock` writes the reproducible dependency graph. The explicit bake may invoke the bounded compatibility publisher once and seals a project-extension Loaf over the exact full-standard-library base. `incan run --locked` then selects that immutable closure and rejects drift; it never invokes Cargo as a hidden fallback. Commit `incan.lock` so CI and collaborators resolve the same graph.
+`incan lock` writes the reproducible dependency graph. The explicit bake may invoke the bounded compatibility publisher once and seals a project-extension Loaf over the exact full-standard-library base. `incan run --locked` then selects that immutable closure and rejects drift; it never invokes Cargo as a hidden fallback. Commit `oven.lock` so CI and collaborators resolve the same graph.
 
 <section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">
 

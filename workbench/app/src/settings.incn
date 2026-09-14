@@ -1,0 +1,22 @@
+"""Read the quotation settings through the public TOML and filesystem APIs."""
+
+from std import toml
+from std.fs import Path
+
+
+@derive(toml)
+model Settings:
+    """Order quantities and the SKU rule supplied by the working project's configuration."""
+
+    first_quantity: int
+    second_quantity: int
+    sku_pattern: str
+
+
+def load_settings(path: str) -> Result[Settings, str]:
+    """Read typed settings and reject negative quantities before quoting the order."""
+    source = Path(path).read_text("utf-8", "strict").map_err((error) => f"Could not read {path}: {error.message()}")?
+    settings = toml.deserialize[Settings](source).map_err((error) => f"Invalid settings in {path}: {error.message()}")?
+    if settings.first_quantity < 0 or settings.second_quantity < 0:
+        return Err("Order quantities must be nonnegative")
+    return Ok(settings)

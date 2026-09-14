@@ -39,9 +39,9 @@ incan new hello_project --yes
 cd hello_project
 ```
 
-This creates `incan.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. The manifest is the project metadata file; it names the project, records the project version and toolchain requirement, and declares the default entry point under `[project.scripts]`.
+This creates `loaf.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. The manifest is the project metadata file; it names the project, records the project version and toolchain requirement, and declares the default entry point under `[project.scripts]`.
 
-```toml title="incan.toml"
+```toml title="loaf.toml"
 [project]
 name = "hello_project"
 version = "0.1.0"

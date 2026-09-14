@@ -47,6 +47,43 @@ pub enum Mutability {
     OwnedMutable,
 }
 
+/// The admitted producer representation of an external union, carried for emission but excluded from type identity.
+///
+/// `NativeUnionExport` is a manifest wire record. It reaches down to the selected artifact's `ProviderIdentity`,
+/// digest included, and it also holds `checked_projection`, a consumer-only physical routing that is attached
+/// partway through lowering. Both derive `Eq`. Left in `IrType`'s derived equality, that made two IR types for the
+/// same union compare unequal whenever the dependency had been rebuilt under a new digest, or whenever one copy
+/// had been projected and the other had not -- and roughly forty call sites ask whether two IR types are the same.
+///
+/// What makes an external union one type is its owning library and its union shape, which `IrType::ExternalUnion`
+/// already compares through `library` and `union`. Which artifact carried the description, and whether a physical
+/// route has been attached yet, are facts about provenance and pipeline position, not about the type. So this
+/// wrapper compares equal to any other: the payload rides along for emission and takes no part in identity.
+#[derive(Debug, Clone)]
+pub struct CarriedNativeUnion(pub Box<crate::library_manifest::NativeUnionExport>);
+
+impl PartialEq for CarriedNativeUnion {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for CarriedNativeUnion {}
+
+impl std::ops::Deref for CarriedNativeUnion {
+    type Target = crate::library_manifest::NativeUnionExport;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for CarriedNativeUnion {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 /// IR type representation
 ///
 /// This is a resolved type that maps directly to Rust types.
@@ -116,6 +153,8 @@ pub enum IrType {
     ExternalUnion {
         library: String,
         union: Box<IrType>,
+        /// Exact admitted producer representation, absent only for legacy structural metadata.
+        native: Option<CarriedNativeUnion>,
     },
 
     /// Opaque trait return type emitted as Rust `impl Trait`, RFC 042.
@@ -212,9 +251,14 @@ impl IrType {
             Self::Ref(inner) => Self::Ref(Box::new(inner.provider_localized(library))),
             Self::RefMut(inner) => Self::RefMut(Box::new(inner.provider_localized(library))),
             Self::TypeToken(inner) => Self::TypeToken(Box::new(inner.provider_localized(library))),
-            Self::ExternalUnion { library: owner, union } if owner == library => Self::ExternalUnion {
+            Self::ExternalUnion {
+                library: owner,
+                union,
+                native,
+            } if owner == library => Self::ExternalUnion {
                 library: owner.clone(),
                 union: Box::new(union.provider_localized(library)),
+                native: native.clone(),
             },
             Self::ExternalUnion { .. } => self.clone(),
             other => other.clone(),
@@ -396,7 +440,7 @@ impl IrType {
             IrType::Struct(name) | IrType::Enum(name) => name.clone(),
             IrType::Trait(name) => format!("dyn {}", name),
             IrType::RustDisplay(display) => display.clone(),
-            IrType::ExternalUnion { library, union } => union
+            IrType::ExternalUnion { library, union, .. } => self
                 .union_type_name()
                 .map(|name| format!("{library}::{name}"))
                 .unwrap_or_else(|| union.rust_name()),
@@ -447,6 +491,12 @@ impl IrType {
 
     /// Return the deterministic generated Rust type name for an anonymous union shape.
     pub fn union_type_name(&self) -> Option<String> {
+        if let Self::ExternalUnion {
+            native: Some(native), ..
+        } = self
+        {
+            return Some(native.rust_name.clone());
+        }
         let members = self.union_members()?;
         let key = members.iter().map(IrType::rust_name).collect::<Vec<_>>().join("|");
         Some(format!("__IncanUnion{:016x}", stable_union_hash(key.as_bytes())))
@@ -467,6 +517,20 @@ impl IrType {
         format!("V{index}")
     }
 
+    /// Compare nominal payloads through the exact checked consumer bindings retained for this native union.
+    fn native_member_identity_matches(&self, member: &IrType, value: &IrType) -> bool {
+        let Self::ExternalUnion {
+            native: Some(native), ..
+        } = self
+        else {
+            return false;
+        };
+        let Some(projection) = &native.checked_projection else {
+            return false;
+        };
+        checked_native_type_matches(member, value, &projection.nominal_origins)
+    }
+
     /// Find the union variant index that can hold `member_ty`.
     pub fn union_variant_index_for_member(&self, member_ty: &IrType) -> Option<usize> {
         let members = self.union_members()?;
@@ -474,9 +538,9 @@ impl IrType {
             Self::ExternalUnion { library, .. } => member_ty.provider_localized(library),
             _ => member_ty.clone(),
         };
-        members
-            .iter()
-            .position(|member| union_member_type_matches(member, &member_ty))
+        members.iter().position(|member| {
+            union_member_type_matches(member, &member_ty) || self.native_member_identity_matches(member, &member_ty)
+        })
     }
 }
 
@@ -502,7 +566,10 @@ pub(crate) fn isinstance_union_variant_indices(union_ty: &IrType, target_ty: &Ir
         .union_members()?
         .iter()
         .enumerate()
-        .filter_map(|(index, member)| isinstance_type_matches(member, target_ty).then_some(index))
+        .filter_map(|(index, member)| {
+            (isinstance_type_matches(member, target_ty) || union_ty.native_member_identity_matches(member, target_ty))
+                .then_some(index)
+        })
         .collect::<Vec<_>>();
     (!matches.is_empty()).then_some(matches)
 }
@@ -510,6 +577,59 @@ pub(crate) fn isinstance_union_variant_indices(union_ty: &IrType, target_ty: &Ir
 /// Return whether a concrete value type can inhabit a normalized union member type.
 pub(crate) fn union_member_type_matches(member: &IrType, value_ty: &IrType) -> bool {
     member == value_ty || (matches!(member, IrType::String) && is_string_storage_type(value_ty))
+}
+
+/// Compare two physical type trees using only nominal identities retained by the successful checker.
+fn checked_native_type_matches(
+    left: &IrType,
+    right: &IrType,
+    origins: &std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    let name_matches = |left: &str, right: &str| match (
+        origins.get(left.trim_start_matches("::")),
+        origins.get(right.trim_start_matches("::")),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    };
+    let children_match = |left: &[IrType], right: &[IrType]| {
+        left.len() == right.len()
+            && left
+                .iter()
+                .zip(right)
+                .all(|(left, right)| checked_native_type_matches(left, right, origins))
+    };
+    match (left, right) {
+        (
+            IrType::Struct(left) | IrType::Enum(left) | IrType::Trait(left),
+            IrType::Struct(right) | IrType::Enum(right) | IrType::Trait(right),
+        ) => name_matches(left, right),
+        (IrType::NamedGeneric(left, args), IrType::NamedGeneric(right, other)) => {
+            (left == right || name_matches(left, right)) && children_match(args, other)
+        }
+        (IrType::List(left), IrType::List(right))
+        | (IrType::Set(left), IrType::Set(right))
+        | (IrType::Option(left), IrType::Option(right))
+        | (IrType::Ref(left), IrType::Ref(right))
+        | (IrType::RefMut(left), IrType::RefMut(right))
+        | (IrType::TypeToken(left), IrType::TypeToken(right)) => checked_native_type_matches(left, right, origins),
+        (IrType::Tuple(left), IrType::Tuple(right)) => children_match(left, right),
+        (IrType::Dict(left, value), IrType::Dict(right, other))
+        | (IrType::Result(left, value), IrType::Result(right, other)) => {
+            checked_native_type_matches(left, right, origins) && checked_native_type_matches(value, other, origins)
+        }
+        (
+            IrType::Function { params, ret },
+            IrType::Function {
+                params: other,
+                ret: other_ret,
+            },
+        ) => children_match(params, other) && checked_native_type_matches(ret, other_ret, origins),
+        _ => false,
+    }
 }
 
 /// Hash a union member-key into a deterministic generated Rust type suffix.
@@ -525,6 +645,72 @@ fn stable_union_hash(bytes: &[u8]) -> u64 {
 impl fmt::Display for IrType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.rust_name())
+    }
+}
+
+/// Convert typed manifest positions without discarding an admitted native union at a semantic-type boundary.
+///
+/// The ordinary converter retains each caller's existing alias and primitive policy. Native carriers use only their
+/// checked physical projection; the producer descriptor and member order remain independent of those Rust paths.
+pub(crate) fn ir_type_from_projected_manifest(
+    ty: &crate::library_manifest::TypeRef,
+    ordinary: &impl Fn(&crate::library_manifest::TypeRef) -> IrType,
+) -> IrType {
+    use crate::library_manifest::TypeRef;
+    let child = |ty: &TypeRef| ir_type_from_projected_manifest(ty, ordinary);
+    match ty {
+        TypeRef::NativeUnion(native) => {
+            // An unprojected native union means this manifest never went through `with_checked_native_unions`,
+            // which is the only thing that attaches a projection. The dependency path calls it and refuses when no
+            // provider plan admits the union; the SDK seeding path does not call it at all, so the same construct
+            // arrived here with nothing attached and silently became `Unknown` -- a type the emitter will then
+            // resolve to something unrelated or drop, with no diagnostic anywhere.
+            //
+            // `Unknown` is still what this function returns, because it has no error channel and inventing one
+            // would spread through every `ordinary` caller. What changes is that it is no longer silent: an
+            // unprojected union is a wiring defect in the caller, not a property of the type, and the debug
+            // assertion fails the test suite for the case the two paths disagree on. See #1339.
+            let Some(projection) = &native.checked_projection else {
+                debug_assert!(
+                    false,
+                    "native union `{}` reached IR lowering without a checked projection; the seeding path must run \
+                     `with_checked_native_unions` before lowering, as the dependency path does",
+                    native.rust_name
+                );
+                return IrType::Unknown;
+            };
+            let descriptor = native.clone();
+            IrType::ExternalUnion {
+                library: projection.rust_owner.clone(),
+                union: Box::new(IrType::NamedGeneric(
+                    IR_UNION_TYPE_NAME.to_string(),
+                    projection.members.iter().map(child).collect(),
+                )),
+                native: Some(CarriedNativeUnion(Box::new(descriptor))),
+            }
+        }
+        TypeRef::Applied { args, .. } => {
+            let lowered = ordinary(ty);
+            let args = args.iter().map(child).collect::<Vec<_>>();
+            match (lowered, args.as_slice()) {
+                (IrType::List(_), [inner]) => IrType::List(Box::new(inner.clone())),
+                (IrType::Set(_), [inner]) => IrType::Set(Box::new(inner.clone())),
+                (IrType::Option(_), [inner]) => IrType::Option(Box::new(inner.clone())),
+                (IrType::Result(_, _), [ok, err]) => IrType::Result(Box::new(ok.clone()), Box::new(err.clone())),
+                (IrType::Dict(_, _), [key, value]) => IrType::Dict(Box::new(key.clone()), Box::new(value.clone())),
+                (IrType::NamedGeneric(name, _), _) => IrType::NamedGeneric(name, args),
+                (IrType::Tuple(_), _) => IrType::Tuple(args),
+                (other, _) => other,
+            }
+        }
+        TypeRef::Tuple { elements } => IrType::Tuple(elements.iter().map(child).collect()),
+        TypeRef::Function { params, return_type } => IrType::Function {
+            params: params.iter().map(child).collect(),
+            ret: Box::new(child(return_type)),
+        },
+        TypeRef::Ref { inner } => IrType::Ref(Box::new(child(inner))),
+        TypeRef::TypeToken { inner } => IrType::TypeToken(Box::new(child(inner))),
+        _ => ordinary(ty),
     }
 }
 
@@ -898,6 +1084,7 @@ mod tests {
     fn external_union_member_matching_is_provider_aware_issue892() {
         let union = IrType::ExternalUnion {
             library: "widgets".to_string(),
+            native: None,
             union: Box::new(IrType::NamedGeneric(
                 IR_UNION_TYPE_NAME.to_string(),
                 vec![IrType::Struct("Widget".to_string())],
@@ -919,6 +1106,7 @@ mod tests {
     fn provider_localization_preserves_foreign_external_union_issue892() {
         let foreign_union = IrType::ExternalUnion {
             library: "other".to_string(),
+            native: None,
             union: Box::new(IrType::NamedGeneric(
                 IR_UNION_TYPE_NAME.to_string(),
                 vec![IrType::Struct("widgets::Widget".to_string())],
@@ -926,5 +1114,66 @@ mod tests {
         };
 
         assert_eq!(foreign_union.provider_localized("widgets"), foreign_union);
+    }
+    /// A dependency rebuilt under a new digest is still the same external union type.
+    ///
+    /// `NativeUnionExport` reaches the selected artifact's `ProviderIdentity`, digest included, and also carries
+    /// the consumer-only `checked_projection` attached partway through lowering. Both derive `Eq`, so while the
+    /// record sat directly in `IrType` the derived equality compared them, and roughly forty call sites that ask
+    /// whether two IR types are the same silently answered no after an unrelated rebuild.
+    #[test]
+    fn an_external_union_keeps_its_identity_across_artifact_digests() {
+        fn union_of(digest: &str, projected: bool) -> IrType {
+            let mut descriptor = crate::library_manifest::NativeUnionExport {
+                owner: crate::library_manifest::NativeUnionOwnerExport::SelectedArtifact(
+                    crate::provider::ProviderIdentity {
+                        name: "pricing".into(),
+                        version: "1.0.0".into(),
+                        digest: digest.into(),
+                        feature_projection: Default::default(),
+                    },
+                ),
+                rust_name: "__IncanUnion_pricing".into(),
+                members: Vec::new(),
+                local_nominals: Default::default(),
+                checked_projection: None,
+            };
+            if projected {
+                descriptor.checked_projection = Some(Box::new(crate::library_manifest::NativeUnionProjection {
+                    dependency_root: "pricing".into(),
+                    rust_owner: "::pricing".into(),
+                    members: Vec::new(),
+                    nominal_origins: Default::default(),
+                }));
+            }
+            IrType::ExternalUnion {
+                library: "pricing".into(),
+                union: Box::new(IrType::NamedGeneric("__IncanUnion_pricing".into(), vec![IrType::Int])),
+                native: Some(CarriedNativeUnion(Box::new(descriptor))),
+            }
+        }
+
+        assert_eq!(
+            union_of("sha256:aaa", false),
+            union_of("sha256:bbb", false),
+            "a rebuild under a new artifact digest must not change what type this is"
+        );
+        assert_eq!(
+            union_of("sha256:aaa", false),
+            union_of("sha256:aaa", true),
+            "attaching the consumer-only physical projection must not change what type this is"
+        );
+
+        // Identity still comes from the library and the union shape, so a genuinely different union differs.
+        let other = IrType::ExternalUnion {
+            library: "billing".into(),
+            union: Box::new(IrType::NamedGeneric("__IncanUnion_pricing".into(), vec![IrType::Int])),
+            native: None,
+        };
+        assert_ne!(
+            union_of("sha256:aaa", false),
+            other,
+            "a different owning library is a different type"
+        );
     }
 }

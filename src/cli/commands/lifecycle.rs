@@ -17,7 +17,7 @@ use toml_edit::{DocumentMut, value};
 
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::manifest::{
-    INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV, MANIFEST_FILENAME, ProjectManifest,
+    INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV, LOAF_MANIFEST_FILENAME, ProjectManifest,
     render_dependency_overlay_manifest,
 };
 use crate::project_lifecycle::env::{EnvConfigError, EnvConfigSet, EnvRunPreview, ResolvedEnv, resolve_cwd};
@@ -65,7 +65,7 @@ pub struct VersionCommandOptions {
     pub bump: Option<VersionBumpArg>,
     /// Explicit SemVer value passed with `--set`.
     pub set: Option<String>,
-    /// Print the planned change without writing `incan.toml`.
+    /// Print the planned change without writing `loaf.toml`.
     pub dry_run: bool,
     /// Preserve prerelease metadata for release-core bumps.
     pub keep_prerelease: bool,
@@ -73,7 +73,7 @@ pub struct VersionCommandOptions {
     pub project: Option<PathBuf>,
 }
 
-/// Apply a project-version change to `incan.toml`.
+/// Apply a project-version change to `loaf.toml`.
 ///
 /// The command requires a project manifest with `[project].version`. In dry-run mode it prints the old and new versions
 /// without writing. Otherwise it edits only the manifest's project version while preserving the rest of the TOML
@@ -262,7 +262,7 @@ impl Drop for InternalManifestOverride {
 /// Load the manifest document used by `incan version`.
 fn load_manifest_context(project: Option<&Path>) -> CliResult<ManifestContext> {
     let manifest_path = if let Some(project) = project {
-        explicit_project_root(project)?.join(MANIFEST_FILENAME)
+        explicit_project_root(project)?.join(LOAF_MANIFEST_FILENAME)
     } else {
         discover_lifecycle_manifest()?.path().to_path_buf()
     };
@@ -277,10 +277,10 @@ fn load_manifest_context(project: Option<&Path>) -> CliResult<ManifestContext> {
 fn load_env_context(project: Option<&Path>) -> CliResult<EnvContext> {
     let (project_root, manifest_path, manifest_content, manifest) = if let Some(project) = project {
         let project_root = explicit_project_root(project)?;
-        let manifest_path = project_root.join(MANIFEST_FILENAME);
+        let manifest_path = project_root.join(LOAF_MANIFEST_FILENAME);
         let manifest_content = read_manifest_content(&manifest_path)?;
         let manifest = crate::cli::commands::common::discover_effective_project_manifest(&project_root)?
-            .ok_or_else(|| CliError::failure(format!("No incan.toml found at {}", manifest_path.display())))?;
+            .ok_or_else(|| CliError::failure(format!("No loaf.toml found at {}", manifest_path.display())))?;
         (project_root, manifest_path, manifest_content, manifest)
     } else {
         let manifest = discover_lifecycle_manifest()?;
@@ -309,13 +309,13 @@ fn load_env_context(project: Option<&Path>) -> CliResult<EnvContext> {
 
 /// Resolve an explicit `--project` argument to a project root directory.
 fn explicit_project_root(path: &Path) -> CliResult<PathBuf> {
-    if path.join(MANIFEST_FILENAME).is_file() {
+    if path.join(LOAF_MANIFEST_FILENAME).is_file() {
         Ok(path.to_path_buf())
-    } else if path.is_file() && path.file_name().is_some_and(|name| name == MANIFEST_FILENAME) {
+    } else if path.is_file() && path.file_name().is_some_and(|name| name == LOAF_MANIFEST_FILENAME) {
         Ok(path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf())
     } else {
         Err(CliError::failure(format!(
-            "`--project {}` must point to a directory containing incan.toml",
+            "`--project {}` must point to a directory containing loaf.toml",
             path.display()
         )))
     }
@@ -326,7 +326,7 @@ fn discover_lifecycle_manifest() -> CliResult<ProjectManifest> {
     let cwd = env::current_dir()
         .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?;
     crate::cli::commands::common::discover_effective_project_manifest(&cwd)?.ok_or_else(|| {
-        CliError::failure("No incan.toml found; run `incan init` or `incan new <name>` to create a project")
+        CliError::failure("No loaf.toml found; run `incan init` or `incan new <name>` to create a project")
     })
 }
 
@@ -826,7 +826,7 @@ mod tests {
     fn project_root_discovery_walks_upward() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         fs::write(
-            tmp.path().join(MANIFEST_FILENAME),
+            tmp.path().join(LOAF_MANIFEST_FILENAME),
             "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n",
         )?;
         let nested = tmp.path().join("src/nested");
@@ -885,7 +885,7 @@ mod tests {
     fn env_run_rejects_unsatisfied_requires_incan_before_spawning() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         fs::write(
-            tmp.path().join(MANIFEST_FILENAME),
+            tmp.path().join(LOAF_MANIFEST_FILENAME),
             r#"
             [project]
             name = "demo"

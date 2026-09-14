@@ -21,6 +21,7 @@ mod consts;
 mod decls;
 mod errors;
 mod expressions;
+pub(in crate::backend::ir) mod native_unions;
 mod program;
 mod statements;
 mod types;
@@ -237,10 +238,43 @@ pub(super) struct StructConstructorMetadata {
     default_fields: HashSet<String>,
     field_aliases: HashMap<String, String>,
     type_private_fields: HashSet<String>,
+    /// The constructed declaration's own type parameters.
+    ///
+    /// A field type mentioning one of these is written in the declaration's vocabulary, not the construction
+    /// site's, so it must not be used as an emission target until it is substituted. See #1507.
+    owner_type_params: HashSet<String>,
     constructor_surface: StructConstructorSurface,
 }
 
 impl StructConstructorMetadata {
+    /// Whether a declared field type is written in the declaration's own type-parameter vocabulary.
+    ///
+    /// Such a type cannot be emitted at a construction site: `items: list[Elem]` on a `Holder[Picked](...)` names
+    /// `Elem`, which is bound in the declaration and nowhere at the call. The genericity of the type is not the
+    /// test — `Generic("Picked")` is generic and perfectly emittable, because the construction site binds it — so
+    /// the question is only whether the name belongs to this declaration. See #1507.
+    fn mentions_own_type_param(&self, ty: &IrType) -> bool {
+        if self.owner_type_params.is_empty() {
+            return false;
+        }
+        match ty {
+            IrType::Generic(name) | IrType::Struct(name) => self.owner_type_params.contains(name),
+            IrType::Ref(inner) | IrType::RefMut(inner) | IrType::Option(inner) | IrType::List(inner) => {
+                self.mentions_own_type_param(inner)
+            }
+            IrType::Set(inner) => self.mentions_own_type_param(inner),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                self.mentions_own_type_param(key) || self.mentions_own_type_param(value)
+            }
+            IrType::Tuple(items) => items.iter().any(|item| self.mentions_own_type_param(item)),
+            IrType::NamedGeneric(_, args) => args.iter().any(|arg| self.mentions_own_type_param(arg)),
+            IrType::Function { params, ret } => {
+                params.iter().any(|param| self.mentions_own_type_param(param)) || self.mentions_own_type_param(ret)
+            }
+            _ => false,
+        }
+    }
+
     /// Select the external Rust construction surface for one nominal declaration.
     ///
     /// Models seal private constructor inputs outside their owner. Classes retain their complete constructor input
@@ -267,6 +301,7 @@ impl StructConstructorMetadata {
     fn from_struct(s: &IrStruct) -> Self {
         Self {
             provider_identity: None,
+            owner_type_params: s.type_params.iter().map(|param| param.name.clone()).collect(),
             fields: s.fields.iter().map(|field| field.name.clone()).collect(),
             field_types: s
                 .fields
@@ -341,6 +376,7 @@ impl StructConstructorMetadata {
         let constructor_surface = Self::external_constructor_surface(kind, &type_private_fields, &default_fields);
         Self {
             provider_identity: Some(ConstructorProviderIdentity::PublicDependency(library.to_string())),
+            owner_type_params: HashSet::new(),
             fields: fields.iter().map(|field| field.name.clone()).collect(),
             field_types: fields
                 .iter()
@@ -645,6 +681,11 @@ pub struct IrEmitter<'a> {
     qualify_union_types_from_crate: bool,
     /// Extra anonymous union shapes that should be emitted in this module in addition to locally referenced shapes.
     generated_union_types: HashMap<String, IrType>,
+    /// Exact local wrappers passed to definition emission after alias resolution and generated-use filtering.
+    emitted_native_unions: RefCell<HashMap<String, IrType>>,
+    /// Exact consumer nominal bindings retained by this source module's lowering pass.
+    native_nominal_origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
+
     /// Whether this module should emit generated ordinary union wrapper definitions.
     emit_generated_union_definitions: bool,
     /// Stack of statement-slice analyses describing which local `StaticBinding` names need mutable Rust bindings.
@@ -746,6 +787,8 @@ impl<'a> IrEmitter<'a> {
             qualify_internal_canonical_paths: RefCell::new(false),
             qualify_union_types_from_crate: false,
             generated_union_types: HashMap::new(),
+            emitted_native_unions: RefCell::new(HashMap::new()),
+            native_nominal_origins: Default::default(),
             emit_generated_union_definitions: true,
             storage_binding_mut_names: RefCell::new(Vec::new()),
             result_observer_callable_types: RefCell::new(HashSet::new()),
@@ -784,8 +827,17 @@ impl<'a> IrEmitter<'a> {
         let mut planned = Vec::new();
         for field_name in metadata.constructor_fields() {
             let field_ident = Self::rust_ident(field_name);
-            let target_ty = metadata.field_types.get(field_name);
+            // A declared field type is usable as a target only when it is resolved at this construction site. A
+            // model's own type parameter is still spelled with the declaration's name — `items: list[Elem]` on a
+            // `Holder[Picked](...)` — and names nothing bound here, so targeting it emits `Vec::<Elem>::new()`
+            // against a type parameter that does not exist in scope. The supplied value's checked type carries the
+            // substitution this site made, so it is preferred whenever the declared type does not. See #1507.
+            let declared_ty = metadata.field_types.get(field_name);
             let value = if let Some(value) = provided.get(field_name.as_str()) {
+                let target_ty = match declared_ty {
+                    Some(declared) if metadata.mentions_own_type_param(declared) => Some(&value.ty),
+                    other => other,
+                };
                 let value = self.emit_expr_for_use(value, super::ownership::ValueUseSite::StructField { target_ty })?;
                 if metadata.uses_constructor_function() && metadata.default_fields.contains(field_name) {
                     quote! { Some(#value) }
@@ -793,6 +845,7 @@ impl<'a> IrEmitter<'a> {
                     value
                 }
             } else if metadata.default_fields.contains(field_name) {
+                let target_ty = declared_ty;
                 if metadata.uses_constructor_function() {
                     quote! { None }
                 } else {
@@ -1220,8 +1273,10 @@ impl<'a> IrEmitter<'a> {
             IrType::TypeToken(inner) => {
                 IrType::TypeToken(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting)))
             }
-            IrType::ExternalUnion { library, union } => IrType::ExternalUnion {
+            IrType::ExternalUnion { native: Some(_), .. } => ty.clone(),
+            IrType::ExternalUnion { library, union, native } => IrType::ExternalUnion {
                 library: library.clone(),
+                native: native.clone(),
                 union: Box::new(self.resolve_type_aliases_for_emit_inner(union, visiting)),
             },
             IrType::Ref(inner) => IrType::Ref(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting))),
@@ -1870,16 +1925,60 @@ impl<'a> IrEmitter<'a> {
         self.source_dependency_constructor_reexports_dirty = true;
     }
 
+    /// Supply exact lowered nominal bindings for conversion metadata emitted in this source module.
+    pub(crate) fn set_native_nominal_origins(
+        &mut self,
+        origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
+    ) {
+        self.native_nominal_origins = origins;
+    }
+
     /// Seed public dependency nominal metadata from `.incnlib` manifests.
     ///
     /// Package consumers do not have the provider's lowered IR available, but const validation and constructor emission
     /// need the same field metadata for public models/classes that source-module consumers receive from lowered
     /// dependency modules.
-    pub(crate) fn seed_public_dependency_nominal_metadata(&mut self, index: &LibraryManifestIndex) {
+    ///
+    /// This repeats work per module that cannot differ between modules, and the repetition is deliberate rather than
+    /// unnoticed. `with_checked_native_unions` depends only on the manifest, the library, the plan and the routes,
+    /// all fixed for a compilation, so its result is identical every time; only the `with_native_nominal_origins`
+    /// step that follows is module-specific. The cost is roughly modules x libraries x unions x exports.
+    ///
+    /// Caching it needs somewhere to live that outlasts this emitter, and an emitter is constructed per module. The
+    /// obvious home is `ProviderPlan`, which is shared -- but it is documented as an immutable catalog and derives
+    /// `Clone`, so adding interior mutability there trades a clear ownership story for a speedup and raises a
+    /// thread-safety question the type does not currently have to answer. The projection also belongs outside the
+    /// emitter entirely, which is where the direct-rustc work puts it; optimizing it in place would be effort spent
+    /// on a path that is being removed. Hoist it when that seam moves, not before.
+    pub(crate) fn seed_public_dependency_nominal_metadata(
+        &mut self,
+        index: &LibraryManifestIndex,
+        routes: &HashMap<String, HashMap<String, String>>,
+        plan: Option<&crate::provider::ProviderPlan>,
+    ) -> Result<(), EmitError> {
+        let mut manifests = HashMap::new();
+        for library in index.known_libraries() {
+            let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = index.get(&library) else {
+                continue;
+            };
+            let projected = crate::library_manifest::with_checked_native_unions(
+                manifest.as_ref().clone(),
+                &library,
+                plan,
+                routes.get(&library),
+            )
+            .map_err(EmitError::InternalInvariant)?;
+            let projected =
+                crate::library_manifest::with_native_nominal_origins(projected, &self.native_nominal_origins);
+            manifests.insert(
+                library.clone(),
+                crate::library_manifest::with_checked_type_routes(projected, routes.get(&library)),
+            );
+        }
         let mut counts = HashMap::<String, usize>::new();
         let mut public_type_paths = HashMap::<String, HashSet<Vec<String>>>::new();
         for library in index.known_libraries() {
-            let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = index.get(&library) else {
+            let Some(manifest) = manifests.get(&library) else {
                 continue;
             };
             let mut manifest_nominal_names = manifest
@@ -1980,7 +2079,7 @@ impl<'a> IrEmitter<'a> {
             .collect();
 
         for library in index.known_libraries() {
-            let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = index.get(&library) else {
+            let Some(manifest) = manifests.get(&library) else {
                 continue;
             };
             let mut public_names = manifest
@@ -2001,6 +2100,7 @@ impl<'a> IrEmitter<'a> {
                 }
             }
         }
+        Ok(())
     }
 
     /// Return the public nominal name represented by one checked API declaration.
@@ -2335,8 +2435,37 @@ impl<'a> IrEmitter<'a> {
     /// Built-in stdlib consumers intentionally do not materialize provider source modules. The artifact manifest is
     /// therefore the sole metadata source for whether a receiver uses Incan call semantics and whether a member is an
     /// enum variant rather than a Rust field access.
-    pub(crate) fn seed_sdk_provider_manifest_metadata(&mut self, manifest: &LibraryManifest) {
+    ///
+    /// The manifest is projected before a single export is read. It was not, and that made this the seeding path
+    /// `ir_type_from_projected_manifest` names when it refuses: a native union arrived with no physical projection
+    /// and lowered to `Unknown`. The failure needed a component whose surface actually carries one to appear at all,
+    /// which is why it surfaced as an SDK preparation panic in `stdlib-codecs` rather than in any unit test.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmitError::InternalInvariant`] when the manifest names a native union owned by some *other*
+    /// artifact that no admitted provider plan binds. That is a refusal rather than a fallback: emitting the union
+    /// unbound produces a type the generated Rust resolves to something else, with no diagnostic anywhere.
+    pub(crate) fn seed_sdk_provider_manifest_metadata(
+        &mut self,
+        manifest: &LibraryManifest,
+        plan: Option<&crate::provider::ProviderPlan>,
+        routes: Option<&HashMap<String, String>>,
+    ) -> Result<(), EmitError> {
         let provider_crate = manifest.name.replace('-', "_");
+        // Only the union binding, and deliberately not the rest of the dependency path's projection. A provider
+        // owns the unions its own surface publishes, and the admitted public-artifact graph is built from project
+        // dependencies, so it has no entry to look this provider up by; bind those first, and leave whatever names
+        // another artifact to the plan, which is the question the plan answers.
+        //
+        // `with_checked_type_routes` must not run here. It rewrites every origin-carrying leaf to its route and
+        // replaces it with `Unknown` where no route matches, and an SDK provider has no foreign type routes — so
+        // applying it would erase the very metadata this function exists to seed. That is a dependency-path step
+        // for a dependency-path input, and the seeding path needs neither it nor the nominal-origin overlay.
+        let self_owned = crate::library_manifest::with_self_owned_native_unions(manifest.clone(), &provider_crate);
+        let library = self_owned.name.clone();
+        let manifest = &crate::library_manifest::with_checked_native_unions(self_owned, &library, plan, routes)
+            .map_err(EmitError::InternalInvariant)?;
         for entry in &manifest.contract_metadata.identity_graph.exports {
             if entry.kind != ExportIdentityKind::Function || entry.public_path.first() != Some(&manifest.name) {
                 continue;
@@ -2378,7 +2507,7 @@ impl<'a> IrEmitter<'a> {
         // the public declarations of every `std.*` provider module. Consumers must use that artifact-owned API
         // instead of reopening the provider source modules.
         let Some(api) = manifest.contract_metadata.api.as_ref() else {
-            return;
+            return Ok(());
         };
         self.compiled_sdk_module_paths
             .extend(api.modules.iter().map(|module| module.module_path.clone()));
@@ -2414,6 +2543,7 @@ impl<'a> IrEmitter<'a> {
         }
         self.seed_compiled_provider_export_metadata(&provider_crate, &models, &classes, &enums, &newtypes);
         self.seed_compiled_provider_factory_metadata(&functions, &models, &classes);
+        Ok(())
     }
 
     /// Set provider module paths when a caller already derived them from the artifact entrypoint or manifest.
@@ -2895,7 +3025,9 @@ impl<'a> IrEmitter<'a> {
 
     /// Convert a public manifest type reference into the IR vocabulary used by emission metadata.
     fn manifest_type_ref_to_ir_type(ty: &TypeRef) -> IrType {
-        Self::resolved_type_to_ir_type(&resolved_type_from_manifest_type_ref(ty))
+        super::types::ir_type_from_projected_manifest(ty, &|ordinary| {
+            Self::resolved_type_to_ir_type(&resolved_type_from_manifest_type_ref(ordinary))
+        })
     }
 
     /// Convert resolved frontend metadata into IR type metadata without requiring an AST lowering context.
@@ -3249,8 +3381,9 @@ impl<'a> IrEmitter<'a> {
                 ret: Box::new(Self::substitute_signature_type(ret, subst)),
             },
             IrType::TypeToken(inner) => IrType::TypeToken(Box::new(Self::substitute_signature_type(inner, subst))),
-            IrType::ExternalUnion { library, union } => IrType::ExternalUnion {
+            IrType::ExternalUnion { library, union, native } => IrType::ExternalUnion {
                 library: library.clone(),
+                native: native.clone(),
                 union: Box::new(Self::substitute_signature_type(union, subst)),
             },
             IrType::Ref(inner) => IrType::Ref(Box::new(Self::substitute_signature_type(inner, subst))),
@@ -3452,8 +3585,101 @@ mod tests {
         CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
     };
 
+    /// Field metadata uses the same checked foreign route projection as ordinary callable lowering.
     #[test]
-    fn compiled_sdk_manifest_seeds_exact_stdlib_function_identity() {
+    fn public_constructor_metadata_preserves_checked_foreign_routes() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::library_manifest_index::{
+            LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+        };
+        use crate::library_manifest::{
+            FieldExport, FieldVisibilityExport, ModelExport, NominalTypeOriginExport, TypeRef,
+        };
+        let identity = CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: SymbolOrigin::Package {
+                library: "catalog".into(),
+                module_path: vec!["lib".into()],
+            },
+            declaration_name: "Product".into(),
+            kind: SemanticSourceTargetKind::Model,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(0, 20),
+        };
+        let origin = NominalTypeOriginExport {
+            provider: crate::provider::ProviderIdentity {
+                name: "catalog".into(),
+                version: "1.2.3".into(),
+                digest: "a".repeat(64),
+                feature_projection: Default::default(),
+            },
+            canonical: CanonicalIdentityExport::from_canonical("catalog", &identity)
+                .ok_or("identity projection failed")?,
+        };
+        let mut manifest = LibraryManifest::new("pricing", "1.2.3");
+        manifest.exports.models.push(ModelExport {
+            name: "Basket".into(),
+            type_params: vec![],
+            traits: vec![],
+            trait_adoptions: vec![],
+            derives: vec![],
+            properties: vec![],
+            methods: vec![],
+            fields: vec![FieldExport {
+                name: "product".into(),
+                canonical: None,
+                ty: TypeRef::Named {
+                    name: "Product".into(),
+                    origin: Some(origin.clone()),
+                },
+                surface_type_name: None,
+                visibility: FieldVisibilityExport::Public,
+                has_default: false,
+                default: None,
+                alias: None,
+                description: None,
+            }],
+        });
+        let index = LibraryManifestIndex::from_entries(std::collections::HashMap::from([(
+            "pricing".into(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest.clone()),
+                metadata: LibraryArtifactMetadata::from_manifest_path(
+                    "pricing",
+                    "pricing",
+                    "/artifact/pricing.incnlib".into(),
+                    "/artifact".into(),
+                ),
+            },
+        )]));
+        let routes = std::collections::HashMap::from([(
+            "pricing".into(),
+            std::collections::HashMap::from([(
+                origin.binding_key(),
+                "pub::pricing::__incan_provider_rust::catalog::Product".into(),
+            )]),
+        )]);
+        let registry = FunctionRegistry::new();
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.seed_public_dependency_nominal_metadata(&index, &routes, None)?;
+        let metadata = emitter
+            .pub_dependency_constructor_metadata
+            .get(&("pricing".into(), vec!["Basket".into()]))
+            .ok_or("constructor metadata absent")?;
+        assert_eq!(
+            metadata.field_types.get("product"),
+            Some(&IrType::Struct(
+                "::pricing::__incan_provider_rust::catalog::Product".into()
+            ))
+        );
+        assert!(matches!(
+            manifest.exports.models[0].fields[0].ty,
+            TypeRef::Named { origin: Some(_), .. }
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn compiled_sdk_manifest_seeds_exact_stdlib_function_identity() -> Result<(), Box<dyn std::error::Error>> {
         let registry = FunctionRegistry::new();
         let identity = CanonicalSymbolId {
             namespace: SymbolNamespace::OrdinaryLexical,
@@ -3494,9 +3720,123 @@ mod tests {
         let mut emitter = IrEmitter::new(&registry);
         emitter.set_canonical_function_registry(canonical_registry);
 
-        emitter.seed_sdk_provider_manifest_metadata(&manifest);
+        emitter.seed_sdk_provider_manifest_metadata(&manifest, None, None)?;
 
         assert_eq!(emitter.canonical_stdlib_function_identity(&std_path), Some(&identity));
+        Ok(())
+    }
+
+    /// Build one SDK provider manifest whose exported enum variant carries a native union.
+    ///
+    /// `stdlib-system` publishes exactly this shape, and it is what made SDK preparation fail: the seeding path
+    /// read the union straight out of the manifest, where `checked_projection` is `#[serde(skip)]` and therefore
+    /// always absent on arrival.
+    fn manifest_exporting_a_native_union(
+        library: &str,
+        owner: crate::library_manifest::NativeUnionOwnerExport,
+    ) -> LibraryManifest {
+        let mut manifest = LibraryManifest::new(library, "0.6.0");
+        manifest.exports.enums.push(crate::library_manifest::EnumExport {
+            name: "Carrier".to_string(),
+            type_params: Vec::new(),
+            traits: Vec::new(),
+            trait_adoptions: Vec::new(),
+            value_type: None,
+            ordinal_type_identity: None,
+            variants: vec![crate::library_manifest::EnumVariantExport {
+                name: "Carried".to_string(),
+                canonical: None,
+                fields: vec![crate::library_manifest::TypeRef::NativeUnion(
+                    crate::library_manifest::NativeUnionExport {
+                        owner,
+                        rust_name: "__IncanUnionProbe".to_string(),
+                        members: vec![crate::library_manifest::TypeRef::Named {
+                            name: "int".to_string(),
+                            origin: None,
+                        }],
+                        local_nominals: Default::default(),
+                        checked_projection: None,
+                    },
+                )],
+                value: None,
+            }],
+            variant_aliases: Vec::new(),
+            methods: Vec::new(),
+            derives: Vec::new(),
+        });
+        manifest
+    }
+
+    /// A union an SDK provider owns itself binds to that provider's crate, with no admitted artifact graph.
+    ///
+    /// This is the defect that stopped SDK preparation at `stdlib-codecs`. The seeding path never projected, so
+    /// `ir_type_from_projected_manifest` saw a union with no physical projection and returned `Unknown` — silently
+    /// in release, and through a debug assertion in the prewarm. `Unknown` is the observable: the emitter resolves
+    /// it to something unrelated or drops it, with no diagnostic anywhere.
+    ///
+    /// The plan-based projection cannot answer this one. Its owner lookup goes through the admitted public-artifact
+    /// graph, which is built from project-dependency records and has no entry for an SDK provider, so it refuses
+    /// with "union import container is unavailable". A provider that owns its own union does not need to be looked
+    /// up: it is the owner.
+    #[test]
+    fn an_sdk_provider_binds_the_native_unions_it_owns() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let manifest = manifest_exporting_a_native_union(
+            "incan_stdlib_codecs",
+            crate::library_manifest::NativeUnionOwnerExport::ContainingArtifact,
+        );
+
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.seed_sdk_provider_manifest_metadata(&manifest, None, None)?;
+
+        let key = ("Carrier".to_string(), "Carried".to_string());
+        let Some(super::VariantFields::Tuple(fields)) = emitter.enum_variant_fields.get(&key) else {
+            return Err(format!(
+                "the variant should be recorded as a tuple, got {:?}",
+                emitter.enum_variant_fields.get(&key)
+            )
+            .into());
+        };
+        let [IrType::ExternalUnion { library, .. }] = fields.as_slice() else {
+            return Err(format!("the variant field must lower to the carried union, got {fields:?}").into());
+        };
+        assert_eq!(
+            library, "::incan_stdlib_codecs",
+            "a provider owns the unions its own surface publishes, so its crate is the physical route"
+        );
+        Ok(())
+    }
+
+    /// A union owned by another artifact is still refused when nothing admits that artifact.
+    ///
+    /// The self-owned binding deliberately does not answer this case. `SelectedArtifact` names some other owner,
+    /// and which artifact that is, and whether its published representation agrees, is exactly what the admitted
+    /// graph exists to decide. Guessing would put the union in the wrong crate.
+    #[test]
+    fn sdk_provider_seeding_refuses_a_union_owned_by_an_unadmitted_artifact() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let registry = FunctionRegistry::new();
+        let manifest = manifest_exporting_a_native_union(
+            "incan_stdlib_codecs",
+            crate::library_manifest::NativeUnionOwnerExport::SelectedArtifact(crate::provider::ProviderIdentity {
+                name: "incan_stdlib_system".to_string(),
+                version: "0.6.0".to_string(),
+                digest: "sha256:probe".to_string(),
+                feature_projection: Default::default(),
+            }),
+        );
+
+        let mut emitter = IrEmitter::new(&registry);
+        let seeded = emitter.seed_sdk_provider_manifest_metadata(&manifest, None, None);
+
+        let Err(super::EmitError::InternalInvariant(message)) = seeded else {
+            return Err(format!("seeding must refuse a union it cannot place, got {seeded:?}").into());
+        };
+        assert!(
+            message.contains("__IncanUnionProbe"),
+            "the refusal must name the union it could not bind, got {message}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -3921,6 +4261,7 @@ mod tests {
                 name: "secret".to_string(),
                 canonical: None,
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "bool".to_string(),
                 },
                 surface_type_name: None,
@@ -3934,6 +4275,7 @@ mod tests {
                 name: "label".to_string(),
                 canonical: None,
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
                 surface_type_name: None,

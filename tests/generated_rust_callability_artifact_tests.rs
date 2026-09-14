@@ -133,8 +133,8 @@ fn write_producer(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let producer = root.join("callability_lib");
     write_fixture_file(
         &producer,
-        "incan.toml",
-        include_str!("fixtures/generated_rust_callability/producer/incan.toml"),
+        "loaf.toml",
+        include_str!("fixtures/generated_rust_callability/producer/loaf.toml"),
     )?;
     write_fixture_file(
         &producer,
@@ -164,7 +164,7 @@ fn write_consumer(
     let consumer = root.join(dir_name);
     write_fixture_file(
         &consumer,
-        "incan.toml",
+        "loaf.toml",
         "[project]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\ncallability = { path = \"../callability_lib\" }\n",
     )?;
     write_fixture_file(&consumer, "src/main.incn", main_source)?;
@@ -227,14 +227,14 @@ fn generated_callable_artifact_and_consumers_share_producer_build() -> Result<()
     assert!(matches!(
         function_param_ty(&manifest, "map_owned", "f")?,
         TypeRef::Function { params, return_type }
-            if matches!(params.as_slice(), [TypeRef::Named { name }] if name == "int")
-                && matches!(&**return_type, TypeRef::Named { name } if name == "int")
+            if matches!(params.as_slice(), [TypeRef::Named { name, .. }] if name == "int")
+                && matches!(&**return_type, TypeRef::Named { name, .. } if name == "int")
     ));
     assert!(matches!(
         function_param_ty(&manifest, "inspect_payload", "f")?,
         TypeRef::Function { params, return_type }
-            if matches!(params.as_slice(), [TypeRef::Named { name }] if name == "Payload")
-                && matches!(&**return_type, TypeRef::Named { name } if name == "Unit")
+            if matches!(params.as_slice(), [TypeRef::Named { name, .. }] if name == "Payload")
+                && matches!(&**return_type, TypeRef::Named { name, .. } if name == "Unit")
     ));
 
     let (owned_consumer, owned_main_path) = write_consumer(

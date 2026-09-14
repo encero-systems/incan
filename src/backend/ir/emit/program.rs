@@ -494,9 +494,19 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         }
     }
 
-    /// Mark both a full Rust path and its final segment as used so imports can satisfy generic bounds.
+    /// Retain the module binding used by a qualified trait path as well as the trait's existing reachability facts.
+    ///
+    /// Module derives retain source paths such as `codec.Encode`; Rust bounds may already use `codec::Encode`.
+    /// Both require the leading import binding. Absolute Rust paths bypass local imports and must not retain an
+    /// unrelated alias with the same crate spelling.
     fn mark_trait_path_binding(&mut self, trait_path: &str) {
         self.mark_reachable_item(trait_path);
+        if !trait_path.starts_with("::")
+            && let Some(binding) = trait_path.split(['.', ':']).next()
+            && binding != trait_path
+        {
+            self.mark_reachable_item(binding);
+        }
         if let Some(binding) = trait_path.rsplit("::").next()
             && binding != trait_path
         {
@@ -585,7 +595,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
     /// Scan an assignment target without treating field writes as field reads.
     fn scan_assign_target(&mut self, target: &AssignTarget) {
         match target {
-            AssignTarget::Var(name) | AssignTarget::StaticBinding(name) => {
+            AssignTarget::Var { name, .. } | AssignTarget::StaticBinding(name) => {
                 self.mark_reachable_item(name);
             }
             AssignTarget::Static { name, .. } => self.mark_reachable_item(name),
@@ -3955,6 +3965,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit a program to TokenStream (without formatting).
     pub fn emit_program_tokens(&self, program: &IrProgram) -> Result<TokenStream, EmitError> {
+        self.emitted_native_unions.borrow_mut().clear();
         self.set_static_projections(program)?;
         let mut items = Vec::new();
         let analysis =
@@ -4084,8 +4095,9 @@ impl<'a> IrEmitter<'a> {
             }
             let mut union_type_items: Vec<_> = canonical_union_types.into_iter().collect();
             union_type_items.sort_by(|(left, _), (right, _)| left.cmp(right));
-            for (_, union_ty) in union_type_items {
+            for (name, union_ty) in union_type_items {
                 if let Some(item) = self.emit_generated_union_type(&union_ty) {
+                    self.emitted_native_unions.borrow_mut().insert(name, union_ty);
                     items.push(item);
                 }
             }
@@ -4269,6 +4281,80 @@ mod tests {
     use incan_core::lang::c_abi::{LinkCapabilityId, ScalarTypeId};
     use std::collections::HashMap;
 
+    /// Model the provider-projected import and marker impl retained after module-derive expansion.
+    fn emit_qualified_marker_impl(binding: &str, trait_path: &str) -> Result<String, super::EmitError> {
+        use crate::backend::ir::decl::{IrImpl, IrImportOrigin, IrImportQualifier, IrStruct, IrStructKind, Visibility};
+        use crate::backend::ir::{IrDecl, IrDeclKind};
+
+        let mut program = IrProgram::new();
+        for alias in [binding, "unused_codec"] {
+            program.declarations.push(IrDecl::new(IrDeclKind::Import {
+                visibility: Visibility::Private,
+                origin: IrImportOrigin::Standard,
+                qualifier: IrImportQualifier::None,
+                path: vec!["compiled_data".into(), "__incan_std".into(), "codec".into()],
+                alias: Some(alias.to_string()),
+                items: Vec::new(),
+            }));
+        }
+        program.declarations.push(IrDecl::new(IrDeclKind::Struct(IrStruct {
+            kind: IrStructKind::Model,
+            name: "Payload".into(),
+            docstring: None,
+            fields: Vec::new(),
+            derives: Vec::new(),
+            visibility: Visibility::Public,
+            type_params: Vec::new(),
+            derive_rust_modules: HashMap::new(),
+            lint_allows: Vec::new(),
+        })));
+        program.declarations.push(IrDecl::new(IrDeclKind::Impl(IrImpl {
+            target_type: "Payload".into(),
+            type_params: Vec::new(),
+            trait_name: Some(trait_path.into()),
+            trait_module_path: Some(vec!["std".into(), "codec".into()]),
+            trait_source_name: Some("Encode".into()),
+            trait_type_args: Vec::new(),
+            associated_types: Vec::new(),
+            methods: Vec::new(),
+            method_projections: Vec::new(),
+            source_method_projections: Vec::new(),
+        })));
+        let mut emitter = IrEmitter::new(&program.function_registry);
+        emitter.set_preserve_public_items(true);
+        emitter.emit_program(&program)
+    }
+
+    #[test]
+    fn qualified_trait_impl_retains_projected_sdk_module_import() -> Result<(), Box<dyn std::error::Error>> {
+        for binding in ["codec", "formats"] {
+            for separator in [".", "::"] {
+                let code = emit_qualified_marker_impl(binding, &format!("{binding}{separator}Encode"))?;
+                assert!(
+                    code.contains(&format!("compiled_data::__incan_std::codec as {binding};")),
+                    "provider module binding required by the trait impl was pruned:\n{code}"
+                );
+                assert!(code.contains(&format!("impl {binding}::Encode for Payload")), "{code}");
+                assert!(
+                    !code.contains("as unused_codec"),
+                    "an unused alias must stay pruned:\n{code}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn absolute_trait_impl_does_not_retain_same_named_local_module() -> Result<(), Box<dyn std::error::Error>> {
+        let code = emit_qualified_marker_impl("foreign", "::foreign::Encode")?;
+        assert!(code.contains("impl ::foreign::Encode for Payload"), "{code}");
+        assert!(
+            !code.contains("compiled_data"),
+            "absolute trait paths bypass local imports:\n{code}"
+        );
+        Ok(())
+    }
+
     fn union(members: Vec<IrType>) -> IrType {
         IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), members)
     }
@@ -4280,6 +4366,7 @@ mod tests {
     fn external_provider_union() -> IrType {
         IrType::ExternalUnion {
             library: "provider".to_string(),
+            native: None,
             union: Box::new(provider_union()),
         }
     }
@@ -4316,6 +4403,7 @@ mod tests {
         ]);
         let foreign_union = IrType::ExternalUnion {
             library: "other".to_string(),
+            native: None,
             union: Box::new(qualified_provider_union.clone()),
         };
 

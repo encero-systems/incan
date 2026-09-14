@@ -137,7 +137,7 @@ The top-level JSON object is a metadata package:
 | Field            | Type           | Meaning                                                    |
 | ---------------- | -------------- | ---------------------------------------------------------- |
 | `schema_version` | number         | Metadata package schema version                            |
-| `package`        | object or null | Project identity from `incan.toml`, when available         |
+| `package`        | object or null | Project identity from `loaf.toml`, when available         |
 | `modules`        | array          | Checked metadata documents for the entry and local imports |
 
 Each module document contains:
@@ -147,6 +147,9 @@ Each module document contains:
 | `schema_version` | number | Module metadata schema version                    |
 | `module_path`    | array  | Logical module path segments                      |
 | `declarations`   | array  | Public declarations visible from that source file |
+| `derivable_traits` | array | Optional declared module derive members, resolved within `module_path` |
+
+`derivable_traits` preserves the exact `__derives__` list for module derives such as `@derive(toml)`. It is omitted when empty; older metadata without the field declares no module derive bundle. The internal `__derives__` constant is not exported as a public declaration. Each member retains its declaring module context and the checked trait declaration carries any explicit Rust derive decorator.
 
 `declarations` uses a `kind` discriminator. Current declaration kinds are `function`, `model`, `class`, `trait`, `enum`, `newtype`, `type_alias`, `const`, `static`, `alias`, and `partial`.
 
@@ -167,6 +170,21 @@ The metadata is derived from parsed and typechecked semantics. Public declaratio
 - safe const values for public consts and safe decorator arguments
 
 Types use the same structural `TypeRef` encoding as library manifest exports. For example, a non-generic type is encoded as `{"Named": {"name": "str"}}`, while a generic application is encoded as `{"Applied": {"name": "List", "args": [...]}}`.
+
+Built-library metadata captured during native emission may describe an anonymous union using `{"NativeUnion": {...}}` with these fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `owner` | `"ContainingArtifact"` or `{"SelectedArtifact": ProviderIdentity}` | The artifact defining the native wrapper. A containing owner binds to the exact selected artifact when imported. A forwarded descriptor retains its defining provider's name, version, digest, and feature projection. |
+| `rust_name` | string | The wrapper identifier recorded from the defining artifact's emitted representation. |
+| `members` | `TypeRef[]` | Ordered payload types. Element zero is native variant `V0`, element one is `V1`, and so on. |
+| `local_nominals` | Map of producer type spelling to canonical declaration identity | Optional owner-local payload identities without a self artifact digest. Every entry must identify a public nominal declaration in the selected owner. Missing or empty retains the legacy origin-free member contract. |
+
+The `.incnlib` field `contract_metadata.native_unions` contains the defining artifact's emitted union entries. Each local entry uses `"ContainingArtifact"`. An imported descriptor must match an entry in its exact admitted owner's table, including payload order. Consumer import aliases and Rust dependency paths do not change the wrapper or variant indices. Consumer-specific physical routes are not serialized.
+
+Older metadata may omit the table and retain structural `Applied` types named `Union`. Readers continue to accept that legacy encoding. A reader without `NativeUnion` support rejects the new variant instead of treating it as an ordinary structural union.
+
+An explicitly typed, non-generic decorator over an imported union alias can currently pass checking but fail native compilation ([#1453](https://github.com/encero-systems/incan/issues/1453)).
 
 A checked trait-bound entry may also contain `implementation_type_params`. This optional schema-v1 field records the
 generic header required by that exact implementation rather than adding those requirements to every use of the owning

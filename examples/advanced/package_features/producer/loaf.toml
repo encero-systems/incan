@@ -1,0 +1,12 @@
+[project]
+name = "reporting"
+version = "0.1.0"
+
+# `json` is an additive package feature. Selecting it activates the optional `json_support` dependency and asks for
+# that dependency's own `json` feature: a feature-selecting dependency edge owned by this package, not by Cargo.
+[project.features]
+default = ["json"]
+json = ["dep:json_support", "json_support/json"]
+
+[dependencies]
+json_support = { path = "../leaf", optional = true }

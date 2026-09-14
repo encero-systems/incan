@@ -1,8 +1,9 @@
 //! Deterministic integrity identity for one relocatable compiled-provider artifact tree.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use sha2::{Digest, Sha256};
 
@@ -46,10 +47,79 @@ pub fn digest_provider_artifact(root: &Path) -> Result<String, ProviderArtifactD
             path: root.to_path_buf(),
         });
     }
+    // One command builds the provider plan several times over, and each build digested every dependency's
+    // artifact tree in full (#1556). Within one process the digest is reused while the tree is observably the
+    // same: the memo keys on a stamp of every hashed entry's path, length and modification time, taken over the
+    // exact entry set the digest hashes, so any change on disk misses. It never keys on a recorded digest -- the
+    // recorded value is precisely what this function exists to re-derive.
+    let canonical_root = fs::canonicalize(root).map_err(|source| ProviderArtifactDigestError::Io {
+        path: root.to_path_buf(),
+        source,
+    })?;
+    let stamp = artifact_tree_stamp(&canonical_root)?;
+    if let Ok(memo) = provider_artifact_digest_memo().lock()
+        && let Some((known_stamp, digest)) = memo.get(&canonical_root)
+        && *known_stamp == stamp
+    {
+        return Ok(digest.clone());
+    }
     let mut hasher = Sha256::new();
     hasher.update(b"incan-provider-artifact-v1\0");
     hash_directory(root, root, &mut hasher)?;
-    Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
+    let digest = format!("sha256:{}", hex::encode(hasher.finalize()));
+    if let Ok(mut memo) = provider_artifact_digest_memo().lock() {
+        memo.insert(canonical_root, (stamp, digest.clone()));
+    }
+    Ok(digest)
+}
+
+/// Process-wide memo of provider artifact digests, keyed by canonical root and the tree stamp they were taken at.
+fn provider_artifact_digest_memo() -> &'static Mutex<HashMap<PathBuf, (String, String)>> {
+    static MEMO: OnceLock<Mutex<HashMap<PathBuf, (String, String)>>> = OnceLock::new();
+    MEMO.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Stamp the observed state of every entry the physical digest hashes: relative path, byte length and modification
+/// time, in hashing order. Cheap enough to take on every call; changes on disk change it.
+fn artifact_tree_stamp(root: &Path) -> Result<String, ProviderArtifactDigestError> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"incan-provider-artifact-stamp-v1\0");
+    stamp_directory(root, root, &mut hasher)?;
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Feed one directory's kept entries into the tree stamp, recursing exactly where the digest recurses.
+fn stamp_directory(root: &Path, directory: &Path, hasher: &mut Sha256) -> Result<(), ProviderArtifactDigestError> {
+    for entry in artifact_directory_entries(root, directory, false, false)? {
+        let ArtifactEntry {
+            path,
+            relative,
+            file_type,
+        } = entry;
+        hasher.update(relative.to_string_lossy().replace('\\', "/").as_bytes());
+        hasher.update([0]);
+        if file_type.is_dir() {
+            hasher.update(b"directory\0");
+            stamp_directory(root, &path, hasher)?;
+        } else if file_type.is_file() {
+            let metadata = fs::metadata(&path).map_err(|source| ProviderArtifactDigestError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |duration| duration.as_nanos());
+            hasher.update(b"file\0");
+            hasher.update(metadata.len().to_le_bytes());
+            hasher.update(modified.to_le_bytes());
+        } else {
+            return Err(ProviderArtifactDigestError::UnsupportedEntry { path });
+        }
+        hasher.update([0xff]);
+    }
+    Ok(())
 }
 
 /// Hash the authored manifest and logically named Incan source modules that define one compiled provider's semantics.
@@ -1224,49 +1294,12 @@ fn hash_directory_with_normalization(
     normalization: Option<&SemanticArtifactNormalization<'_>>,
     exclude_nested_targets: bool,
 ) -> Result<(), ProviderArtifactDigestError> {
-    let mut entries = fs::read_dir(directory)
-        .map_err(|source| ProviderArtifactDigestError::Io {
-            path: directory.to_path_buf(),
-            source,
-        })?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|source| ProviderArtifactDigestError::Io {
-            path: directory.to_path_buf(),
-            source,
-        })?;
-    entries.sort_by_key(|entry| entry.file_name());
-
-    for entry in entries {
-        let path = entry.path();
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|_| ProviderArtifactDigestError::OutsideRoot {
-                path: path.clone(),
-                root: root.to_path_buf(),
-            })?;
-        // The generated provider-root Cargo.lock is a projection of the canonical Incan lock, not an independent
-        // provider input. Including it here creates a two-pass identity cycle: artifact-only preparation has no
-        // Cargo.lock, while the first locked build materializes one from incan.lock and would otherwise change the
-        // provider's semantic identity. Nested Cargo.lock files remain part of the artifact content projection.
-        if normalization.is_some() && relative == Path::new("Cargo.lock") {
-            continue;
-        }
-        let file_name = path.file_name().and_then(|name| name.to_str());
-        let file_type = entry.file_type().map_err(|source| ProviderArtifactDigestError::Io {
-            path: path.clone(),
-            source,
-        })?;
-        if file_type.is_dir() {
-            let is_mutable_output = matches!(file_name, Some(".git" | ".incan" | ".ralph-cache" | "target"));
-            // v0.5 providers briefly placed the compiler-owned Rust-inspection Cargo target below the published
-            // `oven/` directory. It is mutable preparation state, not provider content. Exclude the legacy location
-            // so an existing generated provider remains loadable while current builders place it under `target/`.
-            let is_legacy_rust_inspect_output = relative == Path::new("oven/rust-inspect");
-            let is_nested_target = file_name == Some("target");
-            if is_mutable_output || is_legacy_rust_inspect_output || (exclude_nested_targets && is_nested_target) {
-                continue;
-            }
-        }
+    for entry in artifact_directory_entries(root, directory, normalization.is_some(), exclude_nested_targets)? {
+        let ArtifactEntry {
+            path,
+            relative,
+            file_type,
+        } = entry;
         hasher.update(relative.to_string_lossy().replace('\\', "/").as_bytes());
         hasher.update([0]);
         if file_type.is_dir() {
@@ -1300,11 +1333,126 @@ fn hash_directory_with_normalization(
     Ok(())
 }
 
+/// One artifact entry the digest projection keeps, in the exact order it contributes to the hash.
+struct ArtifactEntry {
+    path: PathBuf,
+    relative: PathBuf,
+    file_type: fs::FileType,
+}
+
+/// Enumerate the entries of one artifact directory the digest projection keeps, in hashing order.
+///
+/// The exclusion rules live here rather than inline in the traversal so a second reader of the same tree cannot
+/// drift from what the digest actually hashes.
+fn artifact_directory_entries(
+    root: &Path,
+    directory: &Path,
+    skip_root_cargo_lock: bool,
+    exclude_nested_targets: bool,
+) -> Result<Vec<ArtifactEntry>, ProviderArtifactDigestError> {
+    let mut entries = fs::read_dir(directory)
+        .map_err(|source| ProviderArtifactDigestError::Io {
+            path: directory.to_path_buf(),
+            source,
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|source| ProviderArtifactDigestError::Io {
+            path: directory.to_path_buf(),
+            source,
+        })?;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    let mut kept = Vec::new();
+    for entry in entries {
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|_| ProviderArtifactDigestError::OutsideRoot {
+                path: path.clone(),
+                root: root.to_path_buf(),
+            })?
+            .to_path_buf();
+        // The generated provider-root Cargo.lock is a projection of the canonical Incan lock, not an independent
+        // provider input. Including it here creates a two-pass identity cycle: artifact-only preparation has no
+        // Cargo.lock, while the first locked build materializes one from oven.lock and would otherwise change the
+        // provider's semantic identity. Nested Cargo.lock files remain part of the artifact content projection.
+        if skip_root_cargo_lock && relative == Path::new("Cargo.lock") {
+            continue;
+        }
+        let file_name = path.file_name().and_then(|name| name.to_str());
+        let file_type = entry.file_type().map_err(|source| ProviderArtifactDigestError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        if file_type.is_dir() {
+            let is_mutable_output = matches!(file_name, Some(".git" | ".incan" | ".ralph-cache" | "target"));
+            // v0.5 providers briefly placed the compiler-owned Rust-inspection Cargo target below the published
+            // `oven/` directory. It is mutable preparation state, not provider content. Exclude the legacy location
+            // so an existing generated provider remains loadable while current builders place it under `target/`.
+            let is_legacy_rust_inspect_output = relative == Path::new("oven/rust-inspect");
+            let is_nested_target = file_name == Some("target");
+            if is_mutable_output || is_legacy_rust_inspect_output || (exclude_nested_targets && is_nested_target) {
+                continue;
+            }
+        }
+        kept.push(ArtifactEntry {
+            path,
+            relative,
+            file_type,
+        });
+    }
+    Ok(kept)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn a_repeated_digest_of_an_unchanged_tree_is_served_from_the_stamp_memo_and_any_change_misses_issue1556()
+    -> TestResult {
+        let artifact = tempfile::tempdir()?;
+        fs::create_dir_all(artifact.path().join("src"))?;
+        fs::write(artifact.path().join("provider.incnlib"), "manifest")?;
+        fs::write(artifact.path().join("src/lib.rs"), "pub fn value() -> i32 { 1 }")?;
+        let canonical = fs::canonicalize(artifact.path())?;
+        let first = digest_provider_artifact(artifact.path())?;
+        let stamp_after_first = provider_artifact_digest_memo()
+            .lock()
+            .map_err(|_| "memo poisoned")?
+            .get(&canonical)
+            .map(|(stamp, _)| stamp.clone())
+            .ok_or("the first digest was not memoized")?;
+        assert_eq!(first, digest_provider_artifact(artifact.path())?);
+        assert_eq!(
+            provider_artifact_digest_memo()
+                .lock()
+                .map_err(|_| "memo poisoned")?
+                .get(&canonical)
+                .map(|(stamp, _)| stamp.clone()),
+            Some(stamp_after_first.clone()),
+            "an unchanged tree keeps its stamp and its memoized digest"
+        );
+
+        // Same byte length, different content: the modification time moves, so the stamp misses and the digest is
+        // re-derived from the bytes -- the memo never trusts a recorded value over the tree.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(artifact.path().join("src/lib.rs"), "pub fn value() -> i32 { 2 }")?;
+        let second = digest_provider_artifact(artifact.path())?;
+        assert_ne!(first, second);
+        assert_ne!(
+            provider_artifact_digest_memo()
+                .lock()
+                .map_err(|_| "memo poisoned")?
+                .get(&canonical)
+                .map(|(stamp, _)| stamp.clone()),
+            Some(stamp_after_first),
+            "a changed tree carries a new stamp"
+        );
+        Ok(())
+    }
 
     #[test]
     fn digest_tracks_manifest_and_generated_source_but_ignores_mutable_output() -> TestResult {
@@ -1339,7 +1487,7 @@ mod tests {
             fs::create_dir_all(root.join("src"))?;
             fs::create_dir_all(workspace.join("shared"))?;
             fs::write(
-                root.join("incan.toml"),
+                root.join("loaf.toml"),
                 "[project]\nname = \"provider\"\nversion = \"0.1.0\"\n",
             )?;
             fs::write(root.join("src/lib.incn"), "pub def value() -> int:\n    return 1\n")?;
@@ -1358,13 +1506,13 @@ mod tests {
         let second_root = second.path().join("component");
         let first_digest = digest_provider_source_inputs(
             &first_root,
-            &first_root.join("incan.toml"),
+            &first_root.join("loaf.toml"),
             &source_inputs(first.path()),
             &[first.path().join("shared")],
         )?;
         let second_digest = digest_provider_source_inputs(
             &second_root,
-            &second_root.join("incan.toml"),
+            &second_root.join("loaf.toml"),
             &source_inputs(second.path()),
             &[second.path().join("shared")],
         )?;
@@ -1378,7 +1526,7 @@ mod tests {
             first_digest,
             digest_provider_source_inputs(
                 &second_root,
-                &second_root.join("incan.toml"),
+                &second_root.join("loaf.toml"),
                 &source_inputs(second.path()),
                 &[second.path().join("shared")],
             )?
@@ -1388,7 +1536,7 @@ mod tests {
         fs::write(&outside, "pub const LABEL: str = \"outside\"\n")?;
         let error = digest_provider_source_inputs(
             &second_root,
-            &second_root.join("incan.toml"),
+            &second_root.join("loaf.toml"),
             &[("outside".to_string(), outside)],
             &[],
         )
@@ -1406,13 +1554,13 @@ mod tests {
         let workspace = tempfile::tempdir()?;
         let root = workspace.path().join("component");
         fs::create_dir_all(root.join("src"))?;
-        fs::write(root.join("incan.toml"), "[project]\nname = \"provider\"\n")?;
+        fs::write(root.join("loaf.toml"), "[project]\nname = \"provider\"\n")?;
         fs::write(root.join("src/real.incn"), "pub const LABEL: str = \"real\"\n")?;
         symlink(root.join("src/real.incn"), root.join("src/link.incn"))?;
 
         let error = digest_provider_source_inputs(
             &root,
-            &root.join("incan.toml"),
+            &root.join("loaf.toml"),
             &[("link".to_string(), root.join("src/link.incn"))],
             &[],
         )

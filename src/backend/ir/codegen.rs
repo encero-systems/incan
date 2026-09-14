@@ -27,7 +27,7 @@
 //! The `generate*` methods are convenience wrappers that return error comments
 //! on failure (useful for debugging but not recommended for production).
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 #[cfg(feature = "rust_inspect")]
 use std::path::PathBuf;
@@ -213,6 +213,9 @@ enum CapturedImplementationTargetVisibility {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct IrGenerationMetadata {
     implementation_bound_requirements: Vec<CapturedImplementationBoundRequirement>,
+    emitted_declaration_types: Vec<super::emit::native_unions::EmittedDeclarationTypes>,
+    native_unions: Vec<crate::library_manifest::NativeUnionExport>,
+    provider_plan: Option<Arc<ProviderPlan>>,
 }
 
 impl IrGenerationMetadata {
@@ -321,6 +324,11 @@ impl IrGenerationMetadata {
                 ));
             }
         }
+        for captured in &self.emitted_declaration_types {
+            captured.apply(manifest);
+        }
+        manifest.contract_metadata.native_unions = self.native_unions.clone();
+        super::emit::native_unions::preserve_native_aliases(manifest, self.provider_plan.as_deref())?;
         Ok(())
     }
 }
@@ -403,10 +411,14 @@ fn implementation_type_param_export(type_param: &IrTypeParam) -> Result<Implemen
 }
 
 /// Convert an IR type used by implementation metadata into its checked manifest representation.
-fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
-    let named = |name: &str| TypeRef::Named { name: name.to_string() };
+pub(super) fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
+    let named = |name: &str| TypeRef::Named {
+        origin: None,
+        name: name.to_string(),
+    };
     let applied = |name: &str, args: &[IrType]| -> Result<TypeRef, String> {
         Ok(TypeRef::Applied {
+            origin: None,
             name: name.to_string(),
             args: args
                 .iter()
@@ -439,6 +451,9 @@ fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
             inner: Box::new(manifest_type_ref_from_ir(inner)?),
         }),
         IrType::RustDisplay(path) => Ok(TypeRef::RustPath { path: path.clone() }),
+        IrType::ExternalUnion {
+            native: Some(native), ..
+        } => Ok(TypeRef::NativeUnion(native.for_publication())),
         IrType::ExternalUnion { union, .. } => manifest_type_ref_from_ir(union),
         IrType::ImplTrait(bound) => applied(&bound.trait_path, &bound.type_args),
         IrType::Function { params, ret } => Ok(TypeRef::Function {
@@ -454,6 +469,7 @@ fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
             inner: Box::new(manifest_type_ref_from_ir(inner)?),
         }),
         IrType::Decimal { precision, scale } => Ok(TypeRef::Applied {
+            origin: None,
             name: "decimal".to_string(),
             args: vec![
                 TypeRef::TypeParam {
@@ -519,11 +535,13 @@ pub struct IrCodegen<'a> {
     rust_crates: HashSet<String>,
     /// Crate roots required to keep public class-field Rust identities nameable through a compiled provider.
     provider_rust_bridge_roots: BTreeSet<String>,
+    /// Checked physical nominal routes shared by lowering and emitter metadata readers.
+    foreign_pub_type_remappings: HashMap<String, HashMap<String, String>>,
     /// Whether to emit the Zen of Incan at the start of main (set by `import this`)
     emit_zen_in_main: bool,
     /// Functions imported from external Rust crates (name -> true for external)
     external_rust_functions: HashSet<String>,
-    /// Declared Rust crate names from `incan.toml [rust-dependencies]` (RFC 013 / RFC 023).
+    /// Declared Rust crate names from `loaf.toml [rust-dependencies]` (RFC 013 / RFC 023).
     ///
     /// When set, internal typechecking (used to obtain `TypeCheckInfo` for lowering) will validate `rust.module()`
     /// crate segments against this set.
@@ -565,9 +583,67 @@ pub struct IrCodegen<'a> {
     implementation_bound_requirements: Vec<CapturedImplementationBoundRequirement>,
     /// Authoritative checked-API path for a library root while collecting manifest metadata.
     metadata_root_module_path: Option<Vec<String>>,
+    /// Checked API supplied by the publication caller, joined only to the same emitted source module.
+    publication_api: Option<crate::frontend::api_metadata::CheckedApiMetadataPackage>,
+    /// Checked public identities from the same publication, before its containing digest exists.
+    publication_identities: crate::library_manifest::LibraryIdentityGraph,
+    publication_package_name: String,
+    /// Final crate-root emitted definitions, shared with source modules whose wrappers live at the root.
+    emitted_union_definitions: HashMap<String, IrType>,
+    /// Exact lowered nominal spellings from each module's accepted checker bindings.
+    native_union_origins: HashMap<Vec<String>, BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>>,
+    emitted_declaration_types: Vec<super::emit::native_unions::EmittedDeclarationTypes>,
+    native_unions: Vec<crate::library_manifest::NativeUnionExport>,
     /// Manifest/workspace root for rust-inspect-backed typechecking during IR generation.
     #[cfg(feature = "rust_inspect")]
     rust_inspect_manifest_dir: Option<PathBuf>,
+}
+
+/// Fold one module's capture of an emitted union wrapper into the record already held for that wrapper.
+///
+/// A wrapper is captured once per module that mentions it, and each capture only sees what that module can:
+/// `local_nominals` comes from the module's own checked declarations, so the module declaring the payload models
+/// contributes every leaf binding while a module that merely accepts the union in a signature contributes none.
+/// The bindings are therefore merged rather than compared — the published record has to name every leaf, not the
+/// subset whichever module happened to be emitted first could see.
+///
+/// What must agree across modules is the wrapper's representation: its owner, and the payload members in producer
+/// order, because consumers index the emitted `V0`, `V1`, ... variants by that order and may not recompute it. Two
+/// captures disagreeing there, or binding one leaf name to two canonical identities, is a genuine defect and stays
+/// an error — named precisely, so the next occurrence does not need an instrumented build to diagnose.
+fn merge_native_union_capture(
+    existing: &mut crate::library_manifest::NativeUnionExport,
+    captured: crate::library_manifest::NativeUnionExport,
+) -> Result<(), EmitError> {
+    if existing.owner != captured.owner {
+        return Err(EmitError::InternalInvariant(format!(
+            "emitted union {} was captured under two owners",
+            captured.rust_name
+        )));
+    }
+    if existing.members != captured.members {
+        return Err(EmitError::InternalInvariant(format!(
+            "emitted union {} was captured with two different payload orders",
+            captured.rust_name
+        )));
+    }
+    for (name, canonical) in captured.local_nominals {
+        match existing.local_nominals.entry(name) {
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                slot.insert(canonical);
+            }
+            std::collections::btree_map::Entry::Occupied(slot) => {
+                if slot.get() != &canonical {
+                    return Err(EmitError::InternalInvariant(format!(
+                        "emitted union {} binds {} to two canonical identities",
+                        captured.rust_name,
+                        slot.key()
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 impl<'a> IrCodegen<'a> {
@@ -583,6 +659,7 @@ impl<'a> IrCodegen<'a> {
             fixtures: HashMap::new(),
             rust_crates: HashSet::new(),
             provider_rust_bridge_roots: BTreeSet::new(),
+            foreign_pub_type_remappings: HashMap::new(),
             emit_zen_in_main: false,
             declared_crate_names: None,
             provider_plan: None,
@@ -600,6 +677,13 @@ impl<'a> IrCodegen<'a> {
             prechecked_dependency_type_info: HashMap::new(),
             implementation_bound_requirements: Vec::new(),
             metadata_root_module_path: None,
+            publication_api: None,
+            publication_identities: Default::default(),
+            publication_package_name: String::new(),
+            emitted_union_definitions: HashMap::new(),
+            native_union_origins: HashMap::new(),
+            emitted_declaration_types: Vec::new(),
+            native_unions: Vec::new(),
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir: None,
         }
@@ -629,6 +713,71 @@ impl<'a> IrCodegen<'a> {
                     .register_dependency_module_path_segments(name, canonicalize_source_module_segments(path_segments));
             }
         }
+    }
+
+    /// Supply the checked publication surface before generating the Rust whose representations it will describe.
+    pub(crate) fn set_publication_api(
+        &mut self,
+        api: Option<crate::frontend::api_metadata::CheckedApiMetadataPackage>,
+    ) {
+        self.publication_api = api;
+    }
+
+    /// Supply the exact public declaration identities used to bind producer-local native payloads.
+    pub(crate) fn set_publication_identities(
+        &mut self,
+        package_name: String,
+        identities: crate::library_manifest::LibraryIdentityGraph,
+    ) {
+        self.publication_identities = identities;
+        self.publication_package_name = package_name;
+    }
+
+    /// Capture module-scoped public representations after the emitter has finalized its native wrapper table.
+    fn capture_native_union_metadata(
+        &mut self,
+        emitter: &IrEmitter<'_>,
+        path: &[String],
+        program: &IrProgram,
+    ) -> Result<(), EmitError> {
+        self.emitted_union_definitions
+            .extend(emitter.emitted_native_union_types());
+        let Some(module) = self
+            .publication_api
+            .as_ref()
+            .and_then(|api| api.modules.iter().find(|module| module.module_path == path))
+        else {
+            return Ok(());
+        };
+        let origins = self.native_union_origins.get(path).cloned().unwrap_or_default();
+        let (declarations, definitions) = emitter.capture_native_union_metadata(
+            module,
+            program,
+            &self.emitted_union_definitions,
+            &origins,
+            &self.publication_package_name,
+            &self.publication_identities,
+        )?;
+        self.provider_rust_bridge_roots.extend(
+            declarations
+                .iter()
+                .flat_map(|declaration| declaration.bridge_roots.iter().cloned()),
+        );
+        self.emitted_declaration_types.extend(declarations);
+        for definition in definitions {
+            let Some(existing) = self
+                .native_unions
+                .iter_mut()
+                .find(|existing| existing.rust_name == definition.rust_name)
+            else {
+                self.native_unions.push(definition);
+                continue;
+            };
+            merge_native_union_capture(existing, definition)?;
+        }
+        self.native_unions
+            .sort_by(|left, right| left.rust_name.cmp(&right.rust_name));
+        Ok(())
     }
 
     /// Capture bound-bearing implementation headers from one inferred IR module.
@@ -858,7 +1007,8 @@ impl<'a> IrCodegen<'a> {
         emitter: &mut IrEmitter<'_>,
         metadata: &DependencySymbolMetadata,
         provider_plan: Option<&ProviderPlan>,
-    ) {
+        foreign_type_routes: &HashMap<String, HashMap<String, String>>,
+    ) -> Result<(), EmitError> {
         let stdlib_module_paths = provider_plan
             .map(ProviderPlan::active_std_module_paths)
             .unwrap_or_default()
@@ -897,13 +1047,22 @@ impl<'a> IrCodegen<'a> {
         }
         emitter.set_dependency_enum_types(enum_type_names);
         if let Some(plan) = provider_plan {
-            emitter.seed_public_dependency_nominal_metadata(plan.library_manifest_index());
+            emitter.seed_public_dependency_nominal_metadata(
+                plan.library_manifest_index(),
+                foreign_type_routes,
+                Some(plan),
+            )?;
             for provider in plan.active_sdk_records() {
                 if let Some(manifest) = provider.manifest.as_deref() {
-                    emitter.seed_sdk_provider_manifest_metadata(manifest);
+                    emitter.seed_sdk_provider_manifest_metadata(
+                        manifest,
+                        Some(plan),
+                        foreign_type_routes.get(&manifest.name),
+                    )?;
                 }
             }
         }
+        Ok(())
     }
 
     /// Configure source-import emission with the checked module graph for this generated crate.
@@ -1035,7 +1194,7 @@ impl<'a> IrCodegen<'a> {
         self.prechecked_dependency_type_info.get(path).cloned()
     }
 
-    /// Set declared Rust crate names from `incan.toml [rust-dependencies]`. (RFC 031)
+    /// Set declared Rust crate names from `loaf.toml [rust-dependencies]`. (RFC 031)
     ///
     /// This is used for validating `rust.module()` paths during the internal typechecking that precedes IR lowering.
     pub fn set_declared_crate_names(&mut self, names: HashSet<String>) {
@@ -1334,11 +1493,11 @@ impl<'a> IrCodegen<'a> {
         }
     }
 
-    /// Publish the checked crate roots required by public class-field Rust identities.
+    /// Publish the checked crate roots required by public API nominal types and class-field Rust identities.
     ///
     /// Consumer-generated declarations cannot name a transitive Cargo dependency directly. Library-mode crates expose
-    /// only roots selected from checked public class layouts, including compiled providers that own inherited fields.
-    /// Ordinary application builds remain unchanged.
+    /// only roots selected from checked public API types and class layouts, including providers that own inherited
+    /// fields. Ordinary application builds remain unchanged.
     fn attach_provider_rust_dependency_bridge(&self, main_code: String) -> String {
         if !self.preserve_dependency_public_items {
             return main_code;
@@ -1362,11 +1521,19 @@ impl<'a> IrCodegen<'a> {
         format!("{main_code}\n#[doc(hidden)]\npub mod __incan_provider_rust {{\n{reexports}\n}}\n")
     }
 
-    /// Accumulate the exact provider and Rust crate roots required by checked public class layouts.
+    /// Accumulate the exact provider and Rust crate roots required by checked public API types and class layouts.
     fn collect_provider_rust_bridge_roots(&mut self, type_info: &TypeCheckInfo) -> Result<(), GenerationError> {
+        for (library, routes) in &type_info.declarations.foreign_pub_type_remappings {
+            self.foreign_pub_type_remappings
+                .entry(library.clone())
+                .or_default()
+                .extend(routes.clone());
+        }
         if !self.preserve_dependency_public_items {
             return Ok(());
         }
+        self.provider_rust_bridge_roots
+            .extend(type_info.declarations.public_type_bridge_roots.iter().cloned());
         for layout in type_info
             .declarations
             .class_layouts
@@ -1457,6 +1624,9 @@ impl<'a> IrCodegen<'a> {
             code,
             IrGenerationMetadata {
                 implementation_bound_requirements: std::mem::take(&mut self.implementation_bound_requirements),
+                emitted_declaration_types: std::mem::take(&mut self.emitted_declaration_types),
+                native_unions: std::mem::take(&mut self.native_unions),
+                provider_plan: self.provider_plan.clone(),
             },
         ))
     }
@@ -1480,7 +1650,8 @@ impl<'a> IrCodegen<'a> {
         }
 
         // Use the IR pipeline: AST → IR → Rust
-        self.try_generate_via_ir(program, &HashSet::new())
+        let code = self.try_generate_via_ir(program, &HashSet::new())?;
+        Ok(self.attach_provider_rust_dependency_bridge(code))
     }
 
     /// Generate code via the IR pipeline (fallible version)
@@ -1646,7 +1817,9 @@ impl<'a> IrCodegen<'a> {
                 .map(source_module_path_segments)
                 .unwrap_or_default()
         });
-        self.capture_implementation_bound_requirements(root_module_path, &ir_program);
+        self.native_union_origins
+            .insert(root_module_path.clone(), lowering.native_publication_origins());
+        self.capture_implementation_bound_requirements(root_module_path.clone(), &ir_program);
         for (module_path, dependency_program) in &dependency_ir_programs {
             self.capture_implementation_bound_requirements(module_path.clone(), dependency_program);
         }
@@ -1672,12 +1845,23 @@ impl<'a> IrCodegen<'a> {
             // Configure inner emitter
             let inner = svc.inner_mut();
             self.apply_canonical_emission_context(inner);
+            inner.set_native_nominal_origins(
+                self.native_union_origins
+                    .get(&root_module_path)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
             inner.set_internal_module_roots(internal_module_roots.clone());
             Self::configure_source_import_paths(inner, ir_program.source_module_name.as_deref(), &source_module_paths);
             if self.emit_zen_in_main {
                 inner.set_emit_zen(true);
             }
-            Self::apply_dependency_symbol_metadata(inner, &dependency_symbol_metadata, self.provider_plan.as_deref());
+            Self::apply_dependency_symbol_metadata(
+                inner,
+                &dependency_symbol_metadata,
+                self.provider_plan.as_deref(),
+                &self.foreign_pub_type_remappings,
+            )?;
             inner.set_needs_serde(self.needs_serde);
             inner.set_external_rust_functions(self.external_rust_functions.clone());
             inner.set_strict_generated_lints(self.strict_generated_lints);
@@ -1696,10 +1880,18 @@ impl<'a> IrCodegen<'a> {
             for (_, dep_ir) in &compiled_stdlib_metadata_programs {
                 inner.seed_dependency_nominal_metadata_from_program(dep_ir);
             }
-            Ok(svc.emit_program(&ir_program)?)
+            let code = svc.emit_program(&ir_program)?;
+            self.capture_native_union_metadata(svc.inner_mut(), &root_module_path, &ir_program)?;
+            Ok(code)
         } else {
             let mut emitter = IrEmitter::new(&ir_program.function_registry);
             self.apply_canonical_emission_context(&mut emitter);
+            emitter.set_native_nominal_origins(
+                self.native_union_origins
+                    .get(&root_module_path)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
             emitter.set_internal_module_roots(internal_module_roots.clone());
             Self::configure_source_import_paths(
                 &mut emitter,
@@ -1713,7 +1905,8 @@ impl<'a> IrCodegen<'a> {
                 &mut emitter,
                 &dependency_symbol_metadata,
                 self.provider_plan.as_deref(),
-            );
+                &self.foreign_pub_type_remappings,
+            )?;
             emitter.set_needs_serde(self.needs_serde);
             emitter.set_external_rust_functions(self.external_rust_functions.clone());
             emitter.set_strict_generated_lints(self.strict_generated_lints);
@@ -1732,7 +1925,9 @@ impl<'a> IrCodegen<'a> {
             for (_, dep_ir) in &compiled_stdlib_metadata_programs {
                 emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
             }
-            Ok(emitter.emit_program(&ir_program)?)
+            let code = emitter.emit_program(&ir_program)?;
+            self.capture_native_union_metadata(&emitter, &root_module_path, &ir_program)?;
+            Ok(code)
         }
     }
 
@@ -2034,8 +2229,6 @@ impl<'a> IrCodegen<'a> {
                 direct_generated_path_support_items: Some(&mut dependency_reachable_items),
             },
         )?;
-        let main_code = self.attach_provider_rust_dependency_bridge(main_code);
-
         let source_module_paths = lowered_modules
             .iter()
             .map(|(_, module_path, _)| module_path.clone())
@@ -2061,7 +2254,8 @@ impl<'a> IrCodegen<'a> {
                     inner,
                     &dependency_symbol_metadata,
                     self.provider_plan.as_deref(),
-                );
+                    &self.foreign_pub_type_remappings,
+                )?;
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
@@ -2092,7 +2286,8 @@ impl<'a> IrCodegen<'a> {
                     &mut emitter,
                     &dependency_symbol_metadata,
                     self.provider_plan.as_deref(),
-                );
+                    &self.foreign_pub_type_remappings,
+                )?;
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
@@ -2112,7 +2307,7 @@ impl<'a> IrCodegen<'a> {
             modules.insert(name.clone(), module_code);
         }
 
-        Ok((main_code, modules))
+        Ok((self.attach_provider_rust_dependency_bridge(main_code), modules))
     }
 
     /// Generate Rust code for a multi-file project with nested module paths
@@ -2157,6 +2352,9 @@ impl<'a> IrCodegen<'a> {
             generated,
             IrGenerationMetadata {
                 implementation_bound_requirements: std::mem::take(&mut self.implementation_bound_requirements),
+                emitted_declaration_types: std::mem::take(&mut self.emitted_declaration_types),
+                native_unions: std::mem::take(&mut self.native_unions),
+                provider_plan: self.provider_plan.clone(),
             },
         ))
     }
@@ -2258,6 +2456,8 @@ impl<'a> IrCodegen<'a> {
                 lowering.seed_dependency_trait_decls(&dependency_modules)?;
                 lowering.seed_struct_field_aliases(global_aliases.clone());
                 let mut ir = lowering.lower_program(ast)?;
+                self.native_union_origins
+                    .insert(path.clone(), lowering.native_publication_origins());
                 // Do not auto-add serde derives to dependency modules.
                 // Global serde usage in the main module must not mutate unrelated dependency
                 // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
@@ -2330,8 +2530,6 @@ impl<'a> IrCodegen<'a> {
                 direct_generated_path_support_items: Some(&mut dependency_reachable_items),
             },
         )?;
-        let main_code = self.attach_provider_rust_dependency_bridge(main_code);
-
         let source_module_paths = lowered_modules
             .iter()
             .map(|(module_path, _)| module_path.clone())
@@ -2349,6 +2547,7 @@ impl<'a> IrCodegen<'a> {
                 let mut svc = EmitService::new_from_program(ir);
                 let inner = svc.inner_mut();
                 self.apply_canonical_emission_context(inner);
+                inner.set_native_nominal_origins(self.native_union_origins.get(path).cloned().unwrap_or_default());
                 inner.set_internal_module_roots(internal_roots.clone());
                 Self::configure_source_import_paths(inner, ir.source_module_name.as_deref(), &source_module_paths);
                 inner.set_preserve_public_items(preserve_public_items);
@@ -2357,7 +2556,8 @@ impl<'a> IrCodegen<'a> {
                     inner,
                     &dependency_symbol_metadata,
                     self.provider_plan.as_deref(),
-                );
+                    &self.foreign_pub_type_remappings,
+                )?;
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
@@ -2372,10 +2572,13 @@ impl<'a> IrCodegen<'a> {
                 for (_, dep_ir) in &compiled_stdlib_metadata_programs {
                     inner.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
-                svc.emit_program(ir)?
+                let code = svc.emit_program(ir)?;
+                self.capture_native_union_metadata(svc.inner_mut(), path, ir)?;
+                code
             } else {
                 let mut emitter = IrEmitter::new(&ir.function_registry);
                 self.apply_canonical_emission_context(&mut emitter);
+                emitter.set_native_nominal_origins(self.native_union_origins.get(path).cloned().unwrap_or_default());
                 emitter.set_internal_module_roots(internal_roots.clone());
                 Self::configure_source_import_paths(
                     &mut emitter,
@@ -2388,7 +2591,8 @@ impl<'a> IrCodegen<'a> {
                     &mut emitter,
                     &dependency_symbol_metadata,
                     self.provider_plan.as_deref(),
-                );
+                    &self.foreign_pub_type_remappings,
+                )?;
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
@@ -2403,12 +2607,14 @@ impl<'a> IrCodegen<'a> {
                 for (_, dep_ir) in &compiled_stdlib_metadata_programs {
                     emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
-                emitter.emit_program(ir)?
+                let code = emitter.emit_program(ir)?;
+                self.capture_native_union_metadata(&emitter, path, ir)?;
+                code
             };
             modules.insert(path.clone(), module_code);
         }
 
-        Ok((main_code, modules))
+        Ok((self.attach_provider_rust_dependency_bridge(main_code), modules))
     }
 }
 
@@ -2624,6 +2830,7 @@ model PrivateStream[R] with Walk:
         unknown_requirement.target_visibility = CapturedImplementationTargetVisibility::Unknown;
         let unknown_metadata = IrGenerationMetadata {
             implementation_bound_requirements: vec![unknown_requirement],
+            ..IrGenerationMetadata::default()
         };
         let mut unknown_manifest = LibraryManifest::new("unknown_impl", "0.1.0");
         let Err(error) = unknown_metadata.apply_to_library_manifest(&mut unknown_manifest) else {
@@ -2644,6 +2851,7 @@ model PrivateStream[R] with Walk:
                 scale: 4,
             })),
             TypeRef::Applied {
+                origin: None,
                 name: "decimal".to_string(),
                 args: vec![
                     TypeRef::TypeParam { name: "18".to_string() },
@@ -2907,6 +3115,54 @@ pub root = math.sqrt
         assert!(code.contains("pub use crate::__incan_std::math as math;"), "{code}");
         let sqrt = projected_name(&code, "sqrt", SemanticSourceTargetKind::Function);
         assert!(code.contains(&format!("pub use math::{sqrt} as root;")), "{code}");
+    }
+
+    #[test]
+    fn std_prelude_module_import_does_not_reimport_sdk_facade_root() {
+        let code = generate_with_sdk_provider_modules(
+            "import std.prelude\n\ndef main() -> None:\n  pass\n",
+            vec![vec!["prelude".to_string()]],
+        );
+        assert!(!compact_rust(&code).contains("usecrate::__incan_std;"), "{code}");
+    }
+
+    #[test]
+    fn aliased_std_prelude_module_import_retains_requested_binding() {
+        let code = generate_with_sdk_provider_modules(
+            "import std.prelude as foundation\n\ndef main() -> None:\n  pass\n",
+            vec![vec!["prelude".to_string()]],
+        );
+        assert!(
+            compact_rust(&code).contains("pubusecrate::__incan_stdasfoundation;"),
+            "{code}"
+        );
+    }
+
+    #[test]
+    fn std_root_module_import_uses_sdk_facade() {
+        for (import, binding) in [("math", "math"), ("math as arithmetic", "arithmetic")] {
+            let source = format!(
+                "from std import {import}\n\npub def root(value: float) -> float:\n  return {binding}.sqrt(value)\n"
+            );
+            let code = generate_with_sdk_provider_modules(&source, vec![vec!["math".to_string()]]);
+            let compact = compact_rust(&code);
+            let expected = if binding == "math" {
+                "usecrate::__incan_std::math;".to_string()
+            } else {
+                format!("usecrate::__incan_std::mathas{binding};")
+            };
+            assert!(compact.contains(&expected), "{code}");
+            assert!(!compact.contains("usestd::math"), "{code}");
+        }
+    }
+
+    #[test]
+    fn rust_std_root_module_import_keeps_rust_namespace() {
+        let code =
+            generate("from rust::std import cmp\n\npub def maximum(a: int, b: int) -> int:\n  return cmp.max(a, b)\n");
+        let compact = compact_rust(&code);
+        assert!(compact.contains("use::std::cmp;"), "{code}");
+        assert!(!compact.contains("crate::__incan_std::"), "{code}");
     }
 
     #[test]
@@ -4151,6 +4407,7 @@ def main() -> None:
             params: vec![ParamExport {
                 name: "name".to_string(),
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
                 kind: ParamKindExport::Normal,
@@ -4158,6 +4415,7 @@ def main() -> None:
                 default: None,
             }],
             return_type: TypeRef::Named {
+                origin: None,
                 name: "Widget".to_string(),
             },
             is_async: false,
@@ -4165,6 +4423,7 @@ def main() -> None:
         manifest.exports.consts.push(ConstExport {
             name: "DEFAULT_NAME".to_string(),
             ty: TypeRef::Named {
+                origin: None,
                 name: "str".to_string(),
             },
         });
@@ -4175,6 +4434,33 @@ def main() -> None:
                 metadata: LibraryArtifactMetadata::from_crate_root("widgets", "widgets_core", artifact_root),
             },
         )]))
+    }
+
+    #[test]
+    fn canonical_module_item_import_keeps_function_projection_for_both_spellings()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let helper = parse_program("pub def value() -> int:\n  return 42\n");
+        for (import, binding) in [
+            ("import helper::value", "value"),
+            ("import helper::value as answer", "answer"),
+            ("from helper import value", "value"),
+            ("from helper import value as answer", "answer"),
+        ] {
+            let main = parse_program(&format!(
+                "{import}\n\ndef main() -> None:\n  assert {binding}() == 42\n"
+            ));
+            let mut codegen = IrCodegen::new();
+            codegen.add_module("helper", &helper);
+            let (main_code, modules) = codegen.try_generate_multi_file(&main, &["helper"])?;
+            let helper_code = modules.get("helper").ok_or("missing helper output")?;
+            let projection = projected_name(helper_code, "value", SemanticSourceTargetKind::Function);
+            assert!(
+                main_code.contains(&format!("use crate::helper::{projection}")),
+                "{import}: {main_code}"
+            );
+            assert!(main_code.contains(&format!("{projection}()")), "{import}: {main_code}");
+        }
+        Ok(())
     }
 
     fn generate_nested_store_code(store_source: &str) -> String {
@@ -5369,6 +5655,7 @@ pub def forward(value: Thing) -> None:
                     definition_path: Some("demo::takes_ref".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Function(RustFunctionSig {
+                        receiver_contract: None,
                         type_params: Vec::new(),
                         params: vec![RustParam {
                             name: Some("value".to_string()),
@@ -5511,6 +5798,7 @@ pub def retain(file: File) -> File:
                     definition_path: Some("demo::flock".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Function(RustFunctionSig {
+                        receiver_contract: None,
                         type_params: Vec::new(),
                         params: vec![RustParam {
                             name: Some("fd".to_string()),
@@ -5708,6 +5996,7 @@ pub def build_pair() -> None:
                         methods: vec![RustMethodSig {
                             name: "new".to_string(),
                             signature: RustFunctionSig {
+                                receiver_contract: None,
                                 type_params: Vec::new(),
                                 params: vec![
                                     RustParam {
@@ -5901,6 +6190,7 @@ pub def clear() -> ClearColor:
                         methods: vec![RustMethodSig {
                             name: "srgb".to_string(),
                             signature: RustFunctionSig {
+                                receiver_contract: None,
                                 type_params: Vec::new(),
                                 params: vec![
                                     RustParam {
@@ -5997,6 +6287,7 @@ pub def retain(mut commands: List[Commands]) -> None:
                         methods: vec![RustMethodSig {
                             name: "spawn_empty".to_string(),
                             signature: RustFunctionSig {
+                                receiver_contract: None,
                                 type_params: Vec::new(),
                                 params: vec![RustParam {
                                     name: Some("self".to_string()),
@@ -6972,6 +7263,7 @@ pub def translate(time: f32, velocity: f32) -> f32:
                     definition_path: Some("demo::accept_f32".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Function(RustFunctionSig {
+                        receiver_contract: None,
                         type_params: Vec::new(),
                         params: vec![RustParam {
                             name: Some("value".to_string()),
@@ -7182,6 +7474,7 @@ pub def forward(payload: Payload) -> int:
                             RustMethodSig {
                                 name: "new".to_string(),
                                 signature: RustFunctionSig {
+                                    receiver_contract: None,
                                     type_params: Vec::new(),
                                     params: Vec::new(),
                                     return_type: "demo::Builder".to_string(),
@@ -7192,6 +7485,7 @@ pub def forward(payload: Payload) -> int:
                             RustMethodSig {
                                 name: "json".to_string(),
                                 signature: RustFunctionSig {
+                                    receiver_contract: None,
                                     type_params: Vec::new(),
                                     params: vec![RustParam {
                                         name: Some("value".to_string()),
@@ -7364,6 +7658,7 @@ pub async def run(state: State, plan: Plan) -> None:
                     definition_path: Some("demo::consume".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Function(RustFunctionSig {
+                        receiver_contract: None,
                         type_params: Vec::new(),
                         params: vec![
                             RustParam {
@@ -7454,6 +7749,7 @@ pub async def register_csv() -> None:
                             RustMethodSig {
                                 name: "new".to_string(),
                                 signature: RustFunctionSig {
+                                    receiver_contract: None,
                                     type_params: Vec::new(),
                                     params: Vec::new(),
                                     return_type: "demo::SessionContext".to_string(),
@@ -7464,6 +7760,7 @@ pub async def register_csv() -> None:
                             RustMethodSig {
                                 name: "register_csv".to_string(),
                                 signature: RustFunctionSig {
+                                    receiver_contract: None,
                                     type_params: Vec::new(),
                                     params: vec![
                                         RustParam {
@@ -7514,6 +7811,7 @@ pub async def register_csv() -> None:
                         methods: vec![RustMethodSig {
                             name: "new".to_string(),
                             signature: RustFunctionSig {
+                                receiver_contract: None,
                                 type_params: Vec::new(),
                                 params: Vec::new(),
                                 return_type: "demo::CsvReadOptions".to_string(),
@@ -7536,6 +7834,7 @@ pub async def register_csv() -> None:
                     definition_path: Some("demo::make_context".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Function(RustFunctionSig {
+                        receiver_contract: None,
                         type_params: Vec::new(),
                         params: Vec::new(),
                         return_type: "demo::SessionContext".to_string(),
@@ -7553,6 +7852,7 @@ pub async def register_csv() -> None:
                     definition_path: Some("demo::make_options".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Function(RustFunctionSig {
+                        receiver_contract: None,
                         type_params: Vec::new(),
                         params: Vec::new(),
                         return_type: "demo::CsvReadOptions".to_string(),
@@ -7977,5 +8277,132 @@ def read() -> None:
             code.contains("for WrappedPort"),
             "expected checked composed-newtype bridge in generated module:\n{code}"
         );
+    }
+    /// Exercise real TOML receiver facts under the library test root's declared registry-source authority.
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn toml_traversal_uses_extracted_receiver_contracts() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+from rust::toml_edit import Item
+
+def traverse(item: Item, keys: list[str]) -> Item:
+    mut current = item
+    for key in keys:
+        match current.get(key):
+            Some(child) => current = child
+            None => return Item.None
+    return current.clone()
+
+pub def observe(item: Item) -> Item:
+    return traverse(item, ["project", "count"])
+"#;
+        let tokens =
+            crate::frontend::lexer::lex(source).map_err(|errors| std::io::Error::other(format!("lex: {errors:?}")))?;
+        let ast = crate::frontend::parser::parse(&tokens)
+            .map_err(|errors| std::io::Error::other(format!("parse: {errors:?}")))?;
+        let mut checker = crate::frontend::typechecker::TypeChecker::new();
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        checker.set_rust_inspect_manifest_dir(manifest_dir);
+        checker
+            .check_program(&ast)
+            .map_err(|errors| std::io::Error::other(format!("check: {errors:?}")))?;
+        let ir = crate::backend::ir::AstLowering::new_with_type_info(checker.type_info().clone())
+            .lower_program(&ast)
+            .map_err(|error| std::io::Error::other(format!("lower: {error:?}")))?;
+        let generated = crate::backend::ir::IrEmitter::new(&ir.function_registry).emit_program(&ir)?;
+        assert!(
+            generated.contains("item: &Item"),
+            "contracts: {:?}\n{generated}",
+            checker.type_info().rust.receiver_contracts
+        );
+        assert!(!generated.contains("child.clone()"), "{generated}");
+        Ok(())
+    }
+
+    /// Build one producer-local nominal binding for the union-capture merge tests.
+    fn nominal_binding(name: &str, module: &str) -> crate::library_manifest::CanonicalIdentityExport {
+        crate::library_manifest::CanonicalIdentityExport {
+            namespace: crate::library_manifest::CanonicalIdentityNamespaceExport::OrdinaryLexical,
+            origin: crate::library_manifest::CanonicalIdentityOriginExport::Package {
+                library: "provider".to_string(),
+                module_path: vec![module.to_string()],
+            },
+            declaration_name: name.to_string(),
+            kind: "model".to_string(),
+            declaration_span: crate::library_manifest::CanonicalIdentitySpanExport { start: 0, end: 1 },
+        }
+    }
+
+    /// Build one capture of the same emitted wrapper as seen from a single module.
+    fn union_capture(members: &[&str], nominals: &[(&str, &str)]) -> crate::library_manifest::NativeUnionExport {
+        crate::library_manifest::NativeUnionExport {
+            owner: crate::library_manifest::NativeUnionOwnerExport::ContainingArtifact,
+            rust_name: "__IncanUnionTest".to_string(),
+            members: members
+                .iter()
+                .map(|name| crate::library_manifest::TypeRef::Named {
+                    name: (*name).to_string(),
+                    origin: None,
+                })
+                .collect(),
+            local_nominals: nominals
+                .iter()
+                .map(|(name, module)| ((*name).to_string(), nominal_binding(name, module)))
+                .collect(),
+            checked_projection: None,
+        }
+    }
+
+    #[test]
+    fn a_wrapper_captured_from_two_modules_keeps_every_module_s_nominal_bindings()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // The module declaring the payload models sees every leaf; a module that only accepts the union in a
+        // signature sees none. Both are honest partial views of one wrapper, so the merge has to keep the union.
+        let mut declaring = union_capture(&["Left", "Right"], &[("Left", "shapes"), ("Right", "shapes")]);
+        let accepting = union_capture(&["Left", "Right"], &[]);
+        merge_native_union_capture(&mut declaring, accepting)?;
+        assert_eq!(
+            declaring.local_nominals.keys().cloned().collect::<Vec<_>>(),
+            vec!["Left".to_string(), "Right".to_string()]
+        );
+
+        let mut accepting = union_capture(&["Left", "Right"], &[]);
+        let declaring = union_capture(&["Left", "Right"], &[("Left", "shapes"), ("Right", "shapes")]);
+        merge_native_union_capture(&mut accepting, declaring)?;
+        assert_eq!(
+            accepting.local_nominals.keys().cloned().collect::<Vec<_>>(),
+            vec!["Left".to_string(), "Right".to_string()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_wrapper_captured_with_two_payload_orders_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+        // Consumers index the emitted `V0`, `V1`, ... variants by producer order, so disagreement here is a defect
+        // rather than a partial view, and must not be merged away.
+        let mut first = union_capture(&["Left", "Right"], &[]);
+        let reordered = union_capture(&["Right", "Left"], &[]);
+        let Err(error) = merge_native_union_capture(&mut first, reordered) else {
+            return Err("a reordered payload list must not merge".into());
+        };
+        assert!(
+            format!("{error:?}").contains("two different payload orders"),
+            "the refusal must name the payload order: {error:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_leaf_bound_to_two_canonical_identities_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+        let mut first = union_capture(&["Left"], &[("Left", "shapes")]);
+        let conflicting = union_capture(&["Left"], &[("Left", "other_module")]);
+        let Err(error) = merge_native_union_capture(&mut first, conflicting) else {
+            return Err("one leaf name bound to two identities must not merge".into());
+        };
+        assert!(
+            format!("{error:?}").contains("two canonical identities"),
+            "the refusal must name the conflicting binding: {error:?}"
+        );
+        Ok(())
     }
 }

@@ -12,7 +12,9 @@ use incan_core::interop::RustItemMetadata;
 use incan_vocab::{CargoDependency, CargoDependencySource, KeywordActivation, KeywordRegistration, KeywordSpec};
 use serde::Deserialize;
 
-const LIBRARY_ARTIFACT_DIR: &str = "target/lib";
+use crate::library_manifest::published_layout::{
+    LIBRARY_ARTIFACT_DIRECTORY as LIBRARY_ARTIFACT_DIR, LIBRARY_MANIFEST_EXTENSION,
+};
 const LIBRARY_CRATE_LIB_RS: &str = "src/lib.rs";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -597,7 +599,7 @@ fn dependency_crate_root(dependency_root: &Path) -> PathBuf {
 
 /// Return the project root that owns a generated library artifact root, inverting [`dependency_crate_root`].
 ///
-/// A caller-owned `pub::` provider's own project root (where its `incan.toml` and `.incan/oven/` receipts live) is
+/// A caller-owned `pub::` provider's own project root (where its `loaf.toml` and `.incan/oven/` receipts live) is
 /// not carried anywhere on [`LibraryArtifactMetadata`] -- only its generated `crate_root` is. Re-materializing that
 /// provider's compiled libraries into a different consumer needs the provider's own project root to locate its
 /// receipts and resolve its own registry-leaf authority, so this strips the fixed `target/lib` suffix
@@ -617,6 +619,11 @@ pub(crate) fn dependency_project_root(crate_root: &Path) -> Option<PathBuf> {
     (trailing == suffix).then_some(root)
 }
 
+/// Locate the one `.incnlib` manifest a dependency's published artifact root holds.
+///
+/// The manifest named after the dependency key wins outright; otherwise the root must hold exactly one manifest,
+/// and none or several is a load failure that names the root, so a consumer never guesses between two packages
+/// published into one directory.
 fn resolve_manifest_path(crate_root: &Path, dependency_key: &str) -> Result<PathBuf, LibraryManifestLoadFailure> {
     if !crate_root.is_dir() {
         return Err(LibraryManifestLoadFailure {
@@ -626,7 +633,7 @@ fn resolve_manifest_path(crate_root: &Path, dependency_key: &str) -> Result<Path
         });
     }
 
-    let expected = crate_root.join(format!("{dependency_key}.incnlib"));
+    let expected = crate_root.join(format!("{dependency_key}.{LIBRARY_MANIFEST_EXTENSION}"));
     if expected.is_file() {
         return Ok(expected);
     }
@@ -644,7 +651,7 @@ fn resolve_manifest_path(crate_root: &Path, dependency_key: &str) -> Result<Path
             message: format!("failed to inspect `{}`: {error}", crate_root.display()),
         })?;
         let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "incnlib") {
+        if path.extension().is_some_and(|ext| ext == LIBRARY_MANIFEST_EXTENSION) {
             candidates.push(path);
         }
     }
@@ -917,7 +924,7 @@ mod tests {
     #[test]
     fn loads_dependency_manifest_into_index() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let consumer_manifest_path = tmp.path().join("loaf.toml");
         let dep_root = tmp.path().join("deps").join("mylib");
         let dep_artifact_root = dep_root.join("target").join("lib");
         let dep_manifest_path = dep_artifact_root.join("mylib.incnlib");
@@ -984,7 +991,7 @@ mylib = { path = "deps/mylib" }
     #[test]
     fn records_failed_entry_for_missing_dependency_manifest() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let consumer_manifest_path = tmp.path().join("loaf.toml");
         let dep_root = tmp.path().join("deps").join("missinglib");
         std::fs::create_dir_all(&dep_root)?;
 
@@ -1017,7 +1024,7 @@ missinglib = { path = "deps/missinglib" }
     #[test]
     fn supports_dependency_key_alias_to_manifest_name() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let consumer_manifest_path = tmp.path().join("loaf.toml");
         let dep_root = tmp.path().join("deps").join("widgets-lib");
         let dep_artifact_root = dep_root.join("target").join("lib");
         std::fs::create_dir_all(dep_artifact_root.join("src"))?;
@@ -1060,7 +1067,7 @@ widgets = { path = "deps/widgets-lib" }
     #[test]
     fn records_failure_for_manifest_and_cargo_name_mismatch() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let consumer_manifest_path = tmp.path().join("loaf.toml");
         let dep_root = tmp.path().join("deps").join("broken");
         let dep_artifact_root = dep_root.join("target").join("lib");
         std::fs::create_dir_all(dep_artifact_root.join("src"))?;
@@ -1098,7 +1105,7 @@ widgets = { path = "deps/broken" }
     #[test]
     fn exposes_imported_vocab_registrations_from_manifest_payload() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let consumer_manifest_path = tmp.path().join("loaf.toml");
         let dep_root = tmp.path().join("deps").join("widgets-lib");
         let dep_artifact_root = dep_root.join("target").join("lib");
         std::fs::create_dir_all(dep_artifact_root.join("src"))?;
@@ -1172,7 +1179,7 @@ widgets = { path = "deps/widgets-lib" }
     fn characterization_records_failure_for_missing_packaged_vocab_desugarer_artifact()
     -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let consumer_manifest_path = tmp.path().join("loaf.toml");
         let dep_root = tmp.path().join("deps").join("routes-lib");
         let dep_artifact_root = dep_root.join("target").join("lib");
         std::fs::create_dir_all(dep_artifact_root.join("src"))?;
@@ -1230,7 +1237,7 @@ routes = { path = "deps/routes-lib" }
     #[test]
     fn merges_provider_required_dependencies_and_stdlib_features() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let consumer_manifest_path = tmp.path().join("loaf.toml");
         let dep_a_root = tmp.path().join("deps").join("widgets-lib");
         let dep_a_artifact_root = dep_a_root.join("target").join("lib");
         let dep_b_root = tmp.path().join("deps").join("analytics-lib");
@@ -1306,7 +1313,7 @@ analytics = { path = "deps/analytics-lib" }
     #[test]
     fn reports_provider_dependency_conflict() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let consumer_manifest_path = tmp.path().join("loaf.toml");
         let dep_a_root = tmp.path().join("deps").join("widgets-lib");
         let dep_a_artifact_root = dep_a_root.join("target").join("lib");
         let dep_b_root = tmp.path().join("deps").join("analytics-lib");

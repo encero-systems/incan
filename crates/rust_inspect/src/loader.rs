@@ -43,6 +43,118 @@ pub struct RustWorkspace {
 /// tree or in Cargo's cache.
 static OVEN_PROJECT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+/// The standard-library crates a sysroot source tree carries, as the candidate paths below `library/` and the
+/// dependency edges rust-analyzer itself stitches when Cargo is not consulted. Declaring them as a
+/// `sysroot_project` gives rust-analyzer the same graph its own fallback would build, without the `cargo metadata`
+/// it tries first. A crate with more than one candidate path moved between releases (`std_detect` left the
+/// vendored `stdarch` tree for `library/std_detect`); the first candidate present wins.
+const SYSROOT_LIBRARY_CRATES: &[(&str, &[&str], &[&str])] = &[
+    ("core", &["core"], &[]),
+    ("alloc", &["alloc"], &["core"]),
+    ("unwind", &["unwind"], &[]),
+    ("panic_abort", &["panic_abort"], &[]),
+    ("panic_unwind", &["panic_unwind"], &[]),
+    ("profiler_builtins", &["profiler_builtins"], &[]),
+    ("std_detect", &["std_detect", "stdarch/crates/std_detect"], &[]),
+    ("backtrace", &["backtrace"], &[]),
+    ("test", &["test"], &[]),
+    (
+        "std",
+        &["std"],
+        &[
+            "alloc",
+            "panic_unwind",
+            "panic_abort",
+            "core",
+            "profiler_builtins",
+            "unwind",
+            "std_detect",
+            "test",
+        ],
+    ),
+    ("proc_macro", &["proc_macro"], &["std", "core"]),
+];
+
+/// The edition a library crate is compiled under when its `Cargo.toml` does not say.
+///
+/// The toolchain the installer provisions ships its library crates at this edition; a `RUSTC` override to an older
+/// toolchain declares its own in each crate manifest, which `sysroot_project_graph` reads first.
+const SYSROOT_LIBRARY_DEFAULT_EDITION: &str = "2024";
+
+/// Read the `edition = "..."` a sysroot library crate's `Cargo.toml` declares, if the manifest is present and says.
+///
+/// The `rust-src` component ships each crate's manifest beside its sources, so this is a one-line scan rather than
+/// a TOML parse: the field is a plain string at the top level of every library crate manifest.
+fn sysroot_crate_edition(crate_root: &Path) -> Option<String> {
+    let manifest = fs::read_to_string(crate_root.join("Cargo.toml")).ok()?;
+    manifest.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        (key.trim() == "edition").then(|| value.trim().trim_matches('"').to_string())
+    })
+}
+
+/// Describe the sysroot's library crates as a `rust-project.json` graph rooted at `sysroot_src`.
+///
+/// Only crates whose `src/lib.rs` exists in this toolchain are listed, and a dependency on an absent crate is
+/// dropped, so a toolchain that ships fewer library crates still yields a graph rust-analyzer accepts. Each
+/// crate's edition comes from its own manifest when the `rust-src` component carries one, and from
+/// [`SYSROOT_LIBRARY_DEFAULT_EDITION`] otherwise.
+fn sysroot_project_graph(sysroot_src: &Path) -> serde_json::Value {
+    let present = SYSROOT_LIBRARY_CRATES
+        .iter()
+        .filter_map(|(name, candidates, deps)| {
+            candidates
+                .iter()
+                .find(|relative| sysroot_src.join(relative).join("src/lib.rs").is_file())
+                .map(|relative| (*name, *relative, *deps))
+        })
+        .collect::<Vec<_>>();
+    let index_of = |name: &str| present.iter().position(|(candidate, _, _)| *candidate == name);
+    let crates = present
+        .iter()
+        .map(|(name, relative, deps)| {
+            let deps = deps
+                .iter()
+                .filter_map(|dep| index_of(dep).map(|index| serde_json::json!({ "crate": index, "name": dep })))
+                .collect::<Vec<_>>();
+            let edition = sysroot_crate_edition(&sysroot_src.join(relative))
+                .unwrap_or_else(|| SYSROOT_LIBRARY_DEFAULT_EDITION.to_string());
+            serde_json::json!({
+                "display_name": name,
+                "root_module": format!("{relative}/src/lib.rs"),
+                "edition": edition,
+                "deps": deps,
+                "is_workspace_member": false,
+                "is_proc_macro": false,
+                "cfg": [],
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({ "crates": crates })
+}
+
+/// Resolve the active toolchain's sysroot, for declaring it in a build-system-neutral project graph.
+///
+/// A `rust-project.json` graph contains exactly the crates it lists. Unlike the Cargo loader, nothing discovers
+/// the sysroot for it, so omitting these fields leaves `std`, `core` and `alloc` absent and every `rust::std::…`
+/// or `rust::core::…` lookup fails with `CrateNotFound`. That failure is then persisted as a negative cache
+/// entry, so one unanswerable query poisons the item for the life of the workspace. See #1530.
+fn active_sysroot() -> Option<PathBuf> {
+    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let output = std::process::Command::new(rustc)
+        .args(["--print", "sysroot"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let sysroot = std::str::from_utf8(&output.stdout).ok()?.trim();
+    if sysroot.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(sysroot))
+}
+
 /// Resolve the proc-macro server installed beside the active Rust compiler.
 fn active_proc_macro_server() -> ProcMacroServerChoice {
     let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
@@ -363,6 +475,22 @@ struct OvenDependencyDeclaration {
     path: Option<PathBuf>,
     version: Option<String>,
     features: Vec<String>,
+    /// Whether the declaration came from a `[target.'cfg(...)'.dependencies]` table rather than `[dependencies]`.
+    target_conditional: bool,
+    /// Whether the declaration is `optional = true`, so a feature selection decides if the edge exists at all.
+    optional: bool,
+}
+
+impl OvenDependencyDeclaration {
+    /// Whether this edge must appear in the sealed source authority for the authority to be considered complete.
+    ///
+    /// The lockfile is platform- and feature-independent: it retains every edge any resolve could take. The sealed
+    /// authority is the opposite — it records the one closure the bake actually resolved for one target and feature
+    /// selection. So a target-conditional or optional edge is legitimately absent, and demanding a source for it
+    /// fails the whole workspace load over a dependency this build never had.
+    fn requires_sealed_source(&self) -> bool {
+        !self.target_conditional && !self.optional
+    }
 }
 
 /// A package entry from the already-resolved lockfile for a direct Oven project.
@@ -544,6 +672,7 @@ impl RustWorkspace {
             fn collect(
                 table: Option<&toml::Value>,
                 manifest_dir: &Path,
+                target_conditional: bool,
                 dependencies: &mut Vec<OvenDependencyDeclaration>,
             ) {
                 let Some(table) = table.and_then(toml::Value::as_table) else {
@@ -566,6 +695,10 @@ impl RustWorkspace {
                             .and_then(toml::Value::as_str)
                             .map(str::to_string)
                     });
+                    let optional = declaration
+                        .get("optional")
+                        .and_then(toml::Value::as_bool)
+                        .unwrap_or(false);
                     let mut features = declaration
                         .get("features")
                         .and_then(toml::Value::as_array)
@@ -589,6 +722,8 @@ impl RustWorkspace {
                         path,
                         version,
                         features,
+                        target_conditional,
+                        optional,
                     });
                 }
             }
@@ -596,20 +731,38 @@ impl RustWorkspace {
             let mut dependencies = Vec::new();
             // Direct inspection needs the runtime crate graph. Dev-only and build-script dependencies are neither
             // linked into the sealed Loaf nor available through this no-Cargo projection.
-            collect(manifest.get("dependencies"), manifest_dir, &mut dependencies);
+            collect(manifest.get("dependencies"), manifest_dir, false, &mut dependencies);
+            // Every `[target.'cfg(...)']` table is collected because this projection does not evaluate cfg
+            // predicates; the sealed source authority already encodes which of those edges the bake resolved for
+            // the target being inspected. They are marked conditional so an edge this target does not have is
+            // skipped rather than demanded.
             if let Some(targets) = manifest.get("target").and_then(toml::Value::as_table) {
                 for target in targets.values() {
-                    collect(target.get("dependencies"), manifest_dir, &mut dependencies);
+                    collect(target.get("dependencies"), manifest_dir, true, &mut dependencies);
                 }
             }
+            // The conditionality flags sort last and `false` sorts first, so a package declared both unconditionally
+            // and under a cfg or a feature keeps its unconditional record. Collapsing that the other way round would
+            // let a genuinely required source go missing without a refusal.
             dependencies.sort_by(|left, right| {
-                (&left.name, &left.package, &left.path, &left.version, &left.features).cmp(&(
-                    &right.name,
-                    &right.package,
-                    &right.path,
-                    &right.version,
-                    &right.features,
-                ))
+                (
+                    &left.name,
+                    &left.package,
+                    &left.path,
+                    &left.version,
+                    &left.features,
+                    left.target_conditional,
+                    left.optional,
+                )
+                    .cmp(&(
+                        &right.name,
+                        &right.package,
+                        &right.path,
+                        &right.version,
+                        &right.features,
+                        right.target_conditional,
+                        right.optional,
+                    ))
             });
             dependencies.dedup_by(|left, right| {
                 left.name == right.name
@@ -766,9 +919,13 @@ impl RustWorkspace {
         }
 
         /// Locate the source with the same package, registry, checksum, and version as one locked package.
+        ///
+        /// `required` comes from [`OvenDependencyDeclaration::requires_sealed_source`] and decides whether a locked
+        /// edge with no sealed source is a refusal or a skip.
         fn registry_source(
             authority: &OvenInspectionSourceAuthority,
             package: &OvenLockedPackage,
+            required: bool,
         ) -> Result<Option<(PathBuf, Vec<String>)>, RustMetadataError> {
             let Some(registry) = package
                 .source
@@ -794,6 +951,16 @@ impl RustWorkspace {
                     && source.checksum == checksum
             });
             let Some(source) = matches.next() else {
+                if !required || !authority.sources.iter().any(|source| source.package == package.name) {
+                    // Either the edge is conditional, or the authority names no version of this package at all. The
+                    // second case is how an unlinked crate looks from here: a proc-macro or build-script package is
+                    // in the lock and in a crate's `[dependencies]`, but it is never part of the target closure the
+                    // authority sealed, and this projection has no manifest to recognize it by. Refusing would fail
+                    // every query against the workspace over a crate the direct-rustc graph does not link.
+                    return Ok(None);
+                }
+                // The authority does know this package, at some other version or checksum. That is a stale or
+                // tampered authority rather than an unlinked crate, and it stays a refusal.
                 return Err(RustMetadataError::LoadWorkspace {
                     path: PathBuf::from(OVEN_DIRECT_INSPECTION_AUTHORITY_FILE),
                     message: format!(
@@ -959,7 +1126,9 @@ impl RustWorkspace {
                             is_local_path: true,
                             features: declaration.features.clone(),
                         });
-                    } else if let Some((source_dir, features)) = registry_source(authority, dependency)? {
+                    } else if let Some((source_dir, features)) =
+                        registry_source(authority, dependency, declaration.requires_sealed_source())?
+                    {
                         dependencies.push(OvenProjectDependency {
                             name: declaration.name.clone(),
                             source_dir,
@@ -1122,10 +1291,21 @@ impl RustWorkspace {
                 })
             })
             .collect::<Vec<_>>();
-        serde_json::to_vec(&serde_json::json!({
-            "crates": crates,
-        }))
-        .map_err(|error| RustMetadataError::LoadWorkspace {
+        // Declare the sysroot so `std`, `core` and `alloc` are in the graph. Their absence is not a property of
+        // this project: a `rust-project.json` contains exactly what it lists, and nothing discovers them for it.
+        // The sysroot's own graph is declared too: given only `sysroot_src`, rust-analyzer runs `cargo metadata`
+        // on the library workspace to learn it, which is a Cargo invocation inside a normal command; given a
+        // `sysroot_project` it reads the graph as written and asks nothing.
+        let mut graph = serde_json::json!({ "crates": crates });
+        if let Some(sysroot) = active_sysroot() {
+            let sysroot_src = sysroot.join("lib/rustlib/src/rust/library");
+            graph["sysroot"] = serde_json::json!(sysroot.to_string_lossy());
+            if sysroot_src.is_dir() {
+                graph["sysroot_src"] = serde_json::json!(sysroot_src.to_string_lossy());
+                graph["sysroot_project"] = sysroot_project_graph(&sysroot_src);
+            }
+        }
+        serde_json::to_vec(&graph).map_err(|error| RustMetadataError::LoadWorkspace {
             path: manifest_dir.to_path_buf(),
             message: format!("failed to encode direct Oven rust-project graph: {error}"),
         })
@@ -1298,11 +1478,70 @@ mod tests {
 
     use super::{
         OVEN_DIRECT_INSPECTION_MARKER, OvenInspectionRegistrySource, RustWorkspace, digest_oven_source_tree,
-        proc_macro_server_candidates, write_oven_inspection_source_authority,
+        proc_macro_server_candidates, sysroot_project_graph, write_oven_inspection_source_authority,
         write_sealed_oven_inspection_source_authority,
     };
 
     use tempfile::tempdir;
+
+    /// The sysroot graph lists only the library crates this toolchain ships, drops edges to absent ones, indexes
+    /// each dependency by its position in the filtered list, and reads a crate's edition from its own manifest
+    /// (#1530).
+    #[test]
+    fn sysroot_project_graph_describes_only_the_crates_the_toolchain_ships() -> Result<(), Box<dyn std::error::Error>> {
+        let sysroot = tempdir()?;
+        for relative in ["core", "alloc", "std", "stdarch/crates/std_detect"] {
+            fs::create_dir_all(sysroot.path().join(relative).join("src"))?;
+            fs::write(sysroot.path().join(relative).join("src/lib.rs"), "")?;
+        }
+        fs::write(
+            sysroot.path().join("core/Cargo.toml"),
+            "[package]\nname = \"core\"\nedition = \"2021\"\n",
+        )?;
+
+        let graph = sysroot_project_graph(sysroot.path());
+        let crates = graph["crates"].as_array().ok_or("crates must be an array")?;
+        let names = crates
+            .iter()
+            .map(|entry| entry["display_name"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            ["core", "alloc", "std_detect", "std"],
+            "absent crates are not listed, and a crate is found at its older path"
+        );
+        assert_eq!(crates[2]["root_module"], "stdarch/crates/std_detect/src/lib.rs");
+
+        let deps_of = |name: &str| -> Vec<(u64, String)> {
+            crates
+                .iter()
+                .find(|entry| entry["display_name"] == name)
+                .and_then(|entry| entry["deps"].as_array())
+                .map(|deps| {
+                    deps.iter()
+                        .map(|dep| (dep["crate"].as_u64().unwrap_or_default(), dep["name"].to_string()))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        assert_eq!(deps_of("alloc"), [(0, "\"core\"".to_string())]);
+        assert_eq!(
+            deps_of("std"),
+            [
+                (1, "\"alloc\"".to_string()),
+                (0, "\"core\"".to_string()),
+                (2, "\"std_detect\"".to_string())
+            ],
+            "edges to absent crates are dropped and the rest index the filtered list"
+        );
+        assert_eq!(crates[0]["edition"], "2021", "a crate manifest's edition wins");
+        assert_eq!(
+            crates[1]["edition"], "2024",
+            "a crate without a manifest gets the shipped default"
+        );
+        assert!(crates.iter().all(|entry| entry["is_workspace_member"] == false));
+        Ok(())
+    }
 
     #[test]
     fn proc_macro_server_candidates_preserve_windows_executable_suffix() {
@@ -1613,6 +1852,140 @@ mod tests {
             "the root and its one directly authorized registry source must be present"
         );
         assert_eq!(crates[1]["display_name"], "direct");
+        Ok(())
+    }
+
+    /// Build a workspace whose lock names one registry package the sealed authority never carries.
+    ///
+    /// The three unsealed spellings — a `[target.'cfg(...)']` edge, an `optional` edge, and an edge whose package
+    /// the authority does not name at any version — are the three ways Cargo's platform- and feature-independent
+    /// lock can hold a dependency that one target's resolved closure does not.
+    fn oven_workspace_with_unsealed_dependency(
+        workspace: &std::path::Path,
+        sealed_root: &std::path::Path,
+        root_dependency_table: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        fs::create_dir_all(workspace.join("src"))?;
+        fs::write(
+            workspace.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"root\"\nversion = \"0.1.0\"\n\n[dependencies]\nsealed = \"1\"\n{root_dependency_table}"
+            ),
+        )?;
+        fs::write(workspace.join("src/main.rs"), "fn main() {}\n")?;
+        fs::write(
+            workspace.join("Cargo.lock"),
+            "version = 4\n\n[[package]]\nname = \"root\"\nversion = \"0.1.0\"\ndependencies = [\"sealed\", \"unsealed\"]\n\n[[package]]\nname = \"sealed\"\nversion = \"1.0.0\"\nsource = \"registry+https://example.invalid/index\"\nchecksum = \"sealed-checksum\"\n\n[[package]]\nname = \"unsealed\"\nversion = \"1.0.0\"\nsource = \"registry+https://example.invalid/index\"\nchecksum = \"unsealed-checksum\"\n",
+        )?;
+        fs::create_dir_all(sealed_root.join("src"))?;
+        fs::write(
+            sealed_root.join("Cargo.toml"),
+            "[package]\nname = \"sealed\"\nversion = \"1.0.0\"\n",
+        )?;
+        fs::write(sealed_root.join("src/lib.rs"), "pub fn sealed() {}\n")?;
+        let source_digest = digest_oven_source_tree(sealed_root)?;
+        write_oven_inspection_source_authority(
+            workspace,
+            vec![OvenInspectionRegistrySource {
+                package: "sealed".to_string(),
+                version: "1.0.0".to_string(),
+                registry: "registry+https://example.invalid/index".to_string(),
+                checksum: "sealed-checksum".to_string(),
+                features: Vec::new(),
+                source_root: sealed_root.to_path_buf(),
+                source_digest,
+            }],
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn direct_oven_project_skips_locked_edges_outside_the_sealed_target_closure()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for root_dependency_table in [
+            // Target-conditional: the predicate admits some platforms, and the authority sealed one of them.
+            "\n[target.'cfg(target_arch = \"x86_64\")'.dependencies]\nunsealed = \"1\"\n",
+            // Optional: a feature selection decides whether the edge exists, and this one did not take it.
+            "\n[dependencies.unsealed]\nversion = \"1\"\noptional = true\n",
+            // Unlinked: a proc-macro or build-script package is in the lock and in `[dependencies]`, but never in
+            // the target closure, and the authority names no version of it.
+            "\n[dependencies.unsealed]\nversion = \"1\"\n",
+        ] {
+            let workspace = tempdir()?;
+            let sealed = tempdir()?;
+            oven_workspace_with_unsealed_dependency(workspace.path(), sealed.path(), root_dependency_table)?;
+            let payload = RustWorkspace::oven_project_json_payload(workspace.path())
+                .map_err(|error| format!("`{root_dependency_table}` must load: {error}"))?;
+            let graph: serde_json::Value = serde_json::from_slice(&payload)?;
+            let crates = graph["crates"].as_array().ok_or("direct Oven graph omitted crates")?;
+            let names = crates
+                .iter()
+                .map(|entry| entry["display_name"].as_str().unwrap_or_default().to_string())
+                .collect::<Vec<_>>();
+            assert!(
+                names.iter().any(|name| name == "sealed"),
+                "`{root_dependency_table}` must keep the sealed edge, got {names:?}"
+            );
+            assert!(
+                !names.iter().any(|name| name == "unsealed"),
+                "`{root_dependency_table}` must not invent an unsealed crate, got {names:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn direct_oven_project_refuses_a_locked_edge_the_authority_knows_at_another_version()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempdir()?;
+        let sealed = tempdir()?;
+        let stale = tempdir()?;
+        oven_workspace_with_unsealed_dependency(
+            workspace.path(),
+            sealed.path(),
+            "\n[dependencies.unsealed]\nversion = \"1\"\n",
+        )?;
+        // Seal `unsealed` at a version the lock does not name. An authority that knows the package but disagrees on
+        // its identity is stale or tampered with, not an unlinked crate, so it must still be refused.
+        fs::create_dir_all(stale.path().join("src"))?;
+        fs::write(
+            stale.path().join("Cargo.toml"),
+            "[package]\nname = \"unsealed\"\nversion = \"0.9.0\"\n",
+        )?;
+        fs::write(stale.path().join("src/lib.rs"), "pub fn unsealed() {}\n")?;
+        let sealed_digest = digest_oven_source_tree(sealed.path())?;
+        let stale_digest = digest_oven_source_tree(stale.path())?;
+        write_oven_inspection_source_authority(
+            workspace.path(),
+            vec![
+                OvenInspectionRegistrySource {
+                    package: "sealed".to_string(),
+                    version: "1.0.0".to_string(),
+                    registry: "registry+https://example.invalid/index".to_string(),
+                    checksum: "sealed-checksum".to_string(),
+                    features: Vec::new(),
+                    source_root: sealed.path().to_path_buf(),
+                    source_digest: sealed_digest,
+                },
+                OvenInspectionRegistrySource {
+                    package: "unsealed".to_string(),
+                    version: "0.9.0".to_string(),
+                    registry: "registry+https://example.invalid/index".to_string(),
+                    checksum: "stale-checksum".to_string(),
+                    features: Vec::new(),
+                    source_root: stale.path().to_path_buf(),
+                    source_digest: stale_digest,
+                },
+            ],
+        )?;
+        let error = match RustWorkspace::oven_project_json_payload(workspace.path()) {
+            Ok(_) => return Err("an authority that knows the package at another version must refuse".into()),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("no sealed Oven source matches"),
+            "unexpected refusal: {error}"
+        );
         Ok(())
     }
 

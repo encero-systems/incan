@@ -1,7 +1,7 @@
 [sdk]
 id = "incan"
-version = "0.6.0-dev.3"
-compiler-requirement = ">=0.6.0-dev.3,<0.7.0"
+version = "0.6.0-dev.4"
+compiler-requirement = ">=0.6.0-dev.4,<0.7.0"
 
 [profiles]
 minimal = ["stdlib-core", "stdlib-interop"]
@@ -59,7 +59,7 @@ namespace-roots = ["compression"]
 [components.stdlib-data]
 project = "components/stdlib-data"
 dependencies = ["stdlib-core", "stdlib-system"]
-namespace-roots = ["collections", "graph", "hash", "json", "math", "uuid", "datetime", "regex", "serde"]
+namespace-roots = ["collections", "graph", "hash", "json", "toml", "math", "uuid", "datetime", "regex", "serde"]
 
 [components.stdlib-async]
 project = "components/stdlib-async"

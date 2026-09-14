@@ -1,0 +1,3 @@
+"""Public quotation facade backed by the shared catalog package."""
+
+pub from quotation import Quotation, quote

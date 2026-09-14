@@ -1,0 +1,130 @@
+"""Local intake contracts; these do not establish a selected Rust compilation plan."""
+
+from intake import parse_intent, parse_document, intake
+from manifest_errors import IntakeErrorKind
+from std.fs import Path
+from std.testing import fail
+
+
+pub def test_formatting_changes_evidence_not_effective_requests() -> None:
+    """Compare complete normalized intent while proving distinct source bytes have distinct evidence digests."""
+    first = b"[project]\x0aname = 'app'\x0aversion = '0.1.0'\x0a[rust-dependencies]\x0aregex = '1'\x0a"
+    second = b"# source provenance changed\x0a[project]\x0aversion='0.1.0'\x0aname='app'\x0a[rust-dependencies]\x0aregex='1'\x0a"
+    match parse_document(first, "one/loaf.toml"):
+        Err(error) => fail(error.message())
+        Ok(left) =>
+            match parse_document(second, "two/loaf.toml"):
+                Err(error) => fail(error.message())
+                Ok(right) =>
+                    assert left.intent == right.intent
+                    assert left.evidence.raw_bytes != right.evidence.raw_bytes
+                    assert left.evidence.sha256_digest != right.evidence.sha256_digest
+
+
+pub def test_rust_requirements_preserve_features_and_package_alias() -> None:
+    """Retain Rust alias, package, version, feature flags and explicit target policy as unresolved intent."""
+    source = "[project]\nname='app'\nversion='0.1.0'\n[build]\ntarget='wasm32-wasip1'\nprofile='release'\nrust-edition='2024'\n[rust-dependencies]\nsearch={package='regex', version='1', features=['unicode', 'std', 'std'], default-features=false, optional=true}\n"
+    match parse_intent(source, "loaf.toml"):
+        Err(error) => fail(error.message())
+        Ok(project) =>
+            assert project.target == Some("wasm32-wasip1")
+            assert project.profile == Some("release")
+            assert project.rust_edition == Some("2024")
+            request = project.rust_inputs[0]
+            assert request.alias == "search"
+            assert request.package == "regex"
+            assert request.version == "1"
+            assert request.features == ["std", "unicode"]
+            assert not request.default_features
+            assert request.optional
+
+
+pub def test_unsupported_intent_is_not_dropped() -> None:
+    """Refuse unimplemented top-level and project intent instead of producing a partial request."""
+    for extra in ["[workspace]\nmembers=[]\n", "[project.features]\ndefault=[]\n", "[interop.c]\n", "[rust.source]\nroot='rust'\n"]:
+        source = "[project]\nname='app'\nversion='0.1.0'\n" + extra
+        match parse_intent(source, "loaf.toml"):
+            Ok(_) => fail("unsupported intent was accepted")
+            Err(error) =>
+                assert error.kind == IntakeErrorKind.Unsupported
+
+
+pub def test_dependency_options_are_not_silently_ignored() -> None:
+    """Name the exact unsupported local dependency feature field."""
+    source = "[project]\nname='app'\nversion='0.1.0'\n[dependencies]\nstock={path='../catalog', features=['extra']}\n"
+    match parse_intent(source, "loaf.toml"):
+        Ok(_) => fail("unimplemented local feature selection was accepted")
+        Err(error) =>
+            assert error.kind == IntakeErrorKind.Unsupported
+            assert error.field == ["dependencies", "stock", "features"]
+
+
+pub def test_workbench_aliases_and_unselected_rust_request() -> None:
+    """Run from workspaces/oven so the committed three-project workbench is the input."""
+    match intake(Path("../../workbench/app")):
+        Err(error) => fail(error.message())
+        Ok(packet) =>
+            assert len(packet.projects) == 3
+            assert len(packet.edges) == 3
+            mut aliases: list[str] = []
+            mut catalog_roots: list[str] = []
+            for edge in packet.edges:
+                aliases.append(edge.alias)
+                if edge.alias == "stock" or edge.alias == "catalog":
+                    catalog_roots.append(edge.dependency_root)
+            assert sorted(aliases) == ["catalog", "pricing", "stock"]
+            assert catalog_roots[0] == catalog_roots[1]
+            assert len(packet.dependency_order) == 3
+            assert packet.dependency_order[0] == catalog_roots[0]
+            assert packet.projects[0].intent.rust_inputs[0].alias == "regex"
+            assert packet.projects[0].intent.rust_inputs[0].version == "1"
+            assert packet.projects[0].intent.scripts["main"] == "src/main.incn"
+
+
+pub def test_cycle_refuses() -> None:
+    """Reject a two-project dependency cycle before returning topology."""
+    match intake(Path("tests/fixtures/cycle/a")):
+        Ok(_) => fail("cyclic local package graph was accepted")
+        Err(error) =>
+            assert error.kind == IntakeErrorKind.Cycle
+
+
+pub def test_conventional_library_cannot_be_a_script() -> None:
+    """Reject a script that selects the conventional library source."""
+    match intake(Path("tests/fixtures/collision")):
+        Ok(_) => fail("script-library collision was accepted")
+        Err(error) =>
+            assert error.kind == IntakeErrorKind.Invalid
+            assert error.field == ["project", "scripts", "main"]
+
+
+pub def test_missing_root_refuses() -> None:
+    """Return a structured missing-input refusal for a nonexistent project."""
+    match intake(Path("tests/fixtures/absent-project")):
+        Ok(_) => fail("missing local project was accepted")
+        Err(error) =>
+            assert error.kind == IntakeErrorKind.Missing
+
+
+pub def test_literal_alias_diagnostic_retains_segments_and_location() -> None:
+    """Keep a dotted alias literal and locate its unsupported inline value in the original TOML."""
+    source = "[project]\nname='app'\nversion='0.1.0'\n[dependencies]\n'foo.bar'={path='../catalog', unsupported=true}\n"
+    match parse_intent(source, "loaf.toml"):
+        Ok(_) => fail("unknown literal-alias intent was accepted")
+        Err(error) =>
+            assert error.field == ["dependencies", "foo.bar", "unsupported"]
+            match error.location:
+                None => fail("existing unsupported value must retain its source location")
+                Some(location) =>
+                    assert location.line == 5
+                    assert location.column > 1
+
+
+pub def test_absent_build_options_stay_absent() -> None:
+    """Preserve omitted build options without inventing target, profile or edition defaults."""
+    match parse_intent("[project]\nname='app'\nversion='0.1.0'\n", "loaf.toml"):
+        Err(error) => fail(error.message())
+        Ok(project) =>
+            assert project.target == None
+            assert project.profile == None
+            assert project.rust_edition == None

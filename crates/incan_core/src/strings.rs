@@ -305,20 +305,6 @@ pub fn str_join<S: AsRef<str>>(sep: &str, items: &[S]) -> String {
     items.iter().map(AsRef::as_ref).collect::<Vec<_>>().join(sep)
 }
 
-/// Escape `{` and `}` in f-string literal parts for safe interpolation.
-///
-/// ## Parameters
-/// - `s`: Literal segment to escape.
-///
-/// ## Returns
-/// - `String`: `s` with braces escaped as `{{` and `}}`.
-///
-/// ## Notes
-/// - Preserves literal braces when lowering Incan f-strings.
-pub fn escape_format_literal(s: &str) -> String {
-    s.replace('{', "{{").replace('}', "}}")
-}
-
 /// Compose an f-string from literal parts and already-formatted arguments.
 ///
 /// ## Parameters

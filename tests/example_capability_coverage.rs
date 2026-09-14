@@ -96,14 +96,16 @@ const SOURCE_SHAPED_BASELINE: usize = 56;
 /// `session` facade added to `examples/advanced/library_package`, covering Incan libraries: a root facade
 /// re-exporting a module that the consumer then imports through `pub::`.
 ///
-/// Three source-shaped capabilities remain undemonstrated, each for a stated reason rather than for want of an
+/// Moved 53 -> 54 by `examples/advanced/package_features`, a three-member workspace in which `reporting` carries a
+/// feature-selecting dependency edge to `json_support` and the consumer selects `reporting`'s `json` feature. It
+/// could not be committed earlier because a provider carrying such an edge could not be baked inside its workspace
+/// (#1414).
+///
+/// Two source-shaped capabilities remain undemonstrated, each for a stated reason rather than for want of an
 /// example. `ToolchainInstallerManifest` publishes only shell install commands, which no example file can contain
-/// honestly. `CompiledProvidersSdkComponentsPackageFeatures` needs a feature-selecting dependency edge, and a
-/// provider carrying one could not be baked: the provider's own workspace bake then demands a published package Loaf
-/// for itself before it is able to produce one. `RustAllow` acknowledges an unavoidable generated-Rust warning, and
-/// no program in the corpus currently emits one; a file existing only to carry the decorator would be the
-/// conformance dump this suite is meant to avoid.
-const COVERED_BASELINE: usize = 53;
+/// honestly. `RustAllow` acknowledges an unavoidable generated-Rust warning, and no program in the corpus currently
+/// emits one; a file existing only to carry the decorator would be the conformance dump this suite is meant to avoid.
+const COVERED_BASELINE: usize = 54;
 
 /// One capability entry read from the v0.5 catalogue.
 struct Capability {

@@ -1,0 +1,7 @@
+"""Issue #1493: an empty list literal takes its element type from the other operand."""
+
+pub def probe(features: list[str]) -> bool:
+  return features == []
+
+def main() -> None:
+  pass

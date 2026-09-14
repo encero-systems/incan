@@ -1037,8 +1037,26 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
         }
 
         ConversionContext::Assignment => {
-            // Assignments and let bindings need conversion for string literals
+            // A reference target is a borrowed sink, including when the source is an owned field. Resolve it before
+            // owned materialization rules so an explicit reference annotation cannot accidentally clone its source.
             match (&expr.kind, target_ty) {
+                // Opaque Rust payloads already have a native representation that the frontend has not recovered.
+                // Preserve that shape rather than inventing a second borrow of a pattern-bound reference.
+                (_, Some(IrType::Ref(_) | IrType::RefMut(_))) if matches!(expr.ty, IrType::Unknown) => Conversion::None,
+                (_, Some(IrType::Ref(_))) => {
+                    if expr_has_rust_reference_shape(expr) {
+                        Conversion::None
+                    } else {
+                        Conversion::Borrow
+                    }
+                }
+                (_, Some(IrType::RefMut(_))) => {
+                    if expr_has_rust_reference_shape(expr) {
+                        Conversion::None
+                    } else {
+                        Conversion::MutBorrow
+                    }
+                }
                 // String literal assigned to String variable → .to_string()
                 (IrExprKind::String(_), Some(target_ty)) if is_owned_string_target(target_ty) => Conversion::ToString,
                 (IrExprKind::StaticRead { .. }, Some(target_ty))
@@ -2156,6 +2174,35 @@ mod tests {
     }
 
     // === Assignment Tests ===
+
+    #[test]
+    fn reference_assignment_targets_take_precedence_over_owned_field_materialization() {
+        let item_ty = IrType::Struct("Node".to_string());
+        let field = IrExpr::new(
+            IrExprKind::Field {
+                object: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "self".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("Holder".to_string()),
+                )),
+                field: "item".to_string(),
+            },
+            item_ty.clone(),
+        );
+        for (target, expected) in [
+            (IrType::Ref(Box::new(item_ty.clone())), Conversion::Borrow),
+            (IrType::RefMut(Box::new(item_ty.clone())), Conversion::MutBorrow),
+            (item_ty, Conversion::Clone),
+        ] {
+            assert_eq!(
+                determine_conversion(&field, Some(&target), ConversionContext::Assignment),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn test_assignment_string_literal_to_string() {

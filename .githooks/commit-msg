@@ -1,0 +1,39 @@
+#!/bin/sh
+# Reject AI-attribution trailers and generation footers.
+#
+# Published history is authored by its committer. Tool attribution belongs
+# nowhere in this repository's commit messages, and several agent harnesses
+# inject it by default, so the rule is enforced here rather than remembered.
+
+if grep -qiE '^[[:space:]]*Co-Authored-By:[[:space:]]*(Claude|Anthropic|GPT|Copilot|Codex|Cursor|Devin)' "$1"; then
+    echo "commit-msg: refusing an AI co-author trailer." >&2
+    grep -inE '^[[:space:]]*Co-Authored-By:[[:space:]]*(Claude|Anthropic|GPT|Copilot|Codex|Cursor|Devin)' "$1" | sed 's/^/    /' >&2
+    echo "  Remove the trailer and commit again." >&2
+    exit 1
+fi
+
+if grep -qiE '(Generated with .*(Claude|Codex|Copilot|Cursor)|^[[:space:]]*🤖)' "$1"; then
+    echo "commit-msg: refusing an AI generation footer." >&2
+    echo "  Remove it and commit again." >&2
+    exit 1
+fi
+
+if grep -qiE '^[[:space:]]*(Claude|Codex|Copilot|Cursor|Devin)-Session:' "$1"; then
+    echo "commit-msg: refusing an AI session trailer." >&2
+    grep -inE '^[[:space:]]*(Claude|Codex|Copilot|Cursor|Devin)-Session:' "$1" | sed 's/^/    /' >&2
+    echo "  Remove the trailer and commit again." >&2
+    exit 1
+fi
+
+# The identity a commit is recorded under is attribution too. A session whose git identity is a tool's name or a
+# vendor no-reply address produces commits that name the tool as their author, which no trailer check sees; refuse
+# them here, where git has already resolved the identity.
+for ident in "$(git var GIT_AUTHOR_IDENT)" "$(git var GIT_COMMITTER_IDENT)"; do
+    if printf '%s\n' "$ident" | grep -qiE '^(Claude|Anthropic|GPT|Copilot|Codex|Cursor|Devin)\b|@anthropic\.com>|@openai\.com>'; then
+        echo "commit-msg: refusing a tool git identity: $ident" >&2
+        echo "  Set user.name and user.email to the committer's own identity and commit again." >&2
+        exit 1
+    fi
+done
+
+exit 0

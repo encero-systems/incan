@@ -411,7 +411,7 @@ fn stdlib_source_dir_from_root(root: &Path) -> Option<PathBuf> {
 
 /// Return whether `path` is the Incan built-in stdlib source root itself.
 fn is_builtin_stdlib_source_dir(path: &Path) -> bool {
-    path.is_dir() && path.join("incan.toml").is_file() && path.join("prelude.incn").is_file()
+    path.is_dir() && path.join("loaf.toml").is_file() && path.join("prelude.incn").is_file()
 }
 
 /// Append `exe_path`'s directory, parent, and grandparent to `bases`.
@@ -504,7 +504,7 @@ mod tests {
         let current_stdlib = tmp.path().join("checked-out-stdlib");
         fs::create_dir_all(&current_stdlib)?;
         fs::write(
-            current_stdlib.join("incan.toml"),
+            current_stdlib.join("loaf.toml"),
             "[project]\nname = \"incan_builtin_stdlib\"\n",
         )?;
         fs::write(current_stdlib.join("prelude.incn"), "")?;

@@ -26,15 +26,15 @@ Commands:
 - `fmt` - Format Incan source files
 - `test` - Run tests (pytest-style)
 - `new` - Create a new Incan project directory
-- `init` - Add a starter `incan.toml` and project skeleton to an existing directory
-- `version` - Update the project version in `incan.toml`
+- `init` - Add a starter `loaf.toml` and project skeleton to an existing directory
+- `version` - Update the project version in `loaf.toml`
 - `env` - List, inspect, or run configured project environments
-- `lock` - Generate or update `incan.lock`
+- `lock` - Generate or update `oven.lock`
 - `tools` - Inspect local toolchain, editor integration state, and checked metadata
 
 ## Semantic inspection surfaces
 
-Incan 0.5 extends the machine-readable inspection surfaces introduced in 0.4. Use `incan check --format json` for the stable diagnostic plane, `incan build --report json` for successful build and artifact metadata (including the `backend` field described below), `incan inspect backend-selection --format json` for a persisted backend-selection execution receipt, `incan inspect rust --format json` for current generated Rust output, `incan inspect codegraph --format jsonl` for source-structure graph facts, `incan inspect providers --format json` for SDK component and provider participation, `incan inspect features --format json` for the additive package-feature graph, `incan inspect bindings --format json` for checked C declaration facts, `incan inspect bindings --format receipt` for redacted checked binding use, and `incan inspect interop-plan --format json` for one locked Oven interop platform handoff.
+The machine-readable inspection surfaces introduced in 0.4 have grown with each release since. Use `incan check --format json` for the stable diagnostic plane, `incan build --report json` for successful build and artifact metadata (including the `backend` field described below), `incan inspect backend-selection --format json` for a persisted backend-selection execution receipt, `incan inspect rust --format json` for current generated Rust output, `incan inspect codegraph --format jsonl` for source-structure graph facts, `incan inspect providers --format json` for SDK component and provider participation, `incan inspect features --format json` for the additive package-feature graph, `incan inspect bindings --format json` for checked C declaration facts, `incan inspect bindings --format receipt` for redacted checked binding use, `incan inspect interop-plan --format json` for one locked Oven interop platform handoff, and `incan inspect representation --format json` for a published package's executable-representation version and declaration coverage.
 
 These commands are intentionally not a single full semantic database. They are stable public surfaces that tools can join without scraping terminal prose, generated Rust, or source text independently. When a fact appears in more than one surface, consumers should prefer compiler-owned identity fields, source paths, schema versions, and explicit degraded-state or diagnostic records over human output.
 
@@ -103,7 +103,7 @@ Options:
 - `--format text|json`: Output human diagnostics or a stable machine-readable JSON report (default: `text`).
 - `--features`, `--no-default-features`, `--all-features`: Select the root package-feature projection.
 - `--sdk-profile <PROFILE>`: Select a non-persistent SDK profile for this check.
-- `--interop-target <TRIPLE>`: Verify checked C declarations against one exact target declared by `[oven.interop]`. This does not cross-compile generated Rust or package an application.
+- `--interop-target <TRIPLE>`: Verify checked C declarations against one exact target declared by `[interop.c]`. This does not cross-compile generated Rust or package an application.
 - `--workspace`: Check every selected workspace member.
 - `--member <NAME_OR_PATH>`: Check one or more selected workspace members.
 
@@ -166,15 +166,14 @@ Behavior:
 - Prints the generated Rust project path (default example): `target/incan/<name>/`
 - Builds the generated Rust project with a receipt-selected, store-owned direct-`rustc` closure and prints the binary path. Generated source and the published final binary stay under the default project `target/incan/` tree, or under the positional caller-selected `OUTPUT_DIR`.
 - `--lib` builds a project library from `src/lib.incn`, emits its checked `.incnlib` manifest, and publishes
-  caller-owned debug and release `rlib` outputs through the receipt-selected direct-`rustc` plan. It never restores a
-  Cargo backend.
+  caller-owned debug and release `rlib` outputs through the receipt-selected direct-`rustc` plan. The build also publishes the [package executable representation](package_executable_representation.md) for its covered public declarations. It never restores a Cargo backend.
 
 Dependency flags:
 
 - `--features`, `--no-default-features`, `--all-features`: Select public Incan package features for this build.
 - `--sdk-profile <PROFILE>`: Select a non-persistent SDK profile for this build.
 - `--release`: Explicitly request the release profile. This is the default for `incan build`. Compiler-selected integer `abs` and builtin `sum` remain checked in every profile; the flag does not select different language semantics.
-- `--backend <legacy|replacement>`: Declare the compiler backend for this build (#986). Defaults to `legacy`, declared explicitly even when the flag is omitted. `replacement` builds one session-owned analysis for the selected entry and package-feature projection, then directly executes the admitted zero-argument `main` Body-IR profile and its permitted same-module calls. Its bounded profile also admits compiler-selected global `enumerate(list)` and `zip(list, list)` over recursively structural checked list items: enumeration is zero-based, and Zip preserves written left/right order until its shorter list ends. Compiler-selected `len` over admitted source-local hashed sets and dictionaries returns their distinct entry/key count, including typed-empty constructors; this does not admit iteration or other aggregate operations. Compiler-selected `bool` observes only represented booleans, integers, strings, lists, sets, and dictionaries as zero/empty or nonzero/nonempty; float, tuple, bytes/frozen, Option/Result, generator, nominal, and custom truthiness remain refusals. Compiler-selected `sorted` returns a fresh ascending list only for nonempty represented integer lists; empty or non-integer lists and custom ordering remain refusals. Exact signed/unsigned widths, `f32`/`f64`, and checked decimals retain their carrier through literals, locals, lossless widening, same-module calls, entry arguments/results, Display output, receipts, and reports. Public direct/shadow exact `f32`/`f64` carriers are finite-only; ordinary `float` parsing retains its existing separately compared NaN/infinity behavior. Arithmetic on these exact carriers, their unary and resize operations, Debug formatting, aggregates, matching, and decimal scalar casts still refuse before effects under #988. Compiler-owned `isinstance(value, Target)`, including explicit `std.builtins.isinstance(...)`, consumes retained checked value and target types plus the target span. The bounded target set is `int`, `bool`, `str`, and ordinary binary `float`, and the checked value must be one of those scalars or a union made only from them. Unsupported value or target shapes refuse before effects under the broader #988 replacement-execution owner, a same-named source function keeps its own identity, and this is not general runtime reflection or type-value support. A same-name declaration or import does not borrow builtin provenance, and this is not general iterator support. Package and public imports, unsupported aggregate shapes, and other source outside that bounded #988 profile still refuse visibly. Compiler-resolved `let`/`mut` shadowing and reassignment execute through the exact retained local identity; the executor never infers scope from a repeated spelling. It does not create generated Rust or an Oven plan. See [Backend selection & execution receipts](../explanation/backend_selection_receipts.md).
+- `--backend <legacy|replacement>`: Declare the compiler backend for this build (#986). Defaults to `legacy`, declared explicitly even when the flag is omitted. `replacement` builds one session-owned analysis for the selected entry and package-feature projection, then directly executes the admitted zero-argument `main` Body-IR profile and its permitted local-module and published-package calls. Its bounded profile also admits compiler-selected global `enumerate(list)` and `zip(list, list)` over recursively structural checked list items: enumeration is zero-based, and Zip preserves written left/right order until its shorter list ends. Compiler-selected `len` over admitted source-local hashed sets and dictionaries returns their distinct entry/key count, including typed-empty constructors; this does not admit iteration or other aggregate operations. Compiler-selected `bool` observes only represented booleans, integers, strings, lists, sets, and dictionaries as zero/empty or nonzero/nonempty; float, tuple, bytes/frozen, Option/Result, generator, nominal, and custom truthiness remain refusals. Compiler-selected `sorted` returns a fresh ascending list only for nonempty represented integer lists; empty or non-integer lists and custom ordering remain refusals. Exact signed/unsigned widths, `f32`/`f64`, and checked decimals retain their carrier through literals, locals, lossless widening, same-module calls, entry arguments/results, Display output, receipts, and reports. Public direct/shadow exact `f32`/`f64` carriers are finite-only; ordinary `float` parsing retains its existing separately compared NaN/infinity behavior. Arithmetic on these exact carriers, their unary and resize operations, Debug formatting, aggregates, matching, and decimal scalar casts still refuse before effects under #988. Compiler-owned `isinstance(value, Target)`, including explicit `std.builtins.isinstance(...)`, consumes retained checked value and target types plus the target span. The bounded target set is `int`, `bool`, `str`, and ordinary binary `float`, and the checked value must be one of those scalars or a union made only from them. Unsupported value or target shapes refuse before effects under the broader #988 replacement-execution owner, a same-named source function keeps its own identity, and this is not general runtime reflection or type-value support. A same-name declaration or import does not borrow builtin provenance, and this is not general iterator support. Package and public imports require the selected dependency's [published executable coverage](package_executable_representation.md#coverage-and-identity). Missing coverage, unsupported aggregate shapes and other source outside the admitted execution profile refuse visibly. Compiler-resolved `let`/`mut` shadowing and reassignment execute through the exact retained local identity; the executor never infers scope from a repeated spelling. It does not create generated Rust or an Oven plan. See [Backend selection & execution receipts](../explanation/backend_selection_receipts.md).
 - `--backend-fallback <refuse>`: Declare the visible refusal policy for an unavailable backend. The #988 direct profile exposes no legacy fallback target until it has a receipt-bound legacy execution path.
 - `--shadow`: Request a source-observable shadow comparison against the replacement backend alongside normal execution. A build observes the module's `main`, whose return value the produced legacy process does not expose, so on this path the comparison is always recorded explicitly as unavailable with that reason — generated Rust is not semantic proof. The bounded profile that does run a real two-route comparison is described in [Backend selection & execution receipts](../explanation/backend_selection_receipts.md#source-observable-shadow-comparison).
 - `--report json`: Emit a versioned machine-readable build report. The session-owned direct replacement path emits its own `incan.replacement_execution.v1` report because it has no generated Rust, native artifact, or Oven plan; its top-level `semantic_module` identifies the selected checked module and its source and semantic-snapshot identities, and `replacement_execution.result_type` retains the exact checked scalar result kind.
@@ -185,6 +184,8 @@ Dependency flags:
 Normal build, run, and test first select a compatible immutable full-stdlib Loaf from the active toolchain. A project outside that envelope selects its receipt-bound extension from `$INCAN_HOME/oven/store/v2`, or `~/.incan/oven/store/v2` when `INCAN_HOME` is unset, together with the exact base Loaf recorded by the extension. The plan selection key includes target, toolchain, profile, Incan runtime, dependency, feature, and provider inputs. The receipt remains source-strict, so a source change regenerates caller-owned source and receipt while a compatible project can reuse the same immutable base plus extension. `incan inspect oven --receipt PATH --format json` reports the receipt/build-unit identities, selection hit or miss with reason, and physical/logical/reclaimable/lease-protected storage.
 
 Legacy and Oven builds use `schema_version: 1` and describe the successful Oven build rather than restating terminal prose. They include source and generated paths, emitted artifacts, dependency and provider summaries, `oven.receipt_identity`, `oven.build_unit_identity`, `oven.plan_identity`, prepare/build/total elapsed time, a note that no normal Cargo consumer ran, and a `backend` field carrying the build's backend-selection execution receipt (#986). The #988 direct replacement profile instead uses `schema_version: "incan.replacement_execution.v1"` with `status`, `mode`, `entrypoint`, `backend`, top-level `semantic_module`, direct `replacement_execution` evidence (`result`, exact checked `result_type`, exact `stdout_bytes` and `stderr_bytes` byte arrays, the completed-print `emitted_output` projection, `output_identity`, Body-IR snapshot, canonical ownership reads, and runtime requirements), and total elapsed time. The report's `semantic_module` and `backend.semantic_module` name the same selected session-owned module with its source and semantic-snapshot identities. Replacement program output is written to its ordinary streams during execution; a later runtime or receipt-writing failure does not suppress bytes already written. Print calls flush before execution continues. JSON metadata requires `--report-output <PATH>` and never redirects program stdout to stderr. Byte arrays preserve per-stream bytes without assuming UTF-8; they do not claim a total order between the two streams. It intentionally omits `generated`, artifacts, and `oven`: those facts do not exist for direct Body-IR execution. A completed-output reuse is allowed only for the implicit legacy default and retains the verified receipt sealed by its explicit bake; explicit backend, fallback, and shadow requests take the normal preparation path instead.
+
+The replacement report also records `package_declarations_decoded`, `package_payload_bytes_read` and `package_content_bytes_verified`. These distinguish selected declaration decoding from whole-file content verification; see [package execution report fields](package_executable_representation.md#execution-report).
 
 A successful build also publishes that same receipt to `.incan/backend/receipt.json` in the project root, independent of `--report`. Inspect it with `incan inspect backend-selection --receipt .incan/backend/receipt.json`. See [Backend selection & execution receipts](../explanation/backend_selection_receipts.md).
 
@@ -261,7 +262,21 @@ The internal release publisher is the sole Cargo-backed producer for supported O
 
 `interop bake` and `interop stage` are the separate v0.5 C-ABI publisher and handoff commands. They consume a current package lock, explicit compiler/SDK evidence, a sealed base plan, and declared package files to bake native archives or stage digest-verified bundled runtime files. They never invoke Cargo, Gradle, Xcode, signing, or physical devices.
 
-The default Oven store is `$INCAN_HOME/oven/store/v2`, or `~/.incan/oven/store/v2` when `INCAN_HOME` is unset. Its everyday-developer policy retains at most 9 GiB of aggregate physical allocation, with a 6 GiB physical and 6 GiB logical allowance per compatibility domain. The compiler-suite policy explicitly raises those limits to 16 GiB aggregate physical, 6 GiB domain physical, and 4 GiB domain logical. The aggregate allowance includes the previous committed Loaf generation while a replacement is staged, so an interrupted update does not require deleting the last valid generation. Physical allocation and logical artifact bytes—plan bytes plus copied manifest-declared files—are distinct report fields. `incan oven store inspect` also reports reclaimable and lease-protected physical allocation; `incan inspect oven --receipt PATH` adds the receipt/build-unit identity plus a `hit`, `miss`, or `ambiguous` selection reason. Environment overrides use whole-byte values: `INCAN_OVEN_MAX_PHYSICAL_BYTES`, `INCAN_OVEN_MAX_DOMAIN_PHYSICAL_BYTES`, and `INCAN_OVEN_MAX_DOMAIN_LOGICAL_BYTES`. Publication is fail-closed when a single domain exceeds its allowance or active leases prevent safe reclamation. See [Oven Alpha](../explanation/oven_alpha.md) for the compatibility envelope, artifact-plan schema boundary, and exclusions.
+The default Oven store is `$INCAN_HOME/oven/store/v2`, or `~/.incan/oven/store/v2` when `INCAN_HOME` is unset. See [Oven Alpha](../explanation/oven_alpha.md) for the compatibility envelope, artifact-plan schema boundary, and exclusions.
+
+**Store policy**
+
+- **Defaults**: the everyday-developer policy retains at most 12 GiB of aggregate physical allocation, with a 12 GiB physical and 6 GiB logical allowance per compatibility domain. The compiler-suite policy is explicitly 16 GiB aggregate physical, 6 GiB domain physical, and 4 GiB domain logical.
+- **Overrides**: whole-byte values in `INCAN_OVEN_MAX_PHYSICAL_BYTES`, `INCAN_OVEN_MAX_DOMAIN_PHYSICAL_BYTES`, and `INCAN_OVEN_MAX_DOMAIN_LOGICAL_BYTES`.
+- **Staging floor**: an explicit project bake reserves a 4 GiB transient staging floor before it runs. When less than that remains after retention, inactive entries are reclaimed oldest-first until it fits, the bake prints a `note:` naming each reclaimed entry, and entries under a live lease are never candidates.
+- **Generations**: the aggregate allowance includes the previous committed Loaf generation while a replacement is staged, so an interrupted update does not require deleting the last valid generation.
+- **Accounting**: physical allocation and logical artifact bytes — plan bytes plus copied manifest-declared files — are distinct report fields. Publication is fail-closed when a single domain exceeds its allowance or active leases prevent safe reclamation.
+- **Closure proofs**: a `closure-proofs/` directory beside the store (and beside the toolchain's Loaf envelope) records, per sealed closure identity, that one command materialized that closure in full — every declared file present, regular, and below its root. Later commands read that record instead of re-checking ten thousand files; a proof is regenerable at any time by deleting it.
+
+**Inspection**
+
+- `incan inspect oven` never consults a proof and rehashes the closure it audits; `incan inspect oven --receipt PATH` adds the receipt/build-unit identity plus a `hit`, `miss`, or `ambiguous` selection reason.
+- `incan oven store inspect` reports reclaimable and lease-protected physical allocation, and for a direct-rustc plan the complete receipt of the compilation that produced its bytes — reuse hands a consumer bytes some other invocation produced, and the manifest records only that receipt's identity, not what it contained.
 
 ### `incan inspect backend-selection`
 
@@ -388,7 +403,7 @@ Usage:
 incan inspect interop-plan [PATH] --target <TRIPLE> [--format text|json]
 ```
 
-Projects a standalone package or selected workspace member's exact locked Oven interop target into a deterministic, versioned deployment handoff. The command requires the selected target in `[[oven.interop.targets]]` and a current canonical `incan.lock`; workspace members use the single workspace-root lock. It refuses to emit a plan after a declared interop file or deployment fact changes.
+Projects a standalone package or selected workspace member's exact locked Oven interop target into a deterministic, versioned deployment handoff. The command requires the selected target in `[[interop.c.targets]]` and a current canonical `oven.lock`; workspace members use the single workspace-root lock. It refuses to emit a plan after a declared interop file or deployment fact changes.
 
 The JSON report contains package-relative input receipts, target/toolchain/SDK/platform requirements, include roots, definitions, dependency-ordered static, bundled, and system actions, runtime names, placements, minimum platform constraints, and governed shim inputs and logical outputs. It does not build, stage, link, sign, publish, or invoke Gradle or Xcode.
 
@@ -430,6 +445,33 @@ incan inspect bindings . --format json --features sqlite --sdk-profile minimal
 incan inspect bindings . --format receipt --target aarch64-apple-darwin
 ```
 
+### `incan inspect representation`
+
+Usage:
+
+```text
+incan inspect representation [PATH] [--format text|json]
+```
+
+Reports the executable representation a package publishes beside its other products: which encoded version the representation carries, and which of the package's public declarations it covers. `PATH` defaults to the current directory and accepts a package manifest, a generated artifact root, or a project root whose artifacts sit under `target/lib`.
+
+Coverage is read from the representation's declared index, never inferred from its content, so a declaration that is covered with an empty body is reported differently from one the publisher refused to cover. Each refusal carries its stable reason: `unsupported_construct`, `private_dependency`, `unresolved_reference`, `required_declaration_unavailable`, or `no_executable_declaration`. A member that executes through its declaring type's context is reported as `type_context` alongside the owner it resolves through.
+
+The command reads the published sidecar and nothing else. It does not compile, execute, or decode declaration fragments, and it resolves no dependency.
+
+Two states are reported rather than refused, because both are legitimate answers. A package that links without publishing a representation reports `none published`; the non-linking route cannot execute it, which is exactly what the reader needs to know. A representation whose version this build cannot interpret still reports that version, because the version is the one fact an unsupported artifact can still give; its index is not read.
+
+The JSON report additionally carries each declaration's full canonical identity, a covered declaration's direct public requirements, and any public identity the manifest declares that the representation's index does not mention at all — a disagreement between the two, distinct from a declaration the publisher considered and refused.
+
+Examples:
+
+```bash
+incan inspect representation
+incan inspect representation --format json
+incan inspect representation packages/catalog --format json
+incan inspect representation target/lib/catalog.incnlib
+```
+
 ### `incan run`
 
 Usage:
@@ -456,7 +498,7 @@ Run inline code:
 incan run -c "import this"
 ```
 
-If `FILE` is omitted, `incan run` uses `[project.scripts].main` from the nearest `incan.toml`. Outside a project, you must pass `FILE` or `-c`.
+If `FILE` is omitted, `incan run` uses `[project.scripts].main` from the nearest `loaf.toml`. Outside a project, you must pass `FILE` or `-c`.
 
 Dependency flags (same as `build`):
 
@@ -585,7 +627,7 @@ Usage:
 incan new [OPTIONS] [NAME]
 ```
 
-Creates a new project directory with `incan.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. The starter source includes a small public `greeting()` function plus a test that imports and checks it, so `incan run`, `incan test`, and `incan build --release` work immediately after project creation. When run in an interactive terminal without `--yes`, it prompts for project metadata. In non-interactive contexts, pass `NAME` or `--dir`.
+Creates a new project directory with `loaf.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. The starter source includes a small public `greeting()` function plus a test that imports and checks it, so `incan run`, `incan test`, and `incan build --release` work immediately after project creation. When run in an interactive terminal without `--yes`, it prompts for project metadata. In non-interactive contexts, pass `NAME` or `--dir`.
 
 Options:
 
@@ -618,7 +660,7 @@ Usage:
 incan init [OPTIONS] [PATH]
 ```
 
-Adds Incan project files to an existing directory. Use this when you already have a directory and want to add `incan.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. New projects usually start with `incan new` instead.
+Adds Incan project files to an existing directory. Use this when you already have a directory and want to add `loaf.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. New projects usually start with `incan new` instead.
 
 Options:
 
@@ -649,15 +691,15 @@ Usage:
 incan version [OPTIONS] [BUMP]
 ```
 
-Updates `[project].version` in `incan.toml`. `BUMP` is one of `major`, `minor`, `patch`, `alpha`, `beta`, `rc`, or `dev`. Use `--set` when you need an exact SemVer value instead of a bump.
+Updates `[project].version` in `loaf.toml`. `BUMP` is one of `major`, `minor`, `patch`, `alpha`, `beta`, `rc`, or `dev`. Use `--set` when you need an exact SemVer value instead of a bump.
 
 Options:
 
 - `BUMP`: Version bump to apply.
 - `--set <VERSION>`: Explicit SemVer version to write.
-- `--dry-run`: Print the planned change without writing `incan.toml`.
+- `--dry-run`: Print the planned change without writing `loaf.toml`.
 - `--keep-prerelease`: Keep prerelease metadata when applying `major`, `minor`, or `patch`.
-- `--project <PATH>`: Project root containing `incan.toml`.
+- `--project <PATH>`: Project root containing `loaf.toml`.
 - `--workspace`, `--member <NAME_OR_PATH>`: Select a scope that must resolve to exactly one member. These conflict with `--project`.
 
 Examples:
@@ -672,7 +714,7 @@ incan version patch --member packages/api
 
 ### `incan env`
 
-Project environments are declared in `[tool.incan.envs]` in `incan.toml`. The ambient `default` environment is always available, and the `env` command lists available environments, shows a Hatch-style overview table, prints a compact resolved summary for one environment, or runs a named script from an environment.
+Project environments are declared in `[tool.incan.envs]` in `loaf.toml`. The ambient `default` environment is always available, and the `env` command lists available environments, shows a Hatch-style overview table, prints a compact resolved summary for one environment, or runs a named script from an environment.
 
 Treat envs as named command contexts for repeatable workflows such as local testing, CI, docs, or release checks. They are not shell sessions or virtual environments.
 
@@ -687,7 +729,7 @@ incan env run [OPTIONS] <ENV> <SCRIPT> [-- <ARGS>...]
 Shared options:
 
 - `--format text|json`: Output format for `list` and `show` (default: `text`).
-- `--project <PATH>`: Project root containing `incan.toml`.
+- `--project <PATH>`: Project root containing `loaf.toml`.
 
 Run options:
 
@@ -716,11 +758,11 @@ Usage:
 incan lock [OPTIONS] [FILE]
 ```
 
-Resolves all dependencies (manifest + inline + test files) and generates or updates `incan.lock`.
+Resolves all dependencies (manifest + inline + test files) and generates or updates `oven.lock`.
 
-If `FILE` is omitted, uses the `[project.scripts].main` entry from `incan.toml`.
+If `FILE` is omitted, uses the `[project.scripts].main` entry from `loaf.toml`.
 
-Inside a workspace, `incan lock` always resolves every member's effective dependencies and publishes the one canonical root `incan.lock`, even when invoked from one member. It does not create or consume member-local locks. Cooperative publishers serialize generation and publication with a stable advisory lock under compiler-owned `target/incan_lock` state and replace the completed root lock atomically after synchronizing its staged contents. If a legacy project-root `.incan.lock.incan.lock` already exists, new compilers acquire it before the hidden guard so an older compiler still using that inode remains serialized. A project without the legacy sidecar uses the new protocol directly. Whenever that sidecar is absent—whether it never existed or was removed—do not run old and new compilers concurrently because an older compiler cannot discover the hidden guard.
+Inside a workspace, `incan lock` always resolves every member's effective dependencies and publishes the one canonical root `oven.lock`, even when invoked from one member. It does not create or consume member-local locks. Cooperative publishers serialize generation and publication with a stable advisory lock under compiler-owned `target/incan_lock` state and replace the completed root lock atomically after synchronizing its staged contents. The guard identity is derived from the published lock's own filename, so an `oven.lock` project coordinates on `.oven.lock.incan.lock` — a path no compiler predating the hidden guard ever wrote. Concurrent old and new compilers are no longer a hazard for this file: a compiler from before the rename publishes `incan.lock` and never contends for `oven.lock` at all. That earlier lock is inert once a project is on `oven.lock`; nothing reads it, and you can delete it.
 
 Because the lock refresh covers every member, command-local `--features`, `--no-default-features`, `--all-features`, and `--sdk-profile` selections apply to every member projection in that refresh. A requested public feature must therefore be declared by each workspace member; use member manifests for different persistent per-member selections.
 
@@ -744,7 +786,7 @@ incan lock --sdk-profile minimal    # lock the minimal SDK profile projection
 incan lock --cargo-features metrics # select explicit backend Cargo features
 ```
 
-The generated `incan.lock` contains an embedded `Cargo.lock` payload, the expanded SDK component and provider identities, the public package-feature graph and activation reasons, private implementation-facet closure, and a fingerprint of dependency inputs. Commit it to version control for reproducible builds.
+The generated `oven.lock` contains an embedded `Cargo.lock` payload, the expanded SDK component and provider identities, the public package-feature graph and activation reasons, private implementation-facet closure, and a fingerprint of dependency inputs. Commit it to version control for reproducible builds.
 
 See: [Managing dependencies](../how-to/dependencies.md) for practical guidance.
 
@@ -831,7 +873,7 @@ Options:
 The JSON package contains:
 
 - `schema_version`: numeric schema version for the package payload
-- `package`: project name and version from `incan.toml`, when available
+- `package`: project name and version from `loaf.toml`, when available
 - `modules`: checked metadata documents for the entry module and imported local modules
 - `declarations`: public functions, models, classes, traits, enums, newtypes, type aliases, consts, statics, public import aliases, and public partial callable presets
 - `anchor`: stable declaration ids plus source byte spans

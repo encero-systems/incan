@@ -12,7 +12,7 @@ use crate::manifest::ProjectManifest;
 pub struct ToolchainConstraintLayer {
     /// Human-readable source label used in diagnostics and inspection output.
     pub source: String,
-    /// Raw SemVer requirement string as authored in `incan.toml`.
+    /// Raw SemVer requirement string as authored in `loaf.toml`.
     pub requirement: String,
 }
 

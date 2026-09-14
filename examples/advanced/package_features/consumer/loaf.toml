@@ -1,0 +1,11 @@
+[project]
+name = "report_app"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+# The consumer selects `reporting`'s `json` feature explicitly. Feature requests are unified additively across every
+# active edge, so `report_json` exists here because this edge asked for it.
+[dependencies]
+reporting = { path = "../producer", features = ["json"] }

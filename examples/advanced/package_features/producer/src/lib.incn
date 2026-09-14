@@ -1,0 +1,12 @@
+# The provider in the middle: it always reports a value, and can encode it as JSON when its `json` feature is on.
+
+
+pub def report_value() -> int:
+    return 11
+
+
+when feature("json"):
+    from pub::json_support import encode_report
+
+    pub def report_json(name: str) -> str:
+        return encode_report(name, report_value())

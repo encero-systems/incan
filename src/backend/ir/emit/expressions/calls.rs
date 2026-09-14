@@ -117,7 +117,7 @@ impl<'a> IrEmitter<'a> {
     /// Generic placeholders coming from the callee signature (`Option[T]`, `Result[T, E]`) are not in scope at the
     /// caller, so they must still be treated as unresolved here even though they are perfectly valid inside the callee
     /// body or an enclosing generic impl/function.
-    pub(super) fn is_unresolved_call_seed_type(ty: &IrType) -> bool {
+    pub(in crate::backend::ir::emit) fn is_unresolved_call_seed_type(ty: &IrType) -> bool {
         match ty {
             IrType::Unknown | IrType::Generic(_) => true,
             IrType::Ref(inner) | IrType::RefMut(inner) | IrType::Option(inner) | IrType::List(inner) => {
@@ -279,11 +279,18 @@ impl<'a> IrEmitter<'a> {
             },
             _ => None,
         }?;
-        target_ty
-            .union_members()?
-            .iter()
-            .find(|member| member.nominal_type_name() == Some(candidate_name))
-            .cloned()
+        let members = target_ty.union_members()?;
+        let index = target_ty
+            .union_variant_index_for_member(&IrType::Struct(candidate_name.to_string()))
+            .or_else(|| {
+                if matches!(target_ty, IrType::ExternalUnion { native: Some(_), .. }) {
+                    return None;
+                }
+                members
+                    .iter()
+                    .position(|member| member.nominal_type_name() == Some(candidate_name))
+            })?;
+        members.get(index).cloned()
     }
 
     /// Return whether a source anonymous union can be widened into the target anonymous union.
@@ -1354,6 +1361,24 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Emit a binary operation expression.
+    /// Emit one binary operand, letting an empty list literal borrow its element type from the other side.
+    ///
+    /// Only the empty case needs this: a populated literal infers from its own elements.
+    fn emit_comparison_operand(&self, operand: &TypedExpr, other_ty: &IrType) -> Result<TokenStream, EmitError> {
+        if let IrExprKind::List(entries) = &operand.kind
+            && entries.is_empty()
+            && !matches!(&operand.ty, IrType::List(elem) if !matches!(elem.as_ref(), IrType::Unknown))
+            && let IrType::List(elem) = other_ty
+            && !matches!(elem.as_ref(), IrType::Unknown)
+        {
+            let ty_tokens = self.emit_type(elem.as_ref());
+            return Ok(quote! { Vec::<#ty_tokens>::new() });
+        }
+        self.emit_expr(operand)
+    }
+
+    /// Emit a binary operation, folding static string additions and lending an empty-list operand the other side's
+    /// element type so the generated comparison is not an ambiguous `PartialEq`.
     pub(in super::super) fn emit_binop_expr(
         &self,
         op: &BinOp,
@@ -1367,8 +1392,11 @@ impl<'a> IrEmitter<'a> {
             return Ok(tokens);
         }
 
-        let mut l_raw = self.emit_expr(left)?;
-        let mut r_raw = self.emit_expr(right)?;
+        // An empty list literal carries no element type of its own. As an initializer the binding supplies one, but
+        // as a comparison operand -- `features == []` -- nothing does, and rustc reports an ambiguous `PartialEq`.
+        // The other operand is the only thing that knows, so take the element type from it.
+        let mut l_raw = self.emit_comparison_operand(left, &right.ty)?;
+        let mut r_raw = self.emit_comparison_operand(right, &left.ty)?;
 
         // Comparison is an observation boundary for exact floats. Validate the source operands before any concrete
         // f32-to-f64 widening so values injected through a public Rust surface cannot silently compare as IEEE
@@ -1440,8 +1468,13 @@ impl<'a> IrEmitter<'a> {
         Ok(result_validation.apply(emitted))
     }
 
-    /// Return whether a nested binary operand must be parenthesized to preserve Incan precedence.
+    /// Group binary operands to preserve precedence and disambiguate named constructors from Rust control-flow blocks.
     fn binop_operand_needs_parens(parent: &BinOp, operand: &TypedExpr, is_right: bool) -> bool {
+        if let IrExprKind::Struct { fields, .. } = &operand.kind
+            && fields.iter().all(|(name, _)| !name.is_empty())
+        {
+            return true;
+        }
         let IrExprKind::BinOp { op: child, .. } = &operand.kind else {
             return false;
         };
@@ -1608,6 +1641,7 @@ mod tests {
                 name: "secret".to_string(),
                 canonical: None,
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "int".to_string(),
                 },
                 surface_type_name: None,
@@ -1621,6 +1655,7 @@ mod tests {
                 name: "label".to_string(),
                 canonical: None,
                 ty: TypeRef::Named {
+                    origin: None,
                     name: "str".to_string(),
                 },
                 surface_type_name: None,
@@ -1635,6 +1670,7 @@ mod tests {
             name: "unrelated".to_string(),
             canonical: None,
             ty: TypeRef::Named {
+                origin: None,
                 name: "bool".to_string(),
             },
             surface_type_name: None,
@@ -1694,6 +1730,7 @@ mod tests {
             name: "size".to_string(),
             canonical: None,
             ty: TypeRef::Named {
+                origin: None,
                 name: "int".to_string(),
             },
             surface_type_name: None,
@@ -1720,6 +1757,7 @@ mod tests {
             name: "size".to_string(),
             canonical: None,
             ty: TypeRef::Named {
+                origin: None,
                 name: "int".to_string(),
             },
             surface_type_name: None,
@@ -2016,6 +2054,52 @@ mod tests {
         Ok(())
     }
 
+    /// Inline named constructors must parse as operands rather than as the assertion's failure block.
+    #[test]
+    fn emit_canonical_assert_model_constructor_comparison_parses() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let model_type = IrType::Struct("Pair".to_string());
+        let constructor = || {
+            TypedExpr::new(
+                IrExprKind::Struct {
+                    name: "Pair".to_string(),
+                    fields: vec![("x".to_string(), TypedExpr::new(IrExprKind::Int(1), IrType::Int))],
+                    fill_defaults: false,
+                },
+                model_type.clone(),
+            )
+        };
+
+        for helper in ["assert_eq", "assert_ne"] {
+            for (inline_left, inline_right) in [(false, true), (true, false), (true, true)] {
+                let left = if inline_left {
+                    constructor()
+                } else {
+                    local_arg("left", model_type.clone())
+                };
+                let right = if inline_right {
+                    constructor()
+                } else {
+                    local_arg("right", model_type.clone())
+                };
+                let tokens = emitter.emit_call_expr(
+                    &rust_call_target(helper),
+                    &[],
+                    &[pos_arg(left), pos_arg(right)],
+                    None,
+                    Some(&canonical_testing_path(helper)),
+                )?;
+                syn::parse2::<syn::Block>(quote! {{ #tokens }}).map_err(|error| {
+                    std::io::Error::other(format!(
+                        "{helper} with inline operands ({inline_left}, {inline_right}) must parse: {error}; {tokens}"
+                    ))
+                })?;
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn emit_binop_parenthesizes_lower_precedence_right_operand() -> Result<(), Box<dyn std::error::Error>> {
         let registry = FunctionRegistry::new();
@@ -2232,6 +2316,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let target_ty = IrType::ExternalUnion {
             library: "widgets".to_string(),
+            native: None,
             union: Box::new(IrType::NamedGeneric(
                 IR_UNION_TYPE_NAME.to_string(),
                 vec![
@@ -2266,6 +2351,84 @@ mod tests {
             render(emitted),
             format!("widgets::{canonical_name}::V1(always_true.clone())")
         );
+        Ok(())
+    }
+
+    /// Contextual union typing must retain the selected nominal identity of a renamed constructor payload.
+    #[test]
+    fn contextual_union_payload_uses_checked_nominal_identity() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::library_manifest::{
+            CanonicalIdentityExport, CanonicalIdentityNamespaceExport, CanonicalIdentityOriginExport,
+            CanonicalIdentitySpanExport, NativeUnionExport, NativeUnionOwnerExport, NominalTypeOriginExport,
+        };
+        let origin = NominalTypeOriginExport {
+            provider: crate::provider::ProviderIdentity {
+                name: "pricing".into(),
+                version: "1.0.0".into(),
+                digest: "a".repeat(64),
+                feature_projection: Default::default(),
+            },
+            canonical: CanonicalIdentityExport {
+                namespace: CanonicalIdentityNamespaceExport::OrdinaryLexical,
+                origin: CanonicalIdentityOriginExport::Package {
+                    library: "pricing".into(),
+                    module_path: vec!["answer".into()],
+                },
+                declaration_name: "Surcharge".into(),
+                kind: "model".into(),
+                declaration_span: CanonicalIdentitySpanExport { start: 0, end: 20 },
+            },
+        };
+        let member = IrType::Struct("bridge::pricing::Surcharge".into());
+        let target = IrType::ExternalUnion {
+            library: "::bridge::pricing".into(),
+            union: Box::new(IrType::NamedGeneric(
+                IR_UNION_TYPE_NAME.into(),
+                vec![member.clone(), IrType::Int],
+            )),
+            native: Some(crate::backend::ir::types::CarriedNativeUnion(Box::new(
+                NativeUnionExport {
+                    owner: NativeUnionOwnerExport::SelectedArtifact(origin.provider.clone()),
+                    rust_name: "__IncanUnion_selected".into(),
+                    members: Vec::new(),
+                    local_nominals: Default::default(),
+                    checked_projection: Some(Box::new(crate::library_manifest::NativeUnionProjection {
+                        dependency_root: "bridge".into(),
+                        rust_owner: "::bridge::pricing".into(),
+                        members: Vec::new(),
+                        nominal_origins: std::collections::BTreeMap::from([
+                            ("Charge".into(), origin.clone()),
+                            ("bridge::pricing::Surcharge".into(), origin.clone()),
+                        ]),
+                    })),
+                },
+            ))),
+        };
+        let argument = TypedExpr::new(
+            IrExprKind::Struct {
+                name: "Charge".into(),
+                fields: Vec::new(),
+                fill_defaults: false,
+            },
+            target.clone(),
+        );
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        assert_eq!(emitter.union_payload_candidate_type(&argument, &target), Some(member));
+        let tokens = emitter
+            .emit_union_payload_arg(&argument, &target, None)?
+            .ok_or("missing union payload")?;
+        assert!(render(tokens).contains("::bridge::pricing::__IncanUnion_selected::V0(Charge{}"));
+        let mut wrong = target;
+        if let IrType::ExternalUnion {
+            native: Some(native), ..
+        } = &mut wrong
+            && let Some(projection) = &mut native.checked_projection
+            && let Some(identity) = projection.nominal_origins.get_mut("Charge")
+        {
+            identity.provider.digest = "b".repeat(64);
+        }
+        assert_eq!(emitter.union_payload_candidate_type(&argument, &wrong), None);
         Ok(())
     }
 

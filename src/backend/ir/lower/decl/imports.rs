@@ -14,6 +14,34 @@ impl AstLowering {
         i: &ast::ImportDecl,
         span: ast::Span,
     ) -> Result<IrDeclKind, LoweringError> {
+        // The frontend resolves `import module::item` before lowering. Once it proves an item identity, use the
+        // same item import route as `from module import item`, including canonical names and alias projections.
+        // A genuine module identity must retain module binding semantics even when its path has multiple segments.
+        if let ast::ImportKind::Module(path) = &i.kind
+            && let Some((name, parent)) = path.segments.split_last()
+            && let Some(identity) = self
+                .type_info
+                .as_ref()
+                .and_then(|info| info.resolved_import_identity(i.alias.as_deref().unwrap_or(name)))
+            && !matches!(identity.kind, SemanticSourceTargetKind::Module)
+            && matches!(identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. })
+        {
+            let mut item_import = i.clone();
+            item_import.kind = ast::ImportKind::From {
+                module: ast::ImportPath {
+                    segments: parent.to_vec(),
+                    is_absolute: path.is_absolute,
+                    parent_levels: path.parent_levels,
+                },
+                items: vec![ast::ImportItem {
+                    name: name.clone(),
+                    alias: i.alias.clone(),
+                }],
+            };
+            item_import.alias = None;
+            return self.lower_import(&item_import, span);
+        }
+
         let (path, ast_items) = match &i.kind {
             ast::ImportKind::Module(p) => (canonicalize_source_module_segments(&p.segments), vec![]),
             ast::ImportKind::From { module, items } => {

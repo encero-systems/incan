@@ -104,7 +104,7 @@ Oven should adopt the parts of Rust that make the ecosystem interoperable, and r
 
 The adoption path should begin conservatively. An existing Rust repository keeps its Rust source and can keep its `Cargo.toml` and `Cargo.lock` intact. Oven reads them as declared compatibility inputs, resolves the equivalent project graph, and records an Incan-owned lock and receipt. No source rewrite, wrapper crate, or parallel package publishing system should be needed merely to adopt Incan. Over time, a project can express additional Incan packages, typed actions, capabilities, policy, and notebook sessions in that same graph.
 
-This also gives `incan.toml` and `incan.lock` a clearer destination. They should evolve from a manifest plus embedded Cargo lock payload into Incan's native declaration of project intent and resolved identity. Importing existing Cargo metadata is part of compatibility; materialising a generated Cargo project is not the end state.
+This also gives `loaf.toml` and `oven.lock` a clearer destination. They should evolve from a manifest plus embedded Cargo lock payload into Incan's native declaration of project intent and resolved identity. Importing existing Cargo metadata is part of compatibility; materialising a generated Cargo project is not the end state.
 
 ### The hard Rust boundary
 
@@ -143,6 +143,8 @@ That changes the division of labour:
 This does not eliminate source distributions, local compilation, cross-compilation, or platform-specific native dependencies. It makes those cases explicit. Where a compatible published Loaf exists, it should be preferred. Where it does not, Oven should explain what it needs to build, why reuse is unavailable, and which resulting Loaf it will retain or publish according to policy.
 
 The trust decision belongs to the receiving project. A Loaf must bind to declared source and build inputs, carry verifiable publisher or rebuild evidence, and remain subject to the project's trust policy. If an artifact is withdrawn or found invalid, Oven must be able to explain which projects selected it and refuse, replace, or rebuild it according to policy. Prebuilt distribution removes surprise compilation; it cannot remove provenance or revocation responsibility.
+
+The registry side of this division of labour, with measured cold-build costs on two hosts, is argued in [Ship the loaf, not the recipe](incan_pub_ship_the_loaf.md); the contract is RFC 125.
 
 The cache-identity, lifecycle, and CI-safety principles explored in current work remain valuable. Under this direction, they become the substrate for managed build units and Loaves rather than a permanent way to manage Cargo target directories.
 

@@ -23,7 +23,7 @@ resolver = "2"
 ra_ap_proc_macro_api = { path = "crates/third_party/ra_ap_proc_macro_api" }
 
 [workspace.package]
-version = "0.6.0-dev.3"
+version = "0.6.0-dev.4"
 description = "The Incan programming language compiler"
 edition = "2024"
 rust-version = "1.98"
@@ -51,7 +51,7 @@ readme.workspace = true
 
 [features]
 default = ["cli", "std_testing", "std_async", "std_decorators"]
-cli = ["dep:clap", "dep:tracing-subscriber", "rust_inspect"]
+cli = ["dep:clap", "dep:tracing-subscriber", "dep:tempfile", "rust_inspect"]
 lsp = ["dep:tower-lsp", "dep:tokio"]
 std_testing = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_testing"]
 std_async = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_async"]
@@ -81,6 +81,9 @@ serde_json = "1.0"
 
 # CLI parsing with typed subcommands
 clap = { version = "4.4", features = ["derive"], optional = true }
+# Already a dev-dependency below. The direct-rustc reuse path publishes a verified copy of a retained output through
+# a uniquely named sibling, so it needs the same crate at runtime under `cli`.
+tempfile = { version = "3", optional = true }
 # Composable error types
 thiserror = "2.0"
 # Rich error diagnostics with source context
@@ -95,7 +98,7 @@ prettyplease = "0.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
-# TOML parsing for incan.toml manifests (RFC 013/023)
+# TOML parsing for loaf.toml manifests (RFC 013/023)
 toml = "0.9"
 # Span-preserving TOML parsing for manifest diagnostics.
 toml_edit = { version = "0.25", features = ["parse", "serde"] }

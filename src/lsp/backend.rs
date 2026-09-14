@@ -63,6 +63,7 @@ use crate::frontend::{ast_walk, lexer, parser, typechecker};
 use crate::generated_cache::resolve_generated_cargo_target_in_cache_root;
 #[cfg(feature = "rust_inspect")]
 use crate::generated_cache::{GeneratedCacheLease, GeneratedCargoTarget, resolve_generated_cargo_target};
+use crate::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
 use crate::library_manifest::{
     EnumValueExport, EnumValueTypeExport, FieldExport, FieldVisibilityExport, ParamExport, ParamKindExport,
     ReceiverExport, TypeBoundExport, TypeParamExport, TypeRef,
@@ -1226,7 +1227,7 @@ mod tests {
     fn lsp_rust_inspect_workspace_includes_resolved_inline_and_stdlib_requirements()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let manifest_path = tmp.path().join("incan.toml");
+        let manifest_path = tmp.path().join("loaf.toml");
         std::fs::write(&manifest_path, "[project]\nname = \"demo\"\n")?;
         let manifest = ProjectManifest::from_str("[project]\nname = \"demo\"\n", &manifest_path)?;
 
@@ -1692,6 +1693,7 @@ mod lsp_identity_tests {
             }),
             modules: vec![CheckedApiMetadata {
                 schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                derivable_traits: Vec::new(),
                 module_path: vec!["math".to_string()],
                 declarations: Vec::new(),
             }],
@@ -2390,7 +2392,7 @@ mod lsp_contract_model_command_tests {
     fn write_project_bundle(root: &std::path::Path) -> std::io::Result<()> {
         std::fs::create_dir_all(root.join("contracts"))?;
         std::fs::write(
-            root.join("incan.toml"),
+            root.join("loaf.toml"),
             r#"[project]
 name = "lsp_contract_model"
 version = "0.1.0"
@@ -3905,8 +3907,8 @@ fn format_param(param: &ParamExport) -> String {
 /// Format a manifest-level type reference for concise hover display.
 fn format_type_ref(ty: &TypeRef) -> String {
     match ty {
-        TypeRef::Named { name } => name.clone(),
-        TypeRef::Applied { name, args } => {
+        TypeRef::Named { name, .. } => name.clone(),
+        TypeRef::Applied { name, args, .. } => {
             format!(
                 "{name}[{}]",
                 args.iter().map(format_type_ref).collect::<Vec<_>>().join(", ")
@@ -3930,6 +3932,12 @@ fn format_type_ref(ty: &TypeRef) -> String {
         TypeRef::SelfType => "Self".to_string(),
         TypeRef::Ref { inner } => format!("ref {}", format_type_ref(inner)),
         TypeRef::RustPath { path } => format!("rust::{path}"),
+        TypeRef::NativeUnion(native) => native
+            .members
+            .iter()
+            .map(format_type_ref)
+            .collect::<Vec<_>>()
+            .join(" | "),
         TypeRef::Unknown => "_".to_string(),
     }
 }
@@ -6921,7 +6929,7 @@ fn collect_lsp_contract_model_bundles(path: &Path) -> std::result::Result<Vec<Ca
         && absolute
             .extension()
             .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension == "incnlib")
+            .is_some_and(|extension| extension == LIBRARY_MANIFEST_EXTENSION)
     {
         let manifest =
             crate::library_manifest::LibraryManifest::read_from_path(&absolute).map_err(|error| error.to_string())?;

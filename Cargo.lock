@@ -1445,7 +1445,7 @@ dependencies = [
 
 [[package]]
 name = "incan"
-version = "0.6.0-dev.3"
+version = "0.6.0-dev.4"
 dependencies = [
  "blake2",
  "blake3",
@@ -1504,7 +1504,7 @@ dependencies = [
 
 [[package]]
 name = "incan_codegraph"
-version = "0.6.0-dev.3"
+version = "0.6.0-dev.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -1512,14 +1512,14 @@ dependencies = [
 
 [[package]]
 name = "incan_core"
-version = "0.6.0-dev.3"
+version = "0.6.0-dev.4"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "incan_derive"
-version = "0.6.0-dev.3"
+version = "0.6.0-dev.4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1528,16 +1528,20 @@ dependencies = [
 
 [[package]]
 name = "incan_semantics_core"
-version = "0.6.0-dev.3"
+version = "0.6.0-dev.4"
 dependencies = [
+ "hex",
  "incan_core",
+ "postcard",
  "serde",
  "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "incan_semantics_stdlib"
-version = "0.6.0-dev.3"
+version = "0.6.0-dev.4"
 dependencies = [
  "incan_core",
  "incan_semantics_core",
@@ -1545,7 +1549,7 @@ dependencies = [
 
 [[package]]
 name = "incan_stdlib"
-version = "0.6.0-dev.3"
+version = "0.6.0-dev.4"
 dependencies = [
  "axum",
  "incan_core",
@@ -1559,7 +1563,7 @@ dependencies = [
 
 [[package]]
 name = "incan_syntax"
-version = "0.6.0-dev.3"
+version = "0.6.0-dev.4"
 dependencies = [
  "incan_core",
  "incan_semantics_core",
@@ -1581,7 +1585,7 @@ dependencies = [
 
 [[package]]
 name = "incan_web_macros"
-version = "0.6.0-dev.3"
+version = "0.6.0-dev.4"
 dependencies = [
  "axum",
  "incan_stdlib",
@@ -3149,11 +3153,16 @@ dependencies = [
 
 [[package]]
 name = "rust_inspect"
-version = "0.6.0-dev.3"
+version = "0.6.0-dev.4"
 dependencies = [
  "hex",
  "incan_core",
+ "proc-macro2",
+ "quote",
  "ra_ap_hir",
+ "ra_ap_hir_def",
+ "ra_ap_hir_expand",
+ "ra_ap_hir_ty",
  "ra_ap_ide_db",
  "ra_ap_load-cargo",
  "ra_ap_paths",
@@ -3164,6 +3173,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "syn",
  "tempfile",
  "thiserror 2.0.18",
  "toml",

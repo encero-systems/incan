@@ -1,0 +1,7 @@
+[project]
+name = "json_support"
+version = "0.1.0"
+
+[project.features]
+default = ["json"]
+json = []

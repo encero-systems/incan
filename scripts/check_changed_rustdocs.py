@@ -95,9 +95,13 @@ def changed_rust_files(base_ref: str | None) -> dict[Path, set[int]]:
 
 
 def has_doc_comment(lines: list[str], fn_index: int) -> bool:
-    """Return whether the function at `fn_index` has a preceding rustdoc block."""
+    """Return whether the function at `fn_index` has a preceding rustdoc block.
+
+    Attributes between the doc block and the signature are stepped over, including one rustfmt has broken across
+    several lines (`#[allow(\n    dead_code,\n    reason = "..."\n)]`): a line that closes an attribute walks
+    back to the line that opened it.
+    """
     i = fn_index - 1
-    saw_attr = False
     while i >= 0:
         line = lines[i]
         stripped = line.strip()
@@ -105,14 +109,18 @@ def has_doc_comment(lines: list[str], fn_index: int) -> bool:
             i -= 1
             continue
         if ATTR_RE.match(line):
-            saw_attr = True
             i -= 1
             continue
-        if DOC_RE.match(line):
-            return True
-        if saw_attr and DOC_RE.match(line):
-            return True
-        return False
+        if stripped.endswith("]") and not DOC_RE.match(line):
+            # The tail of a multi-line attribute; find its `#[` opener and continue above it.
+            opener = i
+            while opener >= 0 and not ATTR_RE.match(lines[opener]):
+                opener -= 1
+            if opener < 0:
+                return False
+            i = opener - 1
+            continue
+        return bool(DOC_RE.match(line))
     return False
 
 

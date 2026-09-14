@@ -4,7 +4,6 @@
 //! - Format string expressions (f-strings): `f"Hello {name}"`
 //! - Range expressions: `start..end`, `start..=end`, `..end`, `start..`
 
-use incan_core::strings::escape_format_literal;
 use proc_macro2::{Literal as TokenLiteral, TokenStream};
 use quote::quote;
 
@@ -27,7 +26,9 @@ impl<'a> IrEmitter<'a> {
     ///
     /// ## Notes
     ///
-    /// - Literal segments are brace-escaped via `incan_core::strings::escape_format_literal`.
+    /// - Literal segments are passed through verbatim: the lexer already collapsed `{{` and `}}` to one brace, and
+    ///   `incan_stdlib::strings::fstring` concatenates rather than interpreting a format string, so escaping them again
+    ///   would print both characters.
     /// - Display expression segments are formatted via `format!("{}", expr)`.
     /// - Debug expression segments are formatted via `format!("{:?}", expr)`.
     pub(in super::super) fn emit_format_expr(&self, parts: &[FormatPart]) -> Result<TokenStream, EmitError> {
@@ -39,7 +40,7 @@ impl<'a> IrEmitter<'a> {
         for part in parts {
             match part {
                 FormatPart::Literal(s) => {
-                    current.push_str(&escape_format_literal(s));
+                    current.push_str(s);
                 }
                 FormatPart::Expr { expr, style } => {
                     literal_parts.push(current.clone());
