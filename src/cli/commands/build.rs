@@ -6386,17 +6386,14 @@ fn prepare_oven_project(
     record_timing(&mut prepare_timings, "prepare_receipt", lap);
     lap = Instant::now();
     let required_registry_dependencies = format_oven_registry_dependency_requirements(&oven_plan_dependencies);
-    // An imported package Loaf is sufficient for a consume-only command, and for an explicit bake of a consumer that
-    // declares no direct registry root of its own. The explicit baker must otherwise publish the consumer's own
-    // direct registry roots with its complete generated source closure; a provider's catalog must never become the
-    // registry authority for a consumer-declared dependency. With nothing consumer-declared there is nothing for it
-    // to usurp, and composing the sealed package closures is the one route that links each shared registry package
-    // exactly once (#1469): rebuilding the consumer against the base Loaf and relinking the provider's own closure
-    // beside it is what produced two copies of one crate and a refusal.
-    let consumer_declares_registry_roots = !oven_plan_dependencies.is_empty();
-    let packaged_provider_selection = if oven_plan_mode == OvenProjectPlanMode::ConsumeOnly
-        || (oven_plan_mode == OvenProjectPlanMode::ExplicitBake && !consumer_declares_registry_roots)
-    {
+    // An imported package Loaf is sufficient only for consume-only commands. The explicit baker must publish the
+    // consumer's own direct registry roots with its complete generated source closure; otherwise the provider's
+    // catalog would incorrectly become the registry authority for a consumer-declared dependency. Composing the
+    // sealed package closures on an explicit bake was tried for #1469 and put two separately built copies of one
+    // proc macro on a diamond consumer's plan (`source_free_native_diamond_preserves_published_store_inventory`);
+    // the base-plus-relink route below refuses the opposite shape, a provider whose private crate carries its own
+    // registry closure. Both are #1241, which the third-party direct-rustc cutover settles.
+    let packaged_provider_selection = if oven_plan_mode == OvenProjectPlanMode::ConsumeOnly {
         compose_selected_packaged_provider_plan(
             selected_provider_inputs,
             &checked_provider_profiles,
