@@ -349,13 +349,13 @@ mod tests {
     use super::*;
 
     /// Build a minimal exported function record for helper-resolution fixtures.
-    fn function_export(name: &str) -> crate::library_manifest::FunctionExport {
-        crate::library_manifest::FunctionExport {
+    fn function_export(name: &str) -> crate::frontend::library_manifest::FunctionExport {
+        crate::frontend::library_manifest::FunctionExport {
             name: name.to_string(),
             emitted_name: None,
             type_params: Vec::new(),
             params: Vec::new(),
-            return_type: crate::library_manifest::TypeRef::Named {
+            return_type: crate::frontend::library_manifest::TypeRef::Named {
                 origin: None,
                 name: constructors::as_str(constructors::ConstructorId::None).to_string(),
             },
@@ -364,10 +364,10 @@ mod tests {
     }
 
     /// Build a minimal exported const record for helper-resolution fixtures.
-    fn const_export(name: &str) -> crate::library_manifest::ConstExport {
-        crate::library_manifest::ConstExport {
+    fn const_export(name: &str) -> crate::frontend::library_manifest::ConstExport {
+        crate::frontend::library_manifest::ConstExport {
             name: name.to_string(),
-            ty: crate::library_manifest::TypeRef::Named {
+            ty: crate::frontend::library_manifest::TypeRef::Named {
                 origin: None,
                 name: "int".to_string(),
             },
@@ -377,11 +377,11 @@ mod tests {
     /// Build a one-provider index whose manifest carries the given helper bindings and exports.
     fn index_with(
         bindings: Vec<incan_vocab::HelperBinding>,
-        customize: impl FnOnce(&mut crate::library_manifest::LibraryManifest),
+        customize: impl FnOnce(&mut crate::frontend::library_manifest::LibraryManifest),
     ) -> LibraryManifestIndex {
-        let mut manifest = crate::library_manifest::LibraryManifest::new("demo", "0.1.0");
+        let mut manifest = crate::frontend::library_manifest::LibraryManifest::new("demo", "0.1.0");
         customize(&mut manifest);
-        manifest.vocab = Some(crate::library_manifest::VocabExports {
+        manifest.vocab = Some(crate::frontend::library_manifest::VocabExports {
             crate_path: "vocab_companion".to_string(),
             package_name: "vocab_companion".to_string(),
             keyword_registrations: Vec::new(),
@@ -406,15 +406,15 @@ mod tests {
     }
 
     /// Build a minimal exported public partial for helper-resolution fixtures.
-    fn partial_export(name: &str) -> crate::library_manifest::PartialExport {
-        crate::library_manifest::PartialExport {
+    fn partial_export(name: &str) -> crate::frontend::library_manifest::PartialExport {
+        crate::frontend::library_manifest::PartialExport {
             name: name.to_string(),
             target_path: vec!["demo".to_string(), "filter_rows".to_string()],
-            target_kind: crate::library_manifest::PartialTargetKindExport::Function,
+            target_kind: crate::frontend::library_manifest::PartialTargetKindExport::Function,
             presets: Vec::new(),
             type_params: Vec::new(),
             params: Vec::new(),
-            return_type: crate::library_manifest::TypeRef::Named {
+            return_type: crate::frontend::library_manifest::TypeRef::Named {
                 origin: None,
                 name: constructors::as_str(constructors::ConstructorId::None).to_string(),
             },
@@ -523,12 +523,15 @@ mod tests {
             }],
             |manifest| {
                 manifest.exports.functions.push(function_export("filter_rows"));
-                manifest.exports.aliases.push(crate::library_manifest::AliasExport {
-                    name: "where_".to_string(),
-                    target_path: vec!["demo".to_string(), "filter_rows".to_string()],
-                    projected_type: None,
-                    projected_function: None,
-                });
+                manifest
+                    .exports
+                    .aliases
+                    .push(crate::frontend::library_manifest::AliasExport {
+                        name: "where_".to_string(),
+                        target_path: vec!["demo".to_string(), "filter_rows".to_string()],
+                        projected_type: None,
+                        projected_function: None,
+                    });
             },
         );
 
@@ -548,12 +551,15 @@ mod tests {
             }],
             |manifest| {
                 manifest.exports.consts.push(const_export("FILTER_LIMIT"));
-                manifest.exports.aliases.push(crate::library_manifest::AliasExport {
-                    name: "Filterish".to_string(),
-                    target_path: vec!["demo".to_string(), "FILTER_LIMIT".to_string()],
-                    projected_type: None,
-                    projected_function: None,
-                });
+                manifest
+                    .exports
+                    .aliases
+                    .push(crate::frontend::library_manifest::AliasExport {
+                        name: "Filterish".to_string(),
+                        target_path: vec!["demo".to_string(), "FILTER_LIMIT".to_string()],
+                        projected_type: None,
+                        projected_function: None,
+                    });
             },
         );
 
@@ -578,12 +584,15 @@ mod tests {
             }],
             |manifest| {
                 for (name, target) in [("a", "b"), ("b", "a")] {
-                    manifest.exports.aliases.push(crate::library_manifest::AliasExport {
-                        name: name.to_string(),
-                        target_path: vec!["demo".to_string(), target.to_string()],
-                        projected_type: None,
-                        projected_function: None,
-                    });
+                    manifest
+                        .exports
+                        .aliases
+                        .push(crate::frontend::library_manifest::AliasExport {
+                            name: name.to_string(),
+                            target_path: vec!["demo".to_string(), target.to_string()],
+                            projected_type: None,
+                            projected_function: None,
+                        });
                 }
             },
         );
@@ -635,14 +644,17 @@ mod tests {
                 exported_name: "Filterable".to_string(),
             }],
             |manifest| {
-                manifest.exports.traits.push(crate::library_manifest::TraitExport {
-                    name: "Filterable".to_string(),
-                    source_name: None,
-                    type_params: Vec::new(),
-                    supertraits: Vec::new(),
-                    requires: Vec::new(),
-                    methods: Vec::new(),
-                });
+                manifest
+                    .exports
+                    .traits
+                    .push(crate::frontend::library_manifest::TraitExport {
+                        name: "Filterable".to_string(),
+                        source_name: None,
+                        type_params: Vec::new(),
+                        supertraits: Vec::new(),
+                        requires: Vec::new(),
+                        methods: Vec::new(),
+                    });
             },
         );
 
@@ -657,8 +669,8 @@ mod tests {
 
     #[test]
     fn helper_resolution_rejects_bindings_to_missing_exports() -> Result<(), Box<dyn std::error::Error>> {
-        let mut manifest = crate::library_manifest::LibraryManifest::new("demo", "0.1.0");
-        manifest.vocab = Some(crate::library_manifest::VocabExports {
+        let mut manifest = crate::frontend::library_manifest::LibraryManifest::new("demo", "0.1.0");
+        manifest.vocab = Some(crate::frontend::library_manifest::VocabExports {
             crate_path: "vocab_companion".to_string(),
             package_name: "vocab_companion".to_string(),
             keyword_registrations: Vec::new(),

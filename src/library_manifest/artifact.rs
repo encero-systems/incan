@@ -7,8 +7,10 @@ use std::sync::{Mutex, OnceLock};
 
 use sha2::{Digest, Sha256};
 
-use super::wire::RawLibraryManifest;
-use super::{LibraryManifest, ProviderCargoDependency, ProviderCargoDependencySource, ProviderDependencyMetadata};
+use crate::frontend::library_manifest::wire::RawLibraryManifest;
+use crate::frontend::library_manifest::{
+    LibraryManifest, ProviderCargoDependency, ProviderCargoDependencySource, ProviderDependencyMetadata,
+};
 
 /// Failure while hashing a complete generated provider artifact.
 #[derive(Debug, thiserror::Error)]

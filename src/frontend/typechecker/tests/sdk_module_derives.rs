@@ -5,9 +5,9 @@ use crate::frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadata, CheckedApiMetadataPackage, api_declaration_public_name,
     collect_checked_api_metadata,
 };
+use crate::frontend::library_manifest::LibraryManifest;
 use crate::frontend::typechecker::TypeChecker;
 use crate::frontend::{lexer, parser};
-use crate::library_manifest::LibraryManifest;
 use incan_core::lang::traits::{self as core_traits, TraitId};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;

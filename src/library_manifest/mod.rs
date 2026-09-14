@@ -1,40 +1,16 @@
-//! Library manifest (`.incnlib`) semantic model and stable IO boundary.
+//! Loading, digesting and publishing library manifests (`.incnlib`) — the provider side of the contract.
 //!
-//! The semantic model in this module is intentionally transport-agnostic. JSON is the current on-disk encoding, but
-//! callers interact with typed read/write APIs only.
+//! The manifest model itself is the frontend's (`crate::frontend::library_manifest`), because the typechecker
+//! reads dependency manifests through the same types the publisher writes. This module owns everything that
+//! touches an artifact on disk: reading a manifest back, digesting a provider's outputs and source inputs, and
+//! the toolchain-dependency records those digests carry. It re-exports the model so callers name one path.
 
 mod artifact;
-mod model;
-pub mod published_layout;
-#[cfg(test)]
-mod tests;
-mod type_projection;
-mod type_refs;
-mod validation;
-mod wire;
 
-use incan_vocab::{
-    DslSurface, KeywordRegistration as VocabKeywordRegistration, LibraryManifest as VocabProviderManifest,
-};
-
+pub use crate::frontend::library_manifest::published_layout;
+pub use crate::frontend::library_manifest::*;
 pub use artifact::{ProviderArtifactDigestError, digest_provider_artifact, digest_provider_source_inputs};
 pub(crate) use artifact::{
     ProviderSemanticToolchainDependency, digest_cargo_path_source_tree_with_cache,
     digest_provider_semantic_artifact_with_context_and_cache, digest_toolchain_source_tree_with_cache,
 };
-pub use model::*;
-pub(crate) use type_projection::{
-    VisitTypeRefs, contains_native_union, with_checked_native_unions, with_checked_type_origins,
-    with_checked_type_routes, with_native_nominal_origins, with_self_owned_native_unions,
-};
-pub use type_refs::resolved_type_from_manifest_type_ref;
-pub(crate) use type_refs::type_ref_from_resolved;
-
-/// Stable on-disk format version for `.incnlib` manifests.
-pub const LIBRARY_MANIFEST_FORMAT: u32 = 4;
-
-/// Stable schema version for generic provider metadata embedded in `.incnlib` manifests.
-pub const COMPILED_PROVIDER_METADATA_SCHEMA_VERSION: u32 = 1;
-
-/// Stable schema version for Rust ABI metadata embedded in `.incnlib` manifests.
-pub const RUST_ABI_SCHEMA_VERSION: u32 = 2;

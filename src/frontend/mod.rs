@@ -23,6 +23,7 @@ pub mod executable_resolution;
 pub(crate) mod feature_metadata;
 pub mod hir;
 pub mod library_exports;
+pub mod library_manifest;
 pub mod library_manifest_index;
 pub mod module;
 pub mod parsed_module;

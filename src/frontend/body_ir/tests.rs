@@ -5967,8 +5967,8 @@ pub(crate) fn provider_plan_from_checked_source(
     use std::collections::BTreeSet;
     use std::sync::Arc;
 
+    use crate::frontend::library_manifest::{CompiledProviderMetadata, LibraryManifest, ProviderOperationMetadata};
     use crate::frontend::library_manifest_index::LibraryManifestIndex;
-    use crate::library_manifest::{CompiledProviderMetadata, LibraryManifest, ProviderOperationMetadata};
     use crate::provider::{NamespaceAuthority, ProviderIdentity, ProviderProvenance, ProviderRecord};
 
     let operation_descriptors = type_info

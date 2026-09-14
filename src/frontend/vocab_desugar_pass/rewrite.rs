@@ -1644,11 +1644,11 @@ fn error_from_pass_error(error: VocabDesugarPassError, fallback_span: ast::Span)
 #[cfg(test)]
 mod embedded_fragment_desugar_pass_tests {
     use super::*;
+    use crate::frontend::library_manifest::LibraryManifest;
     use crate::frontend::library_manifest_index::{
         LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
     };
     use crate::frontend::typechecker::TypeChecker;
-    use crate::library_manifest::LibraryManifest;
     use incan_syntax::lexer;
 
     /// Build a minimal "known library" index entry so `import pub::webkit` resolves during typecheck.

@@ -6,13 +6,13 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::library_manifest::{LibraryManifest, LibraryManifestError};
+use crate::frontend::library_manifest::{LibraryManifest, LibraryManifestError};
 use crate::manifest::{DependencySource, DependencySpec, ProjectManifest};
 use incan_core::interop::RustItemMetadata;
 use incan_vocab::{CargoDependency, CargoDependencySource, KeywordActivation, KeywordRegistration, KeywordSpec};
 use serde::Deserialize;
 
-use crate::library_manifest::published_layout::{
+use crate::frontend::library_manifest::published_layout::{
     LIBRARY_ARTIFACT_DIRECTORY as LIBRARY_ARTIFACT_DIR, LIBRARY_MANIFEST_EXTENSION,
 };
 const LIBRARY_CRATE_LIB_RS: &str = "src/lib.rs";
@@ -1111,7 +1111,7 @@ widgets = { path = "deps/broken" }
         std::fs::create_dir_all(dep_artifact_root.join("src"))?;
 
         let mut manifest = LibraryManifest::new("widgets_core", "0.1.0");
-        manifest.vocab = Some(crate::library_manifest::VocabExports {
+        manifest.vocab = Some(crate::frontend::library_manifest::VocabExports {
             crate_path: "vocab_companion".to_string(),
             package_name: "widgets_vocab_companion".to_string(),
             keyword_registrations: vec![incan_vocab::KeywordRegistration {
@@ -1185,13 +1185,13 @@ widgets = { path = "deps/widgets-lib" }
         std::fs::create_dir_all(dep_artifact_root.join("src"))?;
 
         let mut manifest = LibraryManifest::new("routes_core", "0.1.0");
-        manifest.vocab = Some(crate::library_manifest::VocabExports {
+        manifest.vocab = Some(crate::frontend::library_manifest::VocabExports {
             crate_path: "vocab_companion".to_string(),
             package_name: "routes_vocab_companion".to_string(),
             keyword_registrations: Vec::new(),
             dsl_surfaces: Vec::new(),
             provider_manifest: incan_vocab::LibraryManifest::default(),
-            desugarer_artifact: Some(crate::library_manifest::VocabDesugarerArtifact {
+            desugarer_artifact: Some(crate::frontend::library_manifest::VocabDesugarerArtifact {
                 artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
                 abi_version: incan_vocab::WASM_DESUGAR_ABI_VERSION,
                 relative_path: "desugarers/routes_desugarer.wasm".to_string(),
@@ -1246,7 +1246,7 @@ routes = { path = "deps/routes-lib" }
         std::fs::create_dir_all(dep_b_artifact_root.join("src"))?;
 
         let mut dep_a_manifest = LibraryManifest::new("widgets_core", "0.1.0");
-        dep_a_manifest.vocab = Some(crate::library_manifest::VocabExports {
+        dep_a_manifest.vocab = Some(crate::frontend::library_manifest::VocabExports {
             crate_path: "widgets_vocab_companion".to_string(),
             package_name: "widgets_vocab_companion".to_string(),
             keyword_registrations: Vec::new(),
@@ -1269,7 +1269,7 @@ routes = { path = "deps/routes-lib" }
         std::fs::write(dep_a_artifact_root.join("src/lib.rs"), "pub fn widgets() {}\n")?;
 
         let mut dep_b_manifest = LibraryManifest::new("analytics_core", "0.1.0");
-        dep_b_manifest.vocab = Some(crate::library_manifest::VocabExports {
+        dep_b_manifest.vocab = Some(crate::frontend::library_manifest::VocabExports {
             crate_path: "analytics_vocab_companion".to_string(),
             package_name: "analytics_vocab_companion".to_string(),
             keyword_registrations: Vec::new(),
@@ -1322,7 +1322,7 @@ analytics = { path = "deps/analytics-lib" }
         std::fs::create_dir_all(dep_b_artifact_root.join("src"))?;
 
         let mut dep_a_manifest = LibraryManifest::new("widgets_core", "0.1.0");
-        dep_a_manifest.vocab = Some(crate::library_manifest::VocabExports {
+        dep_a_manifest.vocab = Some(crate::frontend::library_manifest::VocabExports {
             crate_path: "widgets_vocab_companion".to_string(),
             package_name: "widgets_vocab_companion".to_string(),
             keyword_registrations: Vec::new(),
@@ -1344,7 +1344,7 @@ analytics = { path = "deps/analytics-lib" }
         std::fs::write(dep_a_artifact_root.join("src/lib.rs"), "pub fn widgets() {}\n")?;
 
         let mut dep_b_manifest = LibraryManifest::new("analytics_core", "0.1.0");
-        dep_b_manifest.vocab = Some(crate::library_manifest::VocabExports {
+        dep_b_manifest.vocab = Some(crate::frontend::library_manifest::VocabExports {
             crate_path: "analytics_vocab_companion".to_string(),
             package_name: "analytics_vocab_companion".to_string(),
             keyword_registrations: Vec::new(),
