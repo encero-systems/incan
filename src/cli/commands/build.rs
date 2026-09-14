@@ -46,7 +46,8 @@ use crate::frontend::ast::{Declaration, Decorator, Expr, ImportKind, Literal, Sp
 use crate::frontend::body_ir::build_body_ir_module_v0;
 use crate::frontend::contract_metadata::{ContractMetadataPackage, read_project_model_bundles};
 use crate::frontend::library_exports::{
-    CheckedExportKind, CheckedNamedExport, LibraryExportBindingRegistry, collect_checked_public_exports,
+    CheckedExportKind, CheckedNamedExport, LibraryExportBindingRegistry, checked_exports_by_name,
+    collect_checked_public_exports,
 };
 use crate::frontend::library_manifest_index::{
     LibraryArtifactKind, LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
@@ -3300,70 +3301,6 @@ fn module_key(path_segments: &[String]) -> String {
     canonicalize_source_module_segments(path_segments).join("_")
 }
 
-/// Rename one checked export while preserving its semantic export kind.
-fn rename_checked_export(export: &CheckedNamedExport, exported_name: &str) -> CheckedNamedExport {
-    let mut renamed = export.clone();
-    renamed.name = exported_name.to_string();
-
-    match &mut renamed.kind {
-        CheckedExportKind::Function(function_export) => function_export.name = exported_name.to_string(),
-        CheckedExportKind::Partial(partial_export) => partial_export.name = exported_name.to_string(),
-        CheckedExportKind::Alias(alias_export) => {
-            alias_export.name = exported_name.to_string();
-            // Rename the callable the alias projects along with the alias itself. The projection describes the
-            // binding a consumer resolves under this public name, so a renaming re-export must carry the new name
-            // here too; only `emitted_name` stays put, because the declaration behind the rename is unchanged.
-            if let Some(projected_function) = alias_export.projected_function.as_mut() {
-                projected_function.name = exported_name.to_string();
-            }
-        }
-        CheckedExportKind::TypeAlias(type_alias_export) => type_alias_export.name = exported_name.to_string(),
-        CheckedExportKind::Model(model_export) => model_export.name = exported_name.to_string(),
-        CheckedExportKind::Class(class_export) => class_export.name = exported_name.to_string(),
-        CheckedExportKind::Trait(trait_export) => trait_export.name = exported_name.to_string(),
-        CheckedExportKind::Enum(enum_export) => enum_export.name = exported_name.to_string(),
-        CheckedExportKind::Newtype(newtype_export) => newtype_export.name = exported_name.to_string(),
-        CheckedExportKind::Const(const_export) => const_export.name = exported_name.to_string(),
-        CheckedExportKind::Static(static_export) => static_export.name = exported_name.to_string(),
-    }
-
-    renamed
-}
-
-/// Project a checked provider export through the entrypoint binding that actually re-exports it.
-///
-/// The provider export retains the concrete declaration shape (model, trait, function, and so on), while the
-/// entrypoint's checked export owns the re-export path and target identity. Combining those two checked products
-/// avoids relabeling a renamed declaration as a direct export whose public name no longer matches its canonical
-/// declaration.
-fn project_checked_reexport(
-    export: &CheckedNamedExport,
-    exported_name: &str,
-    entrypoint_exports: Option<&HashMap<String, Vec<CheckedNamedExport>>>,
-) -> CheckedNamedExport {
-    let mut projected = rename_checked_export(export, exported_name);
-    let Some(candidates) = entrypoint_exports.and_then(|exports| exports.get(exported_name)) else {
-        return projected;
-    };
-    let checked_projection = candidates
-        .iter()
-        .find(|candidate| candidate.identity.canonical == export.identity.canonical)
-        .or_else(|| (candidates.len() == 1).then(|| &candidates[0]));
-    if let Some(checked_projection) = checked_projection {
-        projected.identity = checked_projection.identity.clone();
-    }
-    projected
-}
-
-/// Group checked exports by public source name while preserving same-name function overload entries.
-fn checked_exports_by_name(exports: Vec<CheckedNamedExport>) -> HashMap<String, Vec<CheckedNamedExport>> {
-    let mut grouped: HashMap<String, Vec<CheckedNamedExport>> = HashMap::new();
-    for export in exports {
-        grouped.entry(export.name.clone()).or_default().push(export);
-    }
-    grouped
-}
-
 /// Map exported scalar value enums to the serialized identities used by library consumers.
 fn public_ordinal_type_identities(
     lib_module: &ParsedModule,
@@ -3553,7 +3490,7 @@ impl<'a> LibraryReexportResolver<'a> {
                 resolved.extend(
                     exports
                         .iter()
-                        .map(|export| project_checked_reexport(export, &exported_name, entrypoint_exports)),
+                        .map(|export| export.projected_through_reexport(&exported_name, entrypoint_exports)),
                 );
             }
         }
