@@ -17,6 +17,7 @@ use std::thread;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use super::closure_proof::OvenClosureProof;
 use super::interop::{OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, OVEN_INTEROP_PLAN_SCHEMA_INPUT};
 use super::legacy_cargo::{
     OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoError, OvenLegacyCargoInspectionPackage,
@@ -3166,7 +3167,16 @@ fn loaf_from_loaf_with_lock(
         path: loaf_path.to_path_buf(),
         message: "loaf file has no parent directory".to_string(),
     })?;
-    let artifact_plan = loaf.plan.materialize_trusted_store(artifact_root, &receipt.intent)?;
+    // The envelope's generation lock is held (shared) by every caller that reaches a committed Loaf, so the proof
+    // below is written into a root no publisher is replacing; a Loaf reached outside an envelope has nowhere to
+    // keep one and takes the full walk every time.
+    let artifact_plan = match closure_proof_path(loaf_path, &loaf_identity) {
+        Some(proof_path) => {
+            loaf.plan
+                .materialize_proven_store(artifact_root, &receipt.intent, &loaf_identity, &proof_path)?
+        }
+        None => loaf.plan.materialize_trusted_store(artifact_root, &receipt.intent)?,
+    };
     Ok(OvenToolchainLoaf {
         loaf_identity,
         loaf_build_unit_identity: loaf.build_unit_identity,
@@ -3449,6 +3459,15 @@ fn validate_loaf_declared_file_set(loaf: &OvenLoaf, loaf_path: &Path) -> Result<
 }
 
 /// Digest one regular `loaf.json` file into its canonical content identity.
+/// Where the closure proof for a committed Loaf lives: beside its envelope, never inside the sealed `.loaf`
+/// directory, whose declared file set admits nothing undeclared. `None` when `loaf_path` is not below an envelope.
+fn closure_proof_path(loaf_path: &Path, loaf_identity: &str) -> Option<PathBuf> {
+    let envelope_root = loaf_path
+        .ancestors()
+        .find(|ancestor| ancestor.join("envelope.json").is_file())?;
+    Some(OvenClosureProof::path(envelope_root, loaf_identity))
+}
+
 fn loaf_file_identity(loaf_path: &Path) -> Result<String, OvenLoafError> {
     fs::read(loaf_path)
         .map(|bytes| digest_bytes(&bytes))

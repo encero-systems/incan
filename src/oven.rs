@@ -21,6 +21,7 @@ use sha2::{Digest, Sha256};
 use crate::library_manifest::{digest_cargo_path_source_tree_with_cache, digest_provider_artifact};
 use crate::manifest::{DependencySource, DependencySpec, GitReference, ProjectManifest};
 
+pub(crate) mod closure_proof;
 pub(crate) mod compiler_suite_env;
 pub(crate) mod interop;
 pub mod legacy_cargo;

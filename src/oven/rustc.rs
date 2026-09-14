@@ -69,6 +69,7 @@ use std::time::{Duration, Instant};
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 
+use super::closure_proof::{OVEN_CLOSURE_PROOF_SCHEMA_VERSION, OvenClosureProof};
 use super::native_contract::{
     OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION, OvenProjectExtensionPayload, OvenProjectRegistrySourceDependency,
 };
@@ -2813,6 +2814,55 @@ impl OvenRustcArtifactManifest {
         artifact_root: &Path,
         expected_intent: &OvenBuildIntent,
     ) -> Result<OvenRustcArtifactPlan, OvenRustcError> {
+        self.materialize_trusted_store_with_shape(artifact_root, expected_intent, TrustedShape::Checked)
+    }
+
+    /// Materialize a sealed closure whose full shape check one process has already written down (#1546).
+    ///
+    /// `closure_identity` names the closure — for a Loaf, the digest of its manifest — and `proof_path` is where its
+    /// [`OvenClosureProof`] lives. With a matching proof the per-file shape checks are skipped: relative paths are
+    /// still normalized and contained, parents are still canonicalized below the root, but the ten thousand
+    /// `symlink_metadata` calls that re-established a constant every process are not made. Without one, this is the
+    /// full trusted materialization, and on success the proof is written for the next process. A proof that cannot
+    /// be written costs nothing but the next process's full walk.
+    pub(crate) fn materialize_proven_store(
+        &self,
+        artifact_root: &Path,
+        expected_intent: &OvenBuildIntent,
+        closure_identity: &str,
+        proof_path: &Path,
+    ) -> Result<OvenRustcArtifactPlan, OvenRustcError> {
+        let artifact_count = self.declared_file_count();
+        if OvenClosureProof::read_matching(proof_path, closure_identity, artifact_count).is_some() {
+            return self.materialize_trusted_store_with_shape(artifact_root, expected_intent, TrustedShape::Proven);
+        }
+        let plan = self.materialize_trusted_store_with_shape(artifact_root, expected_intent, TrustedShape::Checked)?;
+        let _ = OvenClosureProof {
+            schema_version: OVEN_CLOSURE_PROOF_SCHEMA_VERSION,
+            closure_identity: closure_identity.to_string(),
+            artifact_count,
+        }
+        .write(proof_path);
+        Ok(plan)
+    }
+
+    /// Count every file a full trusted materialization checks, so a proof binds to that exact declared set.
+    fn declared_file_count(&self) -> u64 {
+        let auxiliary_externs = self
+            .vocab_auxiliary_targets
+            .iter()
+            .map(|auxiliary| auxiliary.externs.len())
+            .sum::<usize>();
+        u64::try_from(self.externs.len() + self.supporting_artifacts.len() + auxiliary_externs).unwrap_or(u64::MAX)
+    }
+
+    /// The trusted materialization, with the per-file shape checks either made or already proven.
+    fn materialize_trusted_store_with_shape(
+        &self,
+        artifact_root: &Path,
+        expected_intent: &OvenBuildIntent,
+        shape: TrustedShape,
+    ) -> Result<OvenRustcArtifactPlan, OvenRustcError> {
         self.validate_shape(expected_intent)?;
         let root = canonical_directory(artifact_root, "artifact root")?;
         let expected = expected_artifacts(self)?;
@@ -2823,13 +2873,16 @@ impl OvenRustcArtifactManifest {
             "dependency search",
             &expected,
             &mut trusted_parents,
+            shape,
         )?;
+
         let native_search_paths = trusted_materialize_search_paths(
             &root,
             &self.native_search_paths,
             "native search",
             &expected,
             &mut trusted_parents,
+            shape,
         )?;
         for auxiliary in &self.vocab_auxiliary_targets {
             let _ = trusted_materialize_search_paths(
@@ -2838,6 +2891,7 @@ impl OvenRustcArtifactManifest {
                 "vocab auxiliary dependency search",
                 &expected,
                 &mut trusted_parents,
+                shape,
             )?;
             for artifact in &auxiliary.externs {
                 let _ = trusted_file(
@@ -2845,6 +2899,7 @@ impl OvenRustcArtifactManifest {
                     &artifact.relative_path,
                     "vocab auxiliary extern",
                     &mut trusted_parents,
+                    shape,
                 )?;
             }
         }
@@ -2854,12 +2909,18 @@ impl OvenRustcArtifactManifest {
             .map(|artifact| {
                 Ok((
                     artifact.crate_name.clone(),
-                    trusted_file(&root, &artifact.relative_path, "extern", &mut trusted_parents)?,
+                    trusted_file(&root, &artifact.relative_path, "extern", &mut trusted_parents, shape)?,
                 ))
             })
             .collect::<Result<Vec<_>, OvenRustcError>>()?;
         for artifact in &self.supporting_artifacts {
-            trusted_file(&root, &artifact.relative_path, "supporting", &mut trusted_parents)?;
+            trusted_file(
+                &root,
+                &artifact.relative_path,
+                "supporting",
+                &mut trusted_parents,
+                shape,
+            )?;
         }
         Ok(OvenRustcArtifactPlan {
             source_path_projection: self.source_search_roles_at_root(&root)?,
@@ -2897,6 +2958,7 @@ impl OvenRustcArtifactManifest {
             "vocab auxiliary dependency search",
             &expected,
             &mut trusted_parents,
+            TrustedShape::Checked,
         )?;
         let externs = auxiliary
             .externs
@@ -2909,6 +2971,7 @@ impl OvenRustcArtifactManifest {
                         &artifact.relative_path,
                         "vocab auxiliary extern",
                         &mut trusted_parents,
+                        TrustedShape::Checked,
                     )?,
                 ))
             })
@@ -2971,7 +3034,13 @@ impl OvenRustcArtifactManifest {
                         message: format!("declare mismatched digest for `{relative}`"),
                     });
                 }
-                let path = trusted_file(&root, &relative, "composed supporting artifact", &mut trusted_parents)?;
+                let path = trusted_file(
+                    &root,
+                    &relative,
+                    "composed supporting artifact",
+                    &mut trusted_parents,
+                    TrustedShape::Checked,
+                )?;
                 if locations.insert(relative.clone(), path).is_some() {
                     return Err(OvenRustcError::InvalidInput {
                         field: "composed artifact roots",
@@ -2998,6 +3067,7 @@ impl OvenRustcArtifactManifest {
                 "composed dependency search",
                 &fragment_expected,
                 &mut trusted_parents,
+                TrustedShape::Checked,
             )?);
             if let Some(root_inventory) = fragment.root_inventory {
                 let complete = admitted_search_inventory(root_inventory, &expected)?;
@@ -3038,6 +3108,7 @@ impl OvenRustcArtifactManifest {
                 "composed native search",
                 &fragment_expected,
                 &mut trusted_parents,
+                TrustedShape::Checked,
             )?);
         }
         let missing = expected
@@ -3061,6 +3132,7 @@ impl OvenRustcArtifactManifest {
                 "admitted dependency search",
                 &complete,
                 &mut trusted_parents,
+                TrustedShape::Checked,
             )?;
             for relative in candidate.dependency_search_paths {
                 let members = complete
@@ -3341,6 +3413,7 @@ impl OvenRustcArtifactManifest {
                             &member.relative_path,
                             "admitted source search member",
                             &mut trusted_parents,
+                            TrustedShape::Checked,
                         )?;
                     }
                     selected.insert(chosen.0.join(&chosen.1));
@@ -5926,6 +5999,15 @@ fn admitted_search_inventory(
     Ok(complete)
 }
 
+/// Whether a trusted materialization makes its per-file shape checks or relies on a written closure proof.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrustedShape {
+    /// Stat every declared file and search directory: present, regular or directory, never a symlink.
+    Checked,
+    /// A proof for this exact closure exists; normalize and contain paths, but do not stat each one.
+    Proven,
+}
+
 /// Verify a selected store-owned search directory without repeating publisher-time closure enumeration.
 ///
 /// Publisher-time materialization verifies every child and its digest. A normal consumer proves the selected
@@ -5938,6 +6020,7 @@ fn trusted_materialize_search_paths(
     kind: &'static str,
     expected: &BTreeMap<String, String>,
     trusted_parents: &mut BTreeMap<PathBuf, PathBuf>,
+    shape: TrustedShape,
 ) -> Result<Vec<PathBuf>, OvenRustcError> {
     let mut materialized = Vec::new();
     let mut seen = BTreeSet::new();
@@ -5950,16 +6033,18 @@ fn trusted_materialize_search_paths(
             });
         }
         let path = trusted_safe_path(root, &normalized, kind, trusted_parents)?;
-        let metadata = fs::symlink_metadata(&path).map_err(|source| OvenRustcError::Io {
-            path: path.clone(),
-            source,
-        })?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            return Err(OvenRustcError::InvalidArtifactPath {
-                kind,
-                path,
-                message: "must be a non-symlink directory".to_string(),
-            });
+        if shape == TrustedShape::Checked {
+            let metadata = fs::symlink_metadata(&path).map_err(|source| OvenRustcError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(OvenRustcError::InvalidArtifactPath {
+                    kind,
+                    path,
+                    message: "must be a non-symlink directory".to_string(),
+                });
+            }
         }
         if !expected
             .keys()
@@ -6011,13 +6096,22 @@ fn verified_file(
 }
 
 /// Return a safe regular store artifact without repeating its publisher-verified content digest.
+///
+/// Under [`TrustedShape::Proven`] the path is still normalized and contained below a canonical parent, but the
+/// file itself is not stated: a written proof says this closure's files were all checked once already.
 fn trusted_file(
     root: &Path,
     relative: &str,
     kind: &'static str,
     trusted_parents: &mut BTreeMap<PathBuf, PathBuf>,
+    shape: TrustedShape,
 ) -> Result<PathBuf, OvenRustcError> {
     let relative = normalized_relative_path(relative, kind)?;
+    if shape == TrustedShape::Proven {
+        // The proof covered this file's parent too; re-canonicalizing thousands of source directories is the
+        // other half of the walk the proof exists to retire.
+        return Ok(root.join(relative));
+    }
     let path = trusted_safe_path(root, &relative, kind, trusted_parents)?;
     let metadata = fs::symlink_metadata(&path).map_err(|source| OvenRustcError::Io {
         path: path.clone(),
@@ -6410,15 +6504,16 @@ mod tests {
 
     use super::{
         OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION, OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
-        OvenCallerOwnedRustcLibrary, OvenDirectRustcTestRequest, OvenProjectInspectionAuthorityPayload,
-        OvenProjectInspectionAuthorityRef, OvenProjectInspectionConstituent, OvenProjectInspectionRootDependency,
-        OvenProjectInspectionSource, OvenProjectInspectionSourceOwner, OvenProjectInspectionTestDependencyEnvelope,
-        OvenProjectInspectionTestDependencyRoot, OvenRegistryLeafAuthority, OvenRustcArtifactExtern,
-        OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcAuxiliaryTarget, OvenRustcError,
-        OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact,
-        OvenSelectedPathRustcAuthority, OvenStoredDirectRustcRunRequest, OvenStoredDirectRustcTestRequest,
-        OvenTrustedDirectRustcTargetRequest, OvenTrustedRustcArtifactRoot, OvenTrustedRustdocTestRequest,
-        apply_oven_profile, attach_caller_owned_rustc_libraries, bake_direct_rustc_test, bake_stored_direct_rustc_run,
+        OvenCallerOwnedRustcLibrary, OvenClosureProof, OvenDirectRustcTestRequest,
+        OvenProjectInspectionAuthorityPayload, OvenProjectInspectionAuthorityRef, OvenProjectInspectionConstituent,
+        OvenProjectInspectionRootDependency, OvenProjectInspectionSource, OvenProjectInspectionSourceOwner,
+        OvenProjectInspectionTestDependencyEnvelope, OvenProjectInspectionTestDependencyRoot,
+        OvenRegistryLeafAuthority, OvenRustcArtifactExtern, OvenRustcArtifactManifest, OvenRustcArtifactPlan,
+        OvenRustcAuxiliaryTarget, OvenRustcError, OvenRustcRegistryLeaf, OvenRustcRegistrySource,
+        OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact, OvenSelectedPathRustcAuthority,
+        OvenStoredDirectRustcRunRequest, OvenStoredDirectRustcTestRequest, OvenTrustedDirectRustcTargetRequest,
+        OvenTrustedRustcArtifactRoot, OvenTrustedRustdocTestRequest, apply_oven_profile,
+        attach_caller_owned_rustc_libraries, bake_direct_rustc_test, bake_stored_direct_rustc_run,
         bake_stored_direct_rustc_test, bake_trusted_direct_rustc_dylib, bake_trusted_direct_rustc_library,
         bake_trusted_direct_rustc_proc_macro, bake_trusted_direct_rustc_run, bake_trusted_direct_rustc_test,
         combined_process_output, is_host_native_unix_target, load_project_inspection_authority,
@@ -9892,6 +9987,78 @@ fi
         assert!(matches!(
             manifest.materialize(root.path(), &receipt.intent),
             Err(OvenRustcError::UnrecordedSearchArtifact { .. })
+        ));
+        Ok(())
+    }
+
+    /// The first proven materialization walks every file and writes the proof; the next one is served on the
+    /// proof alone, and a manifest declaring a different file set under the same identity misses it.
+    #[test]
+    fn a_closure_proof_retires_the_per_file_walk_for_the_exact_closure_it_proved_issue1546()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let proofs = tempfile::tempdir()?;
+        let dependencies = root.path().join("deps");
+        fs::create_dir(&dependencies)?;
+        fs::write(dependencies.join("libdeclared.rlib"), b"declared artifact")?;
+        let receipt = intent(root.path())?;
+        let manifest = OvenRustcArtifactManifest {
+            schema_version: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+            intent: receipt.intent.clone(),
+            dependency_search_paths: vec!["deps".to_string()],
+            native_search_paths: Vec::new(),
+            externs: Vec::new(),
+            entrypoint_dependency_search_paths: Default::default(),
+            entrypoint_externs: BTreeMap::new(),
+            registry_leaves: Vec::new(),
+            registry_sources: Vec::new(),
+            compile_environment: BTreeMap::new(),
+            vocab_auxiliary_targets: Vec::new(),
+            supporting_artifacts: vec![OvenRustcSupportingArtifact {
+                relative_path: "deps/libdeclared.rlib".to_string(),
+                digest: digest_bytes(b"declared artifact"),
+            }],
+        };
+        let proof_path = OvenClosureProof::path(proofs.path(), "sha256:closure");
+
+        // Symlinked in place of the declared file, the full walk refuses and writes no proof.
+        let declared = dependencies.join("libdeclared.rlib");
+        let elsewhere = root.path().join("elsewhere");
+        fs::write(&elsewhere, b"declared artifact")?;
+        fs::remove_file(&declared)?;
+        std::os::unix::fs::symlink(&elsewhere, &declared)?;
+        assert!(matches!(
+            manifest.materialize_proven_store(root.path(), &receipt.intent, "sha256:closure", &proof_path),
+            Err(OvenRustcError::InvalidArtifactPath { .. })
+        ));
+        assert!(!proof_path.is_file());
+
+        // A regular file again: the walk passes and the proof is written for this closure and file count.
+        fs::remove_file(&declared)?;
+        fs::write(&declared, b"declared artifact")?;
+        manifest.materialize_proven_store(root.path(), &receipt.intent, "sha256:closure", &proof_path)?;
+        assert_eq!(
+            OvenClosureProof::read_matching(&proof_path, "sha256:closure", 1).map(|proof| proof.artifact_count),
+            Some(1)
+        );
+
+        // With the proof in place the per-file walk is retired: the same symlink swap is not re-checked here (the
+        // proof says the closure was checked once; `inspect oven` is the audit), but the plan still names the
+        // declared path below the root.
+        fs::remove_file(&declared)?;
+        std::os::unix::fs::symlink(&elsewhere, &declared)?;
+        let proven = manifest.materialize_proven_store(root.path(), &receipt.intent, "sha256:closure", &proof_path)?;
+        assert_eq!(proven.dependency_search_paths, vec![fs::canonicalize(&dependencies)?]);
+
+        // A manifest declaring more files under the same identity does not ride on the proof.
+        let mut wider = manifest.clone();
+        wider.supporting_artifacts.push(OvenRustcSupportingArtifact {
+            relative_path: "deps/libother.rlib".to_string(),
+            digest: digest_bytes(b"other"),
+        });
+        assert!(matches!(
+            wider.materialize_proven_store(root.path(), &receipt.intent, "sha256:closure", &proof_path),
+            Err(OvenRustcError::InvalidArtifactPath { .. }) | Err(OvenRustcError::Io { .. })
         ));
         Ok(())
     }

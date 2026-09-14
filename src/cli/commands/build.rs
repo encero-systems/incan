@@ -76,6 +76,7 @@ use crate::lockfile::{
     CargoFeatureSelection, IncanLock, LOCK_FILENAME, provider_semantic_identities, semantic_lock_state,
 };
 use crate::manifest::{DependencySource, DependencySpec, GitReference, LOAF_MANIFEST_FILENAME, ProjectManifest};
+use crate::oven::closure_proof::OvenClosureProof;
 use crate::oven::interop::{
     OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, default_interop_execution_receipt_path, interop_execution_build_unit_inputs,
     load_interop_execution_receipt, validate_interop_execution_receipt,
@@ -1180,8 +1181,15 @@ pub(crate) fn select_receipt_direct_rustc_execution_plan(
             "selected Oven direct-Rustc plan has an invalid payload: {error}"
         ))
     })?;
+    // The entry is content-addressed and leased, so its closure proof lives beside the store under its identity
+    // (#1546): the first process walks every file, the rest read one small record.
     let artifact_plan = artifacts
-        .materialize_trusted_store(&artifact_root, &receipt.intent)
+        .materialize_proven_store(
+            &artifact_root,
+            &receipt.intent,
+            plan_identity,
+            &OvenClosureProof::path(store.root(), plan_identity),
+        )
         .map_err(oven_rustc_error)?;
     Ok(Some(OvenStoredDirectRustcExecutionPlan {
         identity: plan_identity.clone(),
