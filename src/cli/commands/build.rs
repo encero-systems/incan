@@ -73,9 +73,7 @@ use crate::library_manifest::{
     ProviderImplementationFacet, ProviderModuleClaim, ProviderOperationMetadata,
     digest_cargo_path_source_tree_with_cache, digest_provider_artifact, digest_provider_source_inputs,
 };
-use crate::lockfile::{
-    CargoFeatureSelection, IncanLock, LOCK_FILENAME, provider_semantic_identities, semantic_lock_state,
-};
+use crate::lockfile::{CargoFeatureSelection, IncanLock, LOCK_FILENAME, semantic_lock_state};
 use crate::manifest::{DependencySource, DependencySpec, GitReference, LOAF_MANIFEST_FILENAME, ProjectManifest};
 use crate::oven::interop::{
     OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, default_interop_execution_receipt_path, interop_execution_build_unit_inputs,
@@ -92,16 +90,13 @@ use crate::oven::loaf::{
     OVEN_DEPENDENCY_MISS_SUMMARY, OVEN_LOAF_ENV, OVEN_LOAF_MISS_GUIDANCE, OVEN_NESTED_DEPENDENCY_MISS_SUMMARY,
     OVEN_NO_IMPLICIT_DEPENDENCY_BUILD, OVEN_SOURCE_COMPILER_VOCAB_SUPPORT_BUILD_INPUT, OvenToolchainLoaf,
     resolve_compiler_owned_loaf_by_identity, resolve_compiler_owned_loaf_for_registry_dependencies,
-    runtime_build_unit_inputs,
 };
 use crate::oven::plan::composition::{compose_selected_packaged_provider_plan, provider_compilation_artifacts};
 use crate::oven::plan::selection::{
     SelectedPackagedProviderPlans, select_packaged_provider_plans, select_receipt_direct_rustc_execution_plan,
     select_receipt_project_extension_execution_plan,
 };
-use crate::oven::plan::{
-    OvenDirectRustcPlanSelection, OvenPackagedLibraryLoafEntry, OvenPlanError, PackagedProviderCandidate,
-};
+use crate::oven::plan::{OvenDirectRustcPlanSelection, OvenPackagedLibraryLoafEntry, PackagedProviderCandidate};
 use crate::oven::rustc::{
     OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION, OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH,
     OvenCallerOwnedRustcLibrary, OvenLoadedProjectInspectionAuthority, OvenProjectInspectionAuthorityPayload,
@@ -137,18 +132,19 @@ use super::build_report::{
     emit_build_report, emit_rust_inspection_report, emit_workspace_build_report, generated_project_report,
     incan_dependencies_report, interop_report, oven_generated_project_report, rust_inspection_report, semantic_report,
 };
-use super::lock::{
-    LockResolution, LockResolutionRequest, PublishedOvenProjectLock, publish_oven_project_lock, resolve_lock_context,
-    validate_oven_lock_policy,
-};
-#[cfg(feature = "rust_inspect")]
-use super::lock::{
-    OvenRustInspectSourceAuthorityRequest, RustInspectWorkspaceRequest, prepare_project_registry_source_authorities,
-    prepare_rust_inspect_workspace,
-};
 use super::oven::open_default_oven_store;
+use crate::driver::build_unit::{oven_build_unit_inputs, promoted_oven_test_dependencies};
 use crate::driver::cargo_policy::{CargoPolicy, cargo_command_flags, enforce_project_toolchain_constraint};
 use crate::driver::diagnostics::render_module_warnings;
+use crate::driver::error::{oven_plan_error, oven_rustc_error};
+#[cfg(feature = "rust_inspect")]
+use crate::driver::lock::registry_sources::prepare_project_registry_source_authorities;
+use crate::driver::lock::resolution::{publish_oven_project_lock, resolve_lock_context, validate_oven_lock_policy};
+#[cfg(feature = "rust_inspect")]
+use crate::driver::lock::rust_inspect::prepare_rust_inspect_workspace;
+use crate::driver::lock::{LockResolution, LockResolutionRequest, PublishedOvenProjectLock};
+#[cfg(feature = "rust_inspect")]
+use crate::driver::lock::{OvenRustInspectSourceAuthorityRequest, RustInspectWorkspaceRequest};
 use crate::driver::modules::{
     build_source_map, collect_modules_detailed_with_session, collect_rust_dependency_uses, format_dependency_error,
     imported_module_deps_for_with_provider_plan, module_key_index, register_module_path_segments,
@@ -171,8 +167,8 @@ use crate::provider::inventory::extend_requirements_with_provider_plan;
 #[cfg(test)]
 use crate::provider::requirements::dependency_specs_match;
 use crate::provider::requirements::{
-    INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, ProjectRequirements, collect_project_requirements,
-    merge_project_requirement_dependencies, semantic_sdk_path_dependencies,
+    INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, collect_project_requirements, merge_project_requirement_dependencies,
+    semantic_sdk_path_dependencies,
 };
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig, RustMetadataCache, RustMetadataError};
@@ -2309,27 +2305,6 @@ fn prepare_project_with_options(
     Ok(())
 }
 
-/// Prepare an executable for Oven Alpha without launching Cargo, inspecting a Cargo target, or auto-publishing SDK
-/// providers.
-///
-/// The generated Rust remains caller-owned so it can be inspected and regenerated normally. Reusable native inputs
-/// are not derived from that directory: normal execution selects one matching direct-rustc provider/dependency plan
-/// from the bounded Oven store. Incan-generated programs always link the standard runtime, so an empty plan is not a
-/// meaningful normal-command fallback.
-pub(crate) fn oven_build_unit_inputs(
-    provider_plan: &ProviderPlan,
-    requirements: &ProjectRequirements,
-    resolved: &ResolvedDependencies,
-) -> CliResult<BTreeMap<String, String>> {
-    let provider_records = oven_native_provider_records(provider_plan, &semantic_sdk_path_dependencies(requirements))?;
-    let mut dependencies = resolved.dependencies.clone();
-    dependencies.extend(resolved.dev_dependencies.clone());
-    let dependency_digest =
-        digest_dependency_specs(&dependencies).map_err(|error| CliError::failure(error.to_string()))?;
-    runtime_build_unit_inputs(provider_records, &requirements.stdlib_features, dependency_digest)
-        .map_err(CliError::failure)
-}
-
 /// Add the exact selected interop execution receipt when this normal command targets a declared interop profile.
 ///
 /// The portable lock remains the declaration authority; the small project-owned receipt proves which compatible
@@ -2374,56 +2349,6 @@ pub(crate) fn append_oven_interop_execution_build_inputs(
         }
     }
     Ok(())
-}
-
-/// Encode only the compiler-owned SDK capabilities a generated native crate can exercise.
-///
-/// The active provider catalog contains every installed SDK component so semantic analysis can resolve imports
-/// deterministically. An enabled but unused component contributes neither a generated Rust extern nor a selected
-/// implementation facet. Retaining its identity in a Loaf receipt would let an unrelated provider relocation
-/// prevent a safe compiler-owned Loaf match. Direct-link roots remain records even without a module claim because a
-/// checked project-library projection can require their rlib explicitly.
-pub(crate) fn oven_native_provider_records(
-    provider_plan: &ProviderPlan,
-    sdk_path_dependencies: &[DependencySpec],
-) -> CliResult<Vec<String>> {
-    let semantic_identities =
-        provider_semantic_identities(provider_plan, sdk_path_dependencies).map_err(CliError::failure)?;
-    let direct_sdk_link_roots = provider_plan
-        .sdk_link_roots()
-        .into_iter()
-        .map(|provider| provider.identity.stable_key())
-        .collect::<BTreeSet<_>>();
-    let mut provider_records = Vec::new();
-    for provider in provider_plan.active_sdk_records() {
-        let used_modules = provider_plan
-            .used_modules(provider)
-            .into_iter()
-            .map(|module| module.join("."))
-            .collect::<Vec<_>>();
-        let facets = provider_plan
-            .selected_implementation_facets(provider)
-            .into_iter()
-            .map(|facet| facet.id.as_str())
-            .collect::<Vec<_>>();
-        let direct_link = direct_sdk_link_roots.contains(&provider.identity.stable_key());
-        if used_modules.is_empty() && facets.is_empty() && !direct_link {
-            continue;
-        }
-        let raw_identity = provider.identity.stable_key();
-        let identity = semantic_identities.get(&raw_identity).ok_or_else(|| {
-            CliError::failure(format!(
-                "native provider compatibility identity is missing for `{raw_identity}`"
-            ))
-        })?;
-        provider_records.push(format!(
-            "{identity}|{}|{}|{}",
-            used_modules.join(","),
-            facets.join(","),
-            if direct_link { "link" } else { "none" }
-        ));
-    }
-    Ok(provider_records)
 }
 
 /// Resolve the direct-Rustc outputs of materialized caller-owned `pub::` dependencies.
@@ -5270,43 +5195,6 @@ fn project_extension_base_loaf(receipt: &crate::oven::OvenReceipt) -> CliResult<
 struct OvenProjectDependencySurface<'a> {
     selection: &'a [DependencySpec],
     provider_compilations: &'a [OvenCompilerMacroDependency],
-}
-
-/// Promote the complete canonical normal/dev surface into one generated-test dependency set.
-///
-/// Cargo unifies features and default-feature activation for duplicate package edges. The synthetic envelope mirrors
-/// that behavior once at explicit bake time while preserving the dependency key, package rename, source, and version.
-/// Every selected edge becomes non-optional because a generated native test may use any dependency reachable from the
-/// checked project/test graph.
-pub(crate) fn promoted_oven_test_dependencies(resolved: &ResolvedDependencies) -> CliResult<Vec<DependencySpec>> {
-    let mut promoted = Vec::new();
-    for candidate in resolved.dependencies.iter().chain(&resolved.dev_dependencies) {
-        if let Some(existing) = promoted
-            .iter_mut()
-            .find(|dependency: &&mut DependencySpec| dependency.crate_name == candidate.crate_name)
-        {
-            if existing.version != candidate.version
-                || existing.source != candidate.source
-                || existing.package != candidate.package
-            {
-                return Err(CliError::failure(format!(
-                    "test dependency `{}` conflicts between the canonical normal and dev surfaces",
-                    candidate.crate_name
-                )));
-            }
-            existing.features.extend(candidate.features.iter().cloned());
-            existing.features.sort();
-            existing.features.dedup();
-            existing.default_features |= candidate.default_features;
-            existing.optional = false;
-            continue;
-        }
-        let mut candidate = candidate.clone().normalized();
-        candidate.optional = false;
-        promoted.push(candidate);
-    }
-    promoted.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
-    Ok(promoted)
 }
 
 /// Remove public package-provider roots from the Cargo-published test delta without narrowing project authority.
@@ -9062,46 +8950,6 @@ fn direct_rustc_composition_failure(error: &OvenRustcError) -> bool {
         || report.unstructured_output.contains(STABLE_CRATE_ID_COLLISION)
 }
 
-/// Render a plan selection or composition refusal for the CLI, keeping direct-rustc transcripts intact.
-pub(crate) fn oven_plan_error(error: OvenPlanError) -> CliError {
-    match error {
-        OvenPlanError::Rustc(error) => oven_rustc_error(error),
-        OvenPlanError::Selection(message) => CliError::failure(message),
-    }
-}
-
-/// Preserve direct-rustc diagnostics rather than reducing a normal Oven compilation failure to a generic status.
-fn oven_rustc_error(error: OvenRustcError) -> CliError {
-    match error {
-        OvenRustcError::CompilationFailed { report } => {
-            let rendered = report
-                .diagnostics
-                .into_iter()
-                .map(|diagnostic| {
-                    diagnostic
-                        .rendered
-                        .unwrap_or_else(|| format!("{}: {}", diagnostic.level, diagnostic.message))
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let mut output = format!("{rendered}\n{}", report.unstructured_output).trim().to_string();
-            if let Some(invocation) = report.invocation {
-                if !output.is_empty() {
-                    output.push('\n');
-                }
-                output.push_str("direct rustc invocation: ");
-                output.push_str(&invocation);
-            }
-            CliError::failure(if output.is_empty() {
-                "Oven direct-rustc compilation failed without a diagnostic transcript".to_string()
-            } else {
-                format!("Oven direct-rustc compilation failed:\n{output}")
-            })
-        }
-        error => CliError::failure(error.to_string()),
-    }
-}
-
 /// Select the default sealed release output without entering frontend or report reconstruction.
 fn select_default_executable_project_output(
     file_path: &str,
@@ -9517,7 +9365,7 @@ fn prepare_library_project(
             // the parent command remains the sole owner of canonical lock generation and publication. SDK provider
             // artifact builds are excluded because their parent supplies an exact Cargo.lock payload override.
             LockResolution {
-                cargo_lock_authority: super::lock::CargoLockAuthority::None,
+                cargo_lock_authority: crate::driver::lock::CargoLockAuthority::None,
                 cargo_package_name: project_name.clone(),
                 resolved,
                 project_requirements,
@@ -12153,8 +12001,8 @@ fn restore_reused_library_package(
 /// active toolchain.
 ///
 /// Only availability is decided here. A Loaf that exists but disagrees with the recorded build unit or intent is
-/// left for [`super::lock::prepare_project_registry_source_authorities`] to reject, so a switched toolchain family
-/// reads as a cache miss while a tampered authority still fails closed.
+/// left for [`crate::driver::lock::registry_sources::prepare_project_registry_source_authorities`] to reject, so a
+/// switched toolchain family reads as a cache miss while a tampered authority still fails closed.
 fn project_authority_release_loafs_available(authority: &OvenLoadedProjectInspectionAuthority) -> CliResult<bool> {
     release_loaf_constituents_available(&authority.payload.constituents)
 }
@@ -12303,7 +12151,8 @@ fn try_reuse_baked_project(
     if !project_authority_release_loafs_available(&authority)? {
         return Ok(None);
     }
-    let _validated_authority = super::lock::prepare_project_registry_source_authorities(authority)?;
+    let _validated_authority =
+        crate::driver::lock::registry_sources::prepare_project_registry_source_authorities(authority)?;
 
     let mut generated_sources = BTreeMap::new();
     let mut profiles = Vec::new();

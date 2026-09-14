@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::types::{TestInfo, TestResult, TestSummary};
+use crate::driver::testing::types::{TestInfo, TestResult, TestSummary};
 
 /// Trait for reporting test execution results.
 ///

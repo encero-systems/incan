@@ -187,7 +187,7 @@ fn canonical_oven_build_unit_inputs(
             "the legacy comparison provider context could not merge native requirements: {error}"
         ))
     })?;
-    super::build::oven_build_unit_inputs(provider_plan, &requirements, &resolved).map_err(|error| {
+    crate::driver::build_unit::oven_build_unit_inputs(provider_plan, &requirements, &resolved).map_err(|error| {
         ShadowUnavailable::new(format!(
             "the legacy comparison provider context could not derive native build inputs: {error}"
         ))
