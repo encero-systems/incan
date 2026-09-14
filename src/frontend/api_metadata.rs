@@ -22,12 +22,7 @@ use crate::frontend::library_exports::{
     CheckedPartialTargetKind, CheckedPresetValue, CheckedProperty, CheckedTraitExport, CheckedTypeAliasExport,
     CheckedTypeBound, CheckedTypeParam, collect_checked_public_exports,
 };
-use crate::frontend::module::canonicalize_source_module_segments;
-use crate::frontend::symbols::{
-    ImplementationTraitBoundInfo, ImplementationTraitBoundOriginInfo, ImplementationTypeParamInfo,
-};
-use crate::frontend::typechecker::{ConstValue, TypeChecker};
-use crate::library_manifest::{
+use crate::frontend::library_manifest::{
     CanonicalIdentityExport, ClassExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantAliasExport,
     EnumVariantExport, FieldExport, FieldRequirementExport, FunctionExport, ImplementationAssociatedTypeExport,
     ImplementationTraitBoundExport, ImplementationTraitBoundOriginExport, ImplementationTypeParamExport, MethodExport,
@@ -36,6 +31,11 @@ use crate::library_manifest::{
     ReceiverExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport, TypeRef,
     param_default_from_checked, params_from_checked, type_ref_from_resolved,
 };
+use crate::frontend::module::canonicalize_source_module_segments;
+use crate::frontend::symbols::{
+    ImplementationTraitBoundInfo, ImplementationTraitBoundOriginInfo, ImplementationTypeParamInfo,
+};
+use crate::frontend::typechecker::{ConstValue, TypeChecker};
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
 pub const CHECKED_API_METADATA_SCHEMA_VERSION: u32 = 1;
@@ -797,7 +797,7 @@ pub fn collect_checked_api_metadata(
         }
     }
 
-    crate::library_manifest::with_checked_type_origins(
+    crate::frontend::library_manifest::with_checked_type_origins(
         CheckedApiMetadata {
             schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
             derivable_traits: TypeChecker::derivable_traits_from_program(program),
@@ -1423,7 +1423,7 @@ fn api_trait(
                 canonical: None,
                 ty: type_ref_from_resolved(ty),
                 surface_type_name: Some(ty.to_string()),
-                visibility: crate::library_manifest::FieldVisibilityExport::Public,
+                visibility: crate::frontend::library_manifest::FieldVisibilityExport::Public,
                 has_default: false,
                 default: None,
                 alias: None,
@@ -1860,8 +1860,8 @@ fn field(field: &crate::frontend::library_exports::CheckedField) -> FieldExport 
         ty: type_ref_from_resolved(&field.ty),
         surface_type_name: field.surface_type_name.clone(),
         visibility: match field.visibility {
-            Visibility::Private => crate::library_manifest::FieldVisibilityExport::Private,
-            Visibility::Public => crate::library_manifest::FieldVisibilityExport::Public,
+            Visibility::Private => crate::frontend::library_manifest::FieldVisibilityExport::Private,
+            Visibility::Public => crate::frontend::library_manifest::FieldVisibilityExport::Public,
         },
         has_default: field.has_default,
         default,
@@ -2889,7 +2889,7 @@ pub class Buffer:
         assert_eq!(canonical.kind, "method");
         assert_eq!(
             canonical.origin,
-            crate::library_manifest::CanonicalIdentityOriginExport::Package {
+            crate::frontend::library_manifest::CanonicalIdentityOriginExport::Package {
                 library: "incan_stdlib_system".to_string(),
                 module_path: vec!["io".to_string()],
             }

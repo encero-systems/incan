@@ -17,6 +17,13 @@ use crate::frontend::diagnostics::errors;
 use crate::frontend::library_exports::{
     CheckedParamDefault, CheckedParamDefaultArg, CheckedParamDefaultCallSignature, CheckedPresetValue,
 };
+use crate::frontend::library_manifest::{
+    AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport,
+    FunctionExport, ImplementationTraitBoundOriginExport, ImplementationTypeParamExport, LibraryManifest, MethodExport,
+    ModelExport, NewtypeExport, NominalTypeOriginExport, ParamDefaultExport, ParamExport, ParamKindExport,
+    PartialExport, PartialTargetKindExport, PresetValueExport, PropertyExport, ProviderFactKind, ReceiverExport,
+    StaticExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport, resolved_type_from_manifest_type_ref,
+};
 use crate::frontend::library_manifest_index::{LibraryManifestFailureKind, LibraryManifestIndexEntry};
 use crate::frontend::module::{ExportedSymbol, canonicalize_source_module_segments};
 use crate::frontend::symbols::*;
@@ -28,13 +35,6 @@ use crate::frontend::typechecker::type_info::RustTraitImportInfo;
 use crate::frontend::typechecker::{
     ImportedRegistryDefinitionInfo, PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind,
     PublicLibraryTypeIdentity, TypeChecker, canonical_public_library_type_name,
-};
-use crate::library_manifest::{
-    AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport,
-    FunctionExport, ImplementationTraitBoundOriginExport, ImplementationTypeParamExport, LibraryManifest, MethodExport,
-    ModelExport, NewtypeExport, NominalTypeOriginExport, ParamDefaultExport, ParamExport, ParamKindExport,
-    PartialExport, PartialTargetKindExport, PresetValueExport, PropertyExport, ProviderFactKind, ReceiverExport,
-    StaticExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport, resolved_type_from_manifest_type_ref,
 };
 use crate::provider::{ProviderModuleResolution, ProviderProvenance, PublicProviderArtifact};
 use incan_core::interop::{RustItemKind, RustTraitAssoc, fallback_rust_trait_methods, is_rust_capability_bound};
@@ -54,8 +54,8 @@ enum ManifestExportRef<'a> {
     Enum(&'a EnumExport),
     EnumVariant {
         enum_name: &'a str,
-        fields: &'a [crate::library_manifest::TypeRef],
-        canonical: Option<&'a crate::library_manifest::CanonicalIdentityExport>,
+        fields: &'a [crate::frontend::library_manifest::TypeRef],
+        canonical: Option<&'a crate::frontend::library_manifest::CanonicalIdentityExport>,
     },
     TypeAlias(&'a TypeAliasExport),
     Newtype(&'a NewtypeExport),
@@ -2153,7 +2153,7 @@ impl TypeChecker {
         library: &str,
         manifest: &LibraryManifest,
     ) -> BTreeMap<String, NominalTypeOriginExport> {
-        use crate::library_manifest::{TypeRef, VisitTypeRefs};
+        use crate::frontend::library_manifest::{TypeRef, VisitTypeRefs};
 
         let mut carriers = Vec::new();
         manifest.clone().visit_type_refs(&mut |ty| {
@@ -2278,10 +2278,10 @@ impl TypeChecker {
         for export in &artifact.manifest.contract_metadata.identity_graph.exports {
             if !matches!(
                 export.kind,
-                crate::library_manifest::ExportIdentityKind::Model
-                    | crate::library_manifest::ExportIdentityKind::Class
-                    | crate::library_manifest::ExportIdentityKind::Enum
-                    | crate::library_manifest::ExportIdentityKind::Newtype
+                crate::frontend::library_manifest::ExportIdentityKind::Model
+                    | crate::frontend::library_manifest::ExportIdentityKind::Class
+                    | crate::frontend::library_manifest::ExportIdentityKind::Enum
+                    | crate::frontend::library_manifest::ExportIdentityKind::Newtype
             ) {
                 continue;
             }
@@ -2346,8 +2346,8 @@ impl TypeChecker {
     }
 
     /// Return the nominal origin carried by a type reference, when it has one.
-    fn nominal_type_origin(ty: &crate::library_manifest::TypeRef) -> Option<&NominalTypeOriginExport> {
-        use crate::library_manifest::TypeRef;
+    fn nominal_type_origin(ty: &crate::frontend::library_manifest::TypeRef) -> Option<&NominalTypeOriginExport> {
+        use crate::frontend::library_manifest::TypeRef;
         match ty {
             TypeRef::Named {
                 origin: Some(origin), ..
@@ -2938,12 +2938,12 @@ impl TypeChecker {
     /// Hydrate a forwarded nominal only from its exact admitted declaring artifact and public membership.
     fn symbol_kind_from_nominal_projection(
         &self,
-        projected: Option<&crate::library_manifest::TypeRef>,
+        projected: Option<&crate::frontend::library_manifest::TypeRef>,
     ) -> Option<SymbolKind> {
         if projected.is_some_and(|ty| ty.has_native_union()) {
             return Some(SymbolKind::Type(TypeInfo::TypeAlias));
         }
-        let crate::library_manifest::TypeRef::Named {
+        let crate::frontend::library_manifest::TypeRef::Named {
             origin: Some(origin), ..
         } = projected?
         else {
@@ -3865,7 +3865,7 @@ impl TypeChecker {
                 export.fields.iter().any(|field| {
                     matches!(
                         field.visibility,
-                        crate::library_manifest::FieldVisibilityExport::Private
+                        crate::frontend::library_manifest::FieldVisibilityExport::Private
                     )
                 }),
             ),
@@ -4388,16 +4388,16 @@ impl TypeChecker {
                         ty: resolved_type_from_manifest_type_ref(&field.ty),
                         surface_type_name: field.surface_type_name.clone(),
                         visibility: match field.visibility {
-                            crate::library_manifest::FieldVisibilityExport::Private => {
+                            crate::frontend::library_manifest::FieldVisibilityExport::Private => {
                                 crate::frontend::ast::Visibility::Private
                             }
-                            crate::library_manifest::FieldVisibilityExport::Public => {
+                            crate::frontend::library_manifest::FieldVisibilityExport::Public => {
                                 crate::frontend::ast::Visibility::Public
                             }
                         },
                         is_type_private: matches!(
                             field.visibility,
-                            crate::library_manifest::FieldVisibilityExport::Private
+                            crate::frontend::library_manifest::FieldVisibilityExport::Private
                         ),
                         owner: Some(owner.to_string()),
                         has_default: if uses_provider_constructor_bridge {
@@ -4753,8 +4753,8 @@ fn param_kind_from_manifest(kind: ParamKindExport) -> ParamKind {
 /// two callers cannot drift on what counts as an origin.
 fn collect_nominal_type_origins(
     manifest: &LibraryManifest,
-) -> BTreeMap<String, crate::library_manifest::NominalTypeOriginExport> {
-    use crate::library_manifest::VisitTypeRefs;
+) -> BTreeMap<String, crate::frontend::library_manifest::NominalTypeOriginExport> {
+    use crate::frontend::library_manifest::VisitTypeRefs;
     let mut origins = BTreeMap::new();
     let mut projection = manifest.clone();
     projection.visit_type_refs(&mut |ty| {
@@ -4766,7 +4766,7 @@ fn collect_nominal_type_origins(
 }
 
 /// Render an export's public name without its leading package segment.
-fn export_public_name(export: &crate::library_manifest::ExportIdentity) -> String {
+fn export_public_name(export: &crate::frontend::library_manifest::ExportIdentity) -> String {
     export
         .public_path
         .iter()
@@ -4781,7 +4781,7 @@ mod provider_feature_tests {
     use std::collections::BTreeSet;
 
     use super::*;
-    use crate::library_manifest::{ProviderFactKind, ProviderFactRequirement};
+    use crate::frontend::library_manifest::{ProviderFactKind, ProviderFactRequirement};
 
     #[test]
     fn inactive_export_features_preserve_alternative_additive_paths() {

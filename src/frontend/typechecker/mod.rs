@@ -85,6 +85,7 @@ use std::sync::Arc;
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::{CompileError, ErrorKind, errors};
+use crate::frontend::library_manifest::LibraryManifest;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{
     ExportedSymbol, canonicalize_source_module_segments, exported_symbols, logical_source_import_candidates,
@@ -92,7 +93,6 @@ use crate::frontend::module::{
 use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::surface_semantics::SurfaceContext;
 use crate::frontend::symbols::*;
-use crate::library_manifest::LibraryManifest;
 use crate::provider::ProviderPlan;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{
@@ -1515,7 +1515,7 @@ impl TypeChecker {
     /// Retain foreign nominal origins from accepted import bindings, without looking up source names again.
     pub(crate) fn checked_nominal_type_origins(
         &self,
-    ) -> std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport> {
+    ) -> std::collections::BTreeMap<String, crate::frontend::library_manifest::NominalTypeOriginExport> {
         self.public_library_type_identities
             .iter()
             .filter_map(|(name, identity)| {
@@ -1529,9 +1529,9 @@ impl TypeChecker {
                 }
                 Some((
                     name.clone(),
-                    crate::library_manifest::NominalTypeOriginExport {
+                    crate::frontend::library_manifest::NominalTypeOriginExport {
                         provider: provider.clone(),
-                        canonical: crate::library_manifest::CanonicalIdentityExport::from_canonical(
+                        canonical: crate::frontend::library_manifest::CanonicalIdentityExport::from_canonical(
                             library, canonical,
                         )?,
                     },
@@ -6307,7 +6307,7 @@ impl TypeChecker {
     /// Project native bridge roots from the same checked public API type leaves used by artifact publication.
     fn record_public_type_bridge_roots(&mut self, program: &Program) {
         use crate::frontend::library_exports::{CheckedExportProjection, collect_checked_public_exports};
-        use crate::library_manifest::{TypeRef, VisitTypeRefs};
+        use crate::frontend::library_manifest::{TypeRef, VisitTypeRefs};
         let mut api = crate::frontend::api_metadata::collect_checked_api_metadata(
             program,
             self,

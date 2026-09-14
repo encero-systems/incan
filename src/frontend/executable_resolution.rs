@@ -22,9 +22,9 @@ use incan_semantics_core::executable_representation::{
 };
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SymbolOrigin, canonical_module_identity};
 
+use crate::frontend::library_manifest::LibraryManifest;
+use crate::frontend::library_manifest::published_layout::{executable_surface_path, public_executable_identities};
 use crate::frontend::library_manifest_index::LibraryArtifactMetadata;
-use crate::library_manifest::LibraryManifest;
-use crate::library_manifest::published_layout::{executable_surface_path, public_executable_identities};
 use crate::provider::ProviderPlan;
 
 /// A package requirement that cannot be satisfied before execution. No variant authorizes a fallback route.
