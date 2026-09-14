@@ -352,23 +352,25 @@ fn explicitly_baked_project_reuses_release_json_authority_without_cargo() -> Res
     fs::write(&source_path, format!("{original_source}\n# source drift\n"))?;
     let mut source_drift = guarded_incan_command(&project_root, &incan_home, &guard_root, &marker)?;
     source_drift.args(["build", "src/main.incn"]);
-    let source_drift_output = source_drift.output()?;
-    assert!(
-        !source_drift_output.status.success(),
-        "source drift must reject the completed project-output Loaf"
-    );
+    // An edit after the bake sets the sealed output aside and builds from source against the baked dependency
+    // closure: no replay of the stale Loaf, one warning saying so, and still no Cargo.
+    let source_drift_output = run_checked(source_drift, "Cargo-guarded build from source after drift")?;
     let source_drift_diagnostics = format!(
         "{}\n{}",
         String::from_utf8_lossy(&source_drift_output.stdout),
         String::from_utf8_lossy(&source_drift_output.stderr)
     );
     assert!(
-        source_drift_diagnostics.contains("no receipt-compatible Loaf"),
-        "source drift did not return to the explicit-bake boundary:\n{source_drift_diagnostics}"
+        !source_drift_diagnostics.contains("reused sealed project Loaf"),
+        "source drift replayed the stale completed project-output Loaf:\n{source_drift_diagnostics}"
+    );
+    assert!(
+        source_drift_diagnostics.contains("no longer matches this source tree"),
+        "source drift did not say the sealed output was set aside:\n{source_drift_diagnostics}"
     );
     assert!(
         !marker.exists(),
-        "source-drift rejection launched the guarded Cargo executable"
+        "source-drift build launched the guarded Cargo executable"
     );
     fs::write(&source_path, &original_source)?;
 

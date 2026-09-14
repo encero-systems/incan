@@ -728,7 +728,9 @@ jobs:
     name: Oven measured root durations
     runs-on: ubuntu-latest
     needs: oven-linux-replay
-    if: always() && needs.oven-linux-replay.result != 'skipped'
+    # A cancelled replay has no reports; saving from it would leave an empty record as the newest match on the ref,
+    # and the next run's restore-keys prefix would prefer it over a real one and pack with no measurements at all.
+    if: always() && (needs.oven-linux-replay.result == 'success' || needs.oven-linux-replay.result == 'failure')
     steps:
       # Checkout first: it cleans the workspace, and the reports below are downloaded into it.
       - uses: actions/checkout@v5
@@ -743,6 +745,7 @@ jobs:
       # Keep only the per-partition suite reports. The wall-time sidecars and transcript bundles share the prefix
       # and carry no per-root durations, so admitting them would only add files for the loader to skip.
       - name: Keep the suite reports
+        id: keep
         run: |
           set -eu
           mkdir -p target/oven-timing-record
@@ -754,8 +757,11 @@ jobs:
             found=$((found + 1))
           done
           echo "retained $found partition report(s)"
+          echo "found=$found" >> "$GITHUB_OUTPUT"
           [ "$found" -gt 0 ] || echo "no partition reports; the next run falls back to the source-size proxy" >&2
+      # Never save an empty record: it would shadow the last real one for every later run on this ref.
       - name: Save measured root durations
+        if: steps.keep.outputs.found != '0'
         uses: actions/cache/save@v4
         with:
           path: target/oven-timing-record

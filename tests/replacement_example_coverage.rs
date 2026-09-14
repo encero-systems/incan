@@ -39,7 +39,7 @@ use incan::frontend::{lexer, parser};
 /// Body-IR refusal; the other thirteen still refuse, and none of the fourteen changes what executes. The ratio
 /// falling while the count rises is expected here: the new examples were written to demonstrate the documented
 /// capability surface, not to be representable in the replacement profile.
-const REPRESENTED_BASELINE: usize = 53;
+const REPRESENTED_BASELINE: usize = 55;
 
 /// Number of committed example sources included in this fixed corpus.
 ///
@@ -53,7 +53,11 @@ const REPRESENTED_BASELINE: usize = 53;
 /// Moved 74 -> 88 by #1252, which raised example coverage of the documented stable capability surface from 28 to 53
 /// of 56. Nine new examples plus the `library_package` session facade and its consumer are the additions; they are
 /// ordinary Incan programs rather than replacement-profile fixtures, so the denominator is where they land.
-const EXAMPLE_SOURCE_BASELINE: usize = 88;
+///
+/// Moved 88 -> 91 by #1414, which restored `examples/advanced/package_features` (leaf, producer and consumer) to
+/// demonstrate package features across a three-member workspace; representation went 53 -> 55 with it (the two
+/// library members), execution did not move.
+const EXAMPLE_SOURCE_BASELINE: usize = 91;
 
 /// Examples whose `main` executes today. Update this in the same change that moves it.
 ///
