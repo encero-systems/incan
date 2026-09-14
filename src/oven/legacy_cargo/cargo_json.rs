@@ -43,14 +43,14 @@ pub(super) struct CargoCompilerArtifactTarget {
 /// The graph is not retained as an execution dependency. Oven converts its workspace test roots, resolved features,
 /// and direct dependency edges into a receipt-bound target plan before the transient Cargo target is reclaimed.
 #[derive(Deserialize)]
-pub(super) struct CargoUnitGraph {
+pub(crate) struct CargoUnitGraph {
     pub(super) version: u32,
     pub(super) units: Vec<CargoUnitGraphUnit>,
     pub(super) roots: Vec<usize>,
 }
 
 #[derive(Clone, Deserialize)]
-pub(super) struct CargoUnitGraphUnit {
+pub(crate) struct CargoUnitGraphUnit {
     pub(super) pkg_id: String,
     pub(super) target: CargoUnitGraphTarget,
     pub(super) mode: String,
