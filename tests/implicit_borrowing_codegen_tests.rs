@@ -505,42 +505,24 @@ edition = "2024"
         let dependencies = executable
             .parent()
             .ok_or("test executable has no dependency directory")?;
-        let candidates = std::fs::read_dir(dependencies)?
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with("libincan_stdlib-") && name.ends_with(".rlib"))
-            })
-            .collect::<Vec<_>>();
-        let [stdlib] = candidates.as_slice() else {
-            return Err(
-                "native borrowing proof requires one compiled stdlib artifact or an explicit Oven capability".into(),
-            );
-        };
+        // A long-lived target directory keeps an artifact per feature set that ever built here, so the newest one
+        // — the one this test executable was just linked against — is the artifact to use.
+        let stdlib = newest_artifact(dependencies, |name| {
+            name.starts_with("libincan_stdlib-") && name.ends_with(".rlib")
+        })?
+        .ok_or("native borrowing proof requires a compiled stdlib artifact or an explicit Oven capability")?;
         command.arg("-L").arg(format!("dependency={}", dependencies.display()));
         command
             .arg("--extern")
             .arg(format!("incan_stdlib={}", stdlib.display()));
-        let derives = std::fs::read_dir(dependencies)?
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.trim_start_matches("lib").starts_with("incan_derive-"))
-                    && path.extension().and_then(|extension| extension.to_str())
-                        == Some(std::env::consts::DLL_EXTENSION)
-            })
-            .collect::<Vec<_>>();
-        let [derive] = derives.as_slice() else {
-            return Err(
-                "native borrowing proof requires one compiled derive artifact or an explicit Oven capability".into(),
-            );
-        };
+        let derive = newest_artifact(dependencies, |name| {
+            name.trim_start_matches("lib").starts_with("incan_derive-")
+                && std::path::Path::new(name)
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    == Some(std::env::consts::DLL_EXTENSION)
+        })?
+        .ok_or("native borrowing proof requires a compiled derive artifact or an explicit Oven capability")?;
         command
             .arg("--extern")
             .arg(format!("incan_derive={}", derive.display()));
@@ -707,4 +689,30 @@ pub def observe(item: Item) -> bool:
     )?;
     assert!(!rust.contains("item:&Item"), "{rust}");
     Ok(())
+}
+
+/// Return the most recently modified file in `directory` whose name `matches`, or `None` when there is none.
+///
+/// A warm `CARGO_TARGET_DIR` accumulates one artifact per feature set that ever built into it; the newest is the one
+/// the running test executable was linked against, so choosing it keeps the proof honest without demanding a clean
+/// directory.
+fn newest_artifact(
+    directory: &std::path::Path,
+    matches: impl Fn(&str) -> bool,
+) -> Result<Option<std::path::PathBuf>, Box<dyn std::error::Error>> {
+    let mut newest: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    for entry in std::fs::read_dir(directory)? {
+        let path = entry?.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !matches(name) {
+            continue;
+        }
+        let modified = std::fs::metadata(&path)?.modified()?;
+        if newest.as_ref().is_none_or(|(when, _)| modified > *when) {
+            newest = Some((modified, path));
+        }
+    }
+    Ok(newest.map(|(_, path)| path))
 }

@@ -3467,6 +3467,7 @@ fn closure_proof_path(loaf_path: &Path, loaf_identity: &str) -> Option<PathBuf> 
     Some(OvenClosureProof::path(envelope_root, loaf_identity))
 }
 
+/// Digest one regular `loaf.json` file into its canonical content identity.
 fn loaf_file_identity(loaf_path: &Path) -> Result<String, OvenLoafError> {
     fs::read(loaf_path)
         .map(|bytes| digest_bytes(&bytes))
@@ -3646,9 +3647,10 @@ mod tests {
         CompatibleLoaf, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION, OvenLoaf,
         OvenLoafCompatibility, OvenLoafEnvelope, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafError,
         OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafSelection, acquire_exclusive_loaf_generation_lock,
-        acquire_loaf_generation_lock, committed_loaf_envelope_compatibility_identity, committed_loaf_paths,
-        digest_runtime_crate_source, loaf_envelope_inspection_packages, loaf_envelope_specifications, loaf_from_loaf,
-        merge_loaf_inspection_sources, registry_source_dependencies_supported_by_catalog, run_bounded_loaf_cargo,
+        acquire_loaf_generation_lock, closure_proof_path, committed_loaf_envelope_compatibility_identity,
+        committed_loaf_paths, digest_runtime_crate_source, loaf_envelope_inspection_packages,
+        loaf_envelope_specifications, loaf_from_loaf, merge_loaf_inspection_sources,
+        registry_source_dependencies_supported_by_catalog, run_bounded_loaf_cargo,
         seal_registry_lock_from_temporary_store, select_most_specific_compatible_loaf, validate_loaf_declared_file_set,
     };
     use crate::manifest::{DependencySource, DependencySpec};
@@ -3659,6 +3661,34 @@ mod tests {
         OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact,
     };
     use crate::oven::{OvenGeneratedProjectRequest, digest_bytes, digest_source_tree, receipt_generated_project};
+
+    /// A committed Loaf's closure proof lives beside its envelope, never inside the sealed `.loaf` directory whose
+    /// declared file set admits nothing undeclared, and a `loaf.json` below no envelope has nowhere to put one.
+    #[test]
+    fn a_closure_proof_lives_beside_the_envelope_and_never_inside_the_loaf_issue1546()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let envelope = root.path().join("stdlib");
+        let loaf_dir = envelope.join("generations").join("gen-1").join("abc.loaf");
+        fs::create_dir_all(&loaf_dir)?;
+        fs::write(envelope.join("envelope.json"), "{}")?;
+        let loaf_path = loaf_dir.join("loaf.json");
+        fs::write(&loaf_path, "{}")?;
+
+        let proof = closure_proof_path(&loaf_path, "sha256:abc").ok_or("a committed Loaf has a proof path")?;
+        assert_eq!(proof, envelope.join("closure-proofs").join("sha256-abc.json"));
+        assert!(
+            !proof.starts_with(&loaf_dir),
+            "the proof must not be filed inside the sealed Loaf directory: {}",
+            proof.display()
+        );
+
+        let detached = root.path().join("detached").join("loaf.json");
+        fs::create_dir_all(detached.parent().ok_or("parent")?)?;
+        fs::write(&detached, "{}")?;
+        assert!(closure_proof_path(&detached, "sha256:abc").is_none());
+        Ok(())
+    }
     use incan_core::lang::stdlib::{self, StdlibExtraCrateSource};
 
     /// Return the canonical standard-library modules owned by checked SDK component sources.
