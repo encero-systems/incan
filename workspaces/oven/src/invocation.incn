@@ -98,7 +98,7 @@ pub def decide_invocation(inputs: InvocationInputs) -> Result[InvocationConstrai
         not admit a lock or selected native input and cannot authorize execution or publication.
 
     Example:
-        decision = decide_invocation(InvocationInputs(frozen=True))?
+        decision = decide_invocation(InvocationInputs(frozen=true))?
         assert decision.offline and decision.locked and decision.frozen
     """
     if inputs.locked and inputs.no_locked:

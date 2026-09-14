@@ -199,6 +199,7 @@ lint-fast-ci:
 .PHONY: rustdoc-gate  ## quality - Require rustdoc on changed Rust functions/methods
 rustdoc-gate:
 	@echo "\033[1mChecking rustdoc coverage for changed Rust functions/methods...\033[0m"
+	@cd scripts && python3 -m unittest -q test_check_changed_rustdocs
 	@python3 scripts/check_changed_rustdocs.py
 
 .PHONY: rustdoc-gate-ci

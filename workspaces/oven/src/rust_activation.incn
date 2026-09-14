@@ -128,7 +128,7 @@ def refusal(manifest: str, field: list[str], kind: IntakeErrorKind, detail: str)
 
 
 def unique(values: list[str]) -> list[str]:
-    """Normalize a feature set deterministically without changing the declaration's source order."""
+    """Deduplicate a feature set and sort it into the canonical feature-set spelling."""
     items: list[str] = OrderedSet[str].from_iter(values).to_list()
     return sorted(items)
 
@@ -162,9 +162,6 @@ def cfg_predicate(predicate: &Predicate, snapshot: CfgSnapshot) -> Option[bool]:
         Predicate.Target(value) => return Some(target_predicate(value, snapshot))
         Predicate.TargetFeature(value) => return Some(cfg_value(snapshot, "target_feature", str(value)))
         Predicate.Flag(value) => return Some(str(value) in snapshot.flags)
-        # TODO: blocked by #1491. `Predicate::KeyValue` is a Rust struct variant, and neither spelling compiles:
-        # named fields are refused by the typechecker, positional emits Rust that rustc refuses. The named form is
-        # kept because it says what the match means.
         Predicate.KeyValue(key=key, val=value) => return Some(cfg_value(snapshot, str(key), str(value)))
         Predicate.Feature(_) => return None
         Predicate.Test => return None
@@ -265,7 +262,7 @@ def slot_restrictions(
 def feature_symbol(value: str, manifest: str, field: list[str]) -> Result[FeatureSymbol, IntakeError]:
     """Parse feature expansion syntax in Incan without selecting or enabling any dependency yet."""
     if value.startswith("dep:"):
-        alias: str = value.__slice__(4, len(value))
+        alias = value[4:]
         if alias == "" or "/" in alias or "?" in alias:
             return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "malformed dependency feature token"))
         return Ok(FeatureSymbol.Dependency(alias))
@@ -279,7 +276,7 @@ def feature_symbol(value: str, manifest: str, field: list[str]) -> Result[Featur
     mut alias = parts[0]
     weak = alias.endswith("?")
     if weak:
-        alias = alias.__slice__(0, len(alias) - 1)
+        alias = alias[:-1]
     if alias == "" or "?" in alias or ":" in alias or "?" in parts[1] or ":" in parts[1]:
         return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "malformed dependency feature forwarding"))
     return Ok(FeatureSymbol.DependencyFeature(alias, parts[1], weak))

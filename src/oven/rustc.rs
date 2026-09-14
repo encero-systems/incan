@@ -5041,7 +5041,7 @@ mod tests {
     fn jec_compiler_evidence_hashes_the_selected_target_closure() -> Result<(), Box<dyn std::error::Error>> {
         let rustc = rustc_path()?;
         let target = rustc_host_target(&rustc)?;
-        let evidence = super::direct_compiler::direct_rustc_compiler_evidence(&rustc, &target)?;
+        let evidence = super::direct_compiler::retention::direct_rustc_compiler_evidence(&rustc, &target)?;
         assert_eq!(evidence.host(), target);
         assert_eq!(evidence.target(), target);
         assert_eq!(evidence.binary_digest(), digest_bytes(&fs::read(&rustc)?));
@@ -5104,7 +5104,7 @@ fi
         );
 
         let no_capacity = OvenStore::new(root.path().join("no-capacity"), OvenStoreLimits::new(0, 0, 0));
-        let unavailable = super::direct_compiler::retain_direct_rustc_compiler(
+        let unavailable = super::direct_compiler::retention::retain_direct_rustc_compiler(
             &no_capacity,
             &receipt("0.1.0")?,
             &rustc,
@@ -5119,7 +5119,12 @@ fi
         );
 
         let super::direct_compiler::OvenDirectRustcCompilerRetention::Retained(first) =
-            super::direct_compiler::retain_direct_rustc_compiler(&store, &receipt("0.1.0")?, &rustc, "test-target")?
+            super::direct_compiler::retention::retain_direct_rustc_compiler(
+                &store,
+                &receipt("0.1.0")?,
+                &rustc,
+                "test-target",
+            )?
         else {
             return Err("compiler owner was not retained".into());
         };
@@ -5135,12 +5140,17 @@ fi
         // host/toolchain must neither be rescanned nor silently replace the already admitted closure for a new
         // project-version receipt.
         fs::write(&ambient_driver, b"different ambient driver bytes")?;
-        let changed_ambient = super::direct_compiler::direct_rustc_compiler_evidence(&rustc, "test-target")?;
+        let changed_ambient = super::direct_compiler::retention::direct_rustc_compiler_evidence(&rustc, "test-target")?;
         assert_ne!(changed_ambient.closure_digest(), first.evidence.closure_digest());
         fs::write(&rustc, "#!/bin/sh\nexit 91\n")?;
 
         let super::direct_compiler::OvenDirectRustcCompilerRetention::Retained(second) =
-            super::direct_compiler::retain_direct_rustc_compiler(&store, &receipt("0.2.0")?, &rustc, "test-target")?
+            super::direct_compiler::retention::retain_direct_rustc_compiler(
+                &store,
+                &receipt("0.2.0")?,
+                &rustc,
+                "test-target",
+            )?
         else {
             return Err("compatible compiler owner was not reused".into());
         };
