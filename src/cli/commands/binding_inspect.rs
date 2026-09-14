@@ -14,8 +14,8 @@ use serde::Serialize;
 
 use crate::cli::commands::interop_plan::locked_interop_plan_target;
 use crate::cli::{CliError, CliResult, ExitCode};
+use crate::frontend::ParsedModule;
 use crate::frontend::ast::{Span, Visibility};
-use crate::frontend::parsed_module::ParsedModule;
 use crate::frontend::typechecker::{
     CBindingBuffer, CBindingDescriptor, CBindingOutcome, CBindingType, COutputMode, CResourceAccess,
     c_binding_descriptor_identity,

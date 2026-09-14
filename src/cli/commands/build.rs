@@ -166,7 +166,7 @@ use crate::driver::session::CompilationSession;
 use crate::driver::vocab_extraction::{
     PendingDesugarerArtifact, collect_library_vocab_metadata, oven_vocab_direct_rustc_context_from_plan,
 };
-use crate::frontend::parsed_module::ParsedModule;
+use crate::frontend::ParsedModule;
 use crate::provider::inventory::extend_requirements_with_provider_plan;
 #[cfg(test)]
 use crate::provider::requirements::dependency_specs_match;

@@ -7,7 +7,7 @@ use clap::ValueEnum;
 use serde::Serialize;
 
 use crate::cli::{CliError, CliResult, ExitCode};
-use crate::frontend::parsed_module::ParsedModule;
+use crate::frontend::ParsedModule;
 use crate::manifest::ProjectManifest;
 use crate::provider::{
     ComponentSelectionReason, FeatureActivationReason, FeatureSelection, ProviderParticipation, ProviderPlan,

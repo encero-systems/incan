@@ -32,9 +32,9 @@ use crate::backend::project::runner::resolved_cargo_executable;
 use crate::backend::project::runner::{cargo_command, configure_cargo_target, sanitize_cargo_environment};
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies, resolve_reachable_dependencies};
+use crate::frontend::ParsedModule;
 use crate::frontend::ast::{Declaration, ImportKind};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
-use crate::frontend::parsed_module::ParsedModule;
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::generated_cache::{GeneratedCacheLease, resolve_generated_cargo_target};
 use crate::lockfile::{

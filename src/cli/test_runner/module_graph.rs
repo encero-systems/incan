@@ -7,12 +7,12 @@ use crate::driver::modules::{
     topologically_sort_modules, uses_iterator_adapter_surface, uses_result_combinator_surface,
 };
 use crate::driver::project::resolve_stdlib_module_source_path;
+use crate::frontend::ParsedModule;
 use crate::frontend::ast::Program;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{
     SourceModuleImportResolution, resolve_program_source_imports, self_import_diagnostic_message,
 };
-use crate::frontend::parsed_module::ParsedModule;
 use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::provider::ProviderPlan;

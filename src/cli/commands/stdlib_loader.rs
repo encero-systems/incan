@@ -52,7 +52,7 @@ pub struct StdlibModule {
 /// - A stdlib module file cannot be found
 /// - A stdlib module file cannot be read
 /// - A stdlib module fails to parse
-pub fn load_stdlib_modules(modules: &[crate::frontend::parsed_module::ParsedModule]) -> CliResult<Vec<StdlibModule>> {
+pub fn load_stdlib_modules(modules: &[crate::frontend::ParsedModule]) -> CliResult<Vec<StdlibModule>> {
     let mut stdlib_paths: HashSet<Vec<String>> = HashSet::new();
 
     // ---- Collect all stdlib imports ----

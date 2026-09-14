@@ -38,22 +38,6 @@
       ]
     },
     {
-      "path": "src/cli/commands/common.rs",
-      "reaches": [
-        "crate::backend::c_abi",
-        "crate::backend::ir",
-        "crate::backend::project",
-        "crate::frontend::ast",
-        "crate::frontend::body_ir",
-        "crate::frontend::contract_metadata",
-        "crate::frontend::hir",
-        "crate::frontend::library_manifest_index",
-        "crate::frontend::module",
-        "crate::frontend::testing_markers",
-        "crate::frontend::typechecker"
-      ]
-    },
-    {
       "path": "src/cli/commands/diagnostics.rs",
       "reaches": [
         "crate::backend::c_abi",
@@ -87,29 +71,15 @@
       "reaches": [
         "crate::frontend::api_metadata",
         "crate::frontend::contract_metadata",
-        "crate::frontend::diagnostics",
         "crate::frontend::feature_metadata",
         "crate::frontend::library_manifest_index",
-        "crate::frontend::registry_metadata",
-        "crate::frontend::typechecker"
-      ]
-    },
-    {
-      "path": "src/cli/commands/vocab_extraction.rs",
-      "reaches": [
-        "crate::backend::project"
+        "crate::frontend::registry_metadata"
       ]
     },
     {
       "path": "src/cli/mod.rs",
       "reaches": [
         "crate::backend::selection"
-      ]
-    },
-    {
-      "path": "src/cli/prelude.rs",
-      "reaches": [
-        "crate::frontend::parsed_module"
       ]
     },
     {

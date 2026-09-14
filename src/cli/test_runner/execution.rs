@@ -15,6 +15,7 @@ use crate::compiled_sdk::CompiledSdkModules;
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::resolve_reachable_dependencies;
 use crate::driver::cargo_policy::CargoPolicy;
+use crate::frontend::ParsedModule;
 use crate::frontend::ast::{
     AssertKind, AssertStmt, CallArg, Declaration, DictEntry, Expr, ImportItem, ImportKind, ListEntry, ParamKind,
     Program, Span, Spanned, Statement, Type,
@@ -22,7 +23,6 @@ use crate::frontend::ast::{
 use crate::frontend::decorator_resolution;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::logical_module_segments_from_file;
-use crate::frontend::parsed_module::ParsedModule;
 use crate::frontend::testing_markers::{TestingMarkerKind, TestingMarkerSemantics, resolve_testing_marker_kind};
 use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{lexer, parser};

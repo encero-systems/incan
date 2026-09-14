@@ -14,7 +14,7 @@ use crate::backend::shadow::{
     validate_source_observable_profile,
 };
 use crate::dependency_resolver::resolve_reachable_dependencies;
-use crate::frontend::parsed_module::ParsedModule;
+use crate::frontend::ParsedModule;
 use crate::lockfile::CargoFeatureSelection;
 use crate::oven::loaf::OVEN_LOAF_ENV;
 use crate::provider::{FeatureSelection, ProviderPlan};
