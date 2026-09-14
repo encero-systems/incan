@@ -1377,6 +1377,8 @@ impl<'a> IrEmitter<'a> {
         self.emit_expr(operand)
     }
 
+    /// Emit a binary operation, folding static string additions and lending an empty-list operand the other side's
+    /// element type so the generated comparison is not an ambiguous `PartialEq`.
     pub(in super::super) fn emit_binop_expr(
         &self,
         op: &BinOp,

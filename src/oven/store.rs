@@ -1981,6 +1981,8 @@ impl OvenStore {
         self.ensure_layout()
     }
 
+    /// Locate an entry by identity: the `.loaf` spelling when it exists, else the bare directory an older publication
+    /// used.
     fn entry_root(&self, identity: &str) -> PathBuf {
         let directory_name = entry_directory_name(identity);
         let loaf = self.entries_root().join(format!("{directory_name}{LOAF_ENTRY_SUFFIX}"));
@@ -4096,6 +4098,7 @@ pub(crate) mod tests {
         Ok(inventory)
     }
 
+    /// Published reads preserve complete inventory and active leases.
     #[test]
     fn published_reads_preserve_complete_inventory_and_active_leases() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -4149,6 +4152,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Execution payload revalidation binds public fields to the admitted owner.
     #[test]
     fn execution_payload_revalidation_binds_public_fields_to_the_admitted_owner()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -4206,6 +4210,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Exact execution selection rejects noncanonical identities before path resolution.
     #[test]
     fn exact_execution_selection_rejects_noncanonical_identities_before_path_resolution()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -4228,6 +4233,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Matching execution selection rejects a misplaced entry.
     #[test]
     fn matching_execution_selection_rejects_a_misplaced_entry() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -4248,6 +4254,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(unix)]
+    /// Execution selection rejects a symlinked entry root.
     #[test]
     fn execution_selection_rejects_a_symlinked_entry_root() -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::symlink;
@@ -4278,6 +4285,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(unix)]
+    /// Execution selection rejects symlinked authority files.
     #[test]
     fn execution_selection_rejects_symlinked_authority_files() -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::symlink;
@@ -4311,6 +4319,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(unix)]
+    /// Execution payload owner survives store ancestor symlink retargeting.
     #[test]
     fn execution_payload_owner_survives_store_ancestor_symlink_retargeting() -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::symlink;
@@ -4342,6 +4351,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Execution payload revalidation detects materialized tampering after selection.
     #[test]
     fn execution_payload_revalidation_detects_materialized_tampering_after_selection()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -4374,6 +4384,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// A verified import rejects a source file mutated after admission.
     #[test]
     fn a_verified_import_rejects_a_source_file_mutated_after_admission() -> Result<(), Box<dyn std::error::Error>> {
         let source_root = tempfile::tempdir()?;
@@ -4427,6 +4438,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(unix)]
+    /// Execution payload revalidation rejects a symlinked materialized root.
     #[test]
     fn execution_payload_revalidation_rejects_a_symlinked_materialized_root() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -4459,6 +4471,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Published reads refuse missing locks without creating them.
     #[test]
     fn published_reads_refuse_missing_locks_without_creating_them() -> Result<(), Box<dyn std::error::Error>> {
         for manager_missing in [true, false] {
@@ -4488,6 +4501,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Published reads reject payload and materialized tampering.
     #[test]
     fn published_reads_reject_payload_and_materialized_tampering() -> Result<(), Box<dyn std::error::Error>> {
         for tamper_payload in [true, false] {
@@ -4527,6 +4541,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// A tampered manifest is refused when it is selected and ignored when it is not.
     #[test]
     fn a_tampered_manifest_is_refused_when_it_is_selected_and_ignored_when_it_is_not()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -4563,6 +4578,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// A read manifest is read again once its file changes.
     #[test]
     fn a_read_manifest_is_read_again_once_its_file_changes() -> Result<(), Box<dyn std::error::Error>> {
         // Repeated verification of one admitted entry must answer identically, and must stop answering from the
@@ -4594,6 +4610,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Store reports distinct logical and physical bytes.
     #[test]
     fn store_reports_distinct_logical_and_physical_bytes() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -4611,6 +4628,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(unix)]
+    /// Admission reuses the cached physical byte measurement for retained entries.
     #[test]
     fn admission_reuses_the_cached_physical_byte_measurement_for_retained_entries()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -4651,6 +4669,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(unix)]
+    /// Sidecar cache files are never counted toward measured physical bytes.
     #[test]
     fn sidecar_cache_files_are_never_counted_toward_measured_physical_bytes() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -4816,6 +4835,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(unix)]
+    /// A package export adopts an admitted provider closure without rewriting it.
     #[test]
     fn a_package_export_adopts_an_admitted_provider_closure_without_rewriting_it()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -4879,6 +4899,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// A caller owned source beside an entry shaped path is still copied.
     #[test]
     fn a_caller_owned_source_beside_an_entry_shaped_path_is_still_copied() {
         // The link route is keyed on a real entry coordinate -- `entries/<digest>/artifacts/...` -- because that

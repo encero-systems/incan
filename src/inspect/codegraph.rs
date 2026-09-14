@@ -3379,6 +3379,7 @@ fn import_language(import: &ImportDecl) -> CodegraphLanguage {
     }
 }
 
+/// Describe one import as the codegraph records it: its kind, the path it names, and the items it brings in.
 fn import_shape(import: &ImportDecl) -> (String, String, Vec<String>) {
     match &import.kind {
         ImportKind::Module(path) => ("module".to_string(), import_path_display(path), Vec::new()),

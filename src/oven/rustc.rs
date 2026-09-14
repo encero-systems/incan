@@ -1903,6 +1903,7 @@ fn rust_library_crate_name(relative_path: &str) -> Option<&str> {
         .then_some(crate_name)
 }
 
+/// Whether a declared artifact lives somewhere below one declared search directory.
 fn artifact_is_below_search_path(relative_path: &str, search_path: &str) -> bool {
     Path::new(relative_path)
         .strip_prefix(Path::new(search_path))
