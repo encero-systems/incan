@@ -9,7 +9,7 @@
 //! read, and only binding — after `verify_current_inputs` re-checks them — produces something that may run.
 #![allow(
     dead_code,
-    reason = "Gates 6 and 7 of RFC 119 are the reader; this substrate lands first so their blockers have something to change"
+    reason = "Gates 6 and 7 of RFC 119 are the reader; this substrate lands before them"
 )]
 
 use super::*;

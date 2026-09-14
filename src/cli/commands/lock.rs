@@ -1801,7 +1801,7 @@ pub(crate) fn publish_oven_project_lock(
 ) -> CliResult<PublishedOvenProjectLock> {
     let manifest = ProjectManifest::discover(project_root)
         .map_err(|error| CliError::failure(error.to_string()))?
-        .ok_or_else(|| CliError::failure("explicit Oven project bake requires an loaf.toml project"))?;
+        .ok_or_else(|| CliError::failure("explicit Oven project bake requires a loaf.toml project"))?;
     enforce_project_toolchain_constraint(&manifest)?;
     let cargo_features = CargoFeatureSelection::default().normalized();
     let context = match collect_and_publish_project_lock_for_provider_bake(

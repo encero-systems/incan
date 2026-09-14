@@ -4,7 +4,7 @@
 - **Created:** 2026-09-05
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
-    - RFC 034 (`incan.pub` package registry and the `.incanpkg` format)
+    - RFC 125 (`incan.pub` Loaf registry and baked asset distribution; supersedes RFC 034)
     - RFC 106 (compiler-backed agent context graph)
     - RFC 118 (Oven API and operational core)
     - RFC 120 (canonical source symbol identity)
@@ -100,7 +100,7 @@ The compiled Rust artifact is unaffected. It remains the product the Rust-linkin
 
 ### Where it ships, and why a prebuilt Loaf is not the same thing
 
-RFC 034 already reserves the slot. A `.incanpkg` carries `semantic/` for "optional semantic package fragments" beside `artifacts/` for target artifacts, and states that generated Rust "must not be the public compatibility contract." This representation is what `semantic/` holds; a Loaf, when one is published, is an entry under `artifacts/`. Both travel in one signed archive.
+RFC 125 already reserves the slot. A signed source Loaf carries the executable representation its Incan facet publishes beside the sources the manifest selects, and states that generated Rust must not be its compatibility contract. This representation is what that slot holds; a baked asset, when one is published, is a separate `*.loaf` attested against the same source publication. Source and representation travel in one signed archive.
 
 They are not substitutes, because they answer different halves of one question:
 
@@ -180,7 +180,7 @@ Connect resolved package fragments to the existing non-linking execution graph. 
 
 ### Phase 4: Distribution and acceptance
 
-Keep each selected semantic sidecar coherent with its manifest through publication, copying, sealed materialization and reuse. Integrate the semantic slot with the signed archive boundary owned by RFC 034 when that boundary is available; local sidecar tests do not establish signed archive acceptance. Publish user-facing coverage and refusal documentation, and retain direct execution, selective-loading and relevant repository-gate evidence before completing this RFC.
+Keep each selected semantic sidecar coherent with its manifest through publication, copying, sealed materialization and reuse. Integrate the semantic slot with the signed source-Loaf boundary owned by RFC 125 when that boundary is available; local sidecar tests do not establish signed archive acceptance. Publish user-facing coverage and refusal documentation, and retain direct execution, selective-loading and relevant repository-gate evidence before completing this RFC.
 
 ## Progress Checklist
 
@@ -206,7 +206,7 @@ Keep each selected semantic sidecar coherent with its manifest through publicati
 
 - [x] Verify coherent semantic sidecar publication, copying, sealed materialization and reuse, including failed publication.
 - [x] Surface representation version and coverage in inspection output. `incan inspect representation` reports the encoded version, the declared coverage of every indexed declaration with its refusal reason, and any public identity the manifest declares that the index does not mention. A package publishing none, and a version this build cannot interpret, are reported rather than refused.
-- [ ] Verify the semantic slot within the signed package archive boundary; track RFC 034's dependency explicitly until this is executable.
+- [ ] Verify the semantic slot within the signed source-Loaf boundary; track RFC 125's dependency explicitly until this is executable.
 - [x] Pass focused codec, compiler, package-boundary and failure regressions.
 - [ ] Complete the applicable PR integration gates for the final published head.
 - [x] Update user documentation, release notes and generated RFC references with verified behavior.
@@ -217,6 +217,6 @@ Keep each selected semantic sidecar coherent with its manifest through publicati
 
 **A consumer may require a representation, and the requirement is resolved at resolution time.** A route that cannot proceed without one reports at the point the dependency is resolved, naming the package and version, rather than at whichever call happens to cross the boundary first. Deferring to first call makes the failure depend on control flow: the same program reports in different places on different inputs, and a consumer cannot tell whether a dependency is usable without running it. Routes that do not require a representation are unaffected and continue to resolve packages that ship none.
 
-**The representation carries one version for the whole representation.** Integrity and identity are already settled at the archive: RFC 034 covers the package with one checksum and one signature, so the representation's version answers only "can this compiler interpret this?" That is a property of the encoding and the fact vocabulary, not of individual constructs, and per-construct versioning would multiply a compatibility surface that the coverage declaration already expresses more directly.
+**The representation carries one version for the whole representation.** Integrity and identity are already settled at the archive: RFC 125 covers the source Loaf with one digest and one signature, so the representation's version answers only "can this compiler interpret this?" That is a property of the encoding and the fact vocabulary, not of individual constructs, and per-construct versioning would multiply a compatibility surface that the coverage declaration already expresses more directly.
 
 **A representation and the Rust-linking route must agree by construction.** They are produced by one compilation of one package version and ship inside one signed archive, so a disagreement between them is not two artifacts drifting apart -- it is one publisher being internally inconsistent within a single signed unit. Permitting divergence would also make a package's meaning depend on how a consumer reached it, which is the outcome this RFC exists to prevent. Where a construct cannot be represented for a route, the answer is to leave it uncovered and refuse, not to represent it differently.

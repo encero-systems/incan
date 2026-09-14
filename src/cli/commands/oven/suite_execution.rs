@@ -1,6 +1,7 @@
 //! Running prepared compiler-suite children: worker pool, per-root execution, and the paths a root reads from.
 //!
-//! Moved verbatim out of `oven.rs`; selection and reporting live beside it.
+//! Every child runs under the suite lease its caller still holds, through Oven's native runner and never a
+//! Cargo-linked executable copied from the immutable entry. Root selection and reporting live in `oven.rs`.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fs;
@@ -354,10 +355,6 @@ pub(crate) fn compiler_suite_libtest_threads(logical_cores: usize, root_workers:
     (logical_cores / root_workers).clamp(1, 2)
 }
 
-/// Split the host budget between bounded root workers and the libtest threads inside each root.
-///
-/// A root can launch nested normal Incan commands, so reserving one outer-worker share prevents the scheduler from
-/// recreating the unbounded `outer roots × default libtest threads` fan-out that delays capacity and timeout guards.
 /// Compile/inventory/execute every receipt-bound Rustc or Rustdoc workspace test target while the suite lease is
 /// still held by the caller. No Cargo-linked test executable is copied or run from the immutable entry.
 #[allow(clippy::too_many_arguments)]

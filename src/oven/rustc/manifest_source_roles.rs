@@ -1,6 +1,7 @@
 //! Source-search roles: which registry source trees a plan may read, bound to which crate, at which root.
 //!
-//! Moved verbatim out of `rustc.rs`.
+//! A role names one physical source root the plan materialized and the crate it serves; projecting a plan for a
+//! role it never materialized is refused, so no search path is ever synthesized from a name alone.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

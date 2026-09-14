@@ -501,11 +501,14 @@ fn sdk_provider_store_identity(
 /// magnitude below the rebuild it prevents but far too much to pay on every command that resolves the provider
 /// store. So it is computed once per distinct input content and read back afterwards.
 ///
-/// The memo key is a plain byte hash of the same roots the digest reads, which makes the two agree by
-/// construction: the digest is a pure function of those bytes, so equal bytes cannot produce a different digest,
-/// and any edit — even one the digest would forgive, like a comment — misses the memo and recomputes rather than
-/// returning a stale answer. Entries are published by rename, because `make -j` puts many processes on one cache
-/// and a half-written digest is still a well-formed cache key.
+/// The memo key is a plain byte hash of the same roots the digest reads, folded with a stamp of the compiler
+/// executable doing the reading. The digest is a pure function of those bytes *and* of the frontend that lexes,
+/// parses, checks and lowers them, so a key over the bytes alone would let a rebuilt compiler read the previous
+/// compiler's answer back from disk and leave the store identity where it was. Any edit to the roots — even one the
+/// digest would forgive, like a comment — and any rebuild of the compiler miss the memo and recompute rather than
+/// returning a stale answer; a compiler that cannot stamp its own executable does not memoize at all. Entries are
+/// published by rename, because `make -j` puts many processes on one cache and a half-written digest is still a
+/// well-formed cache key.
 ///
 /// # The memo changes the cost, never the value
 ///
@@ -515,8 +518,13 @@ fn sdk_provider_store_identity(
 /// publish to two different store paths, which is exactly what
 /// [`sdk_provider_store_identity_for_compiler_root`] exists to prevent.
 fn sdk_provider_effect_digest(checkout_root: &Path) -> CliResult<String> {
-    let content_key = sdk_provider_effect_input_key(checkout_root)?;
-    let cached_path = sdk_provider_effect_digest_cache_root().map(|root| root.join(&content_key));
+    let cached_path = match running_compiler_stamp() {
+        Some(compiler_stamp) => {
+            let content_key = sdk_provider_effect_input_key(checkout_root, &compiler_stamp)?;
+            sdk_provider_effect_digest_cache_root().map(|root| root.join(&content_key))
+        }
+        None => None,
+    };
     if let Some(cached_path) = &cached_path
         && let Ok(cached) = fs::read_to_string(cached_path)
         && cached.starts_with("sha256:")
@@ -589,14 +597,35 @@ fn sdk_provider_effect_digest_cache_root() -> Option<PathBuf> {
         .map(|root| root.join("cache").join("effect-digest-v1"))
 }
 
-/// Hash the bytes of every root the effect digest reads, as the memo key for its result.
+/// Stamp the compiler executable computing the effect digest: its path, length and modification time.
+///
+/// This is the same observed-stamp shape the `rustc -vV` probe and the artifact digest memo use. A rebuilt
+/// compiler has a new length or a new mtime, so the stamp moves with it; identical checkouts on two machines
+/// produce different stamps and different memo entries, which costs each machine one digest and never changes
+/// the digest's value. `None` means the executable cannot be observed, and the caller then does not memoize.
+fn running_compiler_stamp() -> Option<String> {
+    let executable = env::current_exe().ok()?;
+    let metadata = fs::metadata(&executable).ok()?;
+    let modified = metadata.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some(format!(
+        "{}:{}:{}.{:09}",
+        executable.display(),
+        metadata.len(),
+        modified.as_secs(),
+        modified.subsec_nanos()
+    ))
+}
+
+/// Hash the bytes of every root the effect digest reads, folded with the computing compiler's stamp, as the memo
+/// key for its result.
 ///
 /// Roots are folded in their declared order under their declared labels so two checkouts with the same content
 /// agree, and a root that is absent is recorded as absent rather than skipped — a missing tree is a different
-/// compiler, not the same one.
-fn sdk_provider_effect_input_key(checkout_root: &Path) -> CliResult<String> {
+/// compiler, not the same one. The compiler stamp is folded last, so a rebuilt compiler misses every entry the
+/// previous one wrote.
+fn sdk_provider_effect_input_key(checkout_root: &Path, compiler_stamp: &str) -> CliResult<String> {
     let mut hasher = Sha256::new();
-    hasher.update(b"incan-effect-inputs-v1\0");
+    hasher.update(b"incan-effect-inputs-v2\0");
     let stdlib_root = checkout_root.join(COMPILER_STDLIB_ROOT);
     hasher.update(b"stdlib\0");
     hash_sdk_provider_source_tree(&stdlib_root, &stdlib_root, &mut hasher)?;
@@ -610,6 +639,9 @@ fn sdk_provider_effect_input_key(checkout_root: &Path) -> CliResult<String> {
             hasher.update(b"absent\0");
         }
     }
+    hasher.update(b"compiler\0");
+    hasher.update(compiler_stamp.as_bytes());
+    hasher.update([0]);
     Ok(hex::encode(hasher.finalize()))
 }
 
@@ -5933,15 +5965,21 @@ mod tests {
     #[test]
     fn the_effect_memo_key_over_this_checkout_stays_cheap() -> Result<(), Box<dyn std::error::Error>> {
         let checkout = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let compiler_stamp = running_compiler_stamp().ok_or("the test executable must be stampable")?;
         let started = std::time::Instant::now();
-        let key = sdk_provider_effect_input_key(&checkout)?;
+        let key = sdk_provider_effect_input_key(&checkout, &compiler_stamp)?;
         let elapsed = started.elapsed();
         println!("EFFECT-MEMO-KEY {key} in {} ms", elapsed.as_millis());
         assert_eq!(key.len(), 64, "the memo key is a hex sha256");
         assert_eq!(
             key,
-            sdk_provider_effect_input_key(&checkout)?,
+            sdk_provider_effect_input_key(&checkout, &compiler_stamp)?,
             "the memo key must not depend on directory iteration order"
+        );
+        assert_ne!(
+            key,
+            sdk_provider_effect_input_key(&checkout, "another-compiler-build")?,
+            "a rebuilt compiler must miss the memo the previous build wrote"
         );
         // Generous enough to survive a loaded machine and a cold page cache, tight enough to fail if the key ever
         // starts walking the whole checkout again.

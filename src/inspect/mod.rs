@@ -5,7 +5,7 @@
 //! could not agree with one living in the frontend by construction", and #1293 found a live instance of exactly
 //! that. A CLI command selects an input and formats an answer; it does not compute one.
 //!
-//! Destined for `compiler/incan_inspect` under `loaves/LAYOUT.md`, alongside `rust_inspect`.
+//! Destined for the `incan_inspect` crate of the workspace layout rewrite (#1478), alongside `rust_inspect`.
 
 pub mod closure;
 pub mod codegraph;

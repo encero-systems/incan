@@ -3456,11 +3456,11 @@ mod tests {
         host_alias: &str,
         host_unit: &str,
         package_members: &[OvenSelectedRustFacetSourceMember],
-    ) -> serde_json::Value {
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
         let entrypoint = package_members
             .iter()
             .find(|member| member.path == "build.rs")
-            .expect("fixture intake response lost build.rs");
+            .ok_or("fixture intake response lost build.rs")?;
         let mut response = serde_json::json!({
             "schema": OVEN_RUNTIME_FOUNDATION_PROVIDER_INTAKE_SCHEMA,
             "selected_identity": selected_identity,
@@ -3479,7 +3479,7 @@ mod tests {
                 .map(|member| serde_json::json!({ "path": member.path, "digest": member.digest }))
                 .collect(),
         );
-        response
+        Ok(response)
     }
 
     /// Bind a source-wire fixture to the retained manifest, package inventory and selected host edge it requested.
@@ -3946,7 +3946,7 @@ mod tests {
             "serde_derive",
             &serde_derive.identity,
             &evidence.package.members,
-        ))?;
+        )?)?;
         let declaration = decode_runtime_foundation_provider_intake(&selected, &evidence, &response)?;
         assert!(matches!(
             declaration,
@@ -4125,7 +4125,7 @@ mod tests {
             "not_a_selected_edge",
             &serde_derive.identity,
             &evidence.package.members,
-        ))?;
+        )?)?;
         assert!(matches!(
             decode_runtime_foundation_provider_intake(&selected, &evidence, &detached),
             Err(OvenRustcError::InvalidInput {
@@ -4146,7 +4146,7 @@ mod tests {
             "serde_derive",
             &serde_derive.identity,
             &incomplete_members,
-        ))?;
+        )?)?;
         assert!(matches!(
             decode_runtime_foundation_provider_intake(&selected, &evidence, &incomplete),
             Err(OvenRustcError::InvalidInput {
@@ -4160,7 +4160,7 @@ mod tests {
             "serde_derive",
             &serde_derive.identity,
             &evidence.package.members,
-        );
+        )?;
         effectful["declaration"]["effects"] = serde_json::json!({ "generated_inputs": [] });
         let effectful = serde_json::to_vec(&effectful)?;
         assert!(matches!(

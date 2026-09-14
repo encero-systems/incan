@@ -2,8 +2,8 @@
 //!
 //! A generation is identified by its envelope name and the evidence map — fixture, lock, runtime-source, rustc and SDK
 //! inventory digests — so a committed generation can be reused, imported from a read-only mirror, or rebuilt. The
-//! report types here are what `incan oven legacy-cargo bake-loafs` prints. Moved verbatim out of `oven.rs`; the bake
-//! command that uses them lives there.
+//! report types here are what `incan oven legacy-cargo bake-loafs` prints; the bake command that uses them is
+//! `loaf_bake`.
 
 use std::collections::BTreeMap;
 use std::fs;

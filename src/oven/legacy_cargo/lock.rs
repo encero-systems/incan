@@ -3,8 +3,8 @@
 //! A generated project's `Cargo.lock` is seeded from the checked compiler lock and must stay inside the release
 //! cohort it names: every registry pin the compiler ships is inherited exactly, and only project-only edges may
 //! resolve fresh. These helpers decode lock documents into package graphs, validate a generated lock against the
-//! compiler's, and prune a staged lock down to one package's closure. They are moved verbatim out of
-//! `legacy_cargo.rs`; the publisher that calls them lives there.
+//! compiler's, and prune a staged lock down to one package's closure. The publisher that calls them lives in
+//! `legacy_cargo.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;

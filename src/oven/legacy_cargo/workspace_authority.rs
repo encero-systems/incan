@@ -2,8 +2,8 @@
 //!
 //! Locked local packages, inherited workspace versions and merged workspace dependency specifications are what make
 //! a generated project's manifest agree with the compiler's own workspace. These helpers read that workspace, digest
-//! its authority, and resolve one manifest dependency entry against the compiler lock. They are moved verbatim out of
-//! `legacy_cargo.rs`; the publisher that calls them lives there.
+//! its authority, and resolve one manifest dependency entry against the compiler lock. The publisher that calls them
+//! lives in `legacy_cargo.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;

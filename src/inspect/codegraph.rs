@@ -57,7 +57,7 @@ use crate::provider::{
 use crate::version::INCAN_VERSION;
 
 // The one edge that remains, and it is inherited rather than new. Everything named here is `common.rs` session
-// and discovery, which `loaves/LAYOUT.md` row 76 already sends to `compiler/incan_driver`; `oven/legacy_cargo.rs`,
+// and discovery, which the workspace layout rewrite (#1478) already sends to `incan_driver`; `oven/legacy_cargo.rs`,
 // `lsp/backend.rs` and `backend/project/cargo_toml.rs` reach the same place today. Cutting it means extracting
 // incan_driver out of an 8,691-line module with ten dependents (#1479), not editing this file. When that lands the
 // edge resolves with no further work here.
@@ -73,13 +73,12 @@ pub enum CodegraphInspectionFormat {
     Jsonl,
 }
 
-/// Emit compiler-backed codegraph facts for one Incan file or directory.
 /// A failure while producing codegraph records.
 ///
 /// Owned here rather than borrowed from the CLI. Returning `CliError` from analysis would make a compiler-side
-/// module depend on `crate::cli`, which is the "backend/oven/lsp -> cli" knot `loaves/LAYOUT.md` lists as one of
-/// the four to cut before the crate split — and it would point the wrong way, since a command consumes analysis
-/// rather than the reverse. The CLI converts at its own boundary through the `From` implementation below.
+/// module depend on `crate::cli`, which is the "backend/oven/lsp -> cli" knot the workspace layout rewrite (#1478)
+/// lists as one of the four to cut before the crate split — and it would point the wrong way, since a command consumes
+/// analysis rather than the reverse. The CLI converts at its own boundary through the `From` implementation below.
 #[derive(Debug, thiserror::Error)]
 #[error("{message}")]
 pub struct CodegraphError {
@@ -102,8 +101,9 @@ pub type CodegraphResult<T> = Result<T, CodegraphError>;
 impl From<crate::cli::CliError> for CodegraphError {
     /// Absorb an error raised by the session and discovery code this module still calls into.
     ///
-    /// Transitional, and in the direction that resolves itself: that code is `common.rs`, which `LAYOUT.md` sends
-    /// to `compiler/incan_driver`. When it moves, it stops raising a CLI error and this conversion goes with it.
+    /// Transitional, and in the direction that resolves itself: that code is `common.rs`, which the workspace
+    /// layout rewrite (#1478) sends to `incan_driver`. When it moves, it stops raising a CLI error and this conversion
+    /// goes with it.
     fn from(error: crate::cli::CliError) -> Self {
         Self::failure(error.message)
     }
@@ -858,7 +858,6 @@ impl CodegraphBuilder {
         }
     }
 
-    /// Attach session-owned semantic facts for checked body target population.
     /// Record the signatures derived from lowering, so exported identities can separate overloads.
     fn set_lowered_declaration_facts(&mut self, signatures: BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts>) {
         self.signatures_by_identity = signatures;
@@ -2273,8 +2272,7 @@ impl CodegraphBuilder {
         })
     }
 
-    /// Return whether a method-call receiver names a module this file imported as a whole.    /// Return whether a
-    /// method-call receiver names a module this file imported as a whole.
+    /// Return whether a method-call receiver names a module this file imported as a whole.
     ///
     /// Only a plain `import <module>` binding qualifies. An item import (`from m import f`) binds the item, not the
     /// module, and a value named after a module is still a value.
@@ -2582,14 +2580,6 @@ impl CodegraphBuilder {
     }
 }
 
-/// Derive the signatures a module's declarations carry, keyed by the identity that owns each one.
-///
-/// A `CanonicalSymbolId` does not carry a signature; it comes from the declaration's lowered body. Body IR is built
-/// here rather than added to `SemanticModuleSnapshot` on purpose: every consumer of that snapshot would then pay
-/// for lowering, including `build` and `check`, to satisfy a need only the graph has.
-///
-/// A module that does not lower contributes no signatures rather than failing the export. The consequence is
-/// explicit — its declarations export an identity with `signature: None`, which a consumer must treat as unproven.
 /// What one lowered declaration contributes to the export.
 #[derive(Debug, Clone)]
 struct LoweredDeclarationFacts {

@@ -2050,7 +2050,7 @@ proptest = { workspace = true, features = ["std"] }
         Ok(())
     }
 
-    /// Write an `loaf.toml` at one directory, creating its parent first.
+    /// Write a `loaf.toml` at one directory, creating its parent first.
     fn write_manifest(directory: impl AsRef<Path>, content: &str) -> Result<(), std::io::Error> {
         let directory = directory.as_ref();
         fs::create_dir_all(directory)?;

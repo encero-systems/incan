@@ -10479,7 +10479,7 @@ fn bake_oven_project(
     for directory in &extra_dependency_search_paths {
         artifact_plan.retain_caller_dependency_search_path(directory.clone());
     }
-    bake_trusted_direct_rustc_run(&OvenTrustedDirectRustcTargetRequest {
+    let direct = bake_trusted_direct_rustc_run(&OvenTrustedDirectRustcTargetRequest {
         receipt: &prepared.receipt,
         artifacts: prepared.plan_selection.artifacts(),
         artifact_root: prepared.plan_selection.output_guard_root(),
@@ -10492,8 +10492,8 @@ fn bake_oven_project(
         source_evidence_key: "generated-root",
         features: &prepared.receipt.intent.features,
         prefer_dynamic: false,
-    })
-    .map_err(oven_rustc_error)
+    });
+    classify_direct_rustc_bake(&prepared.crate_name, direct)
 }
 
 /// Return the caller-owned direct-rustc library artifact path.
@@ -10606,13 +10606,23 @@ fn bake_oven_library(
         prefer_dynamic: false,
     });
 
+    classify_direct_rustc_bake(&oven.crate_name, direct)
+}
+
+/// Turn a direct-rustc composition failure into the named Oven-boundary refusal; pass every other outcome through.
+///
+/// A crate-loading failure is a composition fault, not a fault in the generated Rust: the sources already
+/// typechecked, so rustc rejecting a dependency means the assembled closure is not mutually loadable. Both the
+/// executable and the library route name that, rather than surfacing raw `E0463`s or a `StableCrateId` collision
+/// about crates the user never named.
+fn classify_direct_rustc_bake(
+    crate_name: &str,
+    direct: Result<crate::oven::rustc::OvenDirectRustcBake, OvenRustcError>,
+) -> CliResult<crate::oven::rustc::OvenDirectRustcBake> {
     match direct {
         Ok(bake) => Ok(bake),
-        // A crate-loading failure is a composition fault, not a fault in the generated Rust: the sources already
-        // typechecked, so rustc rejecting a dependency means the assembled closure is not mutually loadable. Name
-        // that, rather than surfacing raw `E0463`s about crates the user never named.
         Err(error) if direct_rustc_composition_failure(&error) => Err(oven_native_closure_refusal(
-            &oven.crate_name,
+            crate_name,
             &format!(
                 "its assembled dependency closure is not loadable as independently compiled parts ({})",
                 oven_rustc_error(error)
@@ -10624,19 +10634,23 @@ fn bake_oven_library(
 
 /// Recognize a rustc failure caused by an unloadable dependency closure rather than by the compiled source.
 ///
-/// Only crate-loading diagnostics qualify. `E0463` is a crate that could not be found at all, `E0460`/`E0461`/`E0464`
-/// are candidates that were found but rejected for identity, target or ambiguity reasons. A type error in generated
-/// Rust is never one of these, so this cannot swallow a genuine compilation failure and silently retry it.
+/// Only crate-loading failures qualify. `E0463` is a crate that could not be found at all, `E0460`/`E0461`/`E0464`
+/// are candidates that were found but rejected for identity, target or ambiguity reasons, and a `StableCrateId`
+/// collision -- which rustc reports without an error code -- is two compiled instances of one crate meeting in one
+/// link, the diamond over two source-free providers. A type error in generated Rust is never one of these, so this
+/// cannot swallow a genuine compilation failure and silently retry it.
 fn direct_rustc_composition_failure(error: &OvenRustcError) -> bool {
     let OvenRustcError::CompilationFailed { report } = error else {
         return false;
     };
     const CRATE_LOADING_CODES: [&str; 4] = ["E0460", "E0461", "E0463", "E0464"];
+    const STABLE_CRATE_ID_COLLISION: &str = "colliding StableCrateId";
     if report.diagnostics.iter().any(|diagnostic| {
         diagnostic
             .code
             .as_deref()
             .is_some_and(|code| CRATE_LOADING_CODES.contains(&code))
+            || diagnostic.message.contains(STABLE_CRATE_ID_COLLISION)
     }) {
         return true;
     }
@@ -10646,6 +10660,7 @@ fn direct_rustc_composition_failure(error: &OvenRustcError) -> bool {
     CRATE_LOADING_CODES
         .iter()
         .any(|code| report.unstructured_output.contains(code))
+        || report.unstructured_output.contains(STABLE_CRATE_ID_COLLISION)
 }
 
 /// Preserve direct-rustc diagnostics rather than reducing a normal Oven compilation failure to a generic status.
@@ -14869,7 +14884,7 @@ fn discover_oven_executable_entrypoints(manifest: &ProjectManifest) -> CliResult
 fn discover_oven_bake_project_targets(project_root: &Path) -> CliResult<Vec<(OvenBakeProjectTarget, PathBuf)>> {
     let Some(manifest) = discover_effective_project_manifest(project_root)? else {
         return Err(CliError::failure(format!(
-            "`incan oven bake --project` requires an loaf.toml project at {}",
+            "`incan oven bake --project` requires a loaf.toml project at {}",
             project_root.display()
         )));
     };
@@ -15823,7 +15838,8 @@ mod tests {
     use crate::oven_interop::locked_oven_interop_targets;
     use std::fs;
 
-    /// Unused macro declarations do not request a build; transitive facade requirements preserve the selected macro.
+    /// Two extensions from different compiler families are not an ambiguity when only one family is still
+    /// installed; when neither ships, both are kept so the caller reports the ambiguity rather than guessing.
     #[test]
     fn a_retained_extension_from_a_family_the_toolchain_no_longer_ships_is_not_a_rival_issue1444() {
         let plan = OvenRustcArtifactManifest {
@@ -15867,6 +15883,8 @@ mod tests {
         assert_eq!(none_available.len(), 2);
     }
 
+    /// A release Loaf the active toolchain does not provide reads as unavailable, while an authority made only of
+    /// stored outputs has no release Loaf to be unavailable in the first place.
     #[test]
     fn an_unshipped_release_loaf_is_a_cache_miss_not_a_fault_issue1444() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
@@ -15894,6 +15912,60 @@ mod tests {
         Ok(())
     }
 
+    /// A `StableCrateId` collision -- rustc's report when two compiled instances of one crate meet in a link, which
+    /// carries no error code -- is classified as a composition failure exactly like the coded crate-loading errors,
+    /// whether it arrives as a structured diagnostic or as unstructured text; a type error in the generated Rust is
+    /// not.
+    #[test]
+    fn a_stable_crate_id_collision_is_a_composition_failure_not_a_source_fault() {
+        let collision = "found crates (`serde_derive` and `serde_derive`) with colliding StableCrateId values";
+        let structured = OvenRustcError::CompilationFailed {
+            report: crate::oven::rustc::OvenRustcDiagnosticReport {
+                diagnostics: vec![crate::oven::rustc::OvenRustcDiagnostic {
+                    level: "error".to_string(),
+                    message: collision.to_string(),
+                    code: None,
+                    spans: Vec::new(),
+                    rendered: None,
+                }],
+                unstructured_output: String::new(),
+                invocation: None,
+            },
+        };
+        assert!(direct_rustc_composition_failure(&structured));
+        let unstructured = OvenRustcError::CompilationFailed {
+            report: crate::oven::rustc::OvenRustcDiagnosticReport {
+                diagnostics: Vec::new(),
+                unstructured_output: format!("error: {collision}\n"),
+                invocation: None,
+            },
+        };
+        assert!(direct_rustc_composition_failure(&unstructured));
+        let type_error = OvenRustcError::CompilationFailed {
+            report: crate::oven::rustc::OvenRustcDiagnosticReport {
+                diagnostics: vec![crate::oven::rustc::OvenRustcDiagnostic {
+                    level: "error".to_string(),
+                    message: "mismatched types".to_string(),
+                    code: Some("E0308".to_string()),
+                    spans: Vec::new(),
+                    rendered: None,
+                }],
+                unstructured_output: String::new(),
+                invocation: None,
+            },
+        };
+        assert!(!direct_rustc_composition_failure(&type_error));
+        let refusal = classify_direct_rustc_bake("app", Err(structured))
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+        assert!(refusal.contains("Oven refuses to build `app`"), "{refusal}");
+        assert!(refusal.contains("#1241"), "{refusal}");
+        assert!(refusal.contains("colliding StableCrateId"), "{refusal}");
+    }
+
+    /// The registry-closure refusal names the package and the artifact that pinned it, and its wording never
+    /// points the reader at Cargo or a compatibility mode.
     #[test]
     fn a_closure_refusal_names_the_package_the_pinning_artifact_and_never_offers_cargo() {
         let pinned = provider_registry_conflict_reason("tokio", Some(Path::new("/store/entries/x/artifacts")));
@@ -15907,6 +15979,7 @@ mod tests {
         assert!(!refusal.to_lowercase().contains("cargo-compatibility"));
     }
 
+    /// Unused macro declarations do not request a build; transitive facade requirements preserve the selected macro.
     #[test]
     fn selected_provider_macro_requirements_follow_named_roots() -> Result<(), Box<dyn std::error::Error>> {
         // The plan declares no physical search paths, but it still has to bind the one source role the manifests

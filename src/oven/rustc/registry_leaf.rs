@@ -1,8 +1,7 @@
 //! The registry leaf authority: which sealed Loaf root answers for one registry package requirement.
 //!
 //! A caller-visible registry dependency is served only from the catalog the selected plan sealed, never from an
-//! aggregate Cargo cache. These helpers resolve and validate that leaf against the plan's search paths. Moved verbatim
-//! out of `rustc.rs`.
+//! aggregate Cargo cache. These helpers resolve and validate that leaf against the plan's search paths.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

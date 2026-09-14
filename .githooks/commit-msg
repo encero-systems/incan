@@ -18,4 +18,11 @@ if grep -qiE '(Generated with .*(Claude|Codex|Copilot|Cursor)|^[[:space:]]*🤖)
     exit 1
 fi
 
+if grep -qiE '^[[:space:]]*(Claude|Codex|Copilot|Cursor|Devin)-Session:' "$1"; then
+    echo "commit-msg: refusing an AI session trailer." >&2
+    grep -inE '^[[:space:]]*(Claude|Codex|Copilot|Cursor|Devin)-Session:' "$1" | sed 's/^/    /' >&2
+    echo "  Remove the trailer and commit again." >&2
+    exit 1
+fi
+
 exit 0

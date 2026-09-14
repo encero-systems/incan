@@ -2,7 +2,7 @@
 //!
 //! The installer provisions Incan's own Rustup home; a development checkout resolves through the ambient Rustup.
 //! `resolve_active_rustc`, the one-spawn `rustc -vV` probe, `rustdoc_for_rustc` and the dynamic-library environment a
-//! direct compile runs under live here. Moved verbatim out of `rustc.rs`.
+//! direct compile runs under live here.
 
 use std::collections::HashMap;
 use std::env;

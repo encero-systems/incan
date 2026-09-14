@@ -65,6 +65,46 @@ class ReconcileTests(unittest.TestCase):
         _, problems = reconcile.reconcile(both)
         self.assertTrue(any("both whole and as slices" in problem for problem in problems))
 
+    def test_a_report_without_partition_coordinates_is_not_evidence(self):
+        plain = (Path("suite.json"), {"success": True, "selection": {}, "native_test_roots": [whole("tests/a.rs")]})
+        summary, problems = reconcile.reconcile([plain])
+        self.assertTrue(any("not a partition report" in problem for problem in problems))
+        self.assertFalse(summary["complete_suite_evidence"])
+
+    def test_partitions_that_disagree_on_their_count_or_repeat_an_index_are_refused(self):
+        disagree = [report(0, 2, [whole("tests/a.rs")]), report(1, 3, [whole("tests/b.rs")])]
+        _, problems = reconcile.reconcile(disagree)
+        self.assertTrue(any("partition count 3 disagrees with 2" in problem for problem in problems))
+        repeated = [report(0, 2, [whole("tests/a.rs")]), report(0, 2, [whole("tests/b.rs")])]
+        _, problems = reconcile.reconcile(repeated)
+        self.assertTrue(any("partition 0 reported twice" in problem for problem in problems))
+
+    def test_slices_computed_from_different_bins_or_inventories_are_refused(self):
+        # Every shard derives its slices from the same live inventory; two shards that disagree on the slice
+        # count or on the inventory size ran against different consumer binaries, and their selections cannot
+        # be added up.
+        counts = [
+            report(0, 2, [sliced("tests/g.rs", 0, 2, 3, ["x", "y"])]),
+            report(1, 2, [sliced("tests/g.rs", 1, 3, 3, ["z"])]),
+        ]
+        _, problems = reconcile.reconcile(counts)
+        self.assertTrue(any("disagree on slice count [2, 3]" in problem for problem in problems))
+        inventories = [
+            report(0, 2, [sliced("tests/g.rs", 0, 2, 3, ["x", "y"])]),
+            report(1, 2, [sliced("tests/g.rs", 1, 2, 4, ["z"])]),
+        ]
+        _, problems = reconcile.reconcile(inventories)
+        self.assertTrue(any("different inventories [3, 4]" in problem for problem in problems))
+
+    def test_slice_indices_must_cover_the_slice_count_exactly_once(self):
+        # Two shards both claiming slice 0 of 2 leave slice 1 unrun even when their selections do not overlap.
+        same_index = [
+            report(0, 2, [sliced("tests/g.rs", 0, 2, 2, ["x"])]),
+            report(1, 2, [sliced("tests/g.rs", 0, 2, 2, ["y"])]),
+        ]
+        _, problems = reconcile.reconcile(same_index)
+        self.assertTrue(any("do not cover 0..1 exactly once" in problem for problem in problems))
+
     def test_a_failed_partition_never_reconciles(self):
         reports = [report(0, 1, [whole("tests/a.rs")], success=False)]
         summary, problems = reconcile.reconcile(reports)

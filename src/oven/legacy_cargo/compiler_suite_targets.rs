@@ -2,8 +2,7 @@
 //!
 //! A Cargo root unit becomes one portable target plan naming its source root, edition, features, externs and
 //! runner; workspace libraries and binaries the roots depend on become plans of their own; the compile environment a
-//! shard needs is derived here too. They are moved verbatim out of `legacy_cargo.rs`; the publisher that calls
-//! them lives there.
+//! shard needs is derived here too. The publisher that calls them lives in `legacy_cargo.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;

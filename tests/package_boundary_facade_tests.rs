@@ -327,10 +327,10 @@ fn source_free_native_diamond_preserves_published_store_inventory_issue1458() ->
             "from pub::stock import answer\nfrom pub::pricing import quote\n\ndef main() -> None:\n    println(answer() + quote())\n",
         )?;
         // Two source-free providers each compiled the same registry units for themselves, and one binary cannot
-        // hold two builds of one unit: rustc refuses the colliding `StableCrateId`s. Until the third-party
-        // direct-rustc cutover reconciles shared registry units (#1241) that is where this bake stops -- never at a
-        // Cargo build, which is what the removed unified-Cargo detour used to do here -- and it leaves every
-        // published entry alone.
+        // hold two builds of one unit: rustc refuses the colliding `StableCrateId`s, and Oven names that as the
+        // #1241 boundary rather than surfacing the raw rustc report. Until the third-party direct-rustc cutover
+        // reconciles shared registry units that is where this bake stops -- never at a Cargo build, which is what
+        // the removed unified-Cargo detour used to do here -- and it leaves every published entry alone.
         let consumer_bake = bake(&consumer)?;
         let diagnostics = format!(
             "{}\n{}",
@@ -338,9 +338,16 @@ fn source_free_native_diamond_preserves_published_store_inventory_issue1458() ->
             String::from_utf8_lossy(&consumer_bake.stderr)
         );
         assert!(
-            !consumer_bake.status.success()
-                && (diagnostics.contains("#1241") || diagnostics.contains("colliding StableCrateId")),
-            "the diamond consumer bake must stop at the #1241 boundary rather than fall back to Cargo:\n{diagnostics}"
+            !consumer_bake.status.success() && diagnostics.contains("Oven refuses to build"),
+            "the diamond consumer bake must stop at the Oven boundary rather than fall back to Cargo:\n{diagnostics}"
+        );
+        assert!(
+            diagnostics.contains("#1241") && diagnostics.contains("colliding StableCrateId"),
+            "the refusal must name the #1241 boundary and carry rustc's collision report:\n{diagnostics}"
+        );
+        assert!(
+            !diagnostics.to_lowercase().contains("cargo-compatibility"),
+            "the refusal must never offer a Cargo route:\n{diagnostics}"
         );
         assert_eq!(artifact_inventory(&catalog_artifact)?, catalog_before);
         assert_eq!(artifact_inventory(&pricing_artifact)?, pricing_before);

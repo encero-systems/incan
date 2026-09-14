@@ -6,7 +6,7 @@
 # build output — a worktree working under a storage budget, a cache shared between worktrees — otherwise has cargo
 # writing to one directory while make reads from another. The symptom is not a missing file but a misleading one:
 # every target needing the compiler binary fails claiming the project's dependencies were never baked.
-TARGET_DIR := $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),$(CURDIR)/target)
+TARGET_DIR := $(abspath $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),$(CURDIR)/target))
 
 # Nested generated-project and named-publisher work is constrained so one local test command does not consume every
 # core. The cap used to be a flat 2 regardless of the machine, which meant the SDK prewarm compiled its ten
@@ -104,13 +104,13 @@ help: build-quiet  ## Display this help message
 .PHONY: _incan_link_debug_to_cargo_bin
 _incan_link_debug_to_cargo_bin:
 	@if [ "$(INCAN_LINK_CARGO_BIN)" != "1" ] || [ "$(INCAN_SKIP_CARGO_BIN_LINK)" = "1" ]; then exit 0; fi
-	@if [ ! -f "$(TARGET_DIR)/debug/incan" ]; then echo "incan: expected "$(TARGET_DIR)/debug/incan" after build"; exit 1; fi
+	@if [ ! -f "$(TARGET_DIR)/debug/incan" ]; then echo "incan: expected $(TARGET_DIR)/debug/incan after build"; exit 1; fi
 	@mkdir -p "$(HOME)/.cargo/bin"
 	@ln -sf "$(TARGET_DIR)/debug/incan" "$(HOME)/.cargo/bin/incan"
-	@echo "\033[32m✓ Linked ~/.cargo/bin/incan -> "$(TARGET_DIR)/debug/incan"\033[0m"
+	@echo "\033[32m✓ Linked ~/.cargo/bin/incan -> $(TARGET_DIR)/debug/incan\033[0m"
 	@if [ -f "$(TARGET_DIR)/debug/incan-lsp" ]; then \
 		ln -sf "$(TARGET_DIR)/debug/incan-lsp" "$(HOME)/.cargo/bin/incan-lsp"; \
-		echo "\033[32m✓ Linked ~/.cargo/bin/incan-lsp -> "$(TARGET_DIR)/debug/incan"-lsp\033[0m"; \
+		echo "\033[32m✓ Linked ~/.cargo/bin/incan-lsp -> $(TARGET_DIR)/debug/incan-lsp\033[0m"; \
 	fi
 
 .PHONY: build  ## build - Debug build (compiler + LSP); links ~/.cargo/bin/incan + incan-lsp locally
@@ -372,9 +372,7 @@ test-oven-replay:
 		rustc_path="$$(rustup which --toolchain "$(INCAN_TEST_SUITE_TOOLCHAIN)" rustc)"; \
 		fixture_cargo_path="$$(rustup which --toolchain "$(INCAN_TEST_FIXTURE_CARGO_TOOLCHAIN)" cargo)"; \
 		mkdir -p "$$suite_output/cargo-guard"; \
-		printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "unexpected Cargo invocation (cwd $$PWD; parent $$(ps -o args= -p $$PPID 2>/dev/null | cut -c1-300)): $$*" >> "$$INCAN_OVEN_CARGO_GUARD_LOG"' 'exit 97' \
-			> "$$suite_output/cargo-guard/cargo"; \
-		chmod +x "$$suite_output/cargo-guard/cargo"; \
+		cp "$(CURDIR)/scripts/cargo-guard/cargo" "$$suite_output/cargo-guard/cargo"; \
 		: > "$$suite_output/cargo-guard/invocations.log"; \
 		command_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
 		PATH="$$suite_output/cargo-guard:$$PATH" \
@@ -533,9 +531,7 @@ test-oven-release-smoke: test-prewarm-oven-release-loafs
 		cleanup_smoke_root() { rm -rf -- "$$smoke_root"; }; \
 		trap cleanup_smoke_root EXIT; \
 		mkdir -p "$$smoke_root/cargo-guard" "$$smoke_root/incan-home"; \
-		printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "unexpected Cargo invocation (cwd $$PWD; parent $$(ps -o args= -p $$PPID 2>/dev/null | cut -c1-300)): $$*" >> "$$INCAN_OVEN_CARGO_GUARD_LOG"' 'exit 97' \
-			> "$$smoke_root/cargo-guard/cargo"; \
-		chmod +x "$$smoke_root/cargo-guard/cargo"; \
+		cp "$(CURDIR)/scripts/cargo-guard/cargo" "$$smoke_root/cargo-guard/cargo"; \
 		: > "$$smoke_root/cargo-guard/invocations.log"; \
 		run_incan() { \
 			PATH="$$smoke_root/cargo-guard:$$PATH" \
@@ -621,7 +617,7 @@ smoke-test-release:
 .PHONY: smoke-test-require-release-bin
 smoke-test-require-release-bin:
 	@if [ ! -x "$(TARGET_DIR)/release/incan" ]; then \
-		echo "incan: expected "$(TARGET_DIR)/release/incan"; run make smoke-test-release first"; \
+		echo "incan: expected $(TARGET_DIR)/release/incan; run make smoke-test-release first"; \
 		exit 1; \
 	fi
 
@@ -749,9 +745,7 @@ test-one: test-prewarm-oven-loafs
 		rustc_path="$$(rustup which --toolchain "$(INCAN_TEST_SUITE_TOOLCHAIN)" rustc)"; \
 		fixture_cargo_path="$$(rustup which --toolchain "$(INCAN_TEST_FIXTURE_CARGO_TOOLCHAIN)" cargo)"; \
 		mkdir -p "$$root_output/cargo-guard"; \
-		printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "unexpected Cargo invocation (cwd $$PWD; parent $$(ps -o args= -p $$PPID 2>/dev/null | cut -c1-300)): $$*" >> "$$INCAN_OVEN_CARGO_GUARD_LOG"' 'exit 97' \
-			> "$$root_output/cargo-guard/cargo"; \
-		chmod +x "$$root_output/cargo-guard/cargo"; \
+		cp "$(CURDIR)/scripts/cargo-guard/cargo" "$$root_output/cargo-guard/cargo"; \
 		: > "$$root_output/cargo-guard/invocations.log"; \
 		command_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
 		PATH="$$root_output/cargo-guard:$$PATH" INCAN_OVEN_CARGO_GUARD_LOG="$$root_output/cargo-guard/invocations.log" \

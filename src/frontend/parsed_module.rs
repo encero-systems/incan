@@ -9,7 +9,8 @@ use crate::frontend::ast::Program;
 /// This is the product of parsing, so it belongs to the frontend rather than to any one consumer. It was defined in
 /// `cli::prelude` until the codegraph producer moved behind the compiler boundary, at which point a compiler-side
 /// module would have had to import from `crate::cli` to name its own input — the "backend/oven/lsp -> cli" knot
-/// that `loaves/LAYOUT.md` lists as one of the four to cut before the crate split, pointing the wrong way.
+/// that the workspace layout rewrite (#1478) lists as one of the four to cut before the crate split, pointing the
+/// wrong way.
 ///
 /// `cli::prelude` re-exports it, so callers that already name it there are unaffected.
 #[derive(Clone)]

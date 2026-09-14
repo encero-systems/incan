@@ -1,8 +1,8 @@
 //! Registry source trees and the sealed registry leaf catalog a publisher stages beside its closure.
 //!
 //! Registry checksums come from the lock, source trees are copied under the publisher's staging with their
-//! digests recorded, and the leaf catalog binds every registry artifact to the plan that sealed it. They are moved
-//! verbatim out of `legacy_cargo.rs`; the publisher that calls them lives there.
+//! digests recorded, and the leaf catalog binds every registry artifact to the plan that sealed it. The publisher
+//! that calls them lives in `legacy_cargo.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;

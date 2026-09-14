@@ -8,7 +8,7 @@
 //! host response binding both have to precede materializing any candidate's declared compiler inputs.
 #![allow(
     dead_code,
-    reason = "Gates 6 and 7 of RFC 119 are the reader; this substrate lands first so their blockers have something to change"
+    reason = "Gates 6 and 7 of RFC 119 are the reader; this substrate lands before them"
 )]
 
 use std::collections::BTreeMap;

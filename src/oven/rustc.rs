@@ -12,9 +12,9 @@ mod manifest_cohort;
 mod manifest_materialize;
 mod manifest_source_roles;
 // `inspection_toolchain` is deliberately absent. It is the compiler/sysroot-closure-under-lease surface, and the
-// only thing here that needed `rust_inspect`'s selected-projection API — which does not exist on the dev line and
-// belongs in its own change alongside that port. None of Gate 6 or 7's nine review blockers touches it, so leaving
-// it out is what lets the four runtime modules they *do* touch compile. It is retained on `work/oven-hot-path`.
+// only thing here that needs `rust_inspect`'s selected-projection API, which this tree does not have; it lands
+// together with that port. Nothing in Gates 6 or 7 of RFC 119 depends on it, so its absence is what lets the four
+// runtime modules those gates do use compile on their own.
 pub(crate) mod direct_compiler;
 pub(crate) mod native_input;
 mod registry_leaf;
@@ -426,7 +426,8 @@ pub struct OvenDirectRustcBake {
     pub output: PathBuf,
     /// Digest of the regular caller-owned output, established before it is exposed to another direct-Rustc step.
     pub output_digest: String,
-    /// The command cleared all Cargo process variables before starting rustc.
+    /// Whether a Cargo process performed this compile. Every direct-rustc constructor sets `false`; the flag exists
+    /// so reports and consumers can assert the route rather than infer it from the command.
     pub cargo_process_started: bool,
     /// Whether the receipt- and plan-verified caller-owned native output was reused without launching rustc.
     pub reused: bool,
@@ -1887,7 +1888,6 @@ fn normalized_package_name(name: &str) -> String {
     name.replace('-', "_")
 }
 
-/// Return whether one declared artifact is directly below a declared search directory.
 /// Recover the crate name from a Rust library filename such as `libincan_stdlib-9c218ea857854fce.rlib`.
 ///
 /// Returns `None` for anything that is not a `lib<name>-<hash>.{rlib,rmeta}`, so a source file, a native archive, or
@@ -9501,10 +9501,9 @@ fi
         // A persisted Cargo path root whose digest does not match the dependency is not supported, so the
         // envelope cannot authorize it.
         //
-        // This substrate carries the shapes, not the decision. On `work/oven-hot-path` the same case is a hard
-        // refusal naming "no checked Oven source-unit identity"; producing that error is a Gate 6 blocker, and
-        // the blocker that adds it replaces this with the negative case. Asserting the refusal here would be
-        // asserting behaviour this branch does not bring.
+        // This substrate carries the shapes, not the decision. Gate 6 of RFC 119 turns the same case into a hard
+        // refusal naming "no checked Oven source-unit identity" and replaces this assertion with that negative
+        // case; asserting the refusal here would be asserting behaviour this tree does not yet have.
         assert!(
             !project_inspection_test_dependency_envelope_supports_dependencies(
                 &payload,
@@ -10461,8 +10460,10 @@ pub(crate) fn incan_owned_cargo() -> Option<PathBuf> {
 /// from a selected immutable Loaf catalog. It recursively follows only path-to-path edges and incorporates
 /// each child output digest into its parent output identity. Git, optional/feature-driven roots, build scripts, and
 /// unsealed registry closures remain explicit unsupported inputs.
+///
+/// Gate 6 of RFC 119 is the reader; until it lands only tests exercise this seam.
 #[cfg(test)]
-#[allow(dead_code, reason = "Gate 6 of RFC 119 is the reader; see the note above")]
+#[allow(dead_code, reason = "Gate 6 of RFC 119 is the reader")]
 pub(crate) fn materialize_declared_rust_libraries(
     output_root: &Path,
     rustc: &Path,

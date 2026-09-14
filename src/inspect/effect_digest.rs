@@ -1,9 +1,9 @@
 //! Digesting what the compiler *produces* for the standard library, rather than what the compiler is made of.
 //!
-//! The SDK provider store is keyed by an identity that decides whether ten prepared components can be reused. That
-//! identity currently folds the whole compiler source tree, so editing any file under `src/` or `crates/` — a CLI
-//! command, an inspection module, the language server — rebuilds every component. The rebuild costs roughly
-//! seventeen minutes and is paid on the next command after any compiler edit (#1495).
+//! The SDK provider store is keyed by an identity that decides whether ten prepared components can be reused.
+//! Through store tag v3 that identity folded the whole compiler source tree, so editing any file under `src/` or
+//! `crates/` — a CLI command, an inspection module, the language server — rebuilt every component, roughly
+//! seventeen minutes paid on the next command after any compiler edit (#1495).
 //!
 //! Hashing the source tree answers the wrong question. What a consumer needs to know is not *did the compiler
 //! change* but *would this compiler produce different output for this standard library*. Those differ for almost

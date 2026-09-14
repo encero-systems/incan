@@ -118,8 +118,9 @@ impl OvenRuntimeFoundationBuild {
 
     /// Return how many times this executor actually started the retained compiler.
     ///
-    /// The hot-path reuse proof reads this directly: a coordinate-only change that reuses every unit must report
-    /// zero launches, and no other counter in the pipeline observes real process starts.
+    /// This counts real process starts and nothing else: every unit handed to the executor is compiled, so the
+    /// number equals the units in the foundation. Reuse of an already-published output is the Store's decision on
+    /// identity and never shows up here as a skipped launch.
     pub(crate) fn compiler_launches(&self) -> usize {
         self.compiler_launches
     }
@@ -135,8 +136,9 @@ impl OvenRuntimeFoundationBuild {
 /// Compile every rebuildable unit of one materialized foundation, in its declared dependency-safe order.
 ///
 /// The caller retains the foundation's source and artifact leases for the duration of this call and owns
-/// `output_root`. Each unit is compiled exactly once; an output already present under its compiled identity is
-/// reused without starting the compiler, which is what makes the reuse proof observable.
+/// `output_root`. Each unit is compiled exactly once and unconditionally: the executor empties the unit directory
+/// and runs the compiler rather than trusting whatever scratch already holds, so `compiler_launches` reports real
+/// process starts. Whether two compilations are interchangeable is decided by the Store on identity, not here.
 pub(crate) fn execute_runtime_foundation_rebuild(
     foundation: &ValidatedOvenRuntimeFoundation,
     materialized: &OvenMaterializedRuntimeFoundation,

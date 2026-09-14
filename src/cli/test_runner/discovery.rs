@@ -141,7 +141,7 @@ fn enclosing_manifest_root(path: &Path) -> Option<PathBuf> {
 
 /// Walk the requested path once, retaining candidates and the deepest project boundary that owns each one.
 ///
-/// A command already enclosed by an `loaf.toml` never descends into a nested project. A manifest-less common
+/// A command already enclosed by a `loaf.toml` never descends into a nested project. A manifest-less common
 /// directory may discover sibling projects, but keeps them as separate authorities so command planning can reject the
 /// ambiguous invocation before selecting a session from whichever file happens to sort first.
 pub(crate) fn discover_test_file_candidates(path: &Path) -> TestFileCandidates {

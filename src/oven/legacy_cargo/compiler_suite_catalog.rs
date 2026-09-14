@@ -3,7 +3,7 @@
 //! The explicit compiler-suite publisher runs Cargo once to learn what it built, then never again. These helpers
 //! decode that unit graph, choose the target selections and bootstrap set, and turn the built artifacts into a
 //! catalog keyed by unit so each direct-rustc target plan can name exactly the externs and search directories it
-//! needs. They are moved verbatim out of `legacy_cargo.rs`; the publisher that calls them lives there.
+//! needs. The publisher that calls them lives in `legacy_cargo.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;

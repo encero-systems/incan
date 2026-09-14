@@ -1,8 +1,7 @@
 //! `incan oven legacy-cargo bake-loafs`: bake or reuse the compiler-owned Loaf envelope generations.
 //!
 //! The one place Cargo is allowed to build Incan's own runtime and compiler-suite closures. Everything it publishes
-//! is keyed on the evidence in `loaf_bake_evidence` and committed atomically as a generation. Moved verbatim out of
-//! `oven.rs`.
+//! is keyed on the evidence in `loaf_bake_evidence` and committed atomically as a generation.
 
 use std::collections::BTreeMap;
 use std::fs;

@@ -2,7 +2,7 @@
 //!
 //! The full materialization rehashes every declared file; the trusted forms take the publisher's digests as given
 //! and check only shape, and a closure proof lets a later process skip even that. Composed materialization joins a
-//! base cohort with an extension's own closure. Moved verbatim out of `rustc.rs`.
+//! base cohort with an extension's own closure.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -116,9 +116,8 @@ impl OvenRustcArtifactManifest {
     /// [`OvenClosureProof`] lives. With a matching proof the per-file shape checks are skipped: each relative path
     /// is still normalized (no absolute or parent-escaping segment) and joined below the canonical root, but the ten
     /// thousand `symlink_metadata` and per-directory `canonicalize` calls that re-established a constant every
-    /// process are not made. Without one, this is the
-    /// full trusted materialization, and on success the proof is written for the next process. A proof that cannot
-    /// be written costs nothing but the next process's full walk.
+    /// process are not made. Without one, this is the full trusted materialization, and on success the proof is
+    /// written for the next process. A proof that cannot be written costs nothing but the next process's full walk.
     pub(crate) fn materialize_proven_store(
         &self,
         artifact_root: &Path,

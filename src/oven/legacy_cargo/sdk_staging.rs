@@ -2,8 +2,8 @@
 //!
 //! The compiler-suite publisher copies an already prepared, read-only SDK inventory into its private staging,
 //! rebases the component runtime paths it carries, refreshes the digests of what it staged, and turns directories
-//! into the materialized-file records a store publication declares. They are moved verbatim out of
-//! `legacy_cargo.rs`; the publisher that calls them lives there.
+//! into the materialized-file records a store publication declares. The publisher that calls them lives in
+//! `legacy_cargo.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;

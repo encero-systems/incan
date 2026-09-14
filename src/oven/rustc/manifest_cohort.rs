@@ -2,7 +2,7 @@
 //!
 //! An extension retains its own locked third-party closure and inherits compiler-owned runtime artifacts, overlapping
 //! locked registry units and vocabulary auxiliaries from one immutable base. These methods perform that
-//! substitution, validate it, and partition or fragment a plan against its base. Moved verbatim out of `rustc.rs`.
+//! substitution, validate it, and partition or fragment a plan against its base.
 
 use std::collections::{BTreeMap, BTreeSet};
 

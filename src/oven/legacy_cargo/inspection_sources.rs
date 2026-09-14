@@ -2,8 +2,7 @@
 //!
 //! The publisher asks Cargo for metadata once, under the lock policy the bake selected, and turns the resolved
 //! graph into the direct dependency packages, registry source dependencies and inspection sources that the rest
-//! of the bake consumes. They are moved verbatim out of `legacy_cargo.rs`; the publisher that calls them lives
-//! there.
+//! of the bake consumes. The publisher that calls them lives in `legacy_cargo.rs`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

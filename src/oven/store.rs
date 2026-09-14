@@ -245,10 +245,9 @@ impl OvenStoreExecutionPayload {
     /// Borrow the original publisher recipe; a legacy entry without a witness does not acquire new receipt facts.
     ///
     /// `OvenStoreEntry` exposes the same record for inspection, which is the surface a reader uses. This borrow is
-    /// for an executor holding a lease on reused bytes, and its production consumer is the runtime input owner that
-    /// arrives with the Oven runtime substrate (#1037). The retention itself is not speculative: the witness digest
-    /// is re-checked in `verify_admitted_payload` on every held payload, whether or not the receipt is read.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// for an executor holding a lease on reused bytes; the store-mirror import reads it to publish an imported
+    /// entry under the receipt it was baked for. The witness digest is re-checked in `verify_admitted_payload` on
+    /// every held payload, whether or not the receipt is read.
     pub(crate) fn original_native_receipt(&self) -> Option<&OvenReceipt> {
         self.original_native_receipt.as_ref().map(|witness| &witness.receipt)
     }

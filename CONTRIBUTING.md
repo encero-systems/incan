@@ -36,7 +36,7 @@ Thank you for your interest in contributing to the Incan programming language! T
    make install-hooks
    ```
 
-   This points `core.hooksPath` at the repository's `.githooks/`. The `commit-msg` hook rejects AI attribution trailers and generation footers, which several agent harnesses inject by default. Commit messages in this repository are authored by their committer and carry no tool attribution.
+   This points `core.hooksPath` at the repository's `.githooks/`. The `commit-msg` hook rejects AI attribution trailers, session trailers, and generation footers, which several agent harnesses inject by default. Commit messages in this repository are authored by their committer and carry no tool attribution.
 
 ## Project Structure
 

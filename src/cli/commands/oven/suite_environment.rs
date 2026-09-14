@@ -2,8 +2,7 @@
 //!
 //! A suite child is a libtest or rustdoc root executed through Oven's native runner with a bounded, receipt-derived
 //! environment: no ambient Cargo, an explicit-bake Cargo proxy for the fixtures that publish, and a generated-Rust
-//! closure only for the targets that consume it. Moved verbatim out of `oven.rs`; the runner that uses them lives
-//! there.
+//! closure only for the targets that consume it. The runner that uses them is `suite_execution`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;

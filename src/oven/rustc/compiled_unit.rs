@@ -488,9 +488,9 @@ mod tests {
     }
 
     /// A fact the compilation never observes must not rekey its output. RFC 124 states that plainly, and the
-    /// selection-global root feature set is the case Gate 6-7 review blocker 8 names: a workspace root toggling one
-    /// of its own features leaves every dependency's `rustc` command byte-identical, yet moved every compiled
-    /// identity in the graph and therefore reproduced every output.
+    /// selection-global root feature set was the counterexample: a workspace root toggling one of its own features
+    /// leaves every dependency's `rustc` command byte-identical, yet it moved every compiled identity in the graph
+    /// and therefore reproduced every output.
     #[test]
     fn a_root_feature_the_unit_never_compiles_with_does_not_rekey_it() -> Result<(), Box<dyn std::error::Error>> {
         let baseline = graph_with_root_selection(&["root-feature"], true)?;

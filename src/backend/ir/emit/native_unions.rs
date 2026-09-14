@@ -908,7 +908,6 @@ fn foreign_native_function_projection(
     Ok(Some(function))
 }
 
-/// Return whether a declared surface includes an explicit producer-native union carrier.
 /// Declared type and callable projections supplied by an already-selected public target.
 type DeclaredAliasSurface = (Option<TypeRef>, Option<crate::library_manifest::FunctionExport>);
 
