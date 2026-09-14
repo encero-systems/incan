@@ -6,7 +6,10 @@ use crate::provider::FeatureSelection;
 use crate::driver::cargo_policy::CargoPolicy;
 
 /// Output format for `incan test` results.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+///
+/// The `clap` derive rides the `cli` feature: the runner owns the choice, the command line is one way to make it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum TestOutputFormat {
     /// Human-oriented pytest-style console output.
     Console,

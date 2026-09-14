@@ -13,21 +13,17 @@ use crate::cli::{CliError, CliResult, ExitCode};
 use crate::driver::cargo_policy::CargoPolicy;
 use crate::driver::session::CompilationSession;
 
-mod discovery;
 mod execution;
-mod module_graph;
 mod reporter;
-mod types;
 
-pub use discovery::{discover_test_files, discover_tests_and_fixtures};
-pub(crate) use module_graph::collect_source_modules_for_test;
-pub use reporter::{ConsoleReporter, TestReporter};
-pub use types::{
+pub use crate::driver::testing::discovery::{discover_test_files, discover_tests_and_fixtures};
+pub use crate::driver::testing::types::{
     DiscoveryResult, FixtureInfo, FixtureScope, ParametrizeCall, ParametrizeCase, TestInfo, TestMarker,
     TestOutputFormat, TestResult, TestRunConfig, TestSummary, WorkspaceTestContext,
 };
+pub use reporter::{ConsoleReporter, TestReporter};
 
-use discovery::{
+use crate::driver::testing::discovery::{
     CollectionEvalContext, discover_test_file_candidates, discover_test_files_with_session,
     discover_tests_and_fixtures_with_context, get_autouse_fixtures, parse_duration_literal,
 };
@@ -36,21 +32,6 @@ use execution::{
     validate_oven_test_lock_policy,
 };
 use reporter::{print_test_result, style};
-
-/// Discover a test inventory through a compilation session already owned by the caller.
-pub(crate) fn discover_test_files_with_compilation_session(path: &Path, session: &CompilationSession) -> Vec<PathBuf> {
-    let candidates = discover_test_file_candidates(path);
-    let authority_root = session
-        .manifest
-        .as_ref()
-        .map(|manifest| {
-            std::fs::canonicalize(manifest.project_root()).unwrap_or_else(|_| manifest.project_root().to_path_buf())
-        })
-        .or_else(|| candidates.command_authority_root().ok());
-    authority_root.map_or_else(Vec::new, |authority_root| {
-        discover_test_files_with_session(&candidates, &authority_root, session)
-    })
-}
 
 const RED: &str = "1;31";
 const GREEN: &str = "1;32";
@@ -242,37 +223,6 @@ fn stable_id_root(path: &Path) -> PathBuf {
     } else {
         canonical
     }
-}
-
-/// Infer the command-owned root for a manifest-less test run.
-///
-/// Conventional `tests/` and `src/` anchors belong to their parent project. An unanchored source owns its containing
-/// directory so implementation paths above it never leak into generated module names or runtime working directories.
-fn infer_test_project_root_without_manifest(test_path: &Path) -> PathBuf {
-    let absolute_test_path = if test_path.is_absolute() {
-        test_path.to_path_buf()
-    } else if let Ok(cwd) = std::env::current_dir() {
-        cwd.join(test_path)
-    } else {
-        test_path.to_path_buf()
-    };
-    let absolute_test_path = std::fs::canonicalize(&absolute_test_path).unwrap_or(absolute_test_path);
-
-    for ancestor in absolute_test_path.ancestors().skip(1) {
-        if ancestor
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| matches!(name, "tests" | "src"))
-            && let Some(parent) = ancestor.parent()
-        {
-            return parent.to_path_buf();
-        }
-    }
-
-    absolute_test_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf()
 }
 
 /// Discover and enforce project-level toolchain constraints for a test path, when it belongs to a project.
@@ -1809,7 +1759,7 @@ mod tests {
         assert_eq!(conftest_cache.parse_count, 1);
         assert_eq!(conftest_cache.entries.len(), 1);
 
-        crate::cli::commands::lock::reset_project_lock_collection_metrics();
+        crate::driver::lock::reset_project_lock_collection_metrics();
         let Err(lock_error) = validate_oven_test_lock_policy(
             session.as_ref(),
             representative,
@@ -1821,7 +1771,7 @@ mod tests {
         };
         assert!(lock_error.message.contains("oven.lock is missing"));
         assert_eq!(
-            crate::cli::commands::lock::project_lock_collection_counts(),
+            crate::driver::lock::project_lock_collection_counts(),
             (1, 0),
             "strict validation must collect through the command session without discovering another",
         );

@@ -6,15 +6,18 @@ use std::time::{Duration, Instant};
 
 use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::cli::commands;
-#[cfg(feature = "rust_inspect")]
-use crate::cli::commands::lock::{
-    OvenRustInspectSourceAuthorityRequest, PreparedOvenProjectRegistrySourceAuthorities, RustInspectWorkspaceRequest,
-    prepare_project_registry_source_authorities, prepare_rust_inspect_workspace,
-};
 use crate::compiled_sdk::CompiledSdkModules;
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::resolve_reachable_dependencies;
 use crate::driver::cargo_policy::CargoPolicy;
+#[cfg(feature = "rust_inspect")]
+use crate::driver::lock::registry_sources::prepare_project_registry_source_authorities;
+#[cfg(feature = "rust_inspect")]
+use crate::driver::lock::rust_inspect::prepare_rust_inspect_workspace;
+#[cfg(feature = "rust_inspect")]
+use crate::driver::lock::{
+    OvenRustInspectSourceAuthorityRequest, PreparedOvenProjectRegistrySourceAuthorities, RustInspectWorkspaceRequest,
+};
 use crate::frontend::ParsedModule;
 use crate::frontend::ast::{
     AssertKind, AssertStmt, CallArg, Declaration, DictEntry, Expr, ImportItem, ImportKind, ListEntry, ParamKind,
@@ -40,10 +43,11 @@ use crate::oven::{OvenGeneratedProjectRequest, default_receipt_path, receipt_gen
 use crate::provider::FeatureSelection;
 use sha2::{Digest, Sha256};
 
-use super::infer_test_project_root_without_manifest;
-use super::module_graph::collect_source_modules_for_test;
-use super::types::{FixtureScope, TestInfo, TestResult};
-use crate::cli::commands::lock::{OvenLockValidationRequest, validate_oven_lock_policy_with_session};
+use crate::driver::lock::OvenLockValidationRequest;
+use crate::driver::lock::resolution::validate_oven_lock_policy_with_session;
+use crate::driver::testing::infer_test_project_root_without_manifest;
+use crate::driver::testing::module_graph::collect_source_modules_for_test;
+use crate::driver::testing::types::{FixtureScope, TestInfo, TestResult};
 
 /// Generated `#[cfg(test)]` module that wraps Incan test functions as Rust `#[test]` cases.
 const INCAN_FILE_TEST_MOD: &str = "__incan_file_tests";
@@ -1138,7 +1142,7 @@ fn merge_test_runner_dependencies(
     dependencies: &[crate::manifest::DependencySpec],
     dev_dependencies: &[crate::manifest::DependencySpec],
 ) -> Result<Vec<crate::manifest::DependencySpec>, String> {
-    crate::cli::commands::build::promoted_oven_test_dependencies(&ResolvedDependencies {
+    crate::driver::build_unit::promoted_oven_test_dependencies(&ResolvedDependencies {
         dependencies: dependencies.to_vec(),
         dev_dependencies: dev_dependencies.to_vec(),
     })
@@ -2367,7 +2371,7 @@ fn run_file_tests_batch_oven(
         Err(error) => return failure(error.to_string()),
     };
     let mut build_unit_inputs =
-        match crate::cli::commands::build::oven_build_unit_inputs(&provider_plan, &requirements, &resolved) {
+        match crate::driver::build_unit::oven_build_unit_inputs(&provider_plan, &requirements, &resolved) {
             Ok(inputs) => inputs,
             Err(error) => return failure(error.message),
         };
@@ -3011,7 +3015,7 @@ def captured_resource() -> int:
             vec![sdk, project],
             [vec!["std".to_string(), "testing".to_string()]],
         )?;
-        let inputs = crate::cli::commands::build::oven_build_unit_inputs(
+        let inputs = crate::driver::build_unit::oven_build_unit_inputs(
             &provider_plan,
             &ProjectRequirements::default(),
             &ResolvedDependencies {

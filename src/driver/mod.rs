@@ -6,13 +6,16 @@
 //! provider half of the former `commands/common.rs` — SDK store identity, inventory discovery, project
 //! requirements — lives under `provider`, which this module consumes as a client.
 
+pub mod build_unit;
 pub mod cargo_policy;
 pub mod diagnostics;
 pub mod error;
+pub mod lock;
 pub mod metadata_packages;
 pub mod modules;
 pub mod project;
 #[cfg(feature = "rust_inspect")]
 pub mod rust_inspect_workspace;
 pub mod session;
+pub mod testing;
 pub mod typecheck;

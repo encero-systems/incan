@@ -4,6 +4,9 @@
 //! have theirs — and they are decided where the failure is understood, which is the driver. The CLI only carries
 //! the code to the process boundary.
 
+use crate::oven::plan::OvenPlanError;
+use crate::oven::rustc::OvenRustcError;
+
 use std::fmt;
 /// Exit code for CLI operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,5 +65,45 @@ impl From<crate::provider::error::ProviderError> for CliError {
     /// A provider failure is a command failure with the provider's message; the provider never chooses an exit code.
     fn from(error: crate::provider::error::ProviderError) -> Self {
         Self::failure(error.message)
+    }
+}
+
+/// Render a plan selection or composition refusal for the CLI, keeping direct-rustc transcripts intact.
+pub(crate) fn oven_plan_error(error: OvenPlanError) -> CliError {
+    match error {
+        OvenPlanError::Rustc(error) => oven_rustc_error(error),
+        OvenPlanError::Selection(message) => CliError::failure(message),
+    }
+}
+
+/// Preserve direct-rustc diagnostics rather than reducing a normal Oven compilation failure to a generic status.
+pub(crate) fn oven_rustc_error(error: OvenRustcError) -> CliError {
+    match error {
+        OvenRustcError::CompilationFailed { report } => {
+            let rendered = report
+                .diagnostics
+                .into_iter()
+                .map(|diagnostic| {
+                    diagnostic
+                        .rendered
+                        .unwrap_or_else(|| format!("{}: {}", diagnostic.level, diagnostic.message))
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let mut output = format!("{rendered}\n{}", report.unstructured_output).trim().to_string();
+            if let Some(invocation) = report.invocation {
+                if !output.is_empty() {
+                    output.push('\n');
+                }
+                output.push_str("direct rustc invocation: ");
+                output.push_str(&invocation);
+            }
+            CliError::failure(if output.is_empty() {
+                "Oven direct-rustc compilation failed without a diagnostic transcript".to_string()
+            } else {
+                format!("Oven direct-rustc compilation failed:\n{output}")
+            })
+        }
+        error => CliError::failure(error.to_string()),
     }
 }

@@ -17,10 +17,12 @@ use crate::lockfile::CargoFeatureSelection;
 use crate::provider::FeatureSelection;
 
 #[cfg(feature = "rust_inspect")]
-use super::lock::{RustInspectTypecheckRequest, prepare_rust_inspect_typecheck_workspace};
-#[cfg(feature = "rust_inspect")]
 use crate::driver::cargo_policy::CargoPolicy;
 use crate::driver::diagnostics::{CliDiagnostic, CliDiagnosticFailure};
+#[cfg(feature = "rust_inspect")]
+use crate::driver::lock::RustInspectTypecheckRequest;
+#[cfg(feature = "rust_inspect")]
+use crate::driver::lock::rust_inspect::prepare_rust_inspect_typecheck_workspace;
 use crate::driver::modules::collect_modules_detailed_with_session;
 use crate::driver::project::resolve_project_root;
 use crate::driver::session::CompilationSession;

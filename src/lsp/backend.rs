@@ -18,11 +18,13 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 #[cfg(feature = "rust_inspect")]
-use crate::cli::commands::lock::{LockResolutionRequest, resolve_lock_context};
-#[cfg(feature = "rust_inspect")]
 use crate::dependency_resolver::{ResolvedDependencies, resolve_dependencies};
 #[cfg(feature = "rust_inspect")]
 use crate::driver::cargo_policy::{CargoPolicy, cargo_command_flags};
+#[cfg(feature = "rust_inspect")]
+use crate::driver::lock::LockResolutionRequest;
+#[cfg(feature = "rust_inspect")]
+use crate::driver::lock::resolution::resolve_lock_context;
 #[cfg(feature = "rust_inspect")]
 use crate::driver::modules::{build_source_map, collect_inline_rust_imports, format_dependency_error};
 use crate::driver::project::discover_effective_project_manifest;
