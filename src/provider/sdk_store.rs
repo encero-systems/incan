@@ -13,8 +13,8 @@ use std::{env, fs};
 
 use sha2::{Digest, Sha256};
 
-use crate::driver::error::{CliError, CliResult};
-use crate::inspect::effect_digest::{COMPILER_RUST_EFFECT_ROOTS, COMPILER_STDLIB_ROOT, compiler_effect_digest};
+use crate::provider::effect_digest::{COMPILER_RUST_EFFECT_ROOTS, COMPILER_STDLIB_ROOT, compiler_effect_digest};
+use crate::provider::error::{ProviderError, ProviderResult};
 static SDK_PROVIDER_COMPILER_DIGESTS: LazyLock<Mutex<HashMap<PathBuf, [u8; 32]>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -38,7 +38,7 @@ pub(crate) const INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV: &str = "INCAN_INTERNAL_CA
 pub(crate) fn sdk_provider_builder_executable(
     cargo_test_binary: Option<PathBuf>,
     current_executable: PathBuf,
-) -> CliResult<PathBuf> {
+) -> ProviderResult<PathBuf> {
     if let Some(executable) = cargo_test_binary.as_ref().filter(|path| path.is_file()) {
         return Ok(executable.clone());
     }
@@ -60,7 +60,7 @@ pub(crate) fn sdk_provider_builder_executable(
         .as_deref()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "unset".to_string());
-    Err(CliError::failure(format!(
+    Err(ProviderError::failure(format!(
         "SDK provider publication requires the incan CLI executable at {} or {}; CARGO_BIN_EXE_incan={supplied}, current executable={}; build that binary before running compiler-backed utilities",
         sibling.display(),
         parent_sibling.display(),
@@ -103,9 +103,9 @@ pub(crate) struct SdkProviderStoreLock {
 }
 
 /// Acquire the artifact-store lock that serializes all bootstrap builds and publications.
-pub(crate) fn acquire_sdk_provider_store_lock(store_root: &Path) -> CliResult<SdkProviderStoreLock> {
+pub(crate) fn acquire_sdk_provider_store_lock(store_root: &Path) -> ProviderResult<SdkProviderStoreLock> {
     fs::create_dir_all(store_root).map_err(|error| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to create SDK provider store {}: {error}",
             store_root.display()
         ))
@@ -117,7 +117,9 @@ pub(crate) fn acquire_sdk_provider_store_lock(store_root: &Path) -> CliResult<Sd
         .write(true)
         .truncate(false)
         .open(&lock_path)
-        .map_err(|error| CliError::failure(format!("failed to open artifact lock {}: {error}", lock_path.display())))?;
+        .map_err(|error| {
+            ProviderError::failure(format!("failed to open artifact lock {}: {error}", lock_path.display()))
+        })?;
     // Try first, and say something before settling in to wait. Serializing the store is correct — two processes
     // publishing providers at once is what this lock exists to prevent — but an unannounced block is
     // indistinguishable from a hang, and preparing providers can take minutes. A command that has stopped printing
@@ -129,7 +131,7 @@ pub(crate) fn acquire_sdk_provider_store_lock(store_root: &Path) -> CliResult<Sd
             store_root.display()
         );
         file.lock().map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to acquire artifact lock {}: {error}",
                 lock_path.display()
             ))
@@ -139,17 +141,17 @@ pub(crate) fn acquire_sdk_provider_store_lock(store_root: &Path) -> CliResult<Sd
 }
 
 /// Hash one sorted provider source subtree while excluding generated build output.
-fn hash_sdk_provider_source_tree(root: &Path, current: &Path, hasher: &mut Sha256) -> CliResult<()> {
+fn hash_sdk_provider_source_tree(root: &Path, current: &Path, hasher: &mut Sha256) -> ProviderResult<()> {
     let mut entries = fs::read_dir(current)
         .map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to read stdlib source directory {}: {error}",
                 current.display()
             ))
         })?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to enumerate stdlib source directory {}: {error}",
                 current.display()
             ))
@@ -159,7 +161,7 @@ fn hash_sdk_provider_source_tree(root: &Path, current: &Path, hasher: &mut Sha25
     for entry in entries {
         let path = entry.path();
         let relative = path.strip_prefix(root).map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to make stdlib source path {} relative: {error}",
                 path.display()
             ))
@@ -168,7 +170,7 @@ fn hash_sdk_provider_source_tree(root: &Path, current: &Path, hasher: &mut Sha25
             continue;
         }
         let file_type = entry.file_type().map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to inspect stdlib source path {}: {error}",
                 path.display()
             ))
@@ -181,13 +183,13 @@ fn hash_sdk_provider_source_tree(root: &Path, current: &Path, hasher: &mut Sha25
         } else if file_type.is_file() {
             hasher.update(b"file\0");
             let bytes = fs::read(&path).map_err(|error| {
-                CliError::failure(format!("failed to read stdlib source file {}: {error}", path.display()))
+                ProviderError::failure(format!("failed to read stdlib source file {}: {error}", path.display()))
             })?;
             hasher.update(bytes);
         } else if file_type.is_symlink() {
             hasher.update(b"symlink\0");
             let target = fs::read_link(&path).map_err(|error| {
-                CliError::failure(format!(
+                ProviderError::failure(format!(
                     "failed to read stdlib source symlink {}: {error}",
                     path.display()
                 ))
@@ -224,7 +226,7 @@ pub(crate) fn sdk_provider_store_identity(
     executable: &Path,
     workspace_lock: Option<&Path>,
     distribution_profile: &str,
-) -> CliResult<String> {
+) -> ProviderResult<String> {
     let mut hasher = Sha256::new();
     hasher.update(b"incan-sdk-provider-store-v4\0");
     hasher.update(b"compiler-version\0");
@@ -247,7 +249,7 @@ pub(crate) fn sdk_provider_store_identity(
     hasher.update(b"workspace-lock\0");
     if let Some(workspace_lock) = workspace_lock {
         hasher.update(fs::read(workspace_lock).map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to read workspace lock {}: {error}",
                 workspace_lock.display()
             ))
@@ -278,7 +280,7 @@ pub(crate) fn sdk_provider_store_identity(
 /// alone. Substituting the cheaper byte hash where no cache exists would make two machines with identical source
 /// publish to two different store paths, which is exactly what
 /// [`sdk_provider_store_identity_for_compiler_root`] exists to prevent.
-fn sdk_provider_effect_digest(checkout_root: &Path) -> CliResult<String> {
+fn sdk_provider_effect_digest(checkout_root: &Path) -> ProviderResult<String> {
     let cached_path = match running_compiler_stamp() {
         Some(compiler_stamp) => {
             let content_key = sdk_provider_effect_input_key(checkout_root, &compiler_stamp)?;
@@ -298,7 +300,7 @@ fn sdk_provider_effect_digest(checkout_root: &Path) -> CliResult<String> {
         compiler_effect_digest(&root).map_err(|error| error.to_string())
     })
     .map_err(|message| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to digest compiler effect for the standard library: {message}"
         ))
     })?;
@@ -384,7 +386,7 @@ fn running_compiler_stamp() -> Option<String> {
 /// agree, and a root that is absent is recorded as absent rather than skipped — a missing tree is a different
 /// compiler, not the same one. The compiler stamp is folded last, so a rebuilt compiler misses every entry the
 /// previous one wrote.
-fn sdk_provider_effect_input_key(checkout_root: &Path, compiler_stamp: &str) -> CliResult<String> {
+fn sdk_provider_effect_input_key(checkout_root: &Path, compiler_stamp: &str) -> ProviderResult<String> {
     let mut hasher = Sha256::new();
     hasher.update(b"incan-effect-inputs-v2\0");
     let stdlib_root = checkout_root.join(COMPILER_STDLIB_ROOT);
@@ -411,15 +413,15 @@ fn sdk_provider_effect_input_key(checkout_root: &Path, compiler_stamp: &str) -> 
 /// This is intentionally exposed only to repository automation after it has built the matching CLI. The cache key
 /// must follow the same source closure as provider publication; hashing development executable bytes would make
 /// identical source checkouts miss after unrelated test builds.
-pub(crate) fn sdk_provider_store_identity_for_compiler_root(compiler_root: &Path) -> CliResult<String> {
+pub(crate) fn sdk_provider_store_identity_for_compiler_root(compiler_root: &Path) -> ProviderResult<String> {
     let stdlib_root = fs::canonicalize(compiler_root.join("crates/incan_stdlib/stdlib")).map_err(|error| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to canonicalize built-in stdlib source directory below {}: {error}",
             compiler_root.display()
         ))
     })?;
     let executable = env::current_exe()
-        .map_err(|error| CliError::failure(format!("failed to resolve current incan executable: {error}")))?;
+        .map_err(|error| ProviderError::failure(format!("failed to resolve current incan executable: {error}")))?;
     let executable = sdk_provider_builder_executable(None, executable)?;
     let workspace_lock = sdk_provider_workspace_lock(&stdlib_root);
     let distribution_profile = env::var(INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV)
@@ -456,10 +458,10 @@ fn is_sdk_provider_compiler_checkout(candidate: &Path, stdlib_root: &Path) -> bo
 
 /// Hash the running compiler once per process with SHA-256, the hash family every other identity in the toolchain uses,
 /// independent of its path.
-fn sdk_provider_compiler_digest(executable: &Path) -> CliResult<[u8; 32]> {
+fn sdk_provider_compiler_digest(executable: &Path) -> ProviderResult<[u8; 32]> {
     if let Some(digest) = SDK_PROVIDER_COMPILER_DIGESTS
         .lock()
-        .map_err(|_| CliError::failure("failed to lock the compiler-content digest cache"))?
+        .map_err(|_| ProviderError::failure("failed to lock the compiler-content digest cache"))?
         .get(executable)
         .copied()
     {
@@ -467,7 +469,7 @@ fn sdk_provider_compiler_digest(executable: &Path) -> CliResult<[u8; 32]> {
     }
 
     let mut executable_file = fs::File::open(executable).map_err(|error| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to read compiler executable {}: {error}",
             executable.display()
         ))
@@ -476,7 +478,7 @@ fn sdk_provider_compiler_digest(executable: &Path) -> CliResult<[u8; 32]> {
     let mut buffer = [0_u8; 64 * 1024];
     loop {
         let read = executable_file.read(&mut buffer).map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to read compiler executable {}: {error}",
                 executable.display()
             ))
@@ -489,7 +491,7 @@ fn sdk_provider_compiler_digest(executable: &Path) -> CliResult<[u8; 32]> {
     let digest: [u8; 32] = hasher.finalize().into();
     SDK_PROVIDER_COMPILER_DIGESTS
         .lock()
-        .map_err(|_| CliError::failure("failed to lock the compiler-content digest cache"))?
+        .map_err(|_| ProviderError::failure("failed to lock the compiler-content digest cache"))?
         .insert(executable.to_path_buf(), digest);
     Ok(digest)
 }
@@ -513,17 +515,17 @@ pub(crate) fn default_sdk_provider_store(
 }
 
 /// Flush every staged artifact file and directory before atomic publication.
-pub(crate) fn sync_sdk_provider_tree(path: &Path) -> CliResult<()> {
+pub(crate) fn sync_sdk_provider_tree(path: &Path) -> ProviderResult<()> {
     let mut entries = fs::read_dir(path)
         .map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to read staged artifact directory {}: {error}",
                 path.display()
             ))
         })?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to enumerate staged artifact directory {}: {error}",
                 path.display()
             ))
@@ -532,7 +534,7 @@ pub(crate) fn sync_sdk_provider_tree(path: &Path) -> CliResult<()> {
     for entry in entries {
         let entry_path = entry.path();
         let file_type = entry.file_type().map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to inspect staged artifact path {}: {error}",
                 entry_path.display()
             ))
@@ -543,7 +545,7 @@ pub(crate) fn sync_sdk_provider_tree(path: &Path) -> CliResult<()> {
             fs::File::open(&entry_path)
                 .and_then(|file| file.sync_all())
                 .map_err(|error| {
-                    CliError::failure(format!(
+                    ProviderError::failure(format!(
                         "failed to synchronize staged artifact file {}: {error}",
                         entry_path.display()
                     ))
@@ -553,7 +555,7 @@ pub(crate) fn sync_sdk_provider_tree(path: &Path) -> CliResult<()> {
     fs::File::open(path)
         .and_then(|directory| directory.sync_all())
         .map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to synchronize staged artifact directory {}: {error}",
                 path.display()
             ))
@@ -561,11 +563,11 @@ pub(crate) fn sync_sdk_provider_tree(path: &Path) -> CliResult<()> {
 }
 
 /// Flush the artifact store after publishing a new immutable artifact directory.
-pub(crate) fn sync_sdk_provider_store(store_root: &Path) -> CliResult<()> {
+pub(crate) fn sync_sdk_provider_store(store_root: &Path) -> ProviderResult<()> {
     fs::File::open(store_root)
         .and_then(|directory| directory.sync_all())
         .map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to synchronize artifact store {}: {error}",
                 store_root.display()
             ))
@@ -573,10 +575,10 @@ pub(crate) fn sync_sdk_provider_store(store_root: &Path) -> CliResult<()> {
 }
 
 /// Allocate a unique private staging directory for one artifact identity.
-pub(crate) fn staged_sdk_provider_root(store_root: &Path, identity: &str) -> CliResult<PathBuf> {
+pub(crate) fn staged_sdk_provider_root(store_root: &Path, identity: &str) -> ProviderResult<PathBuf> {
     let elapsed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| CliError::failure(format!("system clock predates Unix epoch: {error}")))?;
+        .map_err(|error| ProviderError::failure(format!("system clock predates Unix epoch: {error}")))?;
     Ok(store_root.join(format!(
         ".staging-{identity}-{}-{}",
         std::process::id(),

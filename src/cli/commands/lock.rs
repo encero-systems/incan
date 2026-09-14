@@ -26,10 +26,6 @@ use sha2::{Digest, Sha256};
 
 #[cfg(test)]
 use crate::backend::ProjectGenerator;
-#[cfg(feature = "rust_inspect")]
-use crate::backend::project::runner::resolved_cargo_executable;
-#[cfg(test)]
-use crate::backend::project::runner::{cargo_command, configure_cargo_target, sanitize_cargo_environment};
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies, resolve_reachable_dependencies};
 use crate::frontend::ParsedModule;
@@ -43,6 +39,10 @@ use crate::lockfile::{
 };
 use crate::manifest::{DependencySpec, ProjectManifest};
 use crate::oven::legacy_cargo::OvenLegacyCargoInspectionPackage;
+#[cfg(feature = "rust_inspect")]
+use crate::oven::legacy_cargo::cargo_process::resolved_cargo_executable;
+#[cfg(test)]
+use crate::oven::legacy_cargo::cargo_process::{cargo_command, configure_cargo_target, sanitize_cargo_environment};
 #[cfg(feature = "rust_inspect")]
 use crate::oven::legacy_cargo::{OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV, explicit_project_bake_inspection_sources};
 #[cfg(feature = "rust_inspect")]

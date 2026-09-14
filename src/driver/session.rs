@@ -728,8 +728,8 @@ impl CompilationSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::driver::test_support::{parsed_module_for_test, write_minimal_library_artifact};
     use crate::library_manifest::{LibraryManifest, VocabExports};
+    use crate::provider::test_support::{parsed_module_for_test, write_minimal_library_artifact};
 
     #[test]
     fn compilation_session_reuses_provider_plan_for_identical_module_usage() -> Result<(), Box<dyn std::error::Error>> {

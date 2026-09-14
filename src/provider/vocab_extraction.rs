@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use wasmtime::{Config, Engine, ExternType, Module, ValType};
 
-use crate::driver::error::{CliError, CliResult};
 use crate::library_manifest::{SoftKeywordActivation, VocabDesugarerArtifact, VocabExports};
 use crate::manifest::ProjectManifest;
 use crate::oven::compiler_suite_env::{
@@ -21,6 +20,7 @@ use crate::oven::compiler_suite_env::{
 use crate::oven::rustc::{
     OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcAuxiliaryTargetPlan, clear_inherited_cargo_environment,
 };
+use crate::provider::error::{ProviderError, ProviderResult};
 use crate::version::INCAN_VERSION;
 const VOCAB_COMPANION_CACHE_FORMAT: u32 = 1;
 const VOCAB_COMPANION_CACHE_DIR_ENV: &str = "INCAN_VOCAB_COMPANION_CACHE_DIR";
@@ -99,7 +99,7 @@ pub(crate) fn collect_library_vocab_metadata(
     project_root: &Path,
     generated_cargo_target_dir: Option<&Path>,
     direct_rustc: Option<&OvenVocabDirectRustcContext>,
-) -> CliResult<Option<LibraryVocabExtraction>> {
+) -> ProviderResult<Option<LibraryVocabExtraction>> {
     collect_library_vocab_metadata_with_mode(
         manifest,
         project_root,
@@ -114,7 +114,7 @@ pub(crate) fn collect_library_vocab_metadata_for_parser(
     manifest: &ProjectManifest,
     project_root: &Path,
     generated_cargo_target_dir: Option<&Path>,
-) -> CliResult<Option<LibraryVocabExtraction>> {
+) -> ProviderResult<Option<LibraryVocabExtraction>> {
     collect_library_vocab_metadata_with_mode(
         manifest,
         project_root,
@@ -131,7 +131,7 @@ fn collect_library_vocab_metadata_with_mode(
     generated_cargo_target_dir: Option<&Path>,
     mode: VocabExtractionMode,
     direct_rustc: Option<&OvenVocabDirectRustcContext>,
-) -> CliResult<Option<LibraryVocabExtraction>> {
+) -> ProviderResult<Option<LibraryVocabExtraction>> {
     let Some(vocab) = manifest.vocab() else {
         return Ok(None);
     };
@@ -139,10 +139,10 @@ fn collect_library_vocab_metadata_with_mode(
     let declared_crate_path = vocab
         .crate_path
         .clone()
-        .ok_or_else(|| CliError::failure("`[vocab]` section requires a `crate` field in loaf.toml".to_string()))?;
+        .ok_or_else(|| ProviderError::failure("`[vocab]` section requires a `crate` field in loaf.toml".to_string()))?;
     let declared_crate_path = declared_crate_path.trim().to_string();
     if declared_crate_path.is_empty() {
-        return Err(CliError::failure("`[vocab].crate` cannot be empty".to_string()));
+        return Err(ProviderError::failure("`[vocab].crate` cannot be empty".to_string()));
     }
 
     let companion_crate_root = resolve_companion_crate_root(project_root, &declared_crate_path);
@@ -240,7 +240,7 @@ fn vocab_companion_cache_context(
     companion_crate_root: &Path,
     package_name: &str,
     generated_cargo_target_dir: Option<&Path>,
-) -> CliResult<VocabCompanionCacheContext> {
+) -> ProviderResult<VocabCompanionCacheContext> {
     let fingerprint = vocab_companion_fingerprint(companion_crate_root, package_name)?;
     let cache_base = vocab_companion_cache_base(project_root, generated_cargo_target_dir);
     Ok(VocabCompanionCacheContext {
@@ -274,7 +274,7 @@ fn resolve_cache_path(project_root: &Path, path: &Path) -> PathBuf {
 }
 
 /// Compute a stable content fingerprint for the companion inputs that affect extracted metadata or artifacts.
-fn vocab_companion_fingerprint(companion_crate_root: &Path, package_name: &str) -> CliResult<String> {
+fn vocab_companion_fingerprint(companion_crate_root: &Path, package_name: &str) -> ProviderResult<String> {
     let mut hasher = Sha256::new();
     hasher.update(b"incan-vocab-companion-cache\0");
     hasher.update(VOCAB_COMPANION_CACHE_FORMAT.to_le_bytes());
@@ -287,7 +287,7 @@ fn vocab_companion_fingerprint(companion_crate_root: &Path, package_name: &str) 
     for file in vocab_companion_fingerprint_files(companion_crate_root)? {
         let relative_path = normalized_relative_path(companion_crate_root, &file);
         let bytes = fs::read(&file).map_err(|err| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to read vocab companion cache input {}: {err}",
                 file.display()
             ))
@@ -304,7 +304,7 @@ fn vocab_companion_fingerprint(companion_crate_root: &Path, package_name: &str) 
 }
 
 /// Collect companion files that participate in the cache fingerprint.
-fn vocab_companion_fingerprint_files(companion_crate_root: &Path) -> CliResult<Vec<PathBuf>> {
+fn vocab_companion_fingerprint_files(companion_crate_root: &Path) -> ProviderResult<Vec<PathBuf>> {
     let mut files = Vec::new();
     collect_vocab_companion_fingerprint_files(companion_crate_root, &mut files)?;
     files.sort();
@@ -312,17 +312,17 @@ fn vocab_companion_fingerprint_files(companion_crate_root: &Path) -> CliResult<V
 }
 
 /// Recursively append fingerprint input files while skipping Cargo output and VCS directories.
-fn collect_vocab_companion_fingerprint_files(dir: &Path, files: &mut Vec<PathBuf>) -> CliResult<()> {
+fn collect_vocab_companion_fingerprint_files(dir: &Path, files: &mut Vec<PathBuf>) -> ProviderResult<()> {
     let mut entries = fs::read_dir(dir)
         .map_err(|err| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to read vocab companion directory {}: {err}",
                 dir.display()
             ))
         })?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to read vocab companion directory {}: {err}",
                 dir.display()
             ))
@@ -356,7 +356,7 @@ fn normalized_relative_path(root: &Path, path: &Path) -> String {
 }
 
 /// Read a valid vocab companion cache entry, returning `None` when the cache is absent, stale, or corrupt.
-fn read_cached_vocab_companion(context: &VocabCompanionCacheContext) -> CliResult<Option<CachedVocabCompanion>> {
+fn read_cached_vocab_companion(context: &VocabCompanionCacheContext) -> ProviderResult<Option<CachedVocabCompanion>> {
     let cache_file = context.cache_dir.join(VOCAB_COMPANION_CACHE_FILE);
     let bytes = match fs::read(&cache_file) {
         Ok(bytes) => bytes,
@@ -389,7 +389,7 @@ fn read_cached_vocab_companion(context: &VocabCompanionCacheContext) -> CliResul
 fn cached_pending_desugarer_artifact(
     context: &VocabCompanionCacheContext,
     cached: CachedDesugarerArtifact,
-) -> CliResult<Option<PendingDesugarerArtifact>> {
+) -> ProviderResult<Option<PendingDesugarerArtifact>> {
     let source_path = context.cache_dir.join("desugarers").join(&cached.file_name);
     let bytes = match fs::read(&source_path) {
         Ok(bytes) => bytes,
@@ -411,9 +411,9 @@ fn write_cached_vocab_companion(
     context: &VocabCompanionCacheContext,
     metadata: &incan_vocab::VocabMetadata,
     pending_desugarer_artifact: Option<&PendingDesugarerArtifact>,
-) -> CliResult<()> {
+) -> ProviderResult<()> {
     fs::create_dir_all(&context.cache_dir).map_err(|err| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to create vocab companion cache directory {}: {err}",
             context.cache_dir.display()
         ))
@@ -430,10 +430,10 @@ fn write_cached_vocab_companion(
         desugarer_artifact,
     };
     let payload = serde_json::to_vec_pretty(&envelope)
-        .map_err(|err| CliError::failure(format!("failed to encode vocab companion cache metadata: {err}")))?;
+        .map_err(|err| ProviderError::failure(format!("failed to encode vocab companion cache metadata: {err}")))?;
     let cache_file = context.cache_dir.join(VOCAB_COMPANION_CACHE_FILE);
     fs::write(&cache_file, payload).map_err(|err| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to write vocab companion cache {}: {err}",
             cache_file.display()
         ))
@@ -444,18 +444,18 @@ fn write_cached_vocab_companion(
 fn cache_desugarer_artifact(
     context: &VocabCompanionCacheContext,
     artifact: &PendingDesugarerArtifact,
-) -> CliResult<CachedDesugarerArtifact> {
+) -> ProviderResult<CachedDesugarerArtifact> {
     let file_name = artifact_cache_file_name(&artifact.metadata)?;
     let destination_dir = context.cache_dir.join("desugarers");
     fs::create_dir_all(&destination_dir).map_err(|err| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to create vocab desugarer cache directory {}: {err}",
             destination_dir.display()
         ))
     })?;
     let destination = destination_dir.join(&file_name);
     fs::copy(&artifact.source_path, &destination).map_err(|err| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to cache vocab desugarer artifact {} -> {}: {err}",
             artifact.source_path.display(),
             destination.display()
@@ -469,13 +469,13 @@ fn cache_desugarer_artifact(
 }
 
 /// Derive the cache-local artifact filename from the packaged desugarer metadata.
-fn artifact_cache_file_name(metadata: &VocabDesugarerArtifact) -> CliResult<String> {
+fn artifact_cache_file_name(metadata: &VocabDesugarerArtifact) -> ProviderResult<String> {
     Path::new(&metadata.relative_path)
         .file_name()
         .and_then(|name| name.to_str())
         .map(str::to_string)
         .ok_or_else(|| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "invalid vocab desugarer relative path for cache: {}",
                 metadata.relative_path
             ))
@@ -491,15 +491,15 @@ fn resolve_companion_crate_root(project_root: &Path, declared_crate_path: &str) 
     }
 }
 
-fn validate_companion_crate_root(crate_root: &Path) -> CliResult<()> {
+fn validate_companion_crate_root(crate_root: &Path) -> ProviderResult<()> {
     if !crate_root.exists() {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "`[vocab].crate` does not exist: {}",
             crate_root.display()
         )));
     }
     if !crate_root.is_dir() {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "`[vocab].crate` must point to a directory: {}",
             crate_root.display()
         )));
@@ -507,7 +507,7 @@ fn validate_companion_crate_root(crate_root: &Path) -> CliResult<()> {
 
     let cargo_toml = crate_root.join("Cargo.toml");
     if !cargo_toml.is_file() {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "vocab companion crate is missing Cargo.toml: {}",
             cargo_toml.display()
         )));
@@ -515,7 +515,7 @@ fn validate_companion_crate_root(crate_root: &Path) -> CliResult<()> {
 
     let lib_rs = crate_root.join("src").join("lib.rs");
     if !lib_rs.is_file() {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "vocab companion crate is missing src/lib.rs: {}",
             lib_rs.display()
         )));
@@ -524,11 +524,11 @@ fn validate_companion_crate_root(crate_root: &Path) -> CliResult<()> {
     Ok(())
 }
 
-fn read_companion_package_name(cargo_manifest_path: &Path) -> CliResult<String> {
+fn read_companion_package_name(cargo_manifest_path: &Path) -> ProviderResult<String> {
     let content = std::fs::read_to_string(cargo_manifest_path)
-        .map_err(|err| CliError::failure(format!("failed to read {}: {err}", cargo_manifest_path.display())))?;
+        .map_err(|err| ProviderError::failure(format!("failed to read {}: {err}", cargo_manifest_path.display())))?;
     let cargo_toml = toml::from_str::<toml::Value>(&content)
-        .map_err(|err| CliError::failure(format!("failed to parse {}: {err}", cargo_manifest_path.display())))?;
+        .map_err(|err| ProviderError::failure(format!("failed to parse {}: {err}", cargo_manifest_path.display())))?;
 
     let package_name = cargo_toml
         .get("package")
@@ -538,7 +538,7 @@ fn read_companion_package_name(cargo_manifest_path: &Path) -> CliResult<String> 
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .ok_or_else(|| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "vocab companion crate {} is missing [package].name",
                 cargo_manifest_path.display()
             ))
@@ -553,35 +553,35 @@ fn run_cargo_build_for_target(
     target_dir: &Path,
     target: &str,
     profile: &str,
-) -> CliResult<()> {
-    let mut command = crate::backend::project::runner::cargo_command();
-    crate::backend::project::runner::configure_cargo_target(&mut command, target_dir);
+) -> ProviderResult<()> {
+    let mut command = crate::oven::legacy_cargo::cargo_process::cargo_command();
+    crate::oven::legacy_cargo::cargo_process::configure_cargo_target(&mut command, target_dir);
     command.arg("build").arg("--manifest-path").arg(cargo_manifest_path);
     if profile == "release" {
         command.arg("--release");
     }
     command.arg("--target").arg(target).arg("--quiet");
 
-    let output = command
-        .output()
-        .map_err(|err| CliError::failure(format!("failed to run cargo build for vocab desugarer target: {err}")))?;
+    let output = command.output().map_err(|err| {
+        ProviderError::failure(format!("failed to run cargo build for vocab desugarer target: {err}"))
+    })?;
     if output.status.success() {
         return Ok(());
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(CliError::failure(format!(
+    Err(ProviderError::failure(format!(
         "vocab companion crate failed to build desugarer target `{target}` profile `{profile}` ({}):\n{}",
         cargo_manifest_path.display(),
         stderr.trim()
     )))
 }
 
-fn ensure_companion_supports_cdylib(cargo_manifest_path: &Path) -> CliResult<()> {
+fn ensure_companion_supports_cdylib(cargo_manifest_path: &Path) -> ProviderResult<()> {
     let content = fs::read_to_string(cargo_manifest_path)
-        .map_err(|err| CliError::failure(format!("failed to read {}: {err}", cargo_manifest_path.display())))?;
+        .map_err(|err| ProviderError::failure(format!("failed to read {}: {err}", cargo_manifest_path.display())))?;
     let cargo_toml = toml::from_str::<toml::Value>(&content)
-        .map_err(|err| CliError::failure(format!("failed to parse {}: {err}", cargo_manifest_path.display())))?;
+        .map_err(|err| ProviderError::failure(format!("failed to parse {}: {err}", cargo_manifest_path.display())))?;
     let has_cdylib = cargo_toml
         .get("lib")
         .and_then(toml::Value::as_table)
@@ -597,7 +597,7 @@ fn ensure_companion_supports_cdylib(cargo_manifest_path: &Path) -> CliResult<()>
     if has_cdylib {
         Ok(())
     } else {
-        Err(CliError::failure(format!(
+        Err(ProviderError::failure(format!(
             "vocab companion crate `{}` must declare `[lib].crate-type` including `cdylib` to package a desugarer (example: `crate-type = [\"rlib\", \"cdylib\"]`)",
             cargo_manifest_path.display()
         )))
@@ -608,12 +608,12 @@ fn ensure_companion_supports_cdylib(cargo_manifest_path: &Path) -> CliResult<()>
 ///
 /// An installed Incan provisions its own toolchain and adds required targets there, leaving the user's Rustup
 /// alone, so consulting ambient Rustup would report a target as missing that Incan installed for itself.
-fn ensure_rust_target_installed(target: &str) -> CliResult<()> {
+fn ensure_rust_target_installed(target: &str) -> ProviderResult<()> {
     if let Some(installed) = crate::oven::rustc::incan_owned_target_installed(target) {
         if installed {
             return Ok(());
         }
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "vocab desugarer build needs the Rust target `{target}`, which this Incan installation's own Rust toolchain does not have. Reinstall Incan to provision it."
         )));
     }
@@ -623,13 +623,13 @@ fn ensure_rust_target_installed(target: &str) -> CliResult<()> {
         .arg("--installed")
         .output()
         .map_err(|err| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to check installed Rust targets for vocab desugarer build: {err}"
             ))
         })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "failed to list installed Rust targets for vocab desugarer build:\n{}",
             stderr.trim()
         )));
@@ -638,7 +638,7 @@ fn ensure_rust_target_installed(target: &str) -> CliResult<()> {
     if installed.contains(target) {
         return Ok(());
     }
-    Err(CliError::failure(format!(
+    Err(ProviderError::failure(format!(
         "vocab desugarer target `{target}` is not installed in the Rust toolchain. Install it with `rustup target add {target}`."
     )))
 }
@@ -658,13 +658,13 @@ fn extract_vocab_metadata_from_library_entrypoint(
     package_name: &str,
     target_dir: &Path,
     direct_rustc: Option<&OvenVocabDirectRustcContext>,
-) -> CliResult<incan_vocab::VocabMetadata> {
+) -> ProviderResult<incan_vocab::VocabMetadata> {
     if let Some(context) = direct_rustc {
         return extract_vocab_metadata_with_direct_rustc(context, companion_crate_root, package_name);
     }
     if env::var_os(OVEN_COMPILER_SUITE_RUSTC_ENV).is_some() {
         let context = oven_compiler_suite_rustc_context()?.ok_or_else(|| {
-            CliError::failure(
+            ProviderError::failure(
                 "stored Oven compiler suite has no direct-Rustc vocab companion capability; Cargo fallback is forbidden"
                     .to_string(),
             )
@@ -675,7 +675,7 @@ fn extract_vocab_metadata_from_library_entrypoint(
     let extraction_dir = create_extraction_workspace_dir()?;
     let helper_root = extraction_dir.join("runner");
     fs::create_dir_all(helper_root.join("src")).map_err(|err| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to create vocab extraction workspace {}: {err}",
             helper_root.display()
         ))
@@ -683,27 +683,27 @@ fn extract_vocab_metadata_from_library_entrypoint(
     write_extraction_runner_manifest(&helper_root, companion_crate_root, package_name)?;
     write_extraction_runner_source(&helper_root)?;
 
-    let mut command = crate::backend::project::runner::cargo_command();
-    crate::backend::project::runner::configure_cargo_target(&mut command, target_dir);
+    let mut command = crate::oven::legacy_cargo::cargo_process::cargo_command();
+    crate::oven::legacy_cargo::cargo_process::configure_cargo_target(&mut command, target_dir);
     let output = command
         .arg("run")
         .arg("--quiet")
         .arg("--manifest-path")
         .arg(helper_root.join("Cargo.toml"))
         .output()
-        .map_err(|err| CliError::failure(format!("failed to run vocab extraction helper: {err}")))?;
+        .map_err(|err| ProviderError::failure(format!("failed to run vocab extraction helper: {err}")))?;
 
     let metadata_result = if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         serde_json::from_str::<incan_vocab::VocabMetadata>(stdout.trim()).map_err(|err| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to parse metadata extracted from `library_vocab()` in {}: {err}",
                 companion_crate_root.display()
             ))
         })
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(CliError::failure(format!(
+        Err(ProviderError::failure(format!(
             "failed to extract vocab metadata from companion crate via `library_vocab()` ({}):\n{}",
             companion_crate_root.display(),
             stderr.trim()
@@ -718,22 +718,22 @@ fn extract_vocab_metadata_from_library_entrypoint(
 ///
 /// The scheduler exports one schema-checked JSON capability rather than an independently counted set of environment
 /// keys. Every supplied path must be an absolute regular file or directory, and malformed input fails closed.
-fn oven_compiler_suite_rustc_context() -> CliResult<Option<OvenVocabDirectRustcContext>> {
+fn oven_compiler_suite_rustc_context() -> ProviderResult<Option<OvenVocabDirectRustcContext>> {
     let Some(capability) = OvenCompilerSuiteCapability::from_environment(OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV)
-        .map_err(CliError::failure)?
+        .map_err(ProviderError::failure)?
     else {
         return Ok(None);
     };
     let rustc = capability.rustc;
     if !rustc.is_absolute() || !rustc.is_file() {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "stored Oven compiler suite provided invalid Rust compiler {}",
             rustc.display()
         )));
     }
     for path in &capability.dependency_search_paths {
         if !path.is_absolute() || !path.is_dir() {
-            return Err(CliError::failure(format!(
+            return Err(ProviderError::failure(format!(
                 "stored Oven compiler suite provided invalid dependency search path {}",
                 path.display()
             )));
@@ -745,12 +745,12 @@ fn oven_compiler_suite_rustc_context() -> CliResult<Option<OvenVocabDirectRustcC
                 .chars()
                 .all(|character| character == '_' || character.is_ascii_alphanumeric())
         {
-            return Err(CliError::failure(format!(
+            return Err(ProviderError::failure(format!(
                 "stored Oven compiler suite provided invalid direct-Rustc extern name `{crate_name}`"
             )));
         }
         if !path.is_absolute() || !path.is_file() {
-            return Err(CliError::failure(format!(
+            return Err(ProviderError::failure(format!(
                 "stored Oven compiler suite provided invalid direct-Rustc extern `{crate_name}`: {}",
                 path.display()
             )));
@@ -758,7 +758,7 @@ fn oven_compiler_suite_rustc_context() -> CliResult<Option<OvenVocabDirectRustcC
     }
     for required in ["incan_vocab", "serde_json"] {
         if !capability.externs.contains_key(required) {
-            return Err(CliError::failure(format!(
+            return Err(ProviderError::failure(format!(
                 "stored Oven compiler suite direct-Rustc closure lacks required `{required}` for vocab extraction"
             )));
         }
@@ -783,9 +783,9 @@ pub(crate) fn oven_vocab_direct_rustc_context_from_plan(
     _plan: &OvenRustcArtifactPlan,
     artifacts: &OvenRustcArtifactManifest,
     artifact_root: &Path,
-) -> CliResult<OvenVocabDirectRustcContext> {
+) -> ProviderResult<OvenVocabDirectRustcContext> {
     if !rustc.is_absolute() || !rustc.is_file() {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "selected Oven vocabulary Rust compiler is invalid: {}",
             rustc.display()
         )));
@@ -794,9 +794,9 @@ pub(crate) fn oven_vocab_direct_rustc_context_from_plan(
     for auxiliary in &artifacts.vocab_auxiliary_targets {
         let auxiliary_plan = artifacts
             .materialize_trusted_vocab_auxiliary_target(artifact_root, &auxiliary.target)
-            .map_err(|error| CliError::failure(error.to_string()))?
+            .map_err(|error| ProviderError::failure(error.to_string()))?
             .ok_or_else(|| {
-                CliError::failure(format!(
+                ProviderError::failure(format!(
                     "selected Oven vocabulary closure omitted declared auxiliary target `{}`",
                     auxiliary.target
                 ))
@@ -806,7 +806,7 @@ pub(crate) fn oven_vocab_direct_rustc_context_from_plan(
             .insert(auxiliary.target.clone(), target_context)
             .is_some()
         {
-            return Err(CliError::failure(format!(
+            return Err(ProviderError::failure(format!(
                 "selected Oven vocabulary closure repeats auxiliary target `{}`",
                 auxiliary.target
             )));
@@ -814,7 +814,7 @@ pub(crate) fn oven_vocab_direct_rustc_context_from_plan(
     }
     let host_target = artifacts.intent.target.clone();
     let host = auxiliary_targets.remove(&host_target).ok_or_else(|| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "selected Oven vocabulary closure lacks the required host target `{host_target}`; normal library builds will not invoke Cargo"
         ))
     })?;
@@ -830,7 +830,7 @@ pub(crate) fn oven_vocab_direct_rustc_context_from_plan(
 fn oven_vocab_auxiliary_target_context(
     target: &str,
     plan: OvenRustcAuxiliaryTargetPlan,
-) -> CliResult<OvenVocabAuxiliaryTargetContext> {
+) -> ProviderResult<OvenVocabAuxiliaryTargetContext> {
     let mut externs = BTreeMap::new();
     for (crate_name, path) in plan.externs {
         if crate_name.is_empty()
@@ -840,20 +840,20 @@ fn oven_vocab_auxiliary_target_context(
             || !path.is_absolute()
             || !path.is_file()
         {
-            return Err(CliError::failure(format!(
+            return Err(ProviderError::failure(format!(
                 "selected Oven vocabulary auxiliary target `{target}` has invalid extern `{crate_name}`: {}",
                 path.display()
             )));
         }
         if externs.insert(crate_name.clone(), path).is_some() {
-            return Err(CliError::failure(format!(
+            return Err(ProviderError::failure(format!(
                 "selected Oven vocabulary auxiliary target `{target}` repeats extern `{crate_name}`"
             )));
         }
     }
     for required in ["incan_vocab", "serde_json"] {
         if !externs.contains_key(required) {
-            return Err(CliError::failure(format!(
+            return Err(ProviderError::failure(format!(
                 "selected Oven vocabulary auxiliary target `{target}` lacks required `{required}`"
             )));
         }
@@ -872,7 +872,7 @@ fn extract_vocab_metadata_with_direct_rustc(
     context: &OvenVocabDirectRustcContext,
     companion_crate_root: &Path,
     package_name: &str,
-) -> CliResult<incan_vocab::VocabMetadata> {
+) -> ProviderResult<incan_vocab::VocabMetadata> {
     let extraction_dir = create_extraction_workspace_dir()?;
     let result = (|| {
         let (companion_source, edition, version) = vocab_companion_rustc_inputs(companion_crate_root)?;
@@ -894,7 +894,7 @@ fn extract_vocab_metadata_with_direct_rustc(
 
         let helper_root = extraction_dir.join("runner");
         fs::create_dir_all(helper_root.join("src")).map_err(|err| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to create direct vocab extraction workspace {}: {err}",
                 helper_root.display()
             ))
@@ -919,13 +919,13 @@ fn extract_vocab_metadata_with_direct_rustc(
         command.current_dir(companion_crate_root);
         clear_inherited_cargo_environment(&mut command);
         let output = command.output().map_err(|err| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to run direct vocab extraction helper {}: {err}",
                 helper_output.display()
             ))
         })?;
         if !output.status.success() {
-            return Err(CliError::failure(format!(
+            return Err(ProviderError::failure(format!(
                 "failed to extract vocab metadata from companion crate via direct Rustc ({})\n{}",
                 companion_crate_root.display(),
                 String::from_utf8_lossy(&output.stderr).trim()
@@ -933,7 +933,7 @@ fn extract_vocab_metadata_with_direct_rustc(
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
         serde_json::from_str::<incan_vocab::VocabMetadata>(stdout.trim()).map_err(|err| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to parse metadata extracted from `library_vocab()` in {}: {err}",
                 companion_crate_root.display()
             ))
@@ -944,14 +944,14 @@ fn extract_vocab_metadata_with_direct_rustc(
 }
 
 /// Read the direct-Rustc-relevant companion manifest fields without asking Cargo to interpret the package.
-fn vocab_companion_rustc_inputs(companion_crate_root: &Path) -> CliResult<(PathBuf, String, String)> {
+fn vocab_companion_rustc_inputs(companion_crate_root: &Path) -> ProviderResult<(PathBuf, String, String)> {
     let manifest_path = companion_crate_root.join("Cargo.toml");
     let content = fs::read_to_string(&manifest_path)
-        .map_err(|err| CliError::failure(format!("failed to read {}: {err}", manifest_path.display())))?;
+        .map_err(|err| ProviderError::failure(format!("failed to read {}: {err}", manifest_path.display())))?;
     let manifest = toml::from_str::<toml::Value>(&content)
-        .map_err(|err| CliError::failure(format!("failed to parse {}: {err}", manifest_path.display())))?;
+        .map_err(|err| ProviderError::failure(format!("failed to parse {}: {err}", manifest_path.display())))?;
     let package = manifest.get("package").and_then(toml::Value::as_table).ok_or_else(|| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "vocab companion crate {} is missing [package]",
             manifest_path.display()
         ))
@@ -975,7 +975,7 @@ fn vocab_companion_rustc_inputs(companion_crate_root: &Path) -> CliResult<(PathB
         .unwrap_or_else(|| PathBuf::from("src/lib.rs"));
     let source = companion_crate_root.join(source);
     if !source.is_file() {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "vocab companion crate {} has no direct-Rustc library source {}",
             companion_crate_root.display(),
             source.display()
@@ -999,10 +999,10 @@ fn run_vocab_direct_rustc(
     additional_extern: Option<(&str, &Path)>,
     target: Option<&str>,
     action: &str,
-) -> CliResult<()> {
+) -> ProviderResult<()> {
     let (dependency_search_paths, externs) = if let Some(target) = target {
         let auxiliary = context.auxiliary_targets.get(target).ok_or_else(|| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "Oven Alpha has no sealed direct-Rustc vocabulary closure for desugarer target `{target}`; normal library builds will not invoke Cargo"
             ))
         })?;
@@ -1013,18 +1013,18 @@ fn run_vocab_direct_rustc(
     if let Some((name, _)) = additional_extern
         && externs.contains_key(name)
     {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "stored Oven compiler suite direct-Rustc closure conflicts with helper extern `{name}`"
         )));
     }
     let parent = output.parent().ok_or_else(|| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "direct vocab output {} has no parent directory",
             output.display()
         ))
     })?;
     fs::create_dir_all(parent).map_err(|err| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to create direct vocab output directory {}: {err}",
             parent.display()
         ))
@@ -1060,11 +1060,11 @@ fn run_vocab_direct_rustc(
         .env("CARGO_PKG_VERSION", package_version);
     let output_result = command
         .output()
-        .map_err(|err| CliError::failure(format!("failed to {action} with direct Rustc: {err}")))?;
+        .map_err(|err| ProviderError::failure(format!("failed to {action} with direct Rustc: {err}")))?;
     if output_result.status.success() {
         return Ok(());
     }
-    Err(CliError::failure(format!(
+    Err(ProviderError::failure(format!(
         "failed to {action} with the stored Oven direct-Rustc closure:\n{}",
         String::from_utf8_lossy(&output_result.stderr).trim()
     )))
@@ -1078,9 +1078,9 @@ fn build_pending_desugarer_artifact_with_direct_rustc(
     target_dir: &Path,
     package_name: &str,
     desugarer: &incan_vocab::DesugarerMetadata,
-) -> CliResult<Option<PendingDesugarerArtifact>> {
+) -> ProviderResult<Option<PendingDesugarerArtifact>> {
     if !matches!(desugarer.artifact_kind, incan_vocab::DesugarerArtifactKind::WasmModule) {
-        return Err(CliError::failure(
+        return Err(ProviderError::failure(
             "unsupported vocab desugarer artifact kind (expected WasmModule)".to_string(),
         ));
     }
@@ -1115,15 +1115,15 @@ fn build_pending_desugarer_artifact_with_direct_rustc(
 fn ensure_supported_vocab_metadata_version(
     metadata: &incan_vocab::VocabMetadata,
     companion_crate_root: &Path,
-) -> CliResult<()> {
+) -> ProviderResult<()> {
     if metadata.metadata_version == 0 {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "companion crate `{}` produced invalid vocab metadata version 0",
             companion_crate_root.display()
         )));
     }
     if metadata.metadata_version > incan_vocab::VOCAB_METADATA_VERSION {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "companion crate `{}` produced vocab metadata version {} but this compiler supports up to {}",
             companion_crate_root.display(),
             metadata.metadata_version,
@@ -1133,20 +1133,20 @@ fn ensure_supported_vocab_metadata_version(
     Ok(())
 }
 
-fn create_extraction_workspace_dir() -> CliResult<PathBuf> {
+fn create_extraction_workspace_dir() -> ProviderResult<PathBuf> {
     static EXTRACTION_COUNTER: AtomicU64 = AtomicU64::new(0);
     let nonce = format!(
         "{}-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|err| CliError::failure(format!("failed to compute extraction workspace timestamp: {err}")))?
+            .map_err(|err| ProviderError::failure(format!("failed to compute extraction workspace timestamp: {err}")))?
             .as_nanos(),
         EXTRACTION_COUNTER.fetch_add(1, Ordering::Relaxed)
     );
     let dir = env::temp_dir().join(format!("incan_vocab_extract_{nonce}"));
     fs::create_dir_all(&dir).map_err(|err| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to create temporary vocab extraction directory {}: {err}",
             dir.display()
         ))
@@ -1159,7 +1159,7 @@ fn write_extraction_runner_manifest(
     helper_root: &Path,
     companion_crate_root: &Path,
     package_name: &str,
-) -> CliResult<()> {
+) -> ProviderResult<()> {
     let helper_manifest = helper_root.join("Cargo.toml");
     let escaped_companion_path = escape_cargo_toml_string(companion_crate_root);
     let escaped_package_name = package_name.replace('\\', "\\\\").replace('"', "\\\"");
@@ -1167,7 +1167,7 @@ fn write_extraction_runner_manifest(
         "[package]\nname = \"incan_vocab_extraction_runner\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n\n[dependencies]\ncompanion = {{ package = \"{escaped_package_name}\", path = \"{escaped_companion_path}\" }}\nserde_json = \"1.0\"\n"
     );
     fs::write(&helper_manifest, manifest).map_err(|err| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to write vocab extraction helper manifest {}: {err}",
             helper_manifest.display()
         ))
@@ -1176,7 +1176,7 @@ fn write_extraction_runner_manifest(
 }
 
 /// Seed the temporary helper with the repo lockfile so path-only vocab tests do not re-resolve crates.io.
-fn copy_workspace_lockfile_to_extraction_runner(helper_root: &Path) -> CliResult<()> {
+fn copy_workspace_lockfile_to_extraction_runner(helper_root: &Path) -> ProviderResult<()> {
     let workspace_lockfile = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock");
     if !workspace_lockfile.is_file() {
         return Ok(());
@@ -1184,7 +1184,7 @@ fn copy_workspace_lockfile_to_extraction_runner(helper_root: &Path) -> CliResult
 
     let helper_lockfile = helper_root.join("Cargo.lock");
     fs::copy(&workspace_lockfile, &helper_lockfile).map_err(|err| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to copy workspace lockfile {} to vocab extraction helper {}: {err}",
             workspace_lockfile.display(),
             helper_lockfile.display()
@@ -1194,11 +1194,11 @@ fn copy_workspace_lockfile_to_extraction_runner(helper_root: &Path) -> CliResult
 }
 
 /// Write the Rust entrypoint for the temporary Cargo package that prints serialized vocab metadata.
-fn write_extraction_runner_source(helper_root: &Path) -> CliResult<()> {
+fn write_extraction_runner_source(helper_root: &Path) -> ProviderResult<()> {
     let source_path = helper_root.join("src").join("main.rs");
     let source = "fn main() {\n    let registration = companion::library_vocab();\n    let metadata = registration.metadata();\n    let text = match serde_json::to_string_pretty(&metadata) {\n        Ok(text) => text,\n        Err(err) => {\n            eprintln!(\"failed to serialize registration metadata: {err}\");\n            std::process::exit(1);\n        }\n    };\n    print!(\"{text}\");\n}\n";
     fs::write(&source_path, source).map_err(|err| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to write vocab extraction helper source {}: {err}",
             source_path.display()
         ))
@@ -1214,14 +1214,14 @@ fn build_pending_desugarer_artifact(
     target_dir: &Path,
     package_name: &str,
     desugarer: Option<&incan_vocab::DesugarerMetadata>,
-) -> CliResult<Option<PendingDesugarerArtifact>> {
+) -> ProviderResult<Option<PendingDesugarerArtifact>> {
     let Some(desugarer) = desugarer else {
         return Ok(None);
     };
 
     let artifact_kind = desugarer.artifact_kind;
     if !matches!(artifact_kind, incan_vocab::DesugarerArtifactKind::WasmModule) {
-        return Err(CliError::failure(
+        return Err(ProviderError::failure(
             "unsupported vocab desugarer artifact kind (expected WasmModule)".to_string(),
         ));
     }
@@ -1236,7 +1236,7 @@ fn build_pending_desugarer_artifact(
         .join(&artifact_file_name);
 
     if !source_path.is_file() {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "vocab desugarer artifact not found at {} (build companion crate for target `{}` profile `{}` first)",
             source_path.display(),
             desugarer.target,
@@ -1245,7 +1245,7 @@ fn build_pending_desugarer_artifact(
     }
 
     let bytes = fs::read(&source_path).map_err(|err| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to read vocab desugarer artifact at {}: {err}",
             source_path.display()
         ))
@@ -1267,13 +1267,13 @@ fn build_pending_desugarer_artifact(
     }))
 }
 
-fn validate_wasm_desugarer_entrypoint(path: &Path, bytes: &[u8], entrypoint: &str) -> CliResult<()> {
+fn validate_wasm_desugarer_entrypoint(path: &Path, bytes: &[u8], entrypoint: &str) -> ProviderResult<()> {
     let mut config = Config::new();
     config.consume_fuel(true);
     let engine = Engine::new(&config)
-        .map_err(|err| CliError::failure(format!("failed to initialize wasm validation engine: {err}")))?;
+        .map_err(|err| ProviderError::failure(format!("failed to initialize wasm validation engine: {err}")))?;
     let module = Module::new(&engine, bytes).map_err(|err| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to compile vocab desugarer artifact `{}` as wasm: {err}",
             path.display()
         ))
@@ -1287,9 +1287,9 @@ fn validate_wasm_desugarer_entrypoint(path: &Path, bytes: &[u8], entrypoint: &st
     Ok(())
 }
 
-fn validate_wasm_memory_export(module: &Module, path: &Path) -> CliResult<()> {
+fn validate_wasm_memory_export(module: &Module, path: &Path) -> ProviderResult<()> {
     let Some(export) = module.get_export(incan_vocab::WASM_DESUGAR_MEMORY_EXPORT) else {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "vocab desugarer artifact `{}` is missing exported memory `{}`",
             path.display(),
             incan_vocab::WASM_DESUGAR_MEMORY_EXPORT
@@ -1298,7 +1298,7 @@ fn validate_wasm_memory_export(module: &Module, path: &Path) -> CliResult<()> {
     if matches!(export, ExternType::Memory(_)) {
         Ok(())
     } else {
-        Err(CliError::failure(format!(
+        Err(ProviderError::failure(format!(
             "vocab desugarer export `{}` in `{}` is not a memory export",
             incan_vocab::WASM_DESUGAR_MEMORY_EXPORT,
             path.display()
@@ -1311,15 +1311,15 @@ fn validate_wasm_func_export(
     path: &Path,
     export_name: &str,
     expected_result: Option<ValType>,
-) -> CliResult<()> {
+) -> ProviderResult<()> {
     let Some(export) = module.get_export(export_name) else {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "vocab desugarer artifact `{}` is missing exported function `{export_name}`",
             path.display()
         )));
     };
     let ExternType::Func(func_ty) = export else {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "vocab desugarer export `{export_name}` in `{}` is not a function",
             path.display()
         )));
@@ -1334,22 +1334,22 @@ fn validate_wasm_func_export(
     if params_ok && result_ok {
         Ok(())
     } else {
-        Err(CliError::failure(format!(
+        Err(ProviderError::failure(format!(
             "vocab desugarer export `{export_name}` in `{}` has an invalid function signature",
             path.display()
         )))
     }
 }
 
-fn validate_wasm_i32_global_export(module: &Module, path: &Path, export_name: &str) -> CliResult<()> {
+fn validate_wasm_i32_global_export(module: &Module, path: &Path, export_name: &str) -> ProviderResult<()> {
     let Some(export) = module.get_export(export_name) else {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "vocab desugarer artifact `{}` is missing exported global `{export_name}`",
             path.display()
         )));
     };
     let ExternType::Global(global_ty) = export else {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "vocab desugarer export `{export_name}` in `{}` is not a global",
             path.display()
         )));
@@ -1357,7 +1357,7 @@ fn validate_wasm_i32_global_export(module: &Module, path: &Path, export_name: &s
     if matches!(global_ty.content(), ValType::I32) {
         Ok(())
     } else {
-        Err(CliError::failure(format!(
+        Err(ProviderError::failure(format!(
             "vocab desugarer global `{export_name}` in `{}` must have type `i32`",
             path.display()
         )))

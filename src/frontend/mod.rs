@@ -30,6 +30,7 @@ pub(crate) mod partial_projection;
 pub mod registry_metadata;
 pub(crate) mod resolved_type_subst;
 pub(crate) mod rust_type_display;
+pub(crate) mod serde_usage;
 pub mod surface_semantics;
 pub mod symbols;
 pub mod testing_markers;

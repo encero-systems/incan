@@ -20,7 +20,6 @@ use std::os::unix::fs::PermissionsExt;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
-use crate::backend::project::runner::resolved_cargo_executable;
 use crate::backend::replacement::source_profile::{module_is_held_to_source_profile, source_profile_refusal};
 use crate::backend::replacement::{
     ReplacementExecutionError, ReplacementExecutionGraph, execute_prevalidated_free_function,
@@ -81,6 +80,7 @@ use crate::oven::interop::{
     OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, default_interop_execution_receipt_path, interop_execution_build_unit_inputs,
     load_interop_execution_receipt, validate_interop_execution_receipt,
 };
+use crate::oven::legacy_cargo::cargo_process::resolved_cargo_executable;
 use crate::oven::legacy_cargo::{
     OVEN_PROVIDER_COMPILATION_KEY, OvenCompilerMacroDependency, OvenLegacyCargoBaseLoaf,
     OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind,
@@ -163,9 +163,6 @@ use crate::driver::rust_inspect_workspace::{
     collect_rust_inspect_query_paths_from_programs, mark_oven_direct_rust_inspection,
 };
 use crate::driver::session::CompilationSession;
-use crate::driver::vocab_extraction::{
-    PendingDesugarerArtifact, collect_library_vocab_metadata, oven_vocab_direct_rustc_context_from_plan,
-};
 use crate::frontend::ParsedModule;
 use crate::provider::inventory::extend_requirements_with_provider_plan;
 #[cfg(test)]
@@ -173,6 +170,9 @@ use crate::provider::requirements::dependency_specs_match;
 use crate::provider::requirements::{
     INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, ProjectRequirements, collect_project_requirements,
     merge_project_requirement_dependencies, semantic_sdk_path_dependencies,
+};
+use crate::provider::vocab_extraction::{
+    PendingDesugarerArtifact, collect_library_vocab_metadata, oven_vocab_direct_rustc_context_from_plan,
 };
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig, RustMetadataCache, RustMetadataError};

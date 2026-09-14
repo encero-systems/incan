@@ -12,12 +12,11 @@ use std::{env, fs};
 
 use incan_core::lang::stdlib;
 
-use crate::backend::project::INCAN_STDLIB_CRATE_NAME;
-use crate::driver::error::{CliError, CliResult};
 use crate::frontend::ast::ImportKind;
 use crate::frontend::parsed_module::ParsedModule;
 use crate::library_manifest::{ProviderCargoDependency, ProviderCargoDependencySource};
 use crate::manifest::{DependencySource, DependencySpec, ProjectManifest};
+use crate::provider::error::{ProviderError, ProviderResult};
 use crate::provider::requirements::{ProjectRequirements, merge_requirement_dependency};
 use crate::provider::sdk_build::prepare_sdk_provider_inventory;
 use crate::provider::{
@@ -25,6 +24,7 @@ use crate::provider::{
     SDK_SOURCE_CATALOG_FILE, SdkArtifactProjection, SdkComponentSelection, SdkDependencyRebinding, SdkInventory,
     SdkResolutionError, SdkSourceCatalog,
 };
+use crate::toolchain_layout::INCAN_STDLIB_CRATE_NAME;
 /// Explicit active SDK inventory override used by toolchain selection and SDK publication.
 pub(crate) const SDK_INVENTORY_OVERRIDE_ENV: &str = "INCAN_SDK_INVENTORY";
 
@@ -38,13 +38,13 @@ thread_local! {
 ///
 /// Oven consumers use this narrow read-only path. A normal command must treat an absent inventory as an explicit
 /// preparation requirement, never as authority to invoke the legacy Cargo publisher.
-pub(crate) fn discover_active_sdk_inventory() -> CliResult<Option<Arc<SdkInventory>>> {
+pub(crate) fn discover_active_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory>>> {
     let explicit = env::var_os(SDK_INVENTORY_OVERRIDE_ENV)
         .filter(|path| !path.is_empty())
         .map(PathBuf::from);
     let inventory_path = if let Some(path) = explicit.as_ref() {
         if !path.is_file() {
-            return Err(CliError::failure(format!(
+            return Err(ProviderError::failure(format!(
                 "{SDK_INVENTORY_OVERRIDE_ENV} points to missing SDK inventory {}",
                 path.display()
             )));
@@ -65,18 +65,18 @@ pub(crate) fn discover_active_sdk_inventory() -> CliResult<Option<Arc<SdkInvento
     let Some(path) = inventory_path else {
         return Ok(None);
     };
-    let inventory = SdkInventory::read_from_path(&path).map_err(|error| CliError::failure(error.to_string()))?;
+    let inventory = SdkInventory::read_from_path(&path).map_err(|error| ProviderError::failure(error.to_string()))?;
     inventory
         .validate_compiler_compatibility(
             crate::version::INCAN_VERSION,
             crate::version::SDK_PROVIDER_CODEGEN_REVISION,
         )
-        .map_err(|error| CliError::failure(error.to_string()))?;
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
     Ok(Some(Arc::new(inventory)))
 }
 
 /// Discover an installed SDK inventory or publish the source checkout's component providers on demand.
-pub(crate) fn prepare_or_discover_sdk_inventory() -> CliResult<Option<Arc<SdkInventory>>> {
+pub(crate) fn prepare_or_discover_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory>>> {
     if let Some(inventory) = discover_active_sdk_inventory()? {
         return Ok(Some(inventory));
     }
@@ -97,7 +97,7 @@ pub(crate) fn validate_component_inventory_selection(
     manifest: Option<&ProjectManifest>,
     sdk_profile_override: Option<&str>,
     inventory: Option<&SdkInventory>,
-) -> CliResult<()> {
+) -> ProviderResult<()> {
     let explicit_selection = manifest.and_then(ProjectManifest::sdk).is_some() || sdk_profile_override.is_some();
     if inventory.is_some() || !explicit_selection {
         return Ok(());
@@ -109,7 +109,7 @@ pub(crate) fn validate_component_inventory_selection(
     let message = manifest
         .and_then(|manifest| sdk_manifest_value_location(manifest, &[]))
         .map_or_else(|| message.to_string(), |location| format!("{location}: {message}"));
-    Err(CliError::failure(message))
+    Err(ProviderError::failure(message))
 }
 
 /// Resolve one SDK component selection and retain the manifest or command provenance of configuration failures.
@@ -119,14 +119,14 @@ pub(crate) fn resolve_sdk_component_selection(
     manifest: Option<&ProjectManifest>,
     sdk_profile_override: Option<&str>,
     require_available: bool,
-) -> CliResult<ResolvedSdkComponents> {
+) -> ProviderResult<ResolvedSdkComponents> {
     let result = if require_available {
         inventory.resolve(selection)
     } else {
         inventory.resolve_catalog(selection)
     };
     result.map_err(|error| {
-        CliError::failure(format_sdk_selection_error(
+        ProviderError::failure(format_sdk_selection_error(
             &error,
             selection,
             manifest,
@@ -200,7 +200,7 @@ fn sdk_manifest_value_location(manifest: &ProjectManifest, candidates: &[String]
 pub(crate) fn extend_requirements_with_provider_plan(
     requirements: &mut ProjectRequirements,
     provider_plan: &ProviderPlan,
-) -> CliResult<()> {
+) -> ProviderResult<()> {
     let sdk_providers = provider_plan
         .sdk_link_roots()
         .into_iter()
@@ -214,7 +214,7 @@ fn extend_requirements_with_selected_sdk_providers(
     requirements: &mut ProjectRequirements,
     provider_plan: &ProviderPlan,
     sdk_providers: &BTreeSet<String>,
-) -> CliResult<()> {
+) -> ProviderResult<()> {
     // Projection helpers do not retain the ProviderPlan. Preserve the complete active SDK path catalog separately
     // from the minimal set of providers linked directly into this generated crate: a copied compiled artifact can
     // still carry a non-descriptor Cargo edge to an active provider supplied transitively or unused by this consumer.
@@ -289,7 +289,7 @@ fn extend_requirements_with_selected_sdk_providers(
                 .iter_mut()
                 .find(|dependency| dependency.crate_name == crate_name)
             else {
-                return Err(CliError::failure(format!(
+                return Err(ProviderError::failure(format!(
                     "provider `{}` implementation facet selects Cargo feature `{crate_name}/{feature}` without declaring that dependency",
                     provider.identity.name
                 )));
@@ -408,14 +408,15 @@ pub(crate) fn provider_used_module_paths(modules: &[ParsedModule]) -> BTreeSet<V
 }
 
 /// Resolve the reserved namespace roots granted to the SDK component currently being compiled from source.
-pub(crate) fn sdk_provider_bootstrap_namespace_roots(project_root: &Path) -> CliResult<BTreeSet<String>> {
+pub(crate) fn sdk_provider_bootstrap_namespace_roots(project_root: &Path) -> ProviderResult<BTreeSet<String>> {
     let Some(component_marker) = env::var_os(SDK_PROVIDER_BUILD_ENV).filter(|value| !value.is_empty()) else {
         return Ok(BTreeSet::new());
     };
-    let stdlib_root = crate::toolchain_layout::find_stdlib_source_dir()
-        .ok_or_else(|| CliError::failure("cannot locate the SDK source catalog while compiling an SDK provider"))?;
+    let stdlib_root = crate::toolchain_layout::find_stdlib_source_dir().ok_or_else(|| {
+        ProviderError::failure("cannot locate the SDK source catalog while compiling an SDK provider")
+    })?;
     let catalog = SdkSourceCatalog::read_from_path(&stdlib_root.join(SDK_SOURCE_CATALOG_FILE))
-        .map_err(|error| CliError::failure(error.to_string()))?;
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
     let component_marker = component_marker.to_string_lossy();
     let canonical_project_root = fs::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
     let component = catalog.components.get(component_marker.as_ref()).or_else(|| {
@@ -425,7 +426,7 @@ pub(crate) fn sdk_provider_bootstrap_namespace_roots(project_root: &Path) -> Cli
         })
     });
     let component = component.ok_or_else(|| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "SDK provider bootstrap marker `{component_marker}` does not match a component in {}",
             stdlib_root.join(SDK_SOURCE_CATALOG_FILE).display()
         ))
@@ -436,9 +437,9 @@ pub(crate) fn sdk_provider_bootstrap_namespace_roots(project_root: &Path) -> Cli
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::driver::test_support::parsed_module_for_test;
     use crate::frontend::library_manifest_index::LibraryArtifactMetadata;
     use crate::library_manifest::LibraryManifest;
+    use crate::provider::test_support::parsed_module_for_test;
 
     #[test]
     fn explicit_sdk_selection_rejects_legacy_inventoryless_toolchains() -> Result<(), Box<dyn std::error::Error>> {

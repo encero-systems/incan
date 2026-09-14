@@ -11,10 +11,9 @@ use std::{env, fs};
 
 use incan_core::lang::stdlib;
 
-use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
-use crate::driver::error::{CliError, CliResult};
 use crate::library_manifest::{LibraryManifest, ProviderModuleClaim, digest_provider_artifact};
 use crate::manifest::{INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV, ProjectManifest};
+use crate::provider::error::{ProviderError, ProviderResult};
 use crate::provider::inventory::SDK_INVENTORY_OVERRIDE_ENV;
 use crate::provider::requirements::INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV;
 use crate::provider::sdk_store::{
@@ -27,11 +26,12 @@ use crate::provider::{
     SDK_INVENTORY_FILE, SDK_PROVIDER_BUILD_ENV, SDK_SOURCE_CATALOG_FILE, SdkComponent, SdkComponentSelection,
     SdkInventory, SdkProviderDescriptor, SdkSourceCatalog,
 };
+use crate::toolchain_layout::GENERATED_CARGO_TARGET_DIR_ENV;
 /// Optional external directory for SDK publication timing evidence.
 const INTERNAL_SDK_BUILD_REPORT_DIR_ENV: &str = "INCAN_INTERNAL_SDK_BUILD_REPORT_DIR";
 
 /// Build and atomically publish every SDK component provider from the source catalog.
-pub(crate) fn prepare_sdk_provider_inventory() -> CliResult<Arc<SdkInventory>> {
+pub(crate) fn prepare_sdk_provider_inventory() -> ProviderResult<Arc<SdkInventory>> {
     prepare_sdk_provider_inventory_in_store(None, None)
 }
 
@@ -42,26 +42,26 @@ pub(crate) fn prepare_sdk_provider_inventory() -> CliResult<Arc<SdkInventory>> {
 pub(crate) fn prepare_sdk_provider_inventory_in_store(
     publisher_store_root: Option<&Path>,
     source_root_override: Option<&Path>,
-) -> CliResult<Arc<SdkInventory>> {
+) -> ProviderResult<Arc<SdkInventory>> {
     let stdlib_root = match source_root_override {
         Some(source_root) => source_root.join("crates/incan_stdlib/stdlib"),
         None => crate::toolchain_layout::find_stdlib_source_dir().ok_or_else(|| {
-            CliError::failure("cannot locate built-in stdlib sources needed to prepare SDK component providers")
+            ProviderError::failure("cannot locate built-in stdlib sources needed to prepare SDK component providers")
         })?,
     };
     let stdlib_root = fs::canonicalize(&stdlib_root).map_err(|error| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to canonicalize built-in stdlib source directory {}: {error}",
             stdlib_root.display()
         ))
     })?;
     let catalog = SdkSourceCatalog::read_from_path(&stdlib_root.join(SDK_SOURCE_CATALOG_FILE))
-        .map_err(|error| CliError::failure(error.to_string()))?;
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
     catalog
         .validate_compiler_version(crate::version::INCAN_VERSION)
-        .map_err(|error| CliError::failure(error.to_string()))?;
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
     let current_exe = env::current_exe()
-        .map_err(|error| CliError::failure(format!("failed to resolve current incan executable: {error}")))?;
+        .map_err(|error| ProviderError::failure(format!("failed to resolve current incan executable: {error}")))?;
     let cargo_test_binary = env::var_os("CARGO_BIN_EXE_incan")
         .filter(|path| !path.is_empty())
         .map(PathBuf::from);
@@ -102,13 +102,13 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
     let inventory_path = artifact_root.join(SDK_INVENTORY_FILE);
     if inventory_path.is_file() {
         let inventory =
-            SdkInventory::read_from_path(&inventory_path).map_err(|error| CliError::failure(error.to_string()))?;
+            SdkInventory::read_from_path(&inventory_path).map_err(|error| ProviderError::failure(error.to_string()))?;
         inventory
             .validate_compiler_compatibility(
                 crate::version::INCAN_VERSION,
                 crate::version::SDK_PROVIDER_CODEGEN_REVISION,
             )
-            .map_err(|error| CliError::failure(error.to_string()))?;
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
         record_sdk_provider_root(&artifact_root)?;
         if let Some(reports) = &mut build_reports {
             reports.finish("cache_hit");
@@ -116,7 +116,7 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
         return Ok(Arc::new(inventory));
     }
     if artifact_root.exists() {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "compiled SDK component artifact at {} is incomplete; refusing to overwrite an already published identity",
             artifact_root.display()
         )));
@@ -140,7 +140,7 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
     };
     sync_sdk_provider_tree(&staging_root)?;
     fs::rename(&staging_root, &artifact_root).map_err(|error| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to publish compiled SDK components from {} to {}: {error}",
             staging_root.display(),
             artifact_root.display()
@@ -149,7 +149,7 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
     sync_sdk_provider_store(&store_root)?;
     let published_inventory_path = artifact_root.join(SDK_INVENTORY_FILE);
     let published = SdkInventory::read_from_path(&published_inventory_path).map_err(|error| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to load published SDK component inventory for {}: {error}",
             staged_inventory.identity()
         ))
@@ -171,25 +171,25 @@ struct SdkBuildReports {
 
 impl SdkBuildReports {
     /// Require an existing external directory before creating a unique publication report session.
-    fn new(directory: &Path, store: &Path, identity: &str) -> CliResult<Self> {
+    fn new(directory: &Path, store: &Path, identity: &str) -> ProviderResult<Self> {
         let directory = fs::canonicalize(directory).map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "SDK build report directory must already exist: {}: {error}",
                 directory.display()
             ))
         })?;
-        let store = fs::canonicalize(store).map_err(|error| CliError::failure(error.to_string()))?;
+        let store = fs::canonicalize(store).map_err(|error| ProviderError::failure(error.to_string()))?;
         if directory.starts_with(&store) || store.starts_with(&directory) {
-            return Err(CliError::failure(
+            return Err(ProviderError::failure(
                 "SDK build report directory must be separate from the provider store",
             ));
         }
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| CliError::failure(error.to_string()))?
+            .map_err(|error| ProviderError::failure(error.to_string()))?
             .as_nanos();
         let directory = directory.join(format!("sdk-build-{}-{nonce}", std::process::id()));
-        fs::create_dir(&directory).map_err(|error| CliError::failure(error.to_string()))?;
+        fs::create_dir(&directory).map_err(|error| ProviderError::failure(error.to_string()))?;
         let reports = Self {
             directory,
             identity: identity.to_string(),
@@ -277,12 +277,12 @@ impl Drop for SdkBuildReports {
 }
 
 /// Report the exact immutable provider root to release packaging when requested.
-fn record_sdk_provider_root(artifact_root: &Path) -> CliResult<()> {
+fn record_sdk_provider_root(artifact_root: &Path) -> ProviderResult<()> {
     let Some(path_file) = env::var_os(INTERNAL_SDK_PROVIDER_PATH_FILE_ENV).filter(|path| !path.is_empty()) else {
         return Ok(());
     };
     fs::write(&path_file, format!("{}\n", artifact_root.display())).map_err(|error| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to record SDK provider root in {}: {error}",
             PathBuf::from(path_file).display()
         ))
@@ -298,16 +298,16 @@ fn build_sdk_components_into_staging(
     distribution_profile: &str,
     toolchain_source: Option<(&Path, &Path)>,
     build_reports: Option<&SdkBuildReports>,
-) -> CliResult<SdkInventory> {
+) -> ProviderResult<SdkInventory> {
     fs::create_dir_all(staging_root).map_err(|error| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to create SDK component staging directory {}: {error}",
             staging_root.display()
         ))
     })?;
     if let Some(workspace_lock) = workspace_lock {
         fs::copy(workspace_lock, staging_root.join("Cargo.lock")).map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to publish shared SDK provider lock from {}: {error}",
                 workspace_lock.display()
             ))
@@ -322,9 +322,9 @@ fn build_sdk_components_into_staging(
     for component in catalog.publication_order() {
         let output_root = staging_root.join("components").join(&component.id);
         let manifest = ProjectManifest::discover(&component.project_root)
-            .map_err(|error| CliError::failure(error.to_string()))?
+            .map_err(|error| ProviderError::failure(error.to_string()))?
             .ok_or_else(|| {
-                CliError::failure(format!(
+                ProviderError::failure(format!(
                     "SDK component `{}` has no loaf.toml at {}",
                     component.id,
                     component.project_root.display()
@@ -334,7 +334,7 @@ fn build_sdk_components_into_staging(
             .project
             .as_ref()
             .and_then(|project| project.name.clone())
-            .ok_or_else(|| CliError::failure(format!("SDK component `{}` has no project name", component.id)))?;
+            .ok_or_else(|| ProviderError::failure(format!("SDK component `{}` has no project name", component.id)))?;
         eprintln!(
             "Preparing SDK component `{}` with `incan build --lib` in {}",
             component.id,
@@ -356,7 +356,7 @@ fn build_sdk_components_into_staging(
         if built_any {
             inventory
                 .write_to_path(&inventory_path)
-                .map_err(|error| CliError::failure(error.to_string()))?;
+                .map_err(|error| ProviderError::failure(error.to_string()))?;
             command.env(SDK_INVENTORY_OVERRIDE_ENV, &inventory_path);
         } else {
             command.env_remove(SDK_INVENTORY_OVERRIDE_ENV);
@@ -367,7 +367,7 @@ fn build_sdk_components_into_staging(
         }
         let component_started = std::time::Instant::now();
         let output = command.output().map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to run SDK component build for `{}` at {}: {error}",
                 component.id,
                 component.project_root.display()
@@ -385,7 +385,7 @@ fn build_sdk_components_into_staging(
         }
         let manifest_path = output_root.join(format!("{provider_name}.incnlib"));
         let provider_manifest = LibraryManifest::read_from_path(&manifest_path).map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to read SDK component `{}` manifest {}: {error}",
                 component.id,
                 manifest_path.display()
@@ -394,7 +394,7 @@ fn build_sdk_components_into_staging(
         let component_lock = output_root.join("Cargo.lock");
         if component_lock.is_file() {
             fs::remove_file(&component_lock).map_err(|error| {
-                CliError::failure(format!(
+                ProviderError::failure(format!(
                     "failed to remove duplicated SDK component lock {}: {error}",
                     component_lock.display()
                 ))
@@ -406,14 +406,14 @@ fn build_sdk_components_into_staging(
             &provider_manifest.contract_metadata.provider.namespace_claims,
         )?;
         let digest = digest_provider_artifact(&output_root).map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to hash SDK component `{}` artifact {}: {error}",
                 component.id,
                 output_root.display()
             ))
         })?;
         let inventory_component = inventory.components.get_mut(&component.id).ok_or_else(|| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "SDK source catalog lost component `{}` while publishing",
                 component.id
             ))
@@ -431,7 +431,7 @@ fn build_sdk_components_into_staging(
     }
     if cargo_target_dir.exists() {
         fs::remove_dir_all(&cargo_target_dir).map_err(|error| {
-            CliError::failure(format!(
+            ProviderError::failure(format!(
                 "failed to remove transient SDK provider Cargo target {}: {error}",
                 cargo_target_dir.display()
             ))
@@ -440,7 +440,7 @@ fn build_sdk_components_into_staging(
     restrict_staged_sdk_profile(catalog, distribution_profile, staging_root, &mut inventory)?;
     inventory
         .write_to_path(&inventory_path)
-        .map_err(|error| CliError::failure(error.to_string()))?;
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
     Ok(inventory)
 }
 
@@ -473,7 +473,7 @@ fn sdk_component_namespace_claims(
     component_id: &str,
     namespace_roots: &BTreeSet<String>,
     claims: &[ProviderModuleClaim],
-) -> CliResult<BTreeSet<Vec<String>>> {
+) -> ProviderResult<BTreeSet<Vec<String>>> {
     let unauthorized = claims
         .iter()
         .filter(|claim| {
@@ -485,7 +485,7 @@ fn sdk_component_namespace_claims(
         .map(|claim| claim.module_path.join("."))
         .collect::<Vec<_>>();
     if !unauthorized.is_empty() {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "SDK component `{component_id}` claims module(s) {} outside its granted namespace roots [{}]",
             unauthorized.join(", "),
             namespace_roots.iter().cloned().collect::<Vec<_>>().join(", ")
@@ -508,9 +508,9 @@ fn restrict_staged_sdk_profile(
     distribution_profile: &str,
     staging_root: &Path,
     inventory: &mut SdkInventory,
-) -> CliResult<()> {
+) -> ProviderResult<()> {
     if !catalog.profiles.contains_key(distribution_profile) {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "unknown SDK distribution profile `{distribution_profile}`"
         )));
     }
@@ -520,7 +520,7 @@ fn restrict_staged_sdk_profile(
             components: BTreeSet::new(),
             exclude_components: BTreeSet::new(),
         })
-        .map_err(|error| CliError::failure(error.to_string()))?;
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
     for component in inventory.components.values_mut() {
         if resolved.enabled.contains(&component.id) {
             continue;
@@ -533,7 +533,7 @@ fn restrict_staged_sdk_profile(
         let component_root = staging_root.join("components").join(&component.id);
         if component_root.exists() {
             fs::remove_dir_all(&component_root).map_err(|error| {
-                CliError::failure(format!(
+                ProviderError::failure(format!(
                     "failed to exclude SDK component payload {}: {error}",
                     component_root.display()
                 ))
@@ -574,7 +574,11 @@ fn source_catalog_inventory(catalog: &SdkSourceCatalog, root: &Path) -> SdkInven
 }
 
 /// Preserve nested compiler stdout and stderr when one component publication fails.
-fn nested_sdk_component_build_error(component: &str, project_root: &Path, output: &std::process::Output) -> CliError {
+fn nested_sdk_component_build_error(
+    component: &str,
+    project_root: &Path,
+    output: &std::process::Output,
+) -> ProviderError {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let diagnostics = [stderr.trim(), stdout.trim()]
@@ -582,7 +586,7 @@ fn nested_sdk_component_build_error(component: &str, project_root: &Path, output
         .filter(|message| !message.is_empty())
         .collect::<Vec<_>>()
         .join("\n");
-    CliError::failure(format!(
+    ProviderError::failure(format!(
         "failed to prepare SDK component `{component}` at {}{}",
         project_root.display(),
         if diagnostics.is_empty() {

@@ -442,8 +442,8 @@ fn run_rust_inspect_out_dirs_prewarm_command(
     target_dir: &Path,
     mode: RustInspectPrewarmCargoMode,
 ) -> CliResult<std::process::Output> {
-    let mut command = crate::backend::project::runner::cargo_command();
-    crate::backend::project::runner::configure_cargo_target(&mut command, target_dir);
+    let mut command = crate::oven::legacy_cargo::cargo_process::cargo_command();
+    crate::oven::legacy_cargo::cargo_process::configure_cargo_target(&mut command, target_dir);
     command.arg("check");
     command.arg("--manifest-path");
     command.arg(manifest_dir.join("Cargo.toml"));
@@ -1047,9 +1047,9 @@ pub(crate) fn prewarm_rust_inspect_workspace(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::driver::test_support::parsed_module_for_test;
     use crate::frontend::library_manifest_index::LibraryArtifactMetadata;
     use crate::library_manifest::LibraryManifest;
+    use crate::provider::test_support::parsed_module_for_test;
     use std::process::Command;
 
     #[cfg(feature = "rust_inspect")]

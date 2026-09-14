@@ -9,4 +9,3 @@
 
 pub mod closure;
 pub mod codegraph;
-pub mod effect_digest;
