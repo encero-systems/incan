@@ -693,7 +693,8 @@ fn is_sdk_provider_compiler_checkout(candidate: &Path, stdlib_root: &Path) -> bo
     fs::canonicalize(&expected_stdlib_root).ok() == fs::canonicalize(stdlib_root).ok()
 }
 
-/// Hash the running compiler once per process with BLAKE3's optimized implementation, independent of its path.
+/// Hash the running compiler once per process with SHA-256, the hash family every other identity in the toolchain uses,
+/// independent of its path.
 fn sdk_provider_compiler_digest(executable: &Path) -> CliResult<[u8; 32]> {
     if let Some(digest) = SDK_PROVIDER_COMPILER_DIGESTS
         .lock()
@@ -710,7 +711,7 @@ fn sdk_provider_compiler_digest(executable: &Path) -> CliResult<[u8; 32]> {
             executable.display()
         ))
     })?;
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
         let read = executable_file.read(&mut buffer).map_err(|error| {
@@ -724,7 +725,7 @@ fn sdk_provider_compiler_digest(executable: &Path) -> CliResult<[u8; 32]> {
         }
         hasher.update(&buffer[..read]);
     }
-    let digest = *hasher.finalize().as_bytes();
+    let digest: [u8; 32] = hasher.finalize().into();
     SDK_PROVIDER_COMPILER_DIGESTS
         .lock()
         .map_err(|_| CliError::failure("failed to lock the compiler-content digest cache"))?

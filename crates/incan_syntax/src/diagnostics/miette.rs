@@ -1,6 +1,6 @@
 use miette::{Diagnostic, LabeledSpan, SourceSpan};
 
-use super::{CompileError, ErrorKind, format_error};
+use super::{CompileError, ErrorKind};
 
 // ============================================================================
 // miette Integration
@@ -130,22 +130,5 @@ impl IncanDiagnostic {
     pub fn with_related(mut self, message: impl Into<String>, start: usize, len: usize) -> Self {
         self.related.push(LabeledSpan::new(Some(message.into()), start, len));
         self
-    }
-}
-
-/// Render a CompileError using miette's fancy reporter
-pub fn render_miette(error: &CompileError, file_name: &str, source: &str) -> String {
-    let diagnostic = IncanDiagnostic::from_error(error, file_name, source);
-    format!("{:?}", miette::Report::new(diagnostic))
-}
-
-/// Format an error, using miette if INCAN_FANCY_ERRORS is set
-///
-/// Set `INCAN_FANCY_ERRORS=1` to enable miette's fancy error output.
-pub fn format_error_smart(file_name: &str, source: &str, error: &CompileError) -> String {
-    if std::env::var("INCAN_FANCY_ERRORS").is_ok() {
-        render_miette(error, file_name, source)
-    } else {
-        format_error(file_name, source, error)
     }
 }
