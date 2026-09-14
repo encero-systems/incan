@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::cli::commands::common::CompilationSession;
+use crate::driver::session::CompilationSession;
 use crate::frontend::ast::{
     BinaryOp, CallArg, Declaration, DecoratorArg, DecoratorArgValue, Expr, ListEntry, Literal, Program, Spanned,
     Statement, UnaryOp,

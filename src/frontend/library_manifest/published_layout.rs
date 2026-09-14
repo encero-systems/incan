@@ -7,6 +7,24 @@ use incan_semantics_core::CanonicalSymbolId;
 
 use super::{CanonicalIdentityExport, FieldExport, FieldVisibilityExport, LibraryManifest};
 
+/// Stable package-artifact manifest that maps each provider profile to its sealed Loaf and direct library output.
+pub(crate) const OVEN_PACKAGED_LIBRARY_LOAF_MANIFEST_RELATIVE_PATH: &str = "oven/package-loafs.json";
+
+/// Return the package-owned Loaf index retained beside one generated public library artifact.
+pub(crate) fn packaged_library_loaf_manifest_path(artifact_root: &Path) -> PathBuf {
+    artifact_root.join(OVEN_PACKAGED_LIBRARY_LOAF_MANIFEST_RELATIVE_PATH)
+}
+
+/// The common command preflight uses this only to refuse an implicit provider rebuild. The consumer's Oven planner
+/// immediately follows with full schema, receipt, artifact-digest, target, toolchain, and closure validation in
+/// [`packaged_library_loaf_profile`] and [`import_packaged_library_loaf`]. Keeping those checks in one place avoids
+/// two subtly different package validators.
+pub(crate) fn oven_library_dependency_declares_package_loaf(dependency_root: &Path) -> bool {
+    let artifact_root = dependency_root.join(LIBRARY_ARTIFACT_DIRECTORY);
+    let manifest_path = packaged_library_loaf_manifest_path(&artifact_root);
+    manifest_path.is_file()
+}
+
 /// Project-relative directory a library build publishes its artifacts under.
 ///
 /// Every reader of a published library — the frontend's dependency index, the lockfile's provider hashing, the

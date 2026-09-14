@@ -8,7 +8,11 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::cli::{CliError, CliResult};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use wasmtime::{Config, Engine, ExternType, Module, ValType};
+
+use crate::driver::error::{CliError, CliResult};
 use crate::library_manifest::{SoftKeywordActivation, VocabDesugarerArtifact, VocabExports};
 use crate::manifest::ProjectManifest;
 use crate::oven::compiler_suite_env::{
@@ -18,10 +22,6 @@ use crate::oven::rustc::{
     OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcAuxiliaryTargetPlan, clear_inherited_cargo_environment,
 };
 use crate::version::INCAN_VERSION;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use wasmtime::{Config, Engine, ExternType, Module, ValType};
-
 const VOCAB_COMPANION_CACHE_FORMAT: u32 = 1;
 const VOCAB_COMPANION_CACHE_DIR_ENV: &str = "INCAN_VOCAB_COMPANION_CACHE_DIR";
 const VOCAB_COMPANION_CACHE_FILE: &str = "metadata.json";

@@ -38,8 +38,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::cli::commands::common::discover_active_sdk_inventory;
 use crate::library_manifest::{LibraryManifest, digest_provider_artifact};
+use crate::provider::inventory::discover_active_sdk_inventory;
 use crate::provider::{SDK_INVENTORY_FILE, SdkInventory};
 
 use super::process::{isolate_process_group, terminate_process_group};

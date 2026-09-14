@@ -22,7 +22,6 @@
 //! ## Modules
 //!
 //! - `commands` - Command implementations
-//! - `prelude` - Stdlib/prelude loading
 //! - `test_runner` - Test discovery and execution
 //!
 //! ## Design
@@ -36,26 +35,23 @@
 #![deny(clippy::expect_used)]
 
 pub mod commands;
-pub mod prelude;
 pub mod test_runner;
 
 use std::env;
 use std::ffi::OsString;
-use std::fmt;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process;
 
+use crate::driver::cargo_policy::{CargoPolicy, CargoPolicyCliFlags};
 use crate::manifest::ProjectManifest;
 use crate::provider::FeatureSelection;
+use crate::provider::requirements::{INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV};
 use crate::workspace::{ResolvedWorkspaceScope, WorkspaceGraph, WorkspaceMember, WorkspaceScopeRequest};
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use commands::binding_inspect::BindingInspectionFormat;
 use commands::build_report::{BuildReportFormat, BuildReportOptions, RustInspectionFormat};
 use commands::codegraph::CodegraphInspectionFormat;
-use commands::common::{
-    CargoPolicy, CargoPolicyCliFlags, INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV,
-};
 use commands::diagnostics::DiagnosticOutputFormat;
 use commands::interop_plan::InteropPlanInspectionFormat;
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
@@ -68,58 +64,7 @@ use commands::workspace::WorkspaceInspectFormat;
 // CLI Error handling
 // ============================================================================
 
-/// Exit code for CLI operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ExitCode(pub i32);
-
-impl ExitCode {
-    pub const SUCCESS: ExitCode = ExitCode(0);
-    pub const FAILURE: ExitCode = ExitCode(1);
-}
-
-/// Error type for CLI operations.
-///
-/// Contains a user-facing message and an exit code. The CLI entry point
-/// catches these errors, prints the message, and exits with the code.
-#[derive(Debug)]
-pub struct CliError {
-    /// User-facing error message (already formatted for display)
-    pub message: String,
-    /// Exit code to return to the shell
-    pub exit_code: ExitCode,
-}
-
-impl CliError {
-    /// Create a new CLI error with a message and exit code.
-    pub fn new(message: impl Into<String>, exit_code: ExitCode) -> Self {
-        Self {
-            message: message.into(),
-            exit_code,
-        }
-    }
-
-    /// Create a failure error (exit code 1).
-    pub fn failure(message: impl Into<String>) -> Self {
-        Self::new(message, ExitCode::FAILURE)
-    }
-
-    /// Create an error with a custom exit code.
-    pub fn with_code(message: impl Into<String>, code: i32) -> Self {
-        Self::new(message, ExitCode(code))
-    }
-}
-
-impl fmt::Display for CliError {
-    /// Render the user-facing CLI error message.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
-impl std::error::Error for CliError {}
-
-/// Result type for CLI operations.
-pub type CliResult<T> = Result<T, CliError>;
+pub use crate::driver::error::{CliError, CliResult, ExitCode};
 
 /// ASCII art logo - embedded at compile time from assets/logo.txt
 const LOGO: &str = include_str!("../../assets/logo.txt");
@@ -2561,7 +2506,7 @@ fn workspace_member_check_target(path: &Path, member: &WorkspaceMember) -> CliRe
 
 /// Resolve a member's configured `main` script without treating a virtual workspace root as a project entrypoint.
 fn workspace_member_main_script_target(member: &WorkspaceMember, command_name: &str) -> CliResult<PathBuf> {
-    let manifest = commands::common::discover_effective_project_manifest(member.root())?.ok_or_else(|| {
+    let manifest = crate::driver::project::discover_effective_project_manifest(member.root())?.ok_or_else(|| {
         CliError::failure(format!(
             "workspace member `{}` has no project manifest available for `incan {command_name}`",
             member.name()

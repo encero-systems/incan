@@ -66,6 +66,7 @@ use crate::frontend::{diagnostics, typechecker};
 use crate::generated_cache::resolve_generated_cargo_target;
 #[cfg(feature = "rust_inspect")]
 use crate::library_manifest::LibraryRustAbi;
+use crate::library_manifest::published_layout::packaged_library_loaf_manifest_path;
 use crate::library_manifest::{
     CompiledProviderMetadata, LibraryManifest, ProviderCargoDependency, ProviderCargoDependencySource,
     ProviderDependencyKind, ProviderDependencyMetadata, ProviderFactKind, ProviderFactRequirement,
@@ -136,22 +137,6 @@ use super::build_report::{
     emit_build_report, emit_rust_inspection_report, emit_workspace_build_report, generated_project_report,
     incan_dependencies_report, interop_report, oven_generated_project_report, rust_inspection_report, semantic_report,
 };
-#[cfg(test)]
-use super::common::dependency_specs_match;
-use super::common::{
-    CargoPolicy, CompilationSession, INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, ProjectRequirements, build_source_map,
-    cargo_command_flags, collect_incan_source_files, collect_modules_detailed_with_session,
-    collect_project_requirements, collect_rust_dependency_uses, discover_effective_project_manifest,
-    effective_project_manifest_for_exact_root, enforce_project_toolchain_constraint,
-    extend_requirements_with_provider_plan, format_dependency_error, imported_module_deps_for_with_provider_plan,
-    merge_project_requirement_dependencies, module_key_index, register_module_path_segments, render_module_warnings,
-    resolve_project_root, resolve_source_root, semantic_sdk_path_dependencies, validate_output_dir,
-};
-#[cfg(feature = "rust_inspect")]
-use super::common::{
-    collect_rust_inspect_derive_probe_paths, collect_rust_inspect_query_paths,
-    collect_rust_inspect_query_paths_from_programs, mark_oven_direct_rust_inspection,
-};
 use super::lock::{
     LockResolution, LockResolutionRequest, PublishedOvenProjectLock, publish_oven_project_lock, resolve_lock_context,
     validate_oven_lock_policy,
@@ -162,10 +147,33 @@ use super::lock::{
     prepare_rust_inspect_workspace,
 };
 use super::oven::open_default_oven_store;
-use super::vocab_extraction::{
+use crate::driver::cargo_policy::{CargoPolicy, cargo_command_flags, enforce_project_toolchain_constraint};
+use crate::driver::diagnostics::render_module_warnings;
+use crate::driver::modules::{
+    build_source_map, collect_modules_detailed_with_session, collect_rust_dependency_uses, format_dependency_error,
+    imported_module_deps_for_with_provider_plan, module_key_index, register_module_path_segments,
+};
+use crate::driver::project::{
+    collect_incan_source_files, discover_effective_project_manifest, effective_project_manifest_for_exact_root,
+    resolve_project_root, resolve_source_root, validate_output_dir,
+};
+#[cfg(feature = "rust_inspect")]
+use crate::driver::rust_inspect_workspace::{
+    collect_rust_inspect_derive_probe_paths, collect_rust_inspect_query_paths,
+    collect_rust_inspect_query_paths_from_programs, mark_oven_direct_rust_inspection,
+};
+use crate::driver::session::CompilationSession;
+use crate::driver::vocab_extraction::{
     PendingDesugarerArtifact, collect_library_vocab_metadata, oven_vocab_direct_rustc_context_from_plan,
 };
-use crate::cli::prelude::ParsedModule;
+use crate::frontend::ParsedModule;
+use crate::provider::inventory::extend_requirements_with_provider_plan;
+#[cfg(test)]
+use crate::provider::requirements::dependency_specs_match;
+use crate::provider::requirements::{
+    INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, ProjectRequirements, collect_project_requirements,
+    merge_project_requirement_dependencies, semantic_sdk_path_dependencies,
+};
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig, RustMetadataCache, RustMetadataError};
 use sha2::{Digest as _, Sha256};
@@ -178,8 +186,6 @@ const INLINE_COMMAND_PROJECT_PREFIX: &str = "incan_inline_command";
 const INLINE_COMMAND_OUTPUT_PARENT: &str = "target/incan/inline";
 /// Stable package-artifact location for immutable provider Loafs.
 const OVEN_PACKAGED_LIBRARY_LOAF_STORE_RELATIVE_PATH: &str = "oven/loafs";
-/// Stable package-artifact manifest that maps each provider profile to its sealed Loaf and direct library output.
-const OVEN_PACKAGED_LIBRARY_LOAF_MANIFEST_RELATIVE_PATH: &str = "oven/package-loafs.json";
 /// Current wire schema for package-owned Oven Loaf handoff metadata.
 ///
 /// Version 6 seals the checked `.incnlib` manifest and every manifest-declared provider sidecar by relative path and
@@ -2007,7 +2013,7 @@ fn prepare_project_with_options(
     };
     let path = normalized_file_path.as_path();
     let inferred_project_root = resolve_project_root(path);
-    let compilation_session = super::common::CompilationSession::discover_with_selections(
+    let compilation_session = crate::driver::session::CompilationSession::discover_with_selections(
         path,
         package_features,
         options.sdk_profile_override,
@@ -2017,9 +2023,11 @@ fn prepare_project_with_options(
         enforce_project_toolchain_constraint(manifest)?;
     }
 
-    let modules =
-        super::common::collect_modules_detailed_with_session(normalized_file_path.clone(), &compilation_session)
-            .map_err(|failure| CliError::failure(failure.render_human()))?;
+    let modules = crate::driver::modules::collect_modules_detailed_with_session(
+        normalized_file_path.clone(),
+        &compilation_session,
+    )
+    .map_err(|failure| CliError::failure(failure.render_human()))?;
     let rust_extern_contexts = collect_rust_extern_contexts(&modules);
 
     let Some(main_module) = modules.last() else {
@@ -4383,9 +4391,11 @@ fn prepare_oven_project(
     if let Some(manifest) = manifest.as_ref() {
         enforce_project_toolchain_constraint(manifest)?;
     }
-    let modules =
-        super::common::collect_modules_detailed_with_session(normalized_file_path.clone(), &compilation_session)
-            .map_err(|failure| CliError::failure(failure.render_human()))?;
+    let modules = crate::driver::modules::collect_modules_detailed_with_session(
+        normalized_file_path.clone(),
+        &compilation_session,
+    )
+    .map_err(|failure| CliError::failure(failure.render_human()))?;
     let Some(main_module) = modules.last() else {
         return Err(CliError::failure("No modules found"));
     };
@@ -5011,7 +5021,7 @@ fn loaf_rust_inspect_query_paths(
         return Ok(query_paths.into_iter().collect());
     }
 
-    let stdlib_root = crate::cli::prelude::find_stdlib_dir()
+    let stdlib_root = crate::toolchain_layout::find_stdlib_source_dir()
         .ok_or_else(|| CliError::failure("cannot locate compiler-owned stdlib sources while preparing an Oven Loaf"))?;
     let mut source_files = Vec::new();
     collect_incan_source_files(&stdlib_root, &mut source_files).map_err(|error| {
@@ -9136,7 +9146,7 @@ pub fn build_file(
 ) -> CliResult<ExitCode> {
     reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
     ensure_backend_request_available(&options.backend)?;
-    super::common::warn_once_about_ignored_cargo_manifest(&resolve_project_root(Path::new(file_path)));
+    crate::driver::project::warn_once_about_ignored_cargo_manifest(&resolve_project_root(Path::new(file_path)));
     if options.backend.requested == BackendKind::Replacement {
         let report = build_replacement_file_report(file_path, options, &report_options)?;
         emit_workspace_build_report(&report, &report_options)?;
@@ -9345,10 +9355,15 @@ fn prepare_library_project(
     let compilation_session = if normal_oven {
         CompilationSession::discover_for_oven(&lib_entry, package_features, sdk_profile_override)?
     } else {
-        super::common::CompilationSession::discover_with_selections(&lib_entry, package_features, sdk_profile_override)?
+        crate::driver::session::CompilationSession::discover_with_selections(
+            &lib_entry,
+            package_features,
+            sdk_profile_override,
+        )?
     };
-    let modules = super::common::collect_library_modules_detailed_with_session(lib_entry.clone(), &compilation_session)
-        .map_err(|failure| CliError::failure(failure.render_human()))?;
+    let modules =
+        crate::driver::modules::collect_library_modules_detailed_with_session(lib_entry.clone(), &compilation_session)
+            .map_err(|failure| CliError::failure(failure.render_human()))?;
     let provider_metadata_modules = collect_unprojected_provider_modules(&lib_entry, &compilation_session)?;
 
     let Some(lib_module) = modules.last() else {
@@ -10775,9 +10790,9 @@ fn relative_provider_artifact_path(from: &Path, to: &Path) -> CliResult<String> 
 /// without reparsing provider source.
 fn collect_unprojected_provider_modules(
     library_entrypoint: &Path,
-    session: &super::common::CompilationSession,
+    session: &crate::driver::session::CompilationSession,
 ) -> CliResult<Vec<ParsedModule>> {
-    let mut pending = super::common::library_source_seeds(library_entrypoint, session)?;
+    let mut pending = crate::driver::modules::library_source_seeds(library_entrypoint, session)?;
     let mut processed = HashSet::new();
     let mut modules = Vec::new();
 
@@ -11336,11 +11351,6 @@ fn write_library_manifest_artifacts(prepared: &mut PreparedLibraryProject) -> Cl
 /// Return the package-owned bounded Oven store that carries this public library's project Loafs.
 fn packaged_library_loaf_store_root(artifact_root: &Path) -> PathBuf {
     artifact_root.join(OVEN_PACKAGED_LIBRARY_LOAF_STORE_RELATIVE_PATH)
-}
-
-/// Return the package-owned Loaf index retained beside one generated public library artifact.
-fn packaged_library_loaf_manifest_path(artifact_root: &Path) -> PathBuf {
-    artifact_root.join(OVEN_PACKAGED_LIBRARY_LOAF_MANIFEST_RELATIVE_PATH)
 }
 
 /// Command-local memo for exact project source-authority nodes.
@@ -12689,16 +12699,6 @@ fn read_packaged_library_loaf_manifest(
 
 /// Return whether a provider declares an explicit package-Loaf handoff.
 ///
-/// The common command preflight uses this only to refuse an implicit provider rebuild. The consumer's Oven planner
-/// immediately follows with full schema, receipt, artifact-digest, target, toolchain, and closure validation in
-/// [`packaged_library_loaf_profile`] and [`import_packaged_library_loaf`]. Keeping those checks in one place avoids
-/// two subtly different package validators.
-pub(crate) fn oven_library_dependency_declares_package_loaf(dependency_root: &Path) -> bool {
-    let artifact_root = dependency_root.join("target").join("lib");
-    let manifest_path = packaged_library_loaf_manifest_path(&artifact_root);
-    manifest_path.is_file()
-}
-
 /// Resolve one package-owned native output without permitting a symlink escape from its artifact root.
 fn validated_packaged_library_output_path(
     artifact: &LibraryArtifactMetadata,
@@ -13173,7 +13173,7 @@ pub fn build_library(
             Some(path) => resolve_project_root(Path::new(path)),
             None => PathBuf::from("."),
         };
-        super::common::warn_once_about_ignored_cargo_manifest(&library_root);
+        crate::driver::project::warn_once_about_ignored_cargo_manifest(&library_root);
     }
     if !artifact_only {
         reject_normal_cargo_controls(&options.cargo_policy, options.generated_cargo_target_dir.as_ref())?;
@@ -14075,7 +14075,7 @@ pub fn run_file(
     release: bool,
 ) -> CliResult<ExitCode> {
     reject_normal_cargo_controls(&cargo_policy, None)?;
-    super::common::warn_once_about_ignored_cargo_manifest(&resolve_project_root(Path::new(file_path)));
+    crate::driver::project::warn_once_about_ignored_cargo_manifest(&resolve_project_root(Path::new(file_path)));
     let profile = if release { "release" } else { "debug" };
     let completed_output_policy = CompletedOutputPolicy {
         cargo_policy: &cargo_policy,
@@ -14221,6 +14221,7 @@ mod tests {
     use crate::frontend::library_exports::CheckedExportIdentity;
     use crate::frontend::parser;
     use crate::frontend::symbols::ResolvedType;
+    use crate::library_manifest::published_layout::oven_library_dependency_declares_package_loaf;
     use crate::lockfile::{
         CargoFeatureSelection, IncanLock, LockedOvenState, LockedProvider, LockedSdkComponent, LockedSdkState,
         SemanticLockState, compute_deps_fingerprint,
@@ -19354,7 +19355,7 @@ pub model Nested:
             "when feature(\"missing\"):\n    pub model Nested:\n        pub value: int\n",
         )?;
 
-        let session = super::super::common::CompilationSession::discover_with_feature_selection(
+        let session = crate::driver::session::CompilationSession::discover_with_feature_selection(
             &entry_path,
             &FeatureSelection::default(),
         )?;
@@ -20265,7 +20266,7 @@ pub model Nested:
             "def helper() -> int:\n    return 1\n\ndef main() -> int:\n    return helper()\n",
         )?;
 
-        let analysis_scope = super::super::common::scoped_compilation_session_analysis_invocations();
+        let analysis_scope = crate::driver::session::scoped_compilation_session_analysis_invocations();
         let report = build_replacement_file_report(
             &entrypoint.to_string_lossy(),
             replacement_build_options(),
