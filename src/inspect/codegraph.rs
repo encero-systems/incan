@@ -60,17 +60,16 @@ use crate::version::INCAN_VERSION;
 // `lsp/backend.rs` and `backend/project/cargo_toml.rs` reach the same place today. Cutting it means extracting
 // incan_driver out of an 8,691-line module with ten dependents (#1479), not editing this file. When that lands the
 // edge resolves with no further work here.
-use crate::cli::commands::common::{
-    CliDiagnosticFailure, CompilationAnalysis, CompilationSession, collect_modules_detailed_with_selections,
-    collect_modules_detailed_with_session, discover_effective_project_manifest, read_source, resolve_project_root,
-};
+use crate::driver::diagnostics::CliDiagnosticFailure;
+use crate::driver::modules::{collect_modules_detailed_with_selections, collect_modules_detailed_with_session};
+use crate::driver::project::{discover_effective_project_manifest, read_source, resolve_project_root};
+use crate::driver::session::{CompilationAnalysis, CompilationSession};
 
 /// A failure while producing codegraph records.
 ///
-/// Owned here rather than borrowed from the CLI. Returning `CliError` from analysis would make a compiler-side
-/// module depend on `crate::cli`, which is the "backend/oven/lsp -> cli" knot the workspace layout rewrite (#1478)
-/// lists as one of the four to cut before the crate split — and it would point the wrong way, since a command consumes
-/// analysis rather than the reverse. The CLI converts at its own boundary through the `From` implementation below.
+/// Owned here rather than borrowed from the driver: a command consumes analysis rather than the reverse, so
+/// analysis reports its own failure and the driver's error converts at its boundary through the `From`
+/// implementations below.
 #[derive(Debug, thiserror::Error)]
 #[error("{message}")]
 pub struct CodegraphError {
@@ -90,18 +89,18 @@ impl CodegraphError {
 /// The result type every producer in this module returns.
 pub type CodegraphResult<T> = Result<T, CodegraphError>;
 
-impl From<crate::cli::CliError> for CodegraphError {
+impl From<crate::driver::error::CliError> for CodegraphError {
     /// Absorb an error raised by the session and discovery code this module still calls into.
     ///
     /// Transitional, and in the direction that resolves itself: that code is `common.rs`, which the workspace
     /// layout rewrite (#1478) sends to `incan_driver`. When it moves, it stops raising a CLI error and this conversion
     /// goes with it.
-    fn from(error: crate::cli::CliError) -> Self {
+    fn from(error: crate::driver::error::CliError) -> Self {
         Self::failure(error.message)
     }
 }
 
-impl From<CodegraphError> for crate::cli::CliError {
+impl From<CodegraphError> for crate::driver::error::CliError {
     /// Convert at the command boundary, so a CLI command can report an analysis failure as its own.
     ///
     /// This is the direction that stays. A command consuming analysis and translating its errors is the normal

@@ -10,8 +10,10 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use super::common::{CompilationSession, collect_modules_detailed_with_session, read_source};
 use super::diagnostics::{DiagnosticOutputFormat, check_path};
+use crate::driver::modules::collect_modules_detailed_with_session;
+use crate::driver::project::read_source;
+use crate::driver::session::CompilationSession;
 
 /// Lex and display tokens.
 pub fn lex_file(file_path: &str) -> CliResult<ExitCode> {

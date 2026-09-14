@@ -17,13 +17,14 @@ use crate::lockfile::CargoFeatureSelection;
 use crate::provider::FeatureSelection;
 
 #[cfg(feature = "rust_inspect")]
-use super::common::CargoPolicy;
-use super::common::{
-    CliDiagnostic, CliDiagnosticFailure, CompilationSession, collect_modules_detailed_with_session,
-    resolve_project_root, typecheck_modules_with_import_graph_detailed_for_c_abi_target,
-};
-#[cfg(feature = "rust_inspect")]
 use super::lock::{RustInspectTypecheckRequest, prepare_rust_inspect_typecheck_workspace};
+#[cfg(feature = "rust_inspect")]
+use crate::driver::cargo_policy::CargoPolicy;
+use crate::driver::diagnostics::{CliDiagnostic, CliDiagnosticFailure};
+use crate::driver::modules::collect_modules_detailed_with_session;
+use crate::driver::project::resolve_project_root;
+use crate::driver::session::CompilationSession;
+use crate::driver::typecheck::typecheck_modules_with_import_graph_detailed_for_c_abi_target;
 
 /// Output format for stable diagnostics commands.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]

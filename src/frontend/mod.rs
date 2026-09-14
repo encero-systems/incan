@@ -11,6 +11,7 @@
 
 // Syntax components are provided by the shared incan_syntax crate.
 pub use incan_syntax::{ast, diagnostics, lexer, parser};
+pub use parsed_module::ParsedModule;
 
 // Compiler-specific pieces remain local.
 pub mod api_metadata;

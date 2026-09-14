@@ -9,8 +9,9 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::cli::commands::common::{CargoPolicy, CompilationSession};
 use crate::cli::{CliError, CliResult, ExitCode};
+use crate::driver::cargo_policy::CargoPolicy;
+use crate::driver::session::CompilationSession;
 
 mod discovery;
 mod execution;
@@ -281,8 +282,8 @@ fn enforce_test_path_toolchain_constraint(path: &Path) -> CliResult<()> {
     } else {
         path
     };
-    if let Some(manifest) = crate::cli::commands::common::discover_effective_project_manifest(start)? {
-        crate::cli::commands::common::enforce_project_toolchain_constraint(&manifest)?;
+    if let Some(manifest) = crate::driver::project::discover_effective_project_manifest(start)? {
+        crate::driver::cargo_policy::enforce_project_toolchain_constraint(&manifest)?;
     }
     Ok(())
 }
@@ -1340,9 +1341,7 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     let path = Path::new(path);
     enforce_test_path_toolchain_constraint(path)?;
     // `incan test` builds and runs under Oven authority like `build` and `run`, so RFC 117 rule 11 applies here too.
-    crate::cli::commands::common::warn_once_about_ignored_cargo_manifest(
-        &crate::cli::commands::common::resolve_project_root(path),
-    );
+    crate::driver::project::warn_once_about_ignored_cargo_manifest(&crate::driver::project::resolve_project_root(path));
     let stable_id_root = stable_id_root(path);
     let candidates = discover_test_file_candidates(path);
     if candidates.is_empty() {

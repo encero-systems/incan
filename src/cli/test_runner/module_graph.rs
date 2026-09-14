@@ -2,12 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::cli::commands::common::{
-    resolve_stdlib_module_source_path, topologically_sort_modules, uses_iterator_adapter_surface,
-    uses_result_combinator_surface,
-};
-use crate::cli::prelude::ParsedModule;
 use crate::compiled_sdk::CompiledSdkModules;
+use crate::driver::modules::{
+    topologically_sort_modules, uses_iterator_adapter_surface, uses_result_combinator_surface,
+};
+use crate::driver::project::resolve_stdlib_module_source_path;
+use crate::frontend::ParsedModule;
 use crate::frontend::ast::Program;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{

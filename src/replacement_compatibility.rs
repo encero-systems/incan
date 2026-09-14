@@ -2040,7 +2040,7 @@ fn collect_checked_registry_package(
 ) -> Result<crate::frontend::registry_metadata::CheckedRegistryMetadataPackage, RegistryValidationError> {
     #[cfg(feature = "cli")]
     {
-        crate::cli::commands::tools::collect_registry_metadata_package(source)
+        crate::driver::metadata_packages::collect_registry_metadata_package(source)
             .map_err(|error| RegistryValidationError::from_messages(vec![error.to_string()]))
     }
     #[cfg(not(feature = "cli"))]

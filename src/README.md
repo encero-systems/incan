@@ -93,5 +93,5 @@ src/
 
 - **Codegen**: `backend::ir::codegen::IrCodegen` — the single public entry point for all code generation.
 - **Type conversions**: `backend::ir::conversions` — centralized `&str`/`String`, borrow, and ownership conversions. Use `determine_conversion()`, never ad-hoc `.to_string()` insertions.
-- **CLI commands**: all go through `cli::commands::common::collect_modules()` for module loading and error display.
+- **CLI commands**: all go through the driver — `driver::modules::collect_modules()` for module loading, `driver::session::CompilationSession` for analysis — and render what it returns.
 - **LSP**: feature-gated — build with `cargo build --features lsp` or `make lsp`.

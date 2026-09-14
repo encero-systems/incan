@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use crate::provider::FeatureSelection;
 
-use crate::cli::commands::common::CargoPolicy;
+use crate::driver::cargo_policy::CargoPolicy;
 
 /// Output format for `incan test` results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
