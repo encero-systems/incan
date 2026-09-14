@@ -25,4 +25,15 @@ if grep -qiE '^[[:space:]]*(Claude|Codex|Copilot|Cursor|Devin)-Session:' "$1"; t
     exit 1
 fi
 
+# The identity a commit is recorded under is attribution too. A session whose git identity is a tool's name or a
+# vendor no-reply address produces commits that name the tool as their author, which no trailer check sees; refuse
+# them here, where git has already resolved the identity.
+for ident in "$(git var GIT_AUTHOR_IDENT)" "$(git var GIT_COMMITTER_IDENT)"; do
+    if printf '%s\n' "$ident" | grep -qiE '^(Claude|Anthropic|GPT|Copilot|Codex|Cursor|Devin)\b|@anthropic\.com>|@openai\.com>'; then
+        echo "commit-msg: refusing a tool git identity: $ident" >&2
+        echo "  Set user.name and user.email to the committer's own identity and commit again." >&2
+        exit 1
+    fi
+done
+
 exit 0
