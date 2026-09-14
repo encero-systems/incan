@@ -60,6 +60,7 @@ fn test_rust_inspect_workspace_generations(workspace_dir: &Path) -> u64 {
     counts.get(workspace_dir).copied().unwrap_or(0)
 }
 
+/// Trim, sort and dedupe the stdlib feature list so the workspace fingerprint does not change with spelling order.
 #[cfg(feature = "rust_inspect")]
 fn normalized_stdlib_features_for_rust_inspect_fingerprint(features: &[String]) -> Vec<String> {
     let mut normalized: Vec<String> = features
@@ -72,6 +73,9 @@ fn normalized_stdlib_features_for_rust_inspect_fingerprint(features: &[String]) 
     normalized
 }
 
+/// Fold one dependency spec into the workspace fingerprint — crate name, version, features, the default-features
+/// and optional flags, package rename, and source — with NUL separators and tagged absences so two specs cannot
+/// collide by concatenation.
 #[cfg(feature = "rust_inspect")]
 fn hash_dependency_spec_for_rust_inspect(hasher: &mut Sha256, spec: &DependencySpec) {
     use crate::manifest::GitReference;
@@ -725,6 +729,7 @@ pub(crate) fn collect_rust_inspect_query_paths(modules: &[ParsedModule]) -> Vec<
 pub(crate) fn collect_rust_inspect_query_paths_from_programs<'a>(
     programs: impl IntoIterator<Item = &'a Program>,
 ) -> Vec<String> {
+    /// Read a presence-and-truthiness flag (`1`, `true`, `on`) from the environment.
     fn env_flag_enabled(name: &str) -> bool {
         std::env::var_os(name).is_some_and(|value| {
             let value = value.to_string_lossy();

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::frontend::parsed_module::ParsedModule;
 use crate::frontend::{lexer, parser};
 use crate::library_manifest::LibraryManifest;
+/// Lex and parse one source string as a `main` module for tests that need a checked module without a file.
 pub(crate) fn parsed_module_for_test(source: &str) -> Result<ParsedModule, Box<dyn std::error::Error>> {
     let tokens = lexer::lex(source).map_err(|errs| format!("lex failed: {errs:?}"))?;
     let ast = parser::parse(&tokens).map_err(|errs| format!("parse failed: {errs:?}"))?;
@@ -17,6 +18,8 @@ pub(crate) fn parsed_module_for_test(source: &str) -> Result<ParsedModule, Box<d
     })
 }
 
+/// Write the smallest published library artifact a dependency index accepts: a Cargo package, an empty `lib.rs`,
+/// and the given manifest under `deps/<key>/target/lib`.
 pub(crate) fn write_minimal_library_artifact(
     root: &Path,
     dependency_key: &str,
