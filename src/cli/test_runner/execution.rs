@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::backend::{IrCodegen, ProjectGenerator};
-use crate::cli::commands;
 use crate::compiled_sdk::CompiledSdkModules;
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::resolve_reachable_dependencies;
@@ -83,11 +82,11 @@ pub(super) fn prepare_oven_test_command_context(
             .map(|manifest| manifest.project_root().to_path_buf())
             .unwrap_or_else(|| infer_test_project_root_without_manifest(representative_test)),
     );
-    let store = commands::oven::open_default_oven_store()?;
+    let store = crate::driver::oven_store::open_default_oven_store()?;
     let has_conventional_target =
         project_root.join("src/lib.incn").is_file() || project_root.join("src/main.incn").is_file();
     let project_source_authorities = if session.manifest.is_some() && has_conventional_target {
-        crate::cli::commands::build::load_current_project_registry_source_authorities(&store, &project_root)?
+        crate::driver::build::output_selection::load_current_project_registry_source_authorities(&store, &project_root)?
             .map(prepare_project_registry_source_authorities)
             .transpose()?
     } else {
@@ -2332,7 +2331,7 @@ fn run_file_tests_batch_oven(
     // The immutable native plan remains responsible only for compiler-owned SDK/runtime inputs; no missing or stale
     // library authorizes a Cargo path.
     let mut caller_owned_libraries =
-        match crate::cli::commands::build::oven_caller_owned_libraries(&provider_plan, "debug") {
+        match crate::driver::build::caller_owned::oven_caller_owned_libraries(&provider_plan, "debug") {
             Ok(libraries) => libraries,
             Err(error) => return failure(error.message),
         };
@@ -2375,7 +2374,7 @@ fn run_file_tests_batch_oven(
             Ok(inputs) => inputs,
             Err(error) => return failure(error.message),
         };
-    if let Err(error) = crate::cli::commands::build::append_oven_interop_execution_build_inputs(
+    if let Err(error) = crate::driver::build::caller_owned::append_oven_interop_execution_build_inputs(
         &mut build_unit_inputs,
         manifest.as_ref(),
         &rustc_target,
@@ -2643,7 +2642,7 @@ fn run_file_tests_batch_oven(
         None => None,
     };
     let owned_plan_selection = if shared_plan_selection.is_none() {
-        match crate::cli::commands::build::select_oven_direct_rustc_plan(
+        match crate::driver::build::oven_project::select_oven_direct_rustc_plan(
             &command_context.store,
             &receipt,
             &inline_path_dependencies,
@@ -2679,19 +2678,21 @@ fn run_file_tests_batch_oven(
         Err(error) => return failure(error.to_string()),
     };
     let inline_libraries_to_materialize =
-        crate::cli::commands::build::declared_rust_libraries_missing_from_selected_plan(
+        crate::driver::build::plan_authority::declared_rust_libraries_missing_from_selected_plan(
             &inline_path_dependencies,
             &artifact_plan,
         );
 
     let registry_authority = plan_selection.registry_leaf_authority();
-    let selected_path_authority =
-        crate::cli::commands::build::compiler_selected_path_authority(full_artifact_plan, Some(&provider_plan));
+    let selected_path_authority = crate::driver::build::plan_authority::compiler_selected_path_authority(
+        full_artifact_plan,
+        Some(&provider_plan),
+    );
 
-    if crate::cli::commands::build::has_caller_owned_project_libraries(&provider_plan)
+    if crate::driver::build::caller_owned::has_caller_owned_project_libraries(&provider_plan)
         && !plan_selection.uses_packaged_provider_closure()
     {
-        let re_materialized = match crate::cli::commands::build::rematerialize_caller_owned_libraries(
+        let re_materialized = match crate::driver::build::plan_authority::rematerialize_caller_owned_libraries(
             &provider_plan,
             "debug",
             plan_selection.artifacts(),
@@ -2704,7 +2705,7 @@ fn run_file_tests_batch_oven(
             Ok(libraries) => libraries,
             Err(error) => return failure(error.message),
         };
-        if let Err(error) = crate::cli::commands::build::replace_caller_owned_package_libraries(
+        if let Err(error) = crate::driver::build::plan_authority::replace_caller_owned_package_libraries(
             &mut caller_owned_libraries,
             re_materialized,
         ) {

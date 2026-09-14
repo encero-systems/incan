@@ -1449,8 +1449,9 @@ fn display_option_path(path: &Option<PathBuf>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::commands::build::{BuildCommandOptions, build_library};
-    use crate::cli::commands::build_report::BuildReportOptions;
+    use crate::cli::commands::build::build_library;
+    use crate::driver::build::BuildCommandOptions;
+    use crate::driver::build_report::BuildReportOptions;
     use crate::frontend::api_metadata::ApiDeclaration;
     use crate::frontend::api_metadata::{CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiPackageIdentity};
     use crate::lockfile::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint};

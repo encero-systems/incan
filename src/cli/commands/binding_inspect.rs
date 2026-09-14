@@ -12,8 +12,8 @@ use clap::ValueEnum;
 use incan_core::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
 use serde::Serialize;
 
-use crate::cli::commands::interop_plan::locked_interop_plan_target;
 use crate::cli::{CliError, CliResult, ExitCode};
+use crate::driver::interop_plan::locked_interop_plan_target;
 use crate::frontend::ParsedModule;
 use crate::frontend::ast::{Span, Visibility};
 use crate::frontend::typechecker::{

@@ -6,6 +6,8 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+pub use crate::driver::oven_store::OvenStoreCommandOptions;
+
 use serde::Serialize;
 
 use crate::cli::{OvenInteropAdapterArgument, OvenLoafEnvelopeArgument, OvenOutputFormat};
@@ -30,29 +32,6 @@ pub struct OvenImportCommandOptions {
     pub output: Option<PathBuf>,
     /// Requested rendering format.
     pub format: OvenOutputFormat,
-}
-
-/// Shared bounded-store location and policy inputs for Oven Alpha commands.
-#[derive(Debug, Clone)]
-pub struct OvenStoreCommandOptions {
-    /// Optional explicit store root; the versioned `INCAN_HOME`/home default is used otherwise.
-    pub root: Option<PathBuf>,
-    /// Optional aggregate physical allocation cap in bytes.
-    pub max_physical_bytes: Option<u64>,
-    /// Optional per-domain physical allocation cap in bytes.
-    pub max_domain_physical_bytes: Option<u64>,
-    /// Optional per-domain logical artifact-byte cap in bytes.
-    pub max_domain_logical_bytes: Option<u64>,
-}
-
-impl OvenStoreCommandOptions {
-    /// Whether a command will resolve the ordinary compiler-owned Oven store without caller-specific policy.
-    pub(super) fn is_ordinary_default(&self) -> bool {
-        self.root.is_none()
-            && self.max_physical_bytes.is_none()
-            && self.max_domain_physical_bytes.is_none()
-            && self.max_domain_logical_bytes.is_none()
-    }
 }
 
 /// Inputs for `incan inspect oven` receipt and build-unit inspection.
