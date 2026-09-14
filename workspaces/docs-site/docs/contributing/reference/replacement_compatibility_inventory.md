@@ -20,8 +20,8 @@ The `v0.5.0` source is a frozen migration baseline, not the beginning of a versi
 
 | Contributor | Lifecycle | Features | Private requirements | Location | Retirement condition |
 |---|---|---|---|---|---|
-| `backend.replacement.bounded-scalar-control` | LocalImplementation | 4 | 3 | `src/backend/replacement/mod.rs::fn replacement_compatibility_direct_execution_contribution` | - |
-| `frontend.body-ir.callable-values` | LocalImplementation | 2 | 2 | `src/frontend/body_ir.rs::fn replacement_compatibility_body_ir_contribution` | - |
+| `backend.replacement.bounded-scalar-control` | LocalImplementation | 4 | 3 | `src/replacement_compatibility.rs::fn replacement_compatibility_direct_execution_contribution` | - |
+| `frontend.body-ir.callable-values` | LocalImplementation | 2 | 2 | `src/replacement_compatibility.rs::fn replacement_compatibility_body_ir_contribution` | - |
 | `replacement-compatibility.migration-bootstrap` | MigrationBootstrap | 21 | 16 | `src/replacement_compatibility.rs::fn migration_bootstrap_compatibility_contribution` | Retire this contributor when every remaining feature and requirement has moved to the module that implements its coherent mechanism; then retain the v0.5 source only as an explicitly historical regression fixture if a later migration needs it. |
 
 ## Compatibility features

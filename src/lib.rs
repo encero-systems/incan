@@ -40,7 +40,7 @@ pub mod replacement_compatibility;
 pub mod rust_inspect;
 pub(crate) mod semantics_registry;
 pub(crate) mod toolchain_layout;
-pub mod version;
+pub use incan_core::version;
 pub mod workspace;
 
 pub use frontend::ast;

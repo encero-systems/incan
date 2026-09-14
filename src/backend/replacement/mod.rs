@@ -23,6 +23,8 @@
 //! this module supplies it with evaluated operands and refuses an unresolved, inactive, or unauthorized operation
 //! at the original source span.
 
+#[cfg(test)]
+mod executable_resolution_tests;
 mod execution_preflight;
 pub mod hashed;
 mod list_iteration;
@@ -7665,110 +7667,6 @@ fn aggregate_label(kind: &incan_semantics_core::body_ir::AggregateKind) -> &'sta
         incan_semantics_core::body_ir::AggregateKind::Range => "range",
         incan_semantics_core::body_ir::AggregateKind::Constructor(_) => "constructor",
     }
-}
-
-/// Register the bounded scalar/control profile beside the replacement executor that implements it.
-///
-/// The compatibility collector reports this contribution but does not own its feature definitions. In particular,
-/// successful direct execution remains non-green until each admitted source contract has paired comparison evidence;
-/// every individual corpus match stays case-scoped.
-pub(crate) fn replacement_compatibility_direct_execution_contribution()
--> crate::replacement_compatibility::ReplacementCompatibilityContribution {
-    use crate::replacement_compatibility::{
-        ComparisonEvidence, OutstandingComparisonEvidence, feature_requirement_link, implementation_requirement,
-        local_implementation_contribution, partially_materialized_feature_at_boundary, preserved_feature_at_boundary,
-    };
-
-    let mut async_tasks = preserved_feature_at_boundary(
-        "async.tasks",
-        "One exact source-local `std.async` activation executes same-module async calls, direct await, and source-order ready-tie races through receipt-bound task frames.",
-        "src/frontend/typechecker/check_expr/control_flow.rs",
-        "fn check_await",
-        "fn lower_race_for",
-        "fn execute_race",
-    );
-    async_tasks.owner_issue = Some(988);
-    async_tasks.migration_or_blocker = Some(
-        "Closed #1155 delivered the bounded source-local task profile; open #988 owns its remaining paired source-observable comparison evidence."
-            .to_string(),
-    );
-    if let ComparisonEvidence::Unavailable {
-        outstanding_evidence, ..
-    } = &mut async_tasks.evidence.surfaces.independent_comparison
-    {
-        *outstanding_evidence = OutstandingComparisonEvidence::Scheduled {
-            owner_issue: 988,
-            note: "Closed #1155 delivered direct task execution; open #988 owns exact paired source-observable evidence through #1146's completed route, so the broader async feature remains non-green."
-                .to_string(),
-        };
-    }
-
-    local_implementation_contribution(
-        "backend.replacement.bounded-scalar-control",
-        "src/backend/replacement/mod.rs",
-        "fn replacement_compatibility_direct_execution_contribution",
-        vec![
-            preserved_feature_at_boundary(
-                "language.control-flow",
-                "Bounded scalar conditionals, loops, returns, assertions, and range iteration execute directly with explicit receipts.",
-                "src/frontend/typechecker/check_expr/control_flow.rs",
-                "fn check_if_expr",
-                "fn lower_if",
-                "fn execute_loop",
-            ),
-            preserved_feature_at_boundary(
-                "language.numeric-and-scalar",
-                "Bounded scalar arithmetic, comparisons, boolean operators, strings, and int/bool/str/None JSON stringification execute directly from Body IR.",
-                "src/frontend/typechecker/check_expr/ops.rs",
-                "fn check_binary",
-                "fn lower_binary",
-                "fn evaluate_binary",
-            ),
-            partially_materialized_feature_at_boundary(
-                "language.numeric-complete",
-                "Exact signed and unsigned widths, finite f32/f64, and decimal values retain their checked carrier through literals, constants, locals, lossless widening, source-local calls, entry arguments and results, Display output, receipts, reports, and bounded source-observable comparison. Public direct and shadow exact-float carriers reject NaN and infinities; ordinary float parsing remains separately compared. Arithmetic, unary operations, resize methods, Debug formatting, aggregates, matching, and decimal scalar casts remain explicit pre-effect refusals owned by #988.",
-                988,
-                "#1279 materializes the typed carrier and bounded movement/output contract. #988 owns the explicitly refused numeric operations, overflow behavior, aggregate integration, Debug formatting, resize methods, and decimal scalar conversions required before the wider feature can become green.",
-                "src/frontend/typechecker/check_stmt.rs",
-                "fn check_assignment",
-                "src/frontend/body_ir/primitives.rs",
-                "fn lower_checked_literal",
-                "fn validate_reachable_typed_numeric_profile",
-            ),
-            async_tasks,
-        ],
-        vec![
-            implementation_requirement(
-                "control.normalized-flow",
-                "Branches, loops, returns, assertions, and breaks execute from normalized Body IR.",
-                "Body IR lowering and replacement evaluator",
-                "replacement-body-v0 corpus",
-                "Normalized control nodes are implementation vocabulary.",
-            ),
-            implementation_requirement(
-                "runtime.scalar-values",
-                "Scalars, strings, operators, conversions, and scalar JSON stringification preserve checked type, exact bytes, and failure behavior.",
-                "Body IR operands/rvalues and replacement evaluator",
-                "replacement-body-v0 scalar corpus, including replacement-body-v0-025",
-                "Scalar representation is an internal evaluator mechanism.",
-            ),
-            implementation_requirement(
-                "async.runtime",
-                "Source-local direct tasks preserve construction, polling, source-order race ties, cancellation, and receipt-bound lifecycle evidence.",
-                "source-local Body IR plus replacement task runtime",
-                "replacement-body-v0-018 and replacement-body-v0-019 corpus probes",
-                "Task frames are private direct-execution machinery, not a general scheduler claim.",
-            ),
-        ],
-        Vec::new(),
-        vec![
-            feature_requirement_link("language.control-flow", "control.normalized-flow"),
-            feature_requirement_link("language.numeric-and-scalar", "runtime.scalar-values"),
-            feature_requirement_link("language.numeric-complete", "runtime.scalar-values"),
-            feature_requirement_link("async.tasks", "async.runtime"),
-            feature_requirement_link("async.tasks", "receipts.comparison"),
-        ],
-    )
 }
 
 /// Render a unary operator as a compact source-level diagnostic label.

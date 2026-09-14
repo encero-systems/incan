@@ -839,14 +839,14 @@ fn frozen_v0_5_capabilities_snapshot_path() -> PathBuf {
 
 /// Return the collected compatibility registry for the full v0.5 public capability baseline.
 ///
-/// The first two contributors are durable registrations beside Body IR and the bounded direct executor. The final
+/// The first two contributors are the durable registrations for Body IR and the bounded direct executor. The final
 /// contributor is intentionally temporary migration scaffolding for contracts whose implementation boundary has not
 /// landed yet, including the audited released-capability crosswalk. The collector records that distinction instead of
 /// letting its bootstrap map masquerade as the permanent home for all features.
 pub fn replacement_compatibility_registry() -> ReplacementCompatibilityRegistry {
     collect_replacement_compatibility_contributions(vec![
-        crate::frontend::body_ir::replacement_compatibility_body_ir_contribution(),
-        crate::backend::replacement::replacement_compatibility_direct_execution_contribution(),
+        replacement_compatibility_body_ir_contribution(),
+        replacement_compatibility_direct_execution_contribution(),
         migration_bootstrap_compatibility_contribution(),
     ])
 }
@@ -2496,6 +2496,165 @@ fn migration_bootstrap_compatibility_features() -> Vec<CompatibilityFeature> {
             "Public ABI and interop parity is an explicit replacement-boundary slice, not a direct scalar-executor extension.",
         ),
     ]
+}
+
+/// Register the callable-value contracts and private mechanisms owned by Body IR lowering.
+///
+/// The registration lives beside the collector rather than beside `BodyBuilder::lower_closure` and
+/// `BodyBuilder::lower_partial` because Body IR sits in the frontend, below this registry; the anchors below still
+/// name the owning modules. The replacement executor still refuses local callable targets; that fact stays explicit
+/// in the collected evidence and does not make either feature execution-complete.
+fn replacement_compatibility_body_ir_contribution() -> ReplacementCompatibilityContribution {
+    local_implementation_contribution(
+        "frontend.body-ir.callable-values",
+        "src/replacement_compatibility.rs",
+        "fn replacement_compatibility_body_ir_contribution",
+        vec![
+            planned_feature_at_boundary(
+                "call.partial-binding",
+                "Partial presets capture at construction, remain overrideable defaults, and preserve named/positional binding rules.",
+                988,
+                "Body IR and closed #1152 carry the source and callable-runtime substrate; open #988 owns the direct local callable forms that remain visibly refused.",
+                "src/frontend/typechecker/check_expr/calls.rs",
+                "fn check_call",
+                "fn lower_call",
+                "fn execute_call",
+            ),
+            planned_feature_at_boundary(
+                "call.stored-callables",
+                "Stored closures and partials retain lexical capture timing, ownership, and isolated local call frames.",
+                988,
+                "Closed #1152 delivered the coherent callable-frame substrate; open #988 owns broadening the local callable targets that direct execution still refuses.",
+                "src/frontend/typechecker/check_expr/calls.rs",
+                "fn check_call",
+                "fn lower_call",
+                "fn execute_call",
+            ),
+        ],
+        vec![
+            implementation_requirement(
+                "call.argument-binder",
+                "Parameter binding preserves positional, named, default, preset, variadic, and diagnostic rules.",
+                "typechecker partial projection and replacement call runtime",
+                "partial/default typechecker and Body-IR tests",
+                "Binding slots are shared call machinery, not a user feature.",
+            ),
+            implementation_requirement(
+                "captures.lexical-environments",
+                "Closure and partial capture reads occur at construction time with explicit ownership.",
+                "Body IR closure lowering and replacement runtime",
+                "closure/partial capture timing regressions",
+                "Lexical environments are private runtime state.",
+            ),
+        ],
+        Vec::new(),
+        vec![
+            feature_requirement_link("call.partial-binding", "call.argument-binder"),
+            feature_requirement_link("call.partial-binding", "captures.lexical-environments"),
+            feature_requirement_link("call.stored-callables", "call.frames"),
+            feature_requirement_link("call.stored-callables", "captures.lexical-environments"),
+        ],
+    )
+}
+
+/// Register the bounded scalar/control profile of the replacement executor.
+///
+/// The registration lives beside the collector rather than beside the executor because the executor sits in the
+/// backend, below this registry; the anchors below still name the owning modules. The collector reports this
+/// contribution but does not own its feature definitions. In particular, successful direct execution remains
+/// non-green until each admitted source contract has paired comparison evidence; every individual corpus match stays
+/// case-scoped.
+fn replacement_compatibility_direct_execution_contribution() -> ReplacementCompatibilityContribution {
+    let mut async_tasks = preserved_feature_at_boundary(
+        "async.tasks",
+        "One exact source-local `std.async` activation executes same-module async calls, direct await, and source-order ready-tie races through receipt-bound task frames.",
+        "src/frontend/typechecker/check_expr/control_flow.rs",
+        "fn check_await",
+        "fn lower_race_for",
+        "fn execute_race",
+    );
+    async_tasks.owner_issue = Some(988);
+    async_tasks.migration_or_blocker = Some(
+        "Closed #1155 delivered the bounded source-local task profile; open #988 owns its remaining paired source-observable comparison evidence."
+            .to_string(),
+    );
+    if let ComparisonEvidence::Unavailable {
+        outstanding_evidence, ..
+    } = &mut async_tasks.evidence.surfaces.independent_comparison
+    {
+        *outstanding_evidence = OutstandingComparisonEvidence::Scheduled {
+            owner_issue: 988,
+            note: "Closed #1155 delivered direct task execution; open #988 owns exact paired source-observable evidence through #1146's completed route, so the broader async feature remains non-green."
+                .to_string(),
+        };
+    }
+
+    local_implementation_contribution(
+        "backend.replacement.bounded-scalar-control",
+        "src/replacement_compatibility.rs",
+        "fn replacement_compatibility_direct_execution_contribution",
+        vec![
+            preserved_feature_at_boundary(
+                "language.control-flow",
+                "Bounded scalar conditionals, loops, returns, assertions, and range iteration execute directly with explicit receipts.",
+                "src/frontend/typechecker/check_expr/control_flow.rs",
+                "fn check_if_expr",
+                "fn lower_if",
+                "fn execute_loop",
+            ),
+            preserved_feature_at_boundary(
+                "language.numeric-and-scalar",
+                "Bounded scalar arithmetic, comparisons, boolean operators, strings, and int/bool/str/None JSON stringification execute directly from Body IR.",
+                "src/frontend/typechecker/check_expr/ops.rs",
+                "fn check_binary",
+                "fn lower_binary",
+                "fn evaluate_binary",
+            ),
+            partially_materialized_feature_at_boundary(
+                "language.numeric-complete",
+                "Exact signed and unsigned widths, finite f32/f64, and decimal values retain their checked carrier through literals, constants, locals, lossless widening, source-local calls, entry arguments and results, Display output, receipts, reports, and bounded source-observable comparison. Public direct and shadow exact-float carriers reject NaN and infinities; ordinary float parsing remains separately compared. Arithmetic, unary operations, resize methods, Debug formatting, aggregates, matching, and decimal scalar casts remain explicit pre-effect refusals owned by #988.",
+                988,
+                "#1279 materializes the typed carrier and bounded movement/output contract. #988 owns the explicitly refused numeric operations, overflow behavior, aggregate integration, Debug formatting, resize methods, and decimal scalar conversions required before the wider feature can become green.",
+                "src/frontend/typechecker/check_stmt.rs",
+                "fn check_assignment",
+                "src/frontend/body_ir/primitives.rs",
+                "fn lower_checked_literal",
+                "fn validate_reachable_typed_numeric_profile",
+            ),
+            async_tasks,
+        ],
+        vec![
+            implementation_requirement(
+                "control.normalized-flow",
+                "Branches, loops, returns, assertions, and breaks execute from normalized Body IR.",
+                "Body IR lowering and replacement evaluator",
+                "replacement-body-v0 corpus",
+                "Normalized control nodes are implementation vocabulary.",
+            ),
+            implementation_requirement(
+                "runtime.scalar-values",
+                "Scalars, strings, operators, conversions, and scalar JSON stringification preserve checked type, exact bytes, and failure behavior.",
+                "Body IR operands/rvalues and replacement evaluator",
+                "replacement-body-v0 scalar corpus, including replacement-body-v0-025",
+                "Scalar representation is an internal evaluator mechanism.",
+            ),
+            implementation_requirement(
+                "async.runtime",
+                "Source-local direct tasks preserve construction, polling, source-order race ties, cancellation, and receipt-bound lifecycle evidence.",
+                "source-local Body IR plus replacement task runtime",
+                "replacement-body-v0-018 and replacement-body-v0-019 corpus probes",
+                "Task frames are private direct-execution machinery, not a general scheduler claim.",
+            ),
+        ],
+        Vec::new(),
+        vec![
+            feature_requirement_link("language.control-flow", "control.normalized-flow"),
+            feature_requirement_link("language.numeric-and-scalar", "runtime.scalar-values"),
+            feature_requirement_link("language.numeric-complete", "runtime.scalar-values"),
+            feature_requirement_link("async.tasks", "async.runtime"),
+            feature_requirement_link("async.tasks", "receipts.comparison"),
+        ],
+    )
 }
 
 /// Return the temporary crosswalk records that await migration into an owning compiler boundary.

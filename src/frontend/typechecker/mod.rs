@@ -75,7 +75,7 @@ mod canonical_identity_tests;
 #[cfg(test)]
 mod identity_surface_tests;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};

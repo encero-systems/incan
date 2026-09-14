@@ -27,6 +27,8 @@ pub mod prelude;
 pub(crate) mod reference_shape;
 mod visit;
 
+#[cfg(test)]
+mod checked_program;
 pub mod codegen;
 pub mod decl;
 pub mod emit;
