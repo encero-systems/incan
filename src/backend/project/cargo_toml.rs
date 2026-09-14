@@ -529,8 +529,8 @@ mod tests {
             .get("dependencies")
             .and_then(toml::Value::as_table)
             .ok_or("generated Cargo.toml missing dependencies")?;
-        let semantic = crate::cli::commands::common::semantic_sdk_path_dependencies(
-            &crate::cli::commands::common::ProjectRequirements::default(),
+        let semantic = crate::provider::requirements::semantic_sdk_path_dependencies(
+            &crate::provider::requirements::ProjectRequirements::default(),
         );
 
         for crate_name in ["incan_stdlib", "incan_derive"] {
