@@ -54,7 +54,6 @@
     {
       "path": "src/cli/commands/lock.rs",
       "reaches": [
-        "crate::backend::project",
         "crate::frontend::ast",
         "crate::frontend::library_manifest_index"
       ]

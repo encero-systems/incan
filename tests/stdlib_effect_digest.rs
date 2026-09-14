@@ -5,7 +5,7 @@
 //! replacement has to get right — it must move for a change the compiler would emit differently, and hold still
 //! for one it would not — and record what it costs against the real standard library.
 
-use incan::inspect::effect_digest::{
+use incan::provider::effect_digest::{
     ComponentSources, compiler_effect_digest, component_effect_digests, module_effect_digest, stdlib_effect_digest,
 };
 use std::collections::BTreeMap;

@@ -25,7 +25,7 @@ use sha2::{Digest as _, Sha256};
 use toml_edit::{DocumentMut, Item, value};
 
 const MOD_INSERT_MARKER: &str = "// __INCAN_INSERT_MODS__";
-pub(crate) const GENERATED_CARGO_TARGET_DIR_ENV: &str = "INCAN_GENERATED_CARGO_TARGET_DIR";
+pub(crate) use crate::toolchain_layout::GENERATED_CARGO_TARGET_DIR_ENV;
 
 /// Hash Cargo configuration files visible from one project without making their absolute roots part of the identity.
 pub(crate) fn cargo_config_identity(start: &Path) -> String {

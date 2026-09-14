@@ -1,4 +1,6 @@
-//! Fixtures shared by the driver and provider test modules that the split of `commands/common.rs` distributed.
+//! Fixtures shared by the provider and driver test modules that the split of `commands/common.rs` distributed.
+//!
+//! Below the driver so the provider's own tests can use them without naming the layer above.
 
 use std::path::{Path, PathBuf};
 

@@ -24,7 +24,7 @@
 
 use crate::frontend::ast::{
     AssertKind, CallArg, ComprehensionClause, Condition, Declaration, DecoratorArg, DecoratorArgValue, DictEntry, Expr,
-    ListEntry, MatchBody, Program, Spanned, Statement,
+    ImportKind, ListEntry, MatchBody, Program, Spanned, Statement,
 };
 
 /// Returns `true` if any expression in `program` satisfies `pred`.
@@ -410,4 +410,26 @@ where
         | CallArg::PositionalUnpack(expr)
         | CallArg::KeywordUnpack(expr) => expr_has(&expr.node, pred),
     }
+}
+
+/// Check if the program imports from `std.<module>` (or any submodule).
+///
+/// This is the import-driven feature activation mechanism prescribed by RFC 022: when the compiler resolves an
+/// import from a `std.*` module, it activates the corresponding feature.
+pub(crate) fn has_stdlib_import(program: &Program, module: &str) -> bool {
+    use incan_core::lang::stdlib::STDLIB_ROOT;
+    program.declarations.iter().any(|decl| {
+        let Declaration::Import(import) = &decl.node else {
+            return false;
+        };
+        match &import.kind {
+            ImportKind::Module(path) => {
+                path.segments.len() >= 2 && path.segments[0] == STDLIB_ROOT && path.segments[1] == module
+            }
+            ImportKind::From { module: m, .. } => {
+                m.segments.len() >= 2 && m.segments[0] == STDLIB_ROOT && m.segments[1] == module
+            }
+            _ => false,
+        }
+    })
 }

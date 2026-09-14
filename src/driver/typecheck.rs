@@ -285,8 +285,8 @@ fn resolve_package_owned_c_binding_header(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::driver::test_support::parsed_module_for_test;
     use crate::frontend::ast::Span;
+    use crate::provider::test_support::parsed_module_for_test;
     use incan_core::lang::c_abi::LinkCapabilityId;
 
     #[test]
