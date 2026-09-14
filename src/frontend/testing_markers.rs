@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 use crate::frontend::api_metadata::{ApiDeclaration, DecoratorArgMetadata, DecoratorValue, SafeMetadataValue};
 use crate::frontend::ast;
 use crate::frontend::decorator_resolution;
-use crate::library_manifest::LibraryManifest;
+use crate::frontend::library_manifest::LibraryManifest;
 use incan_core::lang::stdlib;
 
 const RUST_EXTERN_NAMESPACE: &str = "rust";

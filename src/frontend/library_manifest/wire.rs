@@ -14,7 +14,7 @@ use super::{
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(super) struct RawLibraryManifest {
+pub(crate) struct RawLibraryManifest {
     pub(super) name: String,
     pub(super) version: String,
     pub(super) incan_version: String,
@@ -100,7 +100,7 @@ pub(super) struct RawVocabExports {
 
 impl RawLibraryManifest {
     /// Convert the compiler-facing manifest model into the serialized manifest transport shape.
-    pub(super) fn from_semantic(semantic: &LibraryManifest) -> Self {
+    pub(crate) fn from_semantic(semantic: &LibraryManifest) -> Self {
         Self {
             name: semantic.name.clone(),
             version: semantic.version.clone(),

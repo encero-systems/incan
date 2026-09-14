@@ -15,13 +15,7 @@ use crate::frontend::library_exports::{
     CheckedAliasExport, CheckedExportIdentity, CheckedExportKind, CheckedNamedExport, CheckedPartialTargetKind,
     CheckedPresetValue, collect_checked_public_exports,
 };
-use crate::frontend::library_manifest_index::{
-    LibraryArtifactMetadata, LibraryManifestFailureKind, LibraryManifestIndex, LibraryManifestIndexEntry,
-    LibraryManifestLoadFailure,
-};
-use crate::frontend::testing_markers::TestingFixtureScope;
-use crate::frontend::{lexer, parser};
-use crate::library_manifest::{
+use crate::frontend::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport,
     ExportIdentity, ExportIdentityKind, ExportIdentityProjection, FieldExport, FieldVisibilityExport, FunctionExport,
     LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LibraryContractMetadata, LibraryExports, LibraryIdentityGraph,
@@ -30,6 +24,12 @@ use crate::library_manifest::{
     PartialPresetExport, PartialTargetKindExport, PresetValueExport, ReceiverExport, StaticExport, TraitExport,
     TypeAliasExport, TypeBoundExport, TypeParamExport, TypeRef,
 };
+use crate::frontend::library_manifest_index::{
+    LibraryArtifactMetadata, LibraryManifestFailureKind, LibraryManifestIndex, LibraryManifestIndexEntry,
+    LibraryManifestLoadFailure,
+};
+use crate::frontend::testing_markers::TestingFixtureScope;
+use crate::frontend::{lexer, parser};
 use crate::provider::{
     NamespaceAuthority, ProviderIdentity, ProviderPlan, ProviderPlanError, ProviderProvenance, ProviderRecord,
 };
@@ -2840,7 +2840,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
         name: "mylib".to_string(),
         version: "0.1.0".to_string(),
         incan_version: crate::version::INCAN_VERSION.to_string(),
-        manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
+        manifest_format: crate::frontend::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: Vec::new(),
             partials: vec![PartialExport {
@@ -3266,7 +3266,7 @@ fn library_index_with_callable_alias_export() -> LibraryManifestIndex {
         name: "mylib".to_string(),
         version: "0.1.0".to_string(),
         incan_version: crate::version::INCAN_VERSION.to_string(),
-        manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
+        manifest_format: crate::frontend::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: vec![AliasExport {
                 name: "public_target".to_string(),
@@ -3370,7 +3370,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
         name: "mylib".to_string(),
         version: "0.1.0".to_string(),
         incan_version: crate::version::INCAN_VERSION.to_string(),
-        manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
+        manifest_format: crate::frontend::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: vec![AliasExport {
                 name: "safe_cast".to_string(),
@@ -3439,7 +3439,7 @@ fn library_index_with_trait_export() -> LibraryManifestIndex {
         name: "mylib".to_string(),
         version: "0.1.0".to_string(),
         incan_version: crate::version::INCAN_VERSION.to_string(),
-        manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
+        manifest_format: crate::frontend::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: Vec::new(),
             partials: Vec::new(),
@@ -3507,7 +3507,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
         name: "mylib".to_string(),
         version: "0.1.0".to_string(),
         incan_version: crate::version::INCAN_VERSION.to_string(),
-        manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
+        manifest_format: crate::frontend::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: Vec::new(),
             partials: Vec::new(),
@@ -3652,7 +3652,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
         name: "pubdemo".to_string(),
         version: "0.1.0".to_string(),
         incan_version: crate::version::INCAN_VERSION.to_string(),
-        manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
+        manifest_format: crate::frontend::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: Vec::new(),
             partials: Vec::new(),

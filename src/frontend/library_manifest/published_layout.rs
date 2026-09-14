@@ -238,7 +238,7 @@ fn add_public_fields(fields: &[FieldExport], identities: &mut BTreeSet<Canonical
 #[cfg(test)]
 mod tests {
     use super::executable_surface_path;
-    use crate::library_manifest::{ExecutableRepresentationExport, LibraryManifest};
+    use crate::frontend::library_manifest::{ExecutableRepresentationExport, LibraryManifest};
     use std::path::Path;
 
     /// Linking-only packages never invent a semantic artifact path.
