@@ -491,7 +491,7 @@ fn resolve_companion_crate_root(project_root: &Path, declared_crate_path: &str) 
     }
 }
 
-/// Refuse a companion crate root that does not exist or is not a directory with a Cargo manifest.
+/// Refuse a `[vocab].crate` root that is missing, is not a directory, or lacks `Cargo.toml` or `src/lib.rs`.
 fn validate_companion_crate_root(crate_root: &Path) -> ProviderResult<()> {
     if !crate_root.exists() {
         return Err(ProviderError::failure(format!(
