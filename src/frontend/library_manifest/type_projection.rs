@@ -283,7 +283,7 @@ pub(crate) fn contains_native_union(value: &(impl VisitTypeRefs + Clone)) -> boo
     let mut found = false;
     value
         .clone()
-        .visit_type_refs(&mut |ty| found |= matches!(ty, crate::library_manifest::TypeRef::NativeUnion(_)));
+        .visit_type_refs(&mut |ty| found |= matches!(ty, crate::frontend::library_manifest::TypeRef::NativeUnion(_)));
     found
 }
 
@@ -295,7 +295,7 @@ pub(crate) fn contains_native_union(value: &(impl VisitTypeRefs + Clone)) -> boo
 /// not, so prefixing those would name a type that does not exist. Both owner-resolution strategies — the admitted
 /// provider graph, and a provider that owns its own unions — end here rather than each keeping a copy.
 fn attach_owner_projection(
-    bound: &mut crate::library_manifest::NativeUnionExport,
+    bound: &mut crate::frontend::library_manifest::NativeUnionExport,
     dependency_root: &str,
     rust_owner: String,
     mut members: Vec<TypeRef>,
@@ -342,7 +342,7 @@ fn attach_owner_projection(
 /// unchanged. A `SelectedArtifact` union names some *other* owner and is left alone here, because answering that is
 /// exactly what the artifact graph is for.
 pub(crate) fn with_self_owned_native_unions<T: VisitTypeRefs>(mut value: T, provider_crate: &str) -> T {
-    use crate::library_manifest::NativeUnionOwnerExport;
+    use crate::frontend::library_manifest::NativeUnionOwnerExport;
     let rust_owner = format!("::{provider_crate}");
     value.visit_type_refs(&mut |ty| {
         let TypeRef::NativeUnion(native) = ty else {
@@ -436,27 +436,27 @@ mod tests {
     use crate::frontend::api_metadata::{
         DecoratorArgMetadata, DecoratorCallArgMetadata, DecoratorMetadata, DecoratorValue, SourceSpan,
     };
-    use crate::library_manifest::TypeRef;
+    use crate::frontend::library_manifest::TypeRef;
 
     /// Structured decorator values and nested call type arguments retain the same checked nominal origin.
     #[test]
     fn decorator_argument_types_preserve_checked_nominal_origins() {
-        let origin = crate::library_manifest::NominalTypeOriginExport {
+        let origin = crate::frontend::library_manifest::NominalTypeOriginExport {
             provider: crate::provider::ProviderIdentity {
                 name: "catalog".into(),
                 version: "1.2.3".into(),
                 digest: "a".repeat(64),
                 feature_projection: Default::default(),
             },
-            canonical: crate::library_manifest::CanonicalIdentityExport {
-                namespace: crate::library_manifest::CanonicalIdentityNamespaceExport::OrdinaryLexical,
-                origin: crate::library_manifest::CanonicalIdentityOriginExport::Package {
+            canonical: crate::frontend::library_manifest::CanonicalIdentityExport {
+                namespace: crate::frontend::library_manifest::CanonicalIdentityNamespaceExport::OrdinaryLexical,
+                origin: crate::frontend::library_manifest::CanonicalIdentityOriginExport::Package {
                     library: "catalog".into(),
                     module_path: vec!["lib".into()],
                 },
                 declaration_name: "Product".into(),
                 kind: "model".into(),
-                declaration_span: crate::library_manifest::CanonicalIdentitySpanExport { start: 0, end: 20 },
+                declaration_span: crate::frontend::library_manifest::CanonicalIdentitySpanExport { start: 0, end: 20 },
             },
         };
         let leaf = TypeRef::Named {

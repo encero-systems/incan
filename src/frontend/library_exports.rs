@@ -149,7 +149,8 @@ pub struct CheckedExportIdentity {
     pub canonical: Option<CanonicalSymbolId>,
     /// Checked foreign nominal bindings available while this export was projected; only referenced type leaves
     /// are serialized, so unrelated implementation imports do not become artifact metadata.
-    pub(crate) type_origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
+    pub(crate) type_origins:
+        std::collections::BTreeMap<String, crate::frontend::library_manifest::NominalTypeOriginExport>,
 }
 
 impl CheckedExportIdentity {

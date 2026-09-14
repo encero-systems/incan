@@ -11,13 +11,13 @@ use super::ExecutableResolutionError;
 use crate::backend::replacement::{ReplacementExecutionGraph, execute_free_function};
 use crate::frontend::body_ir::build_body_ir_module_v0;
 use crate::frontend::library_exports::collect_checked_public_exports;
+use crate::frontend::library_manifest::published_layout::{executable_surface_path, public_executable_identities};
+use crate::frontend::library_manifest::{ExecutableRepresentationExport, LibraryManifest};
 use crate::frontend::library_manifest_index::{
     LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
 };
 use crate::frontend::typechecker::TypeChecker;
 use crate::frontend::{lexer, parser};
-use crate::library_manifest::published_layout::{executable_surface_path, public_executable_identities};
-use crate::library_manifest::{ExecutableRepresentationExport, LibraryManifest};
 use incan_semantics_core::executable_representation::{EXECUTABLE_REPRESENTATION_VERSION, build_surface};
 
 /// Admit fixtures through the production provider plan before requesting executable fragments.
@@ -471,7 +471,7 @@ fn exercise_catalog_signature(type_facade: bool) -> Result<(), Box<dyn Error>> {
         std::sync::Arc::new(pricing_plan),
     )?;
     attach_public_dependency(&mut pricing, "types", &import_manifest, &import_root)?;
-    let crate::library_manifest::TypeRef::Named {
+    let crate::frontend::library_manifest::TypeRef::Named {
         origin: Some(origin), ..
     } = &pricing.exports.functions[0].params[0].ty
     else {
@@ -576,12 +576,9 @@ fn attach_public_dependency(
     target: &LibraryManifest,
     target_root: &Path,
 ) -> Result<(), Box<dyn Error>> {
-    owner
-        .contract_metadata
-        .provider
-        .provider_dependencies
-        .push(crate::library_manifest::ProviderDependencyMetadata {
-            kind: crate::library_manifest::ProviderDependencyKind::PublicPackage,
+    owner.contract_metadata.provider.provider_dependencies.push(
+        crate::frontend::library_manifest::ProviderDependencyMetadata {
+            kind: crate::frontend::library_manifest::ProviderDependencyKind::PublicPackage,
             dependency_key: key.into(),
             provider_name: target.name.clone(),
             provider_version: target.version.clone(),
@@ -590,7 +587,8 @@ fn attach_public_dependency(
             requested_features: BTreeSet::new(),
             default_features: true,
             optional: false,
-        });
+        },
+    );
     Ok(())
 }
 
@@ -816,12 +814,9 @@ fn a_transitive_facade_resolves_the_declaring_artifact() -> Result<(), Box<dyn E
     export.public_name = "exposed".into();
     export.public_path = vec!["facade".into(), "exposed".into()];
     facade.contract_metadata.identity_graph.exports.push(export);
-    facade
-        .contract_metadata
-        .provider
-        .provider_dependencies
-        .push(crate::library_manifest::ProviderDependencyMetadata {
-            kind: crate::library_manifest::ProviderDependencyKind::PublicPackage,
+    facade.contract_metadata.provider.provider_dependencies.push(
+        crate::frontend::library_manifest::ProviderDependencyMetadata {
+            kind: crate::frontend::library_manifest::ProviderDependencyKind::PublicPackage,
             dependency_key: "original_alias".into(),
             provider_name: origin.name.clone(),
             provider_version: origin.version.clone(),
@@ -830,7 +825,8 @@ fn a_transitive_facade_resolves_the_declaring_artifact() -> Result<(), Box<dyn E
             requested_features: BTreeSet::new(),
             default_features: true,
             optional: false,
-        });
+        },
+    );
     let required = facade
         .contract_metadata
         .identity_graph
@@ -855,7 +851,7 @@ fn a_transitive_facade_resolves_the_declaring_artifact() -> Result<(), Box<dyn E
         .provider_dependencies
         .first_mut()
         .ok_or("facade edge absent")?;
-    edge.kind = crate::library_manifest::ProviderDependencyKind::PrivateImplementation;
+    edge.kind = crate::frontend::library_manifest::ProviderDependencyKind::PrivateImplementation;
     let private = resolve_executable_requirements(
         &index(&facade_root, "renamed_facade", &facade),
         &BTreeSet::from([required.clone()]),
@@ -867,7 +863,7 @@ fn a_transitive_facade_resolves_the_declaring_artifact() -> Result<(), Box<dyn E
         .provider_dependencies
         .first_mut()
         .ok_or("facade edge absent")?;
-    edge.kind = crate::library_manifest::ProviderDependencyKind::PublicPackage;
+    edge.kind = crate::frontend::library_manifest::ProviderDependencyKind::PublicPackage;
     edge.artifact_digest = format!("sha256:{}", "0".repeat(64));
     let altered = resolve_executable_requirements(
         &index(&facade_root, "renamed_facade", &facade),
@@ -988,7 +984,7 @@ fn product_pair_provider_plan(root: &Path) -> Result<std::sync::Arc<crate::provi
 /// Same-spelled nominal declarations retain separate artifacts through aliases, nested leaves and local shadowing.
 #[test]
 fn two_foreign_products_keep_distinct_signature_origins() -> Result<(), Box<dyn Error>> {
-    use crate::library_manifest::{TypeRef, VisitTypeRefs};
+    use crate::frontend::library_manifest::{TypeRef, VisitTypeRefs};
     let temporary = tempfile::tempdir()?;
     let plan = product_pair_provider_plan(temporary.path())?;
     let source = "from pub::first import Product as Left\nfrom pub::second import Product as Right\n\npub def combine(left: Left, right: Right, nested: list[Right]) -> int:\n    Left = 1\n    return left.value + right.value + Left\n";
