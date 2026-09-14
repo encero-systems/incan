@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1937,6 +1937,8 @@
       
         
       
+        
+      
     
     
     
@@ -2219,6 +2221,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3364,10 +3394,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#incantoml" class="md-nav__link">
+  <a href="#loaftoml" class="md-nav__link">
     <span class="md-ellipsis">
       
-        incan.toml
+        loaf.toml
       
     </span>
   </a>
@@ -3594,6 +3624,8 @@
       
         
           
+        
+      
         
       
         
@@ -4077,6 +4109,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6318,6 +6378,8 @@
       
         
       
+        
+      
     
     
     
@@ -6404,6 +6466,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6668,6 +6758,8 @@
       
         
       
+        
+      
     
     
     
@@ -6710,6 +6802,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6867,6 +6987,8 @@
   
     
     
+      
+        
       
         
       
@@ -7086,6 +7208,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -9118,6 +9268,8 @@
       
         
       
+        
+      
     
     
     
@@ -9220,6 +9372,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9525,10 +9712,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#incantoml" class="md-nav__link">
+  <a href="#loaftoml" class="md-nav__link">
     <span class="md-ellipsis">
       
-        incan.toml
+        loaf.toml
       
     </span>
   </a>
@@ -9672,27 +9859,27 @@
 
 
 <h1 id="project-lifecycle-reference">Project lifecycle reference<a class="headerlink" href="#project-lifecycle-reference" title="Permanent link">&para;</a></h1>
-<p>This page is the language-facing reference for Incan project lifecycle concepts: project roots, <code>incan.toml</code> metadata, version bumps, and named environments. For the CLI flag reference, see <a href="../../../tooling/reference/cli_reference/">CLI reference</a>.</p>
+<p>This page is the language-facing reference for Incan project lifecycle concepts: project roots, <code>loaf.toml</code> metadata, version bumps, and named environments. For the CLI flag reference, see <a href="../../../tooling/reference/cli_reference/">CLI reference</a>.</p>
 <h2 id="project-root">Project root<a class="headerlink" href="#project-root" title="Permanent link">&para;</a></h2>
-<p>An Incan project root is the nearest ancestor directory containing <code>incan.toml</code>.</p>
+<p>An Incan project root is the nearest ancestor directory containing <code>loaf.toml</code>. Discovery walks upward from the working directory and stops at the first directory that holds a manifest of either name: <code>loaf.toml</code> is the project root, while a directory holding only the retired <code>incan.toml</code> ends the search with an error that names the file and asks for the rename, so a stale manifest is never silently stepped over.</p>
 <div class="language-text highlight"><pre><span></span><code>greeter/
-|-- incan.toml
+|-- loaf.toml
 |-- src/
 |   |-- main.incn
 |   `-- greet.incn
 `-- tests/
     `-- test_main.incn
 </code></pre></div>
-<p>Project-aware commands use the project root for metadata, dependencies, source-root resolution, lock files, and lifecycle configuration. Nested projects are allowed; the nearest <code>incan.toml</code> wins.</p>
+<p>Project-aware commands use the project root for metadata, dependencies, source-root resolution, lock files, and lifecycle configuration. Nested projects are allowed; the nearest <code>loaf.toml</code> wins. A <code>Cargo.toml</code> beside <code>loaf.toml</code> does not contribute to the build: the command prints one warning naming the ignored file and continues, because Loaf and Cargo manifests are never merged.</p>
 <p>Single-file commands can still run without a project:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run<span class="w"> </span>hello.incn
 incan<span class="w"> </span>run<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import this&quot;</span>
 </code></pre></div>
-<p>Project-level features such as manifest dependencies, version management, and named environments require <code>incan.toml</code>.</p>
+<p>Project-level features such as manifest dependencies, version management, and named environments require <code>loaf.toml</code>.</p>
 <h2 id="workspaces">Workspaces<a class="headerlink" href="#workspaces" title="Permanent link">&para;</a></h2>
-<p>An Incan workspace is a bounded collection of ordinary Incan projects. It coordinates which projects are members, their effective shared dependencies, and one root-owned <code>incan.lock</code>; it does not turn the repository into one package or make member versions and publication lockstep.</p>
+<p>An Incan workspace is a bounded collection of ordinary Incan projects. It coordinates which projects are members, their effective shared dependencies, and one root-owned <code>oven.lock</code>; it does not turn the repository into one package or make member versions and publication lockstep.</p>
 <p>A root that has both <code>[project]</code> and <code>[workspace]</code> is a <strong>rooted workspace</strong>: the root project is a member without listing <code>"."</code>. A root that has only <code>[workspace]</code> is <strong>virtual</strong> and must list at least one project member.</p>
-<div class="language-toml highlight"><span class="filename">incan.toml</span><pre><span></span><code><span class="k">[workspace]</span>
+<div class="language-toml highlight"><span class="filename">loaf.toml</span><pre><span></span><code><span class="k">[workspace]</span>
 <span class="n">members</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;packages/*&quot;</span><span class="p">]</span>
 <span class="n">default-members</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;api&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;worker&quot;</span><span class="p">]</span>
 <span class="n">exclude</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;packages/experimental&quot;</span><span class="p">]</span>
@@ -9703,8 +9890,8 @@ incan<span class="w"> </span>run<span class="w"> </span>-c<span class="w"> </spa
 <span class="k">[workspace.envs.ci]</span>
 <span class="n">env-vars</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">CI</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;true&quot;</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
-<p>Each non-root member has its own <code>incan.toml</code> and opts into a shared declaration explicitly:</p>
-<div class="language-toml highlight"><span class="filename">packages/api/incan.toml</span><pre><span></span><code><span class="k">[project]</span>
+<p>Each non-root member has its own <code>loaf.toml</code> and opts into a shared declaration explicitly:</p>
+<div class="language-toml highlight"><span class="filename">packages/api/loaf.toml</span><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;api&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
 
@@ -9714,7 +9901,7 @@ incan<span class="w"> </span>run<span class="w"> </span>-c<span class="w"> </spa
 <span class="k">[tool.incan.envs.ci]</span>
 <span class="n">extends</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;workspace:ci&quot;</span><span class="p">]</span>
 </code></pre></div>
-<p>The workspace owns dependency identity—version, source, package rename, and default-feature baseline. A member may add Rust features and choose its own <code>optional</code> use. Shared declarations are inactive until a member declares <code>{ workspace = true }</code>; a member-local <code>incan.lock</code> is never authoritative.</p>
+<p>The workspace owns dependency identity—version, source, package rename, and default-feature baseline. A member may add Rust features and choose its own <code>optional</code> use. Shared declarations are inactive until a member declares <code>{ workspace = true }</code>; a member-local <code>oven.lock</code> is never authoritative.</p>
 <h3 id="selecting-members">Selecting members<a class="headerlink" href="#selecting-members" title="Permanent link">&para;</a></h3>
 <p>Workspace-aware commands resolve their scope before compiling, testing, formatting, running, or mutating a member:</p>
 <div class="language-bash highlight"><pre><span></span><code><span class="c1"># Current member when invoked below packages/api.</span>
@@ -9738,9 +9925,9 @@ incan<span class="w"> </span>workspace<span class="w"> </span>inspect<span class
 incan<span class="w"> </span>workspace<span class="w"> </span>inspect<span class="w"> </span>--member<span class="w"> </span>packages/api<span class="w"> </span>--format<span class="w"> </span>json
 </code></pre></div>
 <p>The JSON projection includes members, selection origin, inherited dependency provenance, explicit workspace environment extensions, lock state, stale member-local locks, and currently-unused shared declarations. Workspace capability application remains member-local in this release: cross-member mutation needs a scoped plan and policy evaluation, neither of which is approximated by this foundation.</p>
-<p>Workspace lock publication uses the same crash-safe staging, synchronization, atomic replacement, and parent-directory synchronization sequence documented by <code>std.fs</code>. Publishers coordinate through a stable compiler-private guard under ignored <code>target/incan_lock</code> state rather than creating a new sidecar in the project root. If a legacy <code>.incan.lock.incan.lock</code> sidecar already exists, the compiler acquires that identity before its active guard so an older compiler using the existing inode remains serialized. Whenever the legacy sidecar is absent—whether it never existed or was removed—old and new compilers must not publish concurrently because an older compiler cannot discover the hidden guard. This preserves a prior complete root lock or a new complete root lock for cooperative readers; it is not a multi-file workspace transaction.</p>
-<h2 id="incantoml"><code>incan.toml</code><a class="headerlink" href="#incantoml" title="Permanent link">&para;</a></h2>
-<p><code>incan.toml</code> is the project manifest. It is intended to be edited and committed.</p>
+<p>Workspace lock publication uses the same crash-safe staging, synchronization, atomic replacement, and parent-directory synchronization sequence documented by <code>std.fs</code>. Publishers coordinate through a stable compiler-private guard under ignored <code>target/incan_lock</code> state rather than creating a new sidecar in the project root. The sidecar identity it checks is derived from the published lock's own filename, so an <code>oven.lock</code> project resolves it to <code>.oven.lock.incan.lock</code>, which no compiler predating that guard ever wrote. Compilers from before the rename publish <code>incan.lock</code> instead and never contend for the same target, so concurrent publication across that boundary cannot interleave on one file. This preserves a prior complete root lock or a new complete root lock for cooperative readers; it is not a multi-file workspace transaction.</p>
+<h2 id="loaftoml"><code>loaf.toml</code><a class="headerlink" href="#loaftoml" title="Permanent link">&para;</a></h2>
+<p><code>loaf.toml</code> is the project manifest. It is intended to be edited and committed.</p>
 <p>Common sections:</p>
 <table>
 <thead>
@@ -9789,7 +9976,7 @@ incan<span class="w"> </span>workspace<span class="w"> </span>inspect<span class
 </tbody>
 </table>
 <p>Minimal application manifest:</p>
-<div class="language-toml highlight"><span class="filename">incan.toml</span><pre><span></span><code><span class="k">[project]</span>
+<div class="language-toml highlight"><span class="filename">loaf.toml</span><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;greeter&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
 <span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.5.0-0,&lt;0.6.0&quot;</span>
@@ -9943,7 +10130,7 @@ incan<span class="w"> </span>new<span class="w"> </span>--dir<span class="w"> </
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
 <span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.5.0-0,&lt;0.6.0&quot;</span>
 </code></pre></div>
-<p>If the active compiler is outside the range, <code>incan run</code> in project mode, <code>incan build</code>, <code>incan test</code>, <code>incan lock</code>, and <code>incan env run</code> fail early with a diagnostic that names the active compiler version and the contributing constraint layers. Single-file and inline commands without a discovered <code>incan.toml</code> remain manifest-free and do not infer a requirement.</p>
+<p>If the active compiler is outside the range, <code>incan run</code> in project mode, <code>incan build</code>, <code>incan test</code>, <code>incan lock</code>, and <code>incan env run</code> fail early with a diagnostic that names the active compiler version and the contributing constraint layers. Single-file and inline commands without a discovered <code>loaf.toml</code> remain manifest-free and do not infer a requirement.</p>
 <p>Development compilers identify themselves with prerelease versions such as <code>0.5.0-dev.N</code>. Generated 0.5 projects therefore use a prerelease-aware lower bound (<code>&gt;=0.5.0-0,&lt;0.6.0</code>) so local development builds and final 0.5 releases both satisfy the starter constraint.</p>
 <h2 id="projectscripts"><code>[project.scripts]</code><a class="headerlink" href="#projectscripts" title="Permanent link">&para;</a></h2>
 <p><code>[project.scripts]</code> maps script names to Incan source files:</p>
@@ -9965,7 +10152,7 @@ incan<span class="w"> </span>new<span class="w"> </span>--dir<span class="w"> </
 </code></pre></div>
 <p>Tests resolve imports against the same source root as production code, so <code>tests/test_main.incn</code> can import <code>src/greet.incn</code> as <code>from greet import greet</code>.</p>
 <h2 id="incan-version"><code>incan version</code><a class="headerlink" href="#incan-version" title="Permanent link">&para;</a></h2>
-<p><code>incan version</code> updates the project version in <code>incan.toml</code>.</p>
+<p><code>incan version</code> updates the project version in <code>loaf.toml</code>.</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>version<span class="w"> </span>patch
 incan<span class="w"> </span>version<span class="w"> </span>minor<span class="w"> </span>--dry-run
 incan<span class="w"> </span>version<span class="w"> </span>--set<span class="w"> </span><span class="m">1</span>.2.0
@@ -10038,7 +10225,7 @@ incan<span class="w"> </span>version<span class="w"> </span>--set<span class="w"
 <p>Mental model:</p>
 <ul>
 <li>An env is a named command context, not a Python-style virtualenv.</li>
-<li>Env scripts are explicit argv lists stored in <code>incan.toml</code>.</li>
+<li>Env scripts are explicit argv lists stored in <code>loaf.toml</code>.</li>
 <li><code>incan env</code> is for repeatable workflows such as local test commands, CI commands, docs builds, or release checks.</li>
 <li>Plain <code>incan run</code>, <code>incan test</code>, and <code>incan build</code> remain valid direct commands; envs are an overlay for named workflows, not a replacement for the base CLI.</li>
 </ul>
@@ -10066,7 +10253,7 @@ incan<span class="w"> </span>version<span class="w"> </span>--set<span class="w"
 </tbody>
 </table>
 <p>Example configuration:</p>
-<div class="language-toml highlight"><span class="filename">incan.toml</span><pre><span></span><code><span class="k">[tool.incan.envs.default]</span>
+<div class="language-toml highlight"><span class="filename">loaf.toml</span><pre><span></span><code><span class="k">[tool.incan.envs.default]</span>
 <span class="n">env-vars</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">INCAN_NO_BANNER</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="w"> </span><span class="p">}</span>
 
 <span class="k">[tool.incan.envs.default.scripts]</span>
@@ -10206,7 +10393,7 @@ incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </sp
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../how-to/project_lifecycle/">Project lifecycle</a></li>
-<li><a href="../../../tooling/reference/project_configuration/">Project configuration (<code>incan.toml</code>)</a></li>
+<li><a href="../../../tooling/reference/project_configuration/">Project configuration (<code>loaf.toml</code>)</a></li>
 <li><a href="../../../tooling/how-to/dependencies/">Managing dependencies</a></li>
 <li><a href="../../../tooling/reference/cli_reference/">CLI reference</a></li>
 </ul>

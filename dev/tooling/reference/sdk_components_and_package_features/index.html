@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1932,6 +1932,8 @@
       
         
       
+        
+      
     
     
     
@@ -2214,6 +2216,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3426,6 +3456,8 @@
       
         
       
+        
+      
     
     
     
@@ -3857,6 +3889,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6103,6 +6163,8 @@
       
         
       
+        
+      
     
     
     
@@ -6189,6 +6251,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6453,6 +6543,8 @@
       
         
       
+        
+      
     
     
     
@@ -6495,6 +6587,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6654,6 +6774,8 @@
   
     
     
+      
+        
       
         
       
@@ -6873,6 +6995,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -9018,6 +9168,8 @@
       
         
       
+        
+      
     
     
     
@@ -9120,6 +9272,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9631,7 +9818,7 @@ incan<span class="w"> </span>inspect<span class="w"> </span>codegraph<span class
 <p>Official components and ordinary compiled libraries use checked provider manifests. Consumers do not parse or typecheck provider source. Source-checkout development publishes immutable SDK provider identities into the user-shared <code>$INCAN_HOME/cache/providers/sdk-v2</code> store, or <code>~/.incan/cache/providers/sdk-v2</code> when <code>INCAN_HOME</code> is unset. The identity follows compiler content, provider source, the verified dependency lock, and distribution profile, so relocating identical compiler bytes reuses the same artifact instead of duplicating it per checkout. Publication uses advisory locking, private staging, file and directory synchronization, and atomic rename.</p>
 <p>An ordinary compiled provider freezes every active Incan dependency edge into its <code>.incnlib</code> record, including the provider name and version, exact artifact digest, requested public features, default-feature policy, optional-edge state, and the dependency artifact's relative location. Consumers recursively validate those records before checking source. The complete artifact graph can therefore move as one distribution tree and continue to build without producer manifests or <code>.incn</code> source; an absolute path, mismatched identity, changed feature projection, missing child, or digest mismatch is rejected before generated Rust is compiled.</p>
 <p>Release packaging copies only the selected, relocatable provider payload into <code>share/incan/sdk</code> inside the installed toolchain. It excludes producer source, mutable Cargo targets, per-component lockfile copies, and components outside the distribution profile. Every archive has a <code>.profile.json</code> evidence sidecar recording the profile, component count, provider payload bytes, and complete archive bytes. Normal Oven consumers select those installed immutable artifacts through a receipt-compatible Loaf without copying a standard-library source tree or mutable provider cache into every project.</p>
-<p><code>incan.lock</code> format 2 records the expanded SDK component selection, exact provider identities and digests, public feature closure and activation reasons, dependency feature edges, and implementation-facet closure that can affect checking or generated output. Its embedded Cargo projection remains compatibility evidence for explicit publication, while normal Oven consumers derive receipt identity and select a sealed direct-<code>rustc</code> closure without materializing that projection. <code>--locked</code> rejects semantic drift or a compatibility manifest that would change the projection; <code>--frozen</code> adds the existing offline and no-mutation policy. Neither mode downloads a missing component.</p>
+<p><code>oven.lock</code> format 2 records the expanded SDK component selection, exact provider identities and digests, public feature closure and activation reasons, dependency feature edges, and implementation-facet closure that can affect checking or generated output. Its embedded Cargo projection remains compatibility evidence for explicit publication, while normal Oven consumers derive receipt identity and select a sealed direct-<code>rustc</code> closure without materializing that projection. <code>--locked</code> rejects semantic drift or a compatibility manifest that would change the projection; <code>--frozen</code> adds the existing offline and no-mutation policy. Neither mode downloads a missing component.</p>
 <p>Inside an RFC 077 workspace, the canonical root lock keeps one member-attributed semantic graph for every project and one workspace-wide backend dependency closure. Generated member roots retain their own Incan identity and target names while Oven receipts bind them to the compatible sealed closure selected for that root. <code>incan workspace inspect</code> exposes the locked member roots, feature closures, SDK profiles, component selections, and provider facts in both its human summary and JSON projection instead of flattening semantic selections into one ambient workspace-wide selection.</p>
 <p>See <a href="../project_configuration/">Project configuration</a> for manifest syntax and <a href="../../../language/reference/conditional_compilation/">Conditional compilation</a> for <code>when feature(...)</code> source projection.</p>
 

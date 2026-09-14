@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../../how-to/testing/">
+        <link rel="prev" href="../oven_ecosystem/">
       
       
         <link rel="next" href="../compiled_sdk_provider_flow/">
@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1932,6 +1932,8 @@
       
         
       
+        
+      
     
     
     
@@ -2214,6 +2216,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3426,6 +3456,8 @@
       
         
       
+        
+      
     
     
     
@@ -3857,6 +3889,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6103,6 +6163,8 @@
       
         
       
+        
+      
     
     
     
@@ -6189,6 +6251,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6455,6 +6545,8 @@
       
         
       
+        
+      
     
     
     
@@ -6497,6 +6589,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6799,6 +6919,8 @@
       
         
       
+        
+      
     
     
     
@@ -6997,6 +7119,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -9029,6 +9179,8 @@
       
         
       
+        
+      
     
     
     
@@ -9131,6 +9283,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9529,29 +9716,29 @@
 <li>It is safe to delete when no Incan command is using it: <code>rm -rf target/incan/</code></li>
 <li>Manual edits inside <code>target/incan/&lt;name&gt;/</code> may be overwritten on the next build</li>
 </ul>
-<p>If an <code>incan.lock</code> exists, its relevant dependency and source evidence contributes to the Oven compatibility identity. A normal build validates and selects an authorized Loaf from that evidence; it does not materialize a Cargo project for execution.</p>
+<p>If an <code>oven.lock</code> exists, its relevant dependency and source evidence contributes to the Oven compatibility identity. A normal build validates and selects an authorized Loaf from that evidence; it does not materialize a Cargo project for execution.</p>
 <h2 id="dependencies">Dependencies<a class="headerlink" href="#dependencies" title="Permanent link">&para;</a></h2>
 <p>Rust crate dependencies are resolved through a three-tier system:</p>
 <ol>
-<li><strong><code>incan.toml</code></strong> (highest priority): Project manifest declares explicit dependencies with versions, features, and sources.</li>
+<li><strong><code>loaf.toml</code></strong> (highest priority): Project manifest declares explicit dependencies with versions, features, and sources.</li>
 <li><strong>Inline annotations</strong>: <code>import rust::foo @ "1.0"</code> specifies versions directly in source files.</li>
 <li><strong>Known-good defaults</strong>: For common crates, the compiler provides tested version/feature defaults.</li>
 </ol>
 <p>If none of these apply, the compiler emits an error.</p>
 <p>See: <a href="../../../language/how-to/rust_interop/">Rust Interop</a> and <a href="../../how-to/dependencies/">Managing dependencies</a>.</p>
 <h2 id="project-configuration">Project configuration<a class="headerlink" href="#project-configuration" title="Permanent link">&para;</a></h2>
-<p>Projects can optionally have an <code>incan.toml</code> manifest at the project root:</p>
+<p>Projects can optionally have a <code>loaf.toml</code> manifest at the project root:</p>
 <div class="language-text highlight"><pre><span></span><code>my_project/
 ├── src/
 │   └── main.incn
 ├── tests/
 │   └── test_main.incn
-├── incan.toml         # Project manifest (optional)
-└── incan.lock         # Lock file (auto-generated, commit to VCS)
+├── loaf.toml         # Project manifest (optional)
+└── oven.lock         # Lock file (auto-generated, commit to VCS)
 </code></pre></div>
 <p>Create one with <code>incan init</code>. See: <a href="../../reference/project_configuration/">Project configuration reference</a>.</p>
 <h2 id="lock-files">Lock files<a class="headerlink" href="#lock-files" title="Permanent link">&para;</a></h2>
-<p><code>incan.lock</code> stores resolved dependency versions and normalized build inputs for reproducible builds. It is generated by <code>incan lock</code> (or automatically on first build) and should be committed to version control. Oven binds relevant lock evidence into Loaf selection.</p>
+<p><code>oven.lock</code> stores resolved dependency versions and normalized build inputs for reproducible builds. It is generated by <code>incan lock</code> (or automatically on first build) and should be committed to version control. Oven binds relevant lock evidence into Loaf selection.</p>
 <p>Use <code>--locked</code> or <code>--frozen</code> in CI to enforce that the lock is present and up to date. Within the Alpha envelope, an unavailable compatible Loaf is an explicit miss; normal commands do not ask Cargo to resolve or build one.</p>
 <p>See: <a href="../../how-to/dependencies/#locking-dependencies">Managing dependencies</a>.</p>
 <h2 id="related-commands">Related commands<a class="headerlink" href="#related-commands" title="Permanent link">&para;</a></h2>

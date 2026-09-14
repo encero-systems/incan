@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1937,6 +1937,8 @@
       
         
       
+        
+      
     
     
     
@@ -2219,6 +2221,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3431,6 +3461,8 @@
       
         
       
+        
+      
     
     
     
@@ -3862,6 +3894,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6207,6 +6267,8 @@
       
         
       
+        
+      
     
     
     
@@ -6293,6 +6355,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6557,6 +6647,8 @@
       
         
       
+        
+      
     
     
     
@@ -6599,6 +6691,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6756,6 +6876,8 @@
   
     
     
+      
+        
       
         
       
@@ -6975,6 +7097,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -9007,6 +9157,8 @@
       
         
       
+        
+      
     
     
     
@@ -9109,6 +9261,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9477,7 +9664,7 @@
 <td>What ABI, ownership, output, enum, and layout contract did the compiler accept from this source graph?</td>
 </tr>
 <tr>
-<td><code>[oven.interop]</code> and <code>incan.lock</code></td>
+<td><code>[interop.c]</code> and <code>oven.lock</code></td>
 <td>What target requirements and package-owned physical inputs did the author declare and lock?</td>
 </tr>
 <tr>
@@ -9521,7 +9708,7 @@
 <p>The language in which a library happens to be implemented is not decisive. A C++ engine, a Python extension, or a Rust library may intentionally publish a C ABI; a Rust wrapper can still be preferable when it owns difficult safety and build concerns well. Conversely, a small C ABI can be clearer and more durable than a wrapper when it is the producer's published contract.</p>
 <h2 id="what-is-deliberately-not-claimed-yet">What is deliberately not claimed yet<a class="headerlink" href="#what-is-deliberately-not-claimed-yet" title="Permanent link">&para;</a></h2>
 <p>The checked boundary itself does not discover interop artifacts, provision Android or Apple targets, or hand an application assembly to Gradle or Xcode. It also does not make <code>c.system_library("name")</code> a portable library-discovery mechanism. Those jobs need target-specific artifact identity and packaging facts, which are distinct from the source ABI declaration.</p>
-<p>A package can declare target-specific, package-relative headers, static or bundled artifacts, system capabilities, C/C++ shim sources, compatible toolchain or SDK capabilities, and an Android API level or iOS deployment target under <code>[oven.interop]</code> in <code>incan.toml</code>; <code>incan lock</code> then records those normalized requirements and the content-derived identities of package-owned files. The declaration is intentionally binding-kind-neutral, so a future JNI, Python-extension, or other interop entry point can consume the same package-level evidence without replacing the language binding as ABI authority.</p>
+<p>A package can declare target-specific, package-relative headers, static or bundled artifacts, system capabilities, C/C++ shim sources, compatible toolchain or SDK capabilities, and an Android API level or iOS deployment target under <code>[interop.c]</code> in <code>loaf.toml</code>; <code>incan lock</code> then records those normalized requirements and the content-derived identities of package-owned files. The declaration is intentionally binding-kind-neutral, so a future JNI, Python-extension, or other interop entry point can consume the same package-level evidence without replacing the language binding as ABI authority.</p>
 <p><code>incan check --interop-target &lt;triple&gt;</code> checks the source-owned C ABI against one such declared target. The Android API level or iOS deployment target becomes part of Clang's exact target triple, and the target's definitions apply to every probe. This is verification only: it does not cross-compile generated Rust, link or stage artifacts, or turn a compatibility requirement into a claimed local toolchain selection.</p>
 <p><code>incan inspect interop-plan --target &lt;triple&gt;</code> then projects the current locked requirements into one deterministic, versioned handoff. It preserves portable input receipts, include roots, definitions, dependency-ordered static links, bundled placements and runtime names, explicit system capabilities, shim inputs and logical outputs, and platform constraints without hard-coding a Gradle or Xcode command protocol.</p>
 <h1 id="944-completes-the-v05-oven-handoff-the-explicit-baker-turns-the-locked-target-supplied-compilersdk-evidence-and-declared-package-files-into-a-receipt-bound-native-plan-and-the-stager-emits-a-narrow-androidios-consumer-layout-it-does-not-reinterpret-package-declarations-discover-libraries-from-the-host-invoke-cargo-or-make-gradlexcode-application-assembly-and-signing-compiler-authority-virtual-device-consumers-verify-the-handoff-physical-device-deployment-remains-outside-the-release-criterion">944 completes the v0.5 Oven handoff: the explicit baker turns the locked target, supplied compiler/SDK evidence, and declared package files into a receipt-bound native plan, and the stager emits a narrow Android/iOS consumer layout. It does not reinterpret package declarations, discover libraries from the host, invoke Cargo, or make Gradle/Xcode application assembly and signing compiler authority. Virtual-device consumers verify the handoff; physical-device deployment remains outside the release criterion.<a class="headerlink" href="#944-completes-the-v05-oven-handoff-the-explicit-baker-turns-the-locked-target-supplied-compilersdk-evidence-and-declared-package-files-into-a-receipt-bound-native-plan-and-the-stager-emits-a-narrow-androidios-consumer-layout-it-does-not-reinterpret-package-declarations-discover-libraries-from-the-host-invoke-cargo-or-make-gradlexcode-application-assembly-and-signing-compiler-authority-virtual-device-consumers-verify-the-handoff-physical-device-deployment-remains-outside-the-release-criterion" title="Permanent link">&para;</a></h1>

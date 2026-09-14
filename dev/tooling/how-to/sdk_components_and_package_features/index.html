@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1932,6 +1932,8 @@
       
         
       
+        
+      
     
     
     
@@ -2214,6 +2216,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3426,6 +3456,8 @@
       
         
       
+        
+      
     
     
     
@@ -3857,6 +3889,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6105,6 +6165,8 @@
       
         
       
+        
+      
     
     
     
@@ -6191,6 +6253,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6590,6 +6680,8 @@
       
         
       
+        
+      
     
     
     
@@ -6632,6 +6724,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6789,6 +6909,8 @@
   
     
     
+      
+        
       
         
       
@@ -7008,6 +7130,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -9040,6 +9190,8 @@
       
         
       
+        
+      
     
     
     
@@ -9142,6 +9294,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9526,7 +9713,7 @@ incan<span class="w"> </span>inspect<span class="w"> </span>features<span class=
 <p>Use the human output while diagnosing a project. Use JSON in CI or other tooling that needs component selection reasons, provider provenance, active features, dependency edges, or implementation facets without parsing terminal prose.</p>
 <h2 id="select-a-smaller-sdk-surface">Select a smaller SDK surface<a class="headerlink" href="#select-a-smaller-sdk-surface" title="Permanent link">&para;</a></h2>
 <p>Start from <code>minimal</code> and add only the capability groups the project needs:</p>
-<div class="language-toml highlight"><span class="filename">incan.toml</span><pre><span></span><code><span class="k">[project]</span>
+<div class="language-toml highlight"><span class="filename">loaf.toml</span><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;catalog_service&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
 
@@ -9546,7 +9733,7 @@ incan<span class="w"> </span>inspect<span class="w"> </span>features<span class=
 incan<span class="w"> </span>lock
 incan<span class="w"> </span>check<span class="w"> </span>src/main.incn
 </code></pre></div>
-<p>Use a command-local profile override to compare another projection without editing <code>incan.toml</code>:</p>
+<p>Use a command-local profile override to compare another projection without editing <code>loaf.toml</code>:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>check<span class="w"> </span>src/main.incn<span class="w"> </span>--sdk-profile<span class="w"> </span>full
 incan<span class="w"> </span>inspect<span class="w"> </span>providers<span class="w"> </span>.<span class="w"> </span>--sdk-profile<span class="w"> </span>full<span class="w"> </span>--format<span class="w"> </span>json
 </code></pre></div>
@@ -9582,7 +9769,7 @@ incan<span class="w"> </span>inspect<span class="w"> </span>providers<span class
 <p>In JSON provider inspection, compare the component and provider <code>available</code>, <code>enabled</code>, and <code>used</code> fields. Do not treat <code>available: true</code> as permission to use a provider: the project must also enable its component. Conversely, an enabled component with <code>available: false</code> is an installation problem rather than an unknown import.</p>
 <h2 id="add-a-package-owned-feature">Add a package-owned feature<a class="headerlink" href="#add-a-package-owned-feature" title="Permanent link">&para;</a></h2>
 <p>Declare public features under <code>[project.features]</code>:</p>
-<div class="language-toml highlight"><span class="filename">incan.toml</span><pre><span></span><code><span class="k">[project]</span>
+<div class="language-toml highlight"><span class="filename">loaf.toml</span><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;reporting&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
 
@@ -9611,7 +9798,7 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 <p><code>--features</code>, <code>--no-default-features</code>, and <code>--all-features</code> select public Incan package features. Cargo-prefixed feature flags remain compatibility inputs on the explicitly supported legacy or resolution surfaces; normal Oven build/run/test commands do not use them to make Cargo prepare a missing closure.</p>
 <h2 id="activate-an-optional-incan-dependency">Activate an optional Incan dependency<a class="headerlink" href="#activate-an-optional-incan-dependency" title="Permanent link">&para;</a></h2>
 <p>An optional dependency stays outside the active graph until a feature selects <code>dep:&lt;name&gt;</code>. A package can activate the dependency and request one of its public features in the same declaration:</p>
-<div class="language-toml highlight"><span class="filename">reporting/incan.toml</span><pre><span></span><code><span class="k">[project]</span>
+<div class="language-toml highlight"><span class="filename">reporting/loaf.toml</span><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;reporting&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
 
@@ -9623,7 +9810,7 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 <span class="n">serializer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../serializer&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">optional</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="n">default-features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <p>A consumer selects the public feature on its dependency edge:</p>
-<div class="language-toml highlight"><span class="filename">app/incan.toml</span><pre><span></span><code><span class="k">[project]</span>
+<div class="language-toml highlight"><span class="filename">app/loaf.toml</span><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;report_app&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
 
@@ -9633,7 +9820,7 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 <p>Feature resolution is additive. If several active parents request different features from <code>reporting</code>, the compiler uses their union. Unknown features, feature cycles, <code>dep:</code> references to non-optional dependencies, and dependency-feature requests against inactive optional edges are configuration errors.</p>
 <h2 id="require-an-sdk-component-from-a-feature">Require an SDK component from a feature<a class="headerlink" href="#require-an-sdk-component-from-a-feature" title="Permanent link">&para;</a></h2>
 <p>Use the expanded feature form when different edge kinds should remain explicit:</p>
-<div class="language-toml highlight"><span class="filename">incan.toml</span><pre><span></span><code><span class="k">[sdk]</span>
+<div class="language-toml highlight"><span class="filename">loaf.toml</span><pre><span></span><code><span class="k">[sdk]</span>
 <span class="n">profile</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;minimal&quot;</span>
 <span class="n">components</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;stdlib-web&quot;</span><span class="p">]</span>
 
@@ -9642,7 +9829,7 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 </code></pre></div>
 <p>Activating <code>server</code> verifies that <code>stdlib-web</code> is enabled and available; it does not add the component to <code>[sdk]</code> or install it. This keeps package-owned API selection separate from project- and installation-owned SDK composition.</p>
 <h2 id="lock-and-verify-the-intended-projection">Lock and verify the intended projection<a class="headerlink" href="#lock-and-verify-the-intended-projection" title="Permanent link">&para;</a></h2>
-<p>Feature and component selections affect checked facts and generated output, so record the exact closure in <code>incan.lock</code>:</p>
+<p>Feature and component selections affect checked facts and generated output, so record the exact closure in <code>oven.lock</code>:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>lock<span class="w"> </span>--features<span class="w"> </span>json
 incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--features<span class="w"> </span>json<span class="w"> </span>--locked
 incan<span class="w"> </span>inspect<span class="w"> </span>features<span class="w"> </span>.<span class="w"> </span>--features<span class="w"> </span>json<span class="w"> </span>--format<span class="w"> </span>json

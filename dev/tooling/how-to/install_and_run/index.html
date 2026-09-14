@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1932,6 +1932,8 @@
       
         
       
+        
+      
     
     
     
@@ -2214,6 +2216,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3426,6 +3456,8 @@
       
         
       
+        
+      
     
     
     
@@ -3857,6 +3889,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6105,6 +6165,8 @@
       
         
       
+        
+      
     
     
     
@@ -6293,6 +6355,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6557,6 +6647,8 @@
       
         
       
+        
+      
     
     
     
@@ -6599,6 +6691,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6756,6 +6876,8 @@
   
     
     
+      
+        
       
         
       
@@ -6975,6 +7097,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -9007,6 +9157,8 @@
       
         
       
+        
+      
     
     
     
@@ -9109,6 +9261,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9498,7 +9685,7 @@ incan<span class="w"> </span><span class="nb">test</span>
 incan<span class="w"> </span>build<span class="w"> </span>--release
 </code></pre></div>
 <p>This is the canonical first-contact loop: scaffold one project, prepare its receipt-bound debug and release plans once, run its entry point, execute its tests, and produce a native release build. Normal <code>run</code>, <code>test</code>, and <code>build</code> commands then reuse the sealed plans without invoking Cargo.</p>
-<p><code>incan new</code> creates <code>incan.toml</code>, <code>src/main.incn</code>, <code>tests/test_main.incn</code>, <code>README.md</code>, and <code>.gitignore</code>. The starter is deliberately small so the first run proves the complete project loop without hiding the generated files.</p>
+<p><code>incan new</code> creates <code>loaf.toml</code>, <code>src/main.incn</code>, <code>tests/test_main.incn</code>, <code>README.md</code>, and <code>.gitignore</code>. The starter is deliberately small so the first run proves the complete project loop without hiding the generated files.</p>
 <h2 id="build-the-05-toolchain-from-source">Build the 0.5 toolchain from source<a class="headerlink" href="#build-the-05-toolchain-from-source" title="Permanent link">&para;</a></h2>
 <p>To build the 0.5 toolchain from source, use the matching release checkout and prepare its bounded release Loaf envelope:</p>
 <div class="language-bash highlight"><pre><span></span><code>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/encero-systems/incan.git

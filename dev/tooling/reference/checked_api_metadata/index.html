@@ -14,7 +14,7 @@
         <link rel="prev" href="../contract_metadata/">
       
       
-        <link rel="next" href="../project_configuration/">
+        <link rel="next" href="../package_executable_representation/">
       
       
         
@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1932,6 +1932,8 @@
       
         
       
+        
+      
     
     
     
@@ -2214,6 +2216,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3426,6 +3456,8 @@
       
         
       
+        
+      
     
     
     
@@ -3857,6 +3889,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6103,6 +6163,8 @@
       
         
       
+        
+      
     
     
     
@@ -6189,6 +6251,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6453,6 +6543,8 @@
       
         
       
+        
+      
     
     
     
@@ -6495,6 +6587,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6654,6 +6774,8 @@
   
     
     
+      
+        
       
         
       
@@ -7016,6 +7138,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -9040,6 +9190,8 @@
       
         
       
+        
+      
     
     
     
@@ -9142,6 +9294,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9647,7 +9834,7 @@
 <tr>
 <td><code>package</code></td>
 <td>object or null</td>
-<td>Project identity from <code>incan.toml</code>, when available</td>
+<td>Project identity from <code>loaf.toml</code>, when available</td>
 </tr>
 <tr>
 <td><code>modules</code></td>
@@ -9681,8 +9868,14 @@
 <td>array</td>
 <td>Public declarations visible from that source file</td>
 </tr>
+<tr>
+<td><code>derivable_traits</code></td>
+<td>array</td>
+<td>Optional declared module derive members, resolved within <code>module_path</code></td>
+</tr>
 </tbody>
 </table>
+<p><code>derivable_traits</code> preserves the exact <code>__derives__</code> list for module derives such as <code>@derive(toml)</code>. It is omitted when empty; older metadata without the field declares no module derive bundle. The internal <code>__derives__</code> constant is not exported as a public declaration. Each member retains its declaring module context and the checked trait declaration carries any explicit Rust derive decorator.</p>
 <p><code>declarations</code> uses a <code>kind</code> discriminator. Current declaration kinds are <code>function</code>, <code>model</code>, <code>class</code>, <code>trait</code>, <code>enum</code>, <code>newtype</code>, <code>type_alias</code>, <code>const</code>, <code>static</code>, <code>alias</code>, and <code>partial</code>.</p>
 <h2 id="declaration-facts">Declaration Facts<a class="headerlink" href="#declaration-facts" title="Permanent link">&para;</a></h2>
 <p>The metadata is derived from parsed and typechecked semantics. Public declarations can include:</p>
@@ -9700,6 +9893,41 @@
 <li>safe const values for public consts and safe decorator arguments</li>
 </ul>
 <p>Types use the same structural <code>TypeRef</code> encoding as library manifest exports. For example, a non-generic type is encoded as <code>{"Named": {"name": "str"}}</code>, while a generic application is encoded as <code>{"Applied": {"name": "List", "args": [...]}}</code>.</p>
+<p>Built-library metadata captured during native emission may describe an anonymous union using <code>{"NativeUnion": {...}}</code> with these fields:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>owner</code></td>
+<td><code>"ContainingArtifact"</code> or <code>{"SelectedArtifact": ProviderIdentity}</code></td>
+<td>The artifact defining the native wrapper. A containing owner binds to the exact selected artifact when imported. A forwarded descriptor retains its defining provider's name, version, digest, and feature projection.</td>
+</tr>
+<tr>
+<td><code>rust_name</code></td>
+<td>string</td>
+<td>The wrapper identifier recorded from the defining artifact's emitted representation.</td>
+</tr>
+<tr>
+<td><code>members</code></td>
+<td><code>TypeRef[]</code></td>
+<td>Ordered payload types. Element zero is native variant <code>V0</code>, element one is <code>V1</code>, and so on.</td>
+</tr>
+<tr>
+<td><code>local_nominals</code></td>
+<td>Map of producer type spelling to canonical declaration identity</td>
+<td>Optional owner-local payload identities without a self artifact digest. Every entry must identify a public nominal declaration in the selected owner. Missing or empty retains the legacy origin-free member contract.</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>.incnlib</code> field <code>contract_metadata.native_unions</code> contains the defining artifact's emitted union entries. Each local entry uses <code>"ContainingArtifact"</code>. An imported descriptor must match an entry in its exact admitted owner's table, including payload order. Consumer import aliases and Rust dependency paths do not change the wrapper or variant indices. Consumer-specific physical routes are not serialized.</p>
+<p>Older metadata may omit the table and retain structural <code>Applied</code> types named <code>Union</code>. Readers continue to accept that legacy encoding. A reader without <code>NativeUnion</code> support rejects the new variant instead of treating it as an ordinary structural union.</p>
+<p>An explicitly typed, non-generic decorator over an imported union alias can currently pass checking but fail native compilation (<a href="https://github.com/encero-systems/incan/issues/1453">#1453</a>).</p>
 <p>A checked trait-bound entry may also contain <code>implementation_type_params</code>. This optional schema-v1 field records the
 generic header required by that exact implementation rather than adding those requirements to every use of the owning
 type. Each entry names the implementation parameter and its bounds; a bound records <code>trait_path</code>, structural

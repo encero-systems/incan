@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1932,6 +1932,8 @@
       
         
       
+        
+      
     
     
     
@@ -2214,6 +2216,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3426,6 +3456,8 @@
       
         
       
+        
+      
     
     
     
@@ -3857,6 +3889,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6246,6 +6306,8 @@
       
         
       
+        
+      
     
     
     
@@ -6332,6 +6394,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6596,6 +6686,8 @@
       
         
       
+        
+      
     
     
     
@@ -6638,6 +6730,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6795,6 +6915,8 @@
   
     
     
+      
+        
       
         
       
@@ -7014,6 +7136,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -9046,6 +9196,8 @@
       
         
       
+        
+      
     
     
     
@@ -9148,6 +9300,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9572,7 +9759,7 @@ License []: MIT
 
   src/main.incn          Entry point
   tests/test_main.incn   Starter test
-  incan.toml             Project manifest
+  loaf.toml             Project manifest
 
 Run it:   incan run
 Test it:  incan test
@@ -9585,16 +9772,16 @@ Test it:  incan test
 │   └── test_main.incn     # Placeholder test
 ├── README.md              # Project README
 ├── .gitignore             # Ignores target/
-└── incan.toml             # Manifest with project metadata and [project.scripts] main set
+└── loaf.toml             # Manifest with project metadata and [project.scripts] main set
 </code></pre></div>
-<p>The generated <code>incan.toml</code> carries a <code>requires-incan</code> constraint for the current release line. Commit <code>incan.lock</code> once the project generates it so builds stay reproducible.</p>
+<p>The generated <code>loaf.toml</code> carries a <code>requires-incan</code> constraint for the current release line. Commit <code>oven.lock</code> once the project generates it so builds stay reproducible.</p>
 <p>Try it immediately:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run
 </code></pre></div>
 <div class="language-text highlight"><pre><span></span><code>Hello from greeter!
 </code></pre></div>
-<p>The generated <code>incan.toml</code> records the project metadata and already has <code>[project.scripts] main</code> pointing at <code>src/main.incn</code>, so commands like <code>incan lock</code> will work without a file argument later on:</p>
-<div class="language-toml highlight"><span class="filename">incan.toml</span><pre><span></span><code><span class="k">[project]</span>
+<p>The generated <code>loaf.toml</code> records the project metadata and already has <code>[project.scripts] main</code> pointing at <code>src/main.incn</code>, so commands like <code>incan lock</code> will work without a file argument later on:</p>
+<div class="language-toml highlight"><span class="filename">loaf.toml</span><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;greeter&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
 <span class="n">description</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;A small greeting command&quot;</span>
@@ -9709,7 +9896,7 @@ test_main.incn::test_farewell PASSED
 │   └── test_main.incn     # Tests for greet module
 ├── README.md
 ├── .gitignore
-└── incan.toml             # Project manifest
+└── loaf.toml             # Project manifest
 </code></pre></div>
 <section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-incus-category="success" data-label="Complete">
 <p>You now have a manifest-backed command-line project with a public module boundary and meaningful tests.</p>
@@ -9744,8 +9931,8 @@ test_main.incn::test_farewell PASSED
 <h2 id="next-steps">Next steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../../language/how-to/rust_interop/">Rust interop</a> — Use Rust crates from Incan code</li>
-<li><a href="../../how-to/dependencies/">Managing dependencies</a> — <code>incan.toml</code>, version annotations, and lock files</li>
-<li><a href="../../reference/project_configuration/">Project configuration reference</a> — Full <code>incan.toml</code> format</li>
+<li><a href="../../how-to/dependencies/">Managing dependencies</a> — <code>loaf.toml</code>, version annotations, and lock files</li>
+<li><a href="../../reference/project_configuration/">Project configuration reference</a> — Full <code>loaf.toml</code> format</li>
 <li><a href="../../how-to/ci_and_automation/">CI &amp; automation</a> — Locked builds, pipelines, and deployment</li>
 <li><a href="../../../language/tutorials/book/">The Incan Book</a> — Learn the language itself</li>
 </ul>

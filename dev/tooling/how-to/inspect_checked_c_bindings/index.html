@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1932,6 +1932,8 @@
       
         
       
+        
+      
     
     
     
@@ -2214,6 +2216,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3426,6 +3456,8 @@
       
         
       
+        
+      
     
     
     
@@ -3857,6 +3889,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6105,6 +6165,8 @@
       
         
       
+        
+      
     
     
     
@@ -6191,6 +6253,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6568,6 +6658,8 @@
       
         
       
+        
+      
     
     
     
@@ -6610,6 +6702,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6767,6 +6887,8 @@
   
     
     
+      
+        
       
         
       
@@ -6986,6 +7108,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -9018,6 +9168,8 @@
       
         
       
+        
+      
     
     
     
@@ -9120,6 +9272,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9495,7 +9682,7 @@
 <p>Join the receipt to one current locked Oven target when target provenance matters:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>inspect<span class="w"> </span>bindings<span class="w"> </span>.<span class="w"> </span>--format<span class="w"> </span>receipt<span class="w"> </span>--target<span class="w"> </span>aarch64-apple-darwin
 </code></pre></div>
-<p>This validates the target's <code>incan.lock</code> projection and emits its portable <code>locked_target_identity</code>. When an already-selected Oven interop execution receipt exists for that exact target, the receipt validates it and includes its execution identity. If the target explicitly maps a checked binding's module/name pair to declared artifacts, that binding includes <code>target_artifacts</code>; a mapping with no compiler-produced binding is rejected rather than guessed. The receipt's <code>compatibility</code> object makes the v0.5 policy explicit: descriptor/ownership/ABI changes require an identical descriptor identity, and a selected target/artifact closure requires an identical locked-target identity. <code>--target</code> is accepted only with <code>--format receipt</code>; it is never silently ignored by the declaration report formats.</p>
+<p>This validates the target's <code>oven.lock</code> projection and emits its portable <code>locked_target_identity</code>. When an already-selected Oven interop execution receipt exists for that exact target, the receipt validates it and includes its execution identity. If the target explicitly maps a checked binding's module/name pair to declared artifacts, that binding includes <code>target_artifacts</code>; a mapping with no compiler-produced binding is rejected rather than guessed. The receipt's <code>compatibility</code> object makes the v0.5 policy explicit: descriptor/ownership/ABI changes require an identical descriptor identity, and a selected target/artifact closure requires an identical locked-target identity. <code>--target</code> is accepted only with <code>--format receipt</code>; it is never silently ignored by the declaration report formats.</p>
 <h2 id="match-the-projects-selected-source-view">Match the project's selected source view<a class="headerlink" href="#match-the-projects-selected-source-view" title="Permanent link">&para;</a></h2>
 <p>Pass the same package features and SDK profile that the build or review uses when declarations are conditional:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>inspect<span class="w"> </span>bindings<span class="w"> </span>.<span class="w"> </span>--format<span class="w"> </span>json<span class="w"> </span>--features<span class="w"> </span>sqlite<span class="w"> </span>--sdk-profile<span class="w"> </span>minimal
@@ -9505,7 +9692,7 @@
 <p>Inspection is strict. If parsing, imports, typechecking, or the host-target C probe fails, the command emits the ordinary compiler diagnostic and no partial report.</p>
 <p>Use the diagnostic to correct the binding declaration or selected environment, then run the inspection again. Do not weaken an exact C type, ownership mode, output contract, enum carrier, or plain layout merely to obtain JSON: a partial or guessed report would defeat the purpose of the command.</p>
 <h2 id="know-where-the-report-stops">Know where the report stops<a class="headerlink" href="#know-where-the-report-stops" title="Permanent link">&para;</a></h2>
-<p>The declaration report describes the checked language declaration. The receipt can join that checked use to one locked target and an already-selected execution receipt, and can report an explicitly authored binding-to-artifact-name correspondence. Neither format resolves or downloads artifacts, compiles C/C++ shims, selects a concrete compiler or SDK, emits a generated bridge implementation or linker invocation, classifies a whole package or re-export graph, or provides editor navigation. Its facade relation is limited to a direct same-module public-function-to-private-bridge call proved by the typechecker. <code>incan inspect codegraph</code> provides the corresponding source graph edges. Use <code>[oven.interop]</code> and <code>incan lock</code> for declared physical requirements and locked package inputs; later Oven resolution and editor projections have separate lifecycles.</p>
+<p>The declaration report describes the checked language declaration. The receipt can join that checked use to one locked target and an already-selected execution receipt, and can report an explicitly authored binding-to-artifact-name correspondence. Neither format resolves or downloads artifacts, compiles C/C++ shims, selects a concrete compiler or SDK, emits a generated bridge implementation or linker invocation, classifies a whole package or re-export graph, or provides editor navigation. Its facade relation is limited to a direct same-module public-function-to-private-bridge call proved by the typechecker. <code>incan inspect codegraph</code> provides the corresponding source graph edges. Use <code>[interop.c]</code> and <code>incan lock</code> for declared physical requirements and locked package inputs; later Oven resolution and editor projections have separate lifecycles.</p>
 <p>For the language-side recipes, see <a href="../../../language/how-to/checked_c_bindings/">Work with checked C bindings</a>. For the reason these facts stay separate, see <a href="../../../language/explanation/checked_c_interop/">How checked C interop is structured</a>.</p>
 
 

@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1932,6 +1932,8 @@
       
         
       
+        
+      
     
     
     
@@ -2214,6 +2216,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3426,6 +3456,8 @@
       
         
       
+        
+      
     
     
     
@@ -3857,6 +3889,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6098,6 +6158,8 @@
       
         
       
+        
+      
     
     
     
@@ -6184,6 +6246,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6448,6 +6538,8 @@
       
         
       
+        
+      
     
     
     
@@ -6490,6 +6582,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6647,6 +6767,8 @@
   
     
     
+      
+        
       
         
       
@@ -6866,6 +6988,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -7843,6 +7993,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#measure-sdk-preparation-in-hosted-ci" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measure SDK preparation in hosted CI
+      
+    </span>
+  </a>
   
 </li>
       
@@ -9035,6 +9196,8 @@
       
         
       
+        
+      
     
     
     
@@ -9137,6 +9300,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9485,6 +9683,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#measure-sdk-preparation-in-hosted-ci" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measure SDK preparation in hosted CI
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -9537,6 +9746,16 @@
 <p>Build the docs site:</p>
 <div class="language-bash highlight"><pre><span></span><code>make<span class="w"> </span>docs-build
 </code></pre></div>
+<h2 id="measure-sdk-preparation-in-hosted-ci">Measure SDK preparation in hosted CI<a class="headerlink" href="#measure-sdk-preparation-in-hosted-ci" title="Permanent link">&para;</a></h2>
+<p>To run the compiler, SDK, verified documentation and generated-reference checks without the heavy Oven suite, dispatch CI against the branch you want to measure:</p>
+<div class="language-bash highlight"><pre><span></span><code>gh<span class="w"> </span>workflow<span class="w"> </span>run<span class="w"> </span>ci.yml<span class="w"> </span>--ref<span class="w"> </span>&lt;branch&gt;<span class="w"> </span>-f<span class="w"> </span><span class="nv">heavy</span><span class="o">=</span><span class="nb">false</span><span class="w"> </span>-f<span class="w"> </span><span class="nv">reference</span><span class="o">=</span><span class="nb">true</span>
+</code></pre></div>
+<p>The Linux compiler and SDK handoff job restores the compatible SDK cache or prepares the SDK once, then publishes the selected provider artifact. Documentation and generated-reference jobs consume that artifact independently. Heavy runs also supply it to Linux C ABI, Oven preparation, shadow comparison and release checks. macOS prepares its own platform-specific SDK.</p>
+<p>After the run finishes, download its preparation evidence:</p>
+<div class="language-bash highlight"><pre><span></span><code>gh<span class="w"> </span>run<span class="w"> </span>download<span class="w"> </span>&lt;run-id&gt;<span class="w"> </span>-n<span class="w"> </span>test-linux-sdk-preparation-reports
+</code></pre></div>
+<p>Inspect the session's <code>summary.json</code> for <code>cache_hit</code>, <code>published</code> or <code>failed</code>. Its elapsed time starts after the SDK store lock is acquired. A cold publication also records each component's existing build report and a timing record; unavailable reports are marked explicitly. Build timings contain inclusive nested phases, so they must not be added together. Compare SDK preparation separately from the documentation-check step and native Loaf preparation.</p>
+<p>Repeat the dispatch at the same commit after the first run completes to measure reuse. A warm run should select the same SDK identity without rebuilding components. Keep the compiler, Rust toolchain and source unchanged between the pair. The cross-run cache can lose a save reservation to another run; the same-run artifact remains the required input for consumers. An absent or incompatible handoff fails validation instead of silently starting another SDK publication.</p>
 
 
 

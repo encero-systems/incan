@@ -49,7 +49,7 @@
     
       <link rel="stylesheet" href="../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1926,6 +1926,8 @@
       
         
       
+        
+      
     
     
     
@@ -2208,6 +2210,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3420,6 +3450,8 @@
       
         
       
+        
+      
     
     
     
@@ -3851,6 +3883,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6092,6 +6152,8 @@
       
         
       
+        
+      
     
     
     
@@ -6178,6 +6240,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6442,6 +6532,8 @@
       
         
       
+        
+      
     
     
     
@@ -6484,6 +6576,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6641,6 +6761,8 @@
   
     
     
+      
+        
       
         
       
@@ -6860,6 +6982,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -8892,6 +9042,8 @@
       
         
       
+        
+      
     
     
     
@@ -8994,6 +9146,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9273,11 +9460,12 @@
 
 <h1 id="rfc-123-package-executable-representation">RFC 123: Package executable representation<a class="headerlink" href="#rfc-123-package-executable-representation" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Planned</li>
+<li><strong>Status:</strong> In Progress</li>
 <li><strong>Created:</strong> 2026-09-05</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
-<li>RFC 034 (<code>incan.pub</code> package registry and the <code>.incanpkg</code> format)</li>
+<li>RFC 125 (<code>incan.pub</code> Loaf registry and baked asset distribution; supersedes RFC 034)</li>
+<li>RFC 106 (compiler-backed agent context graph)</li>
 <li>RFC 118 (Oven API and operational core)</li>
 <li>RFC 120 (canonical source symbol identity)</li>
 <li>RFC 097 (Rust-hosted Incan caller)</li>
@@ -9350,7 +9538,7 @@
 <p>Projections resolve to their target. A consumer calling through an alias, a re-export, or a facade resolves to the declaration the canonical identity names, so a chain of projections does not multiply representations and a facade does not need one of its own.</p>
 <p>The compiled Rust artifact is unaffected. It remains the product the Rust-linking route consumes, and nothing here changes how that route selects or verifies it.</p>
 <h3 id="where-it-ships-and-why-a-prebuilt-loaf-is-not-the-same-thing">Where it ships, and why a prebuilt Loaf is not the same thing<a class="headerlink" href="#where-it-ships-and-why-a-prebuilt-loaf-is-not-the-same-thing" title="Permanent link">&para;</a></h3>
-<p>RFC 034 already reserves the slot. A <code>.incanpkg</code> carries <code>semantic/</code> for "optional semantic package fragments" beside <code>artifacts/</code> for target artifacts, and states that generated Rust "must not be the public compatibility contract." This representation is what <code>semantic/</code> holds; a Loaf, when one is published, is an entry under <code>artifacts/</code>. Both travel in one signed archive.</p>
+<p>RFC 125 already reserves the slot. A signed source Loaf carries the executable representation its Incan facet publishes beside the sources the manifest selects, and states that generated Rust must not be its compatibility contract. This representation is what that slot holds; a baked asset, when one is published, is a separate <code>*.loaf</code> attested against the same source publication. Source and representation travel in one signed archive.</p>
 <p>They are not substitutes, because they answer different halves of one question:</p>
 <table>
 <thead>
@@ -9395,6 +9583,11 @@
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
 <p><em>Non-normative.</em></p>
 <p>The natural producer is the same library build that emits the manifest, because it already holds the checked public surface and the identities the representation must use. The natural consumer boundary is wherever a route resolves an imported declaration, so that a missing or unusable representation is discovered at resolution rather than part-way through execution.</p>
+<h3 id="shared-semantic-facts-with-rfc-106">Shared semantic facts with RFC 106<a class="headerlink" href="#shared-semantic-facts-with-rfc-106" title="Permanent link">&para;</a></h3>
+<p>RFC 106's codegraph and this representation consume the same checked semantic snapshot. Declaration ownership, resolved references, canonical alias and facade targets, and dependency relationships belong to that shared compiler layer. Execution requirement selection must query those relationships rather than introduce a build-command extractor or resolve source names again. A missing relationship needed by both consumers should be added at its semantic producer and projected into both surfaces.</p>
+<p>That identity contract applies to types inside signatures and bodies as well as to callable targets. A public function accepting a dependency's model must retain that model's declaring identity through nested types, aliases and facade imports. Package admission binds the identity to the selected artifact; a consumer's import alias or native linker route is a presentation of that selection, not another semantic identity. Publication must retain the checked binding before reducing a type to its display spelling. Required public type context then follows the same admitted dependencies and checked relationships as executable bodies.</p>
+<p>The two products preserve different information. Codegraph adds source navigation, provenance, diagnostics and tolerant facts for incomplete programs. The executable representation carries versioned bodies, required type context and explicit coverage. Its serializer must still audit the actual retained payload, including defaults and deferred computations, because a source reference graph alone does not establish executable coverage. Tolerant, syntax-derived or advisory codegraph facts cannot authorize execution.</p>
+<p>Package representation version, coverage and declared requirements can in turn enrich inspection and codegraph through the same canonical identities. Their provenance must distinguish a manifest or coverage declaration from a successfully decoded payload and from observed execution. Neither consumer needs to decode the other's wire format or reconstruct the other's graph: checked relationship queries are shared, while graph export and binary executable publication remain separate projections.</p>
 <p>Coverage is likely to grow along the same axis as executable constructs generally, which is one reason the decision below records it explicitly rather than inferring it from what happens to be present.</p>
 <p>Consumers will want the decoded form to outlive one invocation, and the natural shape for that is an identity-keyed local store rather than a cache private to this contract. Nothing here requires one, and nothing here should prevent one: a consumer that keeps decoded declarations addressed by the same canonical identities the representation uses needs no format of its own.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
@@ -9403,10 +9596,47 @@
 <li><strong>Emission</strong>: producing the representation for a library's public surface as part of the same build that produces its manifest.</li>
 <li><strong>Tooling</strong>: publishing and locating the representation beside a package's other products, and surfacing version and coverage in inspection output.</li>
 </ul>
+<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-public-executable-publication">Phase 1: Public executable publication<a class="headerlink" href="#phase-1-public-executable-publication" title="Permanent link">&para;</a></h3>
+<p>Produce the representation from the compilation that finalizes the manifest. Select declarations through its canonical public graph, record explicit uncovered reasons, and retain the complete public execution closure, including defaults, deferred computations and required type context. Reuse the checked relationship queries that feed RFC 106 codegraph; keep executable payload validation specific to publication. Exclude private declarations and compiler-session identities. A public declaration that cannot satisfy those constraints remains uncovered.</p>
+<h3 id="phase-2-versioned-selective-consumption">Phase 2: Versioned selective consumption<a class="headerlink" href="#phase-2-versioned-selective-consumption" title="Permanent link">&para;</a></h3>
+<p>Separate the stable version prefix and coverage index from individually addressable declaration payloads. Resolve dependency aliases and facades through the selected package graph, retaining the declaring identity and version. Load only required bodies and type context, and reject malformed, incompatible or incomplete requirements before execution.</p>
+<h3 id="phase-3-execution-and-refusal-parity">Phase 3: Execution and refusal parity<a class="headerlink" href="#phase-3-execution-and-refusal-parity" title="Permanent link">&para;</a></h3>
+<p>Connect resolved package fragments to the existing non-linking execution graph. Prove producer-to-consumer execution after removing dependency source, and compare observable behavior with the Rust-linking route. Exercise aliases, transitive facades, defaults, recursion and distinct packages with identical source paths. Test missing, uncovered and incompatible content before output or a successful receipt can be published.</p>
+<h3 id="phase-4-distribution-and-acceptance">Phase 4: Distribution and acceptance<a class="headerlink" href="#phase-4-distribution-and-acceptance" title="Permanent link">&para;</a></h3>
+<p>Keep each selected semantic sidecar coherent with its manifest through publication, copying, sealed materialization and reuse. Integrate the semantic slot with the signed source-Loaf boundary owned by RFC 125 when that boundary is available; local sidecar tests do not establish signed archive acceptance. Publish user-facing coverage and refusal documentation, and retain direct execution, selective-loading and relevant repository-gate evidence before completing this RFC.</p>
+<h2 id="progress-checklist">Progress Checklist<a class="headerlink" href="#progress-checklist" title="Permanent link">&para;</a></h2>
+<h3 id="design-and-publication">Design and publication<a class="headerlink" href="#design-and-publication" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Review the RFC contract and establish an independent implementation and acceptance design.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Select published identities from the finalized manifest, including public members and canonical facade targets.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Record uncovered exports separately from empty executable bodies.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Close public requirements over defaults, deferred computations, callees and type context without publishing private declarations or compiler-session state.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Share checked dependency relationships with RFC 106 codegraph and prove agreement for aliases, facades, members, type context and defaults without another analysis pass.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Publish semantic content from the same checked compilation as the manifest and native artifact.</li>
+</ul>
+<h3 id="resolution-and-execution">Resolution and execution<a class="headerlink" href="#resolution-and-execution" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Reject unsupported versions before interpreting version-specific metadata or payloads.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Resolve direct, aliased and transitive facade calls through canonical package identities.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Load only selected fragments and their required public context; prove selective loading with a three-of-four-hundred case.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Execute a real source-unavailable package consumer on the non-linking route with native observable-behavior parity.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Refuse missing, incompatible, malformed and uncovered requirements before program output or a successful receipt.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Preserve Rust-linking use of packages without executable representations.</li>
+</ul>
+<h3 id="distribution-and-verification">Distribution and verification<a class="headerlink" href="#distribution-and-verification" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Verify coherent semantic sidecar publication, copying, sealed materialization and reuse, including failed publication.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Surface representation version and coverage in inspection output. <code>incan inspect representation</code> reports the encoded version, the declared coverage of every indexed declaration with its refusal reason, and any public identity the manifest declares that the index does not mention. A package publishing none, and a version this build cannot interpret, are reported rather than refused.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Verify the semantic slot within the signed source-Loaf boundary; track RFC 125's dependency explicitly until this is executable.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Pass focused codec, compiler, package-boundary and failure regressions.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Complete the applicable PR integration gates for the final published head.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Update user documentation, release notes and generated RFC references with verified behavior.</li>
+</ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <p><strong>Coverage is declared explicitly, not inferred from the identities present.</strong> A consumer must be able to answer "can this route execute this call?" before decoding the declaration, and a reader must be able to see what a package supports without executing anything. Inferring coverage from content also conflates two different states -- "this declaration is not covered" and "this declaration is covered and its body happens to be empty" -- which a refusal has to tell apart.</p>
 <p><strong>A consumer may require a representation, and the requirement is resolved at resolution time.</strong> A route that cannot proceed without one reports at the point the dependency is resolved, naming the package and version, rather than at whichever call happens to cross the boundary first. Deferring to first call makes the failure depend on control flow: the same program reports in different places on different inputs, and a consumer cannot tell whether a dependency is usable without running it. Routes that do not require a representation are unaffected and continue to resolve packages that ship none.</p>
-<p><strong>The representation carries one version for the whole representation.</strong> Integrity and identity are already settled at the archive: RFC 034 covers the package with one checksum and one signature, so the representation's version answers only "can this compiler interpret this?" That is a property of the encoding and the fact vocabulary, not of individual constructs, and per-construct versioning would multiply a compatibility surface that the coverage declaration already expresses more directly.</p>
+<p><strong>The representation carries one version for the whole representation.</strong> Integrity and identity are already settled at the archive: RFC 125 covers the source Loaf with one digest and one signature, so the representation's version answers only "can this compiler interpret this?" That is a property of the encoding and the fact vocabulary, not of individual constructs, and per-construct versioning would multiply a compatibility surface that the coverage declaration already expresses more directly.</p>
 <p><strong>A representation and the Rust-linking route must agree by construction.</strong> They are produced by one compilation of one package version and ship inside one signed archive, so a disagreement between them is not two artifacts drifting apart -- it is one publisher being internally inconsistent within a single signed unit. Permitting divergence would also make a package's meaning depend on how a consumer reached it, which is the outcome this RFC exists to prevent. Where a construct cannot be represented for a route, the answer is to leave it uncovered and refuse, not to represent it differently.</p>
 
 

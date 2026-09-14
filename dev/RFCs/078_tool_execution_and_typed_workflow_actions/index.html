@@ -49,7 +49,7 @@
     
       <link rel="stylesheet" href="../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1926,6 +1926,8 @@
       
         
       
+        
+      
     
     
     
@@ -2208,6 +2210,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3420,6 +3450,8 @@
       
         
       
+        
+      
     
     
     
@@ -3851,6 +3883,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6092,6 +6152,8 @@
       
         
       
+        
+      
     
     
     
@@ -6178,6 +6240,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6442,6 +6532,8 @@
       
         
       
+        
+      
     
     
     
@@ -6484,6 +6576,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6641,6 +6761,8 @@
   
     
     
+      
+        
       
         
       
@@ -6860,6 +6982,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -8892,6 +9042,8 @@
       
         
       
+        
+      
     
     
     
@@ -8994,6 +9146,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9636,10 +9823,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Unresolved questions
+        Design decisions
       
     </span>
   </a>
@@ -9687,6 +9874,7 @@
 <li><strong>Issue:</strong> https://github.com/encero-systems/incan/issues/406</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> ~~v0.3~~ v0.5</li>
+<li><strong>Target scope:</strong> v0.6, slice 7 (Oven CLI delivery, #1142); brought into scope 2026-09-10. Table root is <code>[actions]</code> per RFC 117.</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
@@ -9729,14 +9917,14 @@
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="declaring-actions">Declaring actions<a class="headerlink" href="#declaring-actions" title="Permanent link">&para;</a></h3>
 <p>A project or capability may declare typed actions:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[[oven.actions]]</span>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[[actions]]</span>
 <span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;test&quot;</span>
 <span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;test&quot;</span>
 <span class="n">command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="p">]</span>
 <span class="n">scope</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;member&quot;</span>
 <span class="n">mutates</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[]</span>
 
-<span class="k">[[oven.actions]]</span>
+<span class="k">[[actions]]</span>
 <span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;generate-client&quot;</span>
 <span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;generate&quot;</span>
 <span class="n">tool</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;pub:openapi-client&quot;</span>
@@ -9881,18 +10069,18 @@ oven tool run pub:docs-preview --port 8000
 <li><strong>Agentic tooling:</strong> agents may consume action metadata, capability requirements, dry-run plans, and receipt expectations, but action execution remains subject to policy and user approval.</li>
 <li><strong>Documentation:</strong> docs must distinguish scripts, actions, tools, project-context execution, and isolated execution.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<p>Resolved 2026-09-10 when this RFC was brought into the v0.6 scope.</p>
 <ul>
-<li>Which action kinds should be standardized in v1?</li>
-<li>Should <code>oven run</code> and <code>oven test</code> become aliases for typed actions, or remain separate command families? RFC 118 separately decides which, if any, Incan aliases delegate to those Oven operations.</li>
-<li>What is the minimum useful dry-run contract for mutating external tools?</li>
-<li>Should isolated tool execution use a global cache, per-project cache, or always temporary environment?</li>
-<li>How should action inputs and outputs be represented for tools that cannot predict outputs?</li>
-<li>Should action metadata support secrets or credential requests, and if so how should policy mediate them?</li>
-<li>How should AI-backed actions expose model cost, privacy, and local/cloud execution constraints?</li>
+<li><strong>Standard action kinds.</strong> The ten kinds in the reference section are standardized for v1. Extension kinds use an <code>x-</code> prefix, appear in machine-readable output, and receive conservative policy handling.</li>
+<li><strong><code>oven run</code> and <code>oven test</code> are not actions.</strong> <code>run</code>, <code>test</code>, <code>build</code>, <code>bake</code>, and <code>check</code> remain first-class Oven command families with their own plan identities (RFC 118). Actions are the extension mechanism for everything else and are invoked through <code>oven action run &lt;id&gt;</code>. A project action may declare kind <code>run</code> or <code>test</code>, but it never redefines or shadows the built-in operation, so there is no npm-scripts-style override of <code>oven test</code>.</li>
+<li><strong>Minimum dry-run contract for mutating external tools.</strong> The plan must show the tool's source identity, version, and content hash; execution mode; argv, working directory, and environment additions; declared mutation categories and target paths; capability requirements (RFC 104); and the policy outcome. A tool that cannot predict its outputs declares <code>outputs = "unpredictable"</code>, is non-plannable, requires approval by default, and runs in a staging directory whose post-run diff is presented as a mutation plan before anything is adopted into the project (RFC 112 for the atomic adoption).</li>
+<li><strong>Isolated tool execution uses the Oven store.</strong> Tools are units under RFC 124, cached globally by unit identity and shared across projects; there is no per-project tool cache. <code>--fresh</code> requests a temporary environment for one run.</li>
+<li><strong>Inputs and outputs for unpredictable tools.</strong> Declared as <code>outputs = "unpredictable"</code>; observed outputs are recorded in the receipt and surfaced as the post-run diff above. Tools that can predict outputs declare them and are checked against the receipt.</li>
+<li><strong>Secrets and credentials.</strong> Action metadata may declare named credential requirements (kind and purpose), never values. Policy mediates each request; values are resolved from Oven-controlled secure storage (the credential references RFC 117 already keeps outside the project) as RFC 103 secret values; every request is receipted under RFC 104 with redaction.</li>
+<li><strong>AI-backed actions.</strong> Metadata carries three fields, execution locality (<code>local</code> or <code>cloud</code>), a cost class, and a privacy label, referencing RFC 080 assets where they exist; policy may block cloud execution. The field shapes are fixed here so <code>[actions]</code> need not change when RFC 080 lands; their detailed semantics remain RFC 080's.</li>
 </ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+<p>Amendment made at the same time: the table root is <code>[actions]</code> (RFC 117), not <code>[oven.actions]</code>.</p>
 
 
 

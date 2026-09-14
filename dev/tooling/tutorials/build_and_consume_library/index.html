@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1932,6 +1932,8 @@
       
         
       
+        
+      
     
     
     
@@ -2214,6 +2216,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3426,6 +3456,8 @@
       
         
       
+        
+      
     
     
     
@@ -3857,6 +3889,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6218,6 +6278,8 @@
       
         
       
+        
+      
     
     
     
@@ -6304,6 +6366,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6568,6 +6658,8 @@
       
         
       
+        
+      
     
     
     
@@ -6610,6 +6702,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6767,6 +6887,8 @@
   
     
     
+      
+        
       
         
       
@@ -6986,6 +7108,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -9018,6 +9168,8 @@
       
         
       
+        
+      
     
     
     
@@ -9120,6 +9272,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9496,19 +9683,19 @@
 <p>The complete producer and consumer live at <code>examples/advanced/library_package</code>.</p>
 <h2 id="step-1-create-the-producer">Step 1: Create the producer<a class="headerlink" href="#step-1-create-the-producer" title="Permanent link">&para;</a></h2>
 <p>Create this workspace layout:</p>
-<div class="language-text highlight"><pre><span></span><code>incan.toml
+<div class="language-text highlight"><pre><span></span><code>loaf.toml
 producer/
-├── incan.toml
+├── loaf.toml
 └── src/
     ├── lib.incn
     └── pricing.incn
 </code></pre></div>
-<p>The root <code>incan.toml</code> defines both projects as workspace members:</p>
+<p>The root <code>loaf.toml</code> defines both projects as workspace members:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[workspace]</span>
 <span class="n">members</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;producer&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;consumer&quot;</span><span class="p">]</span>
 <span class="n">default-members</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;pricing_app&quot;</span><span class="p">]</span>
 </code></pre></div>
-<p><code>producer/incan.toml</code> identifies the package:</p>
+<p><code>producer/loaf.toml</code> identifies the package:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;pricing_core&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
@@ -9548,11 +9735,11 @@ incan<span class="w"> </span>build<span class="w"> </span>--lib
 <h2 id="step-4-create-the-consumer">Step 4: Create the consumer<a class="headerlink" href="#step-4-create-the-consumer" title="Permanent link">&para;</a></h2>
 <p>Create a sibling project:</p>
 <div class="language-text highlight"><pre><span></span><code>consumer/
-├── incan.toml
+├── loaf.toml
 └── src/
     └── main.incn
 </code></pre></div>
-<p>Declare the local dependency in <code>consumer/incan.toml</code>:</p>
+<p>Declare the local dependency in <code>consumer/loaf.toml</code>:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;pricing_app&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
@@ -9580,12 +9767,13 @@ incan<span class="w"> </span>build<span class="w"> </span>--lib
 incan<span class="w"> </span>oven<span class="w"> </span>bake<span class="w"> </span>--project<span class="w"> </span>.<span class="w"> </span>--format<span class="w"> </span>json
 incan<span class="w"> </span>run<span class="w"> </span>--member<span class="w"> </span>pricing_app<span class="w"> </span>--locked
 </code></pre></div>
-<p>The workspace bake discovers the producer and consumer, publishes the required project extensions and completed outputs, and names their exact full-standard-library base. The normal run then reuses those checked artifacts without invoking Cargo. Commit the generated root <code>incan.lock</code>; member-local lockfiles are not workspace authorities. When the producer changes its public API, bake and build it again rather than copying source files between projects.</p>
+<p>The workspace bake discovers the producer and consumer, publishes the required project extensions and completed outputs, and names their exact full-standard-library base. The normal run then reuses those checked artifacts without invoking Cargo. Commit the generated root <code>oven.lock</code>; member-local lockfiles are not workspace authorities. When the producer changes its public API, bake and build it again rather than copying source files between projects.</p>
 <section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-incus-category="success" data-label="Complete">
 <p>You selected a public API, built its checked library artifact, locked the workspace, and ran a consumer through the public package boundary.</p>
 </section>
 <h2 id="continue">Continue<a class="headerlink" href="#continue" title="Permanent link">&para;</a></h2>
 <ul>
+<li><a href="../../how-to/execute_published_package/">Execute a published package without native linking</a></li>
 <li><a href="../../how-to/dependencies/">Managing dependencies</a></li>
 <li><a href="../../reference/project_configuration/">Project configuration</a></li>
 <li><a href="../../../language/reference/imports_and_modules/">Imports and modules</a></li>

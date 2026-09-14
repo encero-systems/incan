@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1932,6 +1932,8 @@
       
         
       
+        
+      
     
     
     
@@ -2214,6 +2216,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3426,6 +3456,8 @@
       
         
       
+        
+      
     
     
     
@@ -3857,6 +3889,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6098,6 +6158,8 @@
       
         
       
+        
+      
     
     
     
@@ -6184,6 +6246,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6448,6 +6538,8 @@
       
         
       
+        
+      
     
     
     
@@ -6490,6 +6582,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6647,6 +6767,8 @@
   
     
     
+      
+        
       
         
       
@@ -6866,6 +6988,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -9077,6 +9227,8 @@
       
         
       
+        
+      
     
     
     
@@ -9179,6 +9331,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9643,9 +9830,29 @@
 <h3 id="the-compiler-owns-source-meaning-end-to-end">The compiler owns source meaning end to end<a class="headerlink" href="#the-compiler-owns-source-meaning-end-to-end" title="Permanent link">&para;</a></h3>
 <p>The replacement backend will consume direct, compiler-owned lowering facts through Body IR. Backend selection and execution will be explicit and receipted, with no silent fallback to the legacy route. A corpus-based parity system will show which behavior is verified, which is intentionally migrated, and which is not yet acceptable.</p>
 <ul>
+<li><strong>Packages</strong>: Library builds publish versioned executable content for covered public declarations. Replacement consumers execute supported calls through package aliases and facades without producer source, using the original declaring identities and selected public type context. Missing, incompatible and uncovered requirements refuse before output or a new execution receipt. Native linking remains available for packages without executable coverage. (#1339)</li>
+<li><strong>Tooling</strong>: <code>incan inspect representation</code> reports a published package's executable-representation version and the coverage it declares for each public declaration, with refusals carrying their stable reason. A package that publishes none, and a representation this build cannot interpret, are both reported rather than refused. (#1339)</li>
+<li><strong>Packages</strong>: <code>.incnlib</code> manifests carry anonymous union types in checked signatures, and declare manifest format 4. A reader without support for the new type reference refuses the manifest by format number rather than failing to parse it, so an artifact from a newer compiler names the reason it cannot be read. Comment- and order-preserving manifest editing is unaffected. (#1339, #1453)</li>
+<li><strong>Standard library</strong>: <code>std.toml</code> reads typed manifest values and declared models, reports source locations for parse and structural errors, and writes generated lock documents while retaining TOML date/time kinds. Comment- and order-preserving manifest editing remains deferred. (#1409)</li>
+<li><strong>Tooling</strong>: A direct-rustc store entry retains the complete receipt of the compilation that produced its bytes, admitted against the entry's own receipt, build unit and intent, and re-checked whenever a held payload is revalidated. <code>incan oven store inspect</code> reports it, so a reused artifact can say what made it rather than only naming a receipt. (#1037)</li>
+<li><strong>Tooling</strong>: A consumer of an admitted Incan package no longer needs the producer's private Rust path sources to resolve it: the package is identified by its sealed artifact, never by walking the producer's private Cargo edges. An explicit bake of a consumer that declares no registry roots of its own composes the provider's sealed closure and links it once. The one shape that still refuses is a diamond over two sealed providers that each compiled the same shared registry unit: Oven names the crate and the collision at its own boundary, never falling back to Cargo, until #1241 reconciles shared units to one compiled artifact. (#1469)</li>
+<li><strong>Tooling</strong>: A package diamond that names one provider under one alias from both sides links it once instead of refusing a duplicate extern. (#1459)</li>
+<li><strong>Tooling</strong>: An explicit bake treats a cached output whose release Loaf the active toolchain no longer ships as a cache miss and rebakes; a consumer facing project extensions from two retained families selects the one whose base the toolchain still ships. (#1444)</li>
+<li><strong>Tooling</strong>: A normal <code>incan build</code>, <code>run</code>, or <code>test</code> never launches Cargo. The two remaining silent detours — an executable whose caller-owned provider resolved a shared registry package to a different compiled artifact than the project's own closure, and a library whose assembled closure rustc could not load — are now refusals. The first names the package and the provider artifact that pins it; the second names the library and rustc's crate-loading report, including a <code>StableCrateId</code> collision, which carries no error code. Both point at the Oven-native reconciliation still owed (#1241). (#1141)</li>
+<li><strong>Tooling</strong>: Two large interop projects can share one Oven home. An explicit bake reserves a 4 GiB staging floor before it runs, reclaiming inactive store entries oldest-first to reach it instead of failing with a demand to prune by hand, and prints a <code>note:</code> naming what it reclaimed; entries under a live lease are never touched. The everyday store policy grows to 12 GiB aggregate and per-domain physical allocation so a Bevy-scale and an IncQL-scale project coexist instead of evicting each other. (#1230)</li>
+<li><strong>Tooling</strong>: Editing a baked project no longer stops <code>incan build</code> and <code>incan run</code> with a demand to bake again. The sealed project output is set aside with one warning and the edit compiles from source against the dependency closure the bake published; reverting the edit picks the sealed output back up. (#1141)</li>
+<li><strong>Tooling</strong>: A no-change <code>incan build</code> on a starter project went from 529 ms to 357 ms on the reference machine, and a cold one from 721 ms to 582 ms: Loaf selection materializes only the candidate it picks instead of every compatible family, the compiler is probed once per process with <code>rustc -vV</code> instead of twice, and a packaged provider's sealed digest is served from a tree-stamp memo. <code>incan build --report json</code> now attributes every preparation step under <code>timings_ms</code>. (#1111, #1556)</li>
+<li><strong>Tooling</strong>: A sealed closure's shape check is written down once. Every command that selected the standard-library Loaf re-checked its 9,500 files for presence, regularity and containment; the first command now records a closure proof beside the Loaf envelope (or the Oven store, for a leased project plan) and later ones read that record. Warm no-change build 357 → 277 ms, cold 582 → 416 ms on the reference machine. <code>incan inspect oven</code> still rehashes what it audits. (#1546)</li>
+<li><strong>Tooling</strong>: Oven validates caller-owned native output bytes against the digest recorded after compilation before reusing them. Changed outputs and old or malformed reuse evidence trigger a rebuild. (#1463)</li>
+<li><strong>Tooling</strong>: Native package imports read published Oven stores without changing access bookkeeping or cache files inside the package artifact. This keeps recorded dependency digests stable during import while retaining ordinary consumer-store reuse. (#1458)</li>
+<li><strong>Compiler</strong>: Source traits can inherit imported Rust trait bounds without synthesizing conflicting implementations of foreign parents. (#1427)</li>
+<li><strong>Compiler</strong>: Qualified Rust enum patterns work through shared and mutable references without cloning the matched value. (#1448)</li>
+<li><strong>Compiler</strong>: Checked SDK artifacts retain derive-provider membership, so <code>@derive(toml)</code> remains available through compiled standard-library imports and re-exports. (#1449)</li>
+<li><strong>Compiler</strong>: Imported Rust generic trait bounds accept native scalars and collections, with the actual trait obligation checked by Rust during native compilation. Same-spelled Incan traits still require explicit adoption. (#1451)</li>
+<li><strong>Tooling</strong>: Declared scripts that resolve to <code>src/lib.incn</code> fail with a located manifest diagnostic naming the script and library path, before Oven generates executable code. (#1068)</li>
 <li><strong>Tooling</strong>: Experimental replacement execution admits compiler-selected <code>str</code>, <code>int</code>, and <code>float</code> scalar conversions with receipt-bound normal output and classified parse failures. Source literals and runtime numeric strings share one language-owned underscore-separator policy. Malformed source literals produce compile-time diagnostics, while failed runtime conversions retain the original spelling in the canonical <code>ValueError</code>. #988 retains the broader numeric-operation and entrypoint profile. (#1249, #1278)</li>
 <li><strong>Tooling</strong>: Exact signed and unsigned widths, <code>f32</code>, <code>f64</code>, aliases, and checked fixed-scale decimals now retain their compiler-selected carrier through literals, locals, lossless widening, source-local calls, direct entry arguments/results, Display output, receipts, the replacement JSON report's <code>result_type</code>, and bounded two-route comparison. Exact <code>f32</code>/<code>f64</code> carriers are finite-only: native exact arithmetic validates each result before it can be stored, returned, compared, or printed, and runtime exact-carrier boundaries use the same canonical <code>ValueError</code>; ordinary <code>float</code> retains IEEE non-finite values until code attempts to cross into an exact carrier. The replacement profile still refuses arithmetic on these exact carriers, their unary and resize operations, Debug formatting, aggregates, matching, and decimal scalar casts before effects under #988; package/import execution remains under #989. (<code>replacement-body-v0-029</code>, #1279)</li>
-<li><strong>Tooling</strong>: The experimental direct replacement profile now executes its admitted selected entry through one session-owned package-feature projection and records matching semantic-module provenance in its JSON report and backend receipt. Package/public imports and unsupported source remain refusals; this is not a broad parity claim. (#1254)</li>
+<li><strong>Tooling</strong>: The experimental direct replacement profile now executes its admitted selected entry through one session-owned package-feature projection and records matching semantic-module provenance in its JSON report and backend receipt. That initial profile did not admit package/public imports; published package coverage is described above, and broader unsupported source remains outside the profile. (#1254)</li>
 <li><strong>Compiler</strong>: The experimental replacement profile executes source-local hashed set and dictionary membership with checked <code>int</code>, <code>bool</code>, <code>str</code>, or unit keys, including typed-empty constructors. A same-source comparison covers exact program output and a separate boolean result; iteration, mutation and general collection parity remain outside this profile. (#1247)</li>
 <li><strong>Tooling</strong>: The experimental direct replacement profile recognizes compiler-selected global <code>enumerate(list)</code> and <code>zip(list, list)</code> over retained structural list shapes, preserving zero-based enumeration and ordered shortest-side pairing. Receipt-backed comparisons cover the selected list cases; this does not grant general iterator support. (#1249)</li>
 <li><strong>Compiler</strong>: Native compilation materializes stored <code>enumerate</code> results as checked list values and preserves later-used values when introducing aliases, including the required generic <code>Clone</code> bounds. (#1249)</li>
@@ -9661,7 +9868,7 @@
 <li><strong>Tooling</strong>: The experimental replacement profile executes compiler-selected <code>bool</code> for its directly represented booleans, integers, strings, lists, sets, and dictionaries. Zero and empty values are false; nonzero and nonempty values are true. A same-spelled source declaration keeps its own identity, and floats, tuples, bytes, frozen collections, options/results, arbitrary objects, and custom truthiness remain outside this bounded claim. (#1249)</li>
 <li><strong>Compiler</strong>: <code>isinstance(value, Target)</code> now retains the typechecker-resolved value and target types, any proven nominal target identity, and the target's exact source span in a dedicated Body IR operation. The experimental replacement profile executes the bounded <code>int</code>, <code>bool</code>, <code>str</code>, and ordinary binary <code>float</code> target set when the checked value type is one of those scalars or a nonempty union containing only them. Ambient and explicit <code>std.builtins.isinstance(...)</code> calls consume the same compiler-owned identity, while a source declaration with that spelling remains an ordinary direct call. A same-source comparison covers true and false union-member branches, direct expression use, exact streams, and the typed boolean result. Unsupported value or target shapes refuse before effects; this does not add arbitrary runtime type values, general reflection, nominal execution, or package/import execution. Closed #1154 supplied the current direct nominal/value substrate; open #988 owns broader replacement execution, and #989 owns package/import execution. (#1281)</li>
 <li><strong>Tooling</strong>: The experimental replacement profile executes compiler-selected <code>sorted</code> for nonempty represented integer lists, returning a fresh ascending list while retaining negative values, duplicates, and the source list's original order. Empty lists and other accepted ordering domains remain explicit refusals until checked element-type/order facts reach this runtime seam. (#1249)</li>
-<li><strong>Tooling</strong>: Experimental replacement execution now runs calls that leave the entry module. A call into a sibling module executes against a graph spanning the session's reachable modules, resolving the callee by canonical identity rather than by a same-module span identity; a module-qualified call such as <code>helper.bump(41)</code> executes as a direct call to the declaration its qualifier names, and a local sharing an imported module's name keeps its ordinary meaning. Refusals report against the module whose span they carry rather than the entrypoint, so a diagnostic names the file a reader has to open. Package (<code>pub::</code>) imports remain explicit refusals. (#1260)</li>
+<li><strong>Tooling</strong>: Experimental replacement execution now runs calls that leave the entry module. A call into a sibling module executes against a graph spanning the session's reachable modules, resolving the callee by canonical identity rather than by a same-module span identity; a module-qualified call such as <code>helper.bump(41)</code> executes as a direct call to the declaration its qualifier names, and a local sharing an imported module's name keeps its ordinary meaning. Refusals report against the module whose span they carry rather than the entrypoint, so a diagnostic names the file a reader has to open. That initial module-execution change left package (<code>pub::</code>) imports outside its scope; published package execution is described above. (#1260)</li>
 <li><strong>Tooling</strong>: A facade chain executes on the experimental replacement route with its direct, aliased, and re-exported bindings proven to resolve to one declaration. An alias is admitted as a binding to a declaration rather than a declaration of its own, so refusing it would refuse a name rather than any behavior. (#1261)</li>
 <li><strong>Compiler</strong>: A Rust or Python interop boundary the replacement route cannot cross now refuses as a missing host rather than as a construct the profile has not reached, naming the crate a call would have entered. Previously <code>import rust::serde_json</code> and <code>import std.io</code> reported the same text, which sent a reader to the language when the problem was a host. An ordinary standard-library import still reports as an unreached construct and never claims a missing interop host. (#1262)</li>
 <li><strong>Dependencies</strong>: The locked Wasmtime and Cranelift patch releases advance to the 36.0.14/0.123.14 family, clearing <code>RUSTSEC-2026-0269</code> from the repository security gate without changing Incan's declared dependency range or public language surface.</li>
@@ -9671,6 +9878,8 @@
 <h3 id="loaf-and-oven-become-the-opted-in-project-authority">Loaf and Oven become the opted-in project authority<a class="headerlink" href="#loaf-and-oven-become-the-opted-in-project-authority" title="Permanent link">&para;</a></h3>
 <p>For a project that adopts <code>loaf.toml</code>, Loaf expresses authored project intent and Oven owns resolution, targets, provider planning, cache identity, artifacts, receipts, and publication-facing build evidence. <code>oven build</code> and <code>oven bake</code> will provide the build and target-bound asset surfaces; in-Loaf <code>incan run</code> and <code>incan test</code> will use those same plans and receipts.</p>
 <p>Cargo remains valid as a legacy format and explicit compatibility/adoption mode. It does not become invalid, and a Rust-only project can choose Oven without adding Incan source. But once a project is Loaf-native, Cargo cannot silently retake authority over its project graph or provider effects.</p>
+<p>The authored project manifest is now <code>loaf.toml</code>. <code>incan.toml</code> is not read as a compatibility format — RFC 117 lists preserving it among its non-goals — so a directory holding one is reported as not being a project manifest, naming the file and saying to rename it once its tables satisfy the Loaf schema. Discovery stops at such a directory rather than walking past it to an ancestor project, because whoever put the file there meant it as a project root. <code>[oven.interop]</code> moves in the same transition to <code>[interop.c]</code>, under an <code>[interop]</code> root that names each binding kind; its contents are unchanged.</p>
+<p>The generated project lock is now <code>oven.lock</code>. It records the same resolved dependency, provider, and interop graph that <code>incan.lock</code> did, under the name RFC 117 gives it, and both authored and generated filenames are lowercase so a case-only difference never means one thing on Linux and another on macOS or Windows. <code>incan.lock</code> is not read: a project that still has one should run <code>incan lock</code> and delete the old file, which no longer contributes to any build. Committed example locks in this repository are renamed with it.</p>
 <p>Incan-only, Rust-only, and mixed projects will have deliberate, non-overlapping source roots. Rust facets, direct <code>rustc</code> planning, build scripts, and proc macros remain supported through governed provider contracts. C and other foreign runtimes stay behind explicit interop boundaries rather than being inferred from a source directory.</p>
 <h3 id="runtime-effects-become-governed-and-inspectable">Runtime effects become governed and inspectable<a class="headerlink" href="#runtime-effects-become-governed-and-inspectable" title="Permanent link">&para;</a></h3>
 <p>The runtime and embedded-language work in this release is there to make real programs and the new backend prove one another. Accepted embedded fragments have typed descriptors, diagnostics, LSP behavior, and a safe formatter contract: structured fragments format structurally; opaque fragments are preserved unchanged.</p>
@@ -9695,6 +9904,18 @@
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <p>0.6 is not released yet, so this list carries only fixes that are merged, regression-tested, and part of the release branch's supported behavior.</p>
 <ul>
+<li><strong>Compiler</strong>: Native package consumers retain compiler macro dependencies used only in a provider's child modules, including function-only facades. (#1467)</li>
+<li><strong>Compiler</strong>: Loops over nested literals such as <code>[[], ["x"]]</code> infer the string element type without an extra caller annotation. (#1471)</li>
+<li><strong>Compiler</strong>: <code>import module::item</code> compiles to the same canonical call as <code>from module import item</code>. The Rust-style spelling typechecked but native compilation named the item by its source name with no matching import in scope, so the generated crate did not compile. (#1441)</li>
+<li><strong>Compiler</strong>: A local function called inside a lambda that is passed to a Rust method now keeps its <code>incan-v1</code> identity. The lambda body was skipped entirely while the Rust signature was pending, which discarded the resolved callee along with the diagnostics, and the bare source name reached the generated Rust as an undeclared symbol. (#1492)</li>
+<li><strong>Compiler</strong>: <code>Deque[str].from_iter(...)</code> and every other type application keep their arguments on the receiver. The argument list was dropped at resolution, so the element type reached emission as unknown and a string literal appended to the result was emitted as <code>&amp;str</code> against a <code>String</code> parameter. (#1494)</li>
+<li><strong>Tooling</strong>: A command that has to wait for the SDK provider store lock says so, naming the store and the fact that another Incan process holds it, instead of blocking silently. A three-file <code>incan inspect codegraph</code> that sat in <code>flock</code> for half an hour looked like a compiler hang. (#1514)</li>
+<li><strong>Tooling</strong>: A Loaf project that also holds a <code>Cargo.toml</code> builds with one warning naming the ignored file; a directory holding only the retired <code>incan.toml</code> stops project discovery with an error asking for the rename rather than being stepped over. (#1008)</li>
+<li><strong>Language</strong>: <code>{{</code> and <code>}}</code> in an f-string render one literal brace, as in Python, so <code>f"{{{name}}}"</code> prints <code>{x}</code>; both characters were reaching the output. (#1562)</li>
+<li><strong>Tooling</strong>: A workspace member that carries a feature-selecting dependency edge can be baked inside its workspace. A command's <code>--features</code> selection no longer rewrites the shared root lock, an explicit provider bake publishes the root lock with every member that can already resolve, and a member's sealed authority binds only its own lock entry, so baking providers leaf-first no longer invalidates each other. (#1414)</li>
+<li><strong>Compiler</strong>: Source-backed standard-library module imports retain the trait metadata required by their qualified codec functions. Models using <code>@derive(toml)</code> satisfy TOML codec bounds with either module import spelling and with aliases. (#1473)</li>
+<li><strong>Compiler</strong>: Equality assertions accept inline model constructors on either side of the comparison without requiring an intermediate local binding. (#1470)</li>
+<li><strong>Compiler</strong>: Reference-aware assignments preserve an existing borrow and materialize known borrowed values at owned destinations. Read-only nominal helpers and tree cursors can infer shared borrowing from complete local use and checked Rust receiver lifetimes, avoiding copies of ancestor subtrees. Crate-visible and inherent method entry points retain their callable ABI; mutation, escapes, overlapping call arguments, and unknown contracts keep owned behavior. (#1455)</li>
 <li><strong>Language</strong>: Plain assignment inside a nested block now reassigns the nearest enclosing binding — requiring <code>mut</code> and a compatible type — instead of silently creating a new block-local; <code>let</code> and <code>mut</code> remain the explicit shadowing forms, and <code>mut name = value</code> now declares a new binding over an active name rather than being rejected as mutation of an immutable one. This brings assignment behavior to the documented scoping contract. (#1072, #1248)</li>
 <li><strong>Language</strong>: <code>print</code> and <code>println</code> now render every argument, space-separated. Previously every argument after the first was silently dropped in generated Rust, with no diagnostic. (#1248)</li>
 <li><strong>Language</strong>: <code>print</code> and <code>println</code> are protected builtin bindings: source declarations, imports, parameters, and local bindings cannot replace them. Fields and methods with these names remain valid. (#1249)</li>

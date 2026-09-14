@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1939,6 +1939,8 @@
       
         
       
+        
+      
     
     
     
@@ -2221,6 +2223,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3618,6 +3648,8 @@
       
         
       
+        
+      
     
     
     
@@ -4049,6 +4081,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6290,6 +6350,8 @@
       
         
       
+        
+      
     
     
     
@@ -6376,6 +6438,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6640,6 +6730,8 @@
       
         
       
+        
+      
     
     
     
@@ -6682,6 +6774,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6839,6 +6959,8 @@
   
     
     
+      
+        
       
         
       
@@ -7058,6 +7180,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -9090,6 +9240,8 @@
       
         
       
+        
+      
     
     
     
@@ -9192,6 +9344,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9616,10 +9803,10 @@
 
 
 <h1 id="project-lifecycle">Project lifecycle<a class="headerlink" href="#project-lifecycle" title="Permanent link">&para;</a></h1>
-<p>This guide shows the practical project workflow: create a project, keep project metadata in <code>incan.toml</code>, bump the project version, and run repeatable commands through named environments.</p>
+<p>This guide shows the practical project workflow: create a project, keep project metadata in <code>loaf.toml</code>, bump the project version, and run repeatable commands through named environments.</p>
 <p>For repositories containing several Incan projects, use <a href="../workspaces/">Work with a multi-project workspace</a> to configure members, select command scope, share dependency declarations, and publish one root lock.</p>
 <pre class="inc-diagram"><code>flowchart LR
-  A["new or init"] --&gt; B["incan.toml + source + tests"]
+  A["new or init"] --&gt; B["loaf.toml + source + tests"]
   B --&gt; C["run and test"]
   C --&gt; D["lock and build"]
   D --&gt; E["version bump"]
@@ -9658,16 +9845,16 @@ incan<span class="w"> </span>init<span class="w"> </span><span class="se">\</spa
 |   `-- test_main.incn
 |-- README.md
 |-- .gitignore
-`-- incan.toml
+`-- loaf.toml
 </code></pre></div>
 <p>Run the generated entry point and starter tests:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run
 incan<span class="w"> </span><span class="nb">test</span>
 </code></pre></div>
-<p><code>incan.toml</code> marks the project root. Project-aware commands discover it by walking upward from your current directory. File and directory arguments are still shell paths, so write them relative to the directory you are running the command from.</p>
+<p><code>loaf.toml</code> marks the project root. Project-aware commands discover it by walking upward from your current directory. File and directory arguments are still shell paths, so write them relative to the directory you are running the command from.</p>
 <h2 id="fill-in-project-metadata">Fill in project metadata<a class="headerlink" href="#fill-in-project-metadata" title="Permanent link">&para;</a></h2>
-<p>Open <code>incan.toml</code> and treat <code>[project]</code> as the user-facing metadata for the project:</p>
-<div class="language-toml highlight"><span class="filename">incan.toml</span><pre><span></span><code><span class="k">[project]</span>
+<p>Open <code>loaf.toml</code> and treat <code>[project]</code> as the user-facing metadata for the project:</p>
+<div class="language-toml highlight"><span class="filename">loaf.toml</span><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;greeter&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
 <span class="n">description</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;A small greeting command&quot;</span>
@@ -9688,7 +9875,7 @@ incan<span class="w"> </span><span class="nb">test</span>
 </code></pre></div>
 <p>Use scripts for stable entry-point names, not shell automation. Shell-style lifecycle commands belong under <code>incan env</code> configuration.</p>
 <h2 id="bump-the-project-version">Bump the project version<a class="headerlink" href="#bump-the-project-version" title="Permanent link">&para;</a></h2>
-<p>Use <code>incan version</code> to update the project version in <code>incan.toml</code>:</p>
+<p>Use <code>incan version</code> to update the project version in <code>loaf.toml</code>:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>version<span class="w"> </span>patch
 </code></pre></div>
 <p>Before changing files, check what would happen:</p>
@@ -9728,7 +9915,7 @@ incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </sp
 <p>If all you want is "run the app" or "run the tests", plain <code>incan run</code> and <code>incan test</code> are still the normal commands. Reach for <code>incan env</code> when the project starts to accumulate named workflows such as local test runs, CI runs, docs builds, or release checks.</p>
 <h3 id="a-real-world-env-setup">A real-world env setup<a class="headerlink" href="#a-real-world-env-setup" title="Permanent link">&para;</a></h3>
 <p>This is a realistic small-project setup:</p>
-<div class="language-toml highlight"><span class="filename">incan.toml</span><pre><span></span><code><span class="k">[tool.incan.envs.default]</span>
+<div class="language-toml highlight"><span class="filename">loaf.toml</span><pre><span></span><code><span class="k">[tool.incan.envs.default]</span>
 <span class="n">env-vars</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">INCAN_NO_BANNER</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="w"> </span><span class="p">}</span>
 
 <span class="k">[tool.incan.envs.default.scripts]</span>
@@ -9833,7 +10020,7 @@ incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </sp
 <li>Create the scaffold with <code>incan new</code> or <code>incan init</code>.</li>
 <li>Fill in <code>[project]</code> metadata before sharing the repo.</li>
 <li>Keep <code>[project.scripts].main</code> pointed at the default entry point.</li>
-<li>Commit <code>incan.toml</code> and <code>incan.lock</code>.</li>
+<li>Commit <code>loaf.toml</code> and <code>oven.lock</code>.</li>
 <li>Use <code>incan version --dry-run</code> before bumping releases.</li>
 <li>Put repeatable local and CI commands under <code>incan env</code>, then inspect them with <code>incan env show</code> or <code>--dry-run</code>.</li>
 </ol>
@@ -9841,7 +10028,7 @@ incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </sp
 <ul>
 <li><a href="../../reference/project_lifecycle/">Project lifecycle reference</a></li>
 <li><a href="../imports_and_modules/">Imports and modules</a></li>
-<li><a href="../../../tooling/reference/project_configuration/">Project configuration (<code>incan.toml</code>)</a></li>
+<li><a href="../../../tooling/reference/project_configuration/">Project configuration (<code>loaf.toml</code>)</a></li>
 <li><a href="../../../tooling/reference/cli_reference/">CLI reference</a></li>
 </ul>
 

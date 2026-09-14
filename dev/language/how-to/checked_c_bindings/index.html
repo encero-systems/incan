@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1939,6 +1939,8 @@
       
         
       
+        
+      
     
     
     
@@ -2221,6 +2223,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3634,6 +3664,8 @@
       
         
       
+        
+      
     
     
     
@@ -4065,6 +4097,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6306,6 +6366,8 @@
       
         
       
+        
+      
     
     
     
@@ -6392,6 +6454,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6656,6 +6746,8 @@
       
         
       
+        
+      
     
     
     
@@ -6698,6 +6790,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6855,6 +6975,8 @@
   
     
     
+      
+        
       
         
       
@@ -7074,6 +7196,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -9106,6 +9256,8 @@
       
         
       
+        
+      
     
     
     
@@ -9208,6 +9360,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9682,7 +9869,7 @@ interop/
   src/             # governed C/C++ shims when needed
   lib/             # declared package-owned static or bundled artifacts
 </code></pre></div>
-<p>Keep public application code out of <code>contract.incn</code> and <code>bridge.incn</code>. Put target files under <code>[oven.interop]</code>, run <code>incan lock</code>, and use the binding-use receipt when an audit needs to join checked raw use to a selected target. This layout supports intentionally low-level packages too: they may expose the contract deliberately, but should document that they do not provide a safe facade.</p>
+<p>Keep public application code out of <code>contract.incn</code> and <code>bridge.incn</code>. Put target files under <code>[interop.c]</code>, run <code>incan lock</code>, and use the binding-use receipt when an audit needs to join checked raw use to a selected target. This layout supports intentionally low-level packages too: they may expose the contract deliberately, but should document that they do not provide a safe facade.</p>
 <h2 id="choose-exact-c-types">Choose exact C types<a class="headerlink" href="#choose-exact-c-types" title="Permanent link">&para;</a></h2>
 <p>Use the C namespace in the raw declaration, even when a type looks similar to Incan <code>int</code>:</p>
 <table>
@@ -9844,33 +10031,33 @@ interop/
 </code></pre></div>
 <p>Clang checks each requested field offset, size, and alignment for the selected host target. It does not infer omitted fields or discover a structure from the header. By-value structure and pointer calls are deliberately unavailable in this slice, so do not use a structure declaration as an assertion that you can already pass it across the boundary.</p>
 <h2 id="freeze-oven-interop-requirements-for-a-target">Freeze Oven interop requirements for a target<a class="headerlink" href="#freeze-oven-interop-requirements-for-a-target" title="Permanent link">&para;</a></h2>
-<p>The binding remains the authority for the Incan-facing ABI. When a package needs physical interop inputs, declare its target-specific requirements under <code>[oven.interop]</code> in the package's <code>incan.toml</code>. The declaration names only package-owned files and compatible toolchain or SDK capabilities; it never claims that Oven has selected a local installation or asks the compiler to search the host for headers, libraries, or a C++ installation.</p>
-<div class="language-toml highlight"><span class="filename">incan.toml</span><pre><span></span><code><span class="k">[oven.interop]</span>
+<p>The binding remains the authority for the Incan-facing ABI. When a package needs physical interop inputs, declare its target-specific requirements under <code>[interop.c]</code> in the package's <code>loaf.toml</code>. The declaration names only package-owned files and compatible toolchain or SDK capabilities; it never claims that Oven has selected a local installation or asks the compiler to search the host for headers, libraries, or a C++ installation.</p>
+<div class="language-toml highlight"><span class="filename">loaf.toml</span><pre><span></span><code><span class="k">[interop.c]</span>
 <span class="n">schema</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
 
-<span class="k">[[oven.interop.targets]]</span>
+<span class="k">[[interop.c.targets]]</span>
 <span class="n">target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;aarch64-apple-ios&quot;</span>
 <span class="n">toolchain</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">capability</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;apple-clang&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;&gt;=17, &lt;18&quot;</span><span class="w"> </span><span class="p">}</span>
 <span class="n">sdk</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">capability</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;iphoneos&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;&gt;=18, &lt;19&quot;</span><span class="w"> </span><span class="p">}</span>
 <span class="n">headers</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;interop/include/bridge.h&quot;</span><span class="p">]</span>
 <span class="n">definitions</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;FIXTURE=1&quot;</span><span class="p">]</span>
 
-<span class="k">[oven.interop.targets.platform]</span>
+<span class="k">[interop.c.targets.platform]</span>
 <span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;ios&quot;</span>
 <span class="n">deployment-target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;13.0&quot;</span>
 
-<span class="k">[[oven.interop.targets.artifacts]]</span>
+<span class="k">[[interop.c.targets.artifacts]]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;fixture&quot;</span>
 <span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;static&quot;</span>
 <span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;interop/lib/libfixture.a&quot;</span>
 <span class="n">origin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">source</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;https://example.invalid/fixture&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">revision</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;v1.0.0&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">license</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;MIT&quot;</span><span class="w"> </span><span class="p">}</span>
 
-<span class="k">[[oven.interop.targets.artifacts]]</span>
+<span class="k">[[interop.c.targets.artifacts]]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;foundation&quot;</span>
 <span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;system&quot;</span>
 <span class="n">capability</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;apple.framework.Foundation&quot;</span>
 
-<span class="k">[[oven.interop.targets.shims]]</span>
+<span class="k">[[interop.c.targets.shims]]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;fixture_bridge&quot;</span>
 <span class="n">language</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;c&quot;</span>
 <span class="n">sources</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;interop/src/bridge.c&quot;</span><span class="p">]</span>

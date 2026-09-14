@@ -49,7 +49,7 @@
     
       <link rel="stylesheet" href="../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1926,6 +1926,8 @@
       
         
       
+        
+      
     
     
     
@@ -2208,6 +2210,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3420,6 +3450,8 @@
       
         
       
+        
+      
     
     
     
@@ -3851,6 +3883,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6092,6 +6152,8 @@
       
         
       
+        
+      
     
     
     
@@ -6178,6 +6240,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6442,6 +6532,8 @@
       
         
       
+        
+      
     
     
     
@@ -6484,6 +6576,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6641,6 +6761,8 @@
   
     
     
+      
+        
       
         
       
@@ -6860,6 +6982,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -8892,6 +9042,8 @@
       
         
       
+        
+      
     
     
     
@@ -8994,6 +9146,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9279,7 +9466,7 @@
 <li><strong>Related:</strong><ul>
 <li>RFC 013 (Rust crate dependencies)</li>
 <li>RFC 020 (offline, locked, and reproducible builds)</li>
-<li>RFC 034 (<code>incan.pub</code> package registry)</li>
+<li>RFC 125 (<code>incan.pub</code> Loaf registry and baked asset distribution; supersedes RFC 034)</li>
 <li>RFC 041 (first-class Rust interop authoring)</li>
 <li>RFC 043 (Rust trait implementation from Incan)</li>
 <li>RFC 097 (Rust-hosted Incan caller)</li>
@@ -9451,6 +9638,7 @@ oven bake
 <li>Cross compilation selects a build host and target separately. The plan must report both, the toolchain/sysroot/linker identities, selected capability providers, and any provider node that executes for the host.</li>
 <li>Target artifacts are assigned to an explicit carrier. A Rust library, executable, <code>cdylib</code>, Rust-host caller projection, JNI library, Python carrier, or C ABI carrier can be selected only when the target and provider contracts permit it.</li>
 <li>The receipt distinguishes compile, link, package, test, and deployment facts so a successful host test cannot be mistaken for a target bake or device proof.</li>
+<li>An <strong>isolation boundary</strong> is a declared carrier edge across which no Rust type, trait object, or runtime state passes: a separate process, or a C ABI or other foreign-function carrier under RFC 116. It is the only permitted way for two distinct compiled instances of one package to coexist in one deliverable (RFC 124 refuses them within a single link closure). The boundary, and the fact that a second instance lives behind it, must be declared in the plan and visible in the receipt; an undeclared second instance is a plan error, not a warning.</li>
 </ol>
 <h3 id="rust-test-documentation-and-ide-projections">Rust test, documentation, and IDE projections<a class="headerlink" href="#rust-test-documentation-and-ide-projections" title="Permanent link">&para;</a></h3>
 <ol>

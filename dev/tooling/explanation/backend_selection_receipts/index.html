@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1932,6 +1932,8 @@
       
         
       
+        
+      
     
     
     
@@ -2214,6 +2216,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3426,6 +3456,8 @@
       
         
       
+        
+      
     
     
     
@@ -3857,6 +3889,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6103,6 +6163,8 @@
       
         
       
+        
+      
     
     
     
@@ -6189,6 +6251,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6455,6 +6545,8 @@
       
         
       
+        
+      
     
     
     
@@ -6497,6 +6589,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6855,6 +6975,8 @@
       
         
       
+        
+      
     
     
     
@@ -7053,6 +7175,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -9085,6 +9235,8 @@
       
         
       
+        
+      
     
     
     
@@ -9187,6 +9339,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9616,10 +9803,10 @@
 <p>Every successful <code>incan build</code> exposes a selection and a receipt, including the default path: selecting the legacy backend with no flags produces an explicit <code>selection_reason: "default"</code> record rather than an implicit, unrecorded choice. A source-current completed-output reuse is eligible only when its immutable Loaf already carries and verifies that same implicit-default receipt; it republishes the verified receipt after materialization rather than inventing a new execution record.</p>
 <p>The first #988 replacement profile produces a visible outcome, never a silent legacy execution:</p>
 <ul>
-<li><code>incan build --backend replacement --backend-fallback refuse</code> creates one <code>CompilationSession</code> for the selected entry and the project's selected package-feature projection, then lowers only that session's projected AST and checked <code>TypeCheckInfo</code> Body-IR bridge. It directly executes an admitted zero-argument <code>main</code>; an admitted <code>main</code> may call an admitted same-module Body-IR function, but package and public imports remain outside the profile. The runtime never reconstructs a call from source or routes it through generated Rust, and an unsupported profile remains a visible refusal rather than a legacy fallback. Its receipt records <code>executed_backend: "replacement"</code>, <code>fallback_outcome: "not_needed"</code>, and an output identity over the actual Body-IR result, exact per-stream output bytes, and execution evidence; this path does not construct generated Rust or an Oven plan.</li>
+<li><code>incan build --backend replacement --backend-fallback refuse</code> creates one <code>CompilationSession</code> for the selected entry and the project's selected package-feature projection, then lowers only that session's projected AST and checked <code>TypeCheckInfo</code> Body-IR bridge. It directly executes an admitted zero-argument <code>main</code>; an admitted <code>main</code> may call permitted local-module functions and covered public declarations from built packages. Package calls consume the selected producer's <a href="../../reference/package_executable_representation/">published executable representation</a>; their original source and generated Rust do not define a second execution route. The runtime never reconstructs a call from source or routes it through generated Rust, and an unsupported profile remains a visible refusal rather than a legacy fallback. Its receipt records <code>executed_backend: "replacement"</code>, <code>fallback_outcome: "not_needed"</code>, and an output identity over the actual Body-IR result, exact per-stream output bytes, and execution evidence; this path does not construct generated Rust or an Oven plan.</li>
 </ul>
 <p>The direct JSON report and its persisted backend receipt both carry <code>semantic_module</code> provenance from that same analysis: the checked module id and module path, plus content identities for its source and semantic snapshot. The report's Body-IR snapshot, source spans, ownership reads, runtime requirements, and task lifecycle remain execution evidence for that selected semantic module; they do not widen the supported profile.
-- The supported profile is deliberately partial: scalar arithmetic, scalar local bindings, including compiler-resolved <code>let</code>/<code>mut</code> shadowing and reassignment through retained local identities, returns, compiler-owned string concatenation, normalized range/while branches and loops, assertions, and source-local recursive tuple/list values. Body IR retains an exact declaration-span identity for each same-module named call, so direct dispatch selects the typechecker-chosen sibling body rather than scanning by name; imports and other targets without that identity refuse. It also admits a source-local, undecorated, non-generic plain <code>model</code> with no traits, methods, method aliases, partials, properties, or field aliases when every field is explicitly supplied with an already-admitted recursive structural value: execution verifies its declaration identity and canonical field layout before materializing a value, then permits one read-only named-field projection and an exact-identity <code>match</code> pattern using canonical named fields. Floats, callables, generator values, and nested nominal values are not structural model fields in this profile. Separately, it admits a source-local <code>int</code> or <code>str</code> value enum only when it is undecorated and non-generic, has no traits, methods, aliases, or payload fields, and every member carries a matching literal scalar: Body IR preserves exact enum and member declaration identities, materializes only that carrier, and exposes the raw scalar solely through the compiler-provided zero-argument <code>.value()</code> surface. It also admits a source-local, undecorated, non-generic fieldless normal enum with no value backing, traits, methods, aliases, or payload: direct execution materializes an exact unit-member carrier, permits equality or inequality between two carriers of that same retained enum identity, and dispatches exact-identity unit-member patterns when an identity-retained carrier reaches the match (for example through a same-module direct call). Intrinsic <code>Result</code> construction retains the checked <code>Ok</code> or <code>Err</code> variant and one admitted data payload; direct calls may return that carrier to a same-module caller, <code>match</code> may dispatch its one payload, and <code>?</code> executes only when Body IR records an exact same-error-type route. Cross-error-type conversion, unresolved routing, imported or shadowed constructor spellings, nested Result carriers, and non-data payloads refuse at the original source span. Omitted model defaults, field writes, nested nominal values or projections, classes, generic or decorated models, traits, methods, aliases, payload enums, enum aliases, non-retained enum patterns, generated <code>from_value</code> lookup, custom enum methods, and Result conversions remain visible refusals. One numeric tuple-field projection, one integer list-index projection, and one list-index assignment are admitted; nested projection, slices, named projections outside that plain-model exception, and a selected-entrypoint aggregate output remain visible refusals. Source-local structural-list iteration and compiler-recorded <code>range</code> iteration remain admitted. The profile also admits compiler-selected global <code>enumerate(list)</code> over one checked structural-list operand, retaining zero-based <code>(int, T)</code> pairs, and compiler-selected global <code>zip(list, list)</code> over two checked structural-list operands, retaining exact <code>(L, R)</code> pair items. Structural leaves are <code>int</code>, <code>bool</code>, <code>str</code>, or unit recursively through tuples and lists, including typed empty lists. Zip evaluates its left operand before its right, pairs items in that order, and stops as soon as either list is exhausted. The checked global builtin target is required: a same-module declaration, imported spelling, unresolved spelling, or nominal iterator type never borrows this rule, and the profile does not admit general iterator dispatch. The compiler records the recognized <code>range</code> builtin as an explicit Body-IR target fact, while a same-module declaration named <code>range</code> has its own declaration identity and dispatches as that declaration; an imported or unresolved <code>range</code> never borrows the builtin rule. The profile also executes the admitted callable vocabulary retained in Body IR: captured local closures, partial presets, source-evaluable declaration defaults, identity-selected sibling-function calls, generator expressions and generator functions consumed by <code>.collect()</code>, plus their lazy <code>.map()</code> and <code>.filter()</code> adapters when their callbacks are admitted local callables. Generator frames resume from retained Body-IR state; adapters do not poll their source until collection consumes them. The compiler currently records adapter calls as positional method calls, which the runtime accepts only for the two-operand <code>map</code>/<code>filter</code> profile; it does not infer a general stdlib signature. The one async exception is private, unaliased top-level <code>import std.async</code>, which is syntax activation only: a source-local <code>async def</code> may construct an explicit direct task frame, and an async body may consume that frame only through a direct same-module <code>await</code> or a <code>race for</code> that constructs every arm before polling in source order, selects the first ready arm, and cancels every loser. Task construction, polling, suspend/resume, winner selection, and loser cancellation appear in the replacement JSON report's receipt-bound <code>task_lifecycle</code> evidence; a losing race-arm body never runs. Aliased, <code>from</code>, relative, absolute, package, Rust, provider, task-handle, timer, channel, method, closure, stored/repeated-await, and imported-call surfaces remain visible refusals or source-owned typecheck refusals. Packages, other imports, Rust interop, unsupported callable/default forms, and general destructuring are refused visibly with the original Incan source span. Repeated source spellings do not grant execution by themselves: admitted shadowing and reassignment consume the exact local identities already selected by Body IR. A refusal emits no new receipt; it does not remove a receipt written by an earlier successful build. Direct execution and its selection/execution receipts leave the #987 structural-value, nominal-value, enum-value, pattern, Result, and async rows non-green: #1154 and #1155 respectively own producing exact paired source-observable evidence through #1146's completed route before any parity claim can turn green.
+- The supported profile is deliberately partial: scalar arithmetic, scalar local bindings, including compiler-resolved <code>let</code>/<code>mut</code> shadowing and reassignment through retained local identities, returns, compiler-owned string concatenation, normalized range/while branches and loops, assertions, and source-local recursive tuple/list values. Body IR retains an exact declaration-span identity for each same-module named call, so direct dispatch selects the typechecker-chosen sibling body rather than scanning by name; targets without a retained declaring identity refuse. It also admits a source-local, undecorated, non-generic plain <code>model</code> with no traits, methods, method aliases, partials, properties, or field aliases when every field is explicitly supplied with an already-admitted recursive structural value: execution verifies its declaration identity and canonical field layout before materializing a value, then permits one read-only named-field projection and an exact-identity <code>match</code> pattern using canonical named fields. Floats, callables, generator values, and nested nominal values are not structural model fields in this profile. Separately, it admits a source-local <code>int</code> or <code>str</code> value enum only when it is undecorated and non-generic, has no traits, methods, aliases, or payload fields, and every member carries a matching literal scalar: Body IR preserves exact enum and member declaration identities, materializes only that carrier, and exposes the raw scalar solely through the compiler-provided zero-argument <code>.value()</code> surface. It also admits a source-local, undecorated, non-generic fieldless normal enum with no value backing, traits, methods, aliases, or payload: direct execution materializes an exact unit-member carrier, permits equality or inequality between two carriers of that same retained enum identity, and dispatches exact-identity unit-member patterns when an identity-retained carrier reaches the match (for example through a same-module direct call). Intrinsic <code>Result</code> construction retains the checked <code>Ok</code> or <code>Err</code> variant and one admitted data payload; direct calls may return that carrier to a same-module caller, <code>match</code> may dispatch its one payload, and <code>?</code> executes only when Body IR records an exact same-error-type route. Cross-error-type conversion, unresolved routing, imported or shadowed constructor spellings, nested Result carriers, and non-data payloads refuse at the original source span. Omitted model defaults, field writes, nested nominal values or projections, classes, generic or decorated models, traits, methods, aliases, payload enums, enum aliases, non-retained enum patterns, generated <code>from_value</code> lookup, custom enum methods, and Result conversions remain visible refusals. One numeric tuple-field projection, one integer list-index projection, and one list-index assignment are admitted; nested projection, slices, named projections outside that plain-model exception, and a selected-entrypoint aggregate output remain visible refusals. Source-local structural-list iteration and compiler-recorded <code>range</code> iteration remain admitted. The profile also admits compiler-selected global <code>enumerate(list)</code> over one checked structural-list operand, retaining zero-based <code>(int, T)</code> pairs, and compiler-selected global <code>zip(list, list)</code> over two checked structural-list operands, retaining exact <code>(L, R)</code> pair items. Structural leaves are <code>int</code>, <code>bool</code>, <code>str</code>, or unit recursively through tuples and lists, including typed empty lists. Zip evaluates its left operand before its right, pairs items in that order, and stops as soon as either list is exhausted. The checked global builtin target is required: a same-module declaration, imported spelling, unresolved spelling, or nominal iterator type never borrows this rule, and the profile does not admit general iterator dispatch. The compiler records the recognized <code>range</code> builtin as an explicit Body-IR target fact, while a same-module declaration named <code>range</code> has its own declaration identity and dispatches as that declaration; an imported or unresolved <code>range</code> never borrows the builtin rule. The profile also executes the admitted callable vocabulary retained in Body IR: captured local closures, partial presets, source-evaluable declaration defaults, identity-selected sibling-function calls, generator expressions and generator functions consumed by <code>.collect()</code>, plus their lazy <code>.map()</code> and <code>.filter()</code> adapters when their callbacks are admitted local callables. Generator frames resume from retained Body-IR state; adapters do not poll their source until collection consumes them. The compiler currently records adapter calls as positional method calls, which the runtime accepts only for the two-operand <code>map</code>/<code>filter</code> profile; it does not infer a general stdlib signature. The one async exception is private, unaliased top-level <code>import std.async</code>, which is syntax activation only: a source-local <code>async def</code> may construct an explicit direct task frame, and an async body may consume that frame only through a direct same-module <code>await</code> or a <code>race for</code> that constructs every arm before polling in source order, selects the first ready arm, and cancels every loser. Task construction, polling, suspend/resume, winner selection, and loser cancellation appear in the replacement JSON report's receipt-bound <code>task_lifecycle</code> evidence; a losing race-arm body never runs. Aliased, <code>from</code>, relative, absolute, package, Rust, provider, task-handle, timer, channel, method, closure, stored/repeated-await, and imported-call surfaces remain visible refusals or source-owned typecheck refusals. Package calls require declared executable coverage and an admitted body/value profile; coverage failures name the package and unmet requirement. Other unsupported imports, Rust interop, callable/default forms and general destructuring remain visible refusals. Repeated source spellings do not grant execution by themselves: admitted shadowing and reassignment consume the exact local identities already selected by Body IR. A refusal emits no new receipt; it does not remove a receipt written by an earlier successful build. Direct execution and its selection/execution receipts leave the #987 structural-value, nominal-value, enum-value, pattern, Result, and async rows non-green: #1154 and #1155 respectively own producing exact paired source-observable evidence through #1146's completed route before any parity claim can turn green.
 - Source-local sets and dictionaries admit hashed membership with checked <code>int</code>, <code>bool</code>, <code>str</code>, or unit keys, including typed-empty <code>Set()</code> and <code>Dict()</code> constructors. Dictionary membership tests keys rather than values. The four compiler-owned membership helpers use actual hash tables, and compiler-selected <code>len</code> returns the distinct set-entry or dict-key count after duplicate collapse. Container iteration, indexing, projection, mutation, equality, ordering, printing, formatting, and selected-entrypoint container results remain outside this profile. The same-source <code>replacement-body-v0-020</code> case compares all four key kinds, ordinary output, and a separate boolean result; <code>replacement-body-v0-026</code> separately compares populated, duplicate, and typed-empty entry counts with exact streams and an integer result. These bounded cases do not establish general collection parity.
 - Selected source-local string calls admit ordinary positional <code>upper()</code>, <code>lower()</code>, <code>strip()</code>, <code>replace(old, new)</code>, <code>join(parts)</code>, <code>split()</code> or <code>split(separator)</code>, and <code>contains(needle)</code>. String <code>in</code> uses the same normalized containment helper; <code>not in</code> remains outside this admitted helper profile. The typechecker retains the selected helper identity; direct execution consumes that identity and the existing shared string runtime. Named arguments, unpacked arguments, explicit type arguments, missing or inconsistent identities, and non-admitted methods refuse at their original call span. Case <code>replacement-body-v0-021</code> compares the seven helpers and their assertion comparisons across independent routes with exact program streams and a separate boolean result. The unchanged <code>examples/simple/strings.incn</code> also executes directly, but this does not establish general string formatting or arbitrary-method parity.
 - Compiler-selected global <code>len(value)</code> and checked source-local <code>value.len()</code> count Unicode scalar values when <code>value</code> is a string. Both forms consume retained compiler identity, so a same-spelled source declaration or non-string helper does not borrow this rule. Case <code>replacement-body-v0-024</code> compares both forms across five Unicode inputs with exact streams and a separate boolean result. This is not a byte count or grapheme-cluster count, and it does not widen the other bounded <code>Len</code> operand profiles.

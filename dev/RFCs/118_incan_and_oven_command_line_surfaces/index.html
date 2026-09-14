@@ -49,7 +49,7 @@
     
       <link rel="stylesheet" href="../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1926,6 +1926,8 @@
       
         
       
+        
+      
     
     
     
@@ -2208,6 +2210,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3420,6 +3450,8 @@
       
         
       
+        
+      
     
     
     
@@ -3851,6 +3883,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6092,6 +6152,8 @@
       
         
       
+        
+      
     
     
     
@@ -6178,6 +6240,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6442,6 +6532,8 @@
       
         
       
+        
+      
     
     
     
@@ -6484,6 +6576,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6641,6 +6761,8 @@
   
     
     
+      
+        
       
         
       
@@ -6860,6 +6982,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -8892,6 +9042,8 @@
       
         
       
+        
+      
     
     
     
@@ -8994,6 +9146,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9432,6 +9619,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#member-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Member selection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#oven-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        oven check
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#delegation-and-api-boundary" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9712,6 +9921,8 @@ incan run --direct tool.incn  # explicit direct-source escape hatch
 <div class="language-text highlight"><pre><span></span><code>oven init
 oven add stdlib-web
 oven add --crate serde
+oven check -p oven_model -p oven_store      # plan + check-only compile of selected members, no codegen or link
+oven check --workspace --exclude incan-lsp
 oven build --target aarch64-apple-ios
 oven plan --target aarch64-apple-ios --carrier framework
 oven bake --target aarch64-apple-ios --carrier framework
@@ -9721,6 +9932,9 @@ oven action run generate-client --dry-run
 oven inspect receipt
 oven update
 oven publish
+oven yank widgets 0.4.0 --reason &quot;panics on empty input&quot;
+oven store status
+oven store gc
 </code></pre></div>
 <p>These commands operate on a selected Loaf or workspace closure. They discover <code>loaf.toml</code>, resolve the typed dependency graph, apply inherited workspace authority, and report a plan before effects where policy requires it.</p>
 <h3 id="oven-build-and-oven-bake-are-not-the-same-operation"><code>oven build</code> and <code>oven bake</code> are not the same operation<a class="headerlink" href="#oven-build-and-oven-bake-are-not-the-same-operation" title="Permanent link">&para;</a></h3>
@@ -9814,12 +10028,12 @@ oven cargo build --release
 <tr>
 <td>Dependency, lock, and registry lifecycle</td>
 <td><code>oven</code></td>
-<td><code>add</code> (shorthand for <code>dependency add</code>), <code>dependency</code>, <code>remove</code>, <code>update</code>, <code>lock</code>, <code>registry</code>, <code>publish</code></td>
+<td><code>add</code> (shorthand for <code>dependency add</code>), <code>dependency</code>, <code>remove</code>, <code>update</code>, <code>lock</code>, <code>registry</code>, <code>publish</code>, <code>yank</code></td>
 </tr>
 <tr>
 <td>Target, carrier, provider, and artifact lifecycle</td>
 <td><code>oven</code></td>
-<td><code>plan</code>, <code>build</code>, <code>bake</code>, <code>run</code>, <code>test</code>, <code>inspect</code></td>
+<td><code>plan</code>, <code>check</code>, <code>build</code>, <code>bake</code>, <code>run</code>, <code>test</code>, <code>inspect</code>, <code>store</code> (<code>status</code>, <code>verify</code>, <code>gc</code>)</td>
 </tr>
 <tr>
 <td>Environments, typed actions, project mutations</td>
@@ -9834,6 +10048,18 @@ oven cargo build --release
 </tbody>
 </table>
 <p>An operation that changes dependency resolution, registry trust, a lock, generated project state, selected toolchain/provider, target output, or execution receipt belongs to Oven even when the selected sources are entirely Incan.</p>
+<h3 id="member-selection">Member selection<a class="headerlink" href="#member-selection" title="Permanent link">&para;</a></h3>
+<p>Every Oven operation that acts on a Loaf closure accepts one selection grammar, and the grammar is the same for <code>check</code>, <code>plan</code>, <code>build</code>, <code>bake</code>, <code>test</code>, <code>run</code>, and <code>publish</code>:</p>
+<ul>
+<li>no selection flag selects the workspace's <code>default-members</code> (RFC 117), or the single project when there is no workspace;</li>
+<li><code>-p &lt;member&gt;</code> / <code>--member &lt;member&gt;</code>, repeatable, selects named members by their <code>loaf.toml</code> project name; a path is accepted where a name would be ambiguous;</li>
+<li><code>--workspace</code> selects every declared member;</li>
+<li><code>--exclude &lt;member&gt;</code>, repeatable, removes members from whichever set the other flags selected;</li>
+<li><code>--delivery &lt;name&gt;</code> selects the member list a named delivery policy declares (RFC 117), and may not be combined with <code>-p</code> or <code>--workspace</code>.</li>
+</ul>
+<p>Selection is resolved before planning and is recorded in the plan and the receipt, so two invocations that select the same members produce the same plan identity regardless of how the selection was spelled. A member that is not in the workspace's explicit <code>members</code> list cannot be selected; the error names the file that would have to declare it.</p>
+<h3 id="oven-check"><code>oven check</code><a class="headerlink" href="#oven-check" title="Permanent link">&para;</a></h3>
+<p><code>oven check</code> resolves and plans exactly as <code>oven build</code> does, then runs every selected unit's compiler in check-only mode: the compiler emits metadata and diagnostics and does not generate code or link. It is the operation for "does this closure compile" on a Rust-only Loaf, on a mixed Loaf, or on Oven's own workspace, and it must work in a tree that contains no Incan compiler when the selected members have no Incan facet. <code>incan check</code> remains the Incan-facet diagnostic surface and, inside a Loaf, delegates its plan diagnostics to the same machinery; <code>oven check</code> is the whole-closure operation and owns the selection grammar above. Check-only outputs are metadata-only units under RFC 124 and are reusable like any other unit, so a <code>check</code> followed by a <code>build</code> re-uses the metadata the check produced where the compiler permits.</p>
 <h3 id="delegation-and-api-boundary">Delegation and API boundary<a class="headerlink" href="#delegation-and-api-boundary" title="Permanent link">&para;</a></h3>
 <p>The supported call direction is:</p>
 <div class="language-text highlight"><pre><span></span><code>incan CLI (native Incan)

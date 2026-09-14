@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1939,6 +1939,8 @@
       
         
       
+        
+      
     
     
     
@@ -2221,6 +2223,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3557,6 +3587,8 @@
       
         
       
+        
+      
     
     
     
@@ -3988,6 +4020,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/stdlib/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6229,6 +6289,8 @@
       
         
       
+        
+      
     
     
     
@@ -6315,6 +6377,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6579,6 +6669,8 @@
       
         
       
+        
+      
     
     
     
@@ -6621,6 +6713,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6778,6 +6898,8 @@
   
     
     
+      
+        
       
         
       
@@ -6997,6 +7119,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -9029,6 +9179,8 @@
       
         
       
+        
+      
     
     
     
@@ -9131,6 +9283,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9494,7 +9681,7 @@
 
 
 <h1 id="work-with-a-multi-project-workspace">Work with a multi-project workspace<a class="headerlink" href="#work-with-a-multi-project-workspace" title="Permanent link">&para;</a></h1>
-<p>Use a workspace when several ordinary Incan projects share one repository and should use deterministic command selection, reusable dependency declarations, and one canonical <code>incan.lock</code>. Each member keeps its own project name, version, source tree, and publication lifecycle.</p>
+<p>Use a workspace when several ordinary Incan projects share one repository and should use deterministic command selection, reusable dependency declarations, and one canonical <code>oven.lock</code>. Each member keeps its own project name, version, source tree, and publication lifecycle.</p>
 <h2 id="create-two-member-projects">Create two member projects<a class="headerlink" href="#create-two-member-projects" title="Permanent link">&para;</a></h2>
 <p>Start with a virtual workspace root and two ordinary projects:</p>
 <div class="language-bash highlight"><pre><span></span><code>mkdir<span class="w"> </span>-p<span class="w"> </span>service-workspace/packages
@@ -9502,12 +9689,12 @@
 incan<span class="w"> </span>new<span class="w"> </span>--dir<span class="w"> </span>packages/api<span class="w"> </span>--yes
 incan<span class="w"> </span>new<span class="w"> </span>--dir<span class="w"> </span>packages/worker<span class="w"> </span>--yes
 </code></pre></div>
-<p>Create <code>incan.toml</code> at <code>service-workspace/incan.toml</code>:</p>
+<p>Create <code>loaf.toml</code> at <code>service-workspace/loaf.toml</code>:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[workspace]</span>
 <span class="n">members</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;packages/*&quot;</span><span class="p">]</span>
 <span class="n">default-members</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;api&quot;</span><span class="p">]</span>
 </code></pre></div>
-<p>The root is virtual because it has <code>[workspace]</code> but no <code>[project]</code>. A virtual root must select at least one member. Every member selected by <code>members</code> must contain its own <code>incan.toml</code> with a unique project name.</p>
+<p>The root is virtual because it has <code>[workspace]</code> but no <code>[project]</code>. A virtual root must select at least one member. Every member selected by <code>members</code> must contain its own <code>loaf.toml</code> with a unique project name.</p>
 <p>Run the inspector before building:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>workspace<span class="w"> </span>inspect
 incan<span class="w"> </span>workspace<span class="w"> </span>inspect<span class="w"> </span>--format<span class="w"> </span>json
@@ -9539,7 +9726,7 @@ incan<span class="w"> </span><span class="nb">test</span>
 <span class="k">[workspace.rust-dependencies]</span>
 <span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">default-features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
-<p>Then opt a member into that declaration from <code>packages/api/incan.toml</code>:</p>
+<p>Then opt a member into that declaration from <code>packages/api/loaf.toml</code>:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;api&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
@@ -9553,7 +9740,7 @@ incan<span class="w"> </span><span class="nb">test</span>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>lock
 incan<span class="w"> </span>workspace<span class="w"> </span>inspect<span class="w"> </span>--format<span class="w"> </span>json
 </code></pre></div>
-<p>The workspace always publishes one canonical <code>incan.lock</code> at the workspace root. Do not commit member-local lockfiles as authorities; the inspector reports any stale member-local locks so they can be removed deliberately. Builds and tests attribute their semantic and backend closure to the selected member while consuming the same root lock.</p>
+<p>The workspace always publishes one canonical <code>oven.lock</code> at the workspace root. Do not commit member-local lockfiles as authorities; the inspector reports any stale member-local locks so they can be removed deliberately. Builds and tests attribute their semantic and backend closure to the selected member while consuming the same root lock.</p>
 <h2 id="choose-rooted-or-virtual-layout-deliberately">Choose rooted or virtual layout deliberately<a class="headerlink" href="#choose-rooted-or-virtual-layout-deliberately" title="Permanent link">&para;</a></h2>
 <p>Add <code>[project]</code> to the root only when the root is itself an application or library:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[project]</span>
@@ -9576,7 +9763,7 @@ incan<span class="w"> </span>workspace<span class="w"> </span>inspect<span class
 </thead>
 <tbody>
 <tr>
-<td>A literal member path has no <code>incan.toml</code>.</td>
+<td>A literal member path has no <code>loaf.toml</code>.</td>
 <td>Correct the root-relative path or initialize the member project.</td>
 </tr>
 <tr>

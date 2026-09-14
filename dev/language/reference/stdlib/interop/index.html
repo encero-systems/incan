@@ -53,7 +53,7 @@
     
       <link rel="stylesheet" href="../../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260824-v06-roadmap-2">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260911-oven-map-1">
     
     <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -1937,6 +1937,8 @@
       
         
       
+        
+      
     
     
     
@@ -2219,6 +2221,34 @@
     
   
     Dynamic JSON
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TOML data
   
 
     
@@ -3435,6 +3465,8 @@
       
         
       
+        
+      
     
     
     
@@ -3990,6 +4022,34 @@
     
   
     std.json
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../toml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    std.toml
   
 
     
@@ -6231,6 +6291,8 @@
       
         
       
+        
+      
     
     
     
@@ -6317,6 +6379,34 @@
     
   
     Managing dependencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/execute_published_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execute a published package
   
 
     
@@ -6581,6 +6671,8 @@
       
         
       
+        
+      
     
     
     
@@ -6623,6 +6715,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/explanation/oven_ecosystem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Oven ecosystem
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -6780,6 +6900,8 @@
   
     
     
+      
+        
       
         
       
@@ -6999,6 +7121,34 @@
     
   
     Checked API metadata
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/package_executable_representation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package executable representation
   
 
     
@@ -9031,6 +9181,8 @@
       
         
       
+        
+      
     
     
     
@@ -9133,6 +9285,41 @@
     
   
     A Cargo-free toolchain for Incan and Rust
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--Draft positioning paper"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../whitepapers/incan_pub_ship_the_loaf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ship the loaf, not the recipe: why Incan and Rust need incan.pub
   
 
     
@@ -9568,8 +9755,8 @@
         <span class="k">return</span> <span class="n">view</span><span class="o">.</span><span class="n">copy_utf8</span><span class="p">(</span><span class="n">max_bytes</span><span class="o">=</span><span class="mi">4096</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="verification-and-diagnostics">Verification and diagnostics<a class="headerlink" href="#verification-and-diagnostics" title="Permanent link">&para;</a></h2>
-<p>Before code generation, the compiler renders a non-executable C probe from the binding descriptor and invokes a Clang-compatible toolchain for the selected ABI. A normal invocation selects the host ABI; <code>incan check --interop-target &lt;triple&gt;</code> instead requires and selects the matching <code>[[oven.interop.targets]]</code> declaration. The probe checks the exact free-function signature, every enum constant's declared carrier, and the size, alignment, and field offsets of every listed plain structure. A mismatch is reported at the binding declaration before native execution.</p>
-<p>Headers and native names are explicit in source. The verifier neither scans arbitrary headers to infer an API nor searches for a library that happens to provide a symbol. The logical library name records the link capability. A package may separately declare package-relative interop inputs and compatibility requirements under <code>[oven.interop]</code> in <code>incan.toml</code>; <code>incan lock</code> records those requirements and the content-derived identities of package-owned files. In v0.5, the explicit <code>incan oven interop bake</code> command turns those locked facts plus supplied compiler/SDK evidence into a selected direct-<code>rustc</code> native plan, and <code>stage</code> creates a fixed Android/iOS runtime layout. These commands do not discover host libraries, invoke Cargo or platform build tools, sign applications, or prove physical-device deployment. See the <a href="../../../how-to/checked_c_bindings/#freeze-oven-interop-requirements-for-a-target">checked C binding how-to</a> for the current declaration schema and limits.</p>
+<p>Before code generation, the compiler renders a non-executable C probe from the binding descriptor and invokes a Clang-compatible toolchain for the selected ABI. A normal invocation selects the host ABI; <code>incan check --interop-target &lt;triple&gt;</code> instead requires and selects the matching <code>[[interop.c.targets]]</code> declaration. The probe checks the exact free-function signature, every enum constant's declared carrier, and the size, alignment, and field offsets of every listed plain structure. A mismatch is reported at the binding declaration before native execution.</p>
+<p>Headers and native names are explicit in source. The verifier neither scans arbitrary headers to infer an API nor searches for a library that happens to provide a symbol. The logical library name records the link capability. A package may separately declare package-relative interop inputs and compatibility requirements under <code>[interop.c]</code> in <code>loaf.toml</code>; <code>incan lock</code> records those requirements and the content-derived identities of package-owned files. In v0.5, the explicit <code>incan oven interop bake</code> command turns those locked facts plus supplied compiler/SDK evidence into a selected direct-<code>rustc</code> native plan, and <code>stage</code> creates a fixed Android/iOS runtime layout. These commands do not discover host libraries, invoke Cargo or platform build tools, sign applications, or prove physical-device deployment. See the <a href="../../../how-to/checked_c_bindings/#freeze-oven-interop-requirements-for-a-target">checked C binding how-to</a> for the current declaration schema and limits.</p>
 <p>The repository verifies the pure checked-ABI fixture in Linux x86-64 and macOS arm64 Clang target modes. Declared Android arm64 verification uses <code>aarch64-linux-android&lt;api-level&gt;</code> and the selected target's definitions; <code>INCAN_C_ABI_CLANG</code> supplies the corresponding NDK Clang executable for this check. Declared iOS arm64 verification uses <code>arm64-apple-ios&lt;deployment-target&gt;</code> with Xcode's iPhoneOS SDK sysroot. <code>incan inspect interop-plan --target &lt;triple&gt;</code> separately projects the current lock into a deterministic, schema-versioned adapter input. It retains package-relative inputs, dependency-ordered deployment classes, explicit checked-binding-to-artifact-name correspondences, runtime and placement facts, shim inputs, and platform constraints. The explicit Oven baker, rather than this inspection command, attests selected compiler/SDK evidence, seals declared archives into its native search closure, and may stage bundled runtime files; neither route produces a signed or physical-device application.</p>
 <h2 id="not-included-yet">Not included yet<a class="headerlink" href="#not-included-yet" title="Permanent link">&para;</a></h2>
 <p>Do not use this surface for:</p>
