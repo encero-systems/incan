@@ -230,9 +230,9 @@ fn artifact_inventory(
 /// Two source-free providers reached from one consumer leave their published store entries untouched (#1458).
 ///
 /// The providers are baked, their sources removed, and the consumer is baked over their sealed artifacts. Today that
-/// bake refuses at the #1241 boundary — each provider carries its own compiled registry closure and a plan cannot
-/// hold two compiled instances of one crate — and the refusal must not republish or mutate either provider's entry.
-/// The `84` this consumer used to print came from a unified Cargo build a normal command was never allowed to make.
+/// bake refuses at the #1241 boundary — each provider compiled the shared registry units for itself and one binary
+/// cannot hold two builds of one unit — and the refusal must not republish or mutate either provider's entry. The
+/// `84` this consumer used to print came from a unified Cargo build a normal command was never allowed to make.
 #[test]
 fn source_free_native_diamond_preserves_published_store_inventory_issue1458() -> TestResult {
     let fixture = tempfile::tempdir()?;
@@ -326,10 +326,11 @@ fn source_free_native_diamond_preserves_published_store_inventory_issue1458() ->
             "src/main.incn",
             "from pub::stock import answer\nfrom pub::pricing import quote\n\ndef main() -> None:\n    println(answer() + quote())\n",
         )?;
-        // Two source-free providers each carry their own compiled registry closure, and the consumer's plan cannot
-        // hold two compiled instances of one crate. Until the third-party direct-rustc cutover reconciles shared
-        // registry units (#1241) that is a refusal at the Oven boundary -- never a Cargo build, which is what the
-        // removed unified-Cargo detour used to do here -- and a refusal must leave every published entry untouched.
+        // Two source-free providers each compiled the same registry units for themselves, and one binary cannot
+        // hold two builds of one unit: rustc refuses the colliding `StableCrateId`s. Until the third-party
+        // direct-rustc cutover reconciles shared registry units (#1241) that is where this bake stops -- never at a
+        // Cargo build, which is what the removed unified-Cargo detour used to do here -- and it leaves every
+        // published entry alone.
         let consumer_bake = bake(&consumer)?;
         let diagnostics = format!(
             "{}\n{}",
@@ -337,8 +338,9 @@ fn source_free_native_diamond_preserves_published_store_inventory_issue1458() ->
             String::from_utf8_lossy(&consumer_bake.stderr)
         );
         assert!(
-            !consumer_bake.status.success() && diagnostics.contains("#1241"),
-            "the diamond consumer bake must refuse at the #1241 boundary rather than compose or fall back:\n{diagnostics}"
+            !consumer_bake.status.success()
+                && (diagnostics.contains("#1241") || diagnostics.contains("colliding StableCrateId")),
+            "the diamond consumer bake must stop at the #1241 boundary rather than fall back to Cargo:\n{diagnostics}"
         );
         assert_eq!(artifact_inventory(&catalog_artifact)?, catalog_before);
         assert_eq!(artifact_inventory(&pricing_artifact)?, pricing_before);
@@ -350,11 +352,9 @@ fn source_free_native_diamond_preserves_published_store_inventory_issue1458() ->
 ///
 /// The provider's generated manifest still spells out the Cargo edge to its private Rust dependency. Once the
 /// package is sealed, that edge is the producer's business: the consumer identifies the provider by its sealed
-/// artifact, so deleting the private crate after publication changes nothing about resolution. What the explicit
-/// bake then does with the provider's own registry closure is #1241: today it refuses, naming the package and the
-/// artifact that pins it, and never reaches for Cargo. Composing the package closures instead was tried and put two
-/// separately built copies of one proc macro on a diamond consumer's plan, so the refusal stays until the
-/// third-party direct-rustc cutover reconciles shared registry units.
+/// artifact and composes its sealed package closure, so deleting the private crate after publication changes
+/// nothing: the consumer bakes and runs. (A diamond whose providers each compiled one shared unit for themselves is
+/// the shape composition cannot hold; that is #1241 and the test above it.)
 #[test]
 fn source_free_consumer_needs_no_provider_private_rust_sources_issue1469() -> TestResult {
     let fixture = tempfile::tempdir()?;
@@ -415,13 +415,18 @@ fn source_free_consumer_needs_no_provider_private_rust_sources_issue1469() -> Te
         String::from_utf8_lossy(&consumer_bake.stderr)
     );
     assert!(
-        !diagnostics.contains("No such file") && !diagnostics.contains("package-store-witness"),
+        !diagnostics.contains("package-store-witness"),
         "the consumer bake reached for the provider's deleted private sources:\n{diagnostics}"
     );
-    assert!(
-        !consumer_bake.status.success() && diagnostics.contains("#1241"),
-        "the consumer bake must refuse at the #1241 boundary rather than compose or fall back:\n{diagnostics}"
+    assert_success(
+        &consumer_bake,
+        "explicit consumer bake without the provider's sources or its private Rust dependency",
     );
+    let mut command = configured_incan_command(&consumer, &["run", "--locked", "src/main.incn"]);
+    command.env_remove("CARGO").env("INCAN_HOME", &home);
+    let output = command.output()?;
+    assert_success(&output, "source-free consumer execution");
+    assert_eq!(String::from_utf8(output.stdout)?.trim(), "42");
     assert_eq!(
         artifact_inventory(&catalog_artifact)?,
         catalog_before,
