@@ -77,9 +77,11 @@ use crate::lsp::diagnostics::{
     compile_error_to_diagnostic_with_phase_and_sources, position_to_offset, span_to_range,
 };
 use crate::lsp::semantic_tokens;
+#[cfg(feature = "rust_inspect")]
 use crate::manifest::ProjectManifest;
 #[cfg(feature = "rust_inspect")]
 use crate::provider::inventory::extend_requirements_with_provider_plan;
+#[cfg(feature = "rust_inspect")]
 use crate::provider::requirements::collect_project_requirements;
 #[cfg(feature = "rust_inspect")]
 use crate::provider::requirements::merge_project_requirement_dependencies;

@@ -17,11 +17,10 @@ use incan_vocab::{
     DslSurface, KeywordRegistration as VocabKeywordRegistration, LibraryManifest as VocabProviderManifest,
 };
 
-pub use artifact::{ProviderArtifactDigestError, digest_provider_artifact};
+pub use artifact::{ProviderArtifactDigestError, digest_provider_artifact, digest_provider_source_inputs};
 pub(crate) use artifact::{
     ProviderSemanticToolchainDependency, digest_cargo_path_source_tree_with_cache,
-    digest_provider_semantic_artifact_with_context_and_cache, digest_provider_source_inputs,
-    digest_toolchain_source_tree_with_cache,
+    digest_provider_semantic_artifact_with_context_and_cache, digest_toolchain_source_tree_with_cache,
 };
 pub use model::*;
 pub(crate) use type_projection::{

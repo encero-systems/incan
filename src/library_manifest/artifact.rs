@@ -128,7 +128,7 @@ fn stamp_directory(root: &Path, directory: &Path, hasher: &mut Sha256) -> Result
 /// it to compare equivalent native builds, while [`digest_provider_artifact`] remains the byte-exact integrity check
 /// for each physical artifact. Logical module labels keep shared toolchain source outside the package directory
 /// relocation-stable without excluding it from the semantic identity.
-pub(crate) fn digest_provider_source_inputs(
+pub fn digest_provider_source_inputs(
     project_root: &Path,
     manifest_path: &Path,
     source_inputs: &[(String, PathBuf)],

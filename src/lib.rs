@@ -22,7 +22,6 @@ pub mod dependency_resolver;
 pub mod driver;
 pub mod format;
 pub mod frontend;
-#[cfg(feature = "cli")]
 pub(crate) mod generated_cache;
 pub mod inspect;
 pub mod library_manifest;

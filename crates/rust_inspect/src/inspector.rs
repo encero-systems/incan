@@ -43,23 +43,27 @@ pub struct InspectorConfig {
 }
 
 impl InspectorConfig {
+    /// Configure an inspector over the generated workspace whose `Cargo.toml` lives in `manifest_dir`.
     pub fn new(manifest_dir: impl Into<PathBuf>) -> Self {
         Self {
             manifest_dir: manifest_dir.into(),
         }
     }
 
+    /// The generated workspace directory this inspector loads and caches metadata for.
     pub fn manifest_dir(&self) -> &Path {
         self.manifest_dir.as_path()
     }
 }
 
+/// The rust-analyzer-backed inspector: eager extraction through `prewarm`, cache-only reads through `get`.
 pub struct Inspector {
     config: InspectorConfig,
     cache: RustMetadataCache,
 }
 
 impl Inspector {
+    /// Read a presence-and-truthiness flag (`1`, `true`, `on`) from the environment.
     fn env_flag_enabled(name: &str) -> bool {
         std::env::var_os(name).is_some_and(|value| {
             let value = value.to_string_lossy();
@@ -237,7 +241,10 @@ impl Inspector {
     }
 }
 
+/// Whether any type in the item's signature is still `Unknown`, which is what separates a partial prewarm
+/// record from complete metadata.
 fn metadata_has_unknowns(metadata: &RustItemMetadata) -> bool {
+    /// Walk one type shape, including its `Option`, `Ref`, `Result` and collection payloads.
     fn shape_has_unknown(shape: &incan_core::interop::RustTypeShape) -> bool {
         use incan_core::interop::RustTypeShape;
         match shape {

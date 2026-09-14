@@ -52,7 +52,8 @@ pub use loader::{
 #[cfg(feature = "inspector")]
 pub use mir_digest::{MirDigestError, function_body_digest};
 
-#[cfg(all(test, feature = "inspector"))]
+#[cfg(test)]
+#[cfg(feature = "inspector")]
 mod tests {
     use std::fs;
     use std::sync::Mutex;
