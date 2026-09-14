@@ -15,9 +15,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::backend::project::generator::{GENERATED_CARGO_TARGET_DIR_ENV, cargo_config_identity};
-use crate::backend::project::runner::cargo_executable;
 use crate::lockfile::CargoFeatureSelection;
 use crate::oven::compiler_suite_env::OVEN_COMPILER_SUITE_RUSTC_ENV;
+use crate::oven::legacy_cargo::cargo_process::cargo_executable;
 
 /// Marker exported by a receipt-bound compiler-suite child. Its presence means that Cargo is not an execution
 /// capability and must not be probed while deriving a compatibility identity.

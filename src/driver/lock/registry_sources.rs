@@ -6,14 +6,14 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "rust_inspect")]
 use std::sync::Arc;
 
-#[cfg(feature = "rust_inspect")]
-use crate::backend::project::runner::resolved_cargo_executable;
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::driver::error::{CliError, CliResult};
 use crate::driver::lock::PreparedOvenProjectRegistrySourceAuthorities;
 use crate::driver::lock::rust_inspect::registry_source_is_owned_by_catalog;
 use crate::manifest::DependencySpec;
 use crate::oven::legacy_cargo::OvenLegacyCargoInspectionPackage;
+#[cfg(feature = "rust_inspect")]
+use crate::oven::legacy_cargo::cargo_process::resolved_cargo_executable;
 #[cfg(feature = "rust_inspect")]
 use crate::oven::legacy_cargo::explicit_project_bake_inspection_sources;
 #[cfg(feature = "rust_inspect")]

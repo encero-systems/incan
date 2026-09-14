@@ -13,24 +13,24 @@ use std::{env, fs};
 use incan_core::lang::stdlib;
 use incan_core::lang::stdlib::{StdlibExtraCrateDep, StdlibExtraCrateSource};
 
-use crate::backend::ir::detect_serde_non_import_usage;
-use crate::backend::project::GENERATED_TOOLCHAIN_SUPPORT_CRATES;
-use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
 use crate::dependency_resolver::ResolvedDependencies;
-use crate::driver::error::{CliError, CliResult};
-use crate::driver::vocab_extraction::collect_library_vocab_metadata_for_parser;
 use crate::frontend::ast::ImportKind;
 use crate::frontend::library_manifest_index::{
     LibraryArtifactMetadata, LibraryManifestFailureKind, LibraryManifestIndex, LibraryManifestIndexEntry,
 };
 use crate::frontend::parsed_module::ParsedModule;
+use crate::frontend::serde_usage::detect_serde_non_import_usage;
 use crate::library_manifest::LibraryManifest;
 use crate::library_manifest::published_layout::oven_library_dependency_declares_package_loaf;
 use crate::manifest::{
     DependencySource, DependencySpec, INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV,
     LOAF_MANIFEST_FILENAME, ProjectManifest,
 };
+use crate::provider::error::{ProviderError, ProviderResult};
+use crate::provider::vocab_extraction::collect_library_vocab_metadata_for_parser;
 use crate::provider::{PackageFeaturePlan, SDK_PROVIDER_BUILD_ENV, SdkArtifactProjection, SdkDependencyRebinding};
+use crate::toolchain_layout::GENERATED_CARGO_TARGET_DIR_ENV;
+use crate::toolchain_layout::GENERATED_TOOLCHAIN_SUPPORT_CRATES;
 static PREPARED_LIBRARY_DEPENDENCIES: LazyLock<Mutex<HashMap<PathBuf, BTreeSet<String>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -112,7 +112,7 @@ pub(crate) enum SdkInventorySource {
 pub(crate) fn parser_only_library_manifest_index(
     manifest: &ProjectManifest,
     active_dependencies: &BTreeSet<String>,
-) -> CliResult<LibraryManifestIndex> {
+) -> ProviderResult<LibraryManifestIndex> {
     let existing_index = LibraryManifestIndex::from_project_manifest_dependencies(
         manifest,
         active_dependencies.iter().map(String::as_str),
@@ -153,13 +153,13 @@ pub(crate) fn parser_only_library_manifest_index(
 fn parser_only_library_manifest_entry(
     dependency_key: &str,
     dependency_root: &Path,
-) -> CliResult<LibraryManifestIndexEntry> {
+) -> ProviderResult<LibraryManifestIndexEntry> {
     let dependency_root = fs::canonicalize(dependency_root).unwrap_or_else(|_| dependency_root.to_path_buf());
     let manifest_path = dependency_root.join(LOAF_MANIFEST_FILENAME);
     let manifest_content = fs::read_to_string(&manifest_path)
-        .map_err(|error| CliError::failure(format!("failed to read {}: {error}", manifest_path.display())))?;
+        .map_err(|error| ProviderError::failure(format!("failed to read {}: {error}", manifest_path.display())))?;
     let dependency_manifest = ProjectManifest::from_str(&manifest_content, &manifest_path)
-        .map_err(|error| CliError::failure(error.to_string()))?;
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
     let project_root = dependency_manifest.project_root().to_path_buf();
     let project_name = dependency_manifest
         .project
@@ -205,7 +205,7 @@ pub(crate) fn prepare_library_dependency_artifacts(
     feature_plan: Option<&PackageFeaturePlan>,
     active_dependencies: &BTreeSet<String>,
     preparation: LibraryDependencyPreparation,
-) -> CliResult<()> {
+) -> ProviderResult<()> {
     if active_dependencies.is_empty() {
         return Ok(());
     }
@@ -231,7 +231,7 @@ pub(crate) fn prepare_library_dependency_artifacts(
             }) => {
                 let actual_features = &artifact_manifest.contract_metadata.provider.active_features;
                 if actual_features != &expected_features && !has_source_manifest {
-                    return Err(CliError::failure(format!(
+                    return Err(ProviderError::failure(format!(
                         "compiled dependency `pub::{dependency_key}` at {} was built with package features [{}], but this consumer requires [{}]; the producer source manifest is unavailable, so install or publish an artifact with the exact requested feature projection",
                         metadata.manifest_path.display(),
                         actual_features.iter().cloned().collect::<Vec<_>>().join(", "),
@@ -256,7 +256,7 @@ pub(crate) fn prepare_library_dependency_artifacts(
 
     for (dependency_key, dependency_root, active_features) in required {
         if matches!(preparation, LibraryDependencyPreparation::OvenDirectRustc) {
-            return Err(CliError::failure(format!(
+            return Err(ProviderError::failure(format!(
                 "Oven Alpha requires a baked package Loaf for pub::{dependency_key} at {}; run `incan oven bake --project {}` in that provider before preparing this consumer. Normal build, run, test, lock, and consumer bake will not compile the provider or invoke Cargo on its behalf",
                 dependency_root.display(),
                 dependency_root.display()
@@ -290,12 +290,12 @@ fn prepare_library_dependency_artifact(
     dependency_root: &Path,
     active_features: &BTreeSet<String>,
     preparation: LibraryDependencyPreparation,
-) -> CliResult<()> {
+) -> ProviderResult<()> {
     let canonical_root = fs::canonicalize(dependency_root).unwrap_or_else(|_| dependency_root.to_path_buf());
     {
         let prepared = PREPARED_LIBRARY_DEPENDENCIES
             .lock()
-            .map_err(|_| CliError::failure("failed to lock prepared library dependency set"))?;
+            .map_err(|_| ProviderError::failure("failed to lock prepared library dependency set"))?;
         if prepared.get(&canonical_root) == Some(active_features) {
             return Ok(());
         }
@@ -313,7 +313,7 @@ fn prepare_library_dependency_artifact(
         dependency_root.display()
     );
     let current_exe = env::current_exe()
-        .map_err(|error| CliError::failure(format!("failed to resolve current incan executable: {error}")))?;
+        .map_err(|error| ProviderError::failure(format!("failed to resolve current incan executable: {error}")))?;
     let mut command = Command::new(current_exe);
     command
         .args(["build", "--lib", "--no-default-features"])
@@ -339,14 +339,14 @@ fn prepare_library_dependency_artifact(
             .arg(active_features.iter().cloned().collect::<Vec<_>>().join(","));
     }
     let status = command.status().map_err(|error| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "failed to run `incan build --lib` for pub::{dependency_key} dependency at {}: {error}",
             dependency_root.display()
         ))
     })?;
 
     if !status.success() {
-        return Err(CliError::failure(format!(
+        return Err(ProviderError::failure(format!(
             "failed to prepare pub::{dependency_key} dependency artifact at {}",
             dependency_root.display()
         )));
@@ -354,7 +354,7 @@ fn prepare_library_dependency_artifact(
 
     let mut prepared = PREPARED_LIBRARY_DEPENDENCIES
         .lock()
-        .map_err(|_| CliError::failure("failed to lock prepared library dependency set"))?;
+        .map_err(|_| ProviderError::failure("failed to lock prepared library dependency set"))?;
     prepared.insert(canonical_root, active_features.clone());
     Ok(())
 }
@@ -363,7 +363,7 @@ fn prepare_library_dependency_artifact(
 pub(crate) fn collect_project_requirements(
     modules: &[ParsedModule],
     library_manifest_index: &LibraryManifestIndex,
-) -> CliResult<ProjectRequirements> {
+) -> ProviderResult<ProjectRequirements> {
     let mut stdlib_namespaces = HashSet::new();
     if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
         for module in modules {
@@ -467,7 +467,7 @@ pub(crate) fn collect_project_requirements(
     }
     for spec in library_manifest_index
         .merged_provider_required_dependencies()
-        .map_err(|err| CliError::failure(format!("failed to merge provider requirements: {err}")))?
+        .map_err(|err| ProviderError::failure(format!("failed to merge provider requirements: {err}")))?
     {
         merge_requirement_dependency(
             &mut requirements.dependencies,
@@ -513,9 +513,9 @@ fn compiler_support_dependency_spec(crate_name: &str) -> DependencySpec {
 }
 
 /// Build a dependency specification from a stdlib extra crate requirement.
-fn dependency_spec_from_stdlib_extra_crate(crate_name: &str) -> CliResult<DependencySpec> {
+fn dependency_spec_from_stdlib_extra_crate(crate_name: &str) -> ProviderResult<DependencySpec> {
     let dep = stdlib::find_extra_crate_dep(crate_name).ok_or_else(|| {
-        CliError::failure(format!(
+        ProviderError::failure(format!(
             "stdlib dependency metadata for `{crate_name}` is missing from the registry"
         ))
     })?;
@@ -556,10 +556,10 @@ pub(crate) fn merge_requirement_dependency(
     merged: &mut Vec<DependencySpec>,
     candidate: DependencySpec,
     source_label: String,
-) -> CliResult<()> {
+) -> ProviderResult<()> {
     if let Some(existing) = merged.iter().find(|dep| dep.crate_name == candidate.crate_name) {
         if !dependency_specs_match(existing, &candidate) {
-            return Err(CliError::failure(format!(
+            return Err(ProviderError::failure(format!(
                 "dependency requirement `{}` conflicts with existing collected requirements ({source_label})",
                 candidate.crate_name
             )));
@@ -592,7 +592,7 @@ pub(crate) fn dependency_specs_match(left: &DependencySpec, right: &DependencySp
 pub(crate) fn merge_project_requirement_dependencies(
     resolved: &mut ResolvedDependencies,
     requirements: &ProjectRequirements,
-) -> CliResult<()> {
+) -> ProviderResult<()> {
     for required in &requirements.dependencies {
         let already_in_dependencies = resolved
             .dependencies
@@ -600,7 +600,7 @@ pub(crate) fn merge_project_requirement_dependencies(
             .find(|spec| spec.crate_name == required.crate_name);
         if let Some(existing) = already_in_dependencies {
             if !dependency_specs_match(existing, required) {
-                return Err(CliError::failure(format!(
+                return Err(ProviderError::failure(format!(
                     "dependency `{}` conflicts between resolved imports and collected project requirements",
                     required.crate_name
                 )));
@@ -613,7 +613,7 @@ pub(crate) fn merge_project_requirement_dependencies(
             .find(|spec| spec.crate_name == required.crate_name);
         if let Some(existing) = already_in_dev {
             if existing != required {
-                return Err(CliError::failure(format!(
+                return Err(ProviderError::failure(format!(
                     "dependency `{}` conflicts between dev dependencies and collected project requirements",
                     required.crate_name
                 )));
@@ -631,9 +631,9 @@ pub(crate) fn merge_project_requirement_dependencies(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::driver::test_support::parsed_module_for_test;
     use crate::library_manifest::ProviderFeatureMetadata;
     use crate::provider::FeatureSelection;
+    use crate::provider::test_support::parsed_module_for_test;
     use std::collections::BTreeMap;
 
     #[test]

@@ -289,12 +289,6 @@
       "expected_fingerprint": "0x2149b316c851f3d0"
     },
     {
-      "path": "src/driver/vocab_extraction.rs",
-      "category": "vocab desugarer artifact discovery, profile and crate-type checks",
-      "expected_count": 3,
-      "expected_fingerprint": "0xe97ac641de1e4572"
-    },
-    {
       "path": "src/frontend/testing_markers.rs",
       "category": "metadata-loaded testing marker inventory",
       "expected_count": 13,
@@ -403,6 +397,12 @@
       "expected_fingerprint": "0x3814274efdb9fae2"
     },
     {
+      "path": "src/provider/effect_digest.rs",
+      "category": "effect-digest source-tree target exclusion",
+      "expected_count": 1,
+      "expected_fingerprint": "0xb9e5e7e7fc4c5038"
+    },
+    {
       "path": "src/provider/features.rs",
       "category": "manifest feature-section spelling",
       "expected_count": 2,
@@ -425,6 +425,12 @@
       "category": "provider source-tree hashing target exclusion",
       "expected_count": 1,
       "expected_fingerprint": "0xf6b309b30611feae"
+    },
+    {
+      "path": "src/provider/vocab_extraction.rs",
+      "category": "vocab desugarer artifact discovery, profile and crate-type checks",
+      "expected_count": 3,
+      "expected_fingerprint": "0xe97ac641de1e4572"
     }
   ]
 }

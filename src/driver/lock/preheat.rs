@@ -21,14 +21,14 @@ use std::time::SystemTime;
 use sha2::{Digest, Sha256};
 
 use crate::backend::ProjectGenerator;
-use crate::backend::project::runner::cargo_command;
-use crate::backend::project::runner::configure_cargo_target;
-use crate::backend::project::runner::sanitize_cargo_environment;
 use crate::driver::lock::{DependencyPreheatContext, GeneratedLibraryDependencyPreheatRequest};
 use crate::driver::lock::{
     LIBRARY_DEPENDENCY_PREHEAT_FINGERPRINT_FILE, LIBRARY_DEPENDENCY_PREHEAT_LOCK_FILE,
     LOCK_DEPENDENCY_PREHEAT_STALE_LOCK_SECS, LockDependencyPreheatGuard,
 };
+use crate::oven::legacy_cargo::cargo_process::cargo_command;
+use crate::oven::legacy_cargo::cargo_process::configure_cargo_target;
+use crate::oven::legacy_cargo::cargo_process::sanitize_cargo_environment;
 
 /// Return whether lock-generation dependency preheat should run for the supplied environment value.
 fn parse_lock_dependency_preheat_env(raw: Option<&str>) -> bool {

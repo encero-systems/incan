@@ -837,9 +837,9 @@ pub(crate) fn register_module_path_segments(checker: &mut typechecker::TypeCheck
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::driver::test_support::parsed_module_for_test;
     use crate::frontend::typechecker::IdentKind;
     use crate::frontend::{lexer, parser};
+    use crate::provider::test_support::parsed_module_for_test;
 
     #[test]
     fn collect_rust_dependency_uses_includes_rust_module_root() -> Result<(), Box<dyn std::error::Error>> {

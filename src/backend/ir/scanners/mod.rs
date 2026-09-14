@@ -4,12 +4,10 @@
 //! IR and do not mutate global state.
 
 mod binding_usage;
-mod decorators;
 mod rust_crates;
-mod serde;
 mod this;
 
+pub use crate::frontend::serde_usage::{detect_serde_non_import_usage, detect_serde_usage};
 pub(crate) use binding_usage::{binding_use_scan, expr_uses_binding_name};
 pub use rust_crates::collect_rust_crates;
-pub use serde::{detect_serde_non_import_usage, detect_serde_usage};
 pub use this::check_for_this_import;

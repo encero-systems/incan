@@ -17,8 +17,5 @@ pub mod project;
 #[cfg(feature = "rust_inspect")]
 pub mod rust_inspect_workspace;
 pub mod session;
-#[cfg(test)]
-pub(crate) mod test_support;
 pub mod testing;
 pub mod typecheck;
-pub(crate) mod vocab_extraction;

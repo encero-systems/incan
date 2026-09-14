@@ -6,6 +6,7 @@
 //! before returning. Normal Oven build, run, and test code neither calls this module nor receives a Cargo target path.
 
 mod cargo_json;
+pub(crate) mod cargo_process;
 
 // Cargo's own JSON shapes live beside this file rather than inside it. They are deserialization targets with no
 // publisher behavior, and every path stays where callers expect it through this re-export, so this is a move.
@@ -8046,7 +8047,7 @@ version = "1.0.0"
         )?;
         fs::write(helper.join("src/lib.rs"), "pub fn marker() {}\n")?;
 
-        let cargo = crate::backend::project::runner::resolved_cargo_executable()?;
+        let cargo = crate::oven::legacy_cargo::cargo_process::resolved_cargo_executable()?;
         let manifest = project.join("Cargo.toml");
         let staging = fixture.path().join("staging");
         let initial_sources = explicit_project_bake_inspection_sources(&cargo, &manifest, &[], &[], &staging, None)?;

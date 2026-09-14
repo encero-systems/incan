@@ -435,6 +435,15 @@ fn push_unique(paths: &mut Vec<PathBuf>, path: PathBuf) {
     }
 }
 
+/// Cargo dependency key for the toolchain-owned runtime support crate used by generated Rust projects.
+pub(crate) const INCAN_STDLIB_CRATE_NAME: &str = "incan_stdlib";
+/// Cargo dependency key for the toolchain-owned derive crate used by every generated Rust project.
+pub(crate) const INCAN_DERIVE_CRATE_NAME: &str = "incan_derive";
+/// Complete generator-owned support-crate set emitted unconditionally into generated Cargo projects.
+pub(crate) const GENERATED_TOOLCHAIN_SUPPORT_CRATES: [&str; 2] = [INCAN_STDLIB_CRATE_NAME, INCAN_DERIVE_CRATE_NAME];
+/// Environment variable that redirects every generated project's Cargo target directory.
+pub(crate) const GENERATED_CARGO_TARGET_DIR_ENV: &str = "INCAN_GENERATED_CARGO_TARGET_DIR";
+
 #[cfg(test)]
 mod tests {
     use std::fs;

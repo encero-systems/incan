@@ -1,4 +1,7 @@
-//! Serde/JSON feature detection.
+//! Serde/JSON feature detection over the checked program.
+//!
+//! A frontend scan rather than a backend one: the provider decides a project's runtime requirements from it and the
+//! code generator decides emission from it, and neither may depend on the other.
 //!
 //! Activation is primarily import-driven (RFC 022): importing from `std.serde` signals
 //! that serde is required.
@@ -11,7 +14,7 @@ use crate::frontend::ast::{Expr, Program};
 use crate::frontend::ast_walk::any_expr_in_program;
 use incan_core::lang::builtins::{self, BuiltinFnId};
 
-use super::decorators::has_stdlib_import;
+use crate::frontend::ast_walk::has_stdlib_import;
 
 /// Detect whether serde-backed runtime support is needed for this program.
 ///
