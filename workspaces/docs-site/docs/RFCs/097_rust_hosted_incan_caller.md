@@ -25,7 +25,7 @@
 - **Issue:** https://github.com/encero-systems/incan/issues/569
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
-- **Target scope:** v0.6, slice 4 (Oven fast, real, and performant, #1141), beside RFC 119 and RFC 123; brought into scope 2026-09-10.
+- **Target scope:** v0.6, slice 6 (Loaf-native ecosystem, build scripts inert, #1561), beside RFC 119 and RFC 123; brought into scope 2026-09-10 under slice 4 and moved with #1486 on 2026-09-13.
 - **Shipped in:** —
 
 ## Summary

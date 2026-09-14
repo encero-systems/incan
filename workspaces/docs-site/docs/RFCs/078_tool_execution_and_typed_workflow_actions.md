@@ -17,7 +17,7 @@
 - **Issue:** https://github.com/encero-systems/incan/issues/406
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
-- **Target scope:** v0.6, slice 5 (Oven CLI delivery, #1142); brought into scope 2026-09-10. Table root is `[actions]` per RFC 117.
+- **Target scope:** v0.6, slice 7 (Oven CLI delivery, #1142); brought into scope 2026-09-10. Table root is `[actions]` per RFC 117.
 - **Shipped in:** —
 
 ## Summary
