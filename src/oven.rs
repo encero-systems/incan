@@ -30,6 +30,7 @@ pub mod loaf;
 pub(crate) mod loaf_mirror;
 pub(crate) mod native_contract;
 pub mod native_test;
+pub(crate) mod plan;
 mod process;
 pub(crate) mod progress;
 pub mod rustc;
