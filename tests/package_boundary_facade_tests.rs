@@ -210,7 +210,9 @@ fn artifact_inventory(
                 inventory.insert(relative, None);
                 pending.push(path);
             } else {
-                assert!(entry.file_type()?.is_file(), "unexpected package entry: {path:?}");
+                if !entry.file_type()?.is_file() {
+                    return Err(format!("unexpected package entry: {path:?}").into());
+                }
                 let mut file = fs::File::open(path)?;
                 let mut digest = Sha256::new();
                 loop {

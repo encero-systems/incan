@@ -215,8 +215,9 @@ def internal(value: int) -> int:
 ///
 /// The figure quoted while this was being designed — 1.80 s — was measured on a *text-substitution* prototype,
 /// which RFC 106 then ruled non-conformant. That number was never evidence for the approach actually shipped, so
-/// this measures the value-level digest instead, and asserts the properties a corpus can check that fixtures
-/// cannot: every declaration digests, and no two distinct declarations share a digest by accident.
+/// this measures the value-level digest instead, and asserts the one property a corpus can check that fixtures
+/// cannot: every declaration digests. Declarations that share a digest are reported, not asserted against — a
+/// shared digest is two declarations that mean the same thing, which the corpus legitimately contains.
 #[test]
 fn conformant_digest_covers_the_standard_library() -> TestResult {
     use incan_semantics_core::semantic_digest::{body_without_docstring, semantic_digest};

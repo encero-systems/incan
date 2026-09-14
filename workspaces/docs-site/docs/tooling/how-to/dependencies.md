@@ -31,7 +31,7 @@ listed crate. See [Oven Alpha](../explanation/oven_alpha.md#current-alpha-bounda
 
 ## Using `loaf.toml` for project dependencies
 
-For projects with more than a handful of dependencies, create an `loaf.toml` manifest:
+For projects with more than a handful of dependencies, create a `loaf.toml` manifest:
 
 ```bash
 incan init
@@ -113,9 +113,7 @@ Or, if your `loaf.toml` has `[project.scripts].main` set:
 incan lock
 ```
 
-`oven.lock` records normalized semantic dependency, feature, provider, and implementation-facet inputs. **Commit it
-to version control** so normal commands can validate that the project still matches the receipt-compatible Loaf
-selection. The lock is not permission for a normal command to resolve missing crates with Cargo.
+`oven.lock` records normalized semantic dependency, feature, provider, and implementation-facet inputs. **Commit it to version control** so normal commands can validate that the project still matches the receipt-compatible Loaf selection. The lock is not permission for a normal command to resolve missing crates with Cargo.
 
 For compiled SDK providers, the fingerprint identifies checked provider contracts, dependency and feature choices, and authored Incan inputs. Native Rust output and host-derived ABI metadata remain covered by each installed provider artifact's exact integrity digest, but do not make an otherwise equivalent macOS and Linux SDK selection semantically different. User-authored path dependencies remain part of the semantic fingerprint.
 
@@ -190,14 +188,18 @@ error: Rust crate `criterion` is dev-only and cannot be imported from production
 error: Rust crate `fancy_logging` is optional but not enabled for this build
 ```
 
-**Fix**: Enable it through the owning manifest or Incan package feature, regenerate `oven.lock`, and use a toolchain
-whose Loaf authorizes the resulting closure. Otherwise remove the optional dependency.
+**Fix**: Enable it through the owning manifest or Incan package feature, regenerate `oven.lock`, and use a toolchain whose Loaf authorizes the resulting closure. Otherwise remove the optional dependency.
 
 ### Stale lock file
 
 ```text
-error: oven.lock is out of date; run `incan lock`
+oven.lock is out of date
+
+  expected deps-fingerprint: sha256:…
+    actual deps-fingerprint: sha256:…
 ```
+
+The diagnostic lists what usually moved the fingerprint (manifest dependency entries, inline `rust::…` annotations, toolchain defaults, feature selection) and ends with the fix. A command that does not require the lock as authority prints the shorter `warning: oven.lock is out of date; continuing without using it as Oven lock authority or rewriting it.` and carries on.
 
 **Fix**: Run `incan lock` to regenerate the lock file after changing dependencies.
 

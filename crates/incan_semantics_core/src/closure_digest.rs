@@ -151,13 +151,14 @@ fn strongly_connected_components(nodes: &BTreeMap<String, DependencyNode>) -> Ve
                 state.on_stack.insert(node.clone());
             }
 
-            let dependencies: Vec<String> = nodes
+            // The graph is immutable for the whole walk, so the `child`-th dependency is read in place; only the one
+            // that is pushed onto the work stack is copied.
+            let next_dependency = nodes
                 .get(&node)
-                .map(|entry| entry.dependencies.iter().cloned().collect())
-                .unwrap_or_default();
+                .and_then(|entry| entry.dependencies.iter().nth(child))
+                .cloned();
 
-            if child < dependencies.len() {
-                let dependency = dependencies[child].clone();
+            if let Some(dependency) = next_dependency {
                 work.push((node.clone(), child + 1));
                 if !nodes.contains_key(&dependency) {
                     continue;

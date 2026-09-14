@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::cli::{CliError, CliResult};
+use crate::library_manifest::published_layout::{LIBRARY_ARTIFACT_DIRECTORY, LIBRARY_MANIFEST_EXTENSION};
 
 /// One generated output generation, retained at the same absolute path while new source is compiled.
 ///
@@ -28,7 +29,7 @@ impl LibraryPublication {
 
     /// A current artifact needs only its external receipt captured, with no directory move or payload copy.
     pub(super) fn begin_receipt_update(project: &Path, receipts: Vec<PathBuf>) -> CliResult<Self> {
-        Self::begin_mode(project, &project.join("target/lib"), receipts, false)
+        Self::begin_mode(project, &project.join(LIBRARY_ARTIFACT_DIRECTORY), receipts, false)
     }
 
     /// Capture recovery material for the precise caller projection that the operation can change.
@@ -61,7 +62,7 @@ impl LibraryPublication {
                     "library output must be a regular generated directory",
                 ));
             }
-            if output != project.join("target/lib")
+            if output != project.join(LIBRARY_ARTIFACT_DIRECTORY)
                 && fs::read_dir(&output).map_err(io_error)?.next().is_some()
                 && !owned_library_output(&output)?
             {
@@ -287,7 +288,10 @@ fn owned_library_output(path: &Path) -> CliResult<bool> {
     }
     for entry in fs::read_dir(path).map_err(io_error)? {
         let entry = entry.map_err(io_error)?;
-        if entry.path().extension().is_some_and(|extension| extension == "incnlib")
+        if entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == LIBRARY_MANIFEST_EXTENSION)
             && crate::library_manifest::LibraryManifest::read_from_path(&entry.path()).is_ok()
         {
             return Ok(true);
@@ -314,7 +318,8 @@ fn is_generated_output(name: &std::ffi::OsStr) -> bool {
         Some("Cargo.toml" | "Cargo.lock" | "src" | "oven" | "target")
     ) || name.to_str() == Some(crate::library_manifest::published_layout::EXECUTABLE_SURFACE_DIRECTORY);
     let artifact = path.extension().is_some_and(|extension| {
-        extension == "incnlib" || extension == crate::library_manifest::published_layout::EXECUTABLE_SURFACE_EXTENSION
+        extension == LIBRARY_MANIFEST_EXTENSION
+            || extension == crate::library_manifest::published_layout::EXECUTABLE_SURFACE_EXTENSION
     });
     directory || artifact
 }

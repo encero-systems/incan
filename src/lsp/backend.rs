@@ -63,6 +63,7 @@ use crate::frontend::{ast_walk, lexer, parser, typechecker};
 use crate::generated_cache::resolve_generated_cargo_target_in_cache_root;
 #[cfg(feature = "rust_inspect")]
 use crate::generated_cache::{GeneratedCacheLease, GeneratedCargoTarget, resolve_generated_cargo_target};
+use crate::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
 use crate::library_manifest::{
     EnumValueExport, EnumValueTypeExport, FieldExport, FieldVisibilityExport, ParamExport, ParamKindExport,
     ReceiverExport, TypeBoundExport, TypeParamExport, TypeRef,
@@ -6928,7 +6929,7 @@ fn collect_lsp_contract_model_bundles(path: &Path) -> std::result::Result<Vec<Ca
         && absolute
             .extension()
             .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension == "incnlib")
+            .is_some_and(|extension| extension == LIBRARY_MANIFEST_EXTENSION)
     {
         let manifest =
             crate::library_manifest::LibraryManifest::read_from_path(&absolute).map_err(|error| error.to_string())?;

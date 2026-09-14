@@ -13,6 +13,7 @@ use super::{
     LibraryManifest, OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, OvenArtifactMaterializedFile, OvenLegacyCargoError,
     SDK_INVENTORY_FILE, SdkInventory, digest_provider_artifact, verified_regular_file,
 };
+use crate::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
 
 /// Copy an SDK inventory with its compiler-owned runtime path dependencies made self-contained.
 ///
@@ -330,7 +331,7 @@ pub(crate) fn staged_provider_manifest_path(crate_root: &Path) -> Result<PathBuf
         })?
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("incnlib"))
+        .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some(LIBRARY_MANIFEST_EXTENSION))
         .collect::<Vec<_>>();
     manifests.sort();
     let [manifest] = manifests.as_slice() else {

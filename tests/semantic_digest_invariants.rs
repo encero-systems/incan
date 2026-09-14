@@ -207,7 +207,20 @@ fn inserting_a_declaration_moves_no_existing_declaration() -> TestResult {
         "def edited",
         "def inserted_helper(value: int) -> int:\n    return value\n\n\ndef edited",
     );
-    assert_only_these_moved(BASE, &after, &[])
+    assert_only_these_moved(BASE, &after, &[])?;
+    // The comparison above only sees keys present on both sides; the inserted declaration has to be digested too,
+    // or a digest that silently dropped it would pass.
+    let (before, digested) = digest_pair(BASE, &after)?;
+    assert_eq!(
+        digested.len(),
+        before.len() + 1,
+        "the inserted declaration must be digested"
+    );
+    assert!(
+        digested.keys().any(|key| key.contains("inserted_helper")),
+        "the inserted declaration must appear under its own key"
+    );
+    Ok(())
 }
 
 #[test]

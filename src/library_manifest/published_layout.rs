@@ -7,6 +7,19 @@ use incan_semantics_core::CanonicalSymbolId;
 
 use super::{CanonicalIdentityExport, FieldExport, FieldVisibilityExport, LibraryManifest};
 
+/// Project-relative directory a library build publishes its artifacts under.
+///
+/// Every reader of a published library — the frontend's dependency index, the lockfile's provider hashing, the
+/// representation inspector and the publication rollback — resolves the same directory, so it is spelled once.
+pub const LIBRARY_ARTIFACT_DIRECTORY: &str = "target/lib";
+
+/// Extension of a published library's checked manifest, `<package>.incnlib`.
+///
+/// Spelled once for the same reason as [`LIBRARY_ARTIFACT_DIRECTORY`]: the rollback path classifies a previous
+/// build's manifest as generated output by this extension, and a literal there would resurrect a stale manifest
+/// as a user file the moment the name changed here.
+pub const LIBRARY_MANIFEST_EXTENSION: &str = "incnlib";
+
 /// Directory reserved for executable semantic package fragments.
 pub const EXECUTABLE_SURFACE_DIRECTORY: &str = "semantic";
 

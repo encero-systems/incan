@@ -96,9 +96,16 @@ pub enum ExecutableRepresentationError {
 /// Package publication uses [`build_surface`], which projects public coverage and excludes private declarations.
 /// This whole-module codec deliberately retains every checked fact for compiler regression tests.
 pub fn encode_module(module: &BodyIrModule) -> Result<Vec<u8>, ExecutableRepresentationError> {
-    let framed = EncodedModuleRepresentation {
+    /// The borrowed twin of [`EncodedModuleRepresentation`]: postcard encodes a struct field by field, so this
+    /// serializes byte-for-byte like the owned frame without copying the module first.
+    #[derive(Serialize)]
+    struct BorrowedFrame<'module> {
+        version: u32,
+        module: &'module BodyIrModule,
+    }
+    let framed = BorrowedFrame {
         version: EXECUTABLE_REPRESENTATION_VERSION,
-        module: module.clone(),
+        module,
     };
     postcard::to_allocvec(&framed).map_err(|error| ExecutableRepresentationError::Malformed {
         reason: format!("could not encode the checked module: {error}"),

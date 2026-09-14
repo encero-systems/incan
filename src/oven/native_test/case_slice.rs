@@ -113,7 +113,8 @@ mod tests {
     fn an_unmeasured_inventory_still_splits_deterministically_by_name() {
         let inventory = names(&["zeta", "alpha", "mid"]);
         let bins = assign_case_slices(&inventory, &BTreeMap::new(), 2);
-        // Unmeasured cases all weigh zero: heaviest-first order is name order, bins alternate by lowest total.
+        // Unmeasured cases all weigh one millisecond: heaviest-first order is name order, and each case goes to the
+        // bin with the lowest running total, so alpha and mid open the two bins and zeta joins the lighter one.
         assert_eq!(bins, vec![names(&["alpha", "zeta"]), names(&["mid"])]);
         assert_eq!(
             bins,

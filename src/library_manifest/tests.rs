@@ -4436,12 +4436,13 @@ fn a_newer_manifest_format_is_refused_by_number_not_by_a_parse_error() -> Result
 
 /// A manifest declaring the current format still decodes through the ordinary path.
 ///
-/// The gate must add a refusal without taking one over: a malformed manifest at the supported format has to keep
-/// reaching the existing validation, which produces the specific diagnostic, rather than being short-circuited.
+/// The gate must add a refusal without taking one over: a manifest at the supported format that is missing a
+/// required field has to keep reaching the decoder, which names the field, rather than being short-circuited.
 #[test]
 fn the_format_gate_does_not_swallow_ordinary_validation() -> Result<(), Box<dyn std::error::Error>> {
+    // Complete except for `soft_keywords`, so the only refusal available is the decoder's own.
     let malformed = format!(
-        r#"{{"manifest_format": {LIBRARY_MANIFEST_FORMAT}, "incan_version": "not-a-version", "name": "current",
+        r#"{{"manifest_format": {LIBRARY_MANIFEST_FORMAT}, "incan_version": "1.0.0", "name": "current",
             "version": "1.0.0", "exports": {{}}}}"#
     );
     let error = LibraryManifest::from_json_str(&malformed)
@@ -4450,6 +4451,10 @@ fn the_format_gate_does_not_swallow_ordinary_validation() -> Result<(), Box<dyn 
     assert!(
         !error.to_string().contains("unsupported manifest_format"),
         "the gate must not claim a format problem for a supported format, got: {error}"
+    );
+    assert!(
+        error.to_string().contains("failed to parse library manifest") && error.to_string().contains("soft_keywords"),
+        "the decoder must name the missing field, got: {error}"
     );
     Ok(())
 }

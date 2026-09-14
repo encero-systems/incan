@@ -12,7 +12,9 @@ use incan_core::interop::RustItemMetadata;
 use incan_vocab::{CargoDependency, CargoDependencySource, KeywordActivation, KeywordRegistration, KeywordSpec};
 use serde::Deserialize;
 
-const LIBRARY_ARTIFACT_DIR: &str = "target/lib";
+use crate::library_manifest::published_layout::{
+    LIBRARY_ARTIFACT_DIRECTORY as LIBRARY_ARTIFACT_DIR, LIBRARY_MANIFEST_EXTENSION,
+};
 const LIBRARY_CRATE_LIB_RS: &str = "src/lib.rs";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -617,6 +619,11 @@ pub(crate) fn dependency_project_root(crate_root: &Path) -> Option<PathBuf> {
     (trailing == suffix).then_some(root)
 }
 
+/// Locate the one `.incnlib` manifest a dependency's published artifact root holds.
+///
+/// The manifest named after the dependency key wins outright; otherwise the root must hold exactly one manifest,
+/// and none or several is a load failure that names the root, so a consumer never guesses between two packages
+/// published into one directory.
 fn resolve_manifest_path(crate_root: &Path, dependency_key: &str) -> Result<PathBuf, LibraryManifestLoadFailure> {
     if !crate_root.is_dir() {
         return Err(LibraryManifestLoadFailure {
@@ -626,7 +633,7 @@ fn resolve_manifest_path(crate_root: &Path, dependency_key: &str) -> Result<Path
         });
     }
 
-    let expected = crate_root.join(format!("{dependency_key}.incnlib"));
+    let expected = crate_root.join(format!("{dependency_key}.{LIBRARY_MANIFEST_EXTENSION}"));
     if expected.is_file() {
         return Ok(expected);
     }
@@ -644,7 +651,7 @@ fn resolve_manifest_path(crate_root: &Path, dependency_key: &str) -> Result<Path
             message: format!("failed to inspect `{}`: {error}", crate_root.display()),
         })?;
         let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "incnlib") {
+        if path.extension().is_some_and(|ext| ext == LIBRARY_MANIFEST_EXTENSION) {
             candidates.push(path);
         }
     }

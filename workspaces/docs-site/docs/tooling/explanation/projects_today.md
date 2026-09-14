@@ -50,7 +50,7 @@ See: [Rust Interop](../../language/how-to/rust_interop.md) and [Managing depende
 
 ## Project configuration
 
-Projects can optionally have an `loaf.toml` manifest at the project root:
+Projects can optionally have a `loaf.toml` manifest at the project root:
 
 ```text
 my_project/

@@ -209,7 +209,7 @@ Version strings use [Cargo SemVer syntax](https://doc.rust-lang.org/cargo/refere
 
 ### Project-level dependencies (`loaf.toml`)
 
-For projects with multiple dependencies, use an `loaf.toml` manifest instead of inline annotations. This is the recommended approach for anything beyond single-file scripts:
+For projects with multiple dependencies, use a `loaf.toml` manifest instead of inline annotations. This is the recommended approach for anything beyond single-file scripts:
 
 ```toml
 [project]
@@ -228,7 +228,7 @@ For the full manifest format, see: [Project configuration reference](../../tooli
 
 ### Known-good defaults
 
-The following crates have pre-configured versions with appropriate features. These defaults apply automatically when you import a crate without a version annotation and without an `loaf.toml` entry:
+The following crates have pre-configured versions with appropriate features. These defaults apply automatically when you import a crate without a version annotation and without a `loaf.toml` entry:
 
 | Crate      | Version | Features                            |
 | ---------- | ------- | ----------------------------------- |
@@ -252,8 +252,7 @@ The following crates have pre-configured versions with appropriate features. The
 | bytes      | 1.0     | -                                   |
 | itertools  | 0.12    | -                                   |
 
-You can override any of these requirements via `loaf.toml` or inline `@ "version"` annotations. The installed
-Oven-enabled toolchain must still contain a Loaf that authorizes the chosen closure.
+You can override any of these requirements via `loaf.toml` or inline `@ "version"` annotations. The installed Oven-enabled toolchain must still contain a Loaf that authorizes the chosen closure.
 
 ### Using unknown crates
 

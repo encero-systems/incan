@@ -6,7 +6,7 @@
 - **Related:**
     - RFC 013 (Rust crate dependencies)
     - RFC 020 (offline, locked, and reproducible builds)
-    - RFC 034 (`incan.pub` package registry)
+    - RFC 125 (`incan.pub` Loaf registry and baked asset distribution; supersedes RFC 034)
     - RFC 041 (first-class Rust interop authoring)
     - RFC 043 (Rust trait implementation from Incan)
     - RFC 097 (Rust-hosted Incan caller)

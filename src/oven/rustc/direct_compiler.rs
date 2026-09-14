@@ -12,7 +12,28 @@
     reason = "Gates 6 and 7 of RFC 119 are the reader; this substrate lands before them"
 )]
 
-use super::*;
+use std::collections::{BTreeMap, BTreeSet};
+use std::env;
+use std::ffi::OsString;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+
+use super::super::store::{
+    OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreExecutionPayload,
+};
+use super::super::{OvenReceipt, digest_bytes};
+use super::{
+    OvenDirectRustcBake, OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcError,
+    OvenTrustedDirectRustcTargetRequest, caller_output_path, canonical_directory, digest_regular_file,
+    oven_profile_codegen_options, parse_rustc_diagnostics, resolve_compile_environment_value, rustc_host_target,
+    rustc_identity, rustc_sysroot, trusted_artifact_plan_for_source, validate_edition, validate_rust_identifier,
+    verified_regular_file, verify_rustc_identity,
+};
 
 pub(super) const OVEN_DIRECT_RUSTC_COMPILER_OWNER_SCHEMA_VERSION: u32 = 1;
 pub(super) const OVEN_DIRECT_RUSTC_COMPILER_DOMAIN_PREFIX: &str = "native-compiler";
@@ -49,7 +70,8 @@ pub(super) struct OvenDirectRustcCompilerMember {
 
 /// Store-owned compiler closure retained under one lease for an entire native provider batch.
 pub(crate) struct OvenOwnedDirectRustcCompiler {
-    pub(super) _owner: OvenStoreExecutionPayload,
+    /// The leased Store payload the compiler closure is read from; holding it keeps the lease for the batch.
+    pub(super) owner: OvenStoreExecutionPayload,
     pub(super) evidence: OvenDirectRustcCompilerEvidence,
     pub(super) rustc: PathBuf,
 }
@@ -101,7 +123,7 @@ impl OvenOwnedDirectRustcCompiler {
 
     /// Toolchain identity the closure was admitted under, as the receipt records it.
     pub(crate) fn toolchain(&self) -> &str {
-        &self._owner.manifest.intent.toolchain
+        &self.owner.manifest.intent.toolchain
     }
 }
 
@@ -1246,7 +1268,7 @@ pub(super) fn admit_direct_rustc_compiler_owner(
         return Ok(None);
     }
     Ok(Some(OvenOwnedDirectRustcCompiler {
-        _owner: owner,
+        owner,
         evidence: OvenDirectRustcCompilerEvidence {
             binary_digest: payload.binary_digest.clone(),
             closure_digest: payload.closure_digest.clone(),

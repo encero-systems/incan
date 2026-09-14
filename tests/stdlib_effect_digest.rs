@@ -216,6 +216,12 @@ fn editing_a_leaf_component_moves_only_that_component() -> TestResult {
 
     let components = component_fixture(tmp.path())?;
     let before = component_effect_digests(&components, &roots)?;
+    for (name, digest) in &before {
+        assert!(
+            digest.starts_with("sha256:") && !digest["sha256:".len()..].contains(':'),
+            "{name}'s effect digest must carry exactly one label, got {digest}"
+        );
+    }
 
     fs::write(
         components["web"].project.join("mod.incn"),

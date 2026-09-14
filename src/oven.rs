@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
 use crate::library_manifest::{digest_cargo_path_source_tree_with_cache, digest_provider_artifact};
 use crate::manifest::{DependencySource, DependencySpec, GitReference, ProjectManifest};
 
@@ -27,10 +28,10 @@ pub(crate) mod interop;
 pub mod legacy_cargo;
 pub mod loaf;
 pub(crate) mod loaf_mirror;
-pub mod native_contract;
+pub(crate) mod native_contract;
 pub mod native_test;
 mod process;
-pub mod progress;
+pub(crate) mod progress;
 pub mod rustc;
 pub mod store;
 pub(crate) mod store_mirror;
@@ -99,9 +100,12 @@ fn is_packaged_provider_root(root: &Path) -> bool {
     let Ok(entries) = fs::read_dir(root) else {
         return false;
     };
-    entries
-        .flatten()
-        .any(|entry| entry.path().extension().is_some_and(|extension| extension == "incnlib"))
+    entries.flatten().any(|entry| {
+        entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == LIBRARY_MANIFEST_EXTENSION)
+    })
 }
 
 /// Current wire format for persisted Oven receipts.
@@ -139,7 +143,7 @@ pub const DEFAULT_OVEN_PUBLISHER_STAGING_FLOOR_BYTES: u64 = 4 * 1024 * 1024 * 10
 /// extensions of a compiler Loaf: the library's delta and the test-dependency envelope's, each carrying the unified
 /// closure, its re-rooted copies of shared units, and the extension's own runtime. Measured for IncQL/DataFusion on
 /// Linux, each is 1.5 GiB, so a single debug-profile bake retains 3.0 GiB before its outputs and authority. Six GiB,
-/// the same as the physical allowance, admits that bake with the release profile or a second project beside it;
+/// half the physical allowance, admits that bake with the release profile or a second project beside it;
 /// callers may still choose a stricter explicit limit.
 pub const DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES: u64 = 6 * 1024 * 1024 * 1024;
 /// Aggregate physical allowance for the complete compiler-suite Loaf and repository-test closure.

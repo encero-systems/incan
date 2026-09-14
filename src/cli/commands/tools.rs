@@ -30,6 +30,7 @@ use crate::frontend::registry_metadata::{
     materialize_registry_reexport_projections,
 };
 use crate::frontend::typechecker;
+use crate::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
 use crate::library_manifest::{LibraryManifest, ParamExport, ParamKindExport, TypeRef};
 use crate::manifest::ProjectManifest;
 
@@ -643,7 +644,7 @@ fn collect_model_bundles_for_path(path: &Path) -> CliResult<Vec<CanonicalModelBu
         && absolute
             .extension()
             .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension == "incnlib")
+            .is_some_and(|extension| extension == LIBRARY_MANIFEST_EXTENSION)
     {
         let manifest =
             LibraryManifest::read_from_path(&absolute).map_err(|error| CliError::failure(error.to_string()))?;

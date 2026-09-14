@@ -2989,7 +2989,7 @@ fn compatible_loaf_paths(loaf_root: &Path, receipt: &OvenReceipt) -> Result<Vec<
 ///
 /// This is diagnostic only: it never selects, locks, or mutates a Loaf, and a read failure degrades to a short note
 /// rather than masking the caller's original error.
-pub fn describe_compiler_owned_loaf_miss(receipt: &OvenReceipt) -> String {
+pub(crate) fn describe_compiler_owned_loaf_miss(receipt: &OvenReceipt) -> String {
     let loaf_root = crate::toolchain_layout::resolve_toolchain_data_path(Path::new(TOOLCHAIN_LOAF_RELATIVE_ROOT));
     if !loaf_root.join("envelope.json").is_file() {
         return "no committed compiler-owned Loaf envelope exists".to_string();
@@ -3458,7 +3458,6 @@ fn validate_loaf_declared_file_set(loaf: &OvenLoaf, loaf_path: &Path) -> Result<
     Ok(())
 }
 
-/// Digest one regular `loaf.json` file into its canonical content identity.
 /// Where the closure proof for a committed Loaf lives: beside its envelope, never inside the sealed `.loaf`
 /// directory, whose declared file set admits nothing undeclared. `None` when `loaf_path` is not below an envelope.
 fn closure_proof_path(loaf_path: &Path, loaf_identity: &str) -> Option<PathBuf> {

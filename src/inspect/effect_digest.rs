@@ -45,7 +45,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use incan_semantics_core::closure_digest::{DependencyNode, closure_digests};
+use incan_semantics_core::closure_digest::{DependencyNode, closure_digests, update_delimited};
 use incan_semantics_core::semantic_digest::{body_without_docstring, semantic_digest};
 use incan_semantics_core::stable_identity::{DeclarationSignature, StableDeclarationId};
 use sha2::{Digest, Sha256};
@@ -128,12 +128,6 @@ fn collect_sources(root: &Path, extensions: &[&str]) -> Result<Vec<PathBuf>, Eff
     }
     found.sort();
     Ok(found)
-}
-
-/// Write a length-delimited run so two different sequences cannot encode the same bytes.
-fn delimited(hasher: &mut Sha256, value: &[u8]) {
-    hasher.update((value.len() as u64).to_le_bytes());
-    hasher.update(value);
 }
 
 /// Digest the meaning the compiler's frontend derives from one standard-library module.
@@ -258,7 +252,7 @@ pub fn compiler_effect_digest(checkout_root: &Path) -> Result<String, EffectDige
 /// are refusals: a digest that skipped what it could not read would describe a different standard library.
 pub fn stdlib_effect_digest(stdlib_root: &Path, rust_roots: &[(&str, &Path)]) -> Result<String, EffectDigestError> {
     let mut hasher = Sha256::new();
-    delimited(&mut hasher, b"incan-stdlib-effect-v2");
+    update_delimited(&mut hasher, b"incan-stdlib-effect-v2");
     fold_incan_meaning(&mut hasher, stdlib_root)?;
     fold_rust_roots(&mut hasher, rust_roots)?;
     Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
@@ -270,20 +264,20 @@ pub fn stdlib_effect_digest(stdlib_root: &Path, rust_roots: &[(&str, &Path)]) ->
 /// digest identically — which is what lets a component be digested from its own project directory and a whole
 /// standard library from its own root, by the same code.
 fn fold_incan_meaning(hasher: &mut Sha256, root: &Path) -> Result<(), EffectDigestError> {
-    delimited(hasher, b"incan-meaning");
+    update_delimited(hasher, b"incan-meaning");
     for path in collect_sources(root, &["incn"])? {
         let source = fs::read_to_string(&path).map_err(|error| EffectDigestError::Read {
             path: path.clone(),
             message: error.to_string(),
         })?;
         let relative = path.strip_prefix(root).unwrap_or(&path);
-        delimited(hasher, relative.to_string_lossy().as_bytes());
+        update_delimited(hasher, relative.to_string_lossy().as_bytes());
         match module_meaning(&path, &source) {
             Ok(meanings) => {
-                delimited(hasher, b"meaning");
+                update_delimited(hasher, b"meaning");
                 for (identity, digest) in meanings {
-                    delimited(hasher, identity.as_bytes());
-                    delimited(hasher, digest.as_bytes());
+                    update_delimited(hasher, identity.as_bytes());
+                    update_delimited(hasher, digest.as_bytes());
                 }
             }
             // A module the frontend cannot check standalone still contributes. Folding its bytes over-invalidates
@@ -291,8 +285,8 @@ fn fold_incan_meaning(hasher: &mut Sha256, root: &Path) -> Result<(), EffectDige
             // module out of 104 rather than a general fallback. Refusing outright would be worse: the digest would
             // be unavailable whenever any module was mid-edit.
             Err(_) => {
-                delimited(hasher, b"unchecked-source");
-                delimited(hasher, source.as_bytes());
+                update_delimited(hasher, b"unchecked-source");
+                update_delimited(hasher, source.as_bytes());
             }
         }
     }
@@ -302,13 +296,13 @@ fn fold_incan_meaning(hasher: &mut Sha256, root: &Path) -> Result<(), EffectDige
 /// Fold the token-level content of each labelled Rust root.
 fn fold_rust_roots(hasher: &mut Sha256, rust_roots: &[(&str, &Path)]) -> Result<(), EffectDigestError> {
     for (label, root) in rust_roots {
-        delimited(hasher, b"rust-root");
-        delimited(hasher, label.as_bytes());
+        update_delimited(hasher, b"rust-root");
+        update_delimited(hasher, label.as_bytes());
         // A root that is not there is folded as absent rather than refused. Compiler layouts differ — a trimmed
         // distribution need not ship every crate — and a missing tree is a different compiler, which "absent"
         // already says. Refusing would make the key unavailable for a checkout that builds perfectly well.
         if !root.is_dir() {
-            delimited(hasher, b"absent");
+            update_delimited(hasher, b"absent");
             continue;
         }
         for path in collect_sources(root, &["rs"])? {
@@ -317,8 +311,8 @@ fn fold_rust_roots(hasher: &mut Sha256, rust_roots: &[(&str, &Path)]) -> Result<
                 message: error.to_string(),
             })?;
             let relative = path.strip_prefix(root).unwrap_or(&path);
-            delimited(hasher, relative.to_string_lossy().as_bytes());
-            delimited(
+            update_delimited(hasher, relative.to_string_lossy().as_bytes());
+            update_delimited(
                 hasher,
                 rust_source_digest(&relative.to_string_lossy(), &source).as_bytes(),
             );
@@ -336,19 +330,19 @@ fn rust_source_digest(module_path: &str, source: &str) -> String {
     match rust_inspect::digest_rust_source(module_path, source) {
         Ok(digest) => {
             for item in digest.items() {
-                delimited(&mut hasher, item.key.module_path.as_bytes());
-                delimited(&mut hasher, item.key.owner.as_deref().unwrap_or("").as_bytes());
-                delimited(&mut hasher, format!("{:?}", item.key.kind).as_bytes());
-                delimited(&mut hasher, item.key.name.as_bytes());
-                delimited(&mut hasher, item.key.signature_discriminant.as_bytes());
-                delimited(&mut hasher, item.digest.as_bytes());
+                update_delimited(&mut hasher, item.key.module_path.as_bytes());
+                update_delimited(&mut hasher, item.key.owner.as_deref().unwrap_or("").as_bytes());
+                update_delimited(&mut hasher, format!("{:?}", item.key.kind).as_bytes());
+                update_delimited(&mut hasher, item.key.name.as_bytes());
+                update_delimited(&mut hasher, item.key.signature_discriminant.as_bytes());
+                update_delimited(&mut hasher, item.digest.as_bytes());
             }
         }
         // A file that does not parse is still an input. Folding its bytes over-invalidates, which costs time;
         // skipping it would under-invalidate, which ships a component built from source this digest never saw.
         Err(_) => {
-            delimited(&mut hasher, b"unparsed");
-            delimited(&mut hasher, source.as_bytes());
+            update_delimited(&mut hasher, b"unparsed");
+            update_delimited(&mut hasher, source.as_bytes());
         }
     }
     hex::encode(hasher.finalize())
@@ -394,7 +388,7 @@ pub fn component_effect_digests(
     // Rust trees ten times over would cost ten times as much for the same bytes.
     let shared_rust = {
         let mut hasher = Sha256::new();
-        delimited(&mut hasher, b"incan-component-rust-v1");
+        update_delimited(&mut hasher, b"incan-component-rust-v1");
         fold_rust_roots(&mut hasher, rust_roots)?;
         hex::encode(hasher.finalize())
     };
@@ -402,11 +396,11 @@ pub fn component_effect_digests(
     let mut nodes = BTreeMap::new();
     for (name, sources) in components {
         let mut hasher = Sha256::new();
-        delimited(&mut hasher, b"incan-component-effect-v1");
-        delimited(&mut hasher, name.as_bytes());
+        update_delimited(&mut hasher, b"incan-component-effect-v1");
+        update_delimited(&mut hasher, name.as_bytes());
         fold_incan_meaning(&mut hasher, &sources.project)?;
-        delimited(&mut hasher, b"shared-rust");
-        delimited(&mut hasher, shared_rust.as_bytes());
+        update_delimited(&mut hasher, b"shared-rust");
+        update_delimited(&mut hasher, shared_rust.as_bytes());
         nodes.insert(
             name.clone(),
             DependencyNode {
@@ -416,10 +410,8 @@ pub fn component_effect_digests(
         );
     }
 
-    Ok(closure_digests(&nodes)
-        .into_iter()
-        .map(|(name, digest)| (name, format!("sha256:{digest}")))
-        .collect())
+    // `closure_digests` already labels each digest `sha256:`; re-labelling here doubled the prefix.
+    Ok(closure_digests(&nodes).into_iter().collect())
 }
 
 /// Digest one standard-library module's meaning, for callers that bucket per component rather than per tree.
@@ -435,10 +427,10 @@ pub fn module_effect_digest(path: &Path) -> Result<String, EffectDigestError> {
         message: error.to_string(),
     })?;
     let mut hasher = Sha256::new();
-    delimited(&mut hasher, b"incan-module-effect-v1");
+    update_delimited(&mut hasher, b"incan-module-effect-v1");
     for (identity, digest) in module_meaning(path, &source)? {
-        delimited(&mut hasher, identity.as_bytes());
-        delimited(&mut hasher, digest.as_bytes());
+        update_delimited(&mut hasher, identity.as_bytes());
+        update_delimited(&mut hasher, digest.as_bytes());
     }
     Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
 }

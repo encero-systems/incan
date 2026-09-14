@@ -1799,7 +1799,7 @@ fn measured_root_millis_from_report(report_path: &Path) -> BTreeMap<String, u64>
 fn compiler_suite_root_weigher<'a>(
     references: &'a [OvenCompilerTestSuiteShardReference],
     measured_root_millis: &'a BTreeMap<String, u64>,
-) -> CliResult<impl Fn(&OvenCompilerTestSuiteShardReference) -> u64 + 'a> {
+) -> impl Fn(&OvenCompilerTestSuiteShardReference) -> u64 + 'a {
     let mut measured_millis = 0_u64;
     let mut measured_roots = 0_u64;
     for reference in references {
@@ -1809,12 +1809,12 @@ fn compiler_suite_root_weigher<'a>(
         }
     }
     let typical_millis = (measured_roots > 0).then(|| measured_millis / measured_roots);
-    Ok(move |reference: &OvenCompilerTestSuiteShardReference| {
+    move |reference: &OvenCompilerTestSuiteShardReference| {
         measured_root_millis
             .get(&reference.target.source_relative_path)
             .copied()
             .unwrap_or_else(|| typical_millis.unwrap_or(reference.source_bytes))
-    })
+    }
 }
 
 /// Select the receipt-bound roots this invocation runs: an explicit `--target` list, one partition of a bin-packed
@@ -1889,7 +1889,7 @@ fn compiler_suite_selected_shard_units(
                 references.len()
             )));
         }
-        let weight_of = compiler_suite_root_weigher(references, measured_root_millis)?;
+        let weight_of = compiler_suite_root_weigher(references, measured_root_millis);
         for reference in references {
             if reference.source_bytes == 0 {
                 return Err(CliError::failure(format!(
@@ -2899,7 +2899,7 @@ fn failing_test_names(output: &str) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     for line in output.lines() {
         let trimmed = line.trim();
-        let reported = failing_test_name_from_event(trimmed).map(str::to_string);
+        let reported = failing_test_name_from_event(trimmed);
         let captured = trimmed
             .strip_prefix("---- ")
             .and_then(|rest| rest.strip_suffix(" stdout ----"))
@@ -2946,7 +2946,7 @@ fn is_structured_failure_line(line: &str) -> bool {
 ///
 /// A line that is not an event, or an event that reports any other outcome, yields nothing: the roster must name
 /// what failed and only what failed.
-fn failing_test_name_from_event(line: &str) -> Option<&str> {
+fn failing_test_name_from_event(line: &str) -> Option<String> {
     if !line.starts_with('{') {
         return None;
     }
@@ -2956,11 +2956,11 @@ fn failing_test_name_from_event(line: &str) -> Option<&str> {
     {
         return None;
     }
-    // Borrowed from the caller's line rather than the parsed value, which does not outlive this function.
-    let name = event.get("name").and_then(serde_json::Value::as_str)?;
-    line.match_indices(name)
-        .next()
-        .map(|(start, _)| &line[start..start + name.len()])
+    // Taken from the parsed value: a name whose JSON spelling escapes a byte would not be found in the raw line.
+    event
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
 }
 
 /// Keep terminal failure reporting actionable without dumping an unbounded libtest transcript into the CLI error path.

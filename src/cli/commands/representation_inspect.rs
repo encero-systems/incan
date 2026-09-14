@@ -21,11 +21,9 @@ use crate::cli::{CliError, CliResult, ExitCode};
 use crate::library_manifest::LibraryManifest;
 use crate::library_manifest::published_layout::{executable_surface_path, public_executable_identities};
 
-/// Generated library artifacts live under this project-relative root.
-///
-/// Respelled from the consumer index rather than shared, because that constant is private to the frontend's
-/// dependency loader and this command is a different consumer of the same published layout.
-const LIBRARY_ARTIFACT_DIR: &str = "target/lib";
+use crate::library_manifest::published_layout::{
+    LIBRARY_ARTIFACT_DIRECTORY as LIBRARY_ARTIFACT_DIR, LIBRARY_MANIFEST_EXTENSION,
+};
 
 /// Output format for `incan inspect representation`.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,7 +145,10 @@ fn sole_manifest_in(root: &Path) -> CliResult<Option<PathBuf>> {
         let entry =
             entry.map_err(|error| CliError::failure(format!("failed to inspect `{}`: {error}", root.display())))?;
         let candidate = entry.path();
-        if candidate.extension().is_some_and(|extension| extension == "incnlib") {
+        if candidate
+            .extension()
+            .is_some_and(|extension| extension == LIBRARY_MANIFEST_EXTENSION)
+        {
             manifests.push(candidate);
         }
     }

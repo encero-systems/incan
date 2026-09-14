@@ -12,7 +12,16 @@
     reason = "Gates 6 and 7 of RFC 119 are the reader; this substrate lands before them"
 )]
 
-use super::*;
+use std::borrow::Cow;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+
+use super::super::store::{OvenArtifactKind, OvenStoreExecutionPayload};
+use super::super::{OvenBuildIntent, OvenReceipt};
+use super::{
+    OvenRustcArtifactExtern, OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcError, OvenRustcRegistryLeaf,
+    canonical_directory, trusted_artifact_plan_for_source_evidence, validate_rust_identifier, verified_file,
+};
 
 /// Original foundation provenance, preserving distinct store receipts and committed Loaf member identities.
 pub(crate) enum OvenNativeInputOrigin<'facts> {

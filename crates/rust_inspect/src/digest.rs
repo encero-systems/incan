@@ -139,11 +139,6 @@ impl RustSourceDigest {
         &self.items
     }
 
-    /// Take ownership of the declarations.
-    pub fn into_items(self) -> Vec<RustItemDigest> {
-        self.items
-    }
-
     /// Find the declarations matching an identity, ignoring only the signature discriminant.
     ///
     /// Callers look declarations up by the part of the key that survives an edit, so a signature change reads as "the

@@ -381,7 +381,7 @@ A Loaf is not a cache guess. Its identity binds the semantic digest of its sourc
 | --- | --- | --- |
 | Incan facet | implemented | RFC 077, RFC 113 |
 | Rust facet | planned | RFC 119; legacy crate dependencies RFC 013 |
-| `loaf.toml` and `oven.lock` | planned | RFC 117; lock semantics RFC 020 |
+| `loaf.toml` and `oven.lock` | implemented: the manifest and lock names, the `incan.toml` refusal, and an ignored `Cargo.toml`; the rest of RFC 117 is planned | RFC 117; lock semantics RFC 020 |
 | Project lifecycle | draft, v0.6 slice 5 for RFC 073, 076, 078 | RFC 073, 074, 075, 076, 078 |
 | Unit graph and host providers | planned | RFC 119 |
 | Resolver | planned | RFC 117; offline and locked builds RFC 020 |

@@ -18,6 +18,8 @@
 
 use serde::{Serialize, ser};
 use sha2::{Digest, Sha256};
+
+use crate::closure_digest::update_delimited;
 use std::fmt::Display;
 
 /// Node-identifier fields excluded from every semantic digest.
@@ -97,11 +99,15 @@ impl DigestSerializer<'_> {
 
     /// Write a length-delimited byte run, so adjacent values cannot run together.
     fn bytes(&mut self, value: &[u8]) {
-        self.hasher.update((value.len() as u64).to_le_bytes());
-        self.hasher.update(value);
+        update_delimited(self.hasher, value);
     }
 }
 
+// A deliberate exception to the repository's rule against `macro_rules!` outside `incan_derive`. The two macros
+// below write the serde `Serializer` methods for every primitive and every sequence shape, which differ only in
+// the type tag and the byte encoding they fold; written by hand, a tag typo in one of the twenty methods would be
+// a silent digest collision rather than a compile error. `type_projection.rs`'s `type_fields!` is the same
+// exception for the same reason.
 macro_rules! digest_primitive {
     ($method:ident, $ty:ty, $tag:expr) => {
         fn $method(mut self, value: $ty) -> Result<(), DigestError> {
@@ -337,8 +343,7 @@ impl ser::SerializeStruct for StructDigest<'_> {
         if is_positional_field(key) {
             return Ok(());
         }
-        self.hasher.update((key.len() as u64).to_le_bytes());
-        self.hasher.update(key.as_bytes());
+        update_delimited(self.hasher, key.as_bytes());
         value.serialize(DigestSerializer { hasher: self.hasher })
     }
 

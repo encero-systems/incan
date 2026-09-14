@@ -183,7 +183,7 @@ Cargo compatibility is a clearly selected mode for a directory with `Cargo.toml`
 | Parsing, checking, formatting, compiler diagnostics                                | `incan`         | `check`, `fmt`                                           |
 | Language services and semantic products                                            | `incan`         | `lsp`, `inspect`, `codegraph`, `architect`               |
 | Manifest and workspace selection                                                   | `oven`          | `init`, `new`, member selection                          |
-| Dependency, lock, and registry lifecycle                                           | `oven`          | `add` (shorthand for `dependency add`), `dependency`, `remove`, `update`, `lock`, `registry`, `login`, `publish`, `yank` |
+| Dependency, lock, and registry lifecycle                                           | `oven`          | `add` (shorthand for `dependency add`), `dependency`, `remove`, `update`, `lock`, `registry`, `publish`, `yank` |
 | Target, carrier, provider, and artifact lifecycle                                  | `oven`          | `plan`, `check`, `build`, `bake`, `run`, `test`, `inspect`, `store` (`status`, `verify`, `gc`) |
 | Environments, typed actions, project mutations                                     | `oven`          | `env`, `action`, `starter`, `mix`                        |
 | Cargo compatibility                                                                | `oven`          | `cargo`                                                  |

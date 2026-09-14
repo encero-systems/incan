@@ -70,8 +70,8 @@ impl VisitTypeRefs for TypeRef {
 // stating rather than leaving as drift. This generates the `VisitTypeRefs` implementation for roughly fifty
 // manifest types whose only difference is which fields they forward to. Hand-writing them would not make the
 // visitor clearer; it would make adding a field a silent omission in whichever of fifty impls was forgotten,
-// which is the failure this exists to prevent. The precedent in the tree is the same shape:
-// `semantic_digest.rs`'s `digest_primitive!` and `incan_vocab`'s runtime macros.
+// which is the failure this exists to prevent. `semantic_digest.rs`'s `digest_primitive!` and `digest_sequence!`
+// are the same exception for the same reason, and `incan_vocab`'s runtime macros predate both.
 //
 // The cost is real and belongs here too: a grep for `impl VisitTypeRefs` does not find these, so the list below
 // is the only inventory of what the visitor reaches.

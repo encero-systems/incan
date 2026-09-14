@@ -4,7 +4,7 @@ This page is the language-facing reference for Incan project lifecycle concepts:
 
 ## Project root
 
-An Incan project root is the nearest ancestor directory containing `loaf.toml`.
+An Incan project root is the nearest ancestor directory containing `loaf.toml`. Discovery walks upward from the working directory and stops at the first directory that holds a manifest of either name: `loaf.toml` is the project root, while a directory holding only the retired `incan.toml` ends the search with an error that names the file and asks for the rename, so a stale manifest is never silently stepped over.
 
 ```text
 greeter/
@@ -16,7 +16,7 @@ greeter/
     `-- test_main.incn
 ```
 
-Project-aware commands use the project root for metadata, dependencies, source-root resolution, lock files, and lifecycle configuration. Nested projects are allowed; the nearest `loaf.toml` wins.
+Project-aware commands use the project root for metadata, dependencies, source-root resolution, lock files, and lifecycle configuration. Nested projects are allowed; the nearest `loaf.toml` wins. A `Cargo.toml` beside `loaf.toml` does not contribute to the build: the command prints one warning naming the ignored file and continues, because Loaf and Cargo manifests are never merged.
 
 Single-file commands can still run without a project:
 

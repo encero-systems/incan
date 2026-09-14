@@ -11,7 +11,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use clap::ValueEnum;
 use incan_codegraph::{
     CODEGRAPH_SCHEMA_VERSION, CodegraphCBindingBuffer, CodegraphCBindingCallRecord, CodegraphCBindingEnum,
     CodegraphCBindingEnumVariant, CodegraphCBindingFacadeRecord, CodegraphCBindingOutcome, CodegraphCBindingParameter,
@@ -65,13 +64,6 @@ use crate::cli::commands::common::{
     CliDiagnosticFailure, CompilationAnalysis, CompilationSession, collect_modules_detailed_with_selections,
     collect_modules_detailed_with_session, discover_effective_project_manifest, read_source, resolve_project_root,
 };
-
-/// Output format for `incan inspect codegraph`.
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CodegraphInspectionFormat {
-    /// Newline-delimited JSON records.
-    Jsonl,
-}
 
 /// A failure while producing codegraph records.
 ///

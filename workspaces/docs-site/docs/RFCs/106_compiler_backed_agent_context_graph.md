@@ -1,6 +1,6 @@
 # RFC 106: Compiler-backed agent context graph
 
-- **Status:** Planned
+- **Status:** In Progress
 - **Created:** 2026-05-26
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -672,6 +672,65 @@ The task-context ranker should start simple: exact identifiers, module/name/doc 
 - **LSP / Tooling**: CLI, MCP, editor integrations, graph export, graph stale checks, live graph snapshots, context packing, architecture-advice tooling, risk scoring, and checked metadata/documentation tooling are directly affected.
 - **Packaging / Workspaces**: package identity, workspace roots, lockfiles, generated artifacts, and future registry metadata contribute to graph identity and staleness.
 - **VCS / Coverage inputs**: git history, ownership signals, co-change data, coverage reports, and explicit decision records may contribute optional process-risk facts, but they must remain provenance-tagged and absent when inputs are unavailable.
+
+## Implementation Plan
+
+### Phase 1: Compiler-backed graph export
+
+- Export file, module, declaration, import, export, reference, call, diagnostic, span and provenance records from the compiler's own frontend, with strict checked and tolerant work-in-progress modes.
+- Give every declaration a reversible, span-free canonical identity and every record a graph-schema version.
+
+### Phase 2: One graph across Incan and Rust
+
+- Add namespace nodes over the module graph so a package's modules and the Rust items a module reaches are one subgraph.
+- Retire `rust_item` and `uses_rust_item` in favour of reference and call records whose `canonical_owner` names the Rust declaration, with reachability reported as a lower bound.
+
+### Phase 3: Semantic digests
+
+- Digest each declaration's checked meaning separately from its documentation, so a consumer can tell "changed" from "re-documented".
+- Fold closure digests over the graph's edges so a component's digest moves when anything it reaches moves, and back Rust bodies with MIR-derived digests.
+
+### Phase 4: Context surfaces
+
+- Define the CLI and MCP surfaces for raw graph exploration and task-ranked context packing, the compact deterministic agent context format, snapshot identities, staleness checks, and the optional process-risk and feedback facts.
+- Share the exporter's analysis services with the LSP so editor features read the same records.
+
+## Progress Checklist
+
+### Graph export
+
+- [x] Compiler-backed `incan inspect codegraph --format jsonl` with files, modules, declarations, imports, exports, references, calls, diagnostics, spans, provenance and degraded-state records.
+- [x] Canonical declaration identities that survive edits (`incan-v1`, span-free).
+- [x] Graph-schema version on every export (schema 7).
+- [x] Strict checked export and tolerant export.
+
+### One graph across Incan and Rust
+
+- [x] Namespace nodes over the module graph (#1513).
+- [x] Rust items a module reaches, recorded as reference and call records with `canonical_owner` (#1524).
+- [x] Reference language derived from resolved identity rather than syntax.
+- [x] `rust_item` and `uses_rust_item` retired.
+
+### Semantic digests
+
+- [x] Per-declaration semantic digest excluding position, formatting, comments and documentation; documentation digest kept apart.
+- [x] Closure digests over codegraph edges and MIR-backed Rust body digests (#1504).
+- [x] Corpus and invariant tests: every standard-library declaration digests; a comment, a docstring, an insertion and a reorder move only what they should.
+- [ ] The exported identity carries the digest as its key (see "The exported identity does not satisfy this yet").
+
+### Context surfaces
+
+- [ ] MCP surface for graph exploration and task-ranked context packing.
+- [ ] Compact deterministic agent context format beside JSON and JSONL.
+- [ ] Content-addressed snapshot identities and staleness checks.
+- [ ] Optional process-risk facts (churn, ownership, co-change, coverage) with provenance and absence when inputs are unavailable.
+- [ ] Feedback and task-memory signals with automatic expiry.
+- [ ] LSP features reading the same graph records.
+
+### Docs
+
+- [x] `incan inspect codegraph` documented in the CLI reference.
+- [ ] Agent context format and MCP surface documented.
 
 ## Design Decisions
 

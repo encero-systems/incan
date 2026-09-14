@@ -133,7 +133,7 @@ Most projects use the conventional `src/` layout and don't need to set this fiel
 
 The interop section declares package-owned build inputs and compatibility requirements for checked bindings. It describes what the package requires; it does not claim that Oven has already selected a compiler, SDK, sysroot, or installed library.
 
-Each binding kind names itself, so C declarations live under `[interop.c]`. This table was spelled `[oven.interop]` before RFC 117; that spelling is not read, and a manifest still using it is rejected with a message naming the replacement. Renaming the tables is the whole migration — their contents are unchanged.
+Each binding kind names itself, so C declarations live under `[interop.c]`. Earlier releases spelled this table `[oven.interop]`; that spelling is not read, and a manifest still using it is rejected with a message naming the replacement. Renaming the tables is the whole migration — their contents are unchanged.
 
 ```toml
 [interop.c]

@@ -3791,13 +3791,14 @@ mod tests {
 
         let key = ("Carrier".to_string(), "Carried".to_string());
         let Some(super::VariantFields::Tuple(fields)) = emitter.enum_variant_fields.get(&key) else {
-            panic!(
+            return Err(format!(
                 "the variant should be recorded as a tuple, got {:?}",
                 emitter.enum_variant_fields.get(&key)
-            );
+            )
+            .into());
         };
         let [IrType::ExternalUnion { library, .. }] = fields.as_slice() else {
-            panic!("the variant field must lower to the carried union, got {fields:?}");
+            return Err(format!("the variant field must lower to the carried union, got {fields:?}").into());
         };
         assert_eq!(
             library, "::incan_stdlib_codecs",
@@ -3812,7 +3813,8 @@ mod tests {
     /// and which artifact that is, and whether its published representation agrees, is exactly what the admitted
     /// graph exists to decide. Guessing would put the union in the wrong crate.
     #[test]
-    fn sdk_provider_seeding_refuses_a_union_owned_by_an_unadmitted_artifact() {
+    fn sdk_provider_seeding_refuses_a_union_owned_by_an_unadmitted_artifact() -> Result<(), Box<dyn std::error::Error>>
+    {
         let registry = FunctionRegistry::new();
         let manifest = manifest_exporting_a_native_union(
             "incan_stdlib_codecs",
@@ -3828,12 +3830,13 @@ mod tests {
         let seeded = emitter.seed_sdk_provider_manifest_metadata(&manifest, None, None);
 
         let Err(super::EmitError::InternalInvariant(message)) = seeded else {
-            panic!("seeding must refuse a union it cannot place, got {seeded:?}");
+            return Err(format!("seeding must refuse a union it cannot place, got {seeded:?}").into());
         };
         assert!(
             message.contains("__IncanUnionProbe"),
             "the refusal must name the union it could not bind, got {message}"
         );
+        Ok(())
     }
 
     #[test]

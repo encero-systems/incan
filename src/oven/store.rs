@@ -2113,7 +2113,7 @@ fn verify_published_entry_coordinate(root: &Path, manifest: &OvenArtifactManifes
 /// being a regular file rather than a symlink, the schema version, and the coordinate check that binds the
 /// directory name to the identity the manifest records. What is left out is only the proof that the content
 /// hashes to that identity, which `verify_published_entry_manifest` adds.
-fn read_published_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreError> {
+fn read_published_entry_manifest(root: &Path) -> Result<ReadEntryManifest, OvenStoreError> {
     verify_store_entry_root(root)?;
     let manifest_path = manifest_path_for_entry(root);
     let metadata = fs::symlink_metadata(&manifest_path).map_err(|source| OvenStoreError::Io {
@@ -2126,16 +2126,16 @@ fn read_published_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, Ov
             message: "store entry manifest must be a regular non-symlink file".to_string(),
         });
     }
-    let manifest = read_entry_manifest(root)?;
-    verify_published_entry_coordinate(root, &manifest)?;
-    Ok(manifest)
+    let read = read_entry_manifest(root)?;
+    verify_published_entry_coordinate(root, &read.manifest)?;
+    Ok(read)
 }
 
 /// Read one immutable manifest only from its authenticated published coordinate.
 fn verify_published_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreError> {
-    let manifest = read_published_entry_manifest(root)?;
-    prove_entry_manifest(root, &manifest)?;
-    Ok(manifest)
+    let read = read_published_entry_manifest(root)?;
+    prove_entry_manifest(&read)?;
+    Ok(read.manifest)
 }
 
 /// Bind an exact selector's caller-provided identity to the manifest reached through its filesystem spelling.
@@ -2261,11 +2261,12 @@ where
         // is verified here before its payload is read, so a tampered manifest cannot reach execution by matching.
         // The cheap structural checks — entry root shape, regular non-symlink manifest, schema version, and the
         // coordinate binding the directory name to the recorded identity — still run for every entry enumerated.
-        let manifest = read_published_entry_manifest(&path)?;
-        if !matches(&manifest) {
+        let read = read_published_entry_manifest(&path)?;
+        if !matches(&read.manifest) {
             continue;
         }
-        prove_entry_manifest(&path, &manifest)?;
+        prove_entry_manifest(&read)?;
+        let manifest = read.manifest;
         let payload = verified_payload_bytes(&path, &manifest)?;
         let lease = acquire_execution_lease(&path, false)?;
         let original_native_receipt = admit_native_receipt(&path, &manifest)?;
@@ -2917,10 +2918,10 @@ type ManifestFileStamp = (PathBuf, u64, Option<SystemTime>);
 /// answering each dependency query all land back on the same `loaf.json`. Measured on one no-op bake of a trivial
 /// project, that was 1,454 reads of 61 distinct manifests.
 ///
-/// Only the read is memoized. The identity proof deliberately is not: it must never be keyed by the identity a
-/// manifest *claims*, or a tampered manifest that keeps its recorded identity rides on the proof the genuine one
-/// earned earlier in the same process. Since the proof now runs only for entries a selection actually takes, it
-/// is rare enough that memoizing it buys little and risks exactly that mistake.
+/// This memo holds the parsed manifest keyed by the stamp of the file it was read from. The identity proof is
+/// memoized separately in [`proven_manifest_memo`], keyed by that same stamp — the stamp of the bytes that were
+/// hashed — and never by the identity a manifest *claims*, or a tampered manifest that keeps its recorded identity
+/// would ride on the proof the genuine one earned earlier in the same process.
 fn read_manifest_memo() -> &'static Mutex<HashMap<ManifestFileStamp, OvenArtifactManifest>> {
     static MEMO: OnceLock<Mutex<HashMap<ManifestFileStamp, OvenArtifactManifest>>> = OnceLock::new();
     MEMO.get_or_init(|| Mutex::new(HashMap::new()))
@@ -2935,20 +2936,33 @@ fn manifest_file_stamp(manifest_path: &Path) -> Option<ManifestFileStamp> {
     Some((manifest_path.to_path_buf(), metadata.len(), metadata.modified().ok()))
 }
 
+/// One entry manifest together with the stamp of the file it was parsed from.
+///
+/// The stamp travels with the manifest so that the identity proof is keyed by the bytes that were actually
+/// hashed. Taking a second stamp at proof time would open a window in which the file is rewritten between the
+/// read and the proof and the new stamp is recorded as proven for the old bytes.
+struct ReadEntryManifest {
+    manifest: OvenArtifactManifest,
+    stamp: Option<ManifestFileStamp>,
+}
+
 /// Read one entry manifest and check its structure, without recomputing the identity its content implies.
 ///
 /// Reading and identity-checking are separated because they are needed at different moments. A caller deciding
 /// *whether* it wants an entry needs the manifest's fields; only a caller about to use one needs proof that those
 /// fields hash to the identity the entry is filed under. `verify_entry_manifest` still does both, so every path
 /// that authenticated an entry before still authenticates it now.
-fn read_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreError> {
+fn read_entry_manifest(root: &Path) -> Result<ReadEntryManifest, OvenStoreError> {
     let manifest_path = manifest_path_for_entry(root);
     let stamp = manifest_file_stamp(&manifest_path);
     if let Some(stamp) = stamp.as_ref()
         && let Ok(memo) = read_manifest_memo().lock()
         && let Some(manifest) = memo.get(stamp)
     {
-        return Ok(manifest.clone());
+        return Ok(ReadEntryManifest {
+            manifest: manifest.clone(),
+            stamp: Some(stamp.clone()),
+        });
     }
     let content = fs::read(&manifest_path).map_err(|source| OvenStoreError::Io {
         path: manifest_path.clone(),
@@ -2965,12 +2979,12 @@ fn read_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreErr
             message: format!("unsupported store schema {}", manifest.schema_version),
         });
     }
-    if let Some(stamp) = stamp
+    if let Some(stamp) = stamp.as_ref()
         && let Ok(mut memo) = read_manifest_memo().lock()
     {
-        memo.insert(stamp, manifest.clone());
+        memo.insert(stamp.clone(), manifest.clone());
     }
-    Ok(manifest)
+    Ok(ReadEntryManifest { manifest, stamp })
 }
 
 /// Process-local record of manifest files already proven in this run, keyed by the bytes that were proven.
@@ -3001,28 +3015,30 @@ fn verify_manifest_identity(manifest: &OvenArtifactManifest) -> Result<(), OvenS
 }
 
 /// Prove one entry's manifest, skipping the work when this run already proved the very same bytes.
-fn prove_entry_manifest(root: &Path, manifest: &OvenArtifactManifest) -> Result<(), OvenStoreError> {
-    let stamp = manifest_file_stamp(&manifest_path_for_entry(root));
-    if let Some(stamp) = stamp.as_ref()
+///
+/// The memo key is the stamp the manifest was read under, not a fresh stat: the proof must be recorded for the
+/// bytes that were hashed, and a file rewritten between the read and this call must miss, not ride along.
+fn prove_entry_manifest(read: &ReadEntryManifest) -> Result<(), OvenStoreError> {
+    if let Some(stamp) = read.stamp.as_ref()
         && let Ok(proven) = proven_manifest_memo().lock()
         && proven.contains(stamp)
     {
         return Ok(());
     }
-    verify_manifest_identity(manifest)?;
-    if let Some(stamp) = stamp
+    verify_manifest_identity(&read.manifest)?;
+    if let Some(stamp) = read.stamp.as_ref()
         && let Ok(mut proven) = proven_manifest_memo().lock()
     {
-        proven.insert(stamp);
+        proven.insert(stamp.clone());
     }
     Ok(())
 }
 
 /// Verify immutable manifest structure and identity without traversing the materialized compiler closure.
 fn verify_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreError> {
-    let manifest = read_entry_manifest(root)?;
-    prove_entry_manifest(root, &manifest)?;
-    Ok(manifest)
+    let read = read_entry_manifest(root)?;
+    prove_entry_manifest(&read)?;
+    Ok(read.manifest)
 }
 
 /// Read and authenticate one primary payload only from a regular file within its verified entry root.

@@ -9,7 +9,7 @@
     - RFC 020 (offline, locked, and reproducible builds)
     - RFC 023 (compilable stdlib and Rust module binding)
     - RFC 031 (Incan library system)
-    - RFC 034 (`incan.pub` package registry)
+    - RFC 125 (`incan.pub` Loaf registry and baked asset distribution; supersedes RFC 034)
     - RFC 073 (environment matrices and toolchain constraints)
     - RFC 076 (project mutation policy and recovery)
     - RFC 077 (workspace and multi-package projects)
@@ -522,7 +522,7 @@ loaf.toml
 ├── [project]                 RFC 117
 ├── [workspace]               RFC 117; prospectively supersedes RFC 077's flat-workspace restriction
 ├── dependencies/features     RFC 117 + RFC 114
-├── registry selection        RFC 117 + RFC 034
+├── registry selection        RFC 117 + RFC 125
 ├── [envs]                    RFC 073, rehomed by RFC 117
 ├── [actions]                 RFC 078, rehomed by RFC 117
 ├── [policy]                  RFC 076, rehomed by RFC 117
@@ -664,7 +664,7 @@ RFC 117 is ready to move beyond Draft when its normative rules and updated relat
 
 - Normalize Loaf, crate, and provider dependencies into one resolver-owned graph.
 - Implement default origins, registered registry identities, workspace allow-lists, integrity/trust facts, and the `oven.lock` format.
-- Amend RFC 034 integration and retain RFC 114's public-feature/provider boundaries.
+- Amend RFC 125 integration and retain RFC 114's public-feature/provider boundaries.
 
 ### Phase 3: Target plan and controlled effects
 

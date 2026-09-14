@@ -14,7 +14,7 @@ src/
 ├── lib.rs                            # Library root, re-exports
 ├── manifest.rs                       # loaf.toml project manifest parsing
 ├── lockfile.rs                       # oven.lock lockfile handling
-├── library_manifest.rs               # Library manifest (provider.incnlib)
+├── library_manifest/                 # Library manifest (`<package>.incnlib`)
 ├── dependency_resolver.rs            # Dependency resolution for multi-crate builds
 ├── semantics_registry.rs             # Shared semantic definitions
 ├── numeric.rs / numeric_adapters.rs  # Numeric type handling

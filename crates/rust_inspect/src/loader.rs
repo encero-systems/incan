@@ -43,22 +43,24 @@ pub struct RustWorkspace {
 /// tree or in Cargo's cache.
 static OVEN_PROJECT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-/// The standard-library crates a sysroot source tree carries, as the paths below `library/` and the dependency
-/// edges rust-analyzer itself stitches when Cargo is not consulted. Declaring them as a `sysroot_project` gives
-/// rust-analyzer the same graph its own fallback would build, without the `cargo metadata` it tries first.
-const SYSROOT_LIBRARY_CRATES: &[(&str, &str, &[&str])] = &[
-    ("core", "core", &[]),
-    ("alloc", "alloc", &["core"]),
-    ("unwind", "unwind", &[]),
-    ("panic_abort", "panic_abort", &[]),
-    ("panic_unwind", "panic_unwind", &[]),
-    ("profiler_builtins", "profiler_builtins", &[]),
-    ("std_detect", "stdarch/crates/std_detect", &[]),
-    ("backtrace", "backtrace", &[]),
-    ("test", "test", &[]),
+/// The standard-library crates a sysroot source tree carries, as the candidate paths below `library/` and the
+/// dependency edges rust-analyzer itself stitches when Cargo is not consulted. Declaring them as a
+/// `sysroot_project` gives rust-analyzer the same graph its own fallback would build, without the `cargo metadata`
+/// it tries first. A crate with more than one candidate path moved between releases (`std_detect` left the
+/// vendored `stdarch` tree for `library/std_detect`); the first candidate present wins.
+const SYSROOT_LIBRARY_CRATES: &[(&str, &[&str], &[&str])] = &[
+    ("core", &["core"], &[]),
+    ("alloc", &["alloc"], &["core"]),
+    ("unwind", &["unwind"], &[]),
+    ("panic_abort", &["panic_abort"], &[]),
+    ("panic_unwind", &["panic_unwind"], &[]),
+    ("profiler_builtins", &["profiler_builtins"], &[]),
+    ("std_detect", &["std_detect", "stdarch/crates/std_detect"], &[]),
+    ("backtrace", &["backtrace"], &[]),
+    ("test", &["test"], &[]),
     (
         "std",
-        "std",
+        &["std"],
         &[
             "alloc",
             "panic_unwind",
@@ -70,17 +72,42 @@ const SYSROOT_LIBRARY_CRATES: &[(&str, &str, &[&str])] = &[
             "test",
         ],
     ),
-    ("proc_macro", "proc_macro", &["std", "core"]),
+    ("proc_macro", &["proc_macro"], &["std", "core"]),
 ];
+
+/// The edition a library crate is compiled under when its `Cargo.toml` does not say.
+///
+/// The toolchain the installer provisions ships its library crates at this edition; a `RUSTC` override to an older
+/// toolchain declares its own in each crate manifest, which `sysroot_project_graph` reads first.
+const SYSROOT_LIBRARY_DEFAULT_EDITION: &str = "2024";
+
+/// Read the `edition = "..."` a sysroot library crate's `Cargo.toml` declares, if the manifest is present and says.
+///
+/// The `rust-src` component ships each crate's manifest beside its sources, so this is a one-line scan rather than
+/// a TOML parse: the field is a plain string at the top level of every library crate manifest.
+fn sysroot_crate_edition(crate_root: &Path) -> Option<String> {
+    let manifest = fs::read_to_string(crate_root.join("Cargo.toml")).ok()?;
+    manifest.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        (key.trim() == "edition").then(|| value.trim().trim_matches('"').to_string())
+    })
+}
 
 /// Describe the sysroot's library crates as a `rust-project.json` graph rooted at `sysroot_src`.
 ///
 /// Only crates whose `src/lib.rs` exists in this toolchain are listed, and a dependency on an absent crate is
-/// dropped, so a toolchain that ships fewer library crates still yields a graph rust-analyzer accepts.
+/// dropped, so a toolchain that ships fewer library crates still yields a graph rust-analyzer accepts. Each
+/// crate's edition comes from its own manifest when the `rust-src` component carries one, and from
+/// [`SYSROOT_LIBRARY_DEFAULT_EDITION`] otherwise.
 fn sysroot_project_graph(sysroot_src: &Path) -> serde_json::Value {
     let present = SYSROOT_LIBRARY_CRATES
         .iter()
-        .filter(|(_, relative, _)| sysroot_src.join(relative).join("src/lib.rs").is_file())
+        .filter_map(|(name, candidates, deps)| {
+            candidates
+                .iter()
+                .find(|relative| sysroot_src.join(relative).join("src/lib.rs").is_file())
+                .map(|relative| (*name, *relative, *deps))
+        })
         .collect::<Vec<_>>();
     let index_of = |name: &str| present.iter().position(|(candidate, _, _)| *candidate == name);
     let crates = present
@@ -90,10 +117,12 @@ fn sysroot_project_graph(sysroot_src: &Path) -> serde_json::Value {
                 .iter()
                 .filter_map(|dep| index_of(dep).map(|index| serde_json::json!({ "crate": index, "name": dep })))
                 .collect::<Vec<_>>();
+            let edition = sysroot_crate_edition(&sysroot_src.join(relative))
+                .unwrap_or_else(|| SYSROOT_LIBRARY_DEFAULT_EDITION.to_string());
             serde_json::json!({
                 "display_name": name,
                 "root_module": format!("{relative}/src/lib.rs"),
-                "edition": "2024",
+                "edition": edition,
                 "deps": deps,
                 "is_workspace_member": false,
                 "is_proc_macro": false,
@@ -1449,11 +1478,70 @@ mod tests {
 
     use super::{
         OVEN_DIRECT_INSPECTION_MARKER, OvenInspectionRegistrySource, RustWorkspace, digest_oven_source_tree,
-        proc_macro_server_candidates, write_oven_inspection_source_authority,
+        proc_macro_server_candidates, sysroot_project_graph, write_oven_inspection_source_authority,
         write_sealed_oven_inspection_source_authority,
     };
 
     use tempfile::tempdir;
+
+    /// The sysroot graph lists only the library crates this toolchain ships, drops edges to absent ones, indexes
+    /// each dependency by its position in the filtered list, and reads a crate's edition from its own manifest
+    /// (#1530).
+    #[test]
+    fn sysroot_project_graph_describes_only_the_crates_the_toolchain_ships() -> Result<(), Box<dyn std::error::Error>> {
+        let sysroot = tempdir()?;
+        for relative in ["core", "alloc", "std", "stdarch/crates/std_detect"] {
+            fs::create_dir_all(sysroot.path().join(relative).join("src"))?;
+            fs::write(sysroot.path().join(relative).join("src/lib.rs"), "")?;
+        }
+        fs::write(
+            sysroot.path().join("core/Cargo.toml"),
+            "[package]\nname = \"core\"\nedition = \"2021\"\n",
+        )?;
+
+        let graph = sysroot_project_graph(sysroot.path());
+        let crates = graph["crates"].as_array().ok_or("crates must be an array")?;
+        let names = crates
+            .iter()
+            .map(|entry| entry["display_name"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            ["core", "alloc", "std_detect", "std"],
+            "absent crates are not listed, and a crate is found at its older path"
+        );
+        assert_eq!(crates[2]["root_module"], "stdarch/crates/std_detect/src/lib.rs");
+
+        let deps_of = |name: &str| -> Vec<(u64, String)> {
+            crates
+                .iter()
+                .find(|entry| entry["display_name"] == name)
+                .and_then(|entry| entry["deps"].as_array())
+                .map(|deps| {
+                    deps.iter()
+                        .map(|dep| (dep["crate"].as_u64().unwrap_or_default(), dep["name"].to_string()))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        assert_eq!(deps_of("alloc"), [(0, "\"core\"".to_string())]);
+        assert_eq!(
+            deps_of("std"),
+            [
+                (1, "\"alloc\"".to_string()),
+                (0, "\"core\"".to_string()),
+                (2, "\"std_detect\"".to_string())
+            ],
+            "edges to absent crates are dropped and the rest index the filtered list"
+        );
+        assert_eq!(crates[0]["edition"], "2021", "a crate manifest's edition wins");
+        assert_eq!(
+            crates[1]["edition"], "2024",
+            "a crate without a manifest gets the shipped default"
+        );
+        assert!(crates.iter().all(|entry| entry["is_workspace_member"] == false));
+        Ok(())
+    }
 
     #[test]
     fn proc_macro_server_candidates_preserve_windows_executable_suffix() {

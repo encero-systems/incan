@@ -169,9 +169,9 @@ pub fn build_body_ir_module_v0_with_executable_context(
 /// package-feature selection rather than using this helper to approximate one.
 ///
 /// Ordering matters beyond the pair itself. The caller applies this immediately after parsing, ahead of
-/// [`replacement_module_profile_error`] and typechecking, because both of those must see the projected program: an
-/// import behind an inactive feature is not part of this compilation, and refusing it as an unsupported profile
-/// boundary would report a declaration the build does not contain.
+/// [`crate::backend::replacement::validate_direct_body_profile`] and typechecking, because both of those must see the
+/// projected program: an import behind an inactive feature is not part of this compilation, and refusing it as an
+/// unsupported profile boundary would report a declaration the build does not contain.
 ///
 /// # Errors
 ///

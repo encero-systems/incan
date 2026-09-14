@@ -62,14 +62,6 @@ impl DeclarationSignature {
         Self(format!("({rendered})->{}", render_type(return_type)))
     }
 
-    /// Build a signature from an already-canonical rendering.
-    ///
-    /// For declarations that are not callables but still need separating, and for callers holding a rendering this
-    /// module did not produce. The caller owns the guarantee that the rendering is derived from checked types.
-    pub fn from_rendering(rendering: impl Into<String>) -> Self {
-        Self(rendering.into())
-    }
-
     /// The canonical rendering.
     pub fn as_str(&self) -> &str {
         &self.0
