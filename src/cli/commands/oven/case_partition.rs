@@ -30,14 +30,22 @@ pub(crate) struct CompilerSuiteShardUnit {
     pub(crate) case_slice: Option<(usize, usize)>,
 }
 
-/// Divide roots whose measured weight exceeds one shard's fair share into slices, keeping every other root whole.
+/// Root workers one replay partition runs side by side on the reference CI runner (`compiler_suite_auto_parallel_jobs`
+/// on four cores). A partition's wall is the larger of its total weight over its workers and its single heaviest
+/// unit, so a unit heavier than a worker's share of the partition sets the wall no matter how the rest is packed.
+/// The first measured run (34794133663) showed exactly that: `integration_tests.rs` at 2,092 s was 93% of a
+/// 2,257-second fair share, stayed whole, and held its partition at 42 minutes while the lightest finished in nine.
+const PARTITION_ROOT_WORKERS: u64 = 2;
+
+/// Divide roots whose measured weight exceeds one worker's share of a partition into slices, keeping every other
+/// root whole.
 ///
 /// `weight_of` is the packer's own weight for a root; `is_measured` says whether that weight is a measurement rather
 /// than a proxy, because only a measured giant is worth dividing. Only a native libtest root can be divided: a
-/// Rustdoc root runs its doctests as one process with no case inventory to slice, so it always stays whole. A giant
-/// is cut into `ceil(weight / share)` slices, capped at `partition_count` so no shard is asked to compile one root
-/// more often than another shard would. The returned units are in input order, slices ascending, and carry the
-/// weight each contributes to packing.
+/// Rustdoc root runs its doctests as one process with no case inventory to slice, so it always stays whole. The
+/// target unit is `share / PARTITION_ROOT_WORKERS`; a giant is cut into `ceil(weight / target)` slices, capped at
+/// `partition_count` so no shard is asked to compile one root more often than another shard would. The returned
+/// units are in input order, slices ascending, and carry the weight each contributes to packing.
 pub(crate) fn divide_giant_roots(
     references: &[OvenCompilerTestSuiteShardReference],
     partition_count: usize,
@@ -52,12 +60,13 @@ pub(crate) fn divide_giant_roots(
     } else {
         total / partition_count as u64
     };
+    let target = share / PARTITION_ROOT_WORKERS;
     let mut units = Vec::with_capacity(references.len());
     for reference in references {
         let weight = weight_of(reference);
         let divisible = reference.target.runner == NATIVE_LIBTEST_RUNNER;
-        let slices = if divisible && share > 0 && weight > share && is_measured(reference) {
-            weight.div_ceil(share).min(partition_count as u64).max(2)
+        let slices = if divisible && target > 0 && weight > target && is_measured(reference) {
+            weight.div_ceil(target).min(partition_count as u64).max(2)
         } else {
             1
         };
@@ -233,7 +242,8 @@ mod tests {
             |reference| measured[&reference.target.source_relative_path],
             |_| true,
         );
-        // total 4000, share 1000: the giant is 3× the share → three slices; the small roots stay whole.
+        // total 4000, share 1000, one worker's target 500: the giant is 6× the target → capped at the four shards;
+        // the small roots sit exactly at the target and stay whole.
         let giant = units
             .iter()
             .filter(|(unit, _)| unit.reference.target.source_relative_path == "tests/giant.rs")
@@ -241,9 +251,14 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             giant,
-            vec![(Some((0, 3)), 1000), (Some((1, 3)), 1000), (Some((2, 3)), 1000)]
+            vec![
+                (Some((0, 4)), 750),
+                (Some((1, 4)), 750),
+                (Some((2, 4)), 750),
+                (Some((3, 4)), 750)
+            ]
         );
-        assert_eq!(units.len(), 5);
+        assert_eq!(units.len(), 6);
         assert!(units.iter().filter(|(unit, _)| unit.case_slice.is_none()).count() == 2);
     }
 
@@ -296,9 +311,9 @@ mod tests {
         ];
         let measured = BTreeMap::from([
             ("tests/giant.rs".to_string(), 4_000_u64),
-            ("tests/a.rs".to_string(), 1_000),
-            ("tests/b.rs".to_string(), 1_000),
-            ("tests/c.rs".to_string(), 1_000),
+            ("tests/a.rs".to_string(), 800),
+            ("tests/b.rs".to_string(), 800),
+            ("tests/c.rs".to_string(), 800),
         ]);
         let units = || {
             divide_giant_roots(
@@ -323,13 +338,14 @@ mod tests {
             units().len(),
             "no unit is lost or duplicated across partitions"
         );
-        // total 7000, share 1750: the giant divides into ⌈4000/1750⌉ = 3 slices of ~1333 each; every shard then
-        // carries about the same weight instead of one shard carrying the whole giant.
+        // total 6400, share 1600, one worker's target 800: the giant divides into ⌈4000/800⌉ = 5, capped at the
+        // four shards; the 800-weight roots sit at the target and stay whole, so every shard carries about the same
+        // weight instead of one shard carrying the whole giant.
         let giant_slices = seen
             .iter()
             .filter(|unit| unit.reference.target.source_relative_path == "tests/giant.rs")
             .count();
-        assert_eq!(giant_slices, 3);
+        assert_eq!(giant_slices, 4);
     }
 
     #[test]
