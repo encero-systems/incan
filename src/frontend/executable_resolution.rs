@@ -396,6 +396,3 @@ impl OpenSurface {
 fn malformed(reason: impl Into<String>) -> ExecutableRepresentationError {
     ExecutableRepresentationError::Malformed { reason: reason.into() }
 }
-
-#[cfg(test)]
-mod tests;

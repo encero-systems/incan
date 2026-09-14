@@ -2872,7 +2872,7 @@
       {
         "id": "frontend.body-ir.callable-values",
         "lifecycle": "LocalImplementation",
-        "repository_path": "src/frontend/body_ir.rs",
+        "repository_path": "src/replacement_compatibility.rs",
         "selector": "fn replacement_compatibility_body_ir_contribution",
         "retirement_condition": null,
         "feature_ids": [
@@ -2887,7 +2887,7 @@
       {
         "id": "backend.replacement.bounded-scalar-control",
         "lifecycle": "LocalImplementation",
-        "repository_path": "src/backend/replacement/mod.rs",
+        "repository_path": "src/replacement_compatibility.rs",
         "selector": "fn replacement_compatibility_direct_execution_contribution",
         "retirement_condition": null,
         "feature_ids": [

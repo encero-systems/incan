@@ -7,9 +7,9 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use super::ExecutableResolutionError;
 use crate::backend::replacement::{ReplacementExecutionGraph, execute_free_function};
 use crate::frontend::body_ir::build_body_ir_module_v0;
+use crate::frontend::executable_resolution::{ExecutableResolutionError, ResolvedExecutableModules};
 use crate::frontend::library_exports::collect_checked_public_exports;
 use crate::frontend::library_manifest::published_layout::{executable_surface_path, public_executable_identities};
 use crate::frontend::library_manifest::{ExecutableRepresentationExport, LibraryManifest};
@@ -24,7 +24,7 @@ use incan_semantics_core::executable_representation::{EXECUTABLE_REPRESENTATION_
 fn resolve_executable_requirements(
     index: &LibraryManifestIndex,
     required: &BTreeSet<incan_semantics_core::CanonicalSymbolId>,
-) -> Result<super::ResolvedExecutableModules, ExecutableResolutionError> {
+) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
     let plan =
         crate::provider::ProviderPlan::from_resolved_inputs(index.clone(), None, None, None, []).map_err(|error| {
             ExecutableResolutionError::DependencyArtifact {
@@ -33,7 +33,7 @@ fn resolve_executable_requirements(
                 reason: error.to_string(),
             }
         })?;
-    super::resolve_executable_requirements(&plan, required)
+    crate::frontend::executable_resolution::resolve_executable_requirements(&plan, required)
 }
 
 /// Produce a manifest and semantic surface from one checked source input, using the real identity exporter.
@@ -551,7 +551,7 @@ fn exercise_catalog_signature(type_facade: bool) -> Result<(), Box<dyn Error>> {
                     .canonical_for_public_name("first_product")
             }),
     );
-    let resolved = super::resolve_executable_requirements(&plan, &required)?;
+    let resolved = crate::frontend::executable_resolution::resolve_executable_requirements(&plan, &required)?;
     let consumer = crate::frontend::body_ir::build_body_ir_module_v0_with_executable_context(
         &program,
         &["main".into()],

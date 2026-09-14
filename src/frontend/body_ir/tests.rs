@@ -7280,7 +7280,7 @@ fn build_with_statement_injected_after_typecheck(
 /// compiler desugars them before typechecking. Adding one after checking isolates the lowerer's final safety net:
 /// every executable body must refuse the raw declaration rather than silently dropping it during top-level
 /// collection.
-fn build_with_top_level_declaration_injected_after_typecheck(
+pub(crate) fn build_with_top_level_declaration_injected_after_typecheck(
     source: &str,
     module_path: &[&str],
     injected: ast::Spanned<ast::Declaration>,
@@ -7322,7 +7322,7 @@ fn fixture_scoped_surface_owner() -> ast::ScopedSurfaceOwner {
 }
 
 /// A top-level vocabulary declaration whose source meaning has not been desugared.
-fn fixture_top_level_vocab_declaration() -> ast::Spanned<ast::Declaration> {
+pub(crate) fn fixture_top_level_vocab_declaration() -> ast::Spanned<ast::Declaration> {
     ast::Spanned::new(
         ast::Declaration::VocabBlock(ast::VocabBlockStmt {
             keyword: "query".to_string(),
@@ -7343,44 +7343,6 @@ fn fixture_top_level_vocab_declaration() -> ast::Spanned<ast::Declaration> {
         }),
         ast::Span::new(40, 60),
     )
-}
-
-#[test]
-fn an_undesugared_top_level_vocab_declaration_refuses_every_executable_body() -> Result<(), Box<dyn std::error::Error>>
-{
-    let module = build_with_top_level_declaration_injected_after_typecheck(
-        "def main() -> int:\n    return 1\n\ndef helper() -> int:\n    return 2\n",
-        &["m"],
-        fixture_top_level_vocab_declaration(),
-    )?;
-
-    for body in &module.bodies {
-        let Some(statement) = body.block.stmts.first() else {
-            return Err(Box::from(format!("expected a contract refusal in `{}`", body.name)));
-        };
-        let bir::StatementKind::Unsupported { description } = &statement.kind else {
-            return Err(Box::from(format!(
-                "the first statement of `{}` must reject the raw top-level declaration: {statement:?}",
-                body.name
-            )));
-        };
-        assert!(description.contains("top-level vocab block"), "{description}");
-        assert!(
-            description.contains("Body IR input-contract violation"),
-            "{description}"
-        );
-        assert_eq!(statement.span, HirSourceSpan::new(40, 60));
-    }
-
-    let error = crate::backend::replacement::prepare_free_function_execution(&module, "main", &[])
-        .err()
-        .ok_or("a raw top-level vocabulary declaration must stop direct-execution preparation")?;
-    let crate::backend::replacement::ReplacementExecutionError::Unsupported { description, span, .. } = error else {
-        return Err(Box::from(format!("unexpected direct-execution result: {error}")));
-    };
-    assert!(description.contains("top-level vocab block"), "{description}");
-    assert_eq!(span, HirSourceSpan::new(40, 60));
-    Ok(())
 }
 
 #[test]
