@@ -18,20 +18,20 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 #[cfg(feature = "rust_inspect")]
-use crate::cli::commands::common::{
-    CargoPolicy, build_source_map, cargo_command_flags, collect_inline_rust_imports,
-    collect_rust_inspect_derive_probe_paths, collect_rust_inspect_query_paths, configure_rust_inspect_cargo_target,
-    ensure_rust_inspect_workspace_with_cargo_package_name, extend_requirements_with_provider_plan,
-    format_dependency_error, merge_project_requirement_dependencies, prewarm_rust_inspect_workspace,
-};
-use crate::cli::commands::common::{
-    CompilationSession, collect_project_requirements, discover_effective_project_manifest,
-};
-#[cfg(feature = "rust_inspect")]
 use crate::cli::commands::lock::{LockResolutionRequest, resolve_lock_context};
-use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust_inspect")]
 use crate::dependency_resolver::{ResolvedDependencies, resolve_dependencies};
+#[cfg(feature = "rust_inspect")]
+use crate::driver::cargo_policy::{CargoPolicy, cargo_command_flags};
+#[cfg(feature = "rust_inspect")]
+use crate::driver::modules::{build_source_map, collect_inline_rust_imports, format_dependency_error};
+use crate::driver::project::discover_effective_project_manifest;
+#[cfg(feature = "rust_inspect")]
+use crate::driver::rust_inspect_workspace::{
+    collect_rust_inspect_derive_probe_paths, collect_rust_inspect_query_paths, configure_rust_inspect_cargo_target,
+    ensure_rust_inspect_workspace_with_cargo_package_name, prewarm_rust_inspect_workspace,
+};
+use crate::driver::session::CompilationSession;
 use crate::frontend::api_metadata::{
     ApiClass, ApiConst, ApiDeclaration, ApiEnum, ApiFunction, ApiMethod, ApiModel, ApiNewtype, ApiPartial, ApiStatic,
     ApiTrait, ApiTypeAlias, CheckedApiMetadata, SourceAnchor, checked_api_declaration_is_public_namespace_member,
@@ -53,6 +53,7 @@ use crate::frontend::module::{
     SourceModuleImportResolution, logical_module_name_from_source_path, resolve_program_source_imports,
     self_import_diagnostic_message,
 };
+use crate::frontend::parsed_module::ParsedModule;
 use crate::frontend::symbols::{FunctionInfo, ResolvedType, SymbolKind as FrontendSymbolKind, TypeInfo};
 use crate::frontend::typechecker::stdlib_loader::{StdlibAstCache, StdlibFunctionLspMetadata};
 use crate::frontend::typechecker::{
@@ -77,6 +78,11 @@ use crate::lsp::diagnostics::{
 };
 use crate::lsp::semantic_tokens;
 use crate::manifest::ProjectManifest;
+#[cfg(feature = "rust_inspect")]
+use crate::provider::inventory::extend_requirements_with_provider_plan;
+use crate::provider::requirements::collect_project_requirements;
+#[cfg(feature = "rust_inspect")]
+use crate::provider::requirements::merge_project_requirement_dependencies;
 use crate::provider::{ProviderModuleResolution, ProviderPlan, ProviderProvenance};
 use incan_core::interop::{RustItemKind, RustModuleChildKind, RustTraitAssoc};
 use incan_core::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
@@ -1177,9 +1183,9 @@ mod tests {
         PrewarmQueueEntry, enqueue_prewarm_paths, prepare_lsp_rust_inspect_workspace_in_cache_root,
         take_next_prewarm_batch,
     };
-    use crate::cli::commands::common::CompilationSession;
-    use crate::cli::prelude::ParsedModule;
+    use crate::driver::session::CompilationSession;
     use crate::frontend::library_manifest_index::LibraryManifestIndex;
+    use crate::frontend::parsed_module::ParsedModule;
     use crate::frontend::{lexer, parser};
     use crate::manifest::ProjectManifest;
 

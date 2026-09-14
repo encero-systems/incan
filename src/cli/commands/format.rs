@@ -5,8 +5,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::common::CompilationSession;
 use crate::cli::{CliError, CliResult, ExitCode};
+use crate::driver::session::CompilationSession;
 use crate::format::{FormatConfig, format_diff_from_formatted, format_parsed_source_with_config};
 use crate::frontend::diagnostics;
 

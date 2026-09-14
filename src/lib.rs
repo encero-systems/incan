@@ -19,6 +19,7 @@ pub mod cli;
 pub(crate) mod compiled_sdk;
 pub mod compiler_stack;
 pub mod dependency_resolver;
+pub mod driver;
 pub mod format;
 pub mod frontend;
 #[cfg(feature = "cli")]

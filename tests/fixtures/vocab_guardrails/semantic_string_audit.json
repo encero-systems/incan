@@ -259,16 +259,40 @@
       "expected_fingerprint": "0x7b05117f4d9db0da"
     },
     {
-      "path": "src/cli/commands/common.rs",
-      "category": "project materialization, package entrypoint, provider hashing, dependency, rust-inspect compatibility, and generated-state source exclusion",
-      "expected_count": 12,
-      "expected_fingerprint": "0x46df6b6aaca11d73"
-    },
-    {
       "path": "src/dependency_resolver.rs",
       "category": "dependency resolver registry and package-alias policy",
       "expected_count": 18,
       "expected_fingerprint": "0x12d230c26526632c"
+    },
+    {
+      "path": "src/driver/cargo_policy.rs",
+      "category": "environment flag truthiness for Cargo policy",
+      "expected_count": 1,
+      "expected_fingerprint": "0x7b43ebb63741a15c"
+    },
+    {
+      "path": "src/driver/modules.rs",
+      "category": "package entrypoint stem",
+      "expected_count": 1,
+      "expected_fingerprint": "0x8c4c9e75782e649a"
+    },
+    {
+      "path": "src/driver/project.rs",
+      "category": "project source discovery and generated-state source exclusion",
+      "expected_count": 3,
+      "expected_fingerprint": "0x20dd2e3b43ec0187"
+    },
+    {
+      "path": "src/driver/rust_inspect_workspace.rs",
+      "category": "rust-inspect workspace prewarm flags, lock-projection and primitive-namespace compatibility",
+      "expected_count": 5,
+      "expected_fingerprint": "0x2149b316c851f3d0"
+    },
+    {
+      "path": "src/driver/vocab_extraction.rs",
+      "category": "vocab desugarer artifact discovery, profile and crate-type checks",
+      "expected_count": 3,
+      "expected_fingerprint": "0xe97ac641de1e4572"
     },
     {
       "path": "src/frontend/testing_markers.rs",
@@ -377,6 +401,30 @@
       "category": "Rust module validation compatibility",
       "expected_count": 1,
       "expected_fingerprint": "0x3814274efdb9fae2"
+    },
+    {
+      "path": "src/provider/features.rs",
+      "category": "manifest feature-section spelling",
+      "expected_count": 2,
+      "expected_fingerprint": "0x50c3a16c468f3c51"
+    },
+    {
+      "path": "src/provider/inventory.rs",
+      "category": "SDK inventory manifest section",
+      "expected_count": 1,
+      "expected_fingerprint": "0x12ad1d34129ad869"
+    },
+    {
+      "path": "src/provider/plan.rs",
+      "category": "std and pub namespace authority claims",
+      "expected_count": 4,
+      "expected_fingerprint": "0x08c1bc0bf8f6ab34"
+    },
+    {
+      "path": "src/provider/sdk_store.rs",
+      "category": "provider source-tree hashing target exclusion",
+      "expected_count": 1,
+      "expected_fingerprint": "0xf6b309b30611feae"
     }
   ]
 }

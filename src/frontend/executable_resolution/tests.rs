@@ -346,9 +346,8 @@ fn public_default_calls_and_plain_model_context_execute_from_fragments() -> Resu
 /// Child frames share the complete checked graph, including a canonical backedge into its entry module.
 #[test]
 fn canonical_frames_reenter_the_entry_module_through_a_checked_cycle() -> Result<(), Box<dyn Error>> {
-    use crate::cli::commands::common::{
-        CompilationSession, collect_modules_detailed_with_session, scoped_compilation_session_analysis_invocations,
-    };
+    use crate::driver::modules::collect_modules_detailed_with_session;
+    use crate::driver::session::{CompilationSession, scoped_compilation_session_analysis_invocations};
 
     let temporary = tempfile::tempdir()?;
     fs::create_dir(temporary.path().join("src"))?;

@@ -30,9 +30,9 @@ use crate::backend::ProjectGenerator;
 use crate::backend::project::runner::resolved_cargo_executable;
 #[cfg(test)]
 use crate::backend::project::runner::{cargo_command, configure_cargo_target, sanitize_cargo_environment};
-use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies, resolve_reachable_dependencies};
+use crate::frontend::ParsedModule;
 use crate::frontend::ast::{Declaration, ImportKind};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
@@ -64,19 +64,23 @@ use crate::provider::{FeatureSelection, ProviderPlan, SDK_PROVIDER_BUILD_ENV};
 use crate::workspace::WorkspaceGraph;
 use incan_core::lang::stdlib;
 
-use super::common::{
-    CargoPolicy, CompilationSession, INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, ProjectRequirements, build_source_map,
-    cargo_command_flags, collect_modules_detailed_with_session, collect_project_requirements,
-    collect_rust_dependency_uses, enforce_project_toolchain_constraint, extend_requirements_with_provider_plan,
-    format_dependency_error, merge_project_requirement_dependencies, provider_used_module_paths,
-    semantic_sdk_path_dependencies,
+use crate::driver::cargo_policy::{CargoPolicy, cargo_command_flags, enforce_project_toolchain_constraint};
+use crate::driver::modules::{
+    build_source_map, collect_modules_detailed_with_session, collect_rust_dependency_uses, format_dependency_error,
 };
 #[cfg(feature = "rust_inspect")]
-use super::common::{
+use crate::driver::rust_inspect_workspace::{
     collect_rust_inspect_derive_probe_paths, collect_rust_inspect_query_paths,
     ensure_rust_inspect_workspace_with_cargo_package_name, mark_oven_cargo_bootstrap_rust_inspection,
     mark_oven_direct_rust_inspection, prewarm_rust_inspect_workspace,
 };
+use crate::driver::session::CompilationSession;
+use crate::provider::inventory::{extend_requirements_with_provider_plan, provider_used_module_paths};
+use crate::provider::requirements::{
+    ProjectRequirements, collect_project_requirements, merge_project_requirement_dependencies,
+    semantic_sdk_path_dependencies,
+};
+use crate::provider::sdk_store::INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV;
 
 #[cfg(test)]
 #[allow(dead_code)]

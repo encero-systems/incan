@@ -1,8 +1,12 @@
 //! Backend-neutral compiled-provider, SDK-component, and package-feature resolution.
 
 mod features;
+pub mod inventory;
 mod plan;
+pub mod requirements;
 mod sdk;
+pub mod sdk_build;
+pub mod sdk_store;
 
 pub use features::*;
 pub use plan::*;
