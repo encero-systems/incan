@@ -19,4 +19,4 @@ The compile session: module graph, parsed modules, build orchestration, generate
 
 This is what `incan-lsp` and `incan` both link. Its existence is what makes the LSP compile without the CLI (audit finding 1).
 
-`src/driver/` is the crate root; `backend/` (the generated project, the shadow comparison and the `backend::ir` shim over `incan_ir`/`incan_emit`), `inspect/`, `generated_cache`, `replacement_compatibility` and `shadow_support` are its modules. `backend/project/{plan,lock_projection,cargo_toml,runner}.rs` are still here: their moves into the Oven ring need inversions of their own.
+`src/lib.rs` is the crate root, with the former `src/driver/` modules directly under `src/`; `src/backend/` (the generated project, the shadow comparison and the `backend::ir` shim over `incan_ir`/`incan_emit`), `src/inspect/`, `src/generated_cache.rs`, `src/replacement_compatibility.rs` and `src/shadow_support.rs` sit beside them. `src/backend/project/{plan,lock_projection,cargo_toml,runner}.rs` are still here: their moves into the Oven ring need inversions of their own.

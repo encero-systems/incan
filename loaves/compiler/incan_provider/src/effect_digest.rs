@@ -207,10 +207,10 @@ pub const COMPILER_STDLIB_ROOT: &str = "crates/incan_stdlib/stdlib";
 ///
 /// Lowering and emission are the transitional entries. They change generated Rust without moving any HIR, so until
 /// direct-HIR lands their source is folded: `loaves/compiler/incan_ir` and `loaves/compiler/incan_emit` since the
-/// layout rewrite moved them out of `src/backend`, and what remains of `src/backend` (the generated-project shape
-/// and the shadow comparison) with them. They are labelled apart from the runtime crates for that reason, and they
-/// are removed with the backend rather than maintained. A root that stops existing fails the digest rather than
-/// silently narrowing it, so a move has to update this list.
+/// layout rewrite moved them out of `src/backend`, and the rest of that backend (the generated-project shape and the
+/// shadow comparison, now `loaves/compiler/incan_driver/src/backend`) with them. They are labelled apart from the
+/// runtime crates for that reason, and they are removed with the backend rather than maintained. A root that stops
+/// existing fails the digest rather than silently narrowing it, so a move has to update this list.
 pub const COMPILER_RUST_EFFECT_ROOTS: &[(&str, &str)] = &[
     ("stdlib-runtime", "crates/incan_stdlib/src"),
     ("core", "crates/incan_core"),
@@ -220,7 +220,7 @@ pub const COMPILER_RUST_EFFECT_ROOTS: &[(&str, &str)] = &[
     ("semantics-stdlib", "crates/incan_semantics_stdlib"),
     ("transitional-lowering", "loaves/compiler/incan_ir/src"),
     ("transitional-emission", "loaves/compiler/incan_emit/src"),
-    ("transitional-backend", "src/backend"),
+    ("transitional-backend", "loaves/compiler/incan_driver/src/backend"),
 ];
 
 /// Digest what the compiler in `checkout_root` would produce for its own standard library.
