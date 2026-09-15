@@ -1353,6 +1353,9 @@ pub enum OvenLegacyCargoError {
     /// Filesystem access failed at an explicit publisher path.
     #[error("Oven internal compatibility publisher I/O failed at {path}: {source}")]
     Io { path: PathBuf, source: io::Error },
+    /// The compiler's provider hooks could not stage the SDK providers the publisher needs.
+    #[error("Oven internal compatibility publisher provider hook failed: {0}")]
+    ProviderHook(#[from] oven_store::OvenProviderHookError),
     /// Cargo failed while the explicitly named publisher was running.
     #[error("Oven internal compatibility publisher failed: {output}")]
     CargoFailed { output: String },
@@ -2099,8 +2102,7 @@ pub fn prepare_compiler_test_suite(
     // explicit Oven preparation miss, never authority to launch that helper or create a hidden Cargo cache.
     let prepared_sdk_root = request
         .provider_hooks
-        .sdk_provider_root(request.sdk_inventory.as_deref())
-        .map_err(OvenLegacyCargoError::Plan)?;
+        .sdk_provider_root(request.sdk_inventory.as_deref())?;
     // The component crates retain path dependencies on compiler runtime crates.  Copying only the provider tree
     // would leave those paths pointing back to the publisher checkout, which is both an SDK leak and a later Cargo
     // failure.  Rebase that small compiler-owned runtime source closure inside the immutable provider tree before

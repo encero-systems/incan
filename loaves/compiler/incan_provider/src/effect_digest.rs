@@ -191,10 +191,10 @@ pub const COMPILER_STDLIB_ROOT: &str = "crates/incan_stdlib/stdlib";
 /// excluded and nothing tells you. This list is the other shape. It answers "what can reach a compiled component"
 /// and everything it omits is omitted for a stated reason, each of which is one of exactly two:
 ///
-/// - **Covered by meaning.** `src/frontend`, `loaves/kernel/incan_syntax` and `crates/incan_vocab` are run, not hashed:
-///   the digest lexes, parses, checks and lowers all 104 standard-library sources with this compiler, so a change to
-///   any of them that alters what the compiler understands moves the digest, and one that does not, does not. That is a
-///   stronger answer than hashing their source, not a weaker one.
+/// - **Covered by meaning.** `loaves/compiler/incan_frontend`, `loaves/kernel/incan_syntax` and `crates/incan_vocab`
+///   are run, not hashed: the digest lexes, parses, checks and lowers all 104 standard-library sources with this
+///   compiler, so a change to any of them that alters what the compiler understands moves the digest, and one that does
+///   not, does not. That is a stronger answer than hashing their source, not a weaker one.
 /// - **Cannot reach a component.** `src/cli`, `src/lsp`, `src/inspect`, `src/oven`, `loaves/kernel/incan_codegraph`,
 ///   `loaves/compiler/rust_inspect` and `tests/` are the compiler's own tooling. They decide *when* components are
 ///   built and *where* they are written, never what a component contains.
@@ -205,9 +205,12 @@ pub const COMPILER_STDLIB_ROOT: &str = "crates/incan_stdlib/stdlib";
 /// which the inventory validates on every cache hit and which is folded into the store identity beside this
 /// digest. Publication changes bump that constant; they do not rely on a source hash noticing them.
 ///
-/// `src/backend` is the transitional entry. Lowering and emission change generated Rust without moving any HIR, so
-/// until direct-HIR lands their source is folded. It is labelled apart from the runtime crates for that reason, and
-/// it is removed with the backend rather than maintained.
+/// Lowering and emission are the transitional entries. They change generated Rust without moving any HIR, so until
+/// direct-HIR lands their source is folded: `loaves/compiler/incan_ir` and `loaves/compiler/incan_emit` since the
+/// layout rewrite moved them out of `src/backend`, and the rest of that backend (the generated-project shape and the
+/// shadow comparison, now `loaves/compiler/incan_driver/src/backend`) with them. They are labelled apart from the
+/// runtime crates for that reason, and they are removed with the backend rather than maintained. A root that stops
+/// existing fails the digest rather than silently narrowing it, so a move has to update this list.
 pub const COMPILER_RUST_EFFECT_ROOTS: &[(&str, &str)] = &[
     ("stdlib-runtime", "crates/incan_stdlib/src"),
     ("core", "crates/incan_core"),
@@ -215,7 +218,9 @@ pub const COMPILER_RUST_EFFECT_ROOTS: &[(&str, &str)] = &[
     ("web-macros", "crates/incan_web_macros"),
     ("semantics-core", "loaves/kernel/incan_semantics_core"),
     ("semantics-stdlib", "loaves/compiler/incan_semantics_stdlib"),
-    ("transitional-backend", "src/backend"),
+    ("transitional-lowering", "loaves/compiler/incan_ir/src"),
+    ("transitional-emission", "loaves/compiler/incan_emit/src"),
+    ("transitional-backend", "loaves/compiler/incan_driver/src/backend"),
 ];
 
 /// Digest what the compiler in `checkout_root` would produce for its own standard library.
