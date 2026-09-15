@@ -1121,6 +1121,7 @@ headers = ["interop/include/bridge.h"]
         )?;
         fs::write(rust_helper.join("src/lib.rs"), "pub fn value() -> i64 { 1 }\n")?;
         IncanLock::new(
+            crate::version::INCAN_VERSION,
             "sha256:canonical-one".to_string(),
             CargoFeatureSelection::default(),
             "version = 4\n".to_string(),
@@ -1137,6 +1138,7 @@ headers = ["interop/include/bridge.h"]
         );
 
         IncanLock::new(
+            crate::version::INCAN_VERSION,
             "sha256:canonical-two".to_string(),
             CargoFeatureSelection::default(),
             "version = 4\n".to_string(),
@@ -1149,6 +1151,7 @@ headers = ["interop/include/bridge.h"]
         );
 
         IncanLock::new(
+            crate::version::INCAN_VERSION,
             "sha256:canonical-two".to_string(),
             CargoFeatureSelection::default(),
             "version = 4\n\n[[package]]\nname = \"changed\"\nversion = \"1.0.0\"\n".to_string(),
@@ -1189,6 +1192,7 @@ headers = ["interop/include/bridge.h"]
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
         let lock_path = project.path().join("oven.lock");
         let mut lock = IncanLock::new(
+            crate::version::INCAN_VERSION,
             "sha256:lock-migration".to_string(),
             CargoFeatureSelection::default(),
             "version = 4\n".to_string(),
@@ -1219,6 +1223,7 @@ headers = ["interop/include/bridge.h"]
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
         let lock_path = project.path().join("oven.lock");
         let mut lock = IncanLock::new_with_semantic(
+            crate::version::INCAN_VERSION,
             "sha256:sdk-cohort".to_string(),
             CargoFeatureSelection::default(),
             SemanticLockState {
@@ -1295,6 +1300,7 @@ headers = ["interop/include/bridge.h"]
         let lock_path = project.path().join("oven.lock");
         let write_lock = |fingerprint: &str| {
             IncanLock::new(
+                crate::version::INCAN_VERSION,
                 fingerprint.to_string(),
                 CargoFeatureSelection::default(),
                 "version = 4\n".to_string(),

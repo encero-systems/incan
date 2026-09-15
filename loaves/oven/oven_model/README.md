@@ -19,4 +19,4 @@ none
 
 Sole owner of `toml` and `toml_edit`.
 
-The manifest, workspace, lifecycle and toolchain-layout modules and the interop declarations live here; `lock.rs` holds the lock filename until the generic lock and dependency resolution follow.
+The manifest, workspace, lifecycle and toolchain-layout modules and the interop declarations live here; `lock.rs` is the `oven.lock` model — parse, write, fingerprints, the publication lock; the compiler's `provider::lock_semantics` fills its semantic state.

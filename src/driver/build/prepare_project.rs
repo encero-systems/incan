@@ -449,7 +449,12 @@ mod tests {
 
         let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
-        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
+        let incan_lock = IncanLock::new(
+            crate::version::INCAN_VERSION,
+            fingerprint,
+            CargoFeatureSelection::default(),
+            cargo_lock_payload,
+        );
         incan_lock.write(&project_root.join("oven.lock"))?;
 
         let entry_path = scripts_dir.join("check.incn");
