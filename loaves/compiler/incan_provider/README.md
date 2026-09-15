@@ -6,16 +6,14 @@ Provider and SDK contracts (manifest types, component catalog, inventory) and th
 
 ## Moves here from
 
-- `src/provider/`
-- `src/library_manifest/`
+- `src/provider/` — the loaders: `inventory`, `requirements`, `sdk_store`, `sdk_build`, `vocab_extraction`, `effect_digest`, `lock_semantics`
 - `src/compiled_sdk.rs`
-- `src/semantics_registry.rs`
-- `crates/incan_semantics_stdlib/`
+- `src/dependency_resolver.rs` — `requirements` reads it, so it sits here rather than in the driver
+
+`src/library_manifest/` and `src/semantics_registry.rs` went to `incan_frontend` instead, with the provider *contract* (`provider/{plan,sdk,features,error}`): the typechecker reads the plan and the manifest model embeds frontend types in 25 places, so the cut that removes the frontend ↔ library_manifest cycle runs below the frontend, not beside it. This crate re-exports that contract so `incan_provider::ProviderPlan` is one name for one type.
 
 ## May depend on
 
-`kernel`
+`kernel`, `incan_frontend`, `oven_model`, `oven_store`, `oven_rustc`
 
-Split internally into `contract` (types the frontend may import) and `load` (filesystem and store access). This is the cut that removes the frontend <-> library_manifest cycle.
-
-This directory is a layout skeleton. It holds no code yet; `src/` is a placeholder for the conventional crate root.
+`test_support` (feature `test_support`) holds the fixtures the driver's tests share with this crate's.

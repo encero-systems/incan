@@ -12,16 +12,16 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use wasmtime::{Config, Engine, ExternType, Module, ValType};
 
-use crate::library_manifest::{SoftKeywordActivation, VocabDesugarerArtifact, VocabExports};
-use crate::manifest::ProjectManifest;
-use crate::oven::compiler_suite_env::{
-    OVEN_COMPILER_SUITE_RUSTC_ENV, OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV, OvenCompilerSuiteCapability,
-};
-use crate::oven::rustc::{
+use crate::error::{ProviderError, ProviderResult};
+use incan_core::version::INCAN_VERSION;
+use incan_frontend::library_manifest::{SoftKeywordActivation, VocabDesugarerArtifact, VocabExports};
+use oven_model::manifest::ProjectManifest;
+use oven_rustc::rustc::{
     OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcAuxiliaryTargetPlan, clear_inherited_cargo_environment,
 };
-use crate::provider::error::{ProviderError, ProviderResult};
-use crate::version::INCAN_VERSION;
+use oven_store::compiler_suite_env::{
+    OVEN_COMPILER_SUITE_RUSTC_ENV, OVEN_COMPILER_SUITE_VOCAB_CAPABILITY_ENV, OvenCompilerSuiteCapability,
+};
 const VOCAB_COMPANION_CACHE_FORMAT: u32 = 1;
 const VOCAB_COMPANION_CACHE_DIR_ENV: &str = "INCAN_VOCAB_COMPANION_CACHE_DIR";
 const VOCAB_COMPANION_CACHE_FILE: &str = "metadata.json";
@@ -32,7 +32,7 @@ const VOCAB_COMPANION_CACHE_FILE: &str = "metadata.json";
 /// capability is an error: it must never reopen a Cargo fallback merely because the child was launched outside the
 /// compiler process.
 #[derive(Debug)]
-pub(crate) struct OvenVocabDirectRustcContext {
+pub struct OvenVocabDirectRustcContext {
     rustc: PathBuf,
     dependency_search_paths: Vec<PathBuf>,
     externs: BTreeMap<String, PathBuf>,
@@ -46,16 +46,16 @@ struct OvenVocabAuxiliaryTargetContext {
     externs: BTreeMap<String, PathBuf>,
 }
 
-pub(crate) struct LibraryVocabExtraction {
-    pub(crate) payload: VocabExports,
-    pub(crate) compatibility_activations: Vec<SoftKeywordActivation>,
-    pub(crate) pending_desugarer_artifact: Option<PendingDesugarerArtifact>,
+pub struct LibraryVocabExtraction {
+    pub payload: VocabExports,
+    pub compatibility_activations: Vec<SoftKeywordActivation>,
+    pub pending_desugarer_artifact: Option<PendingDesugarerArtifact>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PendingDesugarerArtifact {
-    pub(crate) metadata: VocabDesugarerArtifact,
-    pub(crate) source_path: PathBuf,
+pub struct PendingDesugarerArtifact {
+    pub metadata: VocabDesugarerArtifact,
+    pub source_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,7 +94,7 @@ struct CachedDesugarerArtifact {
 }
 
 /// Collect full vocab companion metadata for packaging a library artifact.
-pub(crate) fn collect_library_vocab_metadata(
+pub fn collect_library_vocab_metadata(
     manifest: &ProjectManifest,
     project_root: &Path,
     generated_cargo_target_dir: Option<&Path>,
@@ -110,7 +110,7 @@ pub(crate) fn collect_library_vocab_metadata(
 }
 
 /// Collect parser-only vocab metadata for source collection without preparing persistent library artifacts.
-pub(crate) fn collect_library_vocab_metadata_for_parser(
+pub fn collect_library_vocab_metadata_for_parser(
     manifest: &ProjectManifest,
     project_root: &Path,
     generated_cargo_target_dir: Option<&Path>,
@@ -556,8 +556,8 @@ fn run_cargo_build_for_target(
     target: &str,
     profile: &str,
 ) -> ProviderResult<()> {
-    let mut command = crate::oven::legacy_cargo::cargo_process::cargo_command();
-    crate::oven::legacy_cargo::cargo_process::configure_cargo_target(&mut command, target_dir);
+    let mut command = oven_rustc::legacy_cargo::cargo_process::cargo_command();
+    oven_rustc::legacy_cargo::cargo_process::configure_cargo_target(&mut command, target_dir);
     command.arg("build").arg("--manifest-path").arg(cargo_manifest_path);
     if profile == "release" {
         command.arg("--release");
@@ -612,7 +612,7 @@ fn ensure_companion_supports_cdylib(cargo_manifest_path: &Path) -> ProviderResul
 /// An installed Incan provisions its own toolchain and adds required targets there, leaving the user's Rustup
 /// alone, so consulting ambient Rustup would report a target as missing that Incan installed for itself.
 fn ensure_rust_target_installed(target: &str) -> ProviderResult<()> {
-    if let Some(installed) = crate::oven::rustc::incan_owned_target_installed(target) {
+    if let Some(installed) = oven_rustc::rustc::incan_owned_target_installed(target) {
         if installed {
             return Ok(());
         }
@@ -686,8 +686,8 @@ fn extract_vocab_metadata_from_library_entrypoint(
     write_extraction_runner_manifest(&helper_root, companion_crate_root, package_name)?;
     write_extraction_runner_source(&helper_root)?;
 
-    let mut command = crate::oven::legacy_cargo::cargo_process::cargo_command();
-    crate::oven::legacy_cargo::cargo_process::configure_cargo_target(&mut command, target_dir);
+    let mut command = oven_rustc::legacy_cargo::cargo_process::cargo_command();
+    oven_rustc::legacy_cargo::cargo_process::configure_cargo_target(&mut command, target_dir);
     let output = command
         .arg("run")
         .arg("--quiet")
@@ -781,7 +781,7 @@ fn oven_compiler_suite_rustc_context() -> ProviderResult<Option<OvenVocabDirectR
 /// build cannot use an arbitrary companion dependency or recover by invoking Cargo. The host helper closure is kept
 /// separate from normal program externs: `incan_vocab` and its own `serde_json` can therefore never shadow the
 /// standard library's declared `serde_json` artifact.
-pub(crate) fn oven_vocab_direct_rustc_context_from_plan(
+pub fn oven_vocab_direct_rustc_context_from_plan(
     rustc: &Path,
     _plan: &OvenRustcArtifactPlan,
     artifacts: &OvenRustcArtifactManifest,
@@ -1183,7 +1183,7 @@ fn write_extraction_runner_manifest(
 
 /// Seed the temporary helper with the repo lockfile so path-only vocab tests do not re-resolve crates.io.
 fn copy_workspace_lockfile_to_extraction_runner(helper_root: &Path) -> ProviderResult<()> {
-    let workspace_lockfile = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock");
+    let workspace_lockfile = oven_model::toolchain_layout::development_root().join("Cargo.lock");
     if !workspace_lockfile.is_file() {
         return Ok(());
     }
@@ -1412,7 +1412,7 @@ fn project_soft_keyword_activations(registrations: &[incan_vocab::KeywordRegistr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::ProjectManifest;
+    use oven_model::manifest::ProjectManifest;
     use std::fs;
 
     fn write_vocab_companion_crate(
@@ -1426,7 +1426,7 @@ mod tests {
             crate_root.join("Cargo.toml"),
             format!(
                 "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[lib]\npath = \"src/lib.rs\"\n",
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                oven_model::toolchain_layout::development_root()
                     .join("crates")
                     .join("incan_vocab")
                     .display()

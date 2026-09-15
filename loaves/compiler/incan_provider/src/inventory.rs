@@ -12,21 +12,21 @@ use std::{env, fs};
 
 use incan_core::lang::stdlib;
 
-use crate::frontend::ast::ImportKind;
-use crate::frontend::parsed_module::ParsedModule;
-use crate::library_manifest::{ProviderCargoDependency, ProviderCargoDependencySource};
-use crate::manifest::{DependencySource, DependencySpec, ProjectManifest};
-use crate::provider::error::{ProviderError, ProviderResult};
-use crate::provider::requirements::{ProjectRequirements, merge_requirement_dependency};
-use crate::provider::sdk_build::prepare_sdk_provider_inventory;
-use crate::provider::{
+use crate::error::{ProviderError, ProviderResult};
+use crate::requirements::{ProjectRequirements, merge_requirement_dependency};
+use crate::sdk_build::prepare_sdk_provider_inventory;
+use crate::{
     BackendImplementationRequirement, ProviderPlan, ResolvedSdkComponents, SDK_INVENTORY_FILE, SDK_PROVIDER_BUILD_ENV,
     SDK_SOURCE_CATALOG_FILE, SdkArtifactProjection, SdkComponentSelection, SdkDependencyRebinding, SdkInventory,
     SdkResolutionError, SdkSourceCatalog,
 };
-use crate::toolchain_layout::INCAN_STDLIB_CRATE_NAME;
+use incan_frontend::ast::ImportKind;
+use incan_frontend::library_manifest::{ProviderCargoDependency, ProviderCargoDependencySource};
+use incan_frontend::parsed_module::ParsedModule;
+use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
+use oven_model::toolchain_layout::INCAN_STDLIB_CRATE_NAME;
 /// Explicit active SDK inventory override used by toolchain selection and SDK publication.
-pub(crate) const SDK_INVENTORY_OVERRIDE_ENV: &str = "INCAN_SDK_INVENTORY";
+pub const SDK_INVENTORY_OVERRIDE_ENV: &str = "INCAN_SDK_INVENTORY";
 
 #[cfg(test)]
 thread_local! {
@@ -38,7 +38,7 @@ thread_local! {
 ///
 /// Oven consumers use this narrow read-only path. A normal command must treat an absent inventory as an explicit
 /// preparation requirement, never as authority to invoke the legacy Cargo publisher.
-pub(crate) fn discover_active_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory>>> {
+pub fn discover_active_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory>>> {
     let explicit = env::var_os(SDK_INVENTORY_OVERRIDE_ENV)
         .filter(|path| !path.is_empty())
         .map(PathBuf::from);
@@ -51,7 +51,7 @@ pub(crate) fn discover_active_sdk_inventory() -> ProviderResult<Option<Arc<SdkIn
         }
         Some(path.clone())
     } else {
-        crate::toolchain_layout::current_executable_search_bases()
+        oven_model::toolchain_layout::current_executable_search_bases()
             .into_iter()
             .flat_map(|base| {
                 [
@@ -68,22 +68,22 @@ pub(crate) fn discover_active_sdk_inventory() -> ProviderResult<Option<Arc<SdkIn
     let inventory = SdkInventory::read_from_path(&path).map_err(|error| ProviderError::failure(error.to_string()))?;
     inventory
         .validate_compiler_compatibility(
-            crate::version::INCAN_VERSION,
-            crate::version::SDK_PROVIDER_CODEGEN_REVISION,
+            incan_core::version::INCAN_VERSION,
+            incan_core::version::SDK_PROVIDER_CODEGEN_REVISION,
         )
         .map_err(|error| ProviderError::failure(error.to_string()))?;
     Ok(Some(Arc::new(inventory)))
 }
 
 /// Discover an installed SDK inventory or publish the source checkout's component providers on demand.
-pub(crate) fn prepare_or_discover_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory>>> {
+pub fn prepare_or_discover_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory>>> {
     if let Some(inventory) = discover_active_sdk_inventory()? {
         return Ok(Some(inventory));
     }
     if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
         return Ok(None);
     }
-    let has_source_catalog = crate::toolchain_layout::find_stdlib_source_dir()
+    let has_source_catalog = oven_model::toolchain_layout::find_stdlib_source_dir()
         .is_some_and(|root| root.join(SDK_SOURCE_CATALOG_FILE).is_file());
     if has_source_catalog {
         prepare_sdk_provider_inventory().map(Some)
@@ -93,7 +93,7 @@ pub(crate) fn prepare_or_discover_sdk_inventory() -> ProviderResult<Option<Arc<S
 }
 
 /// Reject explicit component-aware selection when the active toolchain exposes only the legacy monolithic SDK.
-pub(crate) fn validate_component_inventory_selection(
+pub fn validate_component_inventory_selection(
     manifest: Option<&ProjectManifest>,
     sdk_profile_override: Option<&str>,
     inventory: Option<&SdkInventory>,
@@ -113,7 +113,7 @@ pub(crate) fn validate_component_inventory_selection(
 }
 
 /// Resolve one SDK component selection and retain the manifest or command provenance of configuration failures.
-pub(crate) fn resolve_sdk_component_selection(
+pub fn resolve_sdk_component_selection(
     inventory: &SdkInventory,
     selection: &SdkComponentSelection,
     manifest: Option<&ProjectManifest>,
@@ -197,7 +197,7 @@ fn sdk_manifest_value_location(manifest: &ProjectManifest, candidates: &[String]
 }
 
 /// Add linked generated crates selected by active compiled providers to the current backend requirements.
-pub(crate) fn extend_requirements_with_provider_plan(
+pub fn extend_requirements_with_provider_plan(
     requirements: &mut ProjectRequirements,
     provider_plan: &ProviderPlan,
 ) -> ProviderResult<()> {
@@ -240,7 +240,7 @@ fn extend_requirements_with_selected_sdk_providers(
         }
     }
     for provider in provider_plan.active_records() {
-        if matches!(provider.authority, crate::provider::NamespaceAuthority::SdkReserved)
+        if matches!(provider.authority, crate::NamespaceAuthority::SdkReserved)
             && !sdk_providers.contains(&provider.identity.stable_key())
         {
             continue;
@@ -249,7 +249,7 @@ fn extend_requirements_with_selected_sdk_providers(
             continue;
         };
         let mut provider_dependency = artifact.to_dependency_spec();
-        if matches!(provider.authority, crate::provider::NamespaceAuthority::SdkReserved) {
+        if matches!(provider.authority, crate::NamespaceAuthority::SdkReserved) {
             // Checked private SDK edges freeze an exact feature projection and never inherit the provider crate's
             // conventional Cargo defaults. Emit that contract explicitly so future artifacts need no legacy repair.
             provider_dependency.default_features = false;
@@ -313,7 +313,7 @@ fn extend_requirements_with_selected_sdk_providers(
 }
 
 /// Sort and de-duplicate physical SDK projections independently of module-group traversal order.
-pub(crate) fn normalize_sdk_dependency_rebindings(rebindings: &mut Vec<SdkDependencyRebinding>) {
+pub fn normalize_sdk_dependency_rebindings(rebindings: &mut Vec<SdkDependencyRebinding>) {
     rebindings.sort_by(|left, right| {
         (
             &left.containing_artifact.crate_root,
@@ -334,7 +334,7 @@ pub(crate) fn normalize_sdk_dependency_rebindings(rebindings: &mut Vec<SdkDepend
 }
 
 /// Sort and de-duplicate projected artifacts by their immutable compiled crate root.
-pub(crate) fn normalize_sdk_artifact_projections(projections: &mut Vec<SdkArtifactProjection>) {
+pub fn normalize_sdk_artifact_projections(projections: &mut Vec<SdkArtifactProjection>) {
     projections.sort_by(|left, right| left.artifact.crate_root.cmp(&right.artifact.crate_root));
     projections.dedup_by(|left, right| left.artifact.crate_root == right.artifact.crate_root);
 }
@@ -344,7 +344,7 @@ fn provider_cargo_dependency_spec(dependency: &ProviderCargoDependency) -> Depen
     let source = match &dependency.source {
         ProviderCargoDependencySource::Registry => DependencySource::Registry,
         ProviderCargoDependencySource::Toolchain { relative_path } => DependencySource::Path {
-            path: crate::toolchain_layout::resolve_toolchain_relative_path(Path::new(relative_path)),
+            path: oven_model::toolchain_layout::resolve_toolchain_relative_path(Path::new(relative_path)),
         },
     };
     DependencySpec {
@@ -360,7 +360,7 @@ fn provider_cargo_dependency_spec(dependency: &ProviderCargoDependency) -> Depen
 }
 
 /// Collect canonical provider module use from resolved source modules and authored import edges.
-pub(crate) fn provider_used_module_paths(modules: &[ParsedModule]) -> BTreeSet<Vec<String>> {
+pub fn provider_used_module_paths(modules: &[ParsedModule]) -> BTreeSet<Vec<String>> {
     let mut used = BTreeSet::new();
     if !modules.is_empty() && env::var_os(SDK_PROVIDER_BUILD_ENV).is_none() {
         // Every ordinary compilation consumes the implicit language prelude. Recording that compiler requirement
@@ -375,7 +375,7 @@ pub(crate) fn provider_used_module_paths(modules: &[ParsedModule]) -> BTreeSet<V
             used.insert(canonical);
         }
         for declaration in &module.ast.declarations {
-            let crate::frontend::ast::Declaration::Import(import) = &declaration.node else {
+            let incan_frontend::ast::Declaration::Import(import) = &declaration.node else {
                 continue;
             };
             // Root imports name their provider module in each imported item, not in the `std` path itself.
@@ -408,11 +408,11 @@ pub(crate) fn provider_used_module_paths(modules: &[ParsedModule]) -> BTreeSet<V
 }
 
 /// Resolve the reserved namespace roots granted to the SDK component currently being compiled from source.
-pub(crate) fn sdk_provider_bootstrap_namespace_roots(project_root: &Path) -> ProviderResult<BTreeSet<String>> {
+pub fn sdk_provider_bootstrap_namespace_roots(project_root: &Path) -> ProviderResult<BTreeSet<String>> {
     let Some(component_marker) = env::var_os(SDK_PROVIDER_BUILD_ENV).filter(|value| !value.is_empty()) else {
         return Ok(BTreeSet::new());
     };
-    let stdlib_root = crate::toolchain_layout::find_stdlib_source_dir().ok_or_else(|| {
+    let stdlib_root = oven_model::toolchain_layout::find_stdlib_source_dir().ok_or_else(|| {
         ProviderError::failure("cannot locate the SDK source catalog while compiling an SDK provider")
     })?;
     let catalog = SdkSourceCatalog::read_from_path(&stdlib_root.join(SDK_SOURCE_CATALOG_FILE))
@@ -437,9 +437,9 @@ pub(crate) fn sdk_provider_bootstrap_namespace_roots(project_root: &Path) -> Pro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frontend::library_manifest_index::LibraryArtifactMetadata;
-    use crate::library_manifest::LibraryManifest;
-    use crate::provider::test_support::parsed_module_for_test;
+    use crate::test_support::parsed_module_for_test;
+    use incan_frontend::library_manifest::LibraryManifest;
+    use incan_frontend::library_manifest_index::LibraryArtifactMetadata;
 
     #[test]
     fn explicit_sdk_selection_rejects_legacy_inventoryless_toolchains() -> Result<(), Box<dyn std::error::Error>> {
@@ -527,19 +527,19 @@ mod tests {
     fn helper_requirements_keep_unused_active_sdk_path_targets_issue911() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = tempfile::tempdir()?;
         let artifact = workspace.path().join("unused-sdk-provider");
-        let record = crate::provider::ProviderRecord {
-            identity: crate::provider::ProviderIdentity {
+        let record = crate::ProviderRecord {
+            identity: crate::ProviderIdentity {
                 name: "incan_issue911_unused_sdk".to_string(),
                 version: "0.5.0".to_string(),
                 digest: "sha256:issue911-unused".to_string(),
                 feature_projection: BTreeSet::new(),
             },
-            provenance: crate::provider::ProviderProvenance::Sdk {
+            provenance: crate::ProviderProvenance::Sdk {
                 sdk_identity: "incan@0.5.0".to_string(),
                 component_id: "issue911-unused".to_string(),
                 inventory_path: None,
             },
-            authority: crate::provider::NamespaceAuthority::SdkReserved,
+            authority: crate::NamespaceAuthority::SdkReserved,
             namespace_claims: BTreeSet::from([vec!["std".to_string(), "issue911_unused".to_string()]]),
             available: true,
             enabled: true,
@@ -552,7 +552,7 @@ mod tests {
             implementation_facets: Vec::new(),
         };
         let plan = ProviderPlan::new(
-            crate::frontend::library_manifest_index::LibraryManifestIndex::default(),
+            incan_frontend::library_manifest_index::LibraryManifestIndex::default(),
             vec![record.clone()],
             std::iter::empty(),
         )?;
@@ -575,7 +575,7 @@ mod tests {
         ));
 
         let used_plan = ProviderPlan::new(
-            crate::frontend::library_manifest_index::LibraryManifestIndex::default(),
+            incan_frontend::library_manifest_index::LibraryManifestIndex::default(),
             vec![record],
             provider_used_module_paths(&[parsed_module_for_test("from std import issue911_unused as selected\n")?]),
         )?;

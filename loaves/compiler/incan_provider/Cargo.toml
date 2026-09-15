@@ -1,0 +1,43 @@
+[package]
+name = "incan_provider"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Incan's SDK providers as the compiler loads them: inventory, requirements, the SDK store and builder, vocab extraction"
+
+[lib]
+name = "incan_provider"
+path = "src/lib.rs"
+
+[features]
+# Mirrors the root crate's defaults without `cli`, so `cargo test -p incan_provider` sees the stdlib semantics packs;
+# the root selects features explicitly and never relies on these.
+default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
+rust_inspect = ["incan_frontend/rust_inspect", "rust_inspect/inspector"]
+std_testing = ["incan_frontend/std_testing"]
+std_async = ["incan_frontend/std_async"]
+std_decorators = ["incan_frontend/std_decorators"]
+# Fixtures the driver's tests share with the provider's.
+test_support = []
+
+[dependencies]
+hex = "0.4.3"
+incan_core = { path = "../../../crates/incan_core" }
+incan_frontend = { path = "../incan_frontend", default-features = false }
+incan_semantics_core = { path = "../../../crates/incan_semantics_core" }
+incan_vocab = { path = "../../../crates/incan_vocab" }
+oven_model = { path = "../../oven/oven_model" }
+oven_rustc = { path = "../../oven/oven_rustc" }
+oven_store = { path = "../../oven/oven_store" }
+rust_inspect = { path = "../../../crates/rust_inspect", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10.9"
+thiserror = { workspace = true }
+toml = "0.9"
+wasmtime = { version = "36.0.14", default-features = false, features = ["cranelift", "runtime", "std"] }
+
+[dev-dependencies]
+incan_frontend = { path = "../incan_frontend", default-features = false, features = ["test_support"] }
+tempfile = "3"

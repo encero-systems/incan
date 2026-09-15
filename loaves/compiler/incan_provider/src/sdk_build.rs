@@ -11,27 +11,27 @@ use std::{env, fs};
 
 use incan_core::lang::stdlib;
 
-use crate::library_manifest::{LibraryManifest, ProviderModuleClaim, digest_provider_artifact};
-use crate::manifest::{INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV, ProjectManifest};
-use crate::provider::error::{ProviderError, ProviderResult};
-use crate::provider::inventory::SDK_INVENTORY_OVERRIDE_ENV;
-use crate::provider::requirements::INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV;
-use crate::provider::sdk_store::{
+use crate::error::{ProviderError, ProviderResult};
+use crate::inventory::SDK_INVENTORY_OVERRIDE_ENV;
+use crate::requirements::INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV;
+use crate::sdk_store::{
     INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV, INTERNAL_SDK_PROVIDER_PATH_FILE_ENV, INTERNAL_SDK_PROVIDER_STORE_ENV,
     acquire_sdk_provider_store_lock, configure_sdk_provider_workspace_lock, default_sdk_provider_store,
     sdk_provider_builder_executable, sdk_provider_store_identity, sdk_provider_workspace_lock,
     staged_sdk_provider_root, sync_sdk_provider_store, sync_sdk_provider_tree,
 };
-use crate::provider::{
+use crate::{
     SDK_INVENTORY_FILE, SDK_PROVIDER_BUILD_ENV, SDK_SOURCE_CATALOG_FILE, SdkComponent, SdkComponentSelection,
     SdkInventory, SdkProviderDescriptor, SdkSourceCatalog,
 };
-use crate::toolchain_layout::GENERATED_CARGO_TARGET_DIR_ENV;
+use incan_frontend::library_manifest::{LibraryManifest, ProviderModuleClaim, digest_provider_artifact};
+use oven_model::manifest::{INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV, ProjectManifest};
+use oven_model::toolchain_layout::GENERATED_CARGO_TARGET_DIR_ENV;
 /// Optional external directory for SDK publication timing evidence.
 const INTERNAL_SDK_BUILD_REPORT_DIR_ENV: &str = "INCAN_INTERNAL_SDK_BUILD_REPORT_DIR";
 
 /// Build and atomically publish every SDK component provider from the source catalog.
-pub(crate) fn prepare_sdk_provider_inventory() -> ProviderResult<Arc<SdkInventory>> {
+pub fn prepare_sdk_provider_inventory() -> ProviderResult<Arc<SdkInventory>> {
     prepare_sdk_provider_inventory_in_store(None, None)
 }
 
@@ -39,13 +39,13 @@ pub(crate) fn prepare_sdk_provider_inventory() -> ProviderResult<Arc<SdkInventor
 ///
 /// This is for the explicitly named Oven `legacy_cargo` transition only. The caller is responsible for copying the
 /// resulting immutable inventory into its receipt-bound artifact before the private publisher root is reclaimed.
-pub(crate) fn prepare_sdk_provider_inventory_in_store(
+pub fn prepare_sdk_provider_inventory_in_store(
     publisher_store_root: Option<&Path>,
     source_root_override: Option<&Path>,
 ) -> ProviderResult<Arc<SdkInventory>> {
     let stdlib_root = match source_root_override {
         Some(source_root) => source_root.join("crates/incan_stdlib/stdlib"),
-        None => crate::toolchain_layout::find_stdlib_source_dir().ok_or_else(|| {
+        None => oven_model::toolchain_layout::find_stdlib_source_dir().ok_or_else(|| {
             ProviderError::failure("cannot locate built-in stdlib sources needed to prepare SDK component providers")
         })?,
     };
@@ -58,7 +58,7 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
     let catalog = SdkSourceCatalog::read_from_path(&stdlib_root.join(SDK_SOURCE_CATALOG_FILE))
         .map_err(|error| ProviderError::failure(error.to_string()))?;
     catalog
-        .validate_compiler_version(crate::version::INCAN_VERSION)
+        .validate_compiler_version(incan_core::version::INCAN_VERSION)
         .map_err(|error| ProviderError::failure(error.to_string()))?;
     let current_exe = env::current_exe()
         .map_err(|error| ProviderError::failure(format!("failed to resolve current incan executable: {error}")))?;
@@ -77,7 +77,7 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
             .map(PathBuf::from)
             .unwrap_or_else(|| {
                 if cfg!(test) {
-                    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store")
+                    oven_model::toolchain_layout::development_root().join("target/incan_test_sdk_provider_store")
                 } else {
                     default_sdk_provider_store(
                         &stdlib_root,
@@ -105,8 +105,8 @@ pub(crate) fn prepare_sdk_provider_inventory_in_store(
             SdkInventory::read_from_path(&inventory_path).map_err(|error| ProviderError::failure(error.to_string()))?;
         inventory
             .validate_compiler_compatibility(
-                crate::version::INCAN_VERSION,
-                crate::version::SDK_PROVIDER_CODEGEN_REVISION,
+                incan_core::version::INCAN_VERSION,
+                incan_core::version::SDK_PROVIDER_CODEGEN_REVISION,
             )
             .map_err(|error| ProviderError::failure(error.to_string()))?;
         record_sdk_provider_root(&artifact_root)?;
@@ -567,7 +567,7 @@ fn source_catalog_inventory(catalog: &SdkSourceCatalog, root: &Path) -> SdkInven
         sdk_id: catalog.sdk_id.clone(),
         sdk_version: catalog.sdk_version.clone(),
         compiler_requirement: catalog.compiler_requirement.clone(),
-        provider_codegen_revision: crate::version::SDK_PROVIDER_CODEGEN_REVISION,
+        provider_codegen_revision: incan_core::version::SDK_PROVIDER_CODEGEN_REVISION,
         components,
         profiles: catalog.profiles.clone(),
     }
@@ -734,7 +734,7 @@ mod tests {
 
     #[test]
     fn restricted_sdk_profile_retains_unavailable_provider_catalog_facts() -> Result<(), Box<dyn std::error::Error>> {
-        let catalog_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let catalog_path = oven_model::toolchain_layout::development_root()
             .join("crates/incan_stdlib/stdlib")
             .join(SDK_SOURCE_CATALOG_FILE);
         let catalog = SdkSourceCatalog::read_from_path(&catalog_path)?;

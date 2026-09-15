@@ -1,14 +1,13 @@
-//! Fixtures shared by the provider and driver test modules that the split of `commands/common.rs` distributed.
-//!
-//! Below the driver so the provider's own tests can use them without naming the layer above.
+//! Fixtures shared by the provider's and the driver's test modules: on under `cfg(test)` and the `test_support`
+//! feature, which the crates above turn on in their dev-dependencies.
 
 use std::path::{Path, PathBuf};
 
-use crate::frontend::parsed_module::ParsedModule;
-use crate::frontend::{lexer, parser};
-use crate::library_manifest::LibraryManifest;
+use incan_frontend::library_manifest::LibraryManifest;
+use incan_frontend::parsed_module::ParsedModule;
+use incan_frontend::{lexer, parser};
 /// Lex and parse one source string as a `main` module for tests that need a checked module without a file.
-pub(crate) fn parsed_module_for_test(source: &str) -> Result<ParsedModule, Box<dyn std::error::Error>> {
+pub fn parsed_module_for_test(source: &str) -> Result<ParsedModule, Box<dyn std::error::Error>> {
     let tokens = lexer::lex(source).map_err(|errs| format!("lex failed: {errs:?}"))?;
     let ast = parser::parse(&tokens).map_err(|errs| format!("parse failed: {errs:?}"))?;
     Ok(ParsedModule {
@@ -22,7 +21,7 @@ pub(crate) fn parsed_module_for_test(source: &str) -> Result<ParsedModule, Box<d
 
 /// Write the smallest published library artifact a dependency index accepts: a Cargo package, an empty `lib.rs`,
 /// and the given manifest under `deps/<key>/target/lib`.
-pub(crate) fn write_minimal_library_artifact(
+pub fn write_minimal_library_artifact(
     root: &Path,
     dependency_key: &str,
     manifest_name: &str,

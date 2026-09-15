@@ -14,37 +14,37 @@ use incan_core::lang::stdlib;
 use incan_core::lang::stdlib::{StdlibExtraCrateDep, StdlibExtraCrateSource};
 
 use crate::dependency_resolver::ResolvedDependencies;
-use crate::frontend::ast::ImportKind;
-use crate::frontend::library_manifest_index::{
+use crate::error::{ProviderError, ProviderResult};
+use crate::vocab_extraction::collect_library_vocab_metadata_for_parser;
+use crate::{PackageFeaturePlan, SDK_PROVIDER_BUILD_ENV, SdkArtifactProjection, SdkDependencyRebinding};
+use incan_frontend::ast::ImportKind;
+use incan_frontend::library_manifest::LibraryManifest;
+use incan_frontend::library_manifest::published_layout::oven_library_dependency_declares_package_loaf;
+use incan_frontend::library_manifest_index::{
     LibraryArtifactMetadata, LibraryManifestFailureKind, LibraryManifestIndex, LibraryManifestIndexEntry,
 };
-use crate::frontend::parsed_module::ParsedModule;
-use crate::frontend::serde_usage::detect_serde_non_import_usage;
-use crate::library_manifest::LibraryManifest;
-use crate::library_manifest::published_layout::oven_library_dependency_declares_package_loaf;
-use crate::manifest::{
+use incan_frontend::parsed_module::ParsedModule;
+use incan_frontend::serde_usage::detect_serde_non_import_usage;
+use oven_model::manifest::{
     DependencySource, DependencySpec, INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV,
     LOAF_MANIFEST_FILENAME, ProjectManifest,
 };
-use crate::provider::error::{ProviderError, ProviderResult};
-use crate::provider::vocab_extraction::collect_library_vocab_metadata_for_parser;
-use crate::provider::{PackageFeaturePlan, SDK_PROVIDER_BUILD_ENV, SdkArtifactProjection, SdkDependencyRebinding};
-use crate::toolchain_layout::GENERATED_CARGO_TARGET_DIR_ENV;
-use crate::toolchain_layout::GENERATED_TOOLCHAIN_SUPPORT_CRATES;
+use oven_model::toolchain_layout::GENERATED_CARGO_TARGET_DIR_ENV;
+use oven_model::toolchain_layout::GENERATED_TOOLCHAIN_SUPPORT_CRATES;
 static PREPARED_LIBRARY_DEPENDENCIES: LazyLock<Mutex<HashMap<PathBuf, BTreeSet<String>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub(crate) const INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV: &str = "INCAN_INTERNAL_LIBRARY_ARTIFACT_ONLY";
+pub const INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV: &str = "INCAN_INTERNAL_LIBRARY_ARTIFACT_ONLY";
 
 /// Internal marker for a nested `pub::` dependency library build.
 ///
 /// Unlike artifact-only mode, an Oven direct-rustc dependency build must emit caller-owned rlibs. It still targets
 /// exactly the dependency project selected by the parent, even if that project is the root of a larger workspace.
-pub(crate) const INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV: &str = "INCAN_INTERNAL_LIBRARY_DEPENDENCY_PREPARATION";
+pub const INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV: &str = "INCAN_INTERNAL_LIBRARY_DEPENDENCY_PREPARATION";
 
 /// Unified project requirements collected from parsed modules and loaded provider manifests.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct ProjectRequirements {
+pub struct ProjectRequirements {
     /// Required stdlib feature flags, such as `json`, `async`, and `web`.
     pub stdlib_features: Vec<String>,
     /// Required Cargo dependencies contributed by stdlib namespaces and provider manifests.
@@ -58,7 +58,7 @@ pub(crate) struct ProjectRequirements {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DependencyManifestMode {
+pub enum DependencyManifestMode {
     /// Prepare a legacy source-compatible dependency manifest without baking a native library.
     FullArtifacts,
     /// Materialize direct-Rustc caller-owned libraries for a normal Oven consumer.
@@ -68,7 +68,7 @@ pub(crate) enum DependencyManifestMode {
 
 impl DependencyManifestMode {
     /// Return the caller-owned library artifact policy for this dependency preparation mode.
-    pub(crate) fn library_dependency_preparation(self) -> Option<LibraryDependencyPreparation> {
+    pub fn library_dependency_preparation(self) -> Option<LibraryDependencyPreparation> {
         match self {
             Self::FullArtifacts => Some(LibraryDependencyPreparation::LegacyManifestOnly),
             Self::OvenArtifacts => Some(LibraryDependencyPreparation::OvenDirectRustc),
@@ -77,14 +77,14 @@ impl DependencyManifestMode {
     }
 
     /// Return whether this mode needs the checked library index after preparation.
-    pub(crate) fn uses_materialized_library_index(self) -> bool {
+    pub fn uses_materialized_library_index(self) -> bool {
         matches!(self, Self::FullArtifacts | Self::OvenArtifacts)
     }
 }
 
 /// Specify which owned artifact a local `pub::` dependency preparation must provide to its caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LibraryDependencyPreparation {
+pub enum LibraryDependencyPreparation {
     /// Preserve the legacy preparation behavior used by commands that only require dependency metadata.
     LegacyManifestOnly,
     /// Produce metadata and profile-specific caller-owned rlibs through normal Oven direct-rustc library execution.
@@ -93,7 +93,7 @@ pub(crate) enum LibraryDependencyPreparation {
 
 /// Decide whether session construction is inside the explicitly named legacy-Cargo provider publisher.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SdkInventorySource {
+pub enum SdkInventorySource {
     /// Existing compatibility behavior for commands that still explicitly own legacy artifact preparation.
     PrepareLegacyCargoIfAbsent,
     /// Oven consumer mode: read an installed/prepared inventory only and never create Cargo state on a cache miss.
@@ -109,7 +109,7 @@ pub(crate) enum SdkInventorySource {
 ///
 /// This is intentionally available to Oven's lock validator so `--locked` and `--frozen` can retain canonical
 /// freshness semantics without starting Cargo merely to inspect dependency metadata.
-pub(crate) fn parser_only_library_manifest_index(
+pub fn parser_only_library_manifest_index(
     manifest: &ProjectManifest,
     active_dependencies: &BTreeSet<String>,
 ) -> ProviderResult<LibraryManifestIndex> {
@@ -200,7 +200,7 @@ fn parser_only_library_manifest_entry(
 }
 
 /// Ensure clean check/format/test entrypoints see the same public dependency manifests as warmed worktrees.
-pub(crate) fn prepare_library_dependency_artifacts(
+pub fn prepare_library_dependency_artifacts(
     manifest: &ProjectManifest,
     feature_plan: Option<&PackageFeaturePlan>,
     active_dependencies: &BTreeSet<String>,
@@ -274,12 +274,12 @@ pub(crate) fn prepare_library_dependency_artifacts(
 /// direct-Rustc cohort, which requires an identity-verified producer receipt for the debug and release profiles.
 /// A local source manifest permits the existing nested Oven build to refresh either missing or malformed receipt.
 fn oven_library_dependency_has_verified_profile_receipts(dependency_root: &Path) -> bool {
-    let release = crate::oven::default_receipt_path(dependency_root);
+    let release = oven_store::default_receipt_path(dependency_root);
     let debug = release.with_file_name("library-debug-receipt.json");
     [release, debug].iter().all(|path| {
         fs::read(path)
             .ok()
-            .and_then(|bytes| serde_json::from_slice::<crate::oven::OvenReceipt>(&bytes).ok())
+            .and_then(|bytes| serde_json::from_slice::<oven_store::OvenReceipt>(&bytes).ok())
             .is_some_and(|receipt| receipt.verify_identity().is_ok())
     })
 }
@@ -360,7 +360,7 @@ fn prepare_library_dependency_artifact(
 }
 
 /// Collect a unified set of project requirements from source imports and loaded provider manifests.
-pub(crate) fn collect_project_requirements(
+pub fn collect_project_requirements(
     modules: &[ParsedModule],
     library_manifest_index: &LibraryManifestIndex,
 ) -> ProviderResult<ProjectRequirements> {
@@ -368,7 +368,7 @@ pub(crate) fn collect_project_requirements(
     if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
         for module in modules {
             for decl in &module.ast.declarations {
-                let crate::frontend::ast::Declaration::Import(import) = &decl.node else {
+                let incan_frontend::ast::Declaration::Import(import) = &decl.node else {
                     continue;
                 };
                 let path = match &import.kind {
@@ -480,7 +480,7 @@ pub(crate) fn collect_project_requirements(
 }
 
 /// Return the exact compiler-owned path catalog used only for semantic generated-artifact identity.
-pub(crate) fn semantic_sdk_path_dependencies(requirements: &ProjectRequirements) -> Vec<DependencySpec> {
+pub fn semantic_sdk_path_dependencies(requirements: &ProjectRequirements) -> Vec<DependencySpec> {
     let mut dependencies = requirements.sdk_path_dependencies.clone();
     for crate_name in GENERATED_TOOLCHAIN_SUPPORT_CRATES {
         if dependencies
@@ -505,7 +505,7 @@ fn compiler_support_dependency_spec(crate_name: &str) -> DependencySpec {
         features: Vec::new(),
         default_features: true,
         source: DependencySource::Path {
-            path: crate::toolchain_layout::resolve_toolchain_crate_path(crate_name),
+            path: oven_model::toolchain_layout::resolve_toolchain_crate_path(crate_name),
         },
         optional: false,
         package: None,
@@ -540,7 +540,7 @@ fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep) -> DependencySpec 
             features: dep.features.iter().map(|feature| (*feature).to_string()).collect(),
             default_features: true,
             source: DependencySource::Path {
-                path: crate::toolchain_layout::resolve_toolchain_relative_path(Path::new(relative_path)),
+                path: oven_model::toolchain_layout::resolve_toolchain_relative_path(Path::new(relative_path)),
             },
             optional: false,
             package: None,
@@ -552,7 +552,7 @@ fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep) -> DependencySpec 
 /// Merge a dependency requirement into a collection of requirements.
 ///
 /// Existing entries with the same crate name must be compatible.
-pub(crate) fn merge_requirement_dependency(
+pub fn merge_requirement_dependency(
     merged: &mut Vec<DependencySpec>,
     candidate: DependencySpec,
     source_label: String,
@@ -572,7 +572,7 @@ pub(crate) fn merge_requirement_dependency(
 }
 
 /// Compare dependency specs while treating equivalent path spellings as the same dependency.
-pub(crate) fn dependency_specs_match(left: &DependencySpec, right: &DependencySpec) -> bool {
+pub fn dependency_specs_match(left: &DependencySpec, right: &DependencySpec) -> bool {
     if left == right {
         return true;
     }
@@ -589,7 +589,7 @@ pub(crate) fn dependency_specs_match(left: &DependencySpec, right: &DependencySp
 /// Merge collected requirement dependencies into resolved dependency sets.
 ///
 /// Existing entries with the same crate name must be compatible.
-pub(crate) fn merge_project_requirement_dependencies(
+pub fn merge_project_requirement_dependencies(
     resolved: &mut ResolvedDependencies,
     requirements: &ProjectRequirements,
 ) -> ProviderResult<()> {
@@ -631,9 +631,9 @@ pub(crate) fn merge_project_requirement_dependencies(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::library_manifest::ProviderFeatureMetadata;
-    use crate::provider::FeatureSelection;
-    use crate::provider::test_support::parsed_module_for_test;
+    use crate::FeatureSelection;
+    use crate::test_support::parsed_module_for_test;
+    use incan_frontend::library_manifest::ProviderFeatureMetadata;
     use std::collections::BTreeMap;
 
     #[test]
@@ -774,8 +774,8 @@ from std.io import BytesIO
         fs::write(&generated_source, "pub fn provider() {}\n")?;
 
         let receipt = |profile| {
-            crate::oven::receipt_generated_project(
-                &crate::oven::OvenGeneratedProjectRequest::new(
+            oven_store::receipt_generated_project(
+                &oven_store::OvenGeneratedProjectRequest::new(
                     project_root,
                     "provider",
                     "0.1.0",
@@ -787,12 +787,12 @@ from std.io import BytesIO
                 .with_generated_source("generated-root", &generated_source),
             )
         };
-        let release_path = crate::oven::default_receipt_path(project_root);
-        crate::oven::write_receipt(&receipt("release")?, &release_path)?;
+        let release_path = oven_store::default_receipt_path(project_root);
+        oven_store::write_receipt(&receipt("release")?, &release_path)?;
         assert!(!oven_library_dependency_has_verified_profile_receipts(project_root));
 
         let debug_path = release_path.with_file_name("library-debug-receipt.json");
-        crate::oven::write_receipt(&receipt("debug")?, &debug_path)?;
+        oven_store::write_receipt(&receipt("debug")?, &debug_path)?;
         assert!(oven_library_dependency_has_verified_profile_receipts(project_root));
 
         fs::write(&debug_path, "not a receipt")?;

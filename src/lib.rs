@@ -16,9 +16,9 @@
 pub mod backend;
 #[cfg(feature = "cli")]
 pub mod cli;
-pub(crate) mod compiled_sdk;
-pub mod compiler_stack;
-pub mod dependency_resolver;
+pub use incan_frontend::compiler_stack;
+pub(crate) use incan_provider::compiled_sdk;
+pub use incan_provider::dependency_resolver;
 pub mod driver;
 pub use incan_format as format;
 pub use incan_frontend as frontend;
@@ -32,7 +32,7 @@ pub use oven_model::manifest;
 pub mod numeric;
 pub use incan_ir::numeric_adapters;
 pub mod oven;
-pub mod oven_facet;
+pub use incan_oven_facet as oven_facet;
 pub use oven_model::oven_interop;
 pub use oven_model::project_lifecycle;
 pub mod provider;

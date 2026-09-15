@@ -397,10 +397,34 @@
       "expected_fingerprint": "0xeeb0ca6fafb43da6"
     },
     {
-      "path": "src/dependency_resolver.rs",
+      "path": "loaves/compiler/incan_provider/src/dependency_resolver.rs",
       "category": "dependency resolver registry and package-alias policy",
       "expected_count": 18,
       "expected_fingerprint": "0x12d230c26526632c"
+    },
+    {
+      "path": "loaves/compiler/incan_provider/src/effect_digest.rs",
+      "category": "effect-digest source-tree target exclusion",
+      "expected_count": 1,
+      "expected_fingerprint": "0xb9e5e7e7fc4c5038"
+    },
+    {
+      "path": "loaves/compiler/incan_provider/src/inventory.rs",
+      "category": "SDK inventory manifest section",
+      "expected_count": 1,
+      "expected_fingerprint": "0x12ad1d34129ad869"
+    },
+    {
+      "path": "loaves/compiler/incan_provider/src/sdk_store.rs",
+      "category": "provider source-tree hashing target exclusion",
+      "expected_count": 1,
+      "expected_fingerprint": "0xf6b309b30611feae"
+    },
+    {
+      "path": "loaves/compiler/incan_provider/src/vocab_extraction.rs",
+      "category": "vocab desugarer artifact discovery, profile and crate-type checks",
+      "expected_count": 3,
+      "expected_fingerprint": "0xe97ac641de1e4572"
     },
     {
       "path": "src/driver/build/bake.rs",
@@ -539,30 +563,6 @@
       "category": "test file discovery root directories",
       "expected_count": 1,
       "expected_fingerprint": "0x7dc8ae981cbf9965"
-    },
-    {
-      "path": "src/provider/effect_digest.rs",
-      "category": "effect-digest source-tree target exclusion",
-      "expected_count": 1,
-      "expected_fingerprint": "0xb9e5e7e7fc4c5038"
-    },
-    {
-      "path": "src/provider/inventory.rs",
-      "category": "SDK inventory manifest section",
-      "expected_count": 1,
-      "expected_fingerprint": "0x12ad1d34129ad869"
-    },
-    {
-      "path": "src/provider/sdk_store.rs",
-      "category": "provider source-tree hashing target exclusion",
-      "expected_count": 1,
-      "expected_fingerprint": "0xf6b309b30611feae"
-    },
-    {
-      "path": "src/provider/vocab_extraction.rs",
-      "category": "vocab desugarer artifact discovery, profile and crate-type checks",
-      "expected_count": 3,
-      "expected_fingerprint": "0xe97ac641de1e4572"
     }
   ]
 }

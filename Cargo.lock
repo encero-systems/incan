@@ -1439,6 +1439,8 @@ dependencies = [
  "incan_format",
  "incan_frontend",
  "incan_ir",
+ "incan_oven_facet",
+ "incan_provider",
  "incan_semantics_core",
  "incan_semantics_stdlib",
  "incan_stdlib",
@@ -1590,6 +1592,41 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tracing",
+]
+
+[[package]]
+name = "incan_oven_facet"
+version = "0.6.0-dev.4"
+dependencies = [
+ "incan_core",
+ "incan_frontend",
+ "incan_provider",
+ "oven_model",
+ "oven_rustc",
+ "oven_store",
+ "tempfile",
+]
+
+[[package]]
+name = "incan_provider"
+version = "0.6.0-dev.4"
+dependencies = [
+ "hex",
+ "incan_core",
+ "incan_frontend",
+ "incan_semantics_core",
+ "incan_vocab",
+ "oven_model",
+ "oven_rustc",
+ "oven_store",
+ "rust_inspect",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+ "wasmtime",
 ]
 
 [[package]]

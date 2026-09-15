@@ -13,16 +13,16 @@ use oven_model::lock::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::library_manifest::{
-    ProviderSemanticToolchainDependency, digest_provider_semantic_artifact_with_context_and_cache,
-    digest_toolchain_source_tree_with_cache,
-};
-use crate::manifest::{DependencySource, DependencySpec};
-use crate::oven_interop::{InteropCSection, locked_interop_targets_from_section};
-use crate::provider::{
+use crate::{
     BackendImplementationRequirement, ComponentSelectionReason, PackageFeaturePlan, ProviderParticipation,
     ProviderPlan, ProviderProvenance, ProviderRecord, ResolvedSdkComponents, SdkInventory,
 };
+use incan_frontend::library_manifest::{
+    ProviderSemanticToolchainDependency, digest_provider_semantic_artifact_with_context_and_cache,
+    digest_toolchain_source_tree_with_cache,
+};
+use oven_model::manifest::{DependencySource, DependencySpec};
+use oven_model::oven_interop::{InteropCSection, locked_interop_targets_from_section};
 
 /// Layout version of the kept sealed-SDK semantic readings.
 ///
@@ -144,7 +144,7 @@ pub fn semantic_lock_state(
 /// Provider-plan construction always validates the physical artifact digest before this projection is available.
 /// Consumers may therefore use these values only where an approved relocation must preserve compatibility; they must
 /// never replace the inventory's byte-exact integrity validation or authorize an unrecorded provider.
-pub(crate) fn provider_semantic_identities(
+pub fn provider_semantic_identities(
     provider_plan: &ProviderPlan,
     sdk_path_dependencies: &[DependencySpec],
 ) -> Result<BTreeMap<String, String>, String> {
@@ -517,11 +517,11 @@ mod tests {
         CargoFeatureSelection, compute_resolved_fingerprint, compute_resolved_fingerprint_with_sdk_paths,
     };
 
-    use crate::manifest::{DependencySource, DependencySpec};
-    use crate::oven_interop::InteropCSection;
-    use crate::provider::{
+    use crate::{
         ComponentSelectionReason, ProviderPlan, ProviderProvenance, ProviderRecord, ResolvedSdkComponents, SdkInventory,
     };
+    use oven_model::manifest::{DependencySource, DependencySpec};
+    use oven_model::oven_interop::InteropCSection;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -579,43 +579,43 @@ mod tests {
         )?;
         fs::write(provider_root.join("src/lib.rs"), generated_source)?;
         let manifest_path = provider_root.join("support_provider.incnlib");
-        let mut manifest = crate::library_manifest::LibraryManifest::new("support_provider", "0.5.0");
+        let mut manifest = incan_frontend::library_manifest::LibraryManifest::new("support_provider", "0.5.0");
         manifest.contract_metadata.provider.semantic_source_digest =
             Some(format!("sha256:{}", source_digest_digit.to_string().repeat(64)));
         if host_abi {
-            manifest.rust_abi = Some(crate::library_manifest::LibraryRustAbi {
-                schema_version: crate::library_manifest::RUST_ABI_SCHEMA_VERSION,
+            manifest.rust_abi = Some(incan_frontend::library_manifest::LibraryRustAbi {
+                schema_version: incan_frontend::library_manifest::RUST_ABI_SCHEMA_VERSION,
                 items: Vec::new(),
             });
         }
         manifest.contract_metadata.provider.implementation_facets.push(
-            crate::library_manifest::ProviderImplementationFacet {
+            incan_frontend::library_manifest::ProviderImplementationFacet {
                 id: "derive-support".to_string(),
                 required_modules: BTreeSet::new(),
                 required_features: BTreeSet::new(),
                 cargo_features: BTreeMap::new(),
-                cargo_dependencies: vec![crate::library_manifest::ProviderCargoDependency {
+                cargo_dependencies: vec![incan_frontend::library_manifest::ProviderCargoDependency {
                     crate_name: "incan_derive".to_string(),
                     package: None,
                     version: None,
                     features: BTreeSet::new(),
                     default_features: false,
-                    source: crate::library_manifest::ProviderCargoDependencySource::Toolchain {
+                    source: incan_frontend::library_manifest::ProviderCargoDependencySource::Toolchain {
                         relative_path: "crates/incan_derive".to_string(),
                     },
                 }],
             },
         );
         manifest.write_to_path(&manifest_path)?;
-        let physical_digest = crate::library_manifest::digest_provider_artifact(&provider_root)?;
-        let artifact = crate::frontend::library_manifest_index::LibraryArtifactMetadata::from_manifest_path(
+        let physical_digest = incan_frontend::library_manifest::digest_provider_artifact(&provider_root)?;
+        let artifact = incan_frontend::library_manifest_index::LibraryArtifactMetadata::from_manifest_path(
             "support_provider",
             "support_provider",
             manifest_path.clone(),
             provider_root.clone(),
         );
         let provider = ProviderRecord {
-            identity: crate::provider::ProviderIdentity {
+            identity: crate::ProviderIdentity {
                 name: "support_provider".to_string(),
                 version: "0.5.0".to_string(),
                 digest: physical_digest.clone(),
@@ -626,7 +626,7 @@ mod tests {
                 component_id: "support".to_string(),
                 inventory_path: None,
             },
-            authority: crate::provider::NamespaceAuthority::SdkReserved,
+            authority: crate::NamespaceAuthority::SdkReserved,
             namespace_claims: BTreeSet::new(),
             available: true,
             enabled: true,
@@ -635,7 +635,7 @@ mod tests {
             implementation_facets: Vec::new(),
         };
         let provider_plan = ProviderPlan::new(
-            crate::frontend::library_manifest_index::LibraryManifestIndex::default(),
+            incan_frontend::library_manifest_index::LibraryManifestIndex::default(),
             vec![provider],
             std::iter::empty::<Vec<String>>(),
         )?;
@@ -644,16 +644,16 @@ mod tests {
             sdk_id: "incan".to_string(),
             sdk_version: "0.5.0".to_string(),
             compiler_requirement: "^0.5".to_string(),
-            provider_codegen_revision: crate::version::SDK_PROVIDER_CODEGEN_REVISION,
+            provider_codegen_revision: incan_core::version::SDK_PROVIDER_CODEGEN_REVISION,
             components: BTreeMap::from([(
                 "support".to_string(),
-                crate::provider::SdkComponent {
+                crate::SdkComponent {
                     id: "support".to_string(),
                     version: "0.5.0".to_string(),
                     mandatory: false,
                     available: true,
                     dependencies: BTreeSet::new(),
-                    providers: vec![crate::provider::SdkProviderDescriptor {
+                    providers: vec![crate::SdkProviderDescriptor {
                         name: "support_provider".to_string(),
                         version: "0.5.0".to_string(),
                         digest: physical_digest,
@@ -973,16 +973,16 @@ mod tests {
             sdk_id: "incan".to_string(),
             sdk_version: "0.5.0".to_string(),
             compiler_requirement: "^0.5".to_string(),
-            provider_codegen_revision: crate::version::SDK_PROVIDER_CODEGEN_REVISION,
+            provider_codegen_revision: incan_core::version::SDK_PROVIDER_CODEGEN_REVISION,
             components: BTreeMap::from([(
                 "stdlib-data".to_string(),
-                crate::provider::SdkComponent {
+                crate::SdkComponent {
                     id: "stdlib-data".to_string(),
                     version: "0.5.0".to_string(),
                     mandatory: false,
                     available: true,
                     dependencies: BTreeSet::new(),
-                    providers: vec![crate::provider::SdkProviderDescriptor {
+                    providers: vec![crate::SdkProviderDescriptor {
                         name: "incan_stdlib_data".to_string(),
                         version: "0.5.0".to_string(),
                         digest: physical_digest.to_string(),
@@ -995,7 +995,7 @@ mod tests {
             profiles: BTreeMap::from([("default".to_string(), BTreeSet::from(["stdlib-data".to_string()]))]),
         };
         let provider = ProviderRecord {
-            identity: crate::provider::ProviderIdentity {
+            identity: crate::ProviderIdentity {
                 name: "incan_stdlib_data".to_string(),
                 version: "0.5.0".to_string(),
                 digest: "sha256:physical-a".to_string(),
@@ -1006,7 +1006,7 @@ mod tests {
                 component_id: "stdlib-data".to_string(),
                 inventory_path: None,
             },
-            authority: crate::provider::NamespaceAuthority::SdkReserved,
+            authority: crate::NamespaceAuthority::SdkReserved,
             namespace_claims: BTreeSet::new(),
             available: true,
             enabled: true,
@@ -1044,25 +1044,25 @@ mod tests {
         )?;
         fs::write(project.path().join("interop/lib/libfixture.a"), b"fixture archive")?;
         let mut interop = InteropCSection {
-            schema: crate::oven_interop::INTEROP_C_SCHEMA_VERSION,
-            targets: vec![crate::oven_interop::InteropCTarget {
+            schema: oven_model::oven_interop::INTEROP_C_SCHEMA_VERSION,
+            targets: vec![oven_model::oven_interop::InteropCTarget {
                 target: "aarch64-apple-ios".to_string(),
-                toolchain: Some(crate::oven_interop::ToolchainRequirement {
+                toolchain: Some(oven_model::oven_interop::ToolchainRequirement {
                     capability: "apple-clang".to_string(),
                     version: Some(">=17, <18".to_string()),
                 }),
-                sdk: Some(crate::oven_interop::ToolchainRequirement {
+                sdk: Some(oven_model::oven_interop::ToolchainRequirement {
                     capability: "iphoneos".to_string(),
                     version: Some(">=18, <19".to_string()),
                 }),
-                platform: Some(crate::oven_interop::InteropTargetPlatform::Ios {
+                platform: Some(oven_model::oven_interop::InteropTargetPlatform::Ios {
                     deployment_target: "13.0".to_string(),
                 }),
                 headers: vec!["interop/include/bridge.h".to_string()],
                 definitions: vec!["FIXTURE=1".to_string()],
-                artifacts: vec![crate::oven_interop::InteropArtifact {
+                artifacts: vec![oven_model::oven_interop::InteropArtifact {
                     name: "fixture".to_string(),
-                    kind: crate::oven_interop::InteropArtifactKind::Static,
+                    kind: oven_model::oven_interop::InteropArtifactKind::Static,
                     path: Some("interop/lib/libfixture.a".to_string()),
                     origin: None,
                     capability: None,
@@ -1072,9 +1072,9 @@ mod tests {
                     dependencies: Vec::new(),
                 }],
                 bindings: Vec::new(),
-                shims: vec![crate::oven_interop::InteropShim {
+                shims: vec![oven_model::oven_interop::InteropShim {
                     name: "fixture_bridge".to_string(),
-                    language: crate::oven_interop::InteropShimLanguage::C,
+                    language: oven_model::oven_interop::InteropShimLanguage::C,
                     sources: vec!["interop/src/bridge.c".to_string()],
                     headers: vec!["interop/include/bridge.h".to_string()],
                     output: "fixture_bridge".to_string(),
@@ -1095,14 +1095,14 @@ mod tests {
         assert_eq!(first_interop.interop.len(), 1);
         assert_eq!(
             first_interop.interop[0].platform,
-            Some(crate::oven_interop::InteropTargetPlatform::Ios {
+            Some(oven_model::oven_interop::InteropTargetPlatform::Ios {
                 deployment_target: "13.0".to_string(),
             })
         );
         assert_eq!(first_interop.interop[0].headers[0].path, "interop/include/bridge.h");
         let first_fingerprint = compute_resolved_fingerprint(&[], &[], &cargo_features, Some(project.path()), &first);
 
-        interop.targets[0].platform = Some(crate::oven_interop::InteropTargetPlatform::Ios {
+        interop.targets[0].platform = Some(oven_model::oven_interop::InteropTargetPlatform::Ios {
             deployment_target: "14.0".to_string(),
         });
         let changed_platform = semantic_lock_state(
@@ -1119,7 +1119,7 @@ mod tests {
             first_fingerprint,
             compute_resolved_fingerprint(&[], &[], &cargo_features, Some(project.path()), &changed_platform)
         );
-        interop.targets[0].platform = Some(crate::oven_interop::InteropTargetPlatform::Ios {
+        interop.targets[0].platform = Some(oven_model::oven_interop::InteropTargetPlatform::Ios {
             deployment_target: "13.0".to_string(),
         });
 

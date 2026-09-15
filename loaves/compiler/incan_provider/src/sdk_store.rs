@@ -13,29 +13,29 @@ use std::{env, fs};
 
 use sha2::{Digest, Sha256};
 
-use crate::provider::effect_digest::{COMPILER_RUST_EFFECT_ROOTS, COMPILER_STDLIB_ROOT, compiler_effect_digest};
-use crate::provider::error::{ProviderError, ProviderResult};
+use crate::effect_digest::{COMPILER_RUST_EFFECT_ROOTS, COMPILER_STDLIB_ROOT, compiler_effect_digest};
+use crate::error::{ProviderError, ProviderResult};
 static SDK_PROVIDER_COMPILER_DIGESTS: LazyLock<Mutex<HashMap<PathBuf, [u8; 32]>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Internal provider-store override used by isolated compiler and packaging tests.
-pub(crate) const INTERNAL_SDK_PROVIDER_STORE_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_STORE";
+pub const INTERNAL_SDK_PROVIDER_STORE_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_STORE";
 
 /// Internal file through which release packaging receives the exact immutable SDK provider root.
-pub(crate) const INTERNAL_SDK_PROVIDER_PATH_FILE_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE";
+pub const INTERNAL_SDK_PROVIDER_PATH_FILE_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE";
 
 /// Internal SDK distribution profile used by release packaging to omit component payloads physically.
-pub(crate) const INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV: &str = "INCAN_INTERNAL_SDK_DISTRIBUTION_PROFILE";
+pub const INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV: &str = "INCAN_INTERNAL_SDK_DISTRIBUTION_PROFILE";
 
 /// Internal path override for the Cargo.lock payload used while producing a compiler-owned artifact.
-pub(crate) const INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV: &str = "INCAN_INTERNAL_CARGO_LOCK_PAYLOAD_PATH";
+pub const INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV: &str = "INCAN_INTERNAL_CARGO_LOCK_PAYLOAD_PATH";
 
 /// Select the Incan CLI executable that prepares SDK provider artifacts.
 ///
 /// Cargo integration tests and development utilities do not run inside the `incan` CLI. Tests receive the real binary
 /// through `CARGO_BIN_EXE_incan`; utility binaries use the sibling CLI built in the same target directory. Returning an
 /// error is important: executing a generator with CLI arguments can exit successfully without publishing an artifact.
-pub(crate) fn sdk_provider_builder_executable(
+pub fn sdk_provider_builder_executable(
     cargo_test_binary: Option<PathBuf>,
     current_executable: PathBuf,
 ) -> ProviderResult<PathBuf> {
@@ -73,7 +73,7 @@ pub(crate) fn sdk_provider_builder_executable(
 /// A standalone artifact crate otherwise resolves its own newest compatible versions, which can differ from the
 /// compiler workspace's verified offline cache. Installed SDK layouts need not contain a workspace lockfile, so they
 /// deliberately retain normal Cargo resolution.
-pub(crate) fn sdk_provider_workspace_lock(stdlib_root: &Path) -> Option<PathBuf> {
+pub fn sdk_provider_workspace_lock(stdlib_root: &Path) -> Option<PathBuf> {
     stdlib_root
         .ancestors()
         .skip(1)
@@ -86,7 +86,7 @@ pub(crate) fn sdk_provider_workspace_lock(stdlib_root: &Path) -> Option<PathBuf>
 ///
 /// The child's lock resolver and project generator materialize this payload inside its library transaction. Writing
 /// Cargo.lock into the output beforehand would create a nonempty directory without generated-library ownership.
-pub(crate) fn configure_sdk_provider_workspace_lock(command: &mut Command, workspace_lock: Option<&Path>) {
+pub fn configure_sdk_provider_workspace_lock(command: &mut Command, workspace_lock: Option<&Path>) {
     let Some(workspace_lock) = workspace_lock else {
         return;
     };
@@ -98,12 +98,12 @@ pub(crate) fn configure_sdk_provider_workspace_lock(command: &mut Command, works
 /// The compiler cannot call its own Incan `std.fs` artifact before that artifact exists. This is therefore a
 /// deliberately narrow native bootstrap boundary, mirroring RFC 112's advisory-lock contract while the compiler
 /// produces the first Incan-owned stdlib artifact.
-pub(crate) struct SdkProviderStoreLock {
+pub struct SdkProviderStoreLock {
     _file: fs::File,
 }
 
 /// Acquire the artifact-store lock that serializes all bootstrap builds and publications.
-pub(crate) fn acquire_sdk_provider_store_lock(store_root: &Path) -> ProviderResult<SdkProviderStoreLock> {
+pub fn acquire_sdk_provider_store_lock(store_root: &Path) -> ProviderResult<SdkProviderStoreLock> {
     fs::create_dir_all(store_root).map_err(|error| {
         ProviderError::failure(format!(
             "failed to create SDK provider store {}: {error}",
@@ -221,7 +221,7 @@ fn hash_sdk_provider_source_tree(root: &Path, current: &Path, hasher: &mut Sha25
 /// of the store without changing any component's content, and that constant is the declared mechanism for saying
 /// so; the inventory already validates it on every cache hit, and folding it here means a bump also partitions the
 /// store rather than only rejecting what is in it.
-pub(crate) fn sdk_provider_store_identity(
+pub fn sdk_provider_store_identity(
     stdlib_root: &Path,
     executable: &Path,
     workspace_lock: Option<&Path>,
@@ -230,9 +230,9 @@ pub(crate) fn sdk_provider_store_identity(
     let mut hasher = Sha256::new();
     hasher.update(b"incan-sdk-provider-store-v4\0");
     hasher.update(b"compiler-version\0");
-    hasher.update(crate::version::INCAN_VERSION.as_bytes());
+    hasher.update(incan_core::version::INCAN_VERSION.as_bytes());
     hasher.update(b"provider-codegen-revision\0");
-    hasher.update(crate::version::SDK_PROVIDER_CODEGEN_REVISION.to_le_bytes());
+    hasher.update(incan_core::version::SDK_PROVIDER_CODEGEN_REVISION.to_le_bytes());
     hasher.update(b"distribution-profile\0");
     hasher.update(distribution_profile.as_bytes());
 
@@ -296,7 +296,7 @@ fn sdk_provider_effect_digest(checkout_root: &Path) -> ProviderResult<String> {
     }
 
     let root = checkout_root.to_path_buf();
-    let digest = crate::compiler_stack::run_on_compiler_stack(move || {
+    let digest = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         compiler_effect_digest(&root).map_err(|error| error.to_string())
     })
     .map_err(|message| {
@@ -343,7 +343,7 @@ fn write_effect_digest_memo(cached_path: &Path, digest: &str) {
 /// target-directory memo of its own, so neither ever reads or writes the developer's own cache.
 fn sdk_provider_effect_digest_cache_root() -> Option<PathBuf> {
     if cfg!(test) {
-        return Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_effect_digest"));
+        return Some(oven_model::toolchain_layout::development_root().join("target/incan_test_effect_digest"));
     }
     if let Some(store) = env::var_os(INTERNAL_SDK_PROVIDER_STORE_ENV).filter(|path| !path.is_empty()) {
         return Some(PathBuf::from(store).join(".effect-digest-v1"));
@@ -413,7 +413,7 @@ fn sdk_provider_effect_input_key(checkout_root: &Path, compiler_stamp: &str) -> 
 /// This is intentionally exposed only to repository automation after it has built the matching CLI. The cache key
 /// must follow the same source closure as provider publication; hashing development executable bytes would make
 /// identical source checkouts miss after unrelated test builds.
-pub(crate) fn sdk_provider_store_identity_for_compiler_root(compiler_root: &Path) -> ProviderResult<String> {
+pub fn sdk_provider_store_identity_for_compiler_root(compiler_root: &Path) -> ProviderResult<String> {
     let stdlib_root = fs::canonicalize(compiler_root.join("crates/incan_stdlib/stdlib")).map_err(|error| {
         ProviderError::failure(format!(
             "failed to canonicalize built-in stdlib source directory below {}: {error}",
@@ -497,7 +497,7 @@ fn sdk_provider_compiler_digest(executable: &Path) -> ProviderResult<[u8; 32]> {
 }
 
 /// Select one user-shared development cache instead of duplicating identical provider artifacts in every checkout.
-pub(crate) fn default_sdk_provider_store(
+pub fn default_sdk_provider_store(
     stdlib_root: &Path,
     incan_home: Option<std::ffi::OsString>,
     user_home: Option<std::ffi::OsString>,
@@ -515,7 +515,7 @@ pub(crate) fn default_sdk_provider_store(
 }
 
 /// Flush every staged artifact file and directory before atomic publication.
-pub(crate) fn sync_sdk_provider_tree(path: &Path) -> ProviderResult<()> {
+pub fn sync_sdk_provider_tree(path: &Path) -> ProviderResult<()> {
     let mut entries = fs::read_dir(path)
         .map_err(|error| {
             ProviderError::failure(format!(
@@ -563,7 +563,7 @@ pub(crate) fn sync_sdk_provider_tree(path: &Path) -> ProviderResult<()> {
 }
 
 /// Flush the artifact store after publishing a new immutable artifact directory.
-pub(crate) fn sync_sdk_provider_store(store_root: &Path) -> ProviderResult<()> {
+pub fn sync_sdk_provider_store(store_root: &Path) -> ProviderResult<()> {
     fs::File::open(store_root)
         .and_then(|directory| directory.sync_all())
         .map_err(|error| {
@@ -575,7 +575,7 @@ pub(crate) fn sync_sdk_provider_store(store_root: &Path) -> ProviderResult<()> {
 }
 
 /// Allocate a unique private staging directory for one artifact identity.
-pub(crate) fn staged_sdk_provider_root(store_root: &Path, identity: &str) -> ProviderResult<PathBuf> {
+pub fn staged_sdk_provider_root(store_root: &Path, identity: &str) -> ProviderResult<PathBuf> {
     let elapsed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| ProviderError::failure(format!("system clock predates Unix epoch: {error}")))?;
@@ -733,7 +733,7 @@ mod tests {
     /// than the whole `src/`, `crates/` and `tests/` tree v3 walked.
     #[test]
     fn the_effect_memo_key_over_this_checkout_stays_cheap() -> Result<(), Box<dyn std::error::Error>> {
-        let checkout = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let checkout = oven_model::toolchain_layout::development_root();
         let compiler_stamp = running_compiler_stamp().ok_or("the test executable must be stampable")?;
         let started = std::time::Instant::now();
         let key = sdk_provider_effect_input_key(&checkout, &compiler_stamp)?;

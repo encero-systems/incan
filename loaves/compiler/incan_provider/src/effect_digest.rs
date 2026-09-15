@@ -135,9 +135,9 @@ fn collect_sources(root: &Path, extensions: &[&str]) -> Result<Vec<PathBuf>, Eff
 /// Returns the module's declarations keyed by their rendered identity, so the caller folds them in a stable order
 /// that does not depend on declaration order within the file.
 fn module_meaning(path: &Path, source: &str) -> Result<BTreeMap<String, String>, EffectDigestError> {
-    use crate::frontend::body_ir::{apply_body_ir_input_contract, build_body_ir_module_v0};
-    use crate::frontend::typechecker::TypeChecker;
-    use crate::frontend::{lexer, parser};
+    use incan_frontend::body_ir::{apply_body_ir_input_contract, build_body_ir_module_v0};
+    use incan_frontend::typechecker::TypeChecker;
+    use incan_frontend::{lexer, parser};
 
     let fail = |message: String| EffectDigestError::Uncompilable {
         path: path.to_path_buf(),

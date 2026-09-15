@@ -1,23 +1,22 @@
 //! What Oven learns about Incan, in one place: the compiler's identity and the provider facts the ring asks for
 //! through [`OvenProviderHooks`]. Oven's crates name no compiler crate; the driver hands them these values.
 //!
-//! This is the seed of `incan_oven_facet`; it moves to that crate once the provider loaders it reads are
-//! `incan_provider`.
+//! The only crate in the compiler ring that depends on the Oven ring's bakers as well as on the provider loaders;
+//! the binaries hand its two values to every Oven request.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use incan_core::version::{INCAN_VERSION, SDK_PROVIDER_CODEGEN_REVISION};
+use incan_frontend::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
+use incan_frontend::library_manifest::{LibraryManifest, digest_provider_artifact};
+use incan_provider::inventory::discover_active_sdk_inventory;
+use incan_provider::{SDK_INVENTORY_FILE, SdkInventory};
 use oven_model::compiler_identity::CompilerIdentity;
-
-use crate::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
-use crate::library_manifest::{LibraryManifest, digest_provider_artifact};
-use crate::oven::OvenProviderHooks;
-use crate::oven::legacy_cargo::{OvenLegacyCargoError, make_publisher_staging_file_writable};
-use crate::provider::inventory::discover_active_sdk_inventory;
-use crate::provider::{SDK_INVENTORY_FILE, SdkInventory};
-use crate::version::{INCAN_VERSION, SDK_PROVIDER_CODEGEN_REVISION};
+use oven_rustc::legacy_cargo::{OvenLegacyCargoError, make_publisher_staging_file_writable};
+use oven_store::OvenProviderHooks;
 
 /// The running compiler's identity for Oven: its version and the generated-provider revision it emits.
 pub fn compiler_identity() -> CompilerIdentity {
@@ -222,16 +221,15 @@ fn staged_provider_manifest_path(crate_root: &Path) -> Result<PathBuf, OvenLegac
 mod tests {
     use std::collections::BTreeSet;
     use std::fs;
-    use std::path::Path;
 
     use incan_core::lang::stdlib::{self, StdlibExtraCrateSource};
-
-    use crate::manifest::{DependencySource, DependencySpec};
-    use crate::oven::digest_dependency_specs;
-    use crate::oven::loaf::{
+    use oven_model::manifest::{DependencySource, DependencySpec};
+    use oven_rustc::loaf::{
         OvenLoafEnvelope, OvenLoafMemberRole, loaf_envelope_inspection_packages, loaf_envelope_specifications,
     };
-    use crate::oven_facet::provider_hooks;
+    use oven_store::digest_dependency_specs;
+
+    use crate::provider_hooks;
 
     #[test]
     fn a_packaged_provider_is_identified_by_its_sealed_artifact_not_its_private_cargo_edges_issue1469()
@@ -279,7 +277,8 @@ mod tests {
     /// modules to their public facade mirrors provider publication, while `std.interop` is the intentionally
     /// source-less vocabulary-backed provider component.
     fn checked_stdlib_component_modules() -> Result<BTreeSet<String>, Box<dyn std::error::Error>> {
-        let component_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib/components");
+        let component_root =
+            oven_model::toolchain_layout::development_root().join("crates/incan_stdlib/stdlib/components");
         let mut modules = BTreeSet::from(["std.interop".to_string()]);
         for entry in fs::read_dir(&component_root)? {
             let entry = entry?;

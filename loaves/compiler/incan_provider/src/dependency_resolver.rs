@@ -9,12 +9,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::frontend::ast::Span;
-use crate::frontend::diagnostics::CompileError;
-use crate::lockfile::CargoFeatureSelection;
-use crate::manifest::validate_cargo_version_req;
-use crate::manifest::{DependencySource, DependencySpec, ProjectManifest};
 use incan_core::lang::stdlib::{self, StdlibExtraCrateSource};
+use incan_frontend::ast::Span;
+use incan_frontend::diagnostics::CompileError;
+use oven_model::lock::CargoFeatureSelection;
+use oven_model::manifest::validate_cargo_version_req;
+use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
 
 #[derive(Debug, Clone)]
 pub struct InlineRustImport {
@@ -629,8 +629,8 @@ fn known_good_spec_from_stdlib(crate_name: &str) -> Option<DependencySpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frontend::ast::Span;
-    use crate::lockfile::CargoFeatureSelection;
+    use incan_frontend::ast::Span;
+    use oven_model::lock::CargoFeatureSelection;
     use std::error::Error;
 
     type TestResult<T = ()> = Result<T, Box<dyn Error>>;
