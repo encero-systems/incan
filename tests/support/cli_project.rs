@@ -370,6 +370,7 @@ pub(crate) fn write_locked_oven_interop_plan(root: &Path) -> Result<(), Box<dyn 
     let manifest = incan::manifest::ProjectManifest::discover(root)?.ok_or("interop fixture manifest was missing")?;
     let interop = incan::oven_interop::locked_oven_interop_targets(&manifest)?;
     let lock = incan::lockfile::IncanLock::new_with_semantic(
+        incan::version::INCAN_VERSION,
         "fixture".to_string(),
         incan::lockfile::CargoFeatureSelection::default(),
         incan::lockfile::SemanticLockState {
@@ -396,6 +397,7 @@ pub(crate) fn write_locked_workspace_oven_interop_plan(
         .to_string_lossy()
         .replace('\\', "/");
     let lock = incan::lockfile::IncanLock::new_with_semantic(
+        incan::version::INCAN_VERSION,
         "fixture".to_string(),
         incan::lockfile::CargoFeatureSelection::default(),
         incan::lockfile::SemanticLockState {

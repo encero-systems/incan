@@ -1782,7 +1782,8 @@ def private_function() -> None:
         let cargo_lock_payload = fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
         let features = CargoFeatureSelection::default();
         let fingerprint = compute_deps_fingerprint(&[], &[], &features, Some(project_root));
-        IncanLock::new(fingerprint, features, cargo_lock_payload).write(&project_root.join("oven.lock"))?;
+        IncanLock::new(crate::version::INCAN_VERSION, fingerprint, features, cargo_lock_payload)
+            .write(&project_root.join("oven.lock"))?;
         Ok(())
     }
 
