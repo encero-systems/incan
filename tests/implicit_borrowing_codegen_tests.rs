@@ -3,9 +3,7 @@
 use incan::backend::ir::IrCodegen;
 use incan::frontend::{lexer, parser};
 
-#[allow(dead_code)]
-#[path = "../src/oven/compiler_suite_env.rs"]
-mod compiler_suite_env;
+use oven_model::compiler_suite_env;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

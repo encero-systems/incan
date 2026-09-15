@@ -44,8 +44,8 @@
 pub(crate) mod c_abi;
 pub mod ir;
 pub mod project;
-pub mod replacement;
-pub mod selection;
+pub use incan_emit::replacement;
+pub use incan_emit::selection;
 pub mod shadow;
 
 // Re-export the unified codegen entrypoint

@@ -1,0 +1,37 @@
+[package]
+name = "incan_ir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The Incan compiler's IR and the lowering from the checked program to it"
+
+[lib]
+name = "incan_ir"
+path = "src/lib.rs"
+
+[features]
+# Mirrors the root crate's defaults without `cli`, so `cargo test -p incan_ir` sees the stdlib semantics packs; the
+# root selects features explicitly and never relies on these.
+default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
+rust_inspect = ["incan_frontend/rust_inspect", "rust_inspect/inspector"]
+std_testing = ["incan_frontend/std_testing"]
+std_async = ["incan_frontend/std_async"]
+std_decorators = ["incan_frontend/std_decorators"]
+
+[dependencies]
+incan_core = { path = "../../../crates/incan_core" }
+incan_frontend = { path = "../incan_frontend", default-features = false }
+incan_semantics_core = { path = "../../../crates/incan_semantics_core" }
+incan_stdlib = { path = "../../../crates/incan_stdlib" }
+incan_syntax = { path = "../../../crates/incan_syntax" }
+incan_vocab = { path = "../../../crates/incan_vocab" }
+oven_model = { path = "../../oven/oven_model" }
+rust_inspect = { path = "../../../crates/rust_inspect", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+incan_frontend = { path = "../incan_frontend", default-features = false, features = ["test_support"] }
+tempfile = "3"

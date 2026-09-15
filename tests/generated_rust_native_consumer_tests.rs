@@ -3,9 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-#[allow(dead_code)]
-#[path = "../src/oven/compiler_suite_env.rs"]
-mod compiler_suite_env;
+use oven_model::compiler_suite_env;
 mod support;
 
 fn incan_binary() -> PathBuf {

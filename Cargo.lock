@@ -1435,8 +1435,10 @@ dependencies = [
  "hmac",
  "incan_codegraph",
  "incan_core",
+ "incan_emit",
  "incan_format",
  "incan_frontend",
+ "incan_ir",
  "incan_semantics_core",
  "incan_semantics_stdlib",
  "incan_stdlib",
@@ -1504,6 +1506,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "incan_emit"
+version = "0.6.0-dev.4"
+dependencies = [
+ "hex",
+ "incan_core",
+ "incan_frontend",
+ "incan_ir",
+ "incan_semantics_core",
+ "incan_stdlib",
+ "incan_syntax",
+ "incan_vocab",
+ "oven_model",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "rust_inspect",
+ "serde",
+ "serde_json",
+ "sha2",
+ "syn",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "incan_format"
 version = "0.6.0-dev.4"
 dependencies = [
@@ -1541,6 +1570,24 @@ dependencies = [
  "tracing",
  "wasmtime",
  "wasmtime-wasi",
+]
+
+[[package]]
+name = "incan_ir"
+version = "0.6.0-dev.4"
+dependencies = [
+ "incan_core",
+ "incan_frontend",
+ "incan_semantics_core",
+ "incan_stdlib",
+ "incan_syntax",
+ "incan_vocab",
+ "oven_model",
+ "rust_inspect",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]

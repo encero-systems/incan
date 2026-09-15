@@ -67,6 +67,162 @@
       "expected_fingerprint": "0x1dc2b536c0293d40"
     },
     {
+      "path": "loaves/compiler/incan_emit/src/checked_program/sdk_module_derives.rs",
+      "category": "checked SDK metadata derive-module assertions",
+      "expected_count": 1,
+      "expected_fingerprint": "0x85e10189cee98b1e"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/codegen.rs",
+      "category": "codegen facade compatibility and Rust serde fallback",
+      "expected_count": 4,
+      "expected_fingerprint": "0xcedb21689b86932d"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/codegen/capability_bridge.rs",
+      "category": "serialized trait capability argument matching",
+      "expected_count": 1,
+      "expected_fingerprint": "0x55a833df26b069fe"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/codegen/dependency_metadata.rs",
+      "category": "dependency metadata compatibility, web route preservation, and registry-backed iterator trait reachability",
+      "expected_count": 3,
+      "expected_fingerprint": "0xee7f98cf89bfc22b"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/codegen/serde_activation.rs",
+      "category": "serde activation compatibility",
+      "expected_count": 3,
+      "expected_fingerprint": "0x2b22f0e7dbaebdbd"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/codegen/string_try_from_bridge.rs",
+      "category": "std.environ generic conversion bridge compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x3447ddc21699825d"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/conversions.rs",
+      "category": "central argument conversion and canonical owned Rust String shape checks",
+      "expected_count": 2,
+      "expected_fingerprint": "0xc102811ab1ea1d38"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/decls/functions.rs",
+      "category": "callable and Rust macro emission compatibility with registry-backed iterator trait emission",
+      "expected_count": 3,
+      "expected_fingerprint": "0xcfacf5792303196e"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/decls/impls.rs",
+      "category": "generated stdlib JSON/newtype helper retention",
+      "expected_count": 4,
+      "expected_fingerprint": "0x3fc0034bdf2e07be"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/decls/mod.rs",
+      "category": "generated stdlib import path recognition",
+      "expected_count": 1,
+      "expected_fingerprint": "0x1c3e7de164e70908"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/decls/structures.rs",
+      "category": "derive macro emission compatibility",
+      "expected_count": 4,
+      "expected_fingerprint": "0xd279ee037e30c621"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/calls.rs",
+      "category": "testing helper and public-module emission compatibility",
+      "expected_count": 5,
+      "expected_fingerprint": "0xd50ac3da0a56714a"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/comprehensions.rs",
+      "category": "dict view compatibility emission",
+      "expected_count": 1,
+      "expected_fingerprint": "0x79dfdfd491f691d1"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/indexing.rs",
+      "category": "callable source-name metadata emission",
+      "expected_count": 1,
+      "expected_fingerprint": "0x87dd19d1c7e84652"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
+      "category": "quarantined metadata-free method compatibility",
+      "expected_count": 11,
+      "expected_fingerprint": "0x78afd8a9c8305f8a"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/fast_paths.rs",
+      "category": "registered method fast-path receiver typing",
+      "expected_count": 2,
+      "expected_fingerprint": "0xd121f2f287b25f51"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/mod.rs",
+      "category": "numeric emission compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x7ab516025dc0a176"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
+      "category": "Rust path segment escaping and public dependency identity compatibility",
+      "expected_count": 3,
+      "expected_fingerprint": "0x24e1c86b39837a62"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/native_unions.rs",
+      "category": "`pub::` import-root segment in native union owner paths",
+      "expected_count": 2,
+      "expected_fingerprint": "0xf88a5f38a2f57053"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/program.rs",
+      "category": "callable source-name metadata use analysis",
+      "expected_count": 2,
+      "expected_fingerprint": "0x497886b639dd72c9"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/types.rs",
+      "category": "Rust path and static trait emission compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0xc141aee1d5c1ebe1"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/ownership.rs",
+      "category": "central external Rust duckborrower buffer planning",
+      "expected_count": 4,
+      "expected_fingerprint": "0xa966759c04bff596"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/reference_shape.rs",
+      "category": "central Rust reference-shape compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0x1f31d645283d8922"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/replacement/executable_resolution_tests.rs",
+      "category": "executable-resolution fixture program, module-name and executable-surface assertions",
+      "expected_count": 16,
+      "expected_fingerprint": "0x57b05cb06a4d87b3"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
+      "category": "replacement executor value-target selection",
+      "expected_count": 1,
+      "expected_fingerprint": "0xfe49ea402cb9f33b"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/trait_bound_inference.rs",
+      "category": "clone/as_ref/self and reflection trait-bound inference compatibility",
+      "expected_count": 4,
+      "expected_fingerprint": "0x7b05117f4d9db0da"
+    },
+    {
       "path": "loaves/compiler/incan_frontend/src/provider/features.rs",
       "category": "manifest feature-section spelling",
       "expected_count": 2,
@@ -187,202 +343,58 @@
       "expected_fingerprint": "0x3814274efdb9fae2"
     },
     {
-      "path": "src/backend/ir/checked_program/sdk_module_derives.rs",
-      "category": "checked SDK metadata derive-module assertions",
-      "expected_count": 1,
-      "expected_fingerprint": "0x85e10189cee98b1e"
-    },
-    {
-      "path": "src/backend/ir/codegen.rs",
-      "category": "codegen facade compatibility and Rust serde fallback",
-      "expected_count": 4,
-      "expected_fingerprint": "0xcedb21689b86932d"
-    },
-    {
-      "path": "src/backend/ir/codegen/capability_bridge.rs",
-      "category": "serialized trait capability argument matching",
-      "expected_count": 1,
-      "expected_fingerprint": "0x55a833df26b069fe"
-    },
-    {
-      "path": "src/backend/ir/codegen/dependency_metadata.rs",
-      "category": "dependency metadata compatibility, web route preservation, and registry-backed iterator trait reachability",
-      "expected_count": 3,
-      "expected_fingerprint": "0xee7f98cf89bfc22b"
-    },
-    {
-      "path": "src/backend/ir/codegen/serde_activation.rs",
-      "category": "serde activation compatibility",
-      "expected_count": 3,
-      "expected_fingerprint": "0x2b22f0e7dbaebdbd"
-    },
-    {
-      "path": "src/backend/ir/codegen/string_try_from_bridge.rs",
-      "category": "std.environ generic conversion bridge compatibility",
-      "expected_count": 1,
-      "expected_fingerprint": "0x3447ddc21699825d"
-    },
-    {
-      "path": "src/backend/ir/conversions.rs",
-      "category": "central argument conversion and canonical owned Rust String shape checks",
-      "expected_count": 2,
-      "expected_fingerprint": "0xc102811ab1ea1d38"
-    },
-    {
-      "path": "src/backend/ir/emit/decls/functions.rs",
-      "category": "callable and Rust macro emission compatibility with registry-backed iterator trait emission",
-      "expected_count": 3,
-      "expected_fingerprint": "0xcfacf5792303196e"
-    },
-    {
-      "path": "src/backend/ir/emit/decls/impls.rs",
-      "category": "generated stdlib JSON/newtype helper retention",
-      "expected_count": 4,
-      "expected_fingerprint": "0x3fc0034bdf2e07be"
-    },
-    {
-      "path": "src/backend/ir/emit/decls/mod.rs",
-      "category": "generated stdlib import path recognition",
-      "expected_count": 1,
-      "expected_fingerprint": "0x1c3e7de164e70908"
-    },
-    {
-      "path": "src/backend/ir/emit/decls/structures.rs",
-      "category": "derive macro emission compatibility",
-      "expected_count": 4,
-      "expected_fingerprint": "0xd279ee037e30c621"
-    },
-    {
-      "path": "src/backend/ir/emit/expressions/calls.rs",
-      "category": "testing helper and public-module emission compatibility",
-      "expected_count": 5,
-      "expected_fingerprint": "0xd50ac3da0a56714a"
-    },
-    {
-      "path": "src/backend/ir/emit/expressions/comprehensions.rs",
-      "category": "dict view compatibility emission",
-      "expected_count": 1,
-      "expected_fingerprint": "0x79dfdfd491f691d1"
-    },
-    {
-      "path": "src/backend/ir/emit/expressions/indexing.rs",
-      "category": "callable source-name metadata emission",
-      "expected_count": 1,
-      "expected_fingerprint": "0x87dd19d1c7e84652"
-    },
-    {
-      "path": "src/backend/ir/emit/expressions/methods.rs",
-      "category": "quarantined metadata-free method compatibility",
-      "expected_count": 11,
-      "expected_fingerprint": "0x78afd8a9c8305f8a"
-    },
-    {
-      "path": "src/backend/ir/emit/expressions/methods/fast_paths.rs",
-      "category": "registered method fast-path receiver typing",
-      "expected_count": 2,
-      "expected_fingerprint": "0xd121f2f287b25f51"
-    },
-    {
-      "path": "src/backend/ir/emit/expressions/mod.rs",
-      "category": "numeric emission compatibility",
-      "expected_count": 1,
-      "expected_fingerprint": "0x7ab516025dc0a176"
-    },
-    {
-      "path": "src/backend/ir/emit/mod.rs",
-      "category": "Rust path segment escaping and public dependency identity compatibility",
-      "expected_count": 3,
-      "expected_fingerprint": "0x24e1c86b39837a62"
-    },
-    {
-      "path": "src/backend/ir/emit/native_unions.rs",
-      "category": "`pub::` import-root segment in native union owner paths",
-      "expected_count": 2,
-      "expected_fingerprint": "0xf88a5f38a2f57053"
-    },
-    {
-      "path": "src/backend/ir/emit/program.rs",
-      "category": "callable source-name metadata use analysis",
-      "expected_count": 2,
-      "expected_fingerprint": "0x497886b639dd72c9"
-    },
-    {
-      "path": "src/backend/ir/emit/types.rs",
-      "category": "Rust path and static trait emission compatibility",
-      "expected_count": 2,
-      "expected_fingerprint": "0x5656f96237432bea"
-    },
-    {
-      "path": "src/backend/ir/expr.rs",
+      "path": "loaves/compiler/incan_ir/src/expr.rs",
       "category": "known iterator method enum classification",
       "expected_count": 23,
       "expected_fingerprint": "0x5c7ee976092c9c9a"
     },
     {
-      "path": "src/backend/ir/lower/decl/functions.rs",
+      "path": "loaves/compiler/incan_ir/src/lower/decl/functions.rs",
       "category": "generic callable source-name lowering compatibility",
       "expected_count": 2,
       "expected_fingerprint": "0xc94cea987d050f33"
     },
     {
-      "path": "src/backend/ir/lower/decl/helpers.rs",
+      "path": "loaves/compiler/incan_ir/src/lower/decl/helpers.rs",
       "category": "serde derive lowering compatibility",
       "expected_count": 2,
       "expected_fingerprint": "0x7ca9fe0193f302ed"
     },
     {
-      "path": "src/backend/ir/lower/decl/mod.rs",
+      "path": "loaves/compiler/incan_ir/src/lower/decl/mod.rs",
       "category": "derive and checked registry lowering compatibility",
       "expected_count": 2,
       "expected_fingerprint": "0x5f09539278cec8e5"
     },
     {
-      "path": "src/backend/ir/lower/expr/calls.rs",
+      "path": "loaves/compiler/incan_ir/src/lower/expr/calls.rs",
       "category": "public dependency call, checked C string construction, default lowering, and assert-raises policy",
       "expected_count": 8,
       "expected_fingerprint": "0xd7fbb13ceabbe8ed"
     },
     {
-      "path": "src/backend/ir/lower/expr/mod.rs",
+      "path": "loaves/compiler/incan_ir/src/lower/expr/mod.rs",
       "category": "method, public dependency, stdlib, checked C string-pointer, and output lowering compatibility",
       "expected_count": 17,
       "expected_fingerprint": "0x96d00a7b6140eca6"
     },
     {
-      "path": "src/backend/ir/lower/mod.rs",
+      "path": "loaves/compiler/incan_ir/src/lower/mod.rs",
       "category": "derive and validation lowering compatibility",
       "expected_count": 4,
       "expected_fingerprint": "0xae0c6d1c895333e6"
     },
     {
-      "path": "src/backend/ir/lower/stmt.rs",
+      "path": "loaves/compiler/incan_ir/src/lower/stmt.rs",
       "category": "placeholder assignment lowering compatibility",
       "expected_count": 1,
       "expected_fingerprint": "0xae028e0ef66ceaa2"
     },
     {
-      "path": "src/backend/ir/lower/types.rs",
+      "path": "loaves/compiler/incan_ir/src/lower/types.rs",
       "category": "lowered primitive and type-token spelling compatibility",
       "expected_count": 9,
       "expected_fingerprint": "0xeeb0ca6fafb43da6"
-    },
-    {
-      "path": "src/backend/ir/ownership.rs",
-      "category": "central external Rust duckborrower buffer planning",
-      "expected_count": 4,
-      "expected_fingerprint": "0xa966759c04bff596"
-    },
-    {
-      "path": "src/backend/ir/reference_shape.rs",
-      "category": "central Rust reference-shape compatibility",
-      "expected_count": 2,
-      "expected_fingerprint": "0x1f31d645283d8922"
-    },
-    {
-      "path": "src/backend/ir/trait_bound_inference.rs",
-      "category": "clone/as_ref/self and reflection trait-bound inference compatibility",
-      "expected_count": 4,
-      "expected_fingerprint": "0x7b05117f4d9db0da"
     },
     {
       "path": "src/dependency_resolver.rs",

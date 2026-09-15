@@ -4,6 +4,8 @@
 //! Nothing here names a compiler crate. The generic lock and dependency resolution join this crate when their
 //! Incan-specific sections move to the facet.
 
+pub mod compiler_suite_env;
+pub mod digest;
 pub mod lock;
 pub mod manifest;
 pub mod oven_interop;

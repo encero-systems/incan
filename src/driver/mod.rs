@@ -23,4 +23,6 @@ pub mod project;
 pub mod rust_inspect_workspace;
 pub mod session;
 pub mod testing;
+#[cfg(test)]
+mod tests;
 pub mod typecheck;

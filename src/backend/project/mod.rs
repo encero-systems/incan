@@ -23,6 +23,8 @@ pub mod generator;
 pub(crate) mod lock_projection;
 pub mod plan;
 pub mod runner;
+#[cfg(test)]
+mod tests;
 
 pub(crate) use crate::toolchain_layout::{INCAN_DERIVE_CRATE_NAME, INCAN_STDLIB_CRATE_NAME};
 

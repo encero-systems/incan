@@ -3,9 +3,7 @@
 //! Implementation ownership lives in the `rust_inspect` crate. This module keeps `incan` imports stable.
 
 #[cfg(test)]
-pub(crate) use ::rust_inspect::test_fixtures::{
-    write_async_result_probe_crate, write_hyphenated_function_probe_crate, write_rustix_as_fd_probe_crate,
-};
+pub(crate) use ::rust_inspect::test_fixtures::{write_hyphenated_function_probe_crate, write_rustix_as_fd_probe_crate};
 
 pub use ::rust_inspect::{
     Fidelity, GeneratedOutDirRecord, InspectError, InspectResult, Inspector, InspectorConfig,
