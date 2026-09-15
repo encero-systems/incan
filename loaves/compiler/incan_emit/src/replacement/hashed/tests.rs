@@ -10,7 +10,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use incan_stdlib::collections as reference;
+use incan_std_core::collections as reference;
 
 use super::{HashedKey, NonScalarKey, ReplacementDict, ReplacementSet, ReplacementValue};
 

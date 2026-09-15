@@ -1,7 +1,11 @@
 [workspace]
 members = [
     ".",
-    "crates/incan_stdlib",
+    "loaves/stdlib/core/rust",
+    "loaves/stdlib/data/rust",
+    "loaves/stdlib/async/rust",
+    "loaves/stdlib/web/rust",
+    "loaves/stdlib/testing/rust",
     "loaves/compiler/incan_driver",
     "loaves/compiler/incan_emit",
     "loaves/compiler/incan_format",
@@ -61,7 +65,11 @@ tracing = "0.1"
 # inherit the entry. The release archive and the staged SDK runtime write their own tables against `crates/<name>`.
 incan_core = { path = "loaves/kernel/incan_core" }
 incan_derive = { path = "loaves/stdlib/derive/incan_derive", version = "0.6.0-dev.4" }
-incan_stdlib = { path = "crates/incan_stdlib", version = "0.6.0-dev.4" }
+incan_std_core = { path = "loaves/stdlib/core/rust", version = "0.6.0-dev.4" }
+incan_std_data = { path = "loaves/stdlib/data/rust", version = "0.6.0-dev.4" }
+incan_std_async = { path = "loaves/stdlib/async/rust", version = "0.6.0-dev.4" }
+incan_std_web = { path = "loaves/stdlib/web/rust", version = "0.6.0-dev.4" }
+incan_std_testing = { path = "loaves/stdlib/testing/rust", version = "0.6.0-dev.4" }
 incan_vocab = { path = "loaves/kernel/incan_vocab", version = "0.3.0" }
 incan_web_macros = { path = "loaves/stdlib/derive/incan_web_macros", version = "0.6.0-dev.4" }
 incan_driver = { path = "loaves/compiler/incan_driver", default-features = false }
@@ -209,7 +217,7 @@ insta = { version = "1.45", features = ["glob"] }
 # Property-based testing
 proptest = "1"
 # Runtime crate for parity tests
-incan_stdlib = { workspace = true }
+incan_std_core = { workspace = true }
 # Temporary directories for manifest discovery tests
 incan_frontend = { workspace = true, features = ["test_support"] }
 incan_emit = { workspace = true, features = ["test_support"] }

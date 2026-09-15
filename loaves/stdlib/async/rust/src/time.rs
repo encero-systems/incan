@@ -1,6 +1,6 @@
 //! Tokio-backed time adapters for `std.async.time`.
 
-use crate::r#async::task::{JoinHandle, TaskJoinError};
+use crate::task::{JoinHandle, TaskJoinError};
 use std::fmt;
 use std::time::Duration;
 
@@ -99,7 +99,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{TimeoutJoinOutcome, clamp_millis, clamp_seconds, timeout_join, timeout_join_ms};
-    use crate::r#async::task::spawn;
+    use crate::task::spawn;
     use std::time::Duration;
     use tokio::sync::oneshot;
 

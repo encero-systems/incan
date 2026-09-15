@@ -75,7 +75,7 @@ async fn multiple_methods_handler() -> Json<Reply> {
 
 /// Build the same inventory-backed Axum router that `std.web.App.run()` serves.
 fn test_router() -> Router {
-    inventory::iter::<incan_stdlib::web::RouteEntry>
+    inventory::iter::<incan_std_web::RouteEntry>
         .into_iter()
         .fold(Router::new(), |router, entry| (entry.register)(router))
 }

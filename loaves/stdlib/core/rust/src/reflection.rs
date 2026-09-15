@@ -20,7 +20,7 @@ use std::marker::PhantomData;
 /// }
 ///
 /// // Generated implementation provides:
-/// use incan_stdlib::reflection::HasFieldInfo;
+/// use incan_std_core::reflection::HasFieldInfo;
 /// assert_eq!(<Person as HasFieldInfo>::field_names(), vec!["name", "age"]);
 /// assert_eq!(<Person as HasFieldInfo>::field_types(), vec!["String", "i64"]);
 /// ```

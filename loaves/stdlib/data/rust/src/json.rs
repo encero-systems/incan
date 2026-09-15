@@ -4,7 +4,7 @@
 //! source API lives in `stdlib/json.incn`; this module provides the compiler/runtime carrier, parse/stringify
 //! boundary, and serde interop needed for that source API to participate in generated JSON model flows.
 
-use crate::errors::{json_decode_error_string, raise_json_serialization_error};
+use incan_std_core::errors::{json_decode_error_string, raise_json_serialization_error};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::error::Error;

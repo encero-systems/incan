@@ -1,0 +1,14 @@
+[package]
+name = "incan_std_core"
+description = "The mandatory Incan standard library runtime: the Rust facet of the `core` component"
+version = "0.6.0-dev.4"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+incan_core = { workspace = true }
+incan_derive = { workspace = true }

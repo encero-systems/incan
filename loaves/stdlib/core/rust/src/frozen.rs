@@ -9,7 +9,7 @@
 //!
 //! ## Examples
 //! ```rust
-//! use incan_stdlib::prelude::*;
+//! use incan_std_core::prelude::*;
 //!
 //! static NUMS: [i64; 3] = [1, 2, 3];
 //! const L: FrozenList<i64> = FrozenList::new(&NUMS);
@@ -26,7 +26,7 @@ use core::fmt;
 ///
 /// ## Examples
 /// ```rust
-/// use incan_stdlib::prelude::*;
+/// use incan_std_core::prelude::*;
 ///
 /// const S: FrozenStr = FrozenStr::new("hello");
 /// assert_eq!(S.as_str(), "hello");
@@ -155,7 +155,7 @@ impl core::ops::Index<usize> for FrozenBytes {
 ///
 /// ## Examples
 /// ```rust
-/// use incan_stdlib::prelude::*;
+/// use incan_std_core::prelude::*;
 ///
 /// static DATA: [i64; 3] = [10, 20, 30];
 /// const L: FrozenList<i64> = FrozenList::new(&DATA);
@@ -295,7 +295,7 @@ mod tests {
 ///
 /// ## Examples
 /// ```rust
-/// use incan_stdlib::prelude::*;
+/// use incan_std_core::prelude::*;
 ///
 /// static DATA: [i64; 2] = [1, 3];
 /// const S: FrozenSet<i64> = FrozenSet::new(&DATA);
@@ -368,7 +368,7 @@ impl<T: fmt::Display> fmt::Display for FrozenSet<T> {
 ///
 /// ## Examples
 /// ```rust
-/// use incan_stdlib::prelude::*;
+/// use incan_std_core::prelude::*;
 ///
 /// static DATA: [(FrozenStr, i64); 2] = [(FrozenStr::new("a"), 1), (FrozenStr::new("b"), 2)];
 /// const D: FrozenDict<FrozenStr, i64> = FrozenDict::new(&DATA);

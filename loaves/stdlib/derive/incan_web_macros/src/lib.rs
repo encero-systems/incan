@@ -177,7 +177,7 @@ fn expand_route(args: RouteArgs, func: ItemFn) -> syn::Result<proc_macro2::Token
         };
         submits.push(quote! {
             inventory::submit! {
-                incan_stdlib::web::RouteEntry::new(
+                incan_std_web::RouteEntry::new(
                     #original_path,
                     #method,
                     |router| router.route(#original_path, axum::routing::#router_method(#route_handler)),
