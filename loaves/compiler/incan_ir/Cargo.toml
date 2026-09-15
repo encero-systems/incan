@@ -23,7 +23,6 @@ std_decorators = ["incan_frontend/std_decorators"]
 incan_core = { path = "../../../crates/incan_core" }
 incan_frontend = { path = "../incan_frontend", default-features = false }
 incan_semantics_core = { path = "../../../crates/incan_semantics_core" }
-incan_stdlib = { path = "../../../crates/incan_stdlib" }
 incan_syntax = { path = "../../../crates/incan_syntax" }
 incan_vocab = { path = "../../../crates/incan_vocab" }
 oven_model = { path = "../../oven/oven_model" }
