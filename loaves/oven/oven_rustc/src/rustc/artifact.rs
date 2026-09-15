@@ -236,8 +236,8 @@ pub struct OvenRustcArtifactManifest {
     pub entrypoint_dependency_search_paths: BTreeMap<String, OvenRustcSourceSearchClosure>,
     /// Exact registry package artifacts whose metadata closure was emitted with this immutable plan.
     ///
-    /// The Loaf repeats this catalog for human inspection, while this copy travels with every bounded
-    /// store entry so a selected plan resolves caller `rust::` imports only from its own compatibility domain.
+    /// The Loaf repeats this catalog for human inspection, while this copy travels with every bounded store entry so a
+    /// selected plan resolves caller `rust::` imports only from its own compatibility domain.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub registry_leaves: Vec<OvenRustcRegistryLeaf>,
     /// Complete locked registry source closure authorized for build-system-neutral Rust inspection.
@@ -356,8 +356,8 @@ pub struct OvenCallerOwnedRustcLibrary {
 /// One publisher-sealed registry package artifact that a Loaf may expose to a direct-Rustc consumer.
 ///
 /// The catalog records an exact package version and the artifact Cargo emitted while the named publisher prepared the
-/// Loaf. It is not a general resolver: a consumer may select only one compatible record already copied into
-/// the immutable Loaf closure.
+/// Loaf. It is not a general resolver: a consumer may select only one compatible record already copied into the
+/// immutable Loaf closure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OvenRustcRegistryLeaf {
     /// Registry package name rather than a caller-local dependency alias.
@@ -368,8 +368,8 @@ pub struct OvenRustcRegistryLeaf {
     pub crate_name: String,
     /// Publisher-resolved Cargo features compiled into this exact immutable artifact.
     ///
-    /// A consumer may request only a subset. This represents the already unified Loaf closure; it does not
-    /// run a feature resolver or permit a consumer to add a feature absent from the sealed leaf.
+    /// A consumer may request only a subset. This represents the already unified Loaf closure; it does not run a
+    /// feature resolver or permit a consumer to add a feature absent from the sealed leaf.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub features: Vec<String>,
     /// Exact registry source closure retained for build-system-neutral Rust inspection.

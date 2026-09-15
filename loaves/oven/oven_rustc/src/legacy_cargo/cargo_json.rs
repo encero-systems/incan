@@ -1,8 +1,8 @@
 //! Cargo's own JSON shapes, as this publisher reads them.
 //!
-//! These mirror what `cargo` emits -- its build-artifact messages, unit graph, metadata resolve, and the
-//! registry checksum lock. They are deserialization targets and carry no publisher behavior, so they are
-//! grouped here to keep the publisher's own logic legible beside them.
+//! These mirror what `cargo` emits -- its build-artifact messages, unit graph, metadata resolve, and the registry
+//! checksum lock. They are deserialization targets and carry no publisher behavior, so they are grouped here to keep
+//! the publisher's own logic legible beside them.
 
 use std::path::PathBuf;
 

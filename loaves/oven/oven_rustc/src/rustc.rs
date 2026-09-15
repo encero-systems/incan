@@ -4116,9 +4116,9 @@ pub fn incan_owned_cargo() -> Option<PathBuf> {
 /// Compile declared narrow Rust library closures with direct `rustc`, never with Cargo.
 ///
 /// This bounded caller-dependency seam builds manifest-declared local path libraries and links registry leaves only
-/// from a selected immutable Loaf catalog. It recursively follows only path-to-path edges and incorporates
-/// each child output digest into its parent output identity. Git, optional/feature-driven roots, build scripts, and
-/// unsealed registry closures remain explicit unsupported inputs.
+/// from a selected immutable Loaf catalog. It recursively follows only path-to-path edges and incorporates each child
+/// output digest into its parent output identity. Git, optional/feature-driven roots, build scripts, and unsealed
+/// registry closures remain explicit unsupported inputs.
 ///
 /// Gate 6 of RFC 119 is the reader; until it lands only tests exercise this seam.
 #[cfg(test)]
