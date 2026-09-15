@@ -13,8 +13,8 @@ use oven_model::compiler_identity::CompilerIdentity;
 
 use crate::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
 use crate::library_manifest::{LibraryManifest, digest_provider_artifact};
-use crate::oven::OvenProviderHooks;
 use crate::oven::legacy_cargo::{OvenLegacyCargoError, make_publisher_staging_file_writable};
+use crate::oven::{OvenProviderHookError, OvenProviderHooks};
 use crate::provider::inventory::discover_active_sdk_inventory;
 use crate::provider::{SDK_INVENTORY_FILE, SdkInventory};
 use crate::version::{INCAN_VERSION, SDK_PROVIDER_CODEGEN_REVISION};
@@ -35,7 +35,7 @@ pub fn provider_hooks() -> Arc<dyn OvenProviderHooks> {
 pub struct IncanProviderHooks;
 
 impl OvenProviderHooks for IncanProviderHooks {
-    fn sdk_provider_root(&self, explicit_inventory: Option<&Path>) -> Result<PathBuf, String> {
+    fn sdk_provider_root(&self, explicit_inventory: Option<&Path>) -> Result<PathBuf, OvenProviderHookError> {
         // The suite publisher copies an already prepared, read-only SDK inventory into the immutable entry. Rebuilding
         // source components here used the ordinary `incan build --lib` helper, which can recurse into generated-Cargo
         // work and turn the hidden Loaf baker into an unbounded second build system. A missing inventory is an
@@ -43,18 +43,19 @@ impl OvenProviderHooks for IncanProviderHooks {
         match explicit_inventory {
             Some(inventory) => SdkInventory::read_from_path(inventory)
                 .map(|inventory| inventory.root)
-                .map_err(|error| {
-                    format!(
-                        "failed to load explicit compiler-suite SDK provider inventory {}: {error}",
-                        inventory.display()
-                    )
+                .map_err(|error| OvenProviderHookError::InventoryUnreadable {
+                    path: inventory.to_path_buf(),
+                    source: Box::new(error),
                 }),
             None => discover_active_sdk_inventory()
-                .map_err(|error| format!("failed to discover active SDK provider inventory: {error}"))?
+                .map_err(|error| OvenProviderHookError::InventoryDiscovery {
+                    source: Box::new(error),
+                })?
                 .map(|inventory| inventory.root.clone())
-                .ok_or_else(|| {
-                    "compiler-suite publication requires a prebuilt compatible SDK provider inventory; set INCAN_SDK_INVENTORY or use an installed Oven toolchain"
-                        .to_string()
+                .ok_or_else(|| OvenProviderHookError::InventoryUnavailable {
+                    guidance: "compiler-suite publication requires a prebuilt compatible SDK provider inventory; set \
+                               INCAN_SDK_INVENTORY or use an installed Oven toolchain"
+                        .to_string(),
                 }),
         }
     }
@@ -63,13 +64,20 @@ impl OvenProviderHooks for IncanProviderHooks {
         SDK_INVENTORY_FILE
     }
 
-    fn refresh_staged_sdk_provider_digests(&self, provider_root: &Path) -> Result<(), String> {
-        refresh_staged_sdk_provider_digests(provider_root).map_err(|error| error.to_string())
+    fn refresh_staged_sdk_provider_digests(&self, provider_root: &Path) -> Result<(), OvenProviderHookError> {
+        refresh_staged_sdk_provider_digests(provider_root).map_err(|error| OvenProviderHookError::DigestRefresh {
+            provider_root: provider_root.to_path_buf(),
+            source: Box::new(error),
+        })
     }
 
-    fn packaged_provider_digest(&self, dependency_root: &Path) -> Option<Result<String, String>> {
-        is_packaged_provider_root(dependency_root)
-            .then(|| digest_provider_artifact(dependency_root).map_err(|error| error.to_string()))
+    fn packaged_provider_digest(&self, dependency_root: &Path) -> Option<Result<String, OvenProviderHookError>> {
+        is_packaged_provider_root(dependency_root).then(|| {
+            digest_provider_artifact(dependency_root).map_err(|error| OvenProviderHookError::PackagedDigest {
+                dependency_root: dependency_root.to_path_buf(),
+                source: Box::new(error),
+            })
+        })
     }
 }
 
