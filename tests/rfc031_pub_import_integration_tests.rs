@@ -7848,7 +7848,7 @@ def main() -> None:
                 "expected provider dependency in generated Cargo.toml, got:\n{cargo_toml}"
             );
             assert!(
-                cargo_toml.contains("incan_stdlib"),
+                cargo_toml.contains("incan_std_core"),
                 "expected stdlib dependency in generated Cargo.toml, got:\n{cargo_toml}"
             );
             assert!(

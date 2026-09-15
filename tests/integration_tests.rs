@@ -8834,9 +8834,9 @@ def main() -> None:
             rust_code
         );
 
-        // Note: This test uses standalone rustc compilation, which can't access incan_stdlib/incan_derive.
+        // Note: This test uses standalone rustc compilation, which can't access the stdlib facets or incan_derive.
         // Skip the compilation check if generated Rust references external Incan crates.
-        if rust_code.contains("incan_stdlib::") || rust_code.contains("incan_derive::") {
+        if rust_code.contains("incan_std_") || rust_code.contains("incan_derive::") {
             // Skip rustc compilation test for code that requires Incan support crates.
             return;
         }

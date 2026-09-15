@@ -4338,7 +4338,7 @@ fn a_rust_interop_boundary_refuses_as_a_missing_host() -> Result<(), Box<dyn std
         (
             "rust-item-import",
             "from rust::incan_std_core::text import normalize\n\ndef main() -> int:\n  return 42\n",
-            "Rust interop item import of crate `incan_stdlib`",
+            "Rust interop item import of crate `incan_std_core`",
         ),
         (
             "python-import",
@@ -4453,7 +4453,7 @@ fn a_rust_interop_refusal_names_the_module_that_crosses_the_boundary() -> Result
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        combined.contains("Rust interop item import of crate `incan_stdlib`"),
+        combined.contains("Rust interop item import of crate `incan_std_core`"),
         "an imported module's interop boundary must be named: {combined}"
     );
     assert!(
