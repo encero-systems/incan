@@ -3,8 +3,14 @@
 //! Project discovery, the compilation session, module collection and typecheck orchestration, Cargo policy for
 //! the compatibility path, the rust-inspect workspace, the build pipeline, the generated project (`backend`), the
 //! inspection analyses (`inspect`), the generated-output cache and the replacement-compatibility corpus live here.
-//! Nothing in this crate parses `clap` arguments or prints; the binaries render what the driver returns, and the LSP
-//! and codegraph consume the same sessions. The provider is `incan_provider`, which this crate consumes as a client.
+//! Nothing in this crate parses `clap` arguments; the binaries render what the driver returns, and the LSP and
+//! codegraph consume the same sessions. The provider is `incan_provider`, which this crate consumes as a client.
+//!
+//! The driver is not yet silent, and an embedder should know where it speaks. Warnings that have no record to ride
+//! home in are still written to stderr where they arise — the ignored `Cargo.toml` beside a `loaf.toml` in
+//! [`project`], typecheck warnings in [`diagnostics`] and [`testing::module_graph`] — and the build pipeline and the
+//! generated-project runner print their progress and the program's output as they go. Moving those onto the returned
+//! records is the remaining half of the boundary; the moves that made this crate did not change any of it.
 
 pub mod backend;
 #[cfg(feature = "cli")]

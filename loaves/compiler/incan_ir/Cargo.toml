@@ -23,7 +23,6 @@ std_decorators = ["incan_frontend/std_decorators"]
 incan_core = { workspace = true }
 incan_frontend = { path = "../incan_frontend", default-features = false }
 incan_semantics_core = { path = "../../kernel/incan_semantics_core" }
-incan_stdlib = { workspace = true }
 incan_syntax = { path = "../../kernel/incan_syntax" }
 incan_vocab = { workspace = true }
 oven_model = { path = "../../oven/oven_model" }
