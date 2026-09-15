@@ -33,8 +33,8 @@ thread_local! {
     static COMPILATION_SESSION_ANALYSIS_INVOCATIONS: Cell<Option<usize>> = const { Cell::new(None) };
 }
 
-/// Discover the active component-aware SDK relative to the selected toolchain or an explicit override.
-/// Discover the installed SDK inventory without publishing source-checkout providers.
+/// Discover the active component-aware SDK relative to the selected toolchain or an explicit override. Discover the
+/// installed SDK inventory without publishing source-checkout providers.
 ///
 /// Oven consumers use this narrow read-only path. A normal command must treat an absent inventory as an explicit
 /// preparation requirement, never as authority to invoke the legacy Cargo publisher.

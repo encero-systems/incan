@@ -1,10 +1,10 @@
 //! Run compiler work on a stack deep enough for realistic source.
 //!
-//! The compiler walks the AST recursively at several stages, so stack depth scales with expression nesting rather
-//! than with file size. A left-leaning chain of binary operators nests once per operand, which means ordinary
-//! generated source -- a long `"a" + "b" + ...` concatenation, a wide boolean guard -- reaches depths a default
-//! 8 MiB main-thread stack cannot hold. Overflowing there aborts the process with `fatal runtime error: stack
-//! overflow` and no diagnostic, because a stack overflow is not a catchable Rust panic.
+//! The compiler walks the AST recursively at several stages, so stack depth scales with expression nesting rather than
+//! with file size. A left-leaning chain of binary operators nests once per operand, which means ordinary generated
+//! source -- a long `"a" + "b" + ...` concatenation, a wide boolean guard -- reaches depths a default 8 MiB main-thread
+//! stack cannot hold. Overflowing there aborts the process with `fatal runtime error: stack overflow` and no
+//! diagnostic, because a stack overflow is not a catchable Rust panic.
 //!
 //! Every production compiler solves this the same way: do the work on a thread with a large stack. `rustc` itself
 //! spawns its main compilation thread for exactly this reason. Sizing the stack for the input is the fix; a
@@ -62,8 +62,8 @@ where
 
 /// Report that a compiler thread could not be spawned.
 ///
-/// Kept separate so the fallback path is explicit: there is no safe way to recover the moved closure once
-/// `spawn` has consumed it, so this aborts with a clear message rather than pretending the build succeeded.
+/// Kept separate so the fallback path is explicit: there is no safe way to recover the moved closure once `spawn` has
+/// consumed it, so this aborts with a clear message rather than pretending the build succeeded.
 fn unreachable_fallback() -> ! {
     eprintln!("incan: could not start the compiler thread; the system refused to create a thread");
     std::process::exit(1)

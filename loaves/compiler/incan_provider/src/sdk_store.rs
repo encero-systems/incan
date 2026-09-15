@@ -276,10 +276,10 @@ pub fn sdk_provider_store_identity(
 /// # The memo changes the cost, never the value
 ///
 /// An environment with nowhere to put the memo recomputes the digest each time and gets the same answer. That is
-/// deliberate rather than an omission: the identity must be a function of the compiler and its standard library
-/// alone. Substituting the cheaper byte hash where no cache exists would make two machines with identical source
-/// publish to two different store paths, which is exactly what
-/// [`sdk_provider_store_identity_for_compiler_root`] exists to prevent.
+/// deliberate rather than an omission: the identity must be a function of the compiler and its standard library alone.
+/// Substituting the cheaper byte hash where no cache exists would make two machines with identical source publish to
+/// two different store paths, which is exactly what [`sdk_provider_store_identity_for_compiler_root`] exists to
+/// prevent.
 fn sdk_provider_effect_digest(checkout_root: &Path) -> ProviderResult<String> {
     let cached_path = match running_compiler_stamp() {
         Some(compiler_stamp) => {
@@ -362,10 +362,10 @@ fn sdk_provider_effect_digest_cache_root() -> Option<PathBuf> {
 
 /// Stamp the compiler executable computing the effect digest: its path, length and modification time.
 ///
-/// This is the same observed-stamp shape the `rustc -vV` probe and the artifact digest memo use. A rebuilt
-/// compiler has a new length or a new mtime, so the stamp moves with it; identical checkouts on two machines
-/// produce different stamps and different memo entries, which costs each machine one digest and never changes
-/// the digest's value. `None` means the executable cannot be observed, and the caller then does not memoize.
+/// This is the same observed-stamp shape the `rustc -vV` probe and the artifact digest memo use. A rebuilt compiler has
+/// a new length or a new mtime, so the stamp moves with it; identical checkouts on two machines produce different
+/// stamps and different memo entries, which costs each machine one digest and never changes the digest's value. `None`
+/// means the executable cannot be observed, and the caller then does not memoize.
 fn running_compiler_stamp() -> Option<String> {
     let executable = env::current_exe().ok()?;
     let metadata = fs::metadata(&executable).ok()?;

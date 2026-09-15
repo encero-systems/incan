@@ -102,10 +102,10 @@ pub enum SdkInventorySource {
 
 /// Build a parser-only dependency manifest index for formatting and other collection-only entrypoints.
 ///
-/// This deliberately does not write `.incnlib` artifacts. A source-derived parser manifest contains vocab
-/// registrations and soft-keyword activations only, because collection parsing needs syntax context but not generated
-/// Rust artifacts, checked exports, Rust ABI metadata, or a packaged desugarer.
-/// Load source dependency manifests without materializing their legacy library artifacts.
+/// This deliberately does not write `.incnlib` artifacts. A source-derived parser manifest contains vocab registrations
+/// and soft-keyword activations only, because collection parsing needs syntax context but not generated Rust artifacts,
+/// checked exports, Rust ABI metadata, or a packaged desugarer. Load source dependency manifests without materializing
+/// their legacy library artifacts.
 ///
 /// This is intentionally available to Oven's lock validator so `--locked` and `--frozen` can retain canonical
 /// freshness semantics without starting Cargo merely to inspect dependency metadata.
