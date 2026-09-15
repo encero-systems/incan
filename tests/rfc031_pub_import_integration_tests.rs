@@ -895,6 +895,7 @@ def main() -> None:
         )?;
 
         let mut command = super::incan_command();
+        support::configure_explicit_oven_bake_command(&mut command)?;
         command
             .args(["oven", "bake", "--project", "."])
             .current_dir(&provider_root)

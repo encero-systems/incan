@@ -4,13 +4,16 @@
 //! `incan_stdlib` as a **dev-dependency** (for parity tests). This test scans those manifests and fails if
 //! `incan_stdlib` appears in `[dependencies]`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+
+mod support;
+use support::repo_root;
 
 use incan_core::lang::stdlib;
 
 /// The root manifest plus every crate manifest in the compiler and kernel rings.
 fn compiler_manifests() -> Vec<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = repo_root();
     let mut manifests = vec![root.join("Cargo.toml")];
     for ring in ["loaves/compiler", "loaves/kernel"] {
         let Ok(entries) = std::fs::read_dir(root.join(ring)) else {
@@ -70,8 +73,9 @@ fn compiler_does_not_depend_on_stdlib_in_main_dependencies() -> Result<(), Box<d
 }
 
 #[test]
-fn std_collections_namespace_declares_its_runtime_feature_without_extra_crates() {
-    let ns = stdlib::find_namespace("collections").expect("std.collections should be registered");
+fn std_collections_namespace_declares_its_runtime_feature_without_extra_crates()
+-> Result<(), Box<dyn std::error::Error>> {
+    let ns = stdlib::find_namespace("collections").ok_or("std.collections should be registered")?;
 
     assert_eq!(
         ns.feature,
@@ -90,12 +94,13 @@ fn std_collections_namespace_declares_its_runtime_feature_without_extra_crates()
         !ns.typechecker_only,
         "std.collections must load through the ordinary stdlib source path"
     );
+    Ok(())
 }
 
 #[test]
 fn std_collections_source_has_no_rust_backed_dispatch_markers_when_present() {
-    let source_path = std::path::Path::new("crates/incan_stdlib/stdlib/collections.incn");
-    let Ok(source) = std::fs::read_to_string(source_path) else {
+    let source_path = repo_root().join("crates/incan_stdlib/stdlib/collections.incn");
+    let Ok(source) = std::fs::read_to_string(&source_path) else {
         // The stdlib-source worker owns this file. This guard starts checking it once their slice is integrated.
         return;
     };
@@ -109,19 +114,19 @@ fn std_collections_source_has_no_rust_backed_dispatch_markers_when_present() {
 }
 
 #[test]
-fn std_encoding_source_stays_incan_authored_without_rust_externs() {
-    let source_root = std::path::Path::new("crates/incan_stdlib/stdlib/encoding");
+fn std_encoding_source_stays_incan_authored_without_rust_externs() -> Result<(), Box<dyn std::error::Error>> {
+    let source_root = repo_root().join("crates/incan_stdlib/stdlib/encoding");
     let Ok(entries) = std::fs::read_dir(source_root) else {
-        return;
+        return Ok(());
     };
 
     for entry in entries {
-        let entry = entry.expect("encoding stdlib directory entries should be readable");
+        let entry = entry?;
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("incn") {
             continue;
         }
-        let source = std::fs::read_to_string(&path).expect("encoding stdlib source should be readable");
+        let source = std::fs::read_to_string(&path)?;
         for forbidden in ["rust.module", "@rust.extern", "from rust::"] {
             assert!(
                 !source.contains(forbidden),
@@ -130,10 +135,11 @@ fn std_encoding_source_stays_incan_authored_without_rust_externs() {
             );
         }
     }
+    Ok(())
 }
 
 #[test]
-fn std_uuid_namespace_stays_source_stdlib_only() {
+fn std_uuid_namespace_stays_source_stdlib_only() -> Result<(), Box<dyn std::error::Error>> {
     let Some(ns) = stdlib::find_namespace("uuid") else {
         panic!("std.uuid should be registered");
     };
@@ -145,8 +151,8 @@ fn std_uuid_namespace_stays_source_stdlib_only() {
         "std.uuid crate dependencies should stay limited to source-visible Rust imports"
     );
 
-    let source_path = std::path::Path::new("crates/incan_stdlib/stdlib/uuid.incn");
-    let source = std::fs::read_to_string(source_path).expect("std.uuid source should exist");
+    let source_path = repo_root().join("crates/incan_stdlib/stdlib/uuid.incn");
+    let source = std::fs::read_to_string(&source_path)?;
     for dep in ns.extra_crate_deps {
         let import_prefix = format!("from rust::{}", dep.crate_name);
         assert!(
@@ -168,12 +174,13 @@ fn std_uuid_namespace_stays_source_stdlib_only() {
         !ns.typechecker_only,
         "std.uuid must load through the ordinary stdlib source path"
     );
+    Ok(())
 }
 
 #[test]
 fn std_uuid_source_has_no_rust_backed_type_markers() {
-    let source_path = std::path::Path::new("crates/incan_stdlib/stdlib/uuid.incn");
-    let Ok(source) = std::fs::read_to_string(source_path) else {
+    let source_path = repo_root().join("crates/incan_stdlib/stdlib/uuid.incn");
+    let Ok(source) = std::fs::read_to_string(&source_path) else {
         panic!("std.uuid source should exist");
     };
 
@@ -186,7 +193,7 @@ fn std_uuid_source_has_no_rust_backed_type_markers() {
 }
 
 #[test]
-fn std_regex_keeps_behavior_in_incan_source() {
+fn std_regex_keeps_behavior_in_incan_source() -> Result<(), Box<dyn std::error::Error>> {
     let source_paths = [
         "crates/incan_stdlib/stdlib/regex/prelude.incn",
         "crates/incan_stdlib/stdlib/regex/_core.incn",
@@ -195,7 +202,7 @@ fn std_regex_keeps_behavior_in_incan_source() {
     ];
     let mut source = String::new();
     for source_path in source_paths {
-        source.push_str(&std::fs::read_to_string(source_path).expect("std.regex source module should exist"));
+        source.push_str(&std::fs::read_to_string(repo_root().join(source_path))?);
         source.push('\n');
     }
     assert!(
@@ -211,9 +218,10 @@ fn std_regex_keeps_behavior_in_incan_source() {
         "std.regex replacement behavior should stay in Incan source"
     );
 
-    let rust_path = std::path::Path::new("crates/incan_stdlib/src/regex.rs");
+    let rust_path = repo_root().join("crates/incan_stdlib/src/regex.rs");
     assert!(
         !rust_path.exists(),
         "std.regex should not keep a Rust runtime-helper module for source-level behavior"
     );
+    Ok(())
 }

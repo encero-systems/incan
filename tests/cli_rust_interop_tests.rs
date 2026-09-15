@@ -4,7 +4,6 @@
 //! `tests/support/cli_project.rs`.
 
 use std::fs;
-use std::path::Path;
 
 mod support;
 
