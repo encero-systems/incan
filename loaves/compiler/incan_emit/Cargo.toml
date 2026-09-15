@@ -26,7 +26,6 @@ incan_core = { workspace = true }
 incan_frontend = { workspace = true }
 incan_ir = { workspace = true }
 incan_semantics_core = { workspace = true }
-incan_stdlib = { workspace = true }
 incan_syntax = { workspace = true }
 incan_vocab = { workspace = true }
 oven_model = { workspace = true }
@@ -45,5 +44,8 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 incan_frontend = { workspace = true, features = ["test_support"] }
+# The runtime crate the emitted code links; the emitter only names it in generated tokens, and links it for the
+# parity tests alone, so the compiler ring never depends on the runtime it generates for.
+incan_stdlib = { workspace = true }
 rust_inspect = { workspace = true, features = ["test_fixtures"] }
 tempfile = "3"

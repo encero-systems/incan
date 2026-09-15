@@ -23,7 +23,6 @@ std_decorators = ["incan_frontend/std_decorators"]
 incan_core = { workspace = true }
 incan_frontend = { workspace = true }
 incan_semantics_core = { workspace = true }
-incan_stdlib = { workspace = true }
 incan_syntax = { workspace = true }
 incan_vocab = { workspace = true }
 oven_model = { workspace = true }

@@ -27,7 +27,6 @@ incan_vocab = { workspace = true }
 incan_syntax = { workspace = true }
 incan_semantics_core = { workspace = true }
 incan_semantics_stdlib = { workspace = true, optional = true }
-incan_stdlib = { workspace = true }
 incan_format = { workspace = true }
 oven_model = { workspace = true }
 rust_inspect = { workspace = true }

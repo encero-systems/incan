@@ -151,7 +151,7 @@ jobs:
       # These source-free checks run independently of SDK publication so its consumers never wait for test linking.
       - name: Compile and run SDK transport and CI contract regressions
         run: |
-          CARGO_BUILD_JOBS=2 cargo test --locked --all-features --lib sdk_build_reports_
+          CARGO_BUILD_JOBS=2 cargo test --locked --all-features -p incan_provider --lib sdk_build_reports_
           CARGO_BUILD_JOBS=2 cargo test --locked --all-features --test toolchain_installer_tests compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence -- --exact
       - name: Show sccache stats
         if: always()
