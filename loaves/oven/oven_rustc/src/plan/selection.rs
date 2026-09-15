@@ -377,9 +377,9 @@ pub fn project_test_dependency_plan_from_constituent(
 
 /// Select an imported public-provider Loaf as the consumer's complete Rust ABI foundation.
 ///
-/// A provider such as IncQL was compiled against its own sealed `incan_stdlib`, DataFusion, and transitive Rust
-/// artifacts. Attaching only its top-level rlib to an unrelated consumer plan would permit Rust to discover two ABI
-/// closures. This selector instead lets the consumer compile against the exact package closures after the explicit
+/// A provider such as IncQL was compiled against its own sealed standard library facets, DataFusion, and transitive
+/// Rust artifacts. Attaching only its top-level rlib to an unrelated consumer plan would permit Rust to discover two
+/// ABI closures. This selector instead lets the consumer compile against the exact package closures after the explicit
 /// consumer bake imported them into the consumer's bounded store. It is deliberately a closure compositor rather
 /// than a first-provider shortcut: independent packages may contribute one ABI-compatible collection of Loafs.
 /// Already selected package inputs shared by requirement inspection and normal composition.

@@ -1135,11 +1135,9 @@ fn compiler_suite_staged_runtime_inputs(
         "sdk-provider-codegen-revision".to_string(),
         compiler.sdk_provider_codegen_revision.to_string(),
     );
-    for (input_name, crate_name) in [
-        ("runtime-source-incan-core", "incan_core"),
-        ("runtime-source-incan-derive", "incan_derive"),
-        ("runtime-source-incan-stdlib", "incan_stdlib"),
-    ] {
+    // One receipt input per compiler-owned runtime crate, so a change to any facet's source re-keys the suite.
+    for crate_name in oven_model::toolchain_layout::SDK_RUNTIME_CRATES {
+        let input_name = format!("runtime-source-{}", crate_name.replace('_', "-"));
         let source_root = runtime_root.join("crates").join(crate_name);
         let digest = crate::loaf::digest_runtime_crate_source(&source_root).map_err(|message| {
             OvenLegacyCargoError::InvalidInput {
@@ -1147,7 +1145,7 @@ fn compiler_suite_staged_runtime_inputs(
                 message,
             }
         })?;
-        inputs.insert(input_name.to_string(), digest);
+        inputs.insert(input_name, digest);
     }
     let lock_bytes = regular_file_bytes(&runtime_lock)?;
     inputs.insert("runtime-lock".to_string(), digest_bytes(&lock_bytes));
@@ -1296,7 +1294,7 @@ pub struct OvenCompilerTestSuitePayload {
     /// Complete direct-rustc closure used by compiler tests that validate generated Rust without Cargo.
     ///
     /// Schemas through 11 retain this closure from a small publisher Cargo target. Schema 12 deliberately leaves it
-    /// empty: the executor rebuilds the receipt-authorized `incan_stdlib` workspace library from an indexed shard,
+    /// empty: the executor rebuilds the receipt-authorized standard library facets from an indexed shard,
     /// avoiding a second concurrently retained Cargo target.
     pub warning_check_artifacts: OvenRustcArtifactManifest,
 }
@@ -2319,7 +2317,7 @@ pub fn prepare_compiler_test_suite(
     reclaim_unmaterialized_compiler_suite_target_files(&cli_unit_graph_target, &[])?;
     enforce_compiler_suite_prepared_staging_capacity(&staging, prepared_related_limit)?;
     // Schema 12 no longer launches a second Cargo build for `generated_rust_warning_clean`.  The scheduler derives
-    // its `incan_stdlib` Rustc plan from a selected shard's already-receipted workspace-library DAG and the sealed
+    // its facet Rustc plans from a selected shard's already-receipted workspace-library DAG and the sealed
     // foundations below.  This keeps one publisher staging root physically bounded instead of holding a second
     // mostly-duplicate Cargo target beside the third-party foundation.
     let warning_check_artifacts = OvenRustcArtifactManifest {
@@ -4802,15 +4800,15 @@ mod tests {
         let mut changed = original.clone();
         changed.source_digest.push_str("-changed");
         assert_ne!(provider_compilation_requirements_digest(&[changed])?, digest);
-        let consumer = BTreeMap::from([("incan_stdlib".to_string(), "incan_stdlib".to_string())]);
+        let consumer = BTreeMap::from([("incan_std_core".to_string(), "incan_std_core".to_string())]);
         let mut selected = consumer.clone();
         selected.insert("incan_derive".to_string(), "incan_derive".to_string());
         let projections =
             provider_compilation_externs(std::slice::from_ref(&original), &consumer, &selected, "generated-root")?;
-        assert_eq!(projections["generated-root"], ["incan_stdlib"]);
+        assert_eq!(projections["generated-root"], ["incan_std_core"]);
         assert_eq!(
             projections[OVEN_PROVIDER_COMPILATION_KEY],
-            ["incan_derive", "incan_stdlib"]
+            ["incan_derive", "incan_std_core"]
         );
         assert!(
             provider_compilation_externs(std::slice::from_ref(&original), &consumer, &consumer, "generated-root")
@@ -5773,7 +5771,11 @@ mod tests {
 
     /// The stdlib ring's version line as the checkout declares it, so the assertion below follows a bump.
     fn incan_stdlib_version_line() -> Result<String, Box<dyn std::error::Error>> {
-        let manifest = oven_model::toolchain_layout::development_root().join("crates/incan_stdlib/Cargo.toml");
+        let manifest = oven_model::toolchain_layout::development_root()
+            .join(oven_model::toolchain_layout::development_support_crate_dir(
+                "incan_std_core",
+            ))
+            .join("Cargo.toml");
         let text = fs::read_to_string(&manifest)?;
         text.lines()
             .find_map(|line| {
@@ -5797,7 +5799,7 @@ mod tests {
         )?;
         fs::write(
             component.join("Cargo.toml"),
-            "[package]\nname = \"fixture_provider\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies.incan_derive]\npath = \"../../../../outside/incan_derive\"\n\n[dependencies.incan_stdlib]\npath = \"../../../../outside/incan_stdlib\"\n",
+            "[package]\nname = \"fixture_provider\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies.incan_derive]\npath = \"../../../../outside/incan_derive\"\n\n[dependencies.incan_std_core]\npath = \"../../../../outside/incan_std_core\"\n",
         )?;
         let inherited_lock = inherited_runtime.join("Cargo.lock");
         fs::write(&inherited_lock, "stale sealed runtime lock\n")?;
@@ -5815,7 +5817,7 @@ mod tests {
         let manifest = fs::read_to_string(staged.join("components/stdlib-core/Cargo.toml"))?;
 
         assert!(manifest.contains("path = \"../../runtime/crates/incan_derive\""));
-        assert!(manifest.contains("path = \"../../runtime/crates/incan_stdlib\""));
+        assert!(manifest.contains("path = \"../../runtime/crates/incan_std_core\""));
         assert!(staged.join("runtime/Cargo.toml").is_file());
         assert!(staged.join("runtime/Cargo.lock").is_file());
         assert_ne!(
@@ -5828,7 +5830,7 @@ mod tests {
             .and_then(|workspace| workspace.get("dependencies"))
             .and_then(toml::Value::as_table)
             .ok_or("staged runtime workspace has no [workspace.dependencies] table")?;
-        for crate_name in ["incan_core", "incan_derive", "incan_stdlib", "incan_web_macros"] {
+        for crate_name in oven_model::toolchain_layout::SDK_RUNTIME_CRATES {
             assert_eq!(
                 runtime_dependencies
                     .get(crate_name)
@@ -5840,7 +5842,7 @@ mod tests {
         }
         assert_eq!(
             runtime_dependencies
-                .get("incan_stdlib")
+                .get("incan_std_core")
                 .and_then(|dependency| dependency.get("version"))
                 .and_then(toml::Value::as_str),
             Some(incan_stdlib_version_line()?.as_str()),
@@ -5857,14 +5859,22 @@ mod tests {
         assert!(!staged.join("runtime/obsolete-runtime-file").exists());
         assert!(staged.join("runtime/crates/incan_core/src/lib.rs").is_file());
         assert!(staged.join("runtime/crates/incan_derive/src/lib.rs").is_file());
-        assert!(staged.join("runtime/crates/incan_stdlib/src/lib.rs").is_file());
+        for facet in [
+            "incan_std_core",
+            "incan_std_data",
+            "incan_std_async",
+            "incan_std_web",
+            "incan_std_testing",
+        ] {
+            assert!(staged.join(format!("runtime/crates/{facet}/src/lib.rs")).is_file());
+        }
         assert!(staged.join("runtime/crates/incan_web_macros/src/lib.rs").is_file());
 
         let files = materialized_files_from_directory(&staged, "providers", "SDK provider inventory")?;
         assert!(
             files
                 .iter()
-                .any(|file| file.relative_path == "providers/runtime/crates/incan_stdlib/src/lib.rs")
+                .any(|file| file.relative_path == "providers/runtime/crates/incan_std_core/src/lib.rs")
         );
         Ok(())
     }
@@ -5904,7 +5914,7 @@ mod tests {
         fs::write(generated.path().join("src/main.rs"), "fn main() {}\n")?;
         let declared: BTreeMap<_, _> = [
             ("byteorder".to_string(), "byteorder".to_string()),
-            ("incan_stdlib".to_string(), "incan_stdlib".to_string()),
+            ("incan_std_core".to_string(), "incan_std_core".to_string()),
         ]
         .into_iter()
         .collect();
@@ -7688,8 +7698,8 @@ version = "1.0.0"
             dependency_search_paths: vec!["deps".to_string()],
             native_search_paths: Vec::new(),
             externs: vec![OvenRustcArtifactExtern {
-                crate_name: "incan_stdlib".to_string(),
-                relative_path: "deps/libincan_stdlib-release.rlib".to_string(),
+                crate_name: "incan_std_core".to_string(),
+                relative_path: "deps/libincan_std_core-release.rlib".to_string(),
                 digest: digest_bytes(b"release stdlib"),
             }],
             entrypoint_dependency_search_paths: Default::default(),
@@ -7703,8 +7713,8 @@ version = "1.0.0"
         let mut publisher_plan = base_plan.clone();
         publisher_plan.externs = vec![
             OvenRustcArtifactExtern {
-                crate_name: "incan_stdlib".to_string(),
-                relative_path: "deps/libincan_stdlib-project.rlib".to_string(),
+                crate_name: "incan_std_core".to_string(),
+                relative_path: "deps/libincan_std_core-project.rlib".to_string(),
                 digest: digest_bytes(b"project stdlib"),
             },
             OvenRustcArtifactExtern {

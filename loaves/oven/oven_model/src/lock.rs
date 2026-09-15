@@ -1546,7 +1546,7 @@ mod tests {
             .push("json-serde".to_string());
         provider_changed.providers[0]
             .backend_requirements
-            .insert("cargo-feature:incan_stdlib/serde".to_string());
+            .insert("cargo-feature:serde/derive".to_string());
 
         assert_ne!(
             baseline_fingerprint,

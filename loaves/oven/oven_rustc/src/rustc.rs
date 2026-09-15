@@ -1885,7 +1885,7 @@ fn normalized_package_name(name: &str) -> String {
     name.replace('-', "_")
 }
 
-/// Recover the crate name from a Rust library filename such as `libincan_stdlib-9c218ea857854fce.rlib`.
+/// Recover the crate name from a Rust library filename such as `libincan_std_core-9c218ea857854fce.rlib`.
 ///
 /// Returns `None` for anything that is not a `lib<name>-<hash>.{rlib,rmeta}`, so a source file, a native archive, or
 /// an unhashed artifact never looks like an explicitly externed crate.
@@ -4773,7 +4773,7 @@ fn validate_inactive_path_dependency_features(
 /// scheduler-owned immutable root and use a crate name that the selected plan already exposes. The artifact and
 /// metadata search paths then come from that plan, rather than from the dependency's Cargo manifest or an ambient
 /// Cargo target directory. This permits a caller-owned library to link a compiler-runtime dependency such as
-/// `incan_stdlib` without re-materializing that runtime crate or interpreting its Cargo feature table.
+/// `incan_std_core` without re-materializing that runtime crate or interpreting its Cargo feature table.
 #[derive(Debug, Clone)]
 pub struct OvenSelectedPathRustcAuthority {
     owned_roots: Vec<PathBuf>,
@@ -5951,7 +5951,7 @@ fi
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = tempfile::tempdir()?;
         let runtime_root = workspace.path().join("leased-runtime");
-        let runtime = runtime_root.join("incan_stdlib");
+        let runtime = runtime_root.join("incan_std_core");
         let wrapper = workspace.path().join("caller-wrapper");
         let sealed_dependencies = workspace.path().join("selected-plan/deps");
         fs::create_dir_all(runtime.join("src"))?;
@@ -5959,12 +5959,12 @@ fi
         fs::create_dir_all(&sealed_dependencies)?;
         fs::write(
             runtime.join("Cargo.toml"),
-            "[package]\nname = \"incan_stdlib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[features]\nfull = []\n",
+            "[package]\nname = \"incan_std_core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[features]\nfull = []\n",
         )?;
         fs::write(runtime.join("src/lib.rs"), "pub fn value() -> i64 { 41 }\n")?;
         fs::write(
             wrapper.join("Cargo.toml"),
-            "[package]\nname = \"caller_wrapper\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_stdlib = { path = \"../leased-runtime/incan_stdlib\" }\n",
+            "[package]\nname = \"caller_wrapper\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_std_core = { path = \"../leased-runtime/incan_std_core\" }\n",
         )?;
         fs::write(
             wrapper.join("src/lib.rs"),
@@ -5972,9 +5972,9 @@ fi
         )?;
         let rustc = rustc_path()?;
         let target = rustc_host_target(&rustc)?;
-        let selected_runtime = sealed_dependencies.join("libincan_stdlib.rlib");
+        let selected_runtime = sealed_dependencies.join("libincan_std_core.rlib");
         let runtime_status = Command::new(&rustc)
-            .args(["--crate-type", "lib", "--crate-name", "incan_stdlib"])
+            .args(["--crate-type", "lib", "--crate-name", "incan_std_core"])
             .arg("--target")
             .arg(&target)
             .arg("--edition=2021")
@@ -5987,7 +5987,7 @@ fi
             source_path_projection: None,
             dependency_search_paths: vec![sealed_dependencies.clone()],
             native_search_paths: Vec::new(),
-            externs: vec![("incan_stdlib".to_string(), selected_runtime.clone())],
+            externs: vec![("incan_std_core".to_string(), selected_runtime.clone())],
             compile_environment: BTreeMap::new(),
             caller_owned_library_digests: BTreeMap::new(),
         };
@@ -6029,7 +6029,7 @@ fi
             .arg("--extern")
             .arg(format!("caller_wrapper={}", wrapper_output.display()))
             .arg("--extern")
-            .arg(format!("incan_stdlib={}", selected_runtime.display()))
+            .arg(format!("incan_std_core={}", selected_runtime.display()))
             .arg(&consumer_source)
             .arg("-o")
             .arg(&consumer_output)
@@ -7265,8 +7265,8 @@ fi
             native_search_paths: Vec::new(),
             externs: vec![
                 OvenRustcArtifactExtern {
-                    crate_name: "incan_stdlib".to_string(),
-                    relative_path: "target/debug/deps/libincan_stdlib-project.rlib".to_string(),
+                    crate_name: "incan_std_core".to_string(),
+                    relative_path: "target/debug/deps/libincan_std_core-project.rlib".to_string(),
                     digest: "sha256:project-stdlib".to_string(),
                 },
                 engine_extern.clone(),
@@ -7299,8 +7299,8 @@ fi
             dependency_search_paths: vec!["target/debug/deps".to_string()],
             native_search_paths: Vec::new(),
             externs: vec![OvenRustcArtifactExtern {
-                crate_name: "incan_stdlib".to_string(),
-                relative_path: "target/debug/deps/libincan_stdlib-release.rlib".to_string(),
+                crate_name: "incan_std_core".to_string(),
+                relative_path: "target/debug/deps/libincan_std_core-release.rlib".to_string(),
                 digest: "sha256:release-stdlib".to_string(),
             }],
             entrypoint_dependency_search_paths: Default::default(),
@@ -7332,12 +7332,12 @@ fi
         let runtime = composed
             .externs
             .iter()
-            .find(|artifact| artifact.crate_name == "incan_stdlib")
+            .find(|artifact| artifact.crate_name == "incan_std_core")
             .ok_or("composed plan lost the runtime extern")?;
         assert_eq!(
             (runtime.relative_path.as_str(), runtime.digest.as_str()),
             (
-                "target/debug/deps/libincan_stdlib-project.rlib",
+                "target/debug/deps/libincan_std_core-project.rlib",
                 "sha256:project-stdlib"
             ),
             "the conservative regime links the extension's runtime, not the base's"
@@ -7452,13 +7452,13 @@ fi
         let root = tempfile::tempdir()?;
         let receipt = intent(root.path())?;
         let project_runtime = OvenRustcArtifactExtern {
-            crate_name: "incan_stdlib".to_string(),
-            relative_path: "target/debug/deps/libincan_stdlib-project.rlib".to_string(),
+            crate_name: "incan_std_core".to_string(),
+            relative_path: "target/debug/deps/libincan_std_core-project.rlib".to_string(),
             digest: "sha256:project-stdlib".to_string(),
         };
         let base_runtime = OvenRustcArtifactExtern {
-            crate_name: "incan_stdlib".to_string(),
-            relative_path: "target/debug/deps/libincan_stdlib-base.rlib".to_string(),
+            crate_name: "incan_std_core".to_string(),
+            relative_path: "target/debug/deps/libincan_std_core-base.rlib".to_string(),
             digest: "sha256:base-stdlib".to_string(),
         };
         let mut project = OvenRustcArtifactManifest {
@@ -7479,7 +7479,7 @@ fi
         let captured = project.capture_source_search_closure(&project.dependency_search_paths)?;
         project
             .entrypoint_externs
-            .insert("generated-root".to_string(), vec!["incan_stdlib".to_string()]);
+            .insert("generated-root".to_string(), vec!["incan_std_core".to_string()]);
         project
             .entrypoint_dependency_search_paths
             .insert("generated-root".to_string(), captured);
@@ -7489,7 +7489,7 @@ fi
         let mut base = OvenRustcArtifactManifest {
             externs: vec![base_runtime.clone()],
             supporting_artifacts: vec![OvenRustcSupportingArtifact {
-                relative_path: "target/debug/deps/libincan_stdlib-base.rmeta".to_string(),
+                relative_path: "target/debug/deps/libincan_std_core-base.rmeta".to_string(),
                 digest: "sha256:base-stdlib-meta".to_string(),
             }],
             entrypoint_dependency_search_paths: Default::default(),
@@ -7498,7 +7498,7 @@ fi
         };
         let base_captured = base.capture_source_search_closure(&base.dependency_search_paths)?;
         base.entrypoint_externs
-            .insert("generated-root".to_string(), vec!["incan_stdlib".to_string()]);
+            .insert("generated-root".to_string(), vec!["incan_std_core".to_string()]);
         base.entrypoint_dependency_search_paths
             .insert("generated-root".to_string(), base_captured);
 
@@ -7607,8 +7607,8 @@ fi
             native_search_paths: Vec::new(),
             externs: vec![
                 OvenRustcArtifactExtern {
-                    crate_name: "incan_stdlib".to_string(),
-                    relative_path: "target/debug/deps/libincan_stdlib-project.rlib".to_string(),
+                    crate_name: "incan_std_core".to_string(),
+                    relative_path: "target/debug/deps/libincan_std_core-project.rlib".to_string(),
                     digest: "sha256:project-stdlib".to_string(),
                 },
                 engine_extern.clone(),
@@ -7643,8 +7643,8 @@ fi
             dependency_search_paths: vec!["target/debug/deps".to_string()],
             native_search_paths: Vec::new(),
             externs: vec![OvenRustcArtifactExtern {
-                crate_name: "incan_stdlib".to_string(),
-                relative_path: "target/debug/deps/libincan_stdlib-release.rlib".to_string(),
+                crate_name: "incan_std_core".to_string(),
+                relative_path: "target/debug/deps/libincan_std_core-release.rlib".to_string(),
                 digest: "sha256:release-stdlib".to_string(),
             }],
             entrypoint_dependency_search_paths: Default::default(),
@@ -7746,8 +7746,8 @@ fi
             native_search_paths: Vec::new(),
             externs: vec![
                 OvenRustcArtifactExtern {
-                    crate_name: "incan_stdlib".to_string(),
-                    relative_path: "deps/libincan_stdlib-project.rlib".to_string(),
+                    crate_name: "incan_std_core".to_string(),
+                    relative_path: "deps/libincan_std_core-project.rlib".to_string(),
                     digest: "sha256:project-runtime".to_string(),
                 },
                 OvenRustcArtifactExtern {
@@ -7792,8 +7792,8 @@ fi
             dependency_search_paths: vec!["deps".to_string()],
             native_search_paths: Vec::new(),
             externs: vec![OvenRustcArtifactExtern {
-                crate_name: "incan_stdlib".to_string(),
-                relative_path: "deps/libincan_stdlib-release.rlib".to_string(),
+                crate_name: "incan_std_core".to_string(),
+                relative_path: "deps/libincan_std_core-release.rlib".to_string(),
                 digest: "sha256:release-runtime".to_string(),
             }],
             entrypoint_dependency_search_paths: Default::default(),
@@ -7847,12 +7847,12 @@ fi
             BTreeSet::from([
                 "incan_core".to_string(),
                 "incan_derive".to_string(),
-                "incan_stdlib".to_string(),
+                "incan_std_core".to_string(),
                 "incan_stdlib_system".to_string(),
             ])
         );
         let composed = project.with_release_cohort_from_base(&base, &BTreeSet::new())?;
-        assert_eq!(composed.externs[0].relative_path, "deps/libincan_stdlib-release.rlib");
+        assert_eq!(composed.externs[0].relative_path, "deps/libincan_std_core-release.rlib");
         assert_eq!(composed.externs[1], project.externs[1]);
         assert_eq!(composed.externs[2], project.externs[2]);
         assert_eq!(composed.vocab_auxiliary_targets, base.vocab_auxiliary_targets);
@@ -7902,7 +7902,7 @@ fi
                 "deps/libbase_runtime_dependency.rlib".to_string(),
                 "deps/libincan_core-release.rlib".to_string(),
                 "deps/libincan_derive-release.dylib".to_string(),
-                "deps/libincan_stdlib-release.rlib".to_string(),
+                "deps/libincan_std_core-release.rlib".to_string(),
                 "deps/libincan_stdlib_system-release.rlib".to_string(),
                 "registry-sources/shared/Cargo.toml".to_string(),
                 "vocab/deps/libincan_vocab-release.rlib".to_string(),
@@ -7970,8 +7970,8 @@ fi
             native_search_paths: Vec::new(),
             externs: vec![
                 OvenRustcArtifactExtern {
-                    crate_name: "incan_stdlib".to_string(),
-                    relative_path: "deps/libincan_stdlib-project.rlib".to_string(),
+                    crate_name: "incan_std_core".to_string(),
+                    relative_path: "deps/libincan_std_core-project.rlib".to_string(),
                     digest: "sha256:project-stdlib".to_string(),
                 },
                 project_serde.clone(),
@@ -8005,8 +8005,8 @@ fi
             native_search_paths: Vec::new(),
             externs: vec![
                 OvenRustcArtifactExtern {
-                    crate_name: "incan_stdlib".to_string(),
-                    relative_path: "deps/libincan_stdlib-release.rlib".to_string(),
+                    crate_name: "incan_std_core".to_string(),
+                    relative_path: "deps/libincan_std_core-release.rlib".to_string(),
                     digest: "sha256:release-stdlib".to_string(),
                 },
                 release_serde.clone(),
@@ -8164,8 +8164,8 @@ fi
             native_search_paths: Vec::new(),
             externs: vec![
                 OvenRustcArtifactExtern {
-                    crate_name: "incan_stdlib".to_string(),
-                    relative_path: "deps/libincan_stdlib-project.rlib".to_string(),
+                    crate_name: "incan_std_core".to_string(),
+                    relative_path: "deps/libincan_std_core-project.rlib".to_string(),
                     digest: "sha256:project-stdlib".to_string(),
                 },
                 project_libc.clone(),
@@ -8188,8 +8188,8 @@ fi
             native_search_paths: Vec::new(),
             externs: vec![
                 OvenRustcArtifactExtern {
-                    crate_name: "incan_stdlib".to_string(),
-                    relative_path: "deps/libincan_stdlib-release.rlib".to_string(),
+                    crate_name: "incan_std_core".to_string(),
+                    relative_path: "deps/libincan_std_core-release.rlib".to_string(),
                     digest: "sha256:release-stdlib".to_string(),
                 },
                 release_libc.clone(),
@@ -8235,8 +8235,8 @@ fi
         let mut publisher = empty_manifest(&receipt);
         publisher.dependency_search_paths = vec!["deps".to_string()];
         publisher.externs = vec![OvenRustcArtifactExtern {
-            crate_name: "incan_stdlib".to_string(),
-            relative_path: "deps/libincan_stdlib-project.rlib".to_string(),
+            crate_name: "incan_std_core".to_string(),
+            relative_path: "deps/libincan_std_core-project.rlib".to_string(),
             digest: "sha256:project-stdlib".to_string(),
         }];
         publisher.registry_sources = vec![registry_source];
@@ -8247,8 +8247,8 @@ fi
         let mut base = empty_manifest(&receipt);
         base.dependency_search_paths = vec!["deps".to_string()];
         base.externs = vec![OvenRustcArtifactExtern {
-            crate_name: "incan_stdlib".to_string(),
-            relative_path: "deps/libincan_stdlib-release.rlib".to_string(),
+            crate_name: "incan_std_core".to_string(),
+            relative_path: "deps/libincan_std_core-release.rlib".to_string(),
             digest: "sha256:release-stdlib".to_string(),
         }];
         let complete = publisher.with_release_cohort_from_base(&base, &BTreeSet::new())?;
@@ -10439,12 +10439,12 @@ fi
         base.schema_version = super::OVEN_RUSTC_LEGACY_ARTIFACT_MANIFEST_SCHEMA_VERSION;
         base.dependency_search_paths = vec!["deps".to_string()];
         base.externs.push(OvenRustcArtifactExtern {
-            crate_name: "incan_stdlib".to_string(),
-            relative_path: "deps/libincan_stdlib-verified.rlib".to_string(),
+            crate_name: "incan_std_core".to_string(),
+            relative_path: "deps/libincan_std_core-verified.rlib".to_string(),
             digest: digest_bytes(b"runtime"),
         });
         base.entrypoint_externs
-            .insert("generated-root".to_string(), vec!["incan_stdlib".to_string()]);
+            .insert("generated-root".to_string(), vec!["incan_std_core".to_string()]);
         let mut current = base.clone();
         current.schema_version = OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION;
         current.entrypoint_dependency_search_paths.insert(
@@ -10454,7 +10454,7 @@ fi
         let original_base = base.clone();
         let compiled = tempfile::tempdir()?;
         fs::create_dir(compiled.path().join("deps"))?;
-        let runtime_path = compiled.path().join("deps/libincan_stdlib-verified.rlib");
+        let runtime_path = compiled.path().join("deps/libincan_std_core-verified.rlib");
         fs::write(&runtime_path, b"runtime")?;
         let before = fs::read(&runtime_path)?;
         let composed = current.with_release_cohort_from_base(&base, &BTreeSet::new())?;

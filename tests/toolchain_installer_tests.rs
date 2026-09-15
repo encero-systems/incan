@@ -889,7 +889,9 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
     for facet in incan_core::lang::stdlib::facets::ALL {
         assert!(listing.contains(&format!("crates/{facet}/Cargo.toml")));
         assert!(
-            !listing.lines().any(|path| path.starts_with(&format!("./stdlib/{}/rust/", &facet["incan_std_".len()..]))),
+            !listing
+                .lines()
+                .any(|path| path.starts_with(&format!("./stdlib/{}/rust/", &facet["incan_std_".len()..]))),
             "a facet ships as a support crate, not inside the stdlib source bundle:\n{listing}"
         );
     }

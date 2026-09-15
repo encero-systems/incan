@@ -45,23 +45,23 @@ impl OvenRustcArtifactManifest {
             .externs
             .iter()
             .enumerate()
-            .filter_map(|(index, artifact)| (artifact.crate_name == "incan_stdlib").then_some(index))
+            .filter_map(|(index, artifact)| (artifact.crate_name == "incan_std_core").then_some(index))
             .collect::<Vec<_>>();
         let [project_runtime_index] = project_runtime_indexes.as_slice() else {
             return Err(OvenRustcError::InvalidInput {
                 field: "project extension runtime",
-                message: "must declare exactly one `incan_stdlib` root extern".to_string(),
+                message: "must declare exactly one `incan_std_core` root extern".to_string(),
             });
         };
         let base_runtimes = base
             .externs
             .iter()
-            .filter(|artifact| artifact.crate_name == "incan_stdlib")
+            .filter(|artifact| artifact.crate_name == "incan_std_core")
             .collect::<Vec<_>>();
         let [base_runtime] = base_runtimes.as_slice() else {
             return Err(OvenRustcError::InvalidInput {
                 field: "project extension base",
-                message: "must declare exactly one `incan_stdlib` root extern".to_string(),
+                message: "must declare exactly one `incan_std_core` root extern".to_string(),
             });
         };
         let mut composed = self.clone();
@@ -493,7 +493,7 @@ impl OvenRustcArtifactManifest {
             };
             closure.merge(&base.source_search_closure(base_key)?);
         }
-        // The base's own `incan_stdlib` root is the one release artifact the loop above deliberately skips: the
+        // The base's own `incan_std_core` root is the one release artifact the loop above deliberately skips: the
         // extension links its own runtime instead. A closure merged from the base still carries it as a member of
         // the search directory, and a member the composed manifest never declares is exactly what
         // `validate_source_search_roles` refuses. Drop that stale claim -- and only when it really is stale, since

@@ -1021,13 +1021,21 @@ mod tests {
 
     #[test]
     fn loaf_enables_the_complete_stdlib_runtime_envelope() {
-        let mut seeded = vec!["json".to_string()];
+        let mut seeded = vec!["incan_std_data".to_string()];
         ensure_loaf_stdlib_facets(&mut seeded, true);
-        assert_eq!(seeded, ["async", "json", "ordinal", "web"]);
+        assert_eq!(
+            seeded,
+            [
+                "incan_std_async",
+                "incan_std_data",
+                "incan_std_testing",
+                "incan_std_web"
+            ]
+        );
 
-        let mut ordinary = vec!["json".to_string()];
+        let mut ordinary = vec!["incan_std_data".to_string()];
         ensure_loaf_stdlib_facets(&mut ordinary, false);
-        assert_eq!(ordinary, ["json"]);
+        assert_eq!(ordinary, ["incan_std_data"]);
     }
 
     #[test]

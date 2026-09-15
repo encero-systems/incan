@@ -555,7 +555,7 @@ pub(crate) mod tests {
 
     /// Return the real Rust source compiled for one fixture crate.
     ///
-    /// The call chain is the proof. `incan_core` calls into the sealed prebuilt crate and `incan_stdlib` calls into
+    /// The call chain is the proof. `incan_core` calls into the sealed prebuilt crate and `incan_std_core` calls into
     /// `incan_core`, so neither compiles unless the executor passed the right `--extern` for both an SDK-owned
     /// artifact and an output it produced itself earlier in the declared order.
     fn fixture_source(crate_name: &str) -> String {
@@ -648,7 +648,7 @@ pub(crate) mod tests {
         toolchain_root: &Path,
     ) -> Result<String, Box<dyn std::error::Error>> {
         write_fixture_file(toolchain_root, "target-spec.json", b"{}")?;
-        for crate_name in ["incan_core", "incan_stdlib"] {
+        for crate_name in ["incan_core", "incan_std_core"] {
             write_fixture_file(
                 toolchain_root,
                 &format!("compiler/{crate_name}/src/lib.rs"),
@@ -738,11 +738,11 @@ pub(crate) mod tests {
         )?;
         let stdlib = library_unit(
             &selection,
-            "incan_stdlib",
+            "incan_std_core",
             package_version,
             OvenSelectedRustFacetSourceKind::Compiler,
             &toolchain_owner(),
-            "compiler/incan_stdlib",
+            "compiler/incan_std_core",
             vec![OvenSelectedRustFacetDependency {
                 alias: "incan_core".to_string(),
                 unit: core.identity.clone(),
@@ -829,7 +829,7 @@ pub(crate) mod tests {
                     },
                 ],
                 units: vec![dep, core, stdlib.clone()],
-                exposed_roots: BTreeMap::from([("incan_stdlib".to_string(), stdlib.identity)]),
+                exposed_roots: BTreeMap::from([("incan_std_core".to_string(), stdlib.identity)]),
             },
             units,
         })
@@ -885,7 +885,7 @@ pub(crate) mod tests {
     /// Real `rustc` compiles the compiler-owned layer in declared order above a sealed prebuilt edge, and a second
     /// execution reproduces it byte for byte.
     #[test]
-    fn host_native_rebuild_compiles_incan_core_then_incan_stdlib() -> Result<(), Box<dyn std::error::Error>> {
+    fn host_native_rebuild_compiles_incan_core_then_incan_std_core() -> Result<(), Box<dyn std::error::Error>> {
         let fixture = fixture()?;
         let output_root = tempfile::tempdir()?;
         let closure = OvenRuntimeCompilerClosure::new(&fixture.rustc, FIXTURE_CLOSURE);
@@ -907,7 +907,7 @@ pub(crate) mod tests {
             .iter()
             .map(|output| output.crate_name.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(produced, vec!["incan_core", "incan_stdlib"]);
+        assert_eq!(produced, vec!["incan_core", "incan_std_core"]);
         for output in build.outputs() {
             assert!(output.artifact.is_file(), "{} produced no rlib", output.crate_name);
             assert!(output.digest.starts_with("sha256:"));
@@ -925,8 +925,8 @@ pub(crate) mod tests {
         let stdlib = build
             .outputs()
             .iter()
-            .find(|output| output.crate_name == "incan_stdlib")
-            .ok_or("build lost incan_stdlib")?;
+            .find(|output| output.crate_name == "incan_std_core")
+            .ok_or("build lost incan_std_core")?;
         assert_eq!(
             core.dependencies
                 .iter()

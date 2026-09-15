@@ -827,12 +827,12 @@ mod tests {
             "runtime/deps".to_string(),
             "target/aarch64-apple-darwin/debug/deps".to_string(),
         ];
-        artifacts.externs[0].relative_path = "runtime/deps/libincan_stdlib.rlib".to_string();
+        artifacts.externs[0].relative_path = "runtime/deps/libincan_std_core.rlib".to_string();
         artifacts.externs[1].relative_path =
             "target/aarch64-apple-darwin/debug/deps/libreceiver_factory.rlib".to_string();
         artifacts
             .entrypoint_externs
-            .insert("generated-root".to_string(), vec!["incan_stdlib".to_string()]);
+            .insert("generated-root".to_string(), vec!["incan_std_core".to_string()]);
         artifacts.schema_version = 9;
         artifacts.entrypoint_dependency_search_paths.clear();
         let package_root = PathBuf::from("sealed-provider.loaf");
@@ -843,8 +843,8 @@ mod tests {
             native_search_paths: Vec::new(),
             externs: vec![
                 (
-                    "incan_stdlib".to_string(),
-                    package_root.join("runtime/deps/libincan_stdlib.rlib"),
+                    "incan_std_core".to_string(),
+                    package_root.join("runtime/deps/libincan_std_core.rlib"),
                 ),
                 (
                     "receiver_factory".to_string(),
@@ -869,7 +869,7 @@ mod tests {
                 .iter()
                 .map(|(crate_name, _)| crate_name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["incan_stdlib"]
+            vec!["incan_std_core"]
         );
         Ok(())
     }
@@ -1223,13 +1223,13 @@ mod tests {
                 .iter()
                 .map(|artifact| artifact.crate_name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["analytics", "incan_stdlib", "incql"]
+            vec!["analytics", "incan_std_core", "incql"]
         );
         assert_eq!(
             composed.entrypoint_externs.get("generated-root"),
             Some(&vec![
                 "analytics".to_string(),
-                "incan_stdlib".to_string(),
+                "incan_std_core".to_string(),
                 "incql".to_string()
             ])
         );
@@ -1392,8 +1392,8 @@ mod tests {
         });
         let mut divergent_provider = provider.clone();
         divergent_provider.externs[0] = OvenRustcArtifactExtern {
-            crate_name: "incan_stdlib".to_string(),
-            relative_path: "provider/deps/libincan_stdlib-provider.rlib".to_string(),
+            crate_name: "incan_std_core".to_string(),
+            relative_path: "provider/deps/libincan_std_core-provider.rlib".to_string(),
             digest: "sha256:provider-stdlib".to_string(),
         };
         divergent_provider
@@ -1414,8 +1414,8 @@ mod tests {
             merge_packaged_provider_artifact_manifests_with_release_base(&[("analytics", &provider)], &base, &intent)?;
 
         assert!(composed.externs.iter().any(|artifact| {
-            artifact.crate_name == "incan_stdlib"
-                && artifact.relative_path == "artifacts/deps/libincan_stdlib-shared.rlib"
+            artifact.crate_name == "incan_std_core"
+                && artifact.relative_path == "artifacts/deps/libincan_std_core-shared.rlib"
         }));
         assert!(
             composed
@@ -1427,7 +1427,7 @@ mod tests {
             composed
                 .supporting_artifacts
                 .iter()
-                .all(|artifact| { artifact.relative_path != "artifacts/deps/libincan_stdlib-shared.rlib" })
+                .all(|artifact| { artifact.relative_path != "artifacts/deps/libincan_std_core-shared.rlib" })
         );
         assert!(
             composed
@@ -1454,7 +1454,7 @@ mod tests {
             direct_rustc_source_extern_names(&composed, "generated-root")?,
             BTreeSet::from([
                 "analytics".to_string(),
-                "incan_stdlib".to_string(),
+                "incan_std_core".to_string(),
                 "incan_stdlib_system".to_string(),
             ])
         );

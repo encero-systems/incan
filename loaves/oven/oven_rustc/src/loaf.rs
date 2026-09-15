@@ -941,14 +941,11 @@ pub fn runtime_build_unit_inputs(
         "sdk-provider-codegen-revision".to_string(),
         compiler.sdk_provider_codegen_revision.to_string(),
     );
-    for (name, crate_name) in [
-        ("runtime-source-incan-core", "incan_core"),
-        ("runtime-source-incan-derive", "incan_derive"),
-        ("runtime-source-incan-stdlib", "incan_stdlib"),
-    ] {
+    // One receipt input per compiler-owned runtime crate, so a change to any facet's source re-keys the Loaf.
+    for crate_name in oven_model::toolchain_layout::SDK_RUNTIME_CRATES {
         let path = oven_model::toolchain_layout::resolve_toolchain_crate_path(crate_name);
         let digest = digest_runtime_crate_source(&path)?;
-        inputs.insert(name.to_string(), digest);
+        inputs.insert(format!("runtime-source-{}", crate_name.replace('_', "-")), digest);
     }
     let lock_path = oven_model::toolchain_layout::resolve_toolchain_runtime_lockfile();
     let lock = fs::read(&lock_path)
@@ -4794,8 +4791,8 @@ mod tests {
         let receipt = runtime_receipt_for_plan()?;
         let mut plan = empty_manifest(&receipt);
         plan.externs.push(crate::rustc::OvenRustcArtifactExtern {
-            crate_name: "incan_stdlib".to_string(),
-            relative_path: "target/deps/libincan_stdlib-verified.rlib".to_string(),
+            crate_name: "incan_std_core".to_string(),
+            relative_path: "target/deps/libincan_std_core-verified.rlib".to_string(),
             digest: digest_bytes(b"stdlib runtime"),
         });
         plan.supporting_artifacts = vec![
@@ -4832,7 +4829,7 @@ mod tests {
             Some(&vec![
                 "incan_core".to_string(),
                 "incan_derive".to_string(),
-                "incan_stdlib".to_string(),
+                "incan_std_core".to_string(),
             ])
         );
         Ok(())
