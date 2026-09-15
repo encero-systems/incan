@@ -872,7 +872,12 @@ impl ChildId {
 
         let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
-        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
+        let incan_lock = IncanLock::new(
+            crate::version::INCAN_VERSION,
+            fingerprint,
+            CargoFeatureSelection::default(),
+            cargo_lock_payload,
+        );
         incan_lock.write(&project_root.join("oven.lock"))?;
 
         let lib_path = src_dir.join("lib.incn");
@@ -940,8 +945,13 @@ impl ChildId {
 
         let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
-        IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload)
-            .write(&project_root.join("oven.lock"))?;
+        IncanLock::new(
+            crate::version::INCAN_VERSION,
+            fingerprint,
+            CargoFeatureSelection::default(),
+            cargo_lock_payload,
+        )
+        .write(&project_root.join("oven.lock"))?;
 
         let lib_path = src_dir.join("lib.incn");
         let lib_path_str = lib_path.to_str().ok_or("lib path should be valid utf-8")?;
@@ -1031,7 +1041,12 @@ pub def answer() -> int:
 
         let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
-        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
+        let incan_lock = IncanLock::new(
+            crate::version::INCAN_VERSION,
+            fingerprint,
+            CargoFeatureSelection::default(),
+            cargo_lock_payload,
+        );
         incan_lock.write(&project_root.join("oven.lock"))?;
 
         let lib_path = src_dir.join("lib.incn");
@@ -1152,7 +1167,12 @@ pub def normalize(value: str) -> str:
 
         let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
-        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
+        let incan_lock = IncanLock::new(
+            crate::version::INCAN_VERSION,
+            fingerprint,
+            CargoFeatureSelection::default(),
+            cargo_lock_payload,
+        );
         incan_lock.write(&project_root.join("oven.lock"))?;
 
         let lib_path = src_dir.join("lib.incn");
