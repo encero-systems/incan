@@ -496,11 +496,17 @@ impl<'a> IrEmitter<'a> {
             return None;
         }
 
-        let facet = Self::rust_ident(stdlib::facets::for_namespace(
-            module_segments.get(1).copied().unwrap_or(""),
-        ));
+        // `std.<namespace>.<rest>` lives at `<facet>[::<namespace>]::<rest>`: the registry says whether the owning
+        // facet keeps the namespace as a module or is that module itself.
+        let namespace = module_segments.get(1).copied().unwrap_or("");
+        let facet = Self::rust_ident(stdlib::facets::for_namespace(namespace));
         let mut tokens = vec![quote! { #facet }];
-        for segment in module_segments.into_iter().skip(1) {
+        let skipped = if stdlib::facets::namespace_is_facet_root(namespace) {
+            2
+        } else {
+            1
+        };
+        for segment in module_segments.into_iter().skip(skipped) {
             let ident = Self::rust_ident(segment);
             tokens.push(quote! { #ident });
         }

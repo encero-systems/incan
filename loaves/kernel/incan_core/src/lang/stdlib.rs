@@ -84,6 +84,15 @@ pub mod facets {
             .unwrap_or(CORE)
     }
 
+    /// Whether a namespace's runtime module is the crate root of its facet rather than a module inside it.
+    ///
+    /// The core and data facets keep one module per namespace (`incan_std_core::strings`, `incan_std_data::json`);
+    /// the async, web and testing facets serve a single namespace and are that module themselves, so a path into
+    /// them starts at the crate (`incan_std_async::task`, never `incan_std_async::r#async::task`).
+    pub fn namespace_is_facet_root(namespace: &str) -> bool {
+        matches!(for_namespace(namespace), ASYNC | WEB | TESTING)
+    }
+
     /// Whether a `::`-qualified Rust path starts with one of the facets, as `incan_std_core::strings::str_len` does.
     pub fn path_names_a_facet(path: &str) -> bool {
         path.split("::").next().is_some_and(is_facet)
@@ -1306,6 +1315,17 @@ mod tests {
         let compression_ns = find_namespace("compression");
 
         assert_eq!(async_ns.and_then(|ns| ns.facet), Some(facets::ASYNC));
+        // The facet's layout decides the module path: async is its own crate root, json is a module of data,
+        // strings a module of core.
+        assert!(facets::namespace_is_facet_root("async"));
+        assert!(facets::namespace_is_facet_root("testing"));
+        assert!(!facets::namespace_is_facet_root("json"));
+        assert!(!facets::namespace_is_facet_root("collections"));
+        assert_eq!(facets::for_requirement("ordinal"), Some(facets::DATA));
+        assert_eq!(facets::for_component("stdlib-web"), Some(facets::WEB));
+        assert_eq!(facets::for_component("stdlib-system"), None);
+        assert!(facets::path_names_a_facet("incan_std_core::strings::str_len"));
+        assert!(!facets::path_names_a_facet("incan_stdlib_core::anything"));
         assert_eq!(reflection_ns.map(|ns| ns.submodules.is_empty()), Some(true));
         assert_eq!(fs_ns.map(|ns| ns.submodules.contains(&"path")), Some(true));
         assert_eq!(fs_ns.and_then(|ns| ns.facet), None);

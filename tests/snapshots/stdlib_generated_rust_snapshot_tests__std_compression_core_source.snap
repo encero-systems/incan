@@ -6,7 +6,7 @@ expression: rust_code
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 #[derive(Debug, Clone)]
 pub enum __IncanUnionf13d01fefab04049 {
     V0(File),
@@ -25,7 +25,7 @@ pub enum Codec {
     Lzma,
     Snappy,
 }
-impl incan_stdlib::reflection::HasTypeClassName for Codec {
+impl incan_std_core::reflection::HasTypeClassName for Codec {
     fn __class_name__() -> &'static str {
         "Codec"
     }
@@ -122,66 +122,66 @@ pub struct CompressionError {
     pub operation: String,
     pub detail: String,
 }
-impl incan_stdlib::reflection::HasClassName for CompressionError {
+impl incan_std_core::reflection::HasClassName for CompressionError {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for CompressionError {
+impl incan_std_core::reflection::HasTypeClassName for CompressionError {
     fn __class_name__() -> &'static str {
         "CompressionError"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for CompressionError {
+impl incan_std_core::reflection::HasFieldMetadata for CompressionError {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for CompressionError {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for CompressionError {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("kind"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("kind"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("kind"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("kind"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("codec"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("codec"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("codec"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[Codec]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("codec"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[Codec]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("operation"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("operation"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("operation"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("operation"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("detail"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("detail"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("detail"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("detail"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl CompressionError {
@@ -216,46 +216,46 @@ impl CompressionError {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("kind"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("kind"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("kind"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("kind"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("codec"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("codec"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("codec"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[Codec]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("codec"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[Codec]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("operation"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("operation"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("operation"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("operation"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("detail"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("detail"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("detail"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("detail"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl Error for CompressionError {
@@ -298,7 +298,7 @@ pub fn _level_or_default(
                             format!("{}", codec.value()), format!("{}", minimum),
                             format!("{}", maximum)
                         ];
-                        incan_stdlib::strings::fstring(&__parts, &__args)
+                        incan_std_core::strings::fstring(&__parts, &__args)
                     },
                 });
             }
@@ -331,7 +331,7 @@ pub fn _reject_level(
                         " does not support configurable compression levels",
                     ];
                     let __args: Vec<String> = vec![format!("{}", codec.value())];
-                    incan_stdlib::strings::fstring(&__parts, &__args)
+                    incan_std_core::strings::fstring(&__parts, &__args)
                 },
             });
         }
@@ -352,16 +352,16 @@ pub fn _codec_error(
 ) -> CompressionError {
     let _ = "\n    Build a codec failure from backend error text.\n\n    Backend crates expose different error enums and messages. The first source pass keeps a stable Incan `kind` by\n    classifying the most common invalid/truncated markers and otherwise preserving the backend text as `backend`.\n    ";
     let mut kind = "backend".to_string();
-    if incan_stdlib::strings::str_contains(&detail, &"EOF")
-        || incan_stdlib::strings::str_contains(&detail, &"eof")
-        || incan_stdlib::strings::str_contains(&detail, &"early")
-        || incan_stdlib::strings::str_contains(&detail, &"truncated")
+    if incan_std_core::strings::str_contains(&detail, &"EOF")
+        || incan_std_core::strings::str_contains(&detail, &"eof")
+        || incan_std_core::strings::str_contains(&detail, &"early")
+        || incan_std_core::strings::str_contains(&detail, &"truncated")
     {
         kind = "truncated_input".to_string();
     } else {
-        if incan_stdlib::strings::str_contains(&detail, &"invalid")
-            || incan_stdlib::strings::str_contains(&detail, &"corrupt")
-            || incan_stdlib::strings::str_contains(&detail, &"checksum")
+        if incan_std_core::strings::str_contains(&detail, &"invalid")
+            || incan_std_core::strings::str_contains(&detail, &"corrupt")
+            || incan_std_core::strings::str_contains(&detail, &"checksum")
         {
             kind = "invalid_data".to_string();
         }
@@ -641,7 +641,7 @@ pub fn _looks_like_zlib(
         data,
         1,
     );
-    return incan_stdlib::num::py_mod_i64(cmf, 16) == 8
-        && incan_stdlib::num::py_mod_i64(cmf * 256 + flg, 31) == 0;
+    return incan_std_core::num::py_mod_i64(cmf, 16) == 8
+        && incan_std_core::num::py_mod_i64(cmf * 256 + flg, 31) == 0;
 }
 pub use _looks_like_zlib as _looks_like_zlib;
