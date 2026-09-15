@@ -409,6 +409,34 @@ pub fn collect_project_requirements(
             stdlib_facets.insert(facet.to_string());
         }
     }
+    // A module's own Rust names facets too: a component's sources reach their facet through
+    // `rust.module("incan_std_<facet>")` and `from rust::incan_std_<facet>::…` without importing the namespace the
+    // facet serves — the testing component is `std.testing`, it does not import it — so every facet a module's Rust
+    // spells is linked. The dependency resolver deliberately drops these imports as toolchain-supplied; this is where
+    // that supply is recorded.
+    for module in modules {
+        if let Some(directive) = &module.ast.rust_module_path
+            && let Some(facet) = directive
+                .node
+                .split("::")
+                .next()
+                .filter(|first| stdlib::facets::is_facet(first))
+        {
+            stdlib_facets.insert(facet.to_string());
+        }
+        for decl in &module.ast.declarations {
+            let incan_frontend::ast::Declaration::Import(import) = &decl.node else {
+                continue;
+            };
+            let crate_name = match &import.kind {
+                ImportKind::RustCrate { crate_name, .. } | ImportKind::RustFrom { crate_name, .. } => crate_name,
+                _ => continue,
+            };
+            if stdlib::facets::is_facet(crate_name) {
+                stdlib_facets.insert(crate_name.clone());
+            }
+        }
+    }
     // A vocab manifest spells its runtime requirements in the vocabulary the contract had before the facets existed;
     // the registry says which facet serves each name.
     for requirement in library_manifest_index.merged_provider_required_stdlib_features() {
@@ -681,6 +709,32 @@ model User:
         let requirements = collect_project_requirements(&[module], &LibraryManifestIndex::default())?;
         assert!(requirements.stdlib_facets.is_empty());
         assert!(requirements.dependencies.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_module_links_every_facet_its_own_rust_names() -> Result<(), Box<dyn std::error::Error>> {
+        // A component's sources reach their facet without importing the namespace it serves.
+        let own_facet = parsed_module_for_test(
+            r#"
+rust.module("incan_std_testing")
+
+def main() -> None:
+    pass
+"#,
+        )?;
+        let inline = parsed_module_for_test(
+            r#"
+from rust::incan_std_data::json import JsonValue
+from rust::serde_json import Value
+
+def main() -> None:
+    pass
+"#,
+        )?;
+
+        let requirements = collect_project_requirements(&[own_facet, inline], &LibraryManifestIndex::default())?;
+        assert_eq!(requirements.stdlib_facets, ["incan_std_data", "incan_std_testing"]);
         Ok(())
     }
 
