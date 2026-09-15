@@ -60,9 +60,9 @@ pub fn digest_dependency_specs(
             // reached through several top-level dependencies.
             DependencySource::Path { path } => match provider_hooks.packaged_provider_digest(path) {
                 Some(digest) => {
-                    let digest = digest.map_err(|message| OvenError::InvalidProjectSource {
+                    let digest = digest.map_err(|source| OvenError::ProviderHook {
                         path: path.clone(),
-                        message,
+                        source,
                     })?;
                     format!("packaged-provider:{digest}")
                 }
@@ -101,18 +101,71 @@ pub fn digest_dependency_specs(
 pub trait OvenProviderHooks: Send + Sync {
     /// The root of the SDK provider tree to stage: the one an explicit inventory path describes, or the active
     /// toolchain's when there is none. An error is a preparation miss the caller reports verbatim.
-    fn sdk_provider_root(&self, explicit_inventory: Option<&Path>) -> Result<PathBuf, String>;
+    fn sdk_provider_root(&self, explicit_inventory: Option<&Path>) -> Result<PathBuf, OvenProviderHookError>;
 
     /// The inventory file's name inside a provider root.
     fn sdk_inventory_file(&self) -> &'static str;
 
     /// Rewrite the dependency digests of the providers copied into `provider_root` so the staged tree is
     /// self-consistent after its compiler-owned path dependencies were rebased.
-    fn refresh_staged_sdk_provider_digests(&self, provider_root: &Path) -> Result<(), String>;
+    fn refresh_staged_sdk_provider_digests(&self, provider_root: &Path) -> Result<(), OvenProviderHookError>;
 
     /// The sealed artifact digest of a packaged provider at `dependency_root`, or `None` when the path is an
     /// authored crate and the caller should digest its source tree instead.
-    fn packaged_provider_digest(&self, dependency_root: &Path) -> Option<Result<String, String>>;
+    fn packaged_provider_digest(&self, dependency_root: &Path) -> Option<Result<String, OvenProviderHookError>>;
+}
+
+/// The compiler's own error type behind a hook failure, kept whole so a caller can still reach it through
+/// [`std::error::Error::source`] without Oven naming the compiler crate that defines it.
+pub type OvenProviderHookSource = Box<dyn std::error::Error + Send + Sync + 'static>;
+
+/// Why a provider hook could not answer.
+///
+/// Each variant is the category Oven acts on — a missing inventory is a preparation miss, a digest that cannot be
+/// refreshed or read means the staged tree is not self-consistent — and carries the compiler's typed error as its
+/// source rather than a rendering of it, so nothing about the failure is lost at the ring boundary.
+#[derive(Debug, thiserror::Error)]
+pub enum OvenProviderHookError {
+    /// The explicitly named SDK provider inventory could not be read.
+    #[error("failed to load explicit SDK provider inventory {path}: {source}")]
+    InventoryUnreadable {
+        /// The inventory file that was named.
+        path: PathBuf,
+        /// The compiler's error while reading it.
+        #[source]
+        source: OvenProviderHookSource,
+    },
+    /// Discovering the active toolchain's SDK provider inventory failed.
+    #[error("failed to discover active SDK provider inventory: {source}")]
+    InventoryDiscovery {
+        /// The compiler's error while looking for it.
+        #[source]
+        source: OvenProviderHookSource,
+    },
+    /// No SDK provider inventory is available to stage from; `guidance` says what would make one available.
+    #[error("{guidance}")]
+    InventoryUnavailable {
+        /// What the caller can do about it.
+        guidance: String,
+    },
+    /// The digests of the providers staged below `provider_root` could not be refreshed.
+    #[error("failed to refresh staged SDK provider digests below {provider_root}: {source}")]
+    DigestRefresh {
+        /// The staged provider tree.
+        provider_root: PathBuf,
+        /// The compiler's error while rewriting them.
+        #[source]
+        source: OvenProviderHookSource,
+    },
+    /// The sealed digest of the packaged provider at `dependency_root` could not be read.
+    #[error("failed to digest packaged provider at {dependency_root}: {source}")]
+    PackagedDigest {
+        /// The packaged provider's root.
+        dependency_root: PathBuf,
+        /// The compiler's error while digesting it.
+        #[source]
+        source: OvenProviderHookSource,
+    },
 }
 
 /// Hooks for a caller that has no compiler providers to speak of: no SDK to stage, nothing packaged, no refresh.
@@ -122,22 +175,24 @@ pub trait OvenProviderHooks: Send + Sync {
 pub struct NoProviderHooks;
 
 impl OvenProviderHooks for NoProviderHooks {
-    fn sdk_provider_root(&self, explicit_inventory: Option<&Path>) -> Result<PathBuf, String> {
+    fn sdk_provider_root(&self, explicit_inventory: Option<&Path>) -> Result<PathBuf, OvenProviderHookError> {
         explicit_inventory
             .and_then(Path::parent)
             .map(Path::to_path_buf)
-            .ok_or_else(|| "no SDK provider inventory is available without a compiler".to_string())
+            .ok_or_else(|| OvenProviderHookError::InventoryUnavailable {
+                guidance: "no SDK provider inventory is available without a compiler".to_string(),
+            })
     }
 
     fn sdk_inventory_file(&self) -> &'static str {
         "sdk-inventory.json"
     }
 
-    fn refresh_staged_sdk_provider_digests(&self, _provider_root: &Path) -> Result<(), String> {
+    fn refresh_staged_sdk_provider_digests(&self, _provider_root: &Path) -> Result<(), OvenProviderHookError> {
         Ok(())
     }
 
-    fn packaged_provider_digest(&self, _dependency_root: &Path) -> Option<Result<String, String>> {
+    fn packaged_provider_digest(&self, _dependency_root: &Path) -> Option<Result<String, OvenProviderHookError>> {
         None
     }
 }
@@ -481,6 +536,15 @@ pub enum OvenError {
     /// An input could not be read.
     #[error("failed to read Oven input {path}: {source}")]
     ReadInput { path: PathBuf, source: io::Error },
+    /// The compiler's provider hooks could not answer for the path dependency at `path`.
+    #[error("Oven provider hook failed for {path}: {source}")]
+    ProviderHook {
+        /// The path dependency the hook was asked about.
+        path: PathBuf,
+        /// The hook's typed failure.
+        #[source]
+        source: OvenProviderHookError,
+    },
     /// Cargo manifest text did not parse as TOML.
     #[error("Oven Alpha compatibility miss: failed to parse Cargo.toml at {path}: {message}")]
     InvalidCargoManifest { path: PathBuf, message: String },
@@ -1576,16 +1640,89 @@ struct BuildUnitIdentityInput<'a> {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use oven_model::manifest::{DependencySource, DependencySpec};
 
     use super::{
-        OvenCompilerSuiteRequest, OvenGeneratedProjectRequest, OvenImportRequest, OvenReceipt, default_receipt_path,
-        digest_bytes, generated_project_source_evidence, import_frozen_project, receipt_generated_project,
-        receipt_generated_project_with_source_evidence, receipt_native_compiler_suite, receipt_with_build_unit_input,
-        receipt_without_build_unit_input, write_receipt,
+        OvenCompilerSuiteRequest, OvenGeneratedProjectRequest, OvenImportRequest, OvenProviderHookError,
+        OvenProviderHooks, OvenReceipt, default_receipt_path, digest_bytes, generated_project_source_evidence,
+        import_frozen_project, receipt_generated_project, receipt_generated_project_with_source_evidence,
+        receipt_native_compiler_suite, receipt_with_build_unit_input, receipt_without_build_unit_input, write_receipt,
     };
+
+    /// A hook that fails the way a compiler would, with its own typed error behind the hook error.
+    struct FailingProviderHooks;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("the compiler could not read the manifest")]
+    struct CompilerSideFailure;
+
+    impl super::OvenProviderHooks for FailingProviderHooks {
+        fn sdk_provider_root(&self, _explicit_inventory: Option<&Path>) -> Result<PathBuf, OvenProviderHookError> {
+            Err(OvenProviderHookError::InventoryDiscovery {
+                source: Box::new(CompilerSideFailure),
+            })
+        }
+
+        fn sdk_inventory_file(&self) -> &'static str {
+            "sdk-inventory.json"
+        }
+
+        fn refresh_staged_sdk_provider_digests(&self, _provider_root: &Path) -> Result<(), OvenProviderHookError> {
+            Ok(())
+        }
+
+        fn packaged_provider_digest(&self, dependency_root: &Path) -> Option<Result<String, OvenProviderHookError>> {
+            Some(Err(OvenProviderHookError::PackagedDigest {
+                dependency_root: dependency_root.to_path_buf(),
+                source: Box::new(CompilerSideFailure),
+            }))
+        }
+    }
+
+    #[test]
+    fn provider_hook_errors_keep_the_compiler_failure_as_their_source() -> Result<(), Box<dyn std::error::Error>> {
+        use std::error::Error as _;
+
+        let Err(error) = FailingProviderHooks.sdk_provider_root(None) else {
+            return Err("discovery failure was not reported".into());
+        };
+        assert!(
+            error
+                .to_string()
+                .starts_with("failed to discover active SDK provider inventory")
+        );
+        assert!(error.source().is_some_and(|source| source.is::<CompilerSideFailure>()));
+
+        let Err(error) = super::NoProviderHooks.sdk_provider_root(None) else {
+            return Err("the compiler-less hooks reported an inventory".into());
+        };
+        assert!(matches!(error, OvenProviderHookError::InventoryUnavailable { .. }));
+        assert!(error.source().is_none());
+
+        let dependency = DependencySpec {
+            crate_name: "packaged_provider".to_string(),
+            version: None,
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Path {
+                path: PathBuf::from("packaged-provider"),
+            },
+            optional: false,
+            package: None,
+        };
+        let Err(error) = super::digest_dependency_specs(std::slice::from_ref(&dependency), &FailingProviderHooks)
+        else {
+            return Err("a packaged provider that cannot be digested was accepted".into());
+        };
+        let super::OvenError::ProviderHook { path, source } = error else {
+            return Err(format!("unexpected error category: {error}").into());
+        };
+        assert_eq!(path, PathBuf::from("packaged-provider"));
+        assert!(source.source().is_some_and(|source| source.is::<CompilerSideFailure>()));
+        Ok(())
+    }
 
     #[test]
     fn receipt_identity_is_portable_and_observes_explicit_build_inputs() -> Result<(), Box<dyn std::error::Error>> {
