@@ -1641,15 +1641,15 @@ def main() -> None:
     fs::create_dir_all(&importer_src)?;
     fs::write(
         importer_dir.join("loaf.toml"),
-        include_str!("../examples/pro/codegraph_importer/loaf.toml"),
+        fs::read_to_string(support::repo_root().join("examples/pro/codegraph_importer/loaf.toml"))?,
     )?;
     fs::write(
         importer_src.join("importer.incn"),
-        include_str!("../examples/pro/codegraph_importer/src/importer.incn"),
+        fs::read_to_string(support::repo_root().join("examples/pro/codegraph_importer/src/importer.incn"))?,
     )?;
     fs::write(
         importer_src.join("main.incn"),
-        include_str!("../examples/pro/codegraph_importer/src/main.incn"),
+        fs::read_to_string(support::repo_root().join("examples/pro/codegraph_importer/src/main.incn"))?,
     )?;
     fs::write(importer_dir.join("codegraph.jsonl"), &graph.stdout)?;
 

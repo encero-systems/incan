@@ -3,6 +3,8 @@
 //! These tests use proptest to verify invariants across many randomly
 //! generated inputs, catching edge cases that hand-written tests might miss.
 
+mod support;
+
 use std::collections::BTreeSet;
 
 use incan::format::format_source;
@@ -173,7 +175,7 @@ def greet(name: str) -> str:
             Ok(())
         }
 
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+        let root = support::repo_root().join("examples");
         let mut files = Vec::new();
         collect(&root, &mut files)?;
         files.sort();

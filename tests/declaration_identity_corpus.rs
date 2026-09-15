@@ -5,6 +5,8 @@
 //! identity. Collision classes are found by measuring a corpus, not by predicting them — the overload case this
 //! guards was discovered exactly that way, and it was the only one in 2,078 declarations.
 
+mod support;
+
 use incan::frontend::body_ir::{apply_body_ir_input_contract, build_body_ir_module_v0};
 use incan::frontend::hir::build_hir_v0;
 use incan::frontend::typechecker::TypeChecker;
@@ -94,7 +96,7 @@ fn identities_in_module(path: &Path, source: &str) -> Result<Vec<(StableDeclarat
 
 #[test]
 fn stable_declaration_identity_is_unique_across_the_standard_library() -> TestResult {
-    let stdlib_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib");
+    let stdlib_root = support::repo_root().join("crates/incan_stdlib/stdlib");
     let mut sources = Vec::new();
     collect_sources(&stdlib_root, &mut sources)?;
     sources.sort();
@@ -223,7 +225,7 @@ fn conformant_digest_covers_the_standard_library() -> TestResult {
     use incan_semantics_core::semantic_digest::{body_without_docstring, semantic_digest};
     use std::time::Instant;
 
-    let stdlib_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib");
+    let stdlib_root = support::repo_root().join("crates/incan_stdlib/stdlib");
     let mut sources = Vec::new();
     collect_sources(&stdlib_root, &mut sources)?;
     sources.sort();

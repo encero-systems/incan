@@ -1,7 +1,9 @@
 //! Contract tests for the selected, canonical `enumerate` and `zip` replacement profile.
 
+mod support;
+
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use incan::backend::replacement::{ReplacementExecutionError, ReplacementValue, execute_free_function};
@@ -85,16 +87,9 @@ fn assert_direct_refusal_at_call(
     Ok(())
 }
 
-/// Locate the Cargo-built compiler binary without consulting a shared target directory.
-fn incan_binary() -> PathBuf {
-    std::env::var_os("CARGO_BIN_EXE_incan")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_incan")))
-}
-
 /// Build one isolated direct-replacement command with its own Incan home.
 fn replacement_command(directory: &Path) -> Command {
-    let mut command = Command::new(incan_binary());
+    let mut command = support::repo_command();
     command
         .current_dir(directory)
         .env("INCAN_HOME", directory.join("incan-home"))

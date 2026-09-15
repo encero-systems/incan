@@ -1,9 +1,9 @@
 //! Replacement-execution evidence for one checked builtin `abs`/`sum` overflow contract.
 
+mod support;
+
 use std::fs;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::PathBuf;
-use std::process::Command;
 
 use incan::backend::replacement::{
     ProgramIo, ReplacementExecutionError, ReplacementValue, execute_free_function_with_io,
@@ -70,11 +70,6 @@ fn direct_runtime_failure(
         .into()),
         Err(error) => Ok(error),
     }
-}
-
-/// Locate the compiler binary Cargo built for this integration-test invocation.
-fn incan_binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_incan"))
 }
 
 /// Both compiler-selected integer builtins fail at their original call span and preserve accepted stdout.
@@ -169,7 +164,7 @@ fn replacement_cli_release_contract_still_reports_checked_sum_overflow() -> Resu
         temporary.path().join("main.incn"),
         "def main() -> int:\n    println(\"before cli sum\")\n    return sum([9223372036854775807, 1])\n",
     )?;
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .current_dir(temporary.path())
         .env("INCAN_HOME", temporary.path().join("incan-home"))
         .args([

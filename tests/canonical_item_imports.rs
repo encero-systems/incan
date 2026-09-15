@@ -173,7 +173,7 @@ fn write_project(root: &Path, strip_import_from: Option<&str>) -> Result<(), Box
 
 /// Retain the caller's SDK and shared Cargo selection while keeping generated project output under its temp root.
 fn project_command(project: &Path) -> Command {
-    let mut command = Command::new(support::incan_binary());
+    let mut command = support::repo_command();
     command
         .current_dir(project)
         .env("INCAN_NO_BANNER", "1")

@@ -121,9 +121,7 @@ fn concurrent_normal_checks_reuse_sealed_sdk_inventory_without_mutable_publicati
         inventory.components.values().all(|component| component.available),
         "the reused full-profile provider identity must contain every component"
     );
-    let workspace_lock: toml::Value = toml::from_str(&fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"),
-    )?)?;
+    let workspace_lock: toml::Value = toml::from_str(&fs::read_to_string(support::repo_root().join("Cargo.lock"))?)?;
     let locked_packages = workspace_lock
         .get("package")
         .and_then(toml::Value::as_array)
