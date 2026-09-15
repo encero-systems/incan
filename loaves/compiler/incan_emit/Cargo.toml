@@ -22,18 +22,18 @@ std_decorators = ["incan_ir/std_decorators", "incan_frontend/std_decorators"]
 
 [dependencies]
 hex = "0.4.3"
-incan_core = { path = "../../../crates/incan_core" }
-incan_frontend = { path = "../incan_frontend", default-features = false }
-incan_ir = { path = "../incan_ir", default-features = false }
-incan_semantics_core = { path = "../../../crates/incan_semantics_core" }
-incan_syntax = { path = "../../../crates/incan_syntax" }
-incan_vocab = { path = "../../../crates/incan_vocab" }
-oven_model = { path = "../../oven/oven_model" }
+incan_core = { workspace = true }
+incan_frontend = { workspace = true }
+incan_ir = { workspace = true }
+incan_semantics_core = { workspace = true }
+incan_syntax = { workspace = true }
+incan_vocab = { workspace = true }
+oven_model = { workspace = true }
 prettyplease = "0.2"
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
 regex = "1"
-rust_inspect = { path = "../../../crates/rust_inspect", default-features = false }
+rust_inspect = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10.9"
@@ -43,9 +43,9 @@ tempfile = { version = "3", optional = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-incan_frontend = { path = "../incan_frontend", default-features = false, features = ["test_support"] }
+incan_frontend = { workspace = true, features = ["test_support"] }
 # The runtime crate the emitted code links; the emitter only names it in generated tokens, and links it for the
 # parity tests alone, so the compiler ring never depends on the runtime it generates for.
-incan_stdlib = { path = "../../../crates/incan_stdlib" }
-rust_inspect = { path = "../../../crates/rust_inspect", default-features = false, features = ["test_fixtures"] }
+incan_stdlib = { workspace = true }
+rust_inspect = { workspace = true, features = ["test_fixtures"] }
 tempfile = "3"

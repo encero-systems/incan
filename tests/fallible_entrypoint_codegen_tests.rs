@@ -38,7 +38,7 @@ fn fallible_main_preserves_entrypoint_setup_before_the_body() -> Result<(), Box<
         .replace(
             &format!(
                 "incan_stdlib::__incan_stdlib_version_check!(\"{}\");",
-                incan::version::INCAN_VERSION
+                incan_emit::GENERATED_FOR_STDLIB_VERSION
             ),
             "incan_stdlib::__incan_stdlib_version_check!(\"<INCAN_STDLIB_VERSION>\");",
         );

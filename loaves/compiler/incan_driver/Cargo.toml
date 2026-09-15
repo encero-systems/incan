@@ -28,20 +28,20 @@ test_support = ["incan_provider/test_support", "incan_emit/test_support", "incan
 [dependencies]
 clap = { version = "4.4", features = ["derive"], optional = true }
 hex = "0.4.3"
-incan_codegraph = { path = "../../../crates/incan_codegraph" }
-incan_core = { path = "../../../crates/incan_core" }
-incan_emit = { path = "../incan_emit", default-features = false }
-incan_format = { path = "../incan_format" }
-incan_frontend = { path = "../incan_frontend", default-features = false }
-incan_ir = { path = "../incan_ir", default-features = false }
-incan_oven_facet = { path = "../incan_oven_facet" }
-incan_provider = { path = "../incan_provider", default-features = false }
-incan_semantics_core = { path = "../../../crates/incan_semantics_core" }
-incan_vocab = { path = "../../../crates/incan_vocab" }
-oven_model = { path = "../../oven/oven_model" }
-oven_rustc = { path = "../../oven/oven_rustc" }
-oven_store = { path = "../../oven/oven_store" }
-rust_inspect = { path = "../../../crates/rust_inspect", default-features = false }
+incan_codegraph = { workspace = true }
+incan_core = { workspace = true }
+incan_emit = { workspace = true }
+incan_format = { workspace = true }
+incan_frontend = { workspace = true }
+incan_ir = { workspace = true }
+incan_oven_facet = { workspace = true }
+incan_provider = { workspace = true }
+incan_semantics_core = { workspace = true }
+incan_vocab = { workspace = true }
+oven_model = { workspace = true }
+oven_rustc = { workspace = true }
+oven_store = { workspace = true }
+rust_inspect = { workspace = true }
 rustix = { version = "1.1.4", features = ["fs"] }
 semver = "1.0.27"
 serde = { workspace = true }
@@ -55,9 +55,9 @@ toml_edit = { version = "0.25", features = ["parse", "serde"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
-incan_emit = { path = "../incan_emit", default-features = false, features = ["test_support"] }
-incan_frontend = { path = "../incan_frontend", default-features = false, features = ["test_support"] }
-incan_provider = { path = "../incan_provider", default-features = false, features = ["test_support"] }
-oven_rustc = { path = "../../oven/oven_rustc", features = ["test_support"] }
-oven_store = { path = "../../oven/oven_store", features = ["test_support"] }
-rust_inspect = { path = "../../../crates/rust_inspect", default-features = false, features = ["test_fixtures"] }
+incan_emit = { workspace = true, features = ["test_support"] }
+incan_frontend = { workspace = true, features = ["test_support"] }
+incan_provider = { workspace = true, features = ["test_support"] }
+oven_rustc = { workspace = true, features = ["test_support"] }
+oven_store = { workspace = true, features = ["test_support"] }
+rust_inspect = { workspace = true, features = ["test_fixtures"] }

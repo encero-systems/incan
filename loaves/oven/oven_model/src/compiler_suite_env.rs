@@ -44,7 +44,7 @@ impl OvenCompilerSuiteTargetCapabilities {
         let cargo_fixture = matches!(
             (package_name, target_kind, source_relative_path),
             ("incan", "lib", "src/lib.rs")
-                | ("rust_inspect", "lib", "crates/rust_inspect/src/lib.rs")
+                | ("rust_inspect", "lib", "loaves/compiler/rust_inspect/src/lib.rs")
                 | ("incan", "test", "tests/generated_rust_artifact_tests.rs")
                 | ("incan", "test", "tests/generated_rust_callability_artifact_tests.rs")
                 | ("incan", "test", "tests/generated_cache_integration.rs")

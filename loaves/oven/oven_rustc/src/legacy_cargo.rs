@@ -2897,7 +2897,7 @@ fn compiler_suite_foundation_dependencies(
                 continue;
             }
             return Err(OvenLegacyCargoError::Plan(format!(
-                "compiler-suite path dependency `{}` is outside the compiler root or approved crates/third_party patch directory",
+                "compiler-suite path dependency `{}` is outside the compiler root or approved loaves/third_party patch directory",
                 package.name
             )));
         }
@@ -2946,7 +2946,7 @@ fn compiler_suite_foundation_dependencies(
 
 /// Return the one class of compiler-tree source Cargo may retain in the sealed third-party foundation.
 ///
-/// Registry patches under `crates/third_party` preserve the checked-in lock graph when an upstream package enables a
+/// Registry patches under `loaves/third_party` preserve the checked-in lock graph when an upstream package enables a
 /// yanked or otherwise unacceptable optional dependency. They are dependency provenance, never normal Incan source
 /// execution: only the named publisher sees this path and Oven retains its verified output thereafter.
 fn compiler_suite_foundation_patch_path(
@@ -2961,7 +2961,7 @@ fn compiler_suite_foundation_patch_path(
         field: "compiler third-party patch Cargo.toml",
         message: format!("{} has no package directory", manifest.display()),
     })?;
-    if package_root.starts_with(compiler_root.join("crates/third_party")) {
+    if package_root.starts_with(compiler_root.join("loaves/third_party")) {
         return Ok(Some(package_root.to_path_buf()));
     }
     Ok(None)
@@ -5769,6 +5769,19 @@ mod tests {
         Ok(())
     }
 
+    /// The stdlib ring's version line as the checkout declares it, so the assertion below follows a bump.
+    fn incan_stdlib_version_line() -> Result<String, Box<dyn std::error::Error>> {
+        let manifest = oven_model::toolchain_layout::development_root().join("crates/incan_stdlib/Cargo.toml");
+        let text = fs::read_to_string(&manifest)?;
+        text.lines()
+            .find_map(|line| {
+                line.strip_prefix("version = \"")
+                    .and_then(|rest| rest.strip_suffix('"'))
+            })
+            .map(str::to_string)
+            .ok_or_else(|| format!("{} declares no explicit version line", manifest.display()).into())
+    }
+
     #[test]
     fn publisher_seals_sdk_component_runtime_paths_inside_the_suite_entry() -> Result<(), Box<dyn std::error::Error>> {
         let provider = tempfile::tempdir()?;
@@ -5806,6 +5819,38 @@ mod tests {
         assert_ne!(
             fs::read_to_string(staged.join("runtime/Cargo.lock"))?,
             "stale sealed runtime lock\n"
+        );
+        let runtime_workspace: toml::Value = toml::from_str(&fs::read_to_string(staged.join("runtime/Cargo.toml"))?)?;
+        let runtime_dependencies = runtime_workspace
+            .get("workspace")
+            .and_then(|workspace| workspace.get("dependencies"))
+            .and_then(toml::Value::as_table)
+            .ok_or("staged runtime workspace has no [workspace.dependencies] table")?;
+        for crate_name in ["incan_core", "incan_derive", "incan_stdlib", "incan_web_macros"] {
+            assert_eq!(
+                runtime_dependencies
+                    .get(crate_name)
+                    .and_then(|dependency| dependency.get("path"))
+                    .and_then(toml::Value::as_str),
+                Some(format!("crates/{crate_name}").as_str()),
+                "staged runtime workspace must name {crate_name} at its copied location"
+            );
+        }
+        assert_eq!(
+            runtime_dependencies
+                .get("incan_stdlib")
+                .and_then(|dependency| dependency.get("version"))
+                .and_then(toml::Value::as_str),
+            Some(incan_stdlib_version_line()?.as_str()),
+            "staged runtime workspace must keep the stdlib ring's version requirement"
+        );
+        assert!(
+            runtime_dependencies.values().all(|dependency| {
+                dependency
+                    .get("path")
+                    .is_none_or(|path| toml::Value::as_str(path).is_some_and(|path| path.starts_with("crates/")))
+            }),
+            "staged runtime workspace must not name a checkout path it does not ship: {runtime_dependencies:?}"
         );
         assert!(!staged.join("runtime/obsolete-runtime-file").exists());
         assert!(staged.join("runtime/crates/incan_core/src/lib.rs").is_file());
@@ -6055,7 +6100,7 @@ checksum = "fixture"
     fn compiler_foundation_manifest_preserves_checked_in_third_party_patch_resolution()
     -> Result<(), Box<dyn std::error::Error>> {
         let compiler_root = tempfile::tempdir()?;
-        let patch_root = compiler_root.path().join("crates/third_party/registry_patch");
+        let patch_root = compiler_root.path().join("loaves/third_party/registry_patch");
         fs::create_dir_all(compiler_root.path().join("src"))?;
         fs::create_dir_all(patch_root.join("src"))?;
         fs::write(

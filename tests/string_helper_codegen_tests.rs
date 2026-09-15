@@ -36,7 +36,7 @@ fn omitted_split_separator_has_a_concrete_emitted_type() -> Result<(), Box<dyn s
         .replace(
             &format!(
                 "incan_stdlib::__incan_stdlib_version_check!(\"{}\");",
-                incan::version::INCAN_VERSION
+                incan_emit::GENERATED_FOR_STDLIB_VERSION
             ),
             "incan_stdlib::__incan_stdlib_version_check!(\"<INCAN_STDLIB_VERSION>\");",
         );

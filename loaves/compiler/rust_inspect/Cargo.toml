@@ -1,0 +1,65 @@
+[package]
+name = "rust_inspect"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Rust inspect metadata extraction substrate for Incan"
+
+[features]
+default = ["inspector"]
+# Probe crates the frontend's and the root crate's tests write to disk to drive the inspector.
+test_fixtures = []
+# The rust-analyzer-backed inspector. Off, the crate is only the token-level declaration digest, which the
+# compiler needs in every build because the SDK effect digest folds it in.
+inspector = [
+    "dep:incan_core",
+    "dep:toml",
+    "dep:semver",
+    "dep:ra_ap_hir",
+    "dep:ra_ap_hir_def",
+    "dep:ra_ap_hir_expand",
+    "dep:ra_ap_hir_ty",
+    "dep:ra_ap_ide_db",
+    "dep:ra_ap_load-cargo",
+    "dep:ra_ap_paths",
+    "dep:ra_ap_project_model",
+    "dep:ra_ap_syntax",
+    "dep:ra_ap_vfs",
+]
+
+[lib]
+name = "rust_inspect"
+path = "src/lib.rs"
+
+[dependencies]
+incan_core = { workspace = true, optional = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10.9"
+hex = "0.4.3"
+toml = { version = "0.9", optional = true }
+semver = { version = "1.0", optional = true }
+tracing = { workspace = true }
+ra_ap_hir = { version = "0.0.325", optional = true }
+ra_ap_hir_def = { version = "0.0.325", optional = true }
+ra_ap_hir_expand = { version = "0.0.325", optional = true }
+ra_ap_hir_ty = { version = "0.0.325", optional = true }
+ra_ap_ide_db = { version = "0.0.325", optional = true }
+ra_ap_load-cargo = { version = "0.0.325", optional = true }
+ra_ap_paths = { version = "0.0.325", optional = true }
+ra_ap_project_model = { version = "0.0.325", optional = true }
+ra_ap_syntax = { version = "0.0.325", optional = true }
+ra_ap_vfs = { version = "0.0.325", optional = true }
+# Token-level Rust parsing for the declaration digest, pinned to the versions the compiler crate already builds so
+# the digest sees the same token model the Rust code generator emits against.
+syn = { workspace = true, features = ["printing"] }
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

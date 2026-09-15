@@ -58,7 +58,7 @@ def changed_rust_files_from_diff_args(args: list[str]) -> dict[Path, set[int]]:
                 or rel.endswith("/tests.rs")
                 or "/examples/" in rel
                 or rel.startswith("examples/")
-                or rel.startswith("crates/third_party/")
+                or rel.startswith("loaves/third_party/")
             ):
                 current_path = None
                 continue

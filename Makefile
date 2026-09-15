@@ -209,6 +209,7 @@ rustdoc-gate-ci:
 .PHONY: version-gate  ## quality - Require hand-written version literals to match the workspace version
 version-gate:
 	@python3 scripts/check_release_version_consistency.py
+	@python3 scripts/check_ring_versions.py
 
 .PHONY: parity-corpus-owners  ## check - Verify every deferred parity row names an OPEN owning issue
 parity-corpus-owners:

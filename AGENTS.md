@@ -223,7 +223,7 @@ Source → Lexer → Parser/AST → Typechecker → Lowering (AST→IR) → Emis
 
 Key directories:
 
-- `crates/incan_syntax/src/parser/` — Parser and AST definitions
+- `loaves/kernel/incan_syntax/src/parser/` — Parser and AST definitions
 - `src/frontend/typechecker/` — Type checking and semantic analysis
 - `src/backend/ir/lower/` — AST to IR lowering
 - `src/backend/ir/emit/` — IR to Rust code emission
@@ -236,7 +236,7 @@ Key directories:
 | Alias resolution | -                                                      | `check_expr/access.rs`, `calls.rs`, `match_.rs`                     | `lower/expr.rs` | -               |
 | Soft keywords    | `parser/core.rs`, `parser/helpers.rs`, `parser/decl/*` | `collect/stdlib_imports.rs`                                         | -               | -               |
 | Stdlib registry  | -                                                      | `incan_core::lang::stdlib` (`crates/incan_core/src/lang/stdlib.rs`) | -               | -               |
-| Diagnostics      | -                                                      | `diagnostics/catalog/errors/*` in `crates/incan_syntax/src/`        | -               | -               |
+| Diagnostics      | -                                                      | `diagnostics/catalog/errors/*` in `loaves/kernel/incan_syntax/src/`        | -               | -               |
 
 ## Available Skills and Agents
 

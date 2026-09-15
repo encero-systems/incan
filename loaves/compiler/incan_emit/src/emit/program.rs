@@ -4004,8 +4004,10 @@ impl<'a> IrEmitter<'a> {
             });
         }
 
-        let compiler_version = incan_core::version::INCAN_VERSION;
-        items.push(quote! { incan_stdlib::__incan_stdlib_version_check!(#compiler_version); });
+        // The generated crate must link a stdlib compatible with the line this compiler generates for; the stdlib
+        // carries its own version line, so that is the declared stdlib line, not the compiler's version.
+        let generated_for_stdlib = crate::GENERATED_FOR_STDLIB_VERSION;
+        items.push(quote! { incan_stdlib::__incan_stdlib_version_check!(#generated_for_stdlib); });
         if program.uses_checked_c_strings {
             items.push(Self::emit_checked_c_string_constructor());
         }

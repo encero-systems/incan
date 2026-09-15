@@ -636,6 +636,13 @@ fn assert_packaged_support_workspace_without_cargo(extracted: &Path) -> Result<(
         fs::metadata(crates.join("Cargo.lock"))?.len() > 0,
         "packaged support workspace has an empty Cargo.lock"
     );
+    // The members are staged verbatim from the checkout, so every `workspace = true` dependency they declare has to
+    // resolve against this workspace's own table; a dependency table copied from the checkout that omits one would
+    // only fail at the release's `cargo metadata`, not here.
+    let workspace_dependencies = workspace
+        .get("dependencies")
+        .and_then(toml::Value::as_table)
+        .ok_or("packaged support workspace has no [workspace.dependencies] table")?;
     for member in expected_members {
         let manifest: toml::Value = toml::from_str(&fs::read_to_string(crates.join(member).join("Cargo.toml"))?)?;
         let package = manifest
@@ -647,6 +654,30 @@ fn assert_packaged_support_workspace_without_cargo(extracted: &Path) -> Result<(
             Some(member),
             "packaged support crate {member} declares the wrong package name"
         );
+        for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+            let Some(dependencies) = manifest.get(section).and_then(toml::Value::as_table) else {
+                continue;
+            };
+            for (alias, dependency) in dependencies {
+                let inherits = dependency
+                    .get("workspace")
+                    .and_then(toml::Value::as_bool)
+                    .unwrap_or(false);
+                if !inherits {
+                    continue;
+                }
+                let key = dependency.get("package").and_then(toml::Value::as_str).unwrap_or(alias);
+                let declaration = workspace_dependencies
+                    .get(key)
+                    .ok_or_else(|| format!("packaged support crate {member} inherits `{key}` from [workspace.dependencies], which does not declare it"))?;
+                if let Some(path) = declaration.get("path").and_then(toml::Value::as_str) {
+                    assert!(
+                        crates.join(path).join("Cargo.toml").is_file(),
+                        "packaged support workspace declares `{key}` at `{path}`, which is not a shipped crate"
+                    );
+                }
+            }
+        }
     }
     Ok(())
 }

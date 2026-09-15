@@ -19,7 +19,7 @@ You are a test orchestrator for the Incan compiler. When invoked, you analyze th
 
 | Changed path pattern | Command |
 |---|---|
-| `crates/incan_syntax/src/parser/` | `cargo test -p incan_syntax --lib parser::tests` |
+| `loaves/kernel/incan_syntax/src/parser/` | `cargo test -p incan_syntax --lib parser::tests` |
 | `src/frontend/typechecker/` | `cargo test -p incan --lib typechecker::tests` |
 | `src/backend/ir/lower/` | `cargo test --test codegen_snapshot_tests` |
 | `src/backend/ir/emit/` | `cargo test --test codegen_snapshot_tests` |

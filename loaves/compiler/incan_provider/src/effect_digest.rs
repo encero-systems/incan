@@ -191,13 +191,13 @@ pub const COMPILER_STDLIB_ROOT: &str = "crates/incan_stdlib/stdlib";
 /// excluded and nothing tells you. This list is the other shape. It answers "what can reach a compiled component"
 /// and everything it omits is omitted for a stated reason, each of which is one of exactly two:
 ///
-/// - **Covered by meaning.** `loaves/compiler/incan_frontend`, `crates/incan_syntax` and `crates/incan_vocab` are run,
-///   not hashed: the digest lexes, parses, checks and lowers all 104 standard-library sources with this compiler, so a
-///   change to any of them that alters what the compiler understands moves the digest, and one that does not, does not.
-///   That is a stronger answer than hashing their source, not a weaker one.
-/// - **Cannot reach a component.** `src/cli`, `src/lsp`, `src/inspect`, `src/oven`, `crates/incan_codegraph`,
-///   `crates/rust_inspect` and `tests/` are the compiler's own tooling. They decide *when* components are built and
-///   *where* they are written, never what a component contains.
+/// - **Covered by meaning.** `loaves/compiler/incan_frontend`, `loaves/kernel/incan_syntax` and `crates/incan_vocab`
+///   are run, not hashed: the digest lexes, parses, checks and lowers all 104 standard-library sources with this
+///   compiler, so a change to any of them that alters what the compiler understands moves the digest, and one that does
+///   not, does not. That is a stronger answer than hashing their source, not a weaker one.
+/// - **Cannot reach a component.** `src/cli`, `src/lsp`, `src/inspect`, `src/oven`, `loaves/kernel/incan_codegraph`,
+///   `loaves/compiler/rust_inspect` and `tests/` are the compiler's own tooling. They decide *when* components are
+///   built and *where* they are written, never what a component contains.
 ///
 /// The second reason has one edge the digest does not cover by itself: publication code that changes the store's
 /// own layout or manifest produces a differently-shaped store from identical component content. That case is
@@ -216,8 +216,8 @@ pub const COMPILER_RUST_EFFECT_ROOTS: &[(&str, &str)] = &[
     ("core", "crates/incan_core"),
     ("derive", "crates/incan_derive"),
     ("web-macros", "crates/incan_web_macros"),
-    ("semantics-core", "crates/incan_semantics_core"),
-    ("semantics-stdlib", "crates/incan_semantics_stdlib"),
+    ("semantics-core", "loaves/kernel/incan_semantics_core"),
+    ("semantics-stdlib", "loaves/compiler/incan_semantics_stdlib"),
     ("transitional-lowering", "loaves/compiler/incan_ir/src"),
     ("transitional-emission", "loaves/compiler/incan_emit/src"),
     ("transitional-backend", "loaves/compiler/incan_driver/src/backend"),

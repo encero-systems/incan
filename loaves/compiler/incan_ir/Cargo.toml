@@ -20,17 +20,17 @@ std_async = ["incan_frontend/std_async"]
 std_decorators = ["incan_frontend/std_decorators"]
 
 [dependencies]
-incan_core = { path = "../../../crates/incan_core" }
-incan_frontend = { path = "../incan_frontend", default-features = false }
-incan_semantics_core = { path = "../../../crates/incan_semantics_core" }
-incan_syntax = { path = "../../../crates/incan_syntax" }
-incan_vocab = { path = "../../../crates/incan_vocab" }
-oven_model = { path = "../../oven/oven_model" }
-rust_inspect = { path = "../../../crates/rust_inspect", default-features = false }
+incan_core = { workspace = true }
+incan_frontend = { workspace = true }
+incan_semantics_core = { workspace = true }
+incan_syntax = { workspace = true }
+incan_vocab = { workspace = true }
+oven_model = { workspace = true }
+rust_inspect = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-incan_frontend = { path = "../incan_frontend", default-features = false, features = ["test_support"] }
+incan_frontend = { workspace = true, features = ["test_support"] }
 tempfile = "3"

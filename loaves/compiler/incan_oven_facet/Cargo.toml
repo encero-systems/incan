@@ -11,12 +11,12 @@ name = "incan_oven_facet"
 path = "src/lib.rs"
 
 [dependencies]
-incan_core = { path = "../../../crates/incan_core" }
-incan_frontend = { path = "../incan_frontend", default-features = false }
-incan_provider = { path = "../incan_provider", default-features = false }
-oven_model = { path = "../../oven/oven_model" }
-oven_rustc = { path = "../../oven/oven_rustc" }
-oven_store = { path = "../../oven/oven_store" }
+incan_core = { workspace = true }
+incan_frontend = { workspace = true }
+incan_provider = { workspace = true }
+oven_model = { workspace = true }
+oven_rustc = { workspace = true }
+oven_store = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

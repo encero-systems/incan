@@ -42,6 +42,10 @@ def main() -> int:
             members.append(crate.name)
         workspace = "[workspace]\nmembers = [" + ", ".join(f'"{member}"' for member in members) + "]\nresolver = \"2\"\n\n"
         workspace += table(root_manifest, "workspace.package") + "\n" + table(root_manifest, "workspace.dependencies")
+        # The Oven crates inherit each other from the root table, whose paths name the checkout layout; the copies
+        # sit beside this manifest. Every other path entry stays as it is: an Oven crate that inherited one would
+        # fail to resolve it here, which is the property under test.
+        workspace = re.sub(r'^(oven_[a-z_]+) = \{ path = "loaves/oven/\1"', r'\1 = { path = "\1"', workspace, flags=re.M)
         (scratch / "Cargo.toml").write_text(workspace)
         shutil.copy(ROOT / "Cargo.lock", scratch / "Cargo.lock")
         env = dict(os.environ)
