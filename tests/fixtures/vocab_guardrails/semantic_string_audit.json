@@ -67,6 +67,228 @@
       "expected_fingerprint": "0x1dc2b536c0293d40"
     },
     {
+      "path": "loaves/compiler/incan_driver/src/backend/c_abi.rs",
+      "category": "C ABI target-triple selection and clang AST node-kind matching",
+      "expected_count": 5,
+      "expected_fingerprint": "0xca7bf27488024e44"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/backend/project/generator.rs",
+      "category": "generated project layout: std path roots, the target directory, the lock format marker, dependency table names, entry module names and the stdlib module",
+      "expected_count": 7,
+      "expected_fingerprint": "0x589c2a6f8554b08b"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/backend/project/runner.rs",
+      "category": "Cargo offline and frozen flag detection",
+      "expected_count": 1,
+      "expected_fingerprint": "0xdbb6cb2d2f7e5615"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/backend/shadow/abs_sum_profile_tests.rs",
+      "category": "shadow comparison legacy-route requirement environment flag",
+      "expected_count": 1,
+      "expected_fingerprint": "0x26029eabba9d5342"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/backend/shadow/enumerate_zip_tests.rs",
+      "category": "shadow comparison legacy-route requirement environment flag",
+      "expected_count": 1,
+      "expected_fingerprint": "0x6d92bc56a991a48f"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/backend/shadow/json_stringify_tests.rs",
+      "category": "shadow comparison legacy-route requirement environment flag",
+      "expected_count": 6,
+      "expected_fingerprint": "0x25f4d476ba282831"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/backend/shadow/legacy_oven.rs",
+      "category": "Cargo environment variable filtering for the legacy Oven route",
+      "expected_count": 1,
+      "expected_fingerprint": "0xc92aa5a8e9ab74d1"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/backend/shadow/len_string_tests.rs",
+      "category": "shadow comparison legacy-route requirement environment flag",
+      "expected_count": 1,
+      "expected_fingerprint": "0x6d92bc56a991a48f"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/backend/shadow/mod.rs",
+      "category": "shadow comparison entrypoint name, std::process observability exclusion and runtime failure message classification",
+      "expected_count": 7,
+      "expected_fingerprint": "0x413857b09adc9312"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/bake.rs",
+      "category": "Oven bake profile selection",
+      "expected_count": 3,
+      "expected_fingerprint": "0xf643e2ca93edf3f7"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/library_project.rs",
+      "category": "library build profile selection and stdlib crate exclusion",
+      "expected_count": 2,
+      "expected_fingerprint": "0x3d486da99b66d880"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/output_materialization.rs",
+      "category": "completed-output profile selection",
+      "expected_count": 1,
+      "expected_fingerprint": "0x6c28a9bbc1a5bab9"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/output_paths.rs",
+      "category": "host target-triple table, Cargo out-dir and build-script layout compatibility",
+      "expected_count": 7,
+      "expected_fingerprint": "0x4aebd9d8ae316bd9"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/output_selection.rs",
+      "category": "baked-output profile selection and path-source dependency projection",
+      "expected_count": 3,
+      "expected_fingerprint": "0x548c43ec45825911"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/oven_project.rs",
+      "category": "stdlib namespace and crate exclusion, Oven Loaf execution environment flags, existing-plan publication marker",
+      "expected_count": 7,
+      "expected_fingerprint": "0xdd7ed5f77dea21c2"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/plan_authority.rs",
+      "category": "Oven Loaf execution environment flag",
+      "expected_count": 1,
+      "expected_fingerprint": "0x0f4d3698de00fc78"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/plan_selection.rs",
+      "category": "plan profile selection, existing-plan publication marker and test-dependency envelope version",
+      "expected_count": 3,
+      "expected_fingerprint": "0x6a7bfcf5ee6e1393"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/provider_compilation.rs",
+      "category": "incan_derive macro-dependency compatibility",
+      "expected_count": 7,
+      "expected_fingerprint": "0xa5538e05fb162812"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/provider_metadata.rs",
+      "category": "describe decorator fact projection",
+      "expected_count": 1,
+      "expected_fingerprint": "0x3737e4b5aaef1e61"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/publication.rs",
+      "category": "Rust source extension check for inspection authority",
+      "expected_count": 1,
+      "expected_fingerprint": "0x7a60930e105ab2a0"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/replacement.rs",
+      "category": "replacement backend main-function selection",
+      "expected_count": 1,
+      "expected_fingerprint": "0x6fe760297364f1c3"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/reuse.rs",
+      "category": "packaged-Loaf store relative path compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0x499c85fb4eca755f"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/rust_extern.rs",
+      "category": "rust.extern decorator path matching",
+      "expected_count": 1,
+      "expected_fingerprint": "0xbed7f3dadd6d0868"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build_report.rs",
+      "category": "Rust source extension check for report source files",
+      "expected_count": 1,
+      "expected_fingerprint": "0x408c977e67bf511f"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/cargo_policy.rs",
+      "category": "environment flag truthiness for Cargo policy",
+      "expected_count": 1,
+      "expected_fingerprint": "0x7b43ebb63741a15c"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/generated_cache.rs",
+      "category": "generated-cache opt-out values, Cargo profile and target environment passthrough, and Cargo flag parsing",
+      "expected_count": 5,
+      "expected_fingerprint": "0x8bfea3ce1344d984"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/inspect/closure.rs",
+      "category": "codegraph declaration visibility for closure export",
+      "expected_count": 1,
+      "expected_fingerprint": "0x9c478fb0eaa58204"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/inspect/codegraph.rs",
+      "category": "codegraph source discovery: the Incan file extension, ignored directories, public from-import filtering and crate-relative module segments",
+      "expected_count": 5,
+      "expected_fingerprint": "0x115079626d32282e"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/lock/preheat.rs",
+      "category": "lock dependency preheat environment flag",
+      "expected_count": 1,
+      "expected_fingerprint": "0xbd292725401e28e3"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/lock/rust_inspect.rs",
+      "category": "Oven Loaf environment flag for rust-inspect preparation",
+      "expected_count": 1,
+      "expected_fingerprint": "0xd3d35633f9d39474"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/modules.rs",
+      "category": "package entrypoint stem",
+      "expected_count": 1,
+      "expected_fingerprint": "0x8c4c9e75782e649a"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/project.rs",
+      "category": "project source discovery and generated-state source exclusion",
+      "expected_count": 3,
+      "expected_fingerprint": "0x20dd2e3b43ec0187"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/replacement_compatibility.rs",
+      "category": "replacement-compatibility registry: repository path traversal checks, evidence kinds, and the capability and feature identifiers the anchor profiles and body-corpus mappings key on",
+      "expected_count": 40,
+      "expected_fingerprint": "0x2bb3122e34c9a456"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/rust_inspect_workspace.rs",
+      "category": "rust-inspect workspace prewarm flags, lock-projection and primitive-namespace compatibility",
+      "expected_count": 5,
+      "expected_fingerprint": "0x2149b316c851f3d0"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/shadow_support.rs",
+      "category": "shadow comparison Oven Loaf environment flag and stdlib import exclusion",
+      "expected_count": 2,
+      "expected_fingerprint": "0x57f8599b43c4b38d"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/testing/discovery.rs",
+      "category": "test discovery marker, fixture, conftest and parametrize vocabulary",
+      "expected_count": 26,
+      "expected_fingerprint": "0xe266ad39aa22ecd4"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/testing/mod.rs",
+      "category": "test file discovery root directories",
+      "expected_count": 1,
+      "expected_fingerprint": "0x7dc8ae981cbf9965"
+    },
+    {
       "path": "loaves/compiler/incan_emit/src/checked_program/sdk_module_derives.rs",
       "category": "checked SDK metadata derive-module assertions",
       "expected_count": 1,
@@ -425,144 +647,6 @@
       "category": "vocab desugarer artifact discovery, profile and crate-type checks",
       "expected_count": 3,
       "expected_fingerprint": "0xe97ac641de1e4572"
-    },
-    {
-      "path": "src/driver/build/bake.rs",
-      "category": "Oven bake profile selection",
-      "expected_count": 3,
-      "expected_fingerprint": "0xf643e2ca93edf3f7"
-    },
-    {
-      "path": "src/driver/build/library_project.rs",
-      "category": "library build profile selection and stdlib crate exclusion",
-      "expected_count": 2,
-      "expected_fingerprint": "0x3d486da99b66d880"
-    },
-    {
-      "path": "src/driver/build/output_materialization.rs",
-      "category": "completed-output profile selection",
-      "expected_count": 1,
-      "expected_fingerprint": "0x6c28a9bbc1a5bab9"
-    },
-    {
-      "path": "src/driver/build/output_paths.rs",
-      "category": "host target-triple table, Cargo out-dir and build-script layout compatibility",
-      "expected_count": 7,
-      "expected_fingerprint": "0x4aebd9d8ae316bd9"
-    },
-    {
-      "path": "src/driver/build/output_selection.rs",
-      "category": "baked-output profile selection and path-source dependency projection",
-      "expected_count": 3,
-      "expected_fingerprint": "0x548c43ec45825911"
-    },
-    {
-      "path": "src/driver/build/oven_project.rs",
-      "category": "stdlib namespace and crate exclusion, Oven Loaf execution environment flags, existing-plan publication marker",
-      "expected_count": 7,
-      "expected_fingerprint": "0xdd7ed5f77dea21c2"
-    },
-    {
-      "path": "src/driver/build/plan_authority.rs",
-      "category": "Oven Loaf execution environment flag",
-      "expected_count": 1,
-      "expected_fingerprint": "0x0f4d3698de00fc78"
-    },
-    {
-      "path": "src/driver/build/plan_selection.rs",
-      "category": "plan profile selection, existing-plan publication marker and test-dependency envelope version",
-      "expected_count": 3,
-      "expected_fingerprint": "0x6a7bfcf5ee6e1393"
-    },
-    {
-      "path": "src/driver/build/provider_compilation.rs",
-      "category": "incan_derive macro-dependency compatibility",
-      "expected_count": 7,
-      "expected_fingerprint": "0xa5538e05fb162812"
-    },
-    {
-      "path": "src/driver/build/provider_metadata.rs",
-      "category": "describe decorator fact projection",
-      "expected_count": 1,
-      "expected_fingerprint": "0x3737e4b5aaef1e61"
-    },
-    {
-      "path": "src/driver/build/publication.rs",
-      "category": "Rust source extension check for inspection authority",
-      "expected_count": 1,
-      "expected_fingerprint": "0x7a60930e105ab2a0"
-    },
-    {
-      "path": "src/driver/build/replacement.rs",
-      "category": "replacement backend main-function selection",
-      "expected_count": 1,
-      "expected_fingerprint": "0x6fe760297364f1c3"
-    },
-    {
-      "path": "src/driver/build/reuse.rs",
-      "category": "packaged-Loaf store relative path compatibility",
-      "expected_count": 2,
-      "expected_fingerprint": "0x499c85fb4eca755f"
-    },
-    {
-      "path": "src/driver/build/rust_extern.rs",
-      "category": "rust.extern decorator path matching",
-      "expected_count": 1,
-      "expected_fingerprint": "0xbed7f3dadd6d0868"
-    },
-    {
-      "path": "src/driver/build_report.rs",
-      "category": "Rust source extension check for report source files",
-      "expected_count": 1,
-      "expected_fingerprint": "0x408c977e67bf511f"
-    },
-    {
-      "path": "src/driver/cargo_policy.rs",
-      "category": "environment flag truthiness for Cargo policy",
-      "expected_count": 1,
-      "expected_fingerprint": "0x7b43ebb63741a15c"
-    },
-    {
-      "path": "src/driver/lock/preheat.rs",
-      "category": "lock dependency preheat environment flag",
-      "expected_count": 1,
-      "expected_fingerprint": "0xbd292725401e28e3"
-    },
-    {
-      "path": "src/driver/lock/rust_inspect.rs",
-      "category": "Oven Loaf environment flag for rust-inspect preparation",
-      "expected_count": 1,
-      "expected_fingerprint": "0xc4d2b453dd4ea8f1"
-    },
-    {
-      "path": "src/driver/modules.rs",
-      "category": "package entrypoint stem",
-      "expected_count": 1,
-      "expected_fingerprint": "0x8c4c9e75782e649a"
-    },
-    {
-      "path": "src/driver/project.rs",
-      "category": "project source discovery and generated-state source exclusion",
-      "expected_count": 3,
-      "expected_fingerprint": "0x20dd2e3b43ec0187"
-    },
-    {
-      "path": "src/driver/rust_inspect_workspace.rs",
-      "category": "rust-inspect workspace prewarm flags, lock-projection and primitive-namespace compatibility",
-      "expected_count": 5,
-      "expected_fingerprint": "0x2149b316c851f3d0"
-    },
-    {
-      "path": "src/driver/testing/discovery.rs",
-      "category": "test discovery marker, fixture, conftest and parametrize vocabulary",
-      "expected_count": 26,
-      "expected_fingerprint": "0xe266ad39aa22ecd4"
-    },
-    {
-      "path": "src/driver/testing/mod.rs",
-      "category": "test file discovery root directories",
-      "expected_count": 1,
-      "expected_fingerprint": "0x7dc8ae981cbf9965"
     }
   ]
 }

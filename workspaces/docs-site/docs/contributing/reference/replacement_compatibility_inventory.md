@@ -20,9 +20,9 @@ The `v0.5.0` source is a frozen migration baseline, not the beginning of a versi
 
 | Contributor | Lifecycle | Features | Private requirements | Location | Retirement condition |
 |---|---|---|---|---|---|
-| `backend.replacement.bounded-scalar-control` | LocalImplementation | 4 | 3 | `src/replacement_compatibility.rs::fn replacement_compatibility_direct_execution_contribution` | - |
-| `frontend.body-ir.callable-values` | LocalImplementation | 2 | 2 | `src/replacement_compatibility.rs::fn replacement_compatibility_body_ir_contribution` | - |
-| `replacement-compatibility.migration-bootstrap` | MigrationBootstrap | 21 | 16 | `src/replacement_compatibility.rs::fn migration_bootstrap_compatibility_contribution` | Retire this contributor when every remaining feature and requirement has moved to the module that implements its coherent mechanism; then retain the v0.5 source only as an explicitly historical regression fixture if a later migration needs it. |
+| `backend.replacement.bounded-scalar-control` | LocalImplementation | 4 | 3 | `loaves/compiler/incan_driver/src/replacement_compatibility.rs::fn replacement_compatibility_direct_execution_contribution` | - |
+| `frontend.body-ir.callable-values` | LocalImplementation | 2 | 2 | `loaves/compiler/incan_driver/src/replacement_compatibility.rs::fn replacement_compatibility_body_ir_contribution` | - |
+| `replacement-compatibility.migration-bootstrap` | MigrationBootstrap | 21 | 16 | `loaves/compiler/incan_driver/src/replacement_compatibility.rs::fn migration_bootstrap_compatibility_contribution` | Retire this contributor when every remaining feature and requirement has moved to the module that implements its coherent mechanism; then retain the v0.5 source only as an explicitly historical regression fixture if a later migration needs it. |
 
 ## Compatibility features
 
@@ -172,13 +172,13 @@ Every planned feature below has a currently open mechanism owner. #1146 is compl
 
 One exact source-local `std.async` activation executes same-module async calls, direct await, and source-order ready-tie races through receipt-bound task frames.
 
-- `probe:async.tasks:bounded-direct-profile` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AsyncAwait`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_expr/control_flow.rs::fn check_await`
+- `probe:async.tasks:bounded-direct-profile` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AsyncAwait`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_await`
   - Positive contract: One exact source-local `std.async` activation executes same-module async calls, direct await, and source-order ready-tie races through receipt-bound task frames.
   - Negative contract: Inputs outside the bounded direct profile refuse visibly with their source span.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AsyncAwait`
-- Typechecker: Observed `src/frontend/typechecker/check_expr/control_flow.rs::fn check_await`
-- Body IR: Observed `src/frontend/body_ir.rs::fn lower_race_for`
-- Replacement executor: Observed `src/backend/replacement/mod.rs::fn execute_race`
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AsyncAwait`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_await`
+- Body IR: Observed `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_race_for`
+- Replacement executor: Observed `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_race`
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: Closed #1155 delivered direct task execution; open #988 owns exact paired source-observable evidence through #1146's completed route, so the broader async feature remains non-green.
 - Blocker/migration: Closed #1155 delivered the bounded source-local task profile; open #988 owns its remaining paired source-observable comparison evidence.
 
@@ -186,13 +186,13 @@ One exact source-local `std.async` activation executes same-module async calls, 
 
 Named calls preserve resolved targets, generic arguments, positional/named binding, and spread diagnostics.
 
-- `probe:call.named-and-variadic:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallSiteGenerics`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_expr/calls.rs::fn check_call`
+- `probe:call.named-and-variadic:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallSiteGenerics`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call`
   - Positive contract: Named calls preserve resolved targets, generic arguments, positional/named binding, and spread diagnostics.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallSiteGenerics`
-- Typechecker: Observed `src/frontend/typechecker/check_expr/calls.rs::fn check_call`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_call`; owner #988
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_call`; owner #988
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallSiteGenerics`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #988
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #988
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1152 delivered the callable runtime substrate; open #988 owns broadening named, variadic, and spread execution with receipt-bound evidence.
 
@@ -200,13 +200,13 @@ Named calls preserve resolved targets, generic arguments, positional/named bindi
 
 Partial presets capture at construction, remain overrideable defaults, and preserve named/positional binding rules.
 
-- `probe:call.partial-binding:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallablePresets`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_expr/calls.rs::fn check_call`
+- `probe:call.partial-binding:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallablePresets`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call`
   - Positive contract: Partial presets capture at construction, remain overrideable defaults, and preserve named/positional binding rules.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallablePresets`
-- Typechecker: Observed `src/frontend/typechecker/check_expr/calls.rs::fn check_call`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_call`; owner #988
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_call`; owner #988
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallablePresets`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #988
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #988
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Body IR and closed #1152 carry the source and callable-runtime substrate; open #988 owns the direct local callable forms that remain visibly refused.
 
@@ -214,13 +214,13 @@ Partial presets capture at construction, remain overrideable defaults, and prese
 
 Stored closures and partials retain lexical capture timing, ownership, and isolated local call frames.
 
-- `probe:call.stored-callables:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FirstClassFunctions`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_expr/calls.rs::fn check_call`
+- `probe:call.stored-callables:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FirstClassFunctions`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call`
   - Positive contract: Stored closures and partials retain lexical capture timing, ownership, and isolated local call frames.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FirstClassFunctions`
-- Typechecker: Observed `src/frontend/typechecker/check_expr/calls.rs::fn check_call`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_call`; owner #988
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_call`; owner #988
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FirstClassFunctions`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #988
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #988
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1152 delivered the coherent callable-frame substrate; open #988 owns broadening the local callable targets that direct execution still refuses.
 
@@ -228,13 +228,13 @@ Stored closures and partials retain lexical capture timing, ownership, and isola
 
 Decorators and scoped DSL surfaces preserve activation, dispatch, and source-owned diagnostics.
 
-- `probe:decorators.dsl-surfaces:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ScopedDslSurfaces`; negative IntentionalRefusal at Observed `src/frontend/typechecker/collect/decorators.rs::fn validate_decorators_allowing_user_defined`
+- `probe:decorators.dsl-surfaces:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ScopedDslSurfaces`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/collect/decorators.rs::fn validate_decorators_allowing_user_defined`
   - Positive contract: Decorators and scoped DSL surfaces preserve activation, dispatch, and source-owned diagnostics.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ScopedDslSurfaces`
-- Typechecker: Observed `src/frontend/typechecker/collect/decorators.rs::fn validate_decorators_allowing_user_defined`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_function_body`; owner #555
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_call`; owner #555
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ScopedDslSurfaces`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/collect/decorators.rs::fn validate_decorators_allowing_user_defined`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_function_body`; owner #555
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #555
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #555: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Surface packs and decorators require a source-to-runtime dispatch boundary before direct execution can classify them.
 
@@ -242,13 +242,13 @@ Decorators and scoped DSL surfaces preserve activation, dispatch, and source-own
 
 Source diagnostics retain intentional acceptance/refusal boundaries, spans, and machine-readable identity.
 
-- `probe:diagnostics.stable:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StableDiagnostics`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_stmt.rs::fn check_statement`
+- `probe:diagnostics.stable:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StableDiagnostics`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs::fn check_statement`
   - Positive contract: Source diagnostics retain intentional acceptance/refusal boundaries, spans, and machine-readable identity.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StableDiagnostics`
-- Typechecker: Observed `src/frontend/typechecker/check_stmt.rs::fn check_statement`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_function_body`; owner #655
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_free_function`; owner #655
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StableDiagnostics`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs::fn check_statement`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_function_body`; owner #655
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_free_function`; owner #655
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #655: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: The compatibility report and corpus need receipt-bound diagnostic evidence; generated Rust diagnostics are not a substitute.
 
@@ -256,13 +256,13 @@ Source diagnostics retain intentional acceptance/refusal boundaries, spans, and 
 
 Result combinators and explicit propagation retain success, error, ordering, and diagnostic behavior.
 
-- `probe:error.result-and-try:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ResultCombinators`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_expr/control_flow.rs::fn check_try`
+- `probe:error.result-and-try:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ResultCombinators`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_try`
   - Positive contract: Result combinators and explicit propagation retain success, error, ordering, and diagnostic behavior.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ResultCombinators`
-- Typechecker: Observed `src/frontend/typechecker/check_expr/control_flow.rs::fn check_try`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_try`; owner #988
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_call`; owner #988
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ResultCombinators`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_try`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_try`; owner #988
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #988
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1101 delivered the Body IR vocabulary and closed #1154 delivered Result/error value routing; open #988 owns broadening and comparing the remaining execution profile.
 
@@ -270,13 +270,13 @@ Result combinators and explicit propagation retain success, error, ordering, and
 
 Generator expressions preserve construction-versus-consumption timing and lazy collection in the admitted profile.
 
-- `probe:generator.expressions:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_expr/calls.rs::fn check_call`
+- `probe:generator.expressions:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call`
   - Positive contract: Generator expressions preserve construction-versus-consumption timing and lazy collection in the admitted profile.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators`
-- Typechecker: Observed `src/frontend/typechecker/check_expr/calls.rs::fn check_call`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_generator_expr`; owner #988
-- Replacement executor: Planned `src/backend/replacement/mod.rs::ReplacementGenerator`; owner #988
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_generator_expr`; owner #988
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::ReplacementGenerator`; owner #988
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1152 delivered the bounded generator-expression collect path; open #988 owns broader consumption and comparison, which remain non-green.
 
@@ -284,13 +284,13 @@ Generator expressions preserve construction-versus-consumption timing and lazy c
 
 Generator functions suspend and resume without replaying prior effects or losing local state.
 
-- `probe:generator.functions:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_expr/calls.rs::fn check_call`
+- `probe:generator.functions:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call`
   - Positive contract: Generator functions suspend and resume without replaying prior effects or losing local state.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators`
-- Typechecker: Observed `src/frontend/typechecker/check_expr/calls.rs::fn check_call`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_generator_expr`; owner #988
-- Replacement executor: Planned `src/backend/replacement/mod.rs::ReplacementGenerator`; owner #988
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_generator_expr`; owner #988
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::ReplacementGenerator`; owner #988
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1152 delivered the callable/lazy-generator substrate; open #988 owns the generator-function frames and resumption forms that remain explicit replacement refusals.
 
@@ -298,13 +298,13 @@ Generator functions suspend and resume without replaying prior effects or losing
 
 Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgements, and source-map diagnostics.
 
-- `probe:interop.rust-and-c:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedCBindingFoundation`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_expr/calls/rust_boundary.rs::fn validate_rust_boundary_value`
+- `probe:interop.rust-and-c:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedCBindingFoundation`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs::fn validate_rust_boundary_value`
   - Positive contract: Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgements, and source-map diagnostics.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedCBindingFoundation`
-- Typechecker: Observed `src/frontend/typechecker/check_expr/calls/rust_boundary.rs::fn validate_rust_boundary_value`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_call`; owner #989
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_call`; owner #989
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedCBindingFoundation`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs::fn validate_rust_boundary_value`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #989
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #989
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #989: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Public ABI and interop parity is an explicit replacement-boundary slice, not a direct scalar-executor extension.
 
@@ -312,13 +312,13 @@ Rust and C boundaries preserve checked signatures, coercions, explicit unsafe ac
 
 Iterator protocols, adapters, and consumers preserve lazy dispatch, callback timing, exhaustion, and errors.
 
-- `probe:iteration.protocol-and-adapters:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IteratorAdapters`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol`
+- `probe:iteration.protocol-and-adapters:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IteratorAdapters`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol`
   - Positive contract: Iterator protocols, adapters, and consumers preserve lazy dispatch, callback timing, exhaustion, and errors.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IteratorAdapters`
-- Typechecker: Observed `src/frontend/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_general_iteration`; owner #988
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_loop`; owner #988
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IteratorAdapters`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_general_iteration`; owner #988
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_loop`; owner #988
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Case `replacement-body-v0-023` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output`
 - Blocker/migration: Closed #1152 delivered the first callable/lazy-generator adapter profile; open #988 owns broader protocol dispatch, which remains blocked.
@@ -327,13 +327,13 @@ Iterator protocols, adapters, and consumers preserve lazy dispatch, callback tim
 
 User-defined and fallible iteration preserve protocol calls, terminal behavior, and error routing.
 
-- `probe:iteration.user-and-fallible:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FallibleIteration`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol`
+- `probe:iteration.user-and-fallible:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FallibleIteration`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol`
   - Positive contract: User-defined and fallible iteration preserve protocol calls, terminal behavior, and error routing.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FallibleIteration`
-- Typechecker: Observed `src/frontend/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_general_iteration`; owner #988
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_loop`; owner #988
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FallibleIteration`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_general_iteration`; owner #988
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_loop`; owner #988
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1101 delivered the Body IR protocol vocabulary; open #988 owns the runtime dispatch and error-routing profile required to admit these forms.
 
@@ -341,13 +341,13 @@ User-defined and fallible iteration preserve protocol calls, terminal behavior, 
 
 Tuple, list, dict, set, slice, projection, mutation, equality, and ordering retain source semantics.
 
-- `probe:language.aggregates-and-projections:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdCollections`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_expr/collections.rs::fn check_list`
+- `probe:language.aggregates-and-projections:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdCollections`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/collections.rs::fn check_list`
   - Positive contract: Tuple, list, dict, set, slice, projection, mutation, equality, and ordering retain source semantics.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdCollections`
-- Typechecker: Observed `src/frontend/typechecker/check_expr/collections.rs::fn check_list`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_aggregate`; owner #988
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn evaluate_aggregate`; owner #988
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdCollections`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/collections.rs::fn check_list`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_aggregate`; owner #988
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn evaluate_aggregate`; owner #988
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Case `replacement-body-v0-020` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output`
 - Case `replacement-body-v0-026` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output`
@@ -358,26 +358,26 @@ Tuple, list, dict, set, slice, projection, mutation, equality, and ordering reta
 
 Bounded scalar conditionals, loops, returns, assertions, and range iteration execute directly with explicit receipts.
 
-- `probe:language.control-flow:bounded-direct-profile` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_expr/control_flow.rs::fn check_if_expr`
+- `probe:language.control-flow:bounded-direct-profile` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_if_expr`
   - Positive contract: Bounded scalar conditionals, loops, returns, assertions, and range iteration execute directly with explicit receipts.
   - Negative contract: Inputs outside the bounded direct profile refuse visibly with their source span.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet`
-- Typechecker: Observed `src/frontend/typechecker/check_expr/control_flow.rs::fn check_if_expr`
-- Body IR: Observed `src/frontend/body_ir.rs::fn lower_if`
-- Replacement executor: Observed `src/backend/replacement/mod.rs::fn execute_loop`
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_if_expr`
+- Body IR: Observed `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_if`
+- Replacement executor: Observed `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_loop`
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; unscheduled evidence debt: The bounded direct profile has no scheduled owner for its remaining aggregate and corpus-case comparison evidence.
 
 ### `language.control-flow-complete`
 
 Control flow beyond the bounded scalar profile preserves value-carrying branches, pattern binding, loop results, and diagnostics.
 
-- `probe:language.control-flow-complete:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_expr/control_flow.rs::fn check_if_expr`
+- `probe:language.control-flow-complete:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_if_expr`
   - Positive contract: Control flow beyond the bounded scalar profile preserves value-carrying branches, pattern binding, loop results, and diagnostics.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet`
-- Typechecker: Observed `src/frontend/typechecker/check_expr/control_flow.rs::fn check_if_expr`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_if_expr`; owner #988
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_loop`; owner #988
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_if_expr`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_if_expr`; owner #988
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_loop`; owner #988
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: The current direct profile covers only the bounded scalar subset. Closed #1154 delivered the value and pattern runtime substrate; open #988 owns the remaining control-flow execution and comparison profile.
 
@@ -385,13 +385,13 @@ Control flow beyond the bounded scalar profile preserves value-carrying branches
 
 Match, destructuring, alternation, guards, and exhaustiveness preserve branch selection and diagnostics.
 
-- `probe:language.match-and-patterns:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::PatternAlternation`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_expr/match_.rs::fn check_match`
+- `probe:language.match-and-patterns:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::PatternAlternation`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/match_.rs::fn check_match`
   - Positive contract: Match, destructuring, alternation, guards, and exhaustiveness preserve branch selection and diagnostics.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::PatternAlternation`
-- Typechecker: Observed `src/frontend/typechecker/check_expr/match_.rs::fn check_match`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_match`; owner #988
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_call`; owner #988
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::PatternAlternation`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/match_.rs::fn check_match`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_match`; owner #988
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #988
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1101 delivered the Body IR vocabulary and closed #1154 delivered pattern dispatch over direct values; open #988 owns broadening and comparing the remaining match surface.
 
@@ -399,13 +399,13 @@ Match, destructuring, alternation, guards, and exhaustiveness preserve branch se
 
 Bounded scalar arithmetic, comparisons, boolean operators, strings, and int/bool/str/None JSON stringification execute directly from Body IR.
 
-- `probe:language.numeric-and-scalar:bounded-direct-profile` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_expr/ops.rs::fn check_binary`
+- `probe:language.numeric-and-scalar:bounded-direct-profile` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn check_binary`
   - Positive contract: Bounded scalar arithmetic, comparisons, boolean operators, strings, and int/bool/str/None JSON stringification execute directly from Body IR.
   - Negative contract: Inputs outside the bounded direct profile refuse visibly with their source span.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem`
-- Typechecker: Observed `src/frontend/typechecker/check_expr/ops.rs::fn check_binary`
-- Body IR: Observed `src/frontend/body_ir.rs::fn lower_binary`
-- Replacement executor: Observed `src/backend/replacement/mod.rs::fn evaluate_binary`
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn check_binary`
+- Body IR: Observed `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_binary`
+- Replacement executor: Observed `loaves/compiler/incan_emit/src/replacement/mod.rs::fn evaluate_binary`
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; unscheduled evidence debt: The bounded direct profile has no scheduled owner for its remaining aggregate and corpus-case comparison evidence.
 - Case `replacement-body-v0-001` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::legacy_receipt_identity`; Observed `tests/parity_corpus_tests.rs::replacement_receipt_identity`; Observed `tests/parity_corpus_tests.rs::fn the_compared_row_carries_two_route_receipts_and_its_oven_authority`
 - Case `replacement-body-v0-022` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output`
@@ -416,13 +416,13 @@ Bounded scalar arithmetic, comparisons, boolean operators, strings, and int/bool
 
 Exact signed and unsigned widths, finite f32/f64, and decimal values retain their checked carrier through literals, constants, locals, lossless widening, source-local calls, entry arguments and results, Display output, receipts, reports, and bounded source-observable comparison. Public direct and shadow exact-float carriers reject NaN and infinities; ordinary float parsing remains separately compared. Arithmetic, unary operations, resize methods, Debug formatting, aggregates, matching, and decimal scalar casts remain explicit pre-effect refusals owned by #988.
 
-- `probe:language.numeric-complete:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_stmt.rs::fn check_assignment`
+- `probe:language.numeric-complete:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs::fn check_assignment`
   - Positive contract: Exact signed and unsigned widths, finite f32/f64, and decimal values retain their checked carrier through literals, constants, locals, lossless widening, source-local calls, entry arguments and results, Display output, receipts, reports, and bounded source-observable comparison. Public direct and shadow exact-float carriers reject NaN and infinities; ordinary float parsing remains separately compared. Arithmetic, unary operations, resize methods, Debug formatting, aggregates, matching, and decimal scalar casts remain explicit pre-effect refusals owned by #988.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem`
-- Typechecker: Observed `src/frontend/typechecker/check_stmt.rs::fn check_assignment`
-- Body IR: Observed `src/frontend/body_ir/primitives.rs::fn lower_checked_literal`
-- Replacement executor: Observed `src/backend/replacement/mod.rs::fn validate_reachable_typed_numeric_profile`
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs::fn check_assignment`
+- Body IR: Observed `loaves/compiler/incan_frontend/src/body_ir/primitives.rs::fn lower_checked_literal`
+- Replacement executor: Observed `loaves/compiler/incan_emit/src/replacement/mod.rs::fn validate_reachable_typed_numeric_profile`
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Case `replacement-body-v0-029` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts`; Observed `tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts`; Observed `tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts`
 - Blocker/migration: #1279 materializes the typed carrier and bounded movement/output contract. #988 owns the explicitly refused numeric operations, overflow behavior, aggregate integration, Debug formatting, resize methods, and decimal scalar conversions required before the wider feature can become green.
@@ -431,13 +431,13 @@ Exact signed and unsigned widths, finite f32/f64, and decimal values retain thei
 
 String operators and formatting preserve interpolation order, conversions, and runtime failures.
 
-- `probe:language.strings-and-format:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_expr/ops.rs::fn check_binary`
+- `probe:language.strings-and-format:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn check_binary`
   - Positive contract: String operators and formatting preserve interpolation order, conversions, and runtime failures.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem`
-- Typechecker: Observed `src/frontend/typechecker/check_expr/ops.rs::fn check_binary`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_binary`; owner #988
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn evaluate_binary`; owner #988
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn check_binary`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_binary`; owner #988
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn evaluate_binary`; owner #988
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Case `replacement-body-v0-021` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output`
 - Case `replacement-body-v0-024` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output`
@@ -447,13 +447,13 @@ String operators and formatting preserve interpolation order, conversions, and r
 
 Modules, imports, aliases, namespaces, and reexports resolve to one source-observable identity.
 
-- `probe:module.identity-and-aliases:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NamespacedStdlib`; negative IntentionalRefusal at Observed `src/frontend/typechecker/collect/stdlib_imports.rs::fn collect_import`
+- `probe:module.identity-and-aliases:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NamespacedStdlib`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs::fn collect_import`
   - Positive contract: Modules, imports, aliases, namespaces, and reexports resolve to one source-observable identity.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NamespacedStdlib`
-- Typechecker: Observed `src/frontend/typechecker/collect/stdlib_imports.rs::fn collect_import`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_call`; owner #1042
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_call`; owner #1042
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NamespacedStdlib`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs::fn collect_import`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #1042
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #1042
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #1042: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Canonical source identity is a prerequisite for a replacement profile that crosses module boundaries.
 
@@ -461,13 +461,13 @@ Modules, imports, aliases, namespaces, and reexports resolve to one source-obser
 
 Models, unions, value enums, newtypes, computed properties, and static storage preserve construction and dispatch semantics.
 
-- `probe:nominal.models-unions-enums:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ComputedProperties`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_decl.rs::fn check_model`
+- `probe:nominal.models-unions-enums:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ComputedProperties`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_decl.rs::fn check_model`
   - Positive contract: Models, unions, value enums, newtypes, computed properties, and static storage preserve construction and dispatch semantics.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ComputedProperties`
-- Typechecker: Observed `src/frontend/typechecker/check_decl.rs::fn check_model`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_constructor`; owner #988
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn evaluate_aggregate`; owner #988
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ComputedProperties`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_decl.rs::fn check_model`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_constructor`; owner #988
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn evaluate_aggregate`; owner #988
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Case `replacement-body-v0-030` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output`
 - Blocker/migration: #1281 retains and executes the bounded checked int/bool/str/float `isinstance` target profile in replacement-body-v0-030. That case does not establish general runtime type values or the wider models/unions/enums/newtypes contract. Closed #1154 delivered the current direct nominal/value substrate; open #988 owns broadening the replacement execution profile.
@@ -476,13 +476,13 @@ Models, unions, value enums, newtypes, computed properties, and static storage p
 
 Libraries, checked API metadata, providers, workspaces, and consumer imports preserve public identity and defaults.
 
-- `probe:package.public-boundaries:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedApiMetadata`; negative IntentionalRefusal at Observed `src/frontend/typechecker/collect/stdlib_imports.rs::fn collect_pub_imports`
+- `probe:package.public-boundaries:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedApiMetadata`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs::fn collect_pub_imports`
   - Positive contract: Libraries, checked API metadata, providers, workspaces, and consumer imports preserve public identity and defaults.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedApiMetadata`
-- Typechecker: Observed `src/frontend/typechecker/collect/stdlib_imports.rs::fn collect_pub_imports`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_call`; owner #989
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_call`; owner #989
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedApiMetadata`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs::fn collect_pub_imports`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #989
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #989
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #989: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Package and ABI boundaries deliberately remain outside the direct source-only profile until #656/#989 evidence exists.
 
@@ -490,13 +490,13 @@ Libraries, checked API metadata, providers, workspaces, and consumer imports pre
 
 Data-oriented stdlib services preserve their documented input, output, and error contracts.
 
-- `probe:runtime.std-data-services:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdChecksum`; negative IntentionalRefusal at Observed `src/frontend/typechecker/stdlib_loader.rs::fn lookup_function_symbol`
+- `probe:runtime.std-data-services:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdChecksum`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol`
   - Positive contract: Data-oriented stdlib services preserve their documented input, output, and error contracts.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdChecksum`
-- Typechecker: Observed `src/frontend/typechecker/stdlib_loader.rs::fn lookup_function_symbol`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_call`; owner #988
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_call`; owner #988
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdChecksum`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #988
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #988
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1156 delivered one checked provider-service dispatch and closed #1154 delivered its value-state prerequisite; open #988 owns broadening direct data-service execution and comparison.
 
@@ -504,13 +504,13 @@ Data-oriented stdlib services preserve their documented input, output, and error
 
 Hosted filesystem, environment, I/O, web, temporary-resource, and process-adjacent services retain authority and lifecycle semantics.
 
-- `probe:runtime.std-hosted-services:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdEnviron`; negative IntentionalRefusal at Observed `src/frontend/typechecker/stdlib_loader.rs::fn lookup_function_symbol`
+- `probe:runtime.std-hosted-services:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdEnviron`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol`
   - Positive contract: Hosted filesystem, environment, I/O, web, temporary-resource, and process-adjacent services retain authority and lifecycle semantics.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdEnviron`
-- Typechecker: Observed `src/frontend/typechecker/stdlib_loader.rs::fn lookup_function_symbol`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_call`; owner #988
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_call`; owner #988
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdEnviron`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #988
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #988
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1156 delivered one checked provider-service dispatch. Open #988 owns broader direct execution and comparison, with authority and receipt facts still supplied by #662.
 
@@ -518,13 +518,13 @@ Hosted filesystem, environment, I/O, web, temporary-resource, and process-adjace
 
 Logging, telemetry, registries, and metadata services preserve structured values and provider behavior.
 
-- `probe:runtime.std-observability:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdLogging`; negative IntentionalRefusal at Observed `src/frontend/typechecker/stdlib_loader.rs::fn lookup_function_symbol`
+- `probe:runtime.std-observability:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdLogging`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol`
   - Positive contract: Logging, telemetry, registries, and metadata services preserve structured values and provider behavior.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdLogging`
-- Typechecker: Observed `src/frontend/typechecker/stdlib_loader.rs::fn lookup_function_symbol`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_call`; owner #988
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_call`; owner #988
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdLogging`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #988
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #988
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1156 delivered one checked provider-service dispatch; open #988 owns broader direct observability execution and comparison, while provider authority and receipts remain explicit prerequisites.
 
@@ -532,13 +532,13 @@ Logging, telemetry, registries, and metadata services preserve structured values
 
 Test discovery, assertions, formatter, build reports, inspection, lifecycle, installer, and Oven observability preserve documented contracts.
 
-- `probe:testing-and-tooling:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::BuildReportsAndRustInspection`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_decl.rs::fn check_test_module`
+- `probe:testing-and-tooling:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::BuildReportsAndRustInspection`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_decl.rs::fn check_test_module`
   - Positive contract: Test discovery, assertions, formatter, build reports, inspection, lifecycle, installer, and Oven observability preserve documented contracts.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::BuildReportsAndRustInspection`
-- Typechecker: Observed `src/frontend/typechecker/check_decl.rs::fn check_test_module`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_function_body`; owner #1034
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_free_function`; owner #1034
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::BuildReportsAndRustInspection`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_decl.rs::fn check_test_module`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_function_body`; owner #1034
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_free_function`; owner #1034
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #1034: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: These are control-plane contracts with source and receipt evidence, not direct Body-IR execution rows.
 
@@ -546,12 +546,12 @@ Test discovery, assertions, formatter, build reports, inspection, lifecycle, ins
 
 Traits, generics, type tokens, protocol hooks, derives, and resolved method signatures preserve checked dispatch decisions.
 
-- `probe:types.traits-generics-reflection:binding-and-refusal` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AbstractTraits`; negative IntentionalRefusal at Observed `src/frontend/typechecker/trait_bound_relations.rs::fn type_satisfies_explicit_bound`
+- `probe:types.traits-generics-reflection:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AbstractTraits`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/trait_bound_relations.rs::fn type_satisfies_explicit_bound`
   - Positive contract: Traits, generics, type tokens, protocol hooks, derives, and resolved method signatures preserve checked dispatch decisions.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
-- Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AbstractTraits`
-- Typechecker: Observed `src/frontend/typechecker/trait_bound_relations.rs::fn type_satisfies_explicit_bound`
-- Body IR: Planned `src/frontend/body_ir.rs::fn lower_call`; owner #1033
-- Replacement executor: Planned `src/backend/replacement/mod.rs::fn execute_call`; owner #1033
+- Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AbstractTraits`
+- Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/trait_bound_relations.rs::fn type_satisfies_explicit_bound`
+- Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #1033
+- Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #1033
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #1033: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Type-directed runtime calls and reflection need canonical source facts and value representation beyond the current profile.

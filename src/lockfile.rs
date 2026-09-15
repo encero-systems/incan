@@ -3,5 +3,4 @@
 
 pub use oven_model::lock::*;
 
-pub(crate) use crate::provider::lock_semantics::provider_semantic_identities;
 pub use crate::provider::lock_semantics::semantic_lock_state;

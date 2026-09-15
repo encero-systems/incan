@@ -125,7 +125,7 @@ impl Capability {
 /// Return the catalogue path that owns the documented capability surface.
 fn catalogue_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn")
+        .join("loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn")
 }
 
 /// Collect every committed example source into one searchable buffer.
