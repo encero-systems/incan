@@ -1427,8 +1427,7 @@ mod tests {
             format!(
                 "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[lib]\npath = \"src/lib.rs\"\n",
                 oven_model::toolchain_layout::development_root()
-                    .join("crates")
-                    .join("incan_vocab")
+                    .join(oven_model::toolchain_layout::development_support_crate_dir("incan_vocab"))
                     .display()
             ),
         )?;
