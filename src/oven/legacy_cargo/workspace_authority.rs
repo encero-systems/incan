@@ -13,7 +13,7 @@ use super::{
     OvenLegacyCargoError, digest_bytes, lock_contains_package, lock_package_identities, lock_package_reference,
     regular_file_bytes, verified_regular_file,
 };
-use crate::library_manifest::digest_toolchain_source_tree_with_cache;
+use oven_model::digest::digest_toolchain_source_tree_with_cache;
 
 /// One local package record ready to append to a staged lock.
 pub(crate) struct LockedLocalPackage {

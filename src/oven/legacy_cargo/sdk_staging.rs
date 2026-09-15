@@ -5,15 +5,13 @@
 //! into the materialized-file records a store publication declares. The publisher that calls them lives in
 //! `legacy_cargo.rs`.
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{
-    LibraryManifest, OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, OvenArtifactMaterializedFile, OvenLegacyCargoError,
-    SDK_INVENTORY_FILE, SdkInventory, digest_provider_artifact, verified_regular_file,
+    OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, OvenArtifactMaterializedFile, OvenLegacyCargoError, verified_regular_file,
 };
-use crate::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
+use crate::oven::OvenProviderHooks;
 
 /// Copy an SDK inventory with its compiler-owned runtime path dependencies made self-contained.
 ///
@@ -25,12 +23,15 @@ use crate::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
 pub(crate) fn stage_self_contained_sdk_provider_tree(
     prepared_root: &Path,
     staging_root: &Path,
+    provider_hooks: &dyn OvenProviderHooks,
 ) -> Result<PathBuf, OvenLegacyCargoError> {
     let provider_root = staging_root.join("providers");
     copy_regular_directory_tree(prepared_root, &provider_root, "SDK provider inventory")?;
     stage_sdk_runtime_crates(&provider_root)?;
     rebase_sdk_component_runtime_paths(&provider_root)?;
-    refresh_staged_sdk_provider_digests(&provider_root)?;
+    provider_hooks
+        .refresh_staged_sdk_provider_digests(&provider_root)
+        .map_err(OvenLegacyCargoError::Plan)?;
     Ok(provider_root)
 }
 
@@ -216,139 +217,8 @@ pub(crate) fn rebase_sdk_component_runtime_paths(provider_root: &Path) -> Result
     Ok(())
 }
 
-/// Re-seal provider and dependency artifact digests after their Cargo path metadata is relocated.
-///
-/// A provider artifact digest deliberately covers `Cargo.toml`; changing its compiler-owned path dependencies must
-/// therefore change both the inventory descriptor and every checked provider edge that references it.  Resolve that
-/// DAG from the copied manifests, write children before parents, and only then rewrite the copied inventory.  This
-/// keeps the normal provider-plan integrity check meaningful after the suite entry has become self-contained.
-pub(crate) fn refresh_staged_sdk_provider_digests(provider_root: &Path) -> Result<(), OvenLegacyCargoError> {
-    let inventory_path = provider_root.join(SDK_INVENTORY_FILE);
-    let mut inventory = SdkInventory::read_from_path(&inventory_path)
-        .map_err(|error| OvenLegacyCargoError::Plan(format!("failed to read staged SDK inventory: {error}")))?;
-    let canonical_provider_root = fs::canonicalize(provider_root).map_err(|source| OvenLegacyCargoError::Io {
-        path: provider_root.to_path_buf(),
-        source,
-    })?;
-    let mut digests = BTreeMap::new();
-    let mut visiting = BTreeSet::new();
-    for component in inventory.components.values() {
-        for descriptor in &component.providers {
-            let Some(crate_root) = descriptor.crate_root.as_ref() else {
-                continue;
-            };
-            let digest = refresh_staged_provider_artifact_digest(
-                crate_root,
-                &canonical_provider_root,
-                &mut digests,
-                &mut visiting,
-            )?;
-            digests.insert(crate_root.clone(), digest);
-        }
-    }
-    for component in inventory.components.values_mut() {
-        for descriptor in &mut component.providers {
-            let Some(crate_root) = descriptor.crate_root.as_ref() else {
-                continue;
-            };
-            let digest = digests.get(crate_root).ok_or_else(|| {
-                OvenLegacyCargoError::Plan(format!(
-                    "staged SDK provider {} has no refreshed artifact digest",
-                    descriptor.name
-                ))
-            })?;
-            descriptor.digest = digest.clone();
-        }
-    }
-    make_publisher_staging_file_writable(&inventory_path)?;
-    inventory
-        .write_to_path(&inventory_path)
-        .map_err(|error| OvenLegacyCargoError::Plan(format!("failed to write staged SDK inventory: {error}")))?;
-    Ok(())
-}
-
-/// Update a copied provider manifest's dependency digests in dependency-first order and return its new digest.
-pub(crate) fn refresh_staged_provider_artifact_digest(
-    crate_root: &Path,
-    provider_root: &Path,
-    digests: &mut BTreeMap<PathBuf, String>,
-    visiting: &mut BTreeSet<PathBuf>,
-) -> Result<String, OvenLegacyCargoError> {
-    let crate_root = fs::canonicalize(crate_root).map_err(|source| OvenLegacyCargoError::Io {
-        path: crate_root.to_path_buf(),
-        source,
-    })?;
-    if !crate_root.starts_with(provider_root) {
-        return Err(OvenLegacyCargoError::InvalidInput {
-            field: "staged SDK provider dependency",
-            message: format!(
-                "{} escapes staged provider root {}",
-                crate_root.display(),
-                provider_root.display()
-            ),
-        });
-    }
-    if let Some(digest) = digests.get(&crate_root) {
-        return Ok(digest.clone());
-    }
-    if !visiting.insert(crate_root.clone()) {
-        return Err(OvenLegacyCargoError::Plan(format!(
-            "staged SDK provider dependency graph cycles at {}",
-            crate_root.display()
-        )));
-    }
-    let manifest_path = staged_provider_manifest_path(&crate_root)?;
-    let mut manifest = LibraryManifest::read_from_path(&manifest_path)
-        .map_err(|error| OvenLegacyCargoError::Plan(format!("failed to read {}: {error}", manifest_path.display())))?;
-    let mut changed = false;
-    for dependency in &mut manifest.contract_metadata.provider.provider_dependencies {
-        let dependency_root = crate_root.join(&dependency.relative_artifact_path);
-        let digest = refresh_staged_provider_artifact_digest(&dependency_root, provider_root, digests, visiting)?;
-        if dependency.artifact_digest != digest {
-            dependency.artifact_digest = digest;
-            changed = true;
-        }
-    }
-    if changed {
-        make_publisher_staging_file_writable(&manifest_path)?;
-        manifest.write_to_path(&manifest_path).map_err(|error| {
-            OvenLegacyCargoError::Plan(format!("failed to write {}: {error}", manifest_path.display()))
-        })?;
-    }
-    let digest = digest_provider_artifact(&crate_root)
-        .map_err(|error| OvenLegacyCargoError::Plan(format!("failed to digest {}: {error}", crate_root.display())))?;
-    visiting.remove(&crate_root);
-    digests.insert(crate_root, digest.clone());
-    Ok(digest)
-}
-
-/// Find the one provider library manifest that owns a copied component root.
-pub(crate) fn staged_provider_manifest_path(crate_root: &Path) -> Result<PathBuf, OvenLegacyCargoError> {
-    let mut manifests = fs::read_dir(crate_root)
-        .map_err(|source| OvenLegacyCargoError::Io {
-            path: crate_root.to_path_buf(),
-            source,
-        })?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some(LIBRARY_MANIFEST_EXTENSION))
-        .collect::<Vec<_>>();
-    manifests.sort();
-    let [manifest] = manifests.as_slice() else {
-        return Err(OvenLegacyCargoError::InvalidInput {
-            field: "staged SDK provider artifact",
-            message: format!(
-                "{} must contain exactly one .incnlib manifest; found {}",
-                crate_root.display(),
-                manifests.len()
-            ),
-        });
-    };
-    Ok(manifest.clone())
-}
-
 /// Mark one copied SDK file writable before adjusting its integrity metadata in publisher-owned staging.
-pub(crate) fn make_publisher_staging_file_writable(path: &Path) -> Result<(), OvenLegacyCargoError> {
+pub fn make_publisher_staging_file_writable(path: &Path) -> Result<(), OvenLegacyCargoError> {
     let mut permissions = fs::metadata(path)
         .map_err(|source| OvenLegacyCargoError::Io {
             path: path.to_path_buf(),

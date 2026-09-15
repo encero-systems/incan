@@ -32,6 +32,7 @@ pub use oven_model::manifest;
 pub mod numeric;
 pub use incan_ir::numeric_adapters;
 pub mod oven;
+pub mod oven_facet;
 pub use oven_model::oven_interop;
 pub use oven_model::project_lifecycle;
 pub mod provider;

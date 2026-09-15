@@ -17,9 +17,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
-use crate::library_manifest::{digest_cargo_path_source_tree_with_cache, digest_provider_artifact};
 use crate::manifest::{DependencySource, DependencySpec, GitReference, ProjectManifest};
+use oven_model::digest::digest_cargo_path_source_tree_with_cache;
 
 pub(crate) mod closure_proof;
 pub(crate) use oven_model::compiler_suite_env;
@@ -41,7 +40,10 @@ pub(crate) mod store_mirror;
 /// Registry and Git specifications are represented by their declared immutable selection facts. Path dependencies add
 /// only a source-tree digest, never the machine-local path. This keeps compatible clean worktrees reusable while a
 /// changed local runtime or declared dependency source necessarily selects a different build unit.
-pub fn digest_dependency_specs(dependencies: &[DependencySpec]) -> Result<String, OvenError> {
+pub fn digest_dependency_specs(
+    dependencies: &[DependencySpec],
+    provider_hooks: &dyn OvenProviderHooks,
+) -> Result<String, OvenError> {
     let mut records = Vec::with_capacity(dependencies.len());
     let mut resolved_path_packages = BTreeMap::new();
     for dependency in dependencies {
@@ -58,26 +60,28 @@ pub fn digest_dependency_specs(dependencies: &[DependencySpec]) -> Result<String
             // A packaged Incan provider is identified by its sealed artifact tree, never by walking the Cargo
             // edges its generated manifest still spells out: those point at the producer's private Rust sources,
             // which an admitted package does not need and a source-free consumer does not have (#1469).
-            DependencySource::Path { path } if is_packaged_provider_root(path) => {
-                let digest = digest_provider_artifact(path).map_err(|error| OvenError::InvalidProjectSource {
-                    path: path.clone(),
-                    message: error.to_string(),
-                })?;
-                format!("packaged-provider:{digest}")
-            }
-            // A path dependency is selected by its recursive Cargo-semantic source closure, not by compiler output
-            // or unrelated repository files. Sharing the package memo also avoids rescanning a common sibling reached
-            // through several top-level dependencies.
-            DependencySource::Path { path } => {
-                let digest =
-                    digest_cargo_path_source_tree_with_cache(path, &mut resolved_path_packages).map_err(|error| {
-                        OvenError::InvalidProjectSource {
+            //
+            // Any other path dependency is selected by its recursive Cargo-semantic source closure, not by compiler
+            // output or unrelated repository files. Sharing the package memo also avoids rescanning a common sibling
+            // reached through several top-level dependencies.
+            DependencySource::Path { path } => match provider_hooks.packaged_provider_digest(path) {
+                Some(digest) => {
+                    let digest = digest.map_err(|message| OvenError::InvalidProjectSource {
+                        path: path.clone(),
+                        message,
+                    })?;
+                    format!("packaged-provider:{digest}")
+                }
+                None => {
+                    let digest = digest_cargo_path_source_tree_with_cache(path, &mut resolved_path_packages).map_err(
+                        |error| OvenError::InvalidProjectSource {
                             path: path.clone(),
                             message: error.to_string(),
-                        }
-                    })?;
-                format!("path-tree:{digest}")
-            }
+                        },
+                    )?;
+                    format!("path-tree:{digest}")
+                }
+            },
         };
         records.push(format!(
             "{}|{}|{}|{}|{}|{}|{}",
@@ -94,18 +98,54 @@ pub fn digest_dependency_specs(dependencies: &[DependencySpec]) -> Result<String
     Ok(digest_bytes(records.join("\n").as_bytes()))
 }
 
-/// Whether a path dependency root is a packaged Incan provider: a generated library crate carrying its `.incnlib`
-/// manifest beside `Cargo.toml`. An authored Rust crate has no such manifest.
-fn is_packaged_provider_root(root: &Path) -> bool {
-    let Ok(entries) = fs::read_dir(root) else {
-        return false;
-    };
-    entries.flatten().any(|entry| {
-        entry
-            .path()
-            .extension()
-            .is_some_and(|extension| extension == LIBRARY_MANIFEST_EXTENSION)
-    })
+/// The provider facts Oven asks the compiler for instead of reading them itself.
+///
+/// The compat publisher stages the compiler's SDK provider tree and rewrites the staged providers' dependency
+/// digests; a dependency digest has to recognise a packaged Incan provider by its sealed artifact. Both are facts
+/// about Incan packages, so the compiler implements this and hands it in with every request that needs it; the Oven
+/// ring names no compiler crate.
+pub trait OvenProviderHooks: Send + Sync {
+    /// The root of the SDK provider tree to stage: the one an explicit inventory path describes, or the active
+    /// toolchain's when there is none. An error is a preparation miss the caller reports verbatim.
+    fn sdk_provider_root(&self, explicit_inventory: Option<&Path>) -> Result<PathBuf, String>;
+
+    /// The inventory file's name inside a provider root.
+    fn sdk_inventory_file(&self) -> &'static str;
+
+    /// Rewrite the dependency digests of the providers copied into `provider_root` so the staged tree is
+    /// self-consistent after its compiler-owned path dependencies were rebased.
+    fn refresh_staged_sdk_provider_digests(&self, provider_root: &Path) -> Result<(), String>;
+
+    /// The sealed artifact digest of a packaged provider at `dependency_root`, or `None` when the path is an
+    /// authored crate and the caller should digest its source tree instead.
+    fn packaged_provider_digest(&self, dependency_root: &Path) -> Option<Result<String, String>>;
+}
+
+/// Hooks for a caller that has no compiler providers to speak of: no SDK to stage, nothing packaged, no refresh.
+///
+/// Oven's own tests run under these; a real compiler hands in its own implementation.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoProviderHooks;
+
+impl OvenProviderHooks for NoProviderHooks {
+    fn sdk_provider_root(&self, explicit_inventory: Option<&Path>) -> Result<PathBuf, String> {
+        explicit_inventory
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .ok_or_else(|| "no SDK provider inventory is available without a compiler".to_string())
+    }
+
+    fn sdk_inventory_file(&self) -> &'static str {
+        "sdk-inventory.json"
+    }
+
+    fn refresh_staged_sdk_provider_digests(&self, _provider_root: &Path) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn packaged_provider_digest(&self, _dependency_root: &Path) -> Option<Result<String, String>> {
+        None
+    }
 }
 
 /// Current wire format for persisted Oven receipts.
@@ -1614,7 +1654,8 @@ mod tests {
             optional: false,
             package: None,
         };
-        let as_authored_crate = super::digest_dependency_specs(std::slice::from_ref(&dependency));
+        let as_authored_crate =
+            super::digest_dependency_specs(std::slice::from_ref(&dependency), &super::NoProviderHooks);
         assert!(
             as_authored_crate.is_err(),
             "an authored crate's missing path dependency is still a fault: {as_authored_crate:?}"
@@ -1623,11 +1664,11 @@ mod tests {
         fs::write(provider.join("immutable_catalog.incnlib"), "{}")?;
         // With its `.incnlib` beside the manifest the same tree is a packaged provider, and the missing private
         // crate is no longer anyone's business.
-        let sealed = super::digest_dependency_specs(std::slice::from_ref(&dependency))?;
+        let sealed = super::digest_dependency_specs(std::slice::from_ref(&dependency), &super::NoProviderHooks)?;
         fs::write(provider.join("src/lib.rs"), "pub fn answer() -> i64 { 43 }\n")?;
         assert_ne!(
             sealed,
-            super::digest_dependency_specs(std::slice::from_ref(&dependency))?,
+            super::digest_dependency_specs(std::slice::from_ref(&dependency), &super::NoProviderHooks)?,
             "the sealed artifact's own bytes still decide its identity"
         );
         Ok(())
@@ -1654,7 +1695,7 @@ mod tests {
             optional: false,
             package: None,
         };
-        let initial = super::digest_dependency_specs(std::slice::from_ref(&dependency))?;
+        let initial = super::digest_dependency_specs(std::slice::from_ref(&dependency), &super::NoProviderHooks)?;
 
         fs::write(
             project.path().join("target"),
@@ -1662,7 +1703,7 @@ mod tests {
         )?;
         assert_ne!(
             initial,
-            super::digest_dependency_specs(std::slice::from_ref(&dependency))?
+            super::digest_dependency_specs(std::slice::from_ref(&dependency), &super::NoProviderHooks)?
         );
         fs::remove_file(project.path().join("target"))?;
 
@@ -1672,18 +1713,21 @@ mod tests {
         }
         assert_eq!(
             initial,
-            super::digest_dependency_specs(std::slice::from_ref(&dependency))?
+            super::digest_dependency_specs(std::slice::from_ref(&dependency), &super::NoProviderHooks)?
         );
 
         fs::write(project.path().join("native-schema.json"), "{\"version\": 1}\n")?;
         assert_ne!(
             initial,
-            super::digest_dependency_specs(std::slice::from_ref(&dependency))?
+            super::digest_dependency_specs(std::slice::from_ref(&dependency), &super::NoProviderHooks)?
         );
         fs::remove_file(project.path().join("native-schema.json"))?;
 
         fs::write(project.path().join("src/lib.rs"), "pub fn value() -> i32 { 2 }\n")?;
-        assert_ne!(initial, super::digest_dependency_specs(&[dependency])?);
+        assert_ne!(
+            initial,
+            super::digest_dependency_specs(&[dependency], &super::NoProviderHooks)?
+        );
         Ok(())
     }
 
@@ -1726,22 +1770,23 @@ mod tests {
         };
         let first_dependency = dependency(&first);
         let second_dependency = dependency(&second);
-        let stable = super::digest_dependency_specs(std::slice::from_ref(&first_dependency))?;
+        let stable = super::digest_dependency_specs(std::slice::from_ref(&first_dependency), &super::NoProviderHooks)?;
         assert_eq!(
             stable,
-            super::digest_dependency_specs(std::slice::from_ref(&second_dependency))?
+            super::digest_dependency_specs(std::slice::from_ref(&second_dependency), &super::NoProviderHooks)?
         );
 
         let second_bar = second.join("bar");
         fs::write(second_bar.join("native-schema.json"), "{\"version\": 2}\n")?;
-        let source_changed = super::digest_dependency_specs(std::slice::from_ref(&second_dependency))?;
+        let source_changed =
+            super::digest_dependency_specs(std::slice::from_ref(&second_dependency), &super::NoProviderHooks)?;
         assert_ne!(stable, source_changed);
 
         fs::create_dir_all(second_bar.join("target/debug"))?;
         fs::write(second_bar.join("target/debug/cache"), "mutable output")?;
         assert_eq!(
             source_changed,
-            super::digest_dependency_specs(std::slice::from_ref(&second_dependency))?
+            super::digest_dependency_specs(std::slice::from_ref(&second_dependency), &super::NoProviderHooks)?
         );
         Ok(())
     }

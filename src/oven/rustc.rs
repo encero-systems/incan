@@ -2515,6 +2515,7 @@ pub(crate) fn project_inspection_authority_supports_dependencies(
 pub(crate) fn project_inspection_test_dependency_envelope_supports_dependencies(
     payload: &OvenProjectInspectionAuthorityPayload,
     dependencies: &[DependencySpec],
+    provider_hooks: &dyn crate::oven::OvenProviderHooks,
 ) -> Result<bool, OvenRustcError> {
     validate_project_inspection_authority_payload(payload)?;
     let Some(envelope) = payload.test_dependency_envelope.as_ref() else {
@@ -2529,12 +2530,12 @@ pub(crate) fn project_inspection_test_dependency_envelope_supports_dependencies(
         let Some(root) = envelope.dependency_roots.get(&alias) else {
             return Ok(false);
         };
-        let actual = crate::oven::digest_dependency_specs(std::slice::from_ref(dependency)).map_err(|error| {
-            OvenRustcError::InvalidInput {
+        let actual = crate::oven::digest_dependency_specs(std::slice::from_ref(dependency), provider_hooks).map_err(
+            |error| OvenRustcError::InvalidInput {
                 field: "project inspection test dependency root",
                 message: error.to_string(),
-            }
-        })?;
+            },
+        )?;
         let (expected, source_matches) = match root {
             OvenProjectInspectionTestDependencyRoot::Registry { dependency_digest, .. } => (
                 dependency_digest,
@@ -10204,7 +10205,10 @@ fi
             dependency_roots: BTreeMap::from([(
                 "serde_json".to_string(),
                 OvenProjectInspectionTestDependencyRoot::Registry {
-                    dependency_digest: crate::oven::digest_dependency_specs(std::slice::from_ref(&matching))?,
+                    dependency_digest: crate::oven::digest_dependency_specs(
+                        std::slice::from_ref(&matching),
+                        &crate::oven::NoProviderHooks,
+                    )?,
                     locked: root,
                 },
             )]),
@@ -10212,13 +10216,15 @@ fi
         validate_project_inspection_authority_payload(&payload)?;
         assert!(project_inspection_test_dependency_envelope_supports_dependencies(
             &payload,
-            std::slice::from_ref(&matching)
+            std::slice::from_ref(&matching),
+            &crate::oven::NoProviderHooks,
         )?);
         let mut missing = matching.clone();
         missing.crate_name = "missing_alias".to_string();
         assert!(!project_inspection_test_dependency_envelope_supports_dependencies(
             &payload,
-            &[missing]
+            &[missing],
+            &crate::oven::NoProviderHooks,
         )?);
 
         let mut direct_plan_payload = payload.clone();
@@ -10285,6 +10291,7 @@ fi
             !project_inspection_test_dependency_envelope_supports_dependencies(
                 &payload,
                 std::slice::from_ref(&path_dependency),
+                &crate::oven::NoProviderHooks,
             )?,
             "an unmatched persisted Cargo path root must not be reported as supported"
         );

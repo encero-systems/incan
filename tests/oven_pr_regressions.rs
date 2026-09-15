@@ -92,6 +92,8 @@ fn legacy_cargo_capacity_abort_terminates_descendants() -> Result<(), Box<dyn st
 
     let started = Instant::now();
     let result = prepare_direct_rustc_plan(&OvenLegacyCargoPrepareRequest {
+        compiler: incan::oven_facet::compiler_identity(),
+        provider_hooks: incan::oven_facet::provider_hooks(),
         store: &store,
         receipt,
         generated_project: project,

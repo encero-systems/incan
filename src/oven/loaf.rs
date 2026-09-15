@@ -11,6 +11,7 @@ use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
@@ -36,7 +37,9 @@ use super::rustc::{
 use super::store::{OvenArtifactKind, OvenStore, OvenStoreError};
 use super::{OvenReceipt, digest_bytes, receipt_without_build_unit_input};
 use crate::manifest::{DependencySource, DependencySpec, ProjectManifest};
-use crate::version::{INCAN_VERSION, SDK_PROVIDER_CODEGEN_REVISION};
+use oven_model::compiler_identity::CompilerIdentity;
+
+use crate::oven::OvenProviderHooks;
 
 pub(crate) mod native_candidates;
 
@@ -896,6 +899,10 @@ pub struct OvenLoafPreparation {
 
 /// Explicit resources and bounded policy available to one hidden legacy-Cargo Loaf bake.
 pub struct OvenLoafBakerContext<'a> {
+    /// The compiler this Loaf is baked for; its version and provider revision are sealed into the provenance.
+    pub compiler: &'a CompilerIdentity,
+    /// The provider facts the bake's publisher asks the compiler for.
+    pub provider_hooks: Arc<dyn OvenProviderHooks>,
     /// Compiler source root whose checked support crates and lock authority are being packaged.
     pub compiler_root: &'a Path,
     pub compiler_support_target: &'a Path,
@@ -923,15 +930,16 @@ pub struct OvenLoafBakerContext<'a> {
 /// dependencies. Compiler-owned sources and the lockfile are resolved from the active toolchain layout so a packaged
 /// compiler never depends on the checkout from which its binary happened to be built.
 pub fn runtime_build_unit_inputs(
+    compiler: &CompilerIdentity,
     provider_records: Vec<String>,
     stdlib_features: &[String],
     rust_dependencies_digest: String,
 ) -> Result<BTreeMap<String, String>, String> {
     let mut inputs = BTreeMap::new();
-    inputs.insert("compiler-version".to_string(), INCAN_VERSION.to_string());
+    inputs.insert("compiler-version".to_string(), compiler.version.clone());
     inputs.insert(
         "sdk-provider-codegen-revision".to_string(),
-        SDK_PROVIDER_CODEGEN_REVISION.to_string(),
+        compiler.sdk_provider_codegen_revision.to_string(),
     );
     for (name, crate_name) in [
         ("runtime-source-incan-core", "incan_core"),
@@ -1092,6 +1100,8 @@ pub fn prepare_loaf_from_generated_project(
     let generated_source = generated_project.join("src/main.rs");
     let compile_environment = direct_rustc_compile_environment(generated_project, &generated_source)?;
     let publication = prepare_direct_rustc_plan(&OvenLegacyCargoPrepareRequest {
+        compiler: context.compiler.clone(),
+        provider_hooks: context.provider_hooks.clone(),
         store: &store,
         receipt: receipt.clone(),
         generated_project: generated_project.to_path_buf(),
@@ -1247,9 +1257,9 @@ fn export_loaf(
         schema_version: OVEN_LOAF_SCHEMA_VERSION,
         build_unit_identity: receipt.build_unit_identity.clone(),
         provenance: OvenLoafProvenance {
-            compiler_version: INCAN_VERSION.to_string(),
+            compiler_version: context.compiler.version.clone(),
             rust_toolchain: receipt.intent.toolchain.clone(),
-            sdk_provider_codegen_revision: SDK_PROVIDER_CODEGEN_REVISION.to_string(),
+            sdk_provider_codegen_revision: context.compiler.sdk_provider_codegen_revision.to_string(),
             baker: "legacy_cargo".to_string(),
         },
         accounting: OvenLoafAccounting {

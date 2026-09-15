@@ -65,7 +65,11 @@ pub(crate) fn open_store_with_defaults(
             CliError::failure("cannot resolve the Oven store root; set INCAN_HOME, HOME, or pass --store")
         })?,
     };
-    Ok(OvenStore::new(root, resolve_limits_with_defaults(options, defaults)?))
+    Ok(OvenStore::with_release(
+        root,
+        resolve_limits_with_defaults(options, defaults)?,
+        &crate::oven_facet::compiler_identity(),
+    ))
 }
 
 /// Open the one policy-bounded Oven store used by ordinary Alpha commands.

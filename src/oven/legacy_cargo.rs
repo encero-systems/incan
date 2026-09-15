@@ -34,14 +34,14 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+
+use oven_model::compiler_identity::CompilerIdentity;
+
+use crate::oven::OvenProviderHooks;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-
-use crate::library_manifest::{LibraryManifest, digest_provider_artifact};
-use crate::provider::inventory::discover_active_sdk_inventory;
-use crate::provider::{SDK_INVENTORY_FILE, SdkInventory};
 
 use super::process::{isolate_process_group, terminate_process_group};
 use super::rustc::{
@@ -58,7 +58,6 @@ use super::{DEFAULT_OVEN_PUBLISHER_STAGING_FLOOR_BYTES, digest_bytes, digest_sou
 use super::{
     OVEN_COMPILER_TEST_PROFILE, OvenBuildIntent, OvenCompatibilityKind, OvenReceipt, compiler_suite_source_evidence_key,
 };
-use crate::version::{INCAN_VERSION, SDK_PROVIDER_CODEGEN_REVISION};
 
 /// Wire format retained as an immutable supporting artifact alongside every `legacy_cargo`-prepared closure.
 pub const OVEN_LEGACY_CARGO_PROVENANCE_SCHEMA_VERSION: u32 = 2;
@@ -331,6 +330,10 @@ fn validate_provider_macro_artifacts(
 
 /// Explicit input to the hidden `legacy_cargo` publisher.
 pub struct OvenLegacyCargoPrepareRequest<'a> {
+    /// The compiler this publication runs under; its identity is sealed into the compatibility inputs.
+    pub compiler: CompilerIdentity,
+    /// The provider facts the publisher asks the compiler for while staging the SDK.
+    pub provider_hooks: Arc<dyn OvenProviderHooks>,
     /// Bounded Oven store that will own the immutable result.
     pub store: &'a OvenStore,
     /// Generated-project receipt that authorizes the generated Rust root and direct-rustc intent.
@@ -1120,14 +1123,15 @@ fn compiler_suite_toolchain_loaf_generation_reference(
 /// would make child selection depend on ambient state and later fail closed only after the suite was admitted.
 fn compiler_suite_staged_runtime_inputs(
     staged_sdk_root: &Path,
+    compiler: &CompilerIdentity,
 ) -> Result<BTreeMap<String, String>, OvenLegacyCargoError> {
     let runtime_root = staged_sdk_root.join("runtime");
     let runtime_lock = runtime_root.join("Cargo.lock");
     let mut inputs = BTreeMap::new();
-    inputs.insert("compiler-version".to_string(), INCAN_VERSION.to_string());
+    inputs.insert("compiler-version".to_string(), compiler.version.clone());
     inputs.insert(
         "sdk-provider-codegen-revision".to_string(),
-        SDK_PROVIDER_CODEGEN_REVISION.to_string(),
+        compiler.sdk_provider_codegen_revision.to_string(),
     );
     for (input_name, crate_name) in [
         ("runtime-source-incan-core", "incan_core"),
@@ -2090,31 +2094,18 @@ pub fn prepare_compiler_test_suite(
     // source components here used the ordinary `incan build --lib` helper, which can recurse into generated-Cargo
     // work and turn the hidden Loaf baker into an unbounded second build system. A missing inventory is an
     // explicit Oven preparation miss, never authority to launch that helper or create a hidden Cargo cache.
-    let prepared_sdk = match request.sdk_inventory.as_deref() {
-        Some(inventory) => Arc::new(SdkInventory::read_from_path(inventory).map_err(|error| {
-            OvenLegacyCargoError::Plan(format!(
-                "failed to load explicit compiler-suite SDK provider inventory {}: {error}",
-                inventory.display()
-            ))
-        })?),
-        None => discover_active_sdk_inventory()
-            .map_err(|error| {
-                OvenLegacyCargoError::Plan(format!("failed to discover active SDK provider inventory: {error}"))
-            })?
-            .ok_or_else(|| {
-                OvenLegacyCargoError::Plan(
-                    "compiler-suite publication requires a prebuilt compatible SDK provider inventory; set INCAN_SDK_INVENTORY or use an installed Oven toolchain"
-                        .to_string(),
-                )
-            })?,
-    };
+    let prepared_sdk_root = request
+        .provider_hooks
+        .sdk_provider_root(request.sdk_inventory.as_deref())
+        .map_err(OvenLegacyCargoError::Plan)?;
     // The component crates retain path dependencies on compiler runtime crates.  Copying only the provider tree
     // would leave those paths pointing back to the publisher checkout, which is both an SDK leak and a later Cargo
     // failure.  Rebase that small compiler-owned runtime source closure inside the immutable provider tree before
     // recording any materialized files.
-    let staged_sdk_root = stage_self_contained_sdk_provider_tree(&prepared_sdk.root, &staging)?;
-    let staged_runtime_inputs = compiler_suite_staged_runtime_inputs(&staged_sdk_root)?;
-    let sdk_inventory_path = staged_sdk_root.join(SDK_INVENTORY_FILE);
+    let staged_sdk_root =
+        stage_self_contained_sdk_provider_tree(&prepared_sdk_root, &staging, request.provider_hooks.as_ref())?;
+    let staged_runtime_inputs = compiler_suite_staged_runtime_inputs(&staged_sdk_root, &request.compiler)?;
+    let sdk_inventory_path = staged_sdk_root.join(request.provider_hooks.sdk_inventory_file());
     let sdk_inventory_digest = digest_bytes(&regular_file_bytes(&sdk_inventory_path)?);
     let mut index_materialized_files =
         materialized_files_from_directory(&staged_sdk_root, "providers", "SDK provider inventory")?;
@@ -2367,7 +2358,7 @@ pub fn prepare_compiler_test_suite(
         cli_foundation_references,
         cli_target: Some(cli_target),
         cli_workspace_libraries,
-        sdk_inventory_relative_path: format!("providers/{SDK_INVENTORY_FILE}"),
+        sdk_inventory_relative_path: format!("providers/{}", request.provider_hooks.sdk_inventory_file()),
         sdk_inventory_digest,
         toolchain_data_relative_root: None,
         warning_check_artifacts,
@@ -4670,6 +4661,9 @@ fn round_physical(bytes: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use oven_model::compiler_identity::CompilerIdentity;
 
     /// One registry unit resolved twice contributes its staged tree once, keeping every feature either asked for.
     ///
@@ -5796,7 +5790,8 @@ mod tests {
         }
         let staging = tempfile::tempdir()?;
 
-        let staged = stage_self_contained_sdk_provider_tree(provider.path(), staging.path())?;
+        let staged =
+            stage_self_contained_sdk_provider_tree(provider.path(), staging.path(), &crate::oven::NoProviderHooks)?;
         let manifest = fs::read_to_string(staged.join("components/stdlib-core/Cargo.toml"))?;
 
         assert!(manifest.contains("path = \"../../runtime/crates/incan_derive\""));
@@ -7570,6 +7565,8 @@ version = "1.0.0"
         fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755))?;
 
         let result = prepare_compiler_test_suite(&OvenLegacyCargoPrepareRequest {
+            compiler: CompilerIdentity::new("0.0.0-test", 0),
+            provider_hooks: Arc::new(crate::oven::NoProviderHooks),
             store: &store,
             receipt: current_receipt,
             generated_project: fixture.path().join("unused-generated-project"),
@@ -7815,6 +7812,8 @@ version = "1.0.0"
         fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755))?;
 
         let result = prepare_direct_rustc_plan(&OvenLegacyCargoPrepareRequest {
+            compiler: CompilerIdentity::new("0.0.0-test", 0),
+            provider_hooks: Arc::new(crate::oven::NoProviderHooks),
             store: &store,
             receipt,
             generated_project: project.path().to_path_buf(),

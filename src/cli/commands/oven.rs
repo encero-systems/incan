@@ -248,6 +248,8 @@ pub fn oven_legacy_cargo_prepare(options: OvenLegacyCargoPrepareCommandOptions) 
     let receipt = read_receipt(&options.receipt)?;
     let store = open_store(&options.store)?;
     let result = prepare_direct_rustc_plan(&OvenLegacyCargoPrepareRequest {
+        compiler: crate::oven_facet::compiler_identity(),
+        provider_hooks: crate::oven_facet::provider_hooks(),
         store: &store,
         receipt,
         generated_project: options.generated_project,

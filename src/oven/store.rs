@@ -4,6 +4,7 @@
 //! logical artifact bytes and measured physical file allocation separately, and refuses publication when its active
 //! leases leave no safe way to satisfy capacity policy.
 
+use oven_model::compiler_identity::{CompilerIdentity, RELEASE_DOMAIN_PREFIX};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Write};
@@ -424,6 +425,9 @@ pub enum OvenStoreError {
 pub struct OvenStore {
     root: PathBuf,
     limits: OvenStoreLimits,
+    /// The domain of the compiler release using this store, when the caller said which release that is; a store
+    /// opened without one never reclaims another release's entries, because it cannot tell which are superseded.
+    active_release: Option<String>,
 }
 
 /// Read-only access to an Oven store embedded in a published, content-addressed package.
@@ -505,6 +509,19 @@ impl OvenStore {
         Self {
             root: root.as_ref().to_path_buf(),
             limits,
+            active_release: None,
+        }
+    }
+
+    /// Open a store on behalf of one compiler release, so pruning may reclaim the entries releases before it left.
+    ///
+    /// The release is the compiler's to name: Oven reads no compiler version of its own.
+    #[must_use]
+    pub fn with_release(root: impl AsRef<Path>, limits: OvenStoreLimits, compiler: &CompilerIdentity) -> Self {
+        Self {
+            root: root.as_ref().to_path_buf(),
+            limits,
+            active_release: Some(compiler.release_domain()),
         }
     }
 
@@ -1707,11 +1724,13 @@ impl OvenStore {
     /// Both passes run under one manager lock and are reported as a single reclamation. The superseded pass is skipped
     /// entirely when nothing qualifies, so an ordinary store pays for one measurement pass rather than two.
     fn prune_with_superseded_release_reclamation(&self, apply: bool) -> Result<OvenStorePruneReport, OvenStoreError> {
-        let active = active_release_domain();
-        if !self.holds_superseded_release_entry(&active)? {
+        let Some(active) = self.active_release.as_deref() else {
+            return self.prune_to_limits(None, 0, 0, apply);
+        };
+        if !self.holds_superseded_release_entry(active)? {
             return self.prune_to_limits(None, 0, 0, apply);
         }
-        let superseded = self.reclaim_superseded_release_entries(&active, apply)?;
+        let superseded = self.reclaim_superseded_release_entries(active, apply)?;
         let retained = self.prune_to_limits(None, 0, 0, apply)?;
         Ok(merge_prune_reports(superseded, retained))
     }
@@ -3434,11 +3453,6 @@ fn related_policy_offending_domains(
 }
 
 /// Sum logical and physical accounting for one compatibility domain.
-/// Return the store domain owned by the running compiler release.
-fn active_release_domain() -> String {
-    format!("{RELEASE_DOMAIN_PREFIX}{}", crate::version::INCAN_VERSION)
-}
-
 /// Fold a superseded-release reclamation report into the retention-prune report that followed it.
 ///
 /// The two passes run back to back under one manager lock, so the user-visible result must read as a single
@@ -3465,9 +3479,6 @@ fn merge_prune_reports(first: OvenStorePruneReport, second: OvenStorePruneReport
         skipped_active_entries,
     }
 }
-
-/// Compiler-release store domains are spelled `incan-release-<version>`.
-const RELEASE_DOMAIN_PREFIX: &str = "incan-release-";
 
 /// Return whether `candidate` names a compiler release superseded by `active`.
 ///
@@ -5389,9 +5400,17 @@ pub(crate) mod tests {
         write_project(project.path())?;
         // Limits far above what these fixtures occupy: retention alone has no reason to evict anything, which is the
         // condition under which superseded releases used to accumulate forever.
-        let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
-        let active = super::active_release_domain();
-        let superseded = format!("{}0.0.1-superseded", super::RELEASE_DOMAIN_PREFIX);
+        let compiler = oven_model::compiler_identity::CompilerIdentity::new("0.0.2-test", 1);
+        let store = OvenStore::with_release(
+            temp.path(),
+            OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000),
+            &compiler,
+        );
+        let active = compiler.release_domain();
+        let superseded = format!(
+            "{}0.0.1-superseded",
+            oven_model::compiler_identity::RELEASE_DOMAIN_PREFIX
+        );
 
         store.publish(&request(project.path(), &superseded, b"stale release artifact")?)?;
         store.publish(&request(project.path(), &active, b"current release artifact")?)?;
