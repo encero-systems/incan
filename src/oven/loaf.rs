@@ -47,11 +47,7 @@ pub(crate) use native_candidates::OvenMaterializedLoafCandidate;
 pub const OVEN_LOAF_SCHEMA_VERSION: u32 = 13;
 /// Current wire format for the atomically committed Loaf-envelope manifest.
 pub const OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION: u32 = 3;
-/// Internal marker enabled only while the named legacy publisher creates a compiler-owned Loaf.
-///
-/// This is deliberately distinct from normal Oven command selection: it grants compiler source emission the same
-/// trusted standard-provider identity as the SDK publisher, but it never authorizes Cargo for a caller command.
-pub(crate) const OVEN_LOAF_ENV: &str = "INCAN_OVEN_LOAF";
+pub use oven_model::compiler_suite_env::OVEN_LOAF_ENV;
 /// Actionable user guidance for a normal-command miss without turning it into a compatibility-baker fallback.
 pub const OVEN_LOAF_MISS_GUIDANCE: &str = "Action: run `incan oven bake --project <project-root>` once. That command compiles this project's dependencies and caches the result, reusing anything already compatible. It is a deliberate, separate step: `incan build`, `incan run`, and `incan test` never compile dependencies on their own.";
 /// Opening clause every fail-closed dependency miss in a normal project command reports.

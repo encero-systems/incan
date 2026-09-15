@@ -16,14 +16,13 @@ use std::io::{self, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
 use crate::library_manifest::{digest_cargo_path_source_tree_with_cache, digest_provider_artifact};
 use crate::manifest::{DependencySource, DependencySpec, GitReference, ProjectManifest};
 
 pub(crate) mod closure_proof;
-pub(crate) mod compiler_suite_env;
+pub(crate) use oven_model::compiler_suite_env;
 pub(crate) mod interop;
 pub mod legacy_cargo;
 pub mod loaf;
@@ -1505,17 +1504,7 @@ fn normalize_content(content: &str) -> String {
     normalized
 }
 
-/// Hash canonical text with Oven's stable `sha256:` rendering.
-fn digest_content(content: &str) -> String {
-    digest_bytes(content.as_bytes())
-}
-
-/// Hash arbitrary canonical identity bytes with Oven's stable `sha256:` rendering.
-pub(crate) fn digest_bytes(content: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(content);
-    format!("sha256:{}", hex::encode(hasher.finalize()))
-}
+pub(crate) use oven_model::digest::{digest_bytes, digest_content};
 
 /// Write, sync, and atomically replace a receipt from a same-directory staged file.
 pub(crate) fn write_receipt_staged(payload: &[u8], staged_path: &Path, path: &Path, parent: &Path) -> io::Result<()> {

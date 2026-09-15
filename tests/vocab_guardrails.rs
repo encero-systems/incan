@@ -26,8 +26,9 @@ fn semantic_compiler_paths_do_not_reverse_emitted_names_into_source_bindings() -
 
     let mut semantic_paths = Vec::new();
     for relative in [
-        "src/backend/ir",
+        "loaves/compiler/incan_emit/src",
         "loaves/compiler/incan_frontend/src",
+        "loaves/compiler/incan_ir/src",
         "src/lsp",
         "src/cli/commands/codegraph.rs",
     ] {
@@ -367,7 +368,8 @@ fn semantic_string_scan_files(root: &Path) -> Vec<PathBuf> {
     const ROOTS: &[&str] = &[
         "crates/incan_core/src/interop",
         "crates/rust_inspect/src",
-        "src/backend/ir",
+        "loaves/compiler/incan_emit/src",
+        "loaves/compiler/incan_ir/src",
         "src/dependency_resolver.rs",
         "src/driver",
         "loaves/compiler/incan_frontend/src/provider",

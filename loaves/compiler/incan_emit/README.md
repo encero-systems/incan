@@ -17,4 +17,4 @@ IR-to-Rust emission with syn/quote, conversions, prettyplease formatting, replac
 
 Pure emission. `src/backend/project/` does NOT come here; it is Oven code (33 imports of `crate::oven`) and moves to the oven ring.
 
-This directory is a layout skeleton. It holds no code yet; `src/` is a placeholder for the conventional crate root.
+Emission, conversions, ownership, the trait-bound inference and the codegen entry point live here with the replacement backend and backend selection; `checked_program` holds the tests that drive a checked program through to Rust.
