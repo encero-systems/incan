@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 #[inline(always)]
 pub(crate) fn __incan_init_module_statics() {
     static __INCAN_STATIC_INIT_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(
@@ -34,32 +34,32 @@ pub(crate) fn __incan_init_module_statics() {
 struct Counter {
     value: i64,
 }
-impl incan_stdlib::reflection::HasClassName for Counter {
+impl incan_std_core::reflection::HasClassName for Counter {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for Counter {
+impl incan_std_core::reflection::HasTypeClassName for Counter {
     fn __class_name__() -> &'static str {
         "Counter"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for Counter {
+impl incan_std_core::reflection::HasFieldMetadata for Counter {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for Counter {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for Counter {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 0] = [];
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for Counter {
+impl incan_std_core::reflection::HasFieldValueReflection for Counter {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             _ => None,
@@ -70,8 +70,8 @@ impl incan_stdlib::reflection::HasFieldValueReflection for Counter {
     }
 }
 static __INCAN_DECORATED_COUNTER_BUMP: std::sync::LazyLock<
-    incan_stdlib::storage::StaticCell<fn(&mut Counter, i64) -> i64>,
-> = std::sync::LazyLock::new(|| incan_stdlib::storage::StaticCell::new(
+    incan_std_core::storage::StaticCell<fn(&mut Counter, i64) -> i64>,
+> = std::sync::LazyLock::new(|| incan_std_core::storage::StaticCell::new(
     keep(Counter::__incan_original_bump_adapter),
 ));
 impl Counter {

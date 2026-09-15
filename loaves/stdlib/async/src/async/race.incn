@@ -26,12 +26,12 @@ Example:
 """
 
 import std.async
-from rust::incan_stdlib::async::time import clamp_seconds
-from rust::incan_stdlib::async::task import RuntimeFuture
-from rust::incan_stdlib::async::race import RaceArm as RawRaceArm, RuntimeRaceCallback
-from rust::incan_stdlib::async::race import arm as rust_arm
-from rust::incan_stdlib::async::race import race as rust_race
-from rust::incan_stdlib::__private::tokio::time import timeout as tokio_timeout
+from rust::incan_std_async::time import clamp_seconds
+from rust::incan_std_async::task import RuntimeFuture
+from rust::incan_std_async::race import RaceArm as RawRaceArm, RuntimeRaceCallback
+from rust::incan_std_async::race import arm as rust_arm
+from rust::incan_std_async::race import race as rust_race
+from rust::incan_std_async::__private::tokio::time import timeout as tokio_timeout
 
 
 pub type RaceArm[R] = rusttype RawRaceArm[R]:

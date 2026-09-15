@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 #[derive(Debug, Clone)]
 pub enum __IncanUniond83007a429c21b6f {
     V0(String),
@@ -14,7 +14,7 @@ pub enum __IncanUniond83007a429c21b6f {
 }
 use ::rand::Rng;
 use ::rand::thread_rng;
-use ::incan_stdlib::errors::raise_value_error;
+use ::incan_std_core::errors::raise_value_error;
 use ::std::string::String as RustString;
 pub use crate::__incan_std::collections::OrdinalKey;
 pub use crate::__incan_std::collections::OrdinalMapError;
@@ -50,7 +50,7 @@ pub enum UuidVersion {
     Max,
     Unknown(i64),
 }
-impl incan_stdlib::reflection::HasTypeClassName for UuidVersion {
+impl incan_std_core::reflection::HasTypeClassName for UuidVersion {
     fn __class_name__() -> &'static str {
         "UuidVersion"
     }
@@ -125,7 +125,7 @@ pub enum UuidVariant {
     Future,
     Unknown,
 }
-impl incan_stdlib::reflection::HasTypeClassName for UuidVariant {
+impl incan_std_core::reflection::HasTypeClassName for UuidVariant {
     fn __class_name__() -> &'static str {
         "UuidVariant"
     }
@@ -150,51 +150,51 @@ pub struct UuidError {
     pub kind: String,
     pub detail: String,
 }
-impl incan_stdlib::reflection::HasClassName for UuidError {
+impl incan_std_core::reflection::HasClassName for UuidError {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for UuidError {
+impl incan_std_core::reflection::HasTypeClassName for UuidError {
     fn __class_name__() -> &'static str {
         "UuidError"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for UuidError {
+impl incan_std_core::reflection::HasFieldMetadata for UuidError {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for UuidError {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for UuidError {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("kind"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 2] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("kind"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("kind"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("kind"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("detail"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("detail"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("detail"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("detail"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for UuidError {
+impl incan_std_core::reflection::HasFieldValueReflection for UuidError {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             "kind" => Some(format!("{}", self.kind)),
@@ -221,28 +221,28 @@ impl UuidError {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("kind"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 2] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("kind"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("kind"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("kind"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("detail"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("detail"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("detail"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("detail"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl Error for UuidError {
@@ -267,7 +267,7 @@ impl UuidError {
 /// 128-bit payload so protocol surfaces that carry non-generated UUID bit patterns can still round-trip exactly.
 #[derive(Debug, Clone, Copy, Eq, Ord, Hash, PartialEq, PartialOrd)]
 pub struct UUID(pub u128);
-impl incan_stdlib::reflection::HasTypeClassName for UUID {
+impl incan_std_core::reflection::HasTypeClassName for UUID {
     fn __class_name__() -> &'static str {
         "UUID"
     }
@@ -475,9 +475,9 @@ impl UUID {
         for index in 0_i64..(16 as i64) {
             let value = _byte_at_uuid(bytes.clone(), index, "canonical".to_string())?;
             if index == 4 || index == 6 || index == 8 || index == 10 {
-                out = incan_stdlib::strings::str_concat(&out, &"-");
+                out = incan_std_core::strings::str_concat(&out, &"-");
             }
-            out = incan_stdlib::strings::str_concat(&out, &_hex_byte(value));
+            out = incan_std_core::strings::str_concat(&out, &_hex_byte(value));
         }
         return Ok::<String, UuidError>(out);
     }
@@ -502,7 +502,7 @@ impl UUID {
     ///     UUID text such as `550e8400e29b41d4a716446655440000`.
     pub fn to_hex(&self) -> String {
         let _ = "\n        Return 32 lower-case hexadecimal UUID digits without hyphens.\n\n        Returns:\n            UUID text such as `550e8400e29b41d4a716446655440000`.\n        ";
-        return incan_stdlib::strings::str_replace(&self.to_string(), &"-", &"");
+        return incan_std_core::strings::str_replace(&self.to_string(), &"-", &"");
     }
     /// Return the UUID as a URN.
     ///
@@ -510,7 +510,7 @@ impl UUID {
     ///     UUID text prefixed with `urn:uuid:`.
     pub fn to_urn(&self) -> String {
         let _ = "\n        Return the UUID as a URN.\n\n        Returns:\n            UUID text prefixed with `urn:uuid:`.\n        ";
-        return incan_stdlib::strings::str_concat(&"urn:uuid:", &self.to_string());
+        return incan_std_core::strings::str_concat(&"urn:uuid:", &self.to_string());
     }
     /// Return the canonical display spelling.
     ///
@@ -534,7 +534,7 @@ impl UUID {
         }
         let bytes = self.to_bytes()?;
         let value = _byte_at_uuid(bytes, 6, "version".to_string())?;
-        let numeric_version = incan_stdlib::num::py_floor_div_i64((value) as i64, 16);
+        let numeric_version = incan_std_core::num::py_floor_div_i64((value) as i64, 16);
         return Ok::<UuidVersion, UuidError>(UuidVersion::from_nibble(numeric_version));
     }
     /// Return the UUID variant marker.
@@ -565,19 +565,19 @@ impl UUID {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("0"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("0"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("0"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("u128"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("0"),
+                type_name: incan_std_core::frozen::FrozenStr::new("u128"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl UUID {
@@ -647,42 +647,42 @@ impl UUID {
 struct _UuidText {
     text: String,
 }
-impl incan_stdlib::reflection::HasClassName for _UuidText {
+impl incan_std_core::reflection::HasClassName for _UuidText {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for _UuidText {
+impl incan_std_core::reflection::HasTypeClassName for _UuidText {
     fn __class_name__() -> &'static str {
         "_UuidText"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for _UuidText {
+impl incan_std_core::reflection::HasFieldMetadata for _UuidText {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for _UuidText {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for _UuidText {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("text"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("text"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("text"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("text"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for _UuidText {
+impl incan_std_core::reflection::HasFieldValueReflection for _UuidText {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             "text" => Some(format!("{}", self.text)),
@@ -715,54 +715,54 @@ impl _UuidText {
     ///     Simple UUID hex text without wrappers or hyphens.
     pub fn normalized_hex(&self) -> Result<String, UuidError> {
         let _ = "\n        Normalize UUID text to exactly 32 lower-case hexadecimal digits.\n\n        Returns:\n            Simple UUID hex text without wrappers or hyphens.\n        ";
-        let mut value = incan_stdlib::strings::str_lower(&self.text);
-        if incan_stdlib::strings::str_starts_with(&value, &"urn:uuid:") {
-            value = incan_stdlib::strings::str_slice(
+        let mut value = incan_std_core::strings::str_lower(&self.text);
+        if incan_std_core::strings::str_starts_with(&value, &"urn:uuid:") {
+            value = incan_std_core::strings::str_slice(
                 &value,
                 Some((9) as i64),
-                Some((incan_stdlib::strings::str_len(&(value))) as i64),
+                Some((incan_std_core::strings::str_len(&(value))) as i64),
                 None,
             );
         }
-        if incan_stdlib::strings::str_starts_with(&value, &"{")
-            || incan_stdlib::strings::str_ends_with(&value, &"}")
+        if incan_std_core::strings::str_starts_with(&value, &"{")
+            || incan_std_core::strings::str_ends_with(&value, &"}")
         {
-            if !incan_stdlib::strings::str_starts_with(&value, &"{")
-                || !incan_stdlib::strings::str_ends_with(&value, &"}")
-                || incan_stdlib::strings::str_len(&(value)) < 2
+            if !incan_std_core::strings::str_starts_with(&value, &"{")
+                || !incan_std_core::strings::str_ends_with(&value, &"}")
+                || incan_std_core::strings::str_len(&(value)) < 2
             {
                 return Err::<
                     String,
                     UuidError,
                 >(_invalid_format("braces must wrap the whole UUID".to_string()));
             }
-            value = incan_stdlib::strings::str_slice(
+            value = incan_std_core::strings::str_slice(
                 &value,
                 Some((1) as i64),
-                Some((incan_stdlib::strings::str_len(&(value)) - 1) as i64),
+                Some((incan_std_core::strings::str_len(&(value)) - 1) as i64),
                 None,
             );
         }
-        if incan_stdlib::strings::str_len(&(value)) == 36 {
-            if incan_stdlib::strings::str_slice(
+        if incan_std_core::strings::str_len(&(value)) == 36 {
+            if incan_std_core::strings::str_slice(
                 &value,
                 Some((8) as i64),
                 Some((9) as i64),
                 None,
             ) != "-"
-                || incan_stdlib::strings::str_slice(
+                || incan_std_core::strings::str_slice(
                     &value,
                     Some((13) as i64),
                     Some((14) as i64),
                     None,
                 ) != "-"
-                || incan_stdlib::strings::str_slice(
+                || incan_std_core::strings::str_slice(
                     &value,
                     Some((18) as i64),
                     Some((19) as i64),
                     None,
                 ) != "-"
-                || incan_stdlib::strings::str_slice(
+                || incan_std_core::strings::str_slice(
                     &value,
                     Some((23) as i64),
                     Some((24) as i64),
@@ -781,13 +781,13 @@ impl _UuidText {
             return Ok::<
                 String,
                 UuidError,
-            >(incan_stdlib::strings::str_replace(&value, &"-", &""));
+            >(incan_std_core::strings::str_replace(&value, &"-", &""));
         }
-        if incan_stdlib::strings::str_len(&(value)) != 32 {
+        if incan_std_core::strings::str_len(&(value)) != 32 {
             return Err::<
                 String,
                 UuidError,
-            >(_invalid_length(incan_stdlib::strings::str_len(&(value))));
+            >(_invalid_length(incan_std_core::strings::str_len(&(value))));
         }
         return Ok::<String, UuidError>(value);
     }
@@ -802,7 +802,7 @@ impl _UuidText {
     pub fn hex_pair(&self, normalized: String, index: i64) -> Result<u8, UuidError> {
         let _ = "\n        Decode two hexadecimal digits from normalized UUID text.\n\n        Args:\n            normalized: The 32-digit UUID text produced by `normalized_hex()`.\n            index: The first digit index for the byte.\n\n        Returns:\n            The decoded byte at that pair position.\n        ";
         let high = _hex_value(
-            incan_stdlib::strings::str_slice(
+            incan_std_core::strings::str_slice(
                     &normalized,
                     Some((index) as i64),
                     Some((index + 1) as i64),
@@ -811,7 +811,7 @@ impl _UuidText {
                 .to_string(),
         )?;
         let low = _hex_value(
-            incan_stdlib::strings::str_slice(
+            incan_std_core::strings::str_slice(
                     &normalized,
                     Some((index + 1) as i64),
                     Some((index + 2) as i64),
@@ -828,48 +828,48 @@ struct _UuidBytesWriter {
     out: _BytesIO,
     operation: String,
 }
-impl incan_stdlib::reflection::HasClassName for _UuidBytesWriter {
+impl incan_std_core::reflection::HasClassName for _UuidBytesWriter {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for _UuidBytesWriter {
+impl incan_std_core::reflection::HasTypeClassName for _UuidBytesWriter {
     fn __class_name__() -> &'static str {
         "_UuidBytesWriter"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for _UuidBytesWriter {
+impl incan_std_core::reflection::HasFieldMetadata for _UuidBytesWriter {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for _UuidBytesWriter {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for _UuidBytesWriter {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("out"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 2] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("out"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("out"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("_BytesIO"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("out"),
+                type_name: incan_std_core::frozen::FrozenStr::new("_BytesIO"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("operation"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("operation"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("operation"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("operation"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl _UuidBytesWriter {
@@ -969,8 +969,9 @@ impl _UuidBytesWriter {
     ///     `Ok(None)` when both bytes are written.
     pub fn clock_seq(&self, clock_seq: i64) -> Result<(), UuidError> {
         let _ = "\n        Append RFC 9562 variant-adjusted clock sequence bytes.\n\n        Args:\n            clock_seq: Fourteen-bit clock sequence value.\n\n        Returns:\n            `Ok(None)` when both bytes are written.\n        ";
-        let high: u8 = (128 + incan_stdlib::num::py_floor_div_i64(clock_seq, 256)) as u8;
-        let low: u8 = (incan_stdlib::num::py_mod_i64(clock_seq, 256)) as u8;
+        let high: u8 = (128 + incan_std_core::num::py_floor_div_i64(clock_seq, 256))
+            as u8;
+        let low: u8 = (incan_std_core::num::py_mod_i64(clock_seq, 256)) as u8;
         let _ = self.u8(high)?;
         let _ = self.u8(low)?;
         return Ok::<(), UuidError>(());
@@ -984,27 +985,27 @@ impl _UuidBytesWriter {
     ///     `Ok(None)` when all six bytes are written.
     pub fn u48(&self, value: i64) -> Result<(), UuidError> {
         let _ = "\n        Append a 48-bit integer in network byte order.\n\n        Args:\n            value: Integer whose low 48 bits are written.\n\n        Returns:\n            `Ok(None)` when all six bytes are written.\n        ";
-        let byte0: u8 = (incan_stdlib::num::py_mod_i64(
-            incan_stdlib::num::py_floor_div_i64(value, 1099511627776),
+        let byte0: u8 = (incan_std_core::num::py_mod_i64(
+            incan_std_core::num::py_floor_div_i64(value, 1099511627776),
             256,
         )) as u8;
-        let byte1: u8 = (incan_stdlib::num::py_mod_i64(
-            incan_stdlib::num::py_floor_div_i64(value, 4294967296),
+        let byte1: u8 = (incan_std_core::num::py_mod_i64(
+            incan_std_core::num::py_floor_div_i64(value, 4294967296),
             256,
         )) as u8;
-        let byte2: u8 = (incan_stdlib::num::py_mod_i64(
-            incan_stdlib::num::py_floor_div_i64(value, 16777216),
+        let byte2: u8 = (incan_std_core::num::py_mod_i64(
+            incan_std_core::num::py_floor_div_i64(value, 16777216),
             256,
         )) as u8;
-        let byte3: u8 = (incan_stdlib::num::py_mod_i64(
-            incan_stdlib::num::py_floor_div_i64(value, 65536),
+        let byte3: u8 = (incan_std_core::num::py_mod_i64(
+            incan_std_core::num::py_floor_div_i64(value, 65536),
             256,
         )) as u8;
-        let byte4: u8 = (incan_stdlib::num::py_mod_i64(
-            incan_stdlib::num::py_floor_div_i64(value, 256),
+        let byte4: u8 = (incan_std_core::num::py_mod_i64(
+            incan_std_core::num::py_floor_div_i64(value, 256),
             256,
         )) as u8;
-        let byte5: u8 = (incan_stdlib::num::py_mod_i64(value, 256)) as u8;
+        let byte5: u8 = (incan_std_core::num::py_mod_i64(value, 256)) as u8;
         let _ = self.u8(byte0)?;
         let _ = self.u8(byte1)?;
         let _ = self.u8(byte2)?;
@@ -1054,14 +1055,14 @@ fn _v1_from_fields(
     let _ = "\n    Assemble a version 1 UUID from timestamp, clock sequence, and node fields.\n\n    Args:\n        timestamp: Gregorian 100ns timestamp.\n        clock_seq: Fourteen-bit clock sequence value.\n        node: Six node bytes.\n\n    Returns:\n        A UUIDv1 value.\n    ";
     let ts = (timestamp) as i64;
     let writer = _uuid_writer("v1".to_string());
-    let time_low: u32 = (incan_stdlib::num::py_mod_i64(ts, 4294967296)) as u32;
-    let time_mid: u16 = (incan_stdlib::num::py_mod_i64(
-        incan_stdlib::num::py_floor_div_i64(ts, 4294967296),
+    let time_low: u32 = (incan_std_core::num::py_mod_i64(ts, 4294967296)) as u32;
+    let time_mid: u16 = (incan_std_core::num::py_mod_i64(
+        incan_std_core::num::py_floor_div_i64(ts, 4294967296),
         65536,
     )) as u16;
     let time_high_and_version: u16 = (4096
-        + incan_stdlib::num::py_mod_i64(
-            incan_stdlib::num::py_floor_div_i64(ts, 281474976710656),
+        + incan_std_core::num::py_mod_i64(
+            incan_std_core::num::py_floor_div_i64(ts, 281474976710656),
             4096,
         )) as u16;
     let _ = writer.u32(time_low)?;
@@ -1079,12 +1080,12 @@ fn _v6_from_fields(
     let _ = "\n    Assemble a version 6 UUID from timestamp, clock sequence, and node fields.\n\n    Args:\n        timestamp: Gregorian 100ns timestamp.\n        clock_seq: Fourteen-bit clock sequence value.\n        node: Six node bytes.\n\n    Returns:\n        A UUIDv6 value.\n    ";
     let ts = (timestamp) as i64;
     let writer = _uuid_writer("v6".to_string());
-    let time_high: u32 = (incan_stdlib::num::py_floor_div_i64(ts, 268435456)) as u32;
-    let time_mid: u16 = (incan_stdlib::num::py_mod_i64(
-        incan_stdlib::num::py_floor_div_i64(ts, 4096),
+    let time_high: u32 = (incan_std_core::num::py_floor_div_i64(ts, 268435456)) as u32;
+    let time_mid: u16 = (incan_std_core::num::py_mod_i64(
+        incan_std_core::num::py_floor_div_i64(ts, 4096),
         65536,
     )) as u16;
-    let time_low_and_version: u16 = (24576 + incan_stdlib::num::py_mod_i64(ts, 4096))
+    let time_low_and_version: u16 = (24576 + incan_std_core::num::py_mod_i64(ts, 4096))
         as u16;
     let _ = writer.u32(time_high)?;
     let _ = writer.u16(time_mid)?;
@@ -1095,7 +1096,7 @@ fn _v6_from_fields(
 }
 fn _unix_time_uuid() -> Result<UUID, UuidError> {
     let _ = "\n    Generate a version 7 UUID from Unix time and random payload bits.\n\n    Returns:\n        A UUIDv7 value.\n    ";
-    let timestamp_ms = incan_stdlib::num::py_floor_div_i64(
+    let timestamp_ms = incan_std_core::num::py_floor_div_i64(
         SystemTime::now().unix_nanoseconds(),
         1000000,
     );
@@ -1104,12 +1105,12 @@ fn _unix_time_uuid() -> Result<UUID, UuidError> {
     let _ = writer.u48(timestamp_ms)?;
     let first_random = (_byte_at_uuid(random.clone(), 0, "v7".to_string())?) as i64;
     let second_random = _byte_at_uuid(random.clone(), 1, "v7".to_string())?;
-    let version_and_rand: u8 = (112 + incan_stdlib::num::py_mod_i64(first_random, 16))
+    let version_and_rand: u8 = (112 + incan_std_core::num::py_mod_i64(first_random, 16))
         as u8;
     let _ = writer.u8(version_and_rand)?;
     let _ = writer.u8(second_random)?;
     let third_random = (_byte_at_uuid(random.clone(), 2, "v7".to_string())?) as i64;
-    let variant_and_rand: u8 = (128 + incan_stdlib::num::py_mod_i64(third_random, 64))
+    let variant_and_rand: u8 = (128 + incan_std_core::num::py_mod_i64(third_random, 64))
         as u8;
     let _ = writer.u8(variant_and_rand)?;
     for index in (3 as i64)..(10 as i64) {
@@ -1174,12 +1175,12 @@ fn _current_gregorian_100ns() -> u128 {
     let unix_nanos = SystemTime::now().unix_nanoseconds();
     let offset: u128 = 122192928000000000;
     if unix_nanos >= 0 {
-        let intervals: u128 = (incan_stdlib::num::py_floor_div_i64(unix_nanos, 100))
+        let intervals: u128 = (incan_std_core::num::py_floor_div_i64(unix_nanos, 100))
             as u128;
         let value: u128 = ((offset) as i64 + (intervals) as i64) as u128;
         return value;
     }
-    let intervals: u128 = (incan_stdlib::num::py_floor_div_i64(0 - unix_nanos, 100))
+    let intervals: u128 = (incan_std_core::num::py_floor_div_i64(0 - unix_nanos, 100))
         as u128;
     let value: u128 = ((offset) as i64 - (intervals) as i64) as u128;
     return value;
@@ -1225,12 +1226,12 @@ fn _uuid_from_versioned_bytes(
             operation.to_string(),
         )?;
         if index == 6 {
-            let low = incan_stdlib::num::py_mod_i64((byte_value) as i64, 16);
+            let low = incan_std_core::num::py_mod_i64((byte_value) as i64, 16);
             let versioned: u8 = (version * 16 + low) as u8;
             byte_value = versioned;
         } else {
             if index == 8 {
-                let low = incan_stdlib::num::py_mod_i64((byte_value) as i64, 64);
+                let low = incan_std_core::num::py_mod_i64((byte_value) as i64, 64);
                 let variant: u8 = (128 + low) as u8;
                 byte_value = variant;
             }
@@ -1318,7 +1319,7 @@ fn _hex_value(digit: String) -> Result<i64, UuidError> {
 fn _hex_digit(value: i64) -> String {
     let _ = "\n    Encode a nibble as lower-case hexadecimal text.\n\n    Args:\n        value: Integer from 0 through 15.\n\n    Returns:\n        A single hexadecimal character.\n    ";
     let digits = "0123456789abcdef".to_string();
-    return incan_stdlib::strings::str_slice(
+    return incan_std_core::strings::str_slice(
         &digits,
         Some((value) as i64),
         Some((value + 1) as i64),
@@ -1328,9 +1329,9 @@ fn _hex_digit(value: i64) -> String {
 fn _hex_byte(value: u8) -> String {
     let _ = "\n    Encode a byte as two lower-case hexadecimal digits.\n\n    Args:\n        value: Byte to encode.\n\n    Returns:\n        Two hexadecimal characters.\n    ";
     let as_int = (value) as i64;
-    let high = incan_stdlib::num::py_floor_div_i64(as_int, 16);
+    let high = incan_std_core::num::py_floor_div_i64(as_int, 16);
     let low = as_int - high * 16;
-    return incan_stdlib::strings::str_concat(&_hex_digit(high), &_hex_digit(low));
+    return incan_std_core::strings::str_concat(&_hex_digit(high), &_hex_digit(low));
 }
 fn _read_u128_from_bytes(raw: Vec<u8>) -> Result<u128, IoError> {
     let _ = "\n    Read sixteen network-order bytes into a `u128`.\n\n    Args:\n        raw: Bytes to read.\n\n    Returns:\n        The decoded integer, or `Err(IoError)` when the input is too short.\n    ";
@@ -1366,7 +1367,7 @@ fn _invalid_length(length: i64) -> UuidError {
                 "",
             ];
             let __args: Vec<String> = vec![format!("{}", length)];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         },
     };
 }
@@ -1384,7 +1385,7 @@ fn _invalid_character(digit: String) -> UuidError {
         detail: {
             let __parts: [&str; 2usize] = ["invalid UUID hex digit: ", ""];
             let __args: Vec<String> = vec![format!("{}", digit)];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         },
     };
 }
@@ -1398,7 +1399,7 @@ fn _invalid_bytes_len(length: i64) -> UuidError {
                 "",
             ];
             let __args: Vec<String> = vec![format!("{}", length)];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         },
     };
 }
@@ -1411,7 +1412,7 @@ fn _io_error(operation: String, err: IoError) -> UuidError {
             let __args: Vec<String> = vec![
                 format!("{}", operation), format!("{}", err.message())
             ];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         },
     };
 }

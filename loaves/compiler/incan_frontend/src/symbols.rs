@@ -2446,19 +2446,19 @@ pub fn render_resolved_type_as_rust_arg(ty: &ResolvedType) -> String {
         ResolvedType::Bool => "bool".to_string(),
         ResolvedType::Str => "String".to_string(),
         ResolvedType::Bytes => "Vec<u8>".to_string(),
-        ResolvedType::FrozenStr => "incan_stdlib::frozen::FrozenStr".to_string(),
-        ResolvedType::FrozenBytes => "incan_stdlib::frozen::FrozenBytes".to_string(),
+        ResolvedType::FrozenStr => "incan_std_core::frozen::FrozenStr".to_string(),
+        ResolvedType::FrozenBytes => "incan_std_core::frozen::FrozenBytes".to_string(),
         ResolvedType::FrozenList(inner) => format!(
-            "incan_stdlib::frozen::FrozenList<{}>",
+            "incan_std_core::frozen::FrozenList<{}>",
             render_resolved_type_as_rust_arg(inner)
         ),
         ResolvedType::FrozenDict(key, value) => format!(
-            "incan_stdlib::frozen::FrozenDict<{}, {}>",
+            "incan_std_core::frozen::FrozenDict<{}, {}>",
             render_resolved_type_as_rust_arg(key),
             render_resolved_type_as_rust_arg(value)
         ),
         ResolvedType::FrozenSet(inner) => format!(
-            "incan_stdlib::frozen::FrozenSet<{}>",
+            "incan_std_core::frozen::FrozenSet<{}>",
             render_resolved_type_as_rust_arg(inner)
         ),
         ResolvedType::Unit => "()".to_string(),
@@ -2476,10 +2476,10 @@ pub fn render_resolved_type_as_rust_arg(ty: &ResolvedType) -> String {
                 Some(CollectionTypeId::Set) => "std::collections::HashSet",
                 Some(CollectionTypeId::Option) => "Option",
                 Some(CollectionTypeId::Result) => "Result",
-                Some(CollectionTypeId::FrozenList) => "incan_stdlib::frozen::FrozenList",
-                Some(CollectionTypeId::FrozenDict) => "incan_stdlib::frozen::FrozenDict",
-                Some(CollectionTypeId::FrozenSet) => "incan_stdlib::frozen::FrozenSet",
-                Some(CollectionTypeId::Generator) => "incan_stdlib::iter::Generator",
+                Some(CollectionTypeId::FrozenList) => "incan_std_core::frozen::FrozenList",
+                Some(CollectionTypeId::FrozenDict) => "incan_std_core::frozen::FrozenDict",
+                Some(CollectionTypeId::FrozenSet) => "incan_std_core::frozen::FrozenSet",
+                Some(CollectionTypeId::Generator) => "incan_std_core::iter::Generator",
                 Some(CollectionTypeId::Tuple) | None => name,
             };
             let rendered_args = args
@@ -2499,7 +2499,7 @@ pub fn render_resolved_type_as_rust_arg(ty: &ResolvedType) -> String {
         }
         ResolvedType::TypeToken(inner) => {
             format!(
-                "incan_stdlib::reflection::TypeToken<{}>",
+                "incan_std_core::reflection::TypeToken<{}>",
                 render_resolved_type_as_rust_arg(inner)
             )
         }

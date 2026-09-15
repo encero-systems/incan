@@ -278,10 +278,10 @@ fn merge_workspace_project_requirements(
     current: &ProjectRequirements,
     extra: &ProjectRequirements,
 ) -> CliResult<ProjectRequirements> {
-    let mut stdlib_features = current.stdlib_features.clone();
-    stdlib_features.extend(extra.stdlib_features.iter().cloned());
-    stdlib_features.sort();
-    stdlib_features.dedup();
+    let mut stdlib_facets = current.stdlib_facets.clone();
+    stdlib_facets.extend(extra.stdlib_facets.iter().cloned());
+    stdlib_facets.sort();
+    stdlib_facets.dedup();
     let mut dependencies = current.dependencies.clone();
     for candidate in &extra.dependencies {
         if let Some(existing) = dependencies
@@ -335,7 +335,7 @@ fn merge_workspace_project_requirements(
     sdk_artifact_projections.sort_by(|left, right| left.artifact.crate_root.cmp(&right.artifact.crate_root));
     sdk_artifact_projections.dedup_by(|left, right| left.artifact.crate_root == right.artifact.crate_root);
     Ok(ProjectRequirements {
-        stdlib_features,
+        stdlib_facets,
         dependencies,
         sdk_dependency_rebindings,
         sdk_path_dependencies,

@@ -48,8 +48,8 @@ fn normalize_codegen_output(code: &str) -> String {
         .replace(&from, to)
         .lines()
         .map(|line| {
-            if line.starts_with("incan_stdlib::__incan_stdlib_version_check!(") {
-                "incan_stdlib::__incan_stdlib_version_check!(\"<INCAN_STDLIB_VERSION>\");"
+            if line.starts_with("incan_std_core::__incan_stdlib_version_check!(") {
+                "incan_std_core::__incan_stdlib_version_check!(\"<INCAN_STDLIB_VERSION>\");"
             } else {
                 line
             }

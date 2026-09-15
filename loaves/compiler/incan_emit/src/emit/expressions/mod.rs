@@ -602,11 +602,11 @@ impl<'a> IrEmitter<'a> {
         if let Some(target_ty) = resolved_target_ty.as_ref() {
             match (&expr.kind, target_ty) {
                 (IrExprKind::String(value), IrType::FrozenStr) => {
-                    return Ok(quote! { incan_stdlib::frozen::FrozenStr::new(#value) });
+                    return Ok(quote! { incan_std_core::frozen::FrozenStr::new(#value) });
                 }
                 (IrExprKind::Bytes(bytes), IrType::FrozenBytes) => {
                     let lit = Literal::byte_string(bytes);
-                    return Ok(quote! { incan_stdlib::frozen::FrozenBytes::new(#lit) });
+                    return Ok(quote! { incan_std_core::frozen::FrozenBytes::new(#lit) });
                 }
                 _ => {}
             }
@@ -1107,10 +1107,10 @@ impl<'a> IrEmitter<'a> {
                 .parse::<TokenStream>()
                 .map_err(|err| EmitError::SynParse(format!("invalid integer literal `{repr}`: {err}"))),
             IrExprKind::Float(n) => Ok(Literal::f64_unsuffixed(*n).to_token_stream()),
-            IrExprKind::Decimal(repr) => Ok(quote! { incan_stdlib::num::Decimal128::from_literal(#repr) }),
+            IrExprKind::Decimal(repr) => Ok(quote! { incan_std_core::num::Decimal128::from_literal(#repr) }),
             IrExprKind::String(s) => {
                 if matches!(expr.ty, IrType::FrozenStr) {
-                    Ok(quote! { incan_stdlib::frozen::FrozenStr::new(#s) })
+                    Ok(quote! { incan_std_core::frozen::FrozenStr::new(#s) })
                 } else {
                     Ok(quote! { #s })
                 }
@@ -1118,7 +1118,7 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::Bytes(bytes) => {
                 let lit = Literal::byte_string(bytes);
                 if matches!(expr.ty, IrType::FrozenBytes) {
-                    Ok(quote! { incan_stdlib::frozen::FrozenBytes::new(#lit) })
+                    Ok(quote! { incan_std_core::frozen::FrozenBytes::new(#lit) })
                 } else if matches!(expr.ty, IrType::StaticBytes) {
                     Ok(lit.to_token_stream())
                 } else {
@@ -1145,7 +1145,7 @@ impl<'a> IrEmitter<'a> {
             }
             IrExprKind::TypeToken { ty } => {
                 let token_ty = self.emit_type(ty);
-                Ok(quote! { incan_stdlib::reflection::TypeToken::<#token_ty>::new() })
+                Ok(quote! { incan_std_core::reflection::TypeToken::<#token_ty>::new() })
             }
 
             IrExprKind::StaticRead { name, reference_kind } => {
@@ -1168,12 +1168,12 @@ impl<'a> IrEmitter<'a> {
                 if *self.in_static_initializer.borrow()
                     && !self.static_reference_needs_imported_init_call(name, *reference_kind)
                 {
-                    Ok(quote! { incan_stdlib::storage::StaticBinding::from_static(&#n) })
+                    Ok(quote! { incan_std_core::storage::StaticBinding::from_static(&#n) })
                 } else {
                     let init_call = self.emit_static_init_call_for_reference(name, *reference_kind);
                     Ok(quote! {{
                         #init_call
-                        incan_stdlib::storage::StaticBinding::from_static(&#n)
+                        incan_std_core::storage::StaticBinding::from_static(&#n)
                     }})
                 }
             }
@@ -1471,11 +1471,11 @@ impl<'a> IrEmitter<'a> {
                     let awaitable = self.emit_expr(&arm.awaitable)?;
                     let body = self.emit_expr(&arm.body)?;
                     branch_tokens.push(quote! {
-                        incan_stdlib::r#async::race::scoped_arm(#awaitable, |#binding_ident| #body)
+                        incan_std_async::race::scoped_arm(#awaitable, |#binding_ident| #body)
                     });
                 }
                 Ok(quote! {
-                    incan_stdlib::r#async::race::scoped_race(vec![#(#branch_tokens),*]).await
+                    incan_std_async::race::scoped_race(vec![#(#branch_tokens),*]).await
                 })
             }
 
@@ -1512,8 +1512,10 @@ impl<'a> IrEmitter<'a> {
                 let t = self.emit_type(to_type);
                 match policy {
                     NumericResizePolicy::Lossless | NumericResizePolicy::Wrapping => Ok(quote! { (#e) as #t }),
-                    NumericResizePolicy::Try => Ok(quote! { incan_stdlib::num::try_resize::<_, #t>(#e) }),
-                    NumericResizePolicy::Saturating => Ok(quote! { incan_stdlib::num::saturating_resize::<_, #t>(#e) }),
+                    NumericResizePolicy::Try => Ok(quote! { incan_std_core::num::try_resize::<_, #t>(#e) }),
+                    NumericResizePolicy::Saturating => {
+                        Ok(quote! { incan_std_core::num::saturating_resize::<_, #t>(#e) })
+                    }
                 }
             }
 
@@ -1580,13 +1582,13 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::FieldsList(fields) => Ok(quote! { vec![#(#fields),*] }),
 
             IrExprKind::SerdeToJson => {
-                Ok(quote! { incan_stdlib::json::__private::stringify_or_raise(self, std::any::type_name::<Self>()) })
+                Ok(quote! { incan_std_data::json::__private::stringify_or_raise(self, std::any::type_name::<Self>()) })
             }
 
             IrExprKind::SerdeFromJson(type_name) => {
                 let type_ident = format_ident!("{}", type_name);
                 Ok(quote! {
-                    incan_stdlib::json::__private::parse_or_error::<#type_ident>(&s)
+                    incan_std_data::json::__private::parse_or_error::<#type_ident>(&s)
                 })
             }
         }
@@ -2848,7 +2850,7 @@ mod tests {
             .map_err(|err| format!("expected successful frozen literal emission, got {err:?}"))?;
         let rendered = emitted.to_string();
         assert_eq!(
-            rendered, "incan_stdlib :: frozen :: FrozenStr :: new (\"policy\")",
+            rendered, "incan_std_core :: frozen :: FrozenStr :: new (\"policy\")",
             "expected target-aware frozen wrapper emission, got `{rendered}`"
         );
         Ok(())
@@ -3229,7 +3231,7 @@ mod tests {
         let rendered = emitted.to_string();
         assert!(
             rendered.contains(
-                "incan_stdlib :: collections :: dict_get (& counts , < _ as AsRef < str >> :: as_ref (& \"the\"))"
+                "incan_std_core :: collections :: dict_get (& counts , < _ as AsRef < str >> :: as_ref (& \"the\"))"
             ),
             "expected dict index to normalize string probes via fully-qualified `AsRef<str>`, got `{rendered}`"
         );
@@ -3272,7 +3274,7 @@ mod tests {
             IrType::Int,
         ))?;
         assert!(
-            index_rendered.contains("incan_stdlib :: collections :: list_index (& items , & 9)"),
+            index_rendered.contains("incan_std_core :: collections :: list_index (& items , & 9)"),
             "expected list.index to route through checked runtime helper, got `{index_rendered}`"
         );
 
@@ -3289,7 +3291,7 @@ mod tests {
             IrType::Int,
         ))?;
         assert!(
-            count_rendered.contains("incan_stdlib :: collections :: list_count (& items , & 9)"),
+            count_rendered.contains("incan_std_core :: collections :: list_count (& items , & 9)"),
             "expected list.count to route through checked runtime helper, got `{count_rendered}`"
         );
 
@@ -3306,7 +3308,7 @@ mod tests {
             IrType::Unit,
         ))?;
         assert!(
-            remove_rendered.contains("incan_stdlib :: collections :: list_remove"),
+            remove_rendered.contains("incan_std_core :: collections :: list_remove"),
             "expected list.remove to route through checked runtime helper, got `{remove_rendered}`"
         );
 
@@ -3330,7 +3332,7 @@ mod tests {
             IrType::Unit,
         ))?;
         assert!(
-            swap_rendered.contains("incan_stdlib :: collections :: list_swap"),
+            swap_rendered.contains("incan_std_core :: collections :: list_swap"),
             "expected list.swap to route through checked runtime helper, got `{swap_rendered}`"
         );
 
@@ -4314,7 +4316,7 @@ mod tests {
             .map_err(|err| format!("expected exact Rust call emission, got {err:?}"))?
             .to_string();
         assert_eq!(
-            exact, "incan_stdlib :: num :: require_finite_f32 (read_exact ())",
+            exact, "incan_std_core :: num :: require_finite_f32 (read_exact ())",
             "an exact Rust result must be validated at ingress"
         );
 

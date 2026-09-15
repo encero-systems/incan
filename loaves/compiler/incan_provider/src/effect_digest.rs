@@ -18,7 +18,7 @@
 //!
 //! # What must be covered, and why an Incan-only digest is unsound
 //!
-//! Every component links against `crates/incan_stdlib/src`, which is thousands of lines of Rust runtime. A digest
+//! Every component links against the standard library facets, thousands of lines of Rust runtime. A digest
 //! that folded only `.incn` meaning would report a hit for an edit to that runtime, which is a false reuse of a
 //! component whose behaviour changed. The Rust half is therefore mandatory rather than an enhancement, and it is
 //! folded here beside the Incan half.
@@ -213,7 +213,11 @@ pub const COMPILER_STDLIB_ROOT: &str = "loaves/stdlib";
 /// runtime crates for that reason, and they are removed with the backend rather than maintained. A root that stops
 /// existing fails the digest rather than silently narrowing it, so a move has to update this list.
 pub const COMPILER_RUST_EFFECT_ROOTS: &[(&str, &str)] = &[
-    ("stdlib-runtime", "crates/incan_stdlib/src"),
+    ("stdlib-runtime-core", "loaves/stdlib/core/rust/src"),
+    ("stdlib-runtime-data", "loaves/stdlib/data/rust/src"),
+    ("stdlib-runtime-async", "loaves/stdlib/async/rust/src"),
+    ("stdlib-runtime-web", "loaves/stdlib/web/rust/src"),
+    ("stdlib-runtime-testing", "loaves/stdlib/testing/rust/src"),
     ("core", "loaves/kernel/incan_core"),
     ("derive", "loaves/stdlib/derive/incan_derive"),
     ("web-macros", "loaves/stdlib/derive/incan_web_macros"),

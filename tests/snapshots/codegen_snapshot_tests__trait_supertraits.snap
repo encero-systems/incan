@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 pub trait Collection<T> {
     fn first(&self) -> T;
 }
@@ -19,39 +19,39 @@ pub trait OrderedCollection<T>: Collection<T> {
 struct BoxedValue<T> {
     value: T,
 }
-impl<T> incan_stdlib::reflection::HasClassName for BoxedValue<T> {
+impl<T> incan_std_core::reflection::HasClassName for BoxedValue<T> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T> incan_stdlib::reflection::HasTypeClassName for BoxedValue<T> {
+impl<T> incan_std_core::reflection::HasTypeClassName for BoxedValue<T> {
     fn __class_name__() -> &'static str {
         "BoxedValue"
     }
 }
-impl<T> incan_stdlib::reflection::HasFieldMetadata for BoxedValue<T> {
+impl<T> incan_std_core::reflection::HasFieldMetadata for BoxedValue<T> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T> incan_stdlib::reflection::HasTypeFieldMetadata for BoxedValue<T> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl<T> incan_std_core::reflection::HasTypeFieldMetadata for BoxedValue<T> {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("value"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("value"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("value"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("T"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("value"),
+                type_name: incan_std_core::frozen::FrozenStr::new("T"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone> BoxedValue<T> {

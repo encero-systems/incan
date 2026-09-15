@@ -6,9 +6,9 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn is_even(n: i64) -> bool {
-    return incan_stdlib::num::py_mod_i64(n, 2) == 0;
+    return incan_std_core::num::py_mod_i64(n, 2) == 0;
 }
 fn double(n: i64) -> i64 {
     return n * 2;
@@ -18,14 +18,14 @@ fn add(acc: i64, n: i64) -> i64 {
 }
 #[derive(Debug, Clone, Copy)]
 struct Money(pub i64);
-impl incan_stdlib::reflection::HasTypeClassName for Money {
+impl incan_std_core::reflection::HasTypeClassName for Money {
     fn __class_name__() -> &'static str {
         "Money"
     }
 }
 #[derive(Debug, Clone, Copy)]
 struct PositiveInt(pub i64);
-impl incan_stdlib::reflection::HasTypeClassName for PositiveInt {
+impl incan_std_core::reflection::HasTypeClassName for PositiveInt {
     fn __class_name__() -> &'static str {
         "PositiveInt"
     }
@@ -33,20 +33,20 @@ impl incan_stdlib::reflection::HasTypeClassName for PositiveInt {
 impl PositiveInt {
     pub fn from_underlying(
         n: i64,
-    ) -> Result<PositiveInt, incan_stdlib::validation::ValidationError> {
+    ) -> Result<PositiveInt, incan_std_core::validation::ValidationError> {
         if n <= 0 {
             return Err::<
                 PositiveInt,
-                incan_stdlib::validation::ValidationError,
+                incan_std_core::validation::ValidationError,
             >(
-                incan_stdlib::validation::ValidationError::new(
+                incan_std_core::validation::ValidationError::new(
                     "positive int must be greater than zero".to_string(),
                 ),
             );
         }
         return Ok::<
             PositiveInt,
-            incan_stdlib::validation::ValidationError,
+            incan_std_core::validation::ValidationError,
         >(PositiveInt(n));
     }
 }
@@ -85,11 +85,11 @@ fn main() {
     let positives = vec![
         match PositiveInt::from_underlying(1) { Ok(__incan_newtype_value) =>
         __incan_newtype_value, Err(__incan_validation_error) =>
-        incan_stdlib::validation::raise_validation_error("PositiveInt".to_string(),
+        incan_std_core::validation::raise_validation_error("PositiveInt".to_string(),
         "from_underlying".to_string(), __incan_validation_error) }, match
         PositiveInt::from_underlying(2) { Ok(__incan_newtype_value) =>
         __incan_newtype_value, Err(__incan_validation_error) =>
-        incan_stdlib::validation::raise_validation_error("PositiveInt".to_string(),
+        incan_std_core::validation::raise_validation_error("PositiveInt".to_string(),
         "from_underlying".to_string(), __incan_validation_error) }
     ];
     let ys = {

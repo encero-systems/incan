@@ -886,7 +886,7 @@ mod tests {
 
         // The Rust half is mandatory rather than an enhancement: every component links this runtime, so an
         // Incan-only key would report a hit for a change the consumer can observe.
-        let runtime = checkout.join("crates/incan_stdlib/src");
+        let runtime = checkout.join("loaves/stdlib/core/rust/src");
         fs::create_dir_all(&runtime)?;
         fs::write(runtime.join("frozen.rs"), "pub fn limit() -> u8 { 1 }\n")?;
         let with_runtime =

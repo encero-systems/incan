@@ -97,7 +97,7 @@ pub fn emit_collection_method(
             if let Some(arg) = args.first() {
                 let a = emitter.emit_expr(arg)?;
                 let list_mut = plan_collection_receiver(&receiver.ty, true).apply(r.clone());
-                return Ok(quote! { incan_stdlib::collections::list_remove(#list_mut, (#a) as i64) });
+                return Ok(quote! { incan_std_core::collections::list_remove(#list_mut, (#a) as i64) });
             }
             Ok(quote! { () })
         }
@@ -121,7 +121,7 @@ pub fn emit_collection_method(
             if let Some(arg) = args.first() {
                 let a = emitter.emit_expr(arg)?;
                 let list_mut = plan_collection_receiver(&receiver.ty, true).apply(r.clone());
-                return Ok(quote! { incan_stdlib::collections::list_extend(#list_mut, &#a) });
+                return Ok(quote! { incan_std_core::collections::list_extend(#list_mut, &#a) });
             }
             Ok(quote! { () })
         }
@@ -130,14 +130,14 @@ pub fn emit_collection_method(
             // Incan types `pop()` as `T`, not `Option<T>`. Route through the runtime helper so generated Rust does not
             // encode the empty-list fallback itself while preserving the canonical Python-like error message.
             let list_mut = plan_collection_receiver(&receiver.ty, true).apply(r.clone());
-            Ok(quote! { incan_stdlib::collections::__private::list_pop(#list_mut) })
+            Ok(quote! { incan_std_core::collections::__private::list_pop(#list_mut) })
         }
         CollectionMethodKind::Swap => {
             if args.len() >= 2 {
                 let a1 = emitter.emit_expr(&args[0])?;
                 let a2 = emitter.emit_expr(&args[1])?;
                 let list_mut = plan_collection_receiver(&receiver.ty, true).apply(r.clone());
-                return Ok(quote! { incan_stdlib::collections::list_swap(#list_mut, (#a1) as i64, (#a2) as i64) });
+                return Ok(quote! { incan_std_core::collections::list_swap(#list_mut, (#a1) as i64, (#a2) as i64) });
             }
             Ok(quote! { () })
         }
@@ -145,7 +145,7 @@ pub fn emit_collection_method(
             if let Some(arg) = args.first() {
                 let a = emitter.emit_expr(arg)?;
                 let list = plan_collection_receiver(&receiver.ty, false).apply(r.clone());
-                return Ok(quote! { incan_stdlib::collections::list_count(#list, &#a) });
+                return Ok(quote! { incan_std_core::collections::list_count(#list, &#a) });
             }
             Ok(quote! { 0i64 })
         }
@@ -153,9 +153,9 @@ pub fn emit_collection_method(
             if let Some(arg) = args.first() {
                 let a = emitter.emit_expr(arg)?;
                 let list = plan_collection_receiver(&receiver.ty, false).apply(r.clone());
-                return Ok(quote! { incan_stdlib::collections::list_index(#list, &#a) });
+                return Ok(quote! { incan_std_core::collections::list_index(#list, &#a) });
             }
-            Ok(quote! { incan_stdlib::errors::raise_list_value_not_found() })
+            Ok(quote! { incan_std_core::errors::raise_list_value_not_found() })
         }
         CollectionMethodKind::Reserve => {
             if let Some(arg) = args.first() {

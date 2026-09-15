@@ -696,10 +696,10 @@ mod tests {
         let artifact_root = workspace.path().join("target/lib");
         let toolchain_root = workspace.path().join("toolchain");
         fs::create_dir_all(artifact_root.join("src"))?;
-        fs::create_dir_all(toolchain_root.join("incan_stdlib"))?;
+        fs::create_dir_all(toolchain_root.join("incan_std_core"))?;
         fs::write(
             artifact_root.join("Cargo.toml"),
-            "[package]\nname = \"provider\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nincan_stdlib = { path = \"../../toolchain/incan_stdlib\" }\nserde = { version = \"1.0\", features = [\"derive\"] }\nrust_shadow = { path = \"../../rust_shadow\" }\n",
+            "[package]\nname = \"provider\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nincan_std_core = { path = \"../../toolchain/incan_std_core\" }\nserde = { version = \"1.0\", features = [\"derive\"] }\nrust_shadow = { path = \"../../rust_shadow\" }\n",
         )?;
         fs::write(artifact_root.join("src/lib.rs"), "pub fn marker() {}\n")?;
         let artifact = LibraryArtifactMetadata {
@@ -733,8 +733,8 @@ mod tests {
             dependency_search_paths: Vec::new(),
             native_search_paths: Vec::new(),
             externs: vec![(
-                "incan_stdlib".to_string(),
-                workspace.path().join("sealed/incan_stdlib.rlib"),
+                "incan_std_core".to_string(),
+                workspace.path().join("sealed/incan_std_core.rlib"),
             )],
             compile_environment: BTreeMap::new(),
             caller_owned_library_digests: BTreeMap::new(),
@@ -761,14 +761,14 @@ mod tests {
         let toolchain_data_root = workspace.path().join("toolchain-data");
         let runtime_root = workspace.path().join("sdk-runtime");
         let provider_root = workspace.path().join("sdk-providers");
-        let runtime_path = runtime_root.join("crates/incan_stdlib");
+        let runtime_path = runtime_root.join("crates/incan_std_core");
         let component_path = provider_root.join("components/stdlib-core");
-        let caller_path = workspace.path().join("caller/incan_stdlib");
+        let caller_path = workspace.path().join("caller/incan_std_core");
         fs::create_dir_all(&runtime_path)?;
         fs::create_dir_all(&component_path)?;
         fs::create_dir_all(&caller_path)?;
         let runtime = DependencySpec {
-            crate_name: "incan_stdlib".to_string(),
+            crate_name: "incan_std_core".to_string(),
             version: None,
             features: Vec::new(),
             default_features: true,
@@ -791,7 +791,7 @@ mod tests {
             },
             ..runtime.clone()
         };
-        let selected_names = BTreeSet::from(["incan_stdlib", "incan_stdlib_core"]);
+        let selected_names = BTreeSet::from(["incan_std_core", "incan_stdlib_core"]);
         fs::create_dir_all(toolchain_data_root.join("share/incan/oven/loafs"))?;
         let owned_roots = vec![
             fs::canonicalize(&toolchain_data_root)?,
@@ -820,8 +820,8 @@ mod tests {
             native_search_paths: Vec::new(),
             externs: vec![
                 (
-                    "incan_stdlib".to_string(),
-                    workspace.path().join("sealed/incan_stdlib.rlib"),
+                    "incan_std_core".to_string(),
+                    workspace.path().join("sealed/incan_std_core.rlib"),
                 ),
                 (
                     "incan_stdlib_core".to_string(),

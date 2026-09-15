@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn main() {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {
@@ -43,14 +43,14 @@ fn main() {
         __incan_dict
     };
     let _ = println!(
-        "{}", * incan_stdlib::collections::list_get(& values, (0) as i64) + *
-        incan_stdlib::collections::list_get(& values, (1) as i64) + *
-        incan_stdlib::collections::list_get(& values, (2) as i64) + *
-        incan_stdlib::collections::list_get(& values, (3) as i64) + *
-        incan_stdlib::collections::list_get(& values, (4) as i64)
+        "{}", * incan_std_core::collections::list_get(& values, (0) as i64) + *
+        incan_std_core::collections::list_get(& values, (1) as i64) + *
+        incan_std_core::collections::list_get(& values, (2) as i64) + *
+        incan_std_core::collections::list_get(& values, (3) as i64) + *
+        incan_std_core::collections::list_get(& values, (4) as i64)
     );
     let _ = println!(
-        "{}", incan_stdlib::collections::dict_get(& merged, < _ as AsRef < str >>
+        "{}", incan_std_core::collections::dict_get(& merged, < _ as AsRef < str >>
         ::as_ref(& "trace")).clone()
     );
 }

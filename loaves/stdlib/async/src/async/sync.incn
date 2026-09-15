@@ -16,7 +16,7 @@ Cancellation contracts:
 
 import std.async
 from std.traits.error import Error
-from rust::incan_stdlib::async::sync import (
+from rust::incan_std_async::sync import (
     RawMutex,
     RawMutexGuard,
     RawRwLock,

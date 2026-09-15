@@ -6,7 +6,7 @@ expression: generate_rust(source)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use ::serde::de::DeserializeOwned as Owned;
 /// Return a value while retaining its foreign trait obligation in the public signature.
 pub fn identity<T: Owned>(value: T) -> T {
@@ -16,32 +16,32 @@ pub fn identity<T: Owned>(value: T) -> T {
 /// Exercise the same foreign bound on a generic method.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct Reader {}
-impl incan_stdlib::reflection::HasClassName for Reader {
+impl incan_std_core::reflection::HasClassName for Reader {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for Reader {
+impl incan_std_core::reflection::HasTypeClassName for Reader {
     fn __class_name__() -> &'static str {
         "Reader"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for Reader {
+impl incan_std_core::reflection::HasFieldMetadata for Reader {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for Reader {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for Reader {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 0] = [];
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for Reader {
+impl incan_std_core::reflection::HasFieldValueReflection for Reader {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             _ => None,
@@ -60,9 +60,9 @@ impl Reader {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 0] = [];
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 fn main() {
@@ -78,7 +78,7 @@ fn main() {
         }),
     );
     let _ = "Require native scalar and collection instantiations to work.";
-    let _ = if incan_stdlib::strings::str_ne(&identity("demo".to_string()), &"demo") {
+    let _ = if incan_std_core::strings::str_ne(&identity("demo".to_string()), &"demo") {
         panic!("AssertionError: left != right");
     };
     let _ = if (Reader {}).identity(vec!["linux".to_string(), "macos".to_string()])

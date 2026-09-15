@@ -19,7 +19,7 @@ Example:
     def main():
         App.run(host="127.0.0.1", port=8080)
 """
-rust.module("incan_stdlib::web")
+rust.module("incan_std_web")
 
 pub class App:
     """

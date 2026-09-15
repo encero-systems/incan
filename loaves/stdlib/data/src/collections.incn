@@ -6,7 +6,7 @@ RFC 030 defines `std.collections` as an explicit stdlib namespace for specialize
 internally rather than Rust-backed dispatch.
 """
 
-from rust::incan_stdlib::errors import raise_key_error, raise_value_error
+from rust::incan_std_core::errors import raise_key_error, raise_value_error
 from rust::std::string import String as RustString
 from std.hash import xxh3_64
 from std.traits.error import Error

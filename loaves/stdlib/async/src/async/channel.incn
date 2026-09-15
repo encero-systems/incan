@@ -24,7 +24,7 @@ Cancellation contracts:
 """
 import std.async  # needed to activate the async prelude
 from std.traits.error import Error
-from rust::incan_stdlib::async::channel import (
+from rust::incan_std_async::channel import (
     RawSender,
     RawSenderPermit,
     RawReceiver,

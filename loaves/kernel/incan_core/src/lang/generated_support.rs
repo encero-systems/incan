@@ -1,7 +1,25 @@
 //! Generated-code support descriptors shared by the compiler and runtime stdlib.
 //!
-//! These descriptors describe toolchain-owned support hooks without making the compiler depend on `incan_stdlib`.
-//! Runtime bodies still live in the stdlib crate; this module only carries pure metadata.
+//! These descriptors describe toolchain-owned support hooks without making the compiler depend on the runtime facets.
+//! Runtime bodies live in the facets; this module only carries pure metadata.
+
+/// The derive-macro crate every generated program links beside the mandatory runtime facet.
+pub const DERIVE_CRATE: &str = "incan_derive";
+
+/// The toolchain-owned crates every generated Cargo project links, whatever the program imports.
+///
+/// The mandatory runtime facet and the derive macros are here by design. The async and data facets are here because
+/// the compiler writes the checked `std.async` and `std.json` facades into every generated crate, and their Rust
+/// reaches `incan_std_async` and `incan_std_data` even when the program names neither namespace; once those facades
+/// are written on demand, the two leave this list and nothing else changes. Facets a program links on demand come
+/// from the registry through [`super::stdlib::StdlibNamespace::facet`]. The project generator and the semantic
+/// artifact identity both read this list, so the manifest a build renders and the identity it records cannot drift.
+pub const SUPPORT_CRATES_EVERY_PROGRAM_LINKS: [&str; 4] = [
+    super::stdlib::facets::CORE,
+    DERIVE_CRATE,
+    super::stdlib::facets::ASYNC,
+    super::stdlib::facets::DATA,
+];
 
 /// A Rust macro that should be expanded inside one generated Incan module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,7 +87,7 @@ pub struct MethodFastPath {
 const ORDINAL_MAP_MODULE_SUPPORTS: &[GeneratedModuleSupport] = &[GeneratedModuleSupport {
     source_module: "std.collections",
     generated_module: "__incan_std.collections",
-    macro_path: "incan_stdlib::__incan_ordinal_map_string_fast_impls",
+    macro_path: "incan_std_data::__incan_ordinal_map_string_fast_impls",
     macro_function_args: &["_missing_ordinal", "_ordinal_map_error"],
     required_items: &[
         "OrdinalMap",

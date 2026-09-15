@@ -4235,7 +4235,7 @@ fn replacement_cli_refuses_module_boundaries_with_primary_spans() -> Result<(), 
         ),
         (
             "rust-module",
-            "rust.module(\"incan_stdlib::testing\")\n\ndef main() -> int:\n  return 42\n",
+            "rust.module(\"incan_std_testing\")\n\ndef main() -> int:\n  return 42\n",
             "Rust interop `rust.module` directive",
         ),
         (
@@ -4337,7 +4337,7 @@ fn a_rust_interop_boundary_refuses_as_a_missing_host() -> Result<(), Box<dyn std
         ),
         (
             "rust-item-import",
-            "from rust::incan_stdlib::text import normalize\n\ndef main() -> int:\n  return 42\n",
+            "from rust::incan_std_core::text import normalize\n\ndef main() -> int:\n  return 42\n",
             "Rust interop item import of crate `incan_stdlib`",
         ),
         (
@@ -4425,7 +4425,7 @@ fn a_rust_interop_refusal_names_the_module_that_crosses_the_boundary() -> Result
     let helpers = temporary.path().join("helpers.incn");
     fs::write(
         &helpers,
-        "from rust::incan_stdlib::text import normalize\n\npub def helper() -> int:\n  return 1\n",
+        "from rust::incan_std_core::text import normalize\n\npub def helper() -> int:\n  return 1\n",
     )?;
     let entrypoint = temporary.path().join("main.incn");
     fs::write(

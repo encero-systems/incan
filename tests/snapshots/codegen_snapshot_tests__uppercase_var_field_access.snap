@@ -6,47 +6,47 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Person {
     name: String,
 }
-impl incan_stdlib::reflection::HasClassName for Person {
+impl incan_std_core::reflection::HasClassName for Person {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for Person {
+impl incan_std_core::reflection::HasTypeClassName for Person {
     fn __class_name__() -> &'static str {
         "Person"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for Person {
+impl incan_std_core::reflection::HasFieldMetadata for Person {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for Person {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for Person {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("name"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("name"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("name"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("name"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for Person {
+impl incan_std_core::reflection::HasFieldValueReflection for Person {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             "name" => Some(format!("{}", self.name)),

@@ -205,8 +205,8 @@ impl<'a> IrEmitter<'a> {
             plan_value_use(value, ValueUseSite::Assignment { target_ty: Some(ty) }).apply(emitted_value);
 
         Ok(quote! {
-            #vis static #name_ident: std::sync::LazyLock<incan_stdlib::storage::StaticCell<#ty_tokens>> =
-                std::sync::LazyLock::new(|| incan_stdlib::storage::StaticCell::new(#converted_value));
+            #vis static #name_ident: std::sync::LazyLock<incan_std_core::storage::StaticCell<#ty_tokens>> =
+                std::sync::LazyLock::new(|| incan_std_core::storage::StaticCell::new(#converted_value));
             #rust_facing_alias
         })
     }
@@ -252,7 +252,7 @@ impl<'a> IrEmitter<'a> {
                     })
                     .collect();
                 let elems = elems?;
-                Ok(quote! { incan_stdlib::frozen::FrozenList::new(&[ #(#elems),* ]) })
+                Ok(quote! { incan_std_core::frozen::FrozenList::new(&[ #(#elems),* ]) })
             }
             (T::NamedGeneric(n, args), IrExprKind::Set(items))
                 if n == collections::as_str(CollectionTypeId::FrozenSet) && args.len() == 1 =>
@@ -262,7 +262,7 @@ impl<'a> IrEmitter<'a> {
                     .map(|item| self.emit_const_value_for_type(&args[0], item))
                     .collect();
                 let elems = elems?;
-                Ok(quote! { incan_stdlib::frozen::FrozenSet::new(&[ #(#elems),* ]) })
+                Ok(quote! { incan_std_core::frozen::FrozenSet::new(&[ #(#elems),* ]) })
             }
             (T::NamedGeneric(n, args), IrExprKind::Dict(pairs))
                 if n == collections::as_str(CollectionTypeId::FrozenDict) && args.len() == 2 =>
@@ -281,7 +281,7 @@ impl<'a> IrEmitter<'a> {
                     })
                     .collect();
                 let kvs = kvs?;
-                Ok(quote! { incan_stdlib::frozen::FrozenDict::new(&[ #(#kvs),* ]) })
+                Ok(quote! { incan_std_core::frozen::FrozenDict::new(&[ #(#kvs),* ]) })
             }
             (T::Tuple(types), IrExprKind::Tuple(items)) if types.len() == items.len() => {
                 let elems: Result<Vec<_>, EmitError> = types
@@ -298,10 +298,10 @@ impl<'a> IrEmitter<'a> {
                 let lit = Literal::byte_string(bytes);
                 Ok(quote! { #lit })
             }
-            (T::FrozenStr, IrExprKind::String(s)) => Ok(quote! { incan_stdlib::frozen::FrozenStr::new(#s) }),
+            (T::FrozenStr, IrExprKind::String(s)) => Ok(quote! { incan_std_core::frozen::FrozenStr::new(#s) }),
             (T::FrozenBytes, IrExprKind::Bytes(bytes)) => {
                 let lit = Literal::byte_string(bytes);
-                Ok(quote! { incan_stdlib::frozen::FrozenBytes::new(#lit) })
+                Ok(quote! { incan_std_core::frozen::FrozenBytes::new(#lit) })
             }
             _ => self.emit_expr(value),
         }
@@ -496,7 +496,10 @@ impl<'a> IrEmitter<'a> {
             return None;
         }
 
-        let mut tokens = vec![quote! { incan_stdlib }];
+        let facet = Self::rust_ident(stdlib::facets::for_namespace(
+            module_segments.get(1).copied().unwrap_or(""),
+        ));
+        let mut tokens = vec![quote! { #facet }];
         for segment in module_segments.into_iter().skip(1) {
             let ident = Self::rust_ident(segment);
             tokens.push(quote! { #ident });

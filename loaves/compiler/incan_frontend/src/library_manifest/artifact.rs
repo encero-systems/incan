@@ -1089,8 +1089,8 @@ mod tests {
     #[test]
     fn toolchain_source_digest_ignores_nested_targets_and_tracks_source_inputs_issue921() -> TestResult {
         let temp = tempfile::tempdir()?;
-        let first = temp.path().join("source-a/crates/incan_stdlib");
-        let second = temp.path().join("source-b/crates/incan_stdlib");
+        let first = temp.path().join("source-a/crates/incan_std_core");
+        let second = temp.path().join("source-b/crates/incan_std_core");
         for root in [&first, &second] {
             fs::create_dir_all(root.join("src"))?;
             fs::create_dir_all(root.join("semantic-inputs"))?;
@@ -1103,7 +1103,7 @@ mod tests {
             )?;
             fs::write(
                 root.join("Cargo.toml"),
-                "[package]\nname = \"incan_stdlib\"\nversion = \"0.5.0\"\n\n[package.metadata.incan]\nsemantic-inputs = [\"semantic-inputs/schema.json\"]\n\n[dependencies]\nincan_core = { path = \"../incan_core\" }\n",
+                "[package]\nname = \"incan_std_core\"\nversion = \"0.5.0\"\n\n[package.metadata.incan]\nsemantic-inputs = [\"semantic-inputs/schema.json\"]\n\n[dependencies]\nincan_core = { path = \"../incan_core\" }\n",
             )?;
             fs::write(root.join("src/lib.rs"), "pub fn support() {}\n")?;
             fs::write(root.join("src/embedded.txt"), "compiled include input\n")?;
@@ -1149,12 +1149,12 @@ mod tests {
 
         fs::write(
             second.join("Cargo.toml"),
-            "[package]\nname = \"incan_stdlib\"\nversion = \"0.5.1\"\n\n[package.metadata.incan]\nsemantic-inputs = [\"semantic-inputs/schema.json\"]\n\n[dependencies]\nincan_core = { path = \"../incan_core\" }\n",
+            "[package]\nname = \"incan_std_core\"\nversion = \"0.5.1\"\n\n[package.metadata.incan]\nsemantic-inputs = [\"semantic-inputs/schema.json\"]\n\n[dependencies]\nincan_core = { path = \"../incan_core\" }\n",
         )?;
         assert_ne!(stable, digest_toolchain_source_tree(&second)?);
         fs::write(
             second.join("Cargo.toml"),
-            "[package]\nname = \"incan_stdlib\"\nversion = \"0.5.0\"\n\n[package.metadata.incan]\nsemantic-inputs = [\"semantic-inputs/schema.json\"]\n\n[dependencies]\nincan_core = { path = \"../incan_core\" }\n",
+            "[package]\nname = \"incan_std_core\"\nversion = \"0.5.0\"\n\n[package.metadata.incan]\nsemantic-inputs = [\"semantic-inputs/schema.json\"]\n\n[dependencies]\nincan_core = { path = \"../incan_core\" }\n",
         )?;
 
         fs::write(
@@ -1320,8 +1320,8 @@ mod tests {
         let second = tempfile::tempdir()?;
         let first_path = "../../provider-home-a/stdlib-core";
         let second_path = "../../provider-home-b/stdlib-core";
-        let first_toolchain_path = "../../source-a/crates/incan_stdlib";
-        let second_toolchain_path = "../../source-b/crates/incan_stdlib";
+        let first_toolchain_path = "../../source-a/crates/incan_std_core";
+        let second_toolchain_path = "../../source-b/crates/incan_std_core";
         let make_artifact = |root: &Path,
                              provider_path: &str,
                              toolchain_path: &str,
@@ -1333,7 +1333,7 @@ mod tests {
             fs::write(
                 root.join("Cargo.toml"),
                 format!(
-                    "[package]\nname = \"root_lib\"\nversion = \"0.1.0\"\n\n[dependencies.incan_stdlib_core]\npath = \"{provider_path}\"\n\n[dependencies.incan_stdlib]\npath = \"{toolchain_path}\"\n\n[dependencies.user_path]\npath = \"{unrelated_path}\"\n"
+                    "[package]\nname = \"root_lib\"\nversion = \"0.1.0\"\n\n[dependencies.incan_stdlib_core]\npath = \"{provider_path}\"\n\n[dependencies.incan_std_core]\npath = \"{toolchain_path}\"\n\n[dependencies.user_path]\npath = \"{unrelated_path}\"\n"
                 ),
             )?;
             Ok(())
@@ -1366,13 +1366,13 @@ mod tests {
                         required_features: BTreeSet::new(),
                         cargo_features: BTreeMap::new(),
                         cargo_dependencies: vec![ProviderCargoDependency {
-                            crate_name: "incan_stdlib".to_string(),
+                            crate_name: "incan_std_core".to_string(),
                             package: None,
                             version: None,
                             features: BTreeSet::new(),
                             default_features: false,
                             source: ProviderCargoDependencySource::Toolchain {
-                                relative_path: "crates/incan_stdlib".to_string(),
+                                relative_path: "crates/incan_std_core".to_string(),
                             },
                         }],
                     },
@@ -1413,7 +1413,7 @@ mod tests {
         fs::write(
             second.path().join("Cargo.toml"),
             format!(
-                "[package]\nname = \"root_lib\"\nversion = \"0.1.0\"\n\n[dependencies.incan_stdlib_core]\npath = \"{second_path}\"\n\n[dependencies.incan_stdlib]\npath = \"{second_toolchain_path}\"\n\n[dependencies.user_path]\npath = \"../different-user-dependency\"\n"
+                "[package]\nname = \"root_lib\"\nversion = \"0.1.0\"\n\n[dependencies.incan_stdlib_core]\npath = \"{second_path}\"\n\n[dependencies.incan_std_core]\npath = \"{second_toolchain_path}\"\n\n[dependencies.user_path]\npath = \"../different-user-dependency\"\n"
             ),
         )?;
         assert_ne!(
@@ -1525,7 +1525,7 @@ mod tests {
             fs::write(
                 leaf_root.join("Cargo.toml"),
                 format!(
-                    "[package]\nname = \"leaf\"\nversion = \"0.1.0\"\n\n[dependencies.incan_stdlib]\npath = \"{source_root}/crates/incan_stdlib\"\n"
+                    "[package]\nname = \"leaf\"\nversion = \"0.1.0\"\n\n[dependencies.incan_std_core]\npath = \"{source_root}/crates/incan_std_core\"\n"
                 ),
             )?;
             let mut leaf_manifest = LibraryManifest::new("leaf", "0.1.0");
@@ -1536,13 +1536,13 @@ mod tests {
                     required_features: BTreeSet::new(),
                     cargo_features: BTreeMap::new(),
                     cargo_dependencies: vec![ProviderCargoDependency {
-                        crate_name: "incan_stdlib".to_string(),
+                        crate_name: "incan_std_core".to_string(),
                         package: None,
                         version: None,
                         features: BTreeSet::new(),
                         default_features: false,
                         source: ProviderCargoDependencySource::Toolchain {
-                            relative_path: "crates/incan_stdlib".to_string(),
+                            relative_path: "crates/incan_std_core".to_string(),
                         },
                     }],
                 },

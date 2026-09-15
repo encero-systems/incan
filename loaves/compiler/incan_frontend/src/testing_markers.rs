@@ -741,7 +741,7 @@ mod tests {
         let program = crate::parser::parse_with_module_path(&tokens, Some(source_path.to_string_lossy().as_ref()))
             .map_err(|errors| format!("parse failed: {errors:?}"))?;
         let mut checker = crate::typechecker::TypeChecker::new();
-        checker.set_declared_crate_names(["incan_stdlib".to_string()].into_iter().collect());
+        checker.set_declared_crate_names(["incan_std_core".to_string()].into_iter().collect());
         checker
             .check_program(&program)
             .map_err(|errors| format!("typecheck failed: {errors:?}"))?;

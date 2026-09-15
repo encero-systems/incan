@@ -236,7 +236,7 @@ pub fn completed_library_output_report(
             rust: Vec::new(),
             rust_dev: Vec::new(),
             incan: Vec::new(),
-            stdlib_features: Vec::new(),
+            stdlib_facets: Vec::new(),
         },
         semantic: crate::build_report::BuildSemanticReport {
             sdk: None,
@@ -952,7 +952,7 @@ mod tests {
                     "library_name": "lexical-sibling",
                     "path": lexical_external.to_string_lossy(),
                 }],
-                "stdlib_features": [authored_sentinel],
+                "stdlib_facets": [authored_sentinel],
             },
             "semantic": {
                 "sdk": null,

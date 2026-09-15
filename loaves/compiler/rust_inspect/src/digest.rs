@@ -167,7 +167,7 @@ impl RustSourceDigest {
 
 /// Digest every declaration in one Rust source file.
 ///
-/// `module_path` names the module the file *is*, for example `incan_stdlib::runtime`; it seeds the module path of
+/// `module_path` names the module the file *is*, for example `incan_std_core::runtime`; it seeds the module path of
 /// every declaration and is not otherwise interpreted. Inline `mod` blocks extend it.
 ///
 /// The file itself contributes a [`RustDigestItemKind::Module`] entry carrying its inner attributes, so a change to

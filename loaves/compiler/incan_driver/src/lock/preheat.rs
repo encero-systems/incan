@@ -302,7 +302,7 @@ fn materialize_dependency_preheat_workspace(
     generator.set_dev_dependencies(context.resolved.dev_dependencies.clone());
     generator.set_include_dev_dependencies(true);
     generator.set_rust_edition(context.rust_edition.map(ToOwned::to_owned));
-    generator.set_stdlib_features(context.project_requirements.stdlib_features.clone());
+    generator.set_stdlib_facets(context.project_requirements.stdlib_facets.clone());
     generator.set_sdk_dependency_rebindings(context.project_requirements.sdk_dependency_rebindings.clone());
     generator.set_sdk_path_dependencies(context.project_requirements.sdk_path_dependencies.clone());
     generator.set_sdk_artifact_projections(context.project_requirements.sdk_artifact_projections.clone());

@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 const A: &'static str = "hello";
 const B: &'static str = concat!("hello", " world");
 const C: &'static str = concat!("hello world", "!");

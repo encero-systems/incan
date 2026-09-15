@@ -35,8 +35,6 @@ pub fn stage_self_contained_sdk_provider_tree(
 
 /// Copy the minimal compiler runtime source closure used by installed SDK component Cargo manifests.
 pub fn stage_sdk_runtime_crates(provider_root: &Path) -> Result<(), OvenLegacyCargoError> {
-    const RUNTIME_CRATES: [&str; 4] = ["incan_core", "incan_derive", "incan_stdlib", "incan_web_macros"];
-
     let source_root = oven_model::toolchain_layout::development_root();
     let runtime_root = provider_root.join("runtime");
     // An inventory may itself have been recovered from an older compiler-suite entry. Its runtime closure was
@@ -85,7 +83,7 @@ pub fn stage_sdk_runtime_crates(provider_root: &Path) -> Result<(), OvenLegacyCa
     workspace.insert(
         "members".to_string(),
         toml::Value::Array(
-            RUNTIME_CRATES
+            oven_model::toolchain_layout::SDK_RUNTIME_CRATES
                 .into_iter()
                 .map(|crate_name| toml::Value::String(format!("crates/{crate_name}")))
                 .collect(),
@@ -98,12 +96,12 @@ pub fn stage_sdk_runtime_crates(provider_root: &Path) -> Result<(), OvenLegacyCa
     // path survives), and the path entries of crates the runtime does not ship are dropped.
     if let Some(dependencies) = workspace.get_mut("dependencies").and_then(toml::Value::as_table_mut) {
         dependencies.retain(|crate_name, dependency| {
-            RUNTIME_CRATES.contains(&crate_name)
+            oven_model::toolchain_layout::SDK_RUNTIME_CRATES.contains(&crate_name)
                 || dependency
                     .as_table()
                     .is_none_or(|dependency| !dependency.contains_key("path"))
         });
-        for crate_name in RUNTIME_CRATES {
+        for crate_name in oven_model::toolchain_layout::SDK_RUNTIME_CRATES {
             if let Some(dependency) = dependencies.get_mut(crate_name).and_then(toml::Value::as_table_mut)
                 && dependency.contains_key("path")
             {
@@ -134,7 +132,7 @@ pub fn stage_sdk_runtime_crates(provider_root: &Path) -> Result<(), OvenLegacyCa
         }
     }
 
-    for crate_name in RUNTIME_CRATES {
+    for crate_name in oven_model::toolchain_layout::SDK_RUNTIME_CRATES {
         let source_crate = oven_model::toolchain_layout::support_crate_dir_in(&source_root, crate_name);
         let destination_crate = runtime_root.join("crates").join(crate_name);
         let source_manifest = source_crate.join("Cargo.toml");
@@ -164,8 +162,6 @@ pub fn stage_sdk_runtime_crates(provider_root: &Path) -> Result<(), OvenLegacyCa
 
 /// Rebase the component manifests' compiler-owned dependencies to the sealed runtime source closure.
 pub fn rebase_sdk_component_runtime_paths(provider_root: &Path) -> Result<(), OvenLegacyCargoError> {
-    const RUNTIME_CRATES: [&str; 4] = ["incan_core", "incan_derive", "incan_stdlib", "incan_web_macros"];
-
     let components_root = provider_root.join("components");
     let components = fs::read_dir(&components_root)
         .map_err(|source| OvenLegacyCargoError::Io {
@@ -202,7 +198,7 @@ pub fn rebase_sdk_component_runtime_paths(provider_root: &Path) -> Result<(), Ov
             continue;
         };
         let mut changed = false;
-        for crate_name in RUNTIME_CRATES {
+        for crate_name in oven_model::toolchain_layout::SDK_RUNTIME_CRATES {
             let Some(dependency) = dependencies.get_mut(crate_name).and_then(toml::Value::as_table_mut) else {
                 continue;
             };

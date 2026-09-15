@@ -489,7 +489,7 @@ path = "{stdlib_path}"
     )?;
     fs::write(
         tmp.path().join("src/lib.incn"),
-        r#"from rust::incan_stdlib::strings import str_slice_byte_range
+        r#"from rust::incan_std_core::strings import str_slice_byte_range
 
 
 pub def append_range(text: str, start: int, end: int) -> str:
@@ -516,7 +516,7 @@ pub def join_ranges(text: str, start: int, middle: int, end: int) -> str:
     let generated = fs::read_to_string(tmp.path().join("target/lib/src/lib.rs"))?;
     let compact_generated = generated.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact_generated.contains("out=incan_stdlib::strings::str_concat(")
+        compact_generated.contains("out=incan_std_core::strings::str_concat(")
             && compact_generated.contains("&str_slice_byte_range(&text,start,end),"),
         "cold Rust metadata must select string-aware compound-assignment lowering:\n{generated}"
     );
@@ -525,7 +525,7 @@ pub def join_ranges(text: str, start: int, middle: int, end: int) -> str:
         "a direct Rust String result must not reach generated Rust's owned `String + String` path:\n{generated}"
     );
     assert!(
-        compact_generated.contains("incan_stdlib::strings::str_concat(&str_slice_byte_range(&text,start,middle),&str_slice_byte_range(&text,middle,end),)"),
+        compact_generated.contains("incan_std_core::strings::str_concat(&str_slice_byte_range(&text,start,middle),&str_slice_byte_range(&text,middle,end),)"),
         "binary concatenation of direct Rust String results must use the string helper:\n{generated}"
     );
     Ok(())
@@ -1183,7 +1183,7 @@ def main() -> None:
     )?;
     fs::write(
         tmp.path().join("src").join("prism.incn"),
-        r#"from rust::incan_stdlib::errors import raise_value_error
+        r#"from rust::incan_std_core::errors import raise_value_error
 from rust::std::primitive import i32 as RustI32
 
 
@@ -1263,7 +1263,7 @@ tiny_error = { path = "rust/tiny_error" }
     )?;
     fs::write(
         &main_path,
-        r#"from rust::incan_stdlib::errors import raise_value_error
+        r#"from rust::incan_std_core::errors import raise_value_error
 from rust::tiny_error import TinyError, consume
 
 

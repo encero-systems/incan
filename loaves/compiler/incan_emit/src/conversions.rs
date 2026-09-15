@@ -237,8 +237,8 @@ impl Conversion {
             Conversion::Borrow => quote! { &#tokens },
             Conversion::MutBorrow => quote! { &mut #tokens },
             Conversion::Clone => quote! { #tokens.clone() },
-            Conversion::RequireFiniteF32 => quote! { incan_stdlib::num::require_finite_f32(#tokens) },
-            Conversion::RequireFiniteF64 => quote! { incan_stdlib::num::require_finite_f64(#tokens) },
+            Conversion::RequireFiniteF32 => quote! { incan_std_core::num::require_finite_f32(#tokens) },
+            Conversion::RequireFiniteF64 => quote! { incan_std_core::num::require_finite_f64(#tokens) },
         }
     }
 }
@@ -340,7 +340,7 @@ fn numeric_operand_conversion(
 pub enum BinOpEmitKind {
     /// Emit as infix tokens, e.g., `+`, `-`, `*`, `==`
     Infix { token: TokenStream },
-    /// Emit a stdlib helper call, e.g., `incan_stdlib::num::py_mod`
+    /// Emit a stdlib helper call, e.g., `incan_std_core::num::py_mod`
     StdlibCall {
         path: TokenStream,
         /// If true, emit as `path(&lhs, &rhs)` to avoid moves and to support &str-based helpers.
@@ -421,7 +421,7 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
             rhs_conv: NumericConversion::None,
             result_ty: IrType::String,
             emit: BinOpEmitKind::StdlibCall {
-                path: quote! { incan_stdlib::strings::str_concat },
+                path: quote! { incan_std_core::strings::str_concat },
                 borrow_args: true,
             },
         };
@@ -433,7 +433,7 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
             rhs_conv: NumericConversion::None,
             result_ty: left.ty.clone(),
             emit: BinOpEmitKind::StdlibCall {
-                path: quote! { incan_stdlib::collections::list_concat },
+                path: quote! { incan_std_core::collections::list_concat },
                 borrow_args: true,
             },
         };
@@ -446,12 +446,12 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
         && is_string_like_type(&right.ty)
     {
         let path = match op {
-            BinOp::Eq => quote! { incan_stdlib::strings::str_eq },
-            BinOp::Ne => quote! { incan_stdlib::strings::str_ne },
-            BinOp::Lt => quote! { incan_stdlib::strings::str_lt },
-            BinOp::Le => quote! { incan_stdlib::strings::str_le },
-            BinOp::Gt => quote! { incan_stdlib::strings::str_gt },
-            BinOp::Ge => quote! { incan_stdlib::strings::str_ge },
+            BinOp::Eq => quote! { incan_std_core::strings::str_eq },
+            BinOp::Ne => quote! { incan_std_core::strings::str_ne },
+            BinOp::Lt => quote! { incan_std_core::strings::str_lt },
+            BinOp::Le => quote! { incan_std_core::strings::str_le },
+            BinOp::Gt => quote! { incan_std_core::strings::str_gt },
+            BinOp::Ge => quote! { incan_std_core::strings::str_ge },
             _ => unreachable!(),
         };
         return BinOpPlan {
@@ -545,11 +545,11 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
         }
         NumericOp::Mod => {
             let path = match &result_ty {
-                IrType::Int => quote! { incan_stdlib::num::py_mod_i64 },
-                IrType::Float => quote! { incan_stdlib::num::py_mod_f64 },
-                IrType::Numeric(NumericTypeId::F32) => quote! { incan_stdlib::num::py_mod_f32 },
-                IrType::Numeric(NumericTypeId::F64) => quote! { incan_stdlib::num::py_mod_f64 },
-                _ => quote! { incan_stdlib::num::py_mod },
+                IrType::Int => quote! { incan_std_core::num::py_mod_i64 },
+                IrType::Float => quote! { incan_std_core::num::py_mod_f64 },
+                IrType::Numeric(NumericTypeId::F32) => quote! { incan_std_core::num::py_mod_f32 },
+                IrType::Numeric(NumericTypeId::F64) => quote! { incan_std_core::num::py_mod_f64 },
+                _ => quote! { incan_std_core::num::py_mod },
             };
             BinOpEmitKind::StdlibCall {
                 path,
@@ -558,11 +558,11 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
         }
         NumericOp::FloorDiv => {
             let path = match &result_ty {
-                IrType::Int => quote! { incan_stdlib::num::py_floor_div_i64 },
-                IrType::Float => quote! { incan_stdlib::num::py_floor_div_f64 },
-                IrType::Numeric(NumericTypeId::F32) => quote! { incan_stdlib::num::py_floor_div_f32 },
-                IrType::Numeric(NumericTypeId::F64) => quote! { incan_stdlib::num::py_floor_div_f64 },
-                _ => quote! { incan_stdlib::num::py_floor_div },
+                IrType::Int => quote! { incan_std_core::num::py_floor_div_i64 },
+                IrType::Float => quote! { incan_std_core::num::py_floor_div_f64 },
+                IrType::Numeric(NumericTypeId::F32) => quote! { incan_std_core::num::py_floor_div_f32 },
+                IrType::Numeric(NumericTypeId::F64) => quote! { incan_std_core::num::py_floor_div_f64 },
+                _ => quote! { incan_std_core::num::py_floor_div },
             };
             BinOpEmitKind::StdlibCall {
                 path,
@@ -571,8 +571,8 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
         }
         NumericOp::Div => {
             let path = match &result_ty {
-                IrType::Numeric(NumericTypeId::F32) => quote! { incan_stdlib::num::py_div_f32 },
-                _ => quote! { incan_stdlib::num::py_div },
+                IrType::Numeric(NumericTypeId::F32) => quote! { incan_std_core::num::py_div_f32 },
+                _ => quote! { incan_std_core::num::py_div },
             };
             BinOpEmitKind::StdlibCall {
                 path,
@@ -1257,7 +1257,7 @@ mod tests {
                 )
                 .into());
             };
-            assert_eq!(path.to_string(), "incan_stdlib :: strings :: str_concat");
+            assert_eq!(path.to_string(), "incan_std_core :: strings :: str_concat");
             assert!(borrow_args);
             assert_eq!(plan.result_ty, IrType::String);
         }
@@ -2009,7 +2009,7 @@ mod tests {
                 )),
                 field: "0".to_string(),
             },
-            IrType::Struct("incan_stdlib::async::channel::Sender<T>".to_string()),
+            IrType::Struct("incan_std_async::channel::Sender<T>".to_string()),
         );
 
         let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);

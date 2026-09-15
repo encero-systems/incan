@@ -268,6 +268,11 @@ pub fn development_support_crate_dir(crate_name: &str) -> PathBuf {
         "incan_vocab" => "loaves/kernel/incan_vocab",
         "incan_derive" => "loaves/stdlib/derive/incan_derive",
         "incan_web_macros" => "loaves/stdlib/derive/incan_web_macros",
+        "incan_std_core" => "loaves/stdlib/core/rust",
+        "incan_std_data" => "loaves/stdlib/data/rust",
+        "incan_std_async" => "loaves/stdlib/async/rust",
+        "incan_std_web" => "loaves/stdlib/web/rust",
+        "incan_std_testing" => "loaves/stdlib/testing/rust",
         other => return Path::new("crates").join(other),
     };
     PathBuf::from(relative)
@@ -331,7 +336,7 @@ fn validated_sdk_runtime_root(runtime_root: PathBuf) -> Option<PathBuf> {
         return None;
     }
     let crates_root = runtime_root.join("crates");
-    for crate_name in ["incan_core", "incan_derive", "incan_stdlib", "incan_web_macros"] {
+    for crate_name in SDK_RUNTIME_CRATES {
         if !crates_root.join(crate_name).join("Cargo.toml").is_file() {
             return None;
         }
@@ -506,12 +511,19 @@ fn push_unique(paths: &mut Vec<PathBuf>, path: PathBuf) {
     }
 }
 
-/// Cargo dependency key for the toolchain-owned runtime support crate used by generated Rust projects.
-pub const INCAN_STDLIB_CRATE_NAME: &str = "incan_stdlib";
-/// Cargo dependency key for the toolchain-owned derive crate used by every generated Rust project.
-pub const INCAN_DERIVE_CRATE_NAME: &str = "incan_derive";
-/// Complete generator-owned support-crate set emitted unconditionally into generated Cargo projects.
-pub const GENERATED_TOOLCHAIN_SUPPORT_CRATES: [&str; 2] = [INCAN_STDLIB_CRATE_NAME, INCAN_DERIVE_CRATE_NAME];
+/// The compiler-owned crates every installed toolchain, release archive and staged SDK runtime carries: the crates a
+/// generated Rust project can link. Each lives at `crates/<name>` in those layouts and in its ring in the checkout
+/// (see [`development_support_crate_dir`]); a runtime root missing any of them is not a usable closure.
+pub const SDK_RUNTIME_CRATES: [&str; 8] = [
+    "incan_core",
+    "incan_derive",
+    "incan_web_macros",
+    "incan_std_core",
+    "incan_std_data",
+    "incan_std_async",
+    "incan_std_web",
+    "incan_std_testing",
+];
 /// Environment variable that redirects every generated project's Cargo target directory.
 pub const GENERATED_CARGO_TARGET_DIR_ENV: &str = "INCAN_GENERATED_CARGO_TARGET_DIR";
 
@@ -712,7 +724,7 @@ mod tests {
     fn sealed_runtime_root_requires_the_complete_compiler_source_closure() -> Result<(), Box<dyn std::error::Error>> {
         let runtime = tempfile::tempdir()?;
         fs::write(runtime.path().join("Cargo.lock"), "version = 4\n")?;
-        for crate_name in ["incan_core", "incan_derive", "incan_stdlib", "incan_web_macros"] {
+        for crate_name in super::SDK_RUNTIME_CRATES {
             let crate_root = runtime.path().join("crates").join(crate_name);
             fs::create_dir_all(&crate_root)?;
             fs::write(

@@ -22,7 +22,7 @@ Example:
         return Json(RouteStatus(valid=True))
     ```
 """
-rust.module("incan_stdlib::web")
+rust.module("incan_std_web")
 
 from rust::axum::extract import Query
 """

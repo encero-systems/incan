@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn score_pairs(left: Vec<f64>, right: Vec<f64>) -> f64 {
     let _ = "Compute a dot product through the fluent iterator zip adapter.";
     let mut score = 0.0;
@@ -95,7 +95,7 @@ fn print_prefix(values: Vec<String>) {
         let _ = println!(
             "{}", { let __parts : [& str; 3usize] = ["", ":", ""]; let __args : Vec <
             String > = vec![format!("{}", rank), format!("{}", value)];
-            incan_stdlib::strings::fstring(& __parts, & __args) }
+            incan_std_core::strings::fstring(& __parts, & __args) }
         );
         rank = rank + 1;
     }
@@ -122,7 +122,7 @@ fn project_prefix(values: Vec<String>) -> Vec<String> {
         .map(|(rank, value)| {
             let __parts: [&str; 3usize] = ["", ":", ""];
             let __args: Vec<String> = vec![format!("{}", rank), format!("{}", value)];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         })
         .collect::<Vec<_>>();
 }
@@ -150,7 +150,7 @@ fn index_prefix(values: Vec<String>) -> std::collections::HashMap<i64, String> {
 }
 fn collect_prefix(values: Vec<String>) -> Vec<String> {
     let _ = "Collect a generator that reads from a source-owned iterator adapter.";
-    return incan_stdlib::iter::Generator::new(
+    return incan_std_core::iter::Generator::new(
             ({
                 let mut __incan_iter = crate::__incan_std::derives::collection::TakeIterator {
                     source: (crate::__incan_std::derives::collection::ListIterator {
@@ -165,7 +165,7 @@ fn collect_prefix(values: Vec<String>) -> Vec<String> {
                 ))
             })
                 .flat_map(move |value| {
-                    incan_stdlib::iter::Generator::new(std::iter::once(value))
+                    incan_std_core::iter::Generator::new(std::iter::once(value))
                 }),
         )
         .collect();
@@ -199,7 +199,7 @@ fn main() {
         "{}", ::std::convert::identity(project_prefix(values.clone()).len() as i64)
     );
     let _ = println!(
-        "{}", incan_stdlib::collections::dict_get(& index_prefix(values.clone()), & 1)
+        "{}", incan_std_core::collections::dict_get(& index_prefix(values.clone()), & 1)
         .clone()
     );
     let _ = println!(

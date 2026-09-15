@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn double(x: i64) -> i64 {
     return x * 2;
 }
@@ -30,29 +30,29 @@ fn collect_last_use(xs: Vec<i64>) -> Vec<i64> {
         }
     };
 }
-fn generator_last_use(xs: Vec<i64>) -> incan_stdlib::iter::Generator<i64> {
-    return incan_stdlib::iter::Generator::new(
+fn generator_last_use(xs: Vec<i64>) -> incan_std_core::iter::Generator<i64> {
+    return incan_std_core::iter::Generator::new(
         ((xs).clone().into_iter())
             .flat_map(move |x| {
-                incan_stdlib::iter::Generator::new(
+                incan_std_core::iter::Generator::new(
                     if x > 0 {
-                        incan_stdlib::iter::Generator::new(std::iter::once(x))
+                        incan_std_core::iter::Generator::new(std::iter::once(x))
                     } else {
-                        incan_stdlib::iter::Generator::new(std::iter::empty())
+                        incan_std_core::iter::Generator::new(std::iter::empty())
                     },
                 )
             }),
     );
 }
-fn generator_one_shot() -> incan_stdlib::iter::Generator<i64> {
-    return incan_stdlib::iter::Generator::new(
+fn generator_one_shot() -> incan_std_core::iter::Generator<i64> {
+    return incan_std_core::iter::Generator::new(
         ((vec![1, 2, 3]).into_iter())
             .flat_map(move |x| {
-                incan_stdlib::iter::Generator::new(
+                incan_std_core::iter::Generator::new(
                     if x > 0 {
-                        incan_stdlib::iter::Generator::new(std::iter::once(x))
+                        incan_std_core::iter::Generator::new(std::iter::once(x))
                     } else {
-                        incan_stdlib::iter::Generator::new(std::iter::empty())
+                        incan_std_core::iter::Generator::new(std::iter::empty())
                     },
                 )
             }),
@@ -66,24 +66,24 @@ fn collect_reused(values: Vec<i64>) -> i64 {
         };
         crate::__incan_std::derives::collection::Iterator::sum(&mut __incan_iterator_sum)
     };
-    let first = *incan_stdlib::collections::list_get(&values, (0) as i64);
+    let first = *incan_std_core::collections::list_get(&values, (0) as i64);
     return total + first;
 }
 fn generator_reused(values: Vec<i64>) -> i64 {
-    let generated = incan_stdlib::iter::Generator::new(
+    let generated = incan_std_core::iter::Generator::new(
             ((values).clone().into_iter())
                 .flat_map(move |x| {
-                    incan_stdlib::iter::Generator::new(
+                    incan_std_core::iter::Generator::new(
                         if x > 0 {
-                            incan_stdlib::iter::Generator::new(std::iter::once(x))
+                            incan_std_core::iter::Generator::new(std::iter::once(x))
                         } else {
-                            incan_stdlib::iter::Generator::new(std::iter::empty())
+                            incan_std_core::iter::Generator::new(std::iter::empty())
                         },
                     )
                 }),
         )
         .collect();
-    let first = *incan_stdlib::collections::list_get(&values, (0) as i64);
+    let first = *incan_std_core::collections::list_get(&values, (0) as i64);
     return ::std::convert::identity(generated.len() as i64) + first;
 }
 fn main() {
@@ -104,13 +104,13 @@ fn main() {
     let reused_iter = collect_reused(vec![1, 2, 3]);
     let reused_gen = generator_reused(vec![1, 2, 3]);
     let _ = println!(
-        "{}", * incan_stdlib::collections::list_get(& collected, (0) as i64)
+        "{}", * incan_std_core::collections::list_get(& collected, (0) as i64)
     );
     let _ = println!(
-        "{}", * incan_stdlib::collections::list_get(& generated, (0) as i64)
+        "{}", * incan_std_core::collections::list_get(& generated, (0) as i64)
     );
     let _ = println!(
-        "{}", * incan_stdlib::collections::list_get(& generated_direct, (0) as i64)
+        "{}", * incan_std_core::collections::list_get(& generated_direct, (0) as i64)
     );
     let _ = println!("{}", reused_iter);
     let _ = println!("{}", reused_gen);

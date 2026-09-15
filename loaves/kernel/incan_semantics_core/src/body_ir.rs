@@ -2813,7 +2813,7 @@ pub enum HelperOp {
     /// Lists are the one non-string builtin whose `+` the typechecker accepts through a dedicated branch rather than
     /// through a `__add__` hook. Because that branch resolves no operator dispatch, nothing downstream would mark the
     /// operation as a call, and a plain [`BinOp::Add`] would have contradicted the Rust-emission backend outright:
-    /// `determine_binop_plan` routes list `+` to `incan_stdlib::collections::list_concat`, so no addition is emitted
+    /// `determine_binop_plan` routes list `+` to `incan_std_core::collections::list_concat`, so no addition is emitted
     /// for it at all. Naming the concatenation as its own helper is what keeps the two backends stating the same
     /// thing.
     ///
@@ -3197,7 +3197,7 @@ pub enum StatementKind {
     /// `src/backend/ir/lower/expr/mod.rs`), so there is no real, delivered behavior for this variant to preserve.
     /// A generator function's body needs no separate top-level state-machine node: it lowers through this same
     /// statement vocabulary, while the target runtime owns the concrete suspension mechanism. The existing
-    /// generated-Rust path uses `incan_stdlib::iter::Generator`'s channel-backed spawn bridge for `yield`-based
+    /// generated-Rust path uses `incan_std_core::iter::Generator`'s channel-backed spawn bridge for `yield`-based
     /// functions; generator expressions instead carry their own deferred [`Rvalue::Generator`] body and use the
     /// iterator-adapter runtime path. Neither representation asks a consumer to infer a suspension point from a
     /// target-language closure shape.

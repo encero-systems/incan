@@ -8366,7 +8366,7 @@ async def main() -> None:
         // written against. Require the splice and both arguments without pinning either spelling or a line break.
         let compact_collections: String = generated_collections.split_whitespace().collect();
         let spliced_with_support_functions = compact_collections
-            .split_once("incan_stdlib::__incan_ordinal_map_string_fast_impls!(")
+            .split_once("incan_std_data::__incan_ordinal_map_string_fast_impls!(")
             .and_then(|(_, rest)| rest.split_once(");"))
             .is_some_and(|(arguments, _)| {
                 arguments.matches(',').count() == 1
@@ -8529,14 +8529,14 @@ async def main() -> None:
             .collect::<String>();
         assert_eq!(
             compact_generated_core
-                .matches("incan_stdlib::strings::str_concat(&out,&str_slice_byte_range(&text,last_end,start),)")
+                .matches("incan_std_core::strings::str_concat(&out,&str_slice_byte_range(&text,last_end,start),)")
                 .count(),
             3,
             "every replacement loop should pass the owned Rust byte-range result directly to str_concat:\n{generated_core}"
         );
         assert_eq!(
             compact_generated_core
-                .matches("incan_stdlib::strings::str_concat(&out,&str_slice_from_byte_offset(&text,last_end),)")
+                .matches("incan_std_core::strings::str_concat(&out,&str_slice_from_byte_offset(&text,last_end),)")
                 .count(),
             3,
             "every replacement loop should pass the owned Rust suffix directly to str_concat:\n{generated_core}"
@@ -9135,15 +9135,15 @@ def main() -> None:
             "expected lossless resize to emit a Rust cast, got:\n{rust_code}"
         );
         assert!(
-            rust_code.contains("incan_stdlib::num::try_resize::<_, i8>(wide)"),
+            rust_code.contains("incan_std_core::num::try_resize::<_, i8>(wide)"),
             "expected try_resize to call stdlib checked resize helper, got:\n{rust_code}"
         );
         assert!(
-            rust_code.contains("incan_stdlib::num::saturating_resize::<_, i8>(wide)"),
+            rust_code.contains("incan_std_core::num::saturating_resize::<_, i8>(wide)"),
             "expected saturating_resize to call stdlib saturating helper, got:\n{rust_code}"
         );
         assert!(
-            rust_code.contains("let _price: incan_stdlib::num::Decimal128")
+            rust_code.contains("let _price: incan_std_core::num::Decimal128")
                 && rust_code.contains("Decimal128::from_literal")
                 && rust_code.contains("\"19.99d\""),
             "expected decimal annotation/literal to lower to Decimal128, got:\n{rust_code}"
@@ -10783,7 +10783,7 @@ def main() -> None:
     println("production")
 
 module tests:
-    from rust::incan_stdlib::testing import TestEnv
+    from rust::incan_std_testing import TestEnv
     from rust::std::path import PathBuf
     import std.testing as testing
     from std.testing import assert_eq, assert_is_some, fixture, test

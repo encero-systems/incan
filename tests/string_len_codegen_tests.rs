@@ -18,7 +18,7 @@ fn string_len_spelling_emit_shared_runtime_semantics() -> Result<(), Box<dyn std
         let source = format!("def length(value: str) -> int:\n    return {expression}\n");
         let rust = generate(&source, "length")?;
         assert!(
-            rust.contains("incan_stdlib::strings::str_len"),
+            rust.contains("incan_std_core::strings::str_len"),
             "{expression} did not emit shared string length:\n{rust}"
         );
         assert!(
@@ -37,6 +37,6 @@ fn list_len_keeps_collection_element_count_emission() -> Result<(), Box<dyn std:
         "length",
     )?;
     assert!(rust.contains(".len() as i64"), "{rust}");
-    assert!(!rust.contains("incan_stdlib::strings::str_len"), "{rust}");
+    assert!(!rust.contains("incan_std_core::strings::str_len"), "{rust}");
     Ok(())
 }

@@ -5,7 +5,7 @@ This module owns the algorithm wrappers and value hashing paths. File and reader
 `std.hash._streaming` so the public prelude stays small and the hot dispatch paths are easier to audit.
 """
 
-from rust::incan_stdlib::errors import raise_value_error
+from rust::incan_std_core::errors import raise_value_error
 from rust::blake2 import Blake2b512, Blake2s256
 from rust::blake3 import Hasher as Blake3Hasher, hash as blake3_hash
 from rust::md5 import Md5

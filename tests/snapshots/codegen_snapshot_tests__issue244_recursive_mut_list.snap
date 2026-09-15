@@ -6,18 +6,18 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn walk(node_id: i64, pending: &mut Vec<i64>, visited: &mut Vec<bool>) {
     if node_id < 0 {
         return;
     }
-    if *incan_stdlib::collections::list_get(&visited, (node_id) as i64) {
+    if *incan_std_core::collections::list_get(&visited, (node_id) as i64) {
         return;
     }
-    *incan_stdlib::collections::list_get_mut(visited, (node_id) as i64) = true;
+    *incan_std_core::collections::list_get_mut(visited, (node_id) as i64) = true;
     let _ = pending.push(node_id - 1);
     while ::std::convert::identity(pending.len() as i64) > 0 {
-        let nxt = incan_stdlib::collections::__private::list_pop(pending);
+        let nxt = incan_std_core::collections::__private::list_pop(pending);
         let _ = walk(nxt, pending, visited);
     }
 }

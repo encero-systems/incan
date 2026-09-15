@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn main() {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {
@@ -19,25 +19,25 @@ fn main() {
             }
         }),
     );
-    let ints: Vec<i64> = incan_stdlib::collections::list_repeat(-1, (4) as i64);
-    let words: Vec<String> = incan_stdlib::collections::list_repeat(
+    let ints: Vec<i64> = incan_std_core::collections::list_repeat(-1, (4) as i64);
+    let words: Vec<String> = incan_std_core::collections::list_repeat(
         "seed".to_string(),
         (2) as i64,
     );
-    let empty: Vec<i64> = incan_stdlib::collections::list_repeat(0, (0) as i64);
-    let nested: Vec<Vec<i64>> = incan_stdlib::collections::list_repeat(
+    let empty: Vec<i64> = incan_std_core::collections::list_repeat(0, (0) as i64);
+    let nested: Vec<Vec<i64>> = incan_std_core::collections::list_repeat(
         vec![1],
         (2) as i64,
     );
-    let named: Vec<i64> = incan_stdlib::collections::list_repeat(7, (3) as i64);
+    let named: Vec<i64> = incan_std_core::collections::list_repeat(7, (3) as i64);
     let _ = println!(
         "{}", { let __parts : [& str; 6usize] = ["", " ", " ", " ", " ", ""]; let __args
-        : Vec < String > = vec![format!("{}", * incan_stdlib::collections::list_get(&
-        ints, (0) as i64)), format!("{}", incan_stdlib::collections::list_get(& words,
+        : Vec < String > = vec![format!("{}", * incan_std_core::collections::list_get(&
+        ints, (0) as i64)), format!("{}", incan_std_core::collections::list_get(& words,
         (1) as i64).clone()), format!("{}", ::std::convert::identity(empty.len() as
-        i64)), format!("{}", * incan_stdlib::collections::list_get(&
-        incan_stdlib::collections::list_get(& nested, (1) as i64).clone(), (0) as i64)),
-        format!("{}", * incan_stdlib::collections::list_get(& named, (2) as i64))];
-        incan_stdlib::strings::fstring(& __parts, & __args) }
+        i64)), format!("{}", * incan_std_core::collections::list_get(&
+        incan_std_core::collections::list_get(& nested, (1) as i64).clone(), (0) as
+        i64)), format!("{}", * incan_std_core::collections::list_get(& named, (2) as
+        i64))]; incan_std_core::strings::fstring(& __parts, & __args) }
     );
 }

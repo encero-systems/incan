@@ -391,7 +391,7 @@ mod tests {
     #[test]
     fn library_rust_abi_query_paths_include_rust_extern_backing_items() -> Result<(), Box<dyn std::error::Error>> {
         let source =
-            "rust.module(\"incan_stdlib::num\")\n@rust.extern\npub def gcd_i64(a: int, b: int) -> int:\n  ...\n";
+            "rust.module(\"incan_std_core::num\")\n@rust.extern\npub def gcd_i64(a: int, b: int) -> int:\n  ...\n";
         let tokens = lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
         let ast = parser::parse(&tokens).map_err(|errs| format!("parse errors: {errs:?}"))?;
         let module = ParsedModule {
@@ -407,7 +407,7 @@ mod tests {
         let paths = collect_library_rust_abi_query_paths(&modules, &contexts);
 
         assert!(
-            paths.iter().any(|path| path == "incan_stdlib::num::gcd_i64"),
+            paths.iter().any(|path| path == "incan_std_core::num::gcd_i64"),
             "expected rust.extern backing item in ABI query paths, got: {paths:?}"
         );
         Ok(())

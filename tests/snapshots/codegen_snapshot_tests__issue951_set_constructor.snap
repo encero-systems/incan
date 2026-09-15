@@ -6,11 +6,11 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-const FROZEN_LIST_VALUES: incan_stdlib::frozen::FrozenList<&'static str> = incan_stdlib::frozen::FrozenList::new(
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+const FROZEN_LIST_VALUES: incan_std_core::frozen::FrozenList<&'static str> = incan_std_core::frozen::FrozenList::new(
     &["beta", "alpha", "beta"],
 );
-const FROZEN_SET_VALUES: incan_stdlib::frozen::FrozenSet<&'static str> = incan_stdlib::frozen::FrozenSet::new(
+const FROZEN_SET_VALUES: incan_std_core::frozen::FrozenSet<&'static str> = incan_std_core::frozen::FrozenSet::new(
     &["beta", "alpha", "beta"],
 );
 fn unique_ids(values: Vec<String>) -> std::collections::HashSet<String> {
@@ -29,7 +29,7 @@ fn unique_without_consuming_source(
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["source:", ""]; let __args : Vec <
         String > = vec![format!("{}", ::std::convert::identity(values.len() as i64))];
-        incan_stdlib::strings::fstring(& __parts, & __args) }
+        incan_std_core::strings::fstring(& __parts, & __args) }
     );
     return result;
 }
@@ -41,7 +41,7 @@ fn generic_unique_without_consuming_source<T: Eq + std::hash::Hash + Clone>(
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["generic-source:", ""]; let __args : Vec
         < String > = vec![format!("{}", ::std::convert::identity(values.len() as i64))];
-        incan_stdlib::strings::fstring(& __parts, & __args) }
+        incan_std_core::strings::fstring(& __parts, & __args) }
     );
     return result;
 }
@@ -53,18 +53,18 @@ fn unique_set_without_consuming_source(
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["set-source:", ""]; let __args : Vec <
         String > = vec![format!("{}", ::std::convert::identity(values.len() as i64))];
-        incan_stdlib::strings::fstring(& __parts, & __args) }
+        incan_std_core::strings::fstring(& __parts, & __args) }
     );
     return result;
 }
 fn unique_frozen_list<T: Eq + std::hash::Hash + Clone>(
-    values: incan_stdlib::frozen::FrozenList<T>,
+    values: incan_std_core::frozen::FrozenList<T>,
 ) -> std::collections::HashSet<T> {
     let _ = "Clone borrowed values while converting an immutable list into a set.";
     return (values).iter().cloned().collect::<std::collections::HashSet<_>>();
 }
 fn unique_frozen_set<T: Eq + std::hash::Hash + Clone>(
-    values: incan_stdlib::frozen::FrozenSet<T>,
+    values: incan_std_core::frozen::FrozenSet<T>,
 ) -> std::collections::HashSet<T> {
     let _ = "Clone borrowed values while converting an immutable set into a mutable set.";
     return (values).iter().cloned().collect::<std::collections::HashSet<_>>();
@@ -114,7 +114,7 @@ fn main() {
         vec!["delta".to_string(), "delta".to_string(), "gamma".to_string()],
     );
     let empty = empty_ids();
-    let summary = incan_stdlib::strings::str_concat(
+    let summary = incan_std_core::strings::str_concat(
         &{
             let __parts: [&str; 6usize] = ["", ":", ":", ":", ":", ":"];
             let __args: Vec<String> = vec![
@@ -124,7 +124,7 @@ fn main() {
                 format!("{}", ::std::convert::identity(generic.len() as i64)),
                 format!("{}", ::std::convert::identity(retained_set.len() as i64))
             ];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         },
         &{
             let __parts: [&str; 6usize] = ["", ":", ":", ":", ":", ""];
@@ -135,7 +135,7 @@ fn main() {
                 format!("{}", ::std::convert::identity(vec_values.len() as i64)),
                 format!("{}", ::std::convert::identity(empty.len() as i64))
             ];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         },
     );
     let _ = println!("{}", summary);

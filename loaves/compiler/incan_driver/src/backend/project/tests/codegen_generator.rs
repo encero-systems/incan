@@ -42,8 +42,8 @@ def main() -> None:
     )
     .map_err(std::io::Error::other)?;
     let output = if let Some(capability) = capability {
-        if !capability.externs.contains_key("incan_stdlib") {
-            return Err("stored Oven compiler suite direct-rustc capability omitted incan_stdlib".into());
+        if !capability.externs.contains_key("incan_std_core") {
+            return Err("stored Oven compiler suite direct-rustc capability omitted incan_std_core".into());
         }
         let mut command = Command::new(&capability.rustc);
         command

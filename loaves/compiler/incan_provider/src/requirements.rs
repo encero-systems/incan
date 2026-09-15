@@ -30,7 +30,6 @@ use oven_model::manifest::{
     LOAF_MANIFEST_FILENAME, ProjectManifest,
 };
 use oven_model::toolchain_layout::GENERATED_CARGO_TARGET_DIR_ENV;
-use oven_model::toolchain_layout::GENERATED_TOOLCHAIN_SUPPORT_CRATES;
 static PREPARED_LIBRARY_DEPENDENCIES: LazyLock<Mutex<HashMap<PathBuf, BTreeSet<String>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -45,8 +44,9 @@ pub const INTERNAL_LIBRARY_DEPENDENCY_PREPARATION_ENV: &str = "INCAN_INTERNAL_LI
 /// Unified project requirements collected from parsed modules and loaded provider manifests.
 #[derive(Debug, Clone, Default)]
 pub struct ProjectRequirements {
-    /// Required stdlib feature flags, such as `json`, `async`, and `web`.
-    pub stdlib_features: Vec<String>,
+    /// The standard library facets the program links beyond the mandatory `incan_std_core`, such as
+    /// `incan_std_data` or `incan_std_web`, sorted.
+    pub stdlib_facets: Vec<String>,
     /// Required Cargo dependencies contributed by stdlib namespaces and provider manifests.
     pub dependencies: Vec<DependencySpec>,
     /// Immutable compiled-library projections that replace obsolete physical SDK cache coordinates.
@@ -400,21 +400,28 @@ pub fn collect_project_requirements(
         stdlib_namespaces.insert("serde".to_string());
     }
 
-    let mut stdlib_features: BTreeSet<String> = BTreeSet::new();
+    let mut stdlib_facets: BTreeSet<String> = BTreeSet::new();
     for namespace_name in &stdlib_namespaces {
         let Some(namespace) = stdlib::find_namespace(namespace_name) else {
             continue;
         };
-        if let Some(feature) = namespace.feature {
-            stdlib_features.insert(feature.to_string());
+        if let Some(facet) = namespace.facet {
+            stdlib_facets.insert(facet.to_string());
         }
     }
-    for feature in library_manifest_index.merged_provider_required_stdlib_features() {
-        stdlib_features.insert(feature);
+    // A vocab manifest spells its runtime requirements in the vocabulary the contract had before the facets existed;
+    // the registry says which facet serves each name.
+    for requirement in library_manifest_index.merged_provider_required_stdlib_features() {
+        let Some(facet) = stdlib::facets::for_requirement(&requirement) else {
+            return Err(ProviderError::failure(format!(
+                "a provider manifest requires the unknown standard library runtime `{requirement}`"
+            )));
+        };
+        stdlib_facets.insert(facet.to_string());
     }
 
     let mut requirements = ProjectRequirements {
-        stdlib_features: stdlib_features.into_iter().collect(),
+        stdlib_facets: stdlib_facets.into_iter().collect(),
         dependencies: Vec::new(),
         sdk_dependency_rebindings: Vec::new(),
         sdk_path_dependencies: Vec::new(),
@@ -480,9 +487,15 @@ pub fn collect_project_requirements(
 }
 
 /// Return the exact compiler-owned path catalog used only for semantic generated-artifact identity.
+///
+/// The catalog is every toolchain-owned crate the generated project links: the support crates every program links,
+/// the facets this program reaches, and the SDK path dependencies already proven compiler-owned.
 pub fn semantic_sdk_path_dependencies(requirements: &ProjectRequirements) -> Vec<DependencySpec> {
     let mut dependencies = requirements.sdk_path_dependencies.clone();
-    for crate_name in GENERATED_TOOLCHAIN_SUPPORT_CRATES {
+    let toolchain_crates = incan_core::lang::generated_support::SUPPORT_CRATES_EVERY_PROGRAM_LINKS
+        .into_iter()
+        .chain(requirements.stdlib_facets.iter().map(String::as_str));
+    for crate_name in toolchain_crates {
         if dependencies
             .iter()
             .any(|dependency| dependency.crate_name == crate_name)
@@ -647,7 +660,7 @@ from std.math import sqrt
         )?;
 
         let requirements = collect_project_requirements(&[module], &LibraryManifestIndex::default())?;
-        assert!(requirements.stdlib_features.is_empty());
+        assert!(requirements.stdlib_facets.is_empty());
         assert!(requirements.dependencies.is_empty());
         Ok(())
     }
@@ -666,7 +679,7 @@ model User:
         )?;
 
         let requirements = collect_project_requirements(&[module], &LibraryManifestIndex::default())?;
-        assert!(requirements.stdlib_features.is_empty());
+        assert!(requirements.stdlib_facets.is_empty());
         assert!(requirements.dependencies.is_empty());
         Ok(())
     }

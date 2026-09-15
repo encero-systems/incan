@@ -220,12 +220,13 @@ pub fn prepare_library_project(
     for module in &emitted_dep_modules {
         inline_imports.extend(collect_rust_dependency_uses(module, false));
     }
-    // Compiler-owned `incan_stdlib` and Rust's sysroot are supplied by the selected Oven plan. The remaining
+    // The compiler-owned standard library facets and Rust's sysroot are supplied by the selected Oven plan. The
+    // remaining
     // caller-authored imports are resolved after code generation and compiled through the same direct-Rustc closure
     // materializer used by normal executables and test batches; this library route must not regain a Cargo fallback.
     let source_inline_crates = inline_imports
         .iter()
-        .filter(|import| import.crate_name != "incan_stdlib" && import.crate_name != "std")
+        .filter(|import| !incan_core::lang::stdlib::facets::is_facet(&import.crate_name) && import.crate_name != "std")
         .map(|import| import.crate_name.clone())
         .collect::<BTreeSet<_>>();
     let project_name = manifest
@@ -795,7 +796,7 @@ pub fn prepare_library_project(
         generator.set_cargo_target_dir_override(Some(managed_target_path.clone()));
         generator.set_generated_cache_context(managed_target_lease, managed_target_identity);
     }
-    generator.set_stdlib_features(project_requirements.stdlib_features.clone());
+    generator.set_stdlib_facets(project_requirements.stdlib_facets.clone());
     generator.set_include_dev_dependencies(
         lock_payload_for_typecheck.is_some() || oven_plan_mode == OvenProjectPlanMode::ExplicitBake,
     );
@@ -856,7 +857,7 @@ pub fn prepare_library_project(
             &rust_dependencies,
             &rust_dev_dependencies,
             incan_dependencies_report(manifest.library_dependencies().iter().collect()),
-            project_requirements.stdlib_features.clone(),
+            project_requirements.stdlib_facets.clone(),
         ),
         semantic: semantic_report(
             compilation_session.sdk_inventory.as_deref(),

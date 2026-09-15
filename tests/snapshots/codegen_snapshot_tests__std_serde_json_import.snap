@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use json::{Deserialize as _, Serialize as _};
 pub use crate::__incan_std::serde::json;
 #[derive(
@@ -22,60 +22,60 @@ struct Config {
     port: i64,
     debug: bool,
 }
-impl incan_stdlib::reflection::HasClassName for Config {
+impl incan_std_core::reflection::HasClassName for Config {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for Config {
+impl incan_std_core::reflection::HasTypeClassName for Config {
     fn __class_name__() -> &'static str {
         "Config"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for Config {
+impl incan_std_core::reflection::HasFieldMetadata for Config {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for Config {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for Config {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("host"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("host"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("host"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("host"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("port"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("port"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("port"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("port"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("debug"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("debug"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("debug"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("bool"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("debug"),
+                type_name: incan_std_core::frozen::FrozenStr::new("bool"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for Config {
+impl incan_std_core::reflection::HasFieldValueReflection for Config {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             "host" => Some(format!("{}", self.host)),
@@ -93,12 +93,12 @@ impl incan_stdlib::reflection::HasFieldValueReflection for Config {
 }
 impl json::Serialize for Config {
     fn to_json(&self) -> String {
-        incan_stdlib::json::__private::stringify_or_raise(self, stringify!(Config))
+        incan_std_data::json::__private::stringify_or_raise(self, stringify!(Config))
     }
 }
 impl json::Deserialize for Config {
     fn from_json(json_str: String) -> Result<Self, String> {
-        incan_stdlib::json::__private::parse_or_error(&json_str)
+        incan_std_data::json::__private::parse_or_error(&json_str)
     }
 }
 fn main() {

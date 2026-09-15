@@ -6,25 +6,25 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn test_string_methods() {
     let s: String = "Hello World".to_string();
-    let _upper: String = incan_stdlib::strings::str_upper(&s);
-    let _lower: String = incan_stdlib::strings::str_lower(&s);
-    let _stripped: String = incan_stdlib::strings::str_strip(&s);
+    let _upper: String = incan_std_core::strings::str_upper(&s);
+    let _lower: String = incan_std_core::strings::str_lower(&s);
+    let _stripped: String = incan_std_core::strings::str_strip(&s);
 }
 fn test_string_contains() {
     let text: String = "hello world".to_string();
-    let _has_hello: bool = incan_stdlib::strings::str_contains(&text, &"hello");
-    let _has_goodbye: bool = incan_stdlib::strings::str_contains(&text, &"goodbye");
+    let _has_hello: bool = incan_std_core::strings::str_contains(&text, &"hello");
+    let _has_goodbye: bool = incan_std_core::strings::str_contains(&text, &"goodbye");
 }
 fn test_string_split() {
     let text: String = "one,two,three".to_string();
-    let _parts: Vec<String> = incan_stdlib::strings::str_split(&text, Some(&","));
+    let _parts: Vec<String> = incan_std_core::strings::str_split(&text, Some(&","));
 }
 fn test_string_replace() {
     let text: String = "hello world".to_string();
-    let _replaced: String = incan_stdlib::strings::str_replace(
+    let _replaced: String = incan_std_core::strings::str_replace(
         &text,
         &"world",
         &"python",
@@ -32,7 +32,7 @@ fn test_string_replace() {
 }
 fn test_string_slice() {
     let text: String = "héllo".to_string();
-    let _mid: String = incan_stdlib::strings::str_slice(
+    let _mid: String = incan_std_core::strings::str_slice(
         &text,
         Some((1) as i64),
         Some((-1) as i64),
@@ -41,20 +41,20 @@ fn test_string_slice() {
 }
 fn test_string_startswith_endswith() {
     let text: String = "hello.txt".to_string();
-    let _starts: bool = incan_stdlib::strings::str_starts_with(&text, &"hello");
-    let _ends: bool = incan_stdlib::strings::str_ends_with(&text, &".txt");
+    let _starts: bool = incan_std_core::strings::str_starts_with(&text, &"hello");
+    let _ends: bool = incan_std_core::strings::str_ends_with(&text, &".txt");
 }
 fn test_string_join() {
     let sep: String = ", ".to_string();
     let words: Vec<String> = vec![
         "one".to_string(), "two".to_string(), "three".to_string()
     ];
-    let _joined: String = incan_stdlib::strings::str_join(&sep, &words);
+    let _joined: String = incan_std_core::strings::str_join(&sep, &words);
 }
 fn test_string_concatenation() {
     let mut result: String = "hello".to_string();
-    result = incan_stdlib::strings::str_concat(&result, &" ");
-    result = incan_stdlib::strings::str_concat(&result, &"world");
+    result = incan_std_core::strings::str_concat(&result, &" ");
+    result = incan_std_core::strings::str_concat(&result, &"world");
     let _ = println!("{}", result);
 }
 fn main() {

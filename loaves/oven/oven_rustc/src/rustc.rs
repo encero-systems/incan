@@ -5968,7 +5968,7 @@ fi
         )?;
         fs::write(
             wrapper.join("src/lib.rs"),
-            "pub fn value() -> i64 { incan_stdlib::value() + 1 }\n",
+            "pub fn value() -> i64 { incan_std_core::value() + 1 }\n",
         )?;
         let rustc = rustc_path()?;
         let target = rustc_host_target(&rustc)?;

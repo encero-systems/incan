@@ -1933,7 +1933,7 @@ impl AstLowering {
                     ],
                     callable_signature: None,
                     canonical_path: Some(vec![
-                        "incan_stdlib".to_string(),
+                        stdlib::facets::CORE.to_string(),
                         "validation".to_string(),
                         "raise_validation_error".to_string(),
                     ]),
@@ -2027,7 +2027,7 @@ impl AstLowering {
                 ],
                 callable_signature: None,
                 canonical_path: Some(vec![
-                    "incan_stdlib".to_string(),
+                    stdlib::facets::CORE.to_string(),
                     "validation".to_string(),
                     "raise_constraint_error".to_string(),
                 ]),
@@ -2112,7 +2112,7 @@ impl AstLowering {
                 }],
                 callable_signature: None,
                 canonical_path: Some(vec![
-                    "incan_stdlib".to_string(),
+                    stdlib::facets::CORE.to_string(),
                     "validation".to_string(),
                     "ValidationErrorsBuilder".to_string(),
                     "new".to_string(),
@@ -2317,7 +2317,7 @@ impl AstLowering {
                 }],
                 callable_signature: None,
                 canonical_path: Some(vec![
-                    "incan_stdlib".to_string(),
+                    stdlib::facets::CORE.to_string(),
                     "validation".to_string(),
                     "ValidationError".to_string(),
                     "new".to_string(),
@@ -2593,7 +2593,7 @@ impl AstLowering {
                     ],
                     callable_signature: None,
                     canonical_path: Some(vec![
-                        "incan_stdlib".to_string(),
+                        stdlib::facets::CORE.to_string(),
                         "validation".to_string(),
                         "raise_validation_error".to_string(),
                     ]),
@@ -3832,7 +3832,7 @@ impl AstLowering {
                     args: lowered_args,
                     callable_signature: None,
                     canonical_path: Some(vec![
-                        "incan_stdlib".to_string(),
+                        stdlib::facets::CORE.to_string(),
                         "validation".to_string(),
                         "ValidationError".to_string(),
                         method.to_string(),

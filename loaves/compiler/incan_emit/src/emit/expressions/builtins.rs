@@ -103,7 +103,7 @@ fn emit_json_stringify(emitter: &IrEmitter<'_>, args: &[TypedExpr]) -> Result<To
     };
     Ok(quote! {{
         #binding
-        incan_stdlib::json::__private::stringify_or_raise(
+        incan_std_data::json::__private::stringify_or_raise(
             __incan_json_value,
             std::any::type_name_of_val(__incan_json_value),
         )
@@ -236,7 +236,7 @@ fn is_frozen_string_iterable_type(ty: &IrType) -> bool {
 fn emit_len(emitter: &IrEmitter<'_>, arg: &TypedExpr) -> Result<TokenStream, EmitError> {
     let value = emitter.emit_expr(arg)?;
     if is_string_iterable_type(&arg.ty) || is_frozen_string_iterable_type(&arg.ty) {
-        Ok(quote! { incan_stdlib::strings::str_len(&(#value)) })
+        Ok(quote! { incan_std_core::strings::str_len(&(#value)) })
     } else {
         Ok(quote! { ::std::convert::identity(#value.len() as i64) })
     }
@@ -247,7 +247,7 @@ fn emit_abs(emitter: &IrEmitter<'_>, arg: &TypedExpr) -> Result<TokenStream, Emi
     let value = emitter.emit_expr(arg)?;
     Ok(quote! {
         ::std::convert::identity::<i64>(#value).checked_abs().unwrap_or_else(|| {
-            incan_stdlib::errors::raise_value_error("integer overflow in builtin `abs`")
+            incan_std_core::errors::raise_value_error("integer overflow in builtin `abs`")
         })
     })
 }
@@ -265,7 +265,7 @@ fn emit_sum(emitter: &IrEmitter<'_>, arg: &TypedExpr) -> Result<TokenStream, Emi
             .iter()
             .try_fold(0_i64, |total, value| total.checked_add(#element))
             .unwrap_or_else(|| {
-                incan_stdlib::errors::raise_value_error("integer overflow in builtin `sum`")
+                incan_std_core::errors::raise_value_error("integer overflow in builtin `sum`")
             })
     })
 }
@@ -384,15 +384,15 @@ impl<'a> IrEmitter<'a> {
                     let a = self.emit_expr(arg)?;
                     let elem_type = list_elem_type(&arg.ty);
                     let tokens = match elem_type {
-                        IrType::Float => quote! { incan_stdlib::collections::__private::list_min_f64(&#a) },
+                        IrType::Float => quote! { incan_std_core::collections::__private::list_min_f64(&#a) },
                         IrType::String | IrType::FrozenStr => {
-                            quote! { incan_stdlib::collections::__private::list_min_clone(&#a) }
+                            quote! { incan_std_core::collections::__private::list_min_clone(&#a) }
                         }
-                        _ => quote! { incan_stdlib::collections::__private::list_min_copy(&#a) },
+                        _ => quote! { incan_std_core::collections::__private::list_min_copy(&#a) },
                     };
                     Ok(tokens)
                 } else {
-                    Ok(quote! { incan_stdlib::errors::raise_value_error("min() missing argument") })
+                    Ok(quote! { incan_std_core::errors::raise_value_error("min() missing argument") })
                 }
             }
             BuiltinFn::Max => {
@@ -400,15 +400,15 @@ impl<'a> IrEmitter<'a> {
                     let a = self.emit_expr(arg)?;
                     let elem_type = list_elem_type(&arg.ty);
                     let tokens = match elem_type {
-                        IrType::Float => quote! { incan_stdlib::collections::__private::list_max_f64(&#a) },
+                        IrType::Float => quote! { incan_std_core::collections::__private::list_max_f64(&#a) },
                         IrType::String | IrType::FrozenStr => {
-                            quote! { incan_stdlib::collections::__private::list_max_clone(&#a) }
+                            quote! { incan_std_core::collections::__private::list_max_clone(&#a) }
                         }
-                        _ => quote! { incan_stdlib::collections::__private::list_max_copy(&#a) },
+                        _ => quote! { incan_std_core::collections::__private::list_max_copy(&#a) },
                     };
                     Ok(tokens)
                 } else {
-                    Ok(quote! { incan_stdlib::errors::raise_value_error("max() missing argument") })
+                    Ok(quote! { incan_std_core::errors::raise_value_error("max() missing argument") })
                 }
             }
             BuiltinFn::Str => {
@@ -424,7 +424,7 @@ impl<'a> IrEmitter<'a> {
                     let a = self.emit_expr(arg)?;
                     match &arg.ty {
                         IrType::String | IrType::FrozenStr => {
-                            Ok(quote! { incan_stdlib::conversions::int_from_str(&#a) })
+                            Ok(quote! { incan_std_core::conversions::int_from_str(&#a) })
                         }
                         IrType::Float => Ok(quote! { (#a) as i64 }),
                         IrType::Bool => Ok(quote! { if #a { 1 } else { 0 } }),
@@ -439,7 +439,7 @@ impl<'a> IrEmitter<'a> {
                     let a = self.emit_expr(arg)?;
                     match &arg.ty {
                         IrType::String | IrType::FrozenStr => {
-                            Ok(quote! { incan_stdlib::conversions::float_from_str(&#a) })
+                            Ok(quote! { incan_std_core::conversions::float_from_str(&#a) })
                         }
                         IrType::Int => Ok(quote! { (#a) as f64 }),
                         _ => Ok(quote! { (#a) as f64 }),
@@ -594,9 +594,9 @@ impl<'a> IrEmitter<'a> {
                         },
                     )?;
                     let count = self.emit_expr(&args[1])?;
-                    Ok(quote! { incan_stdlib::collections::list_repeat(#value, (#count) as i64) })
+                    Ok(quote! { incan_std_core::collections::list_repeat(#value, (#count) as i64) })
                 } else {
-                    Ok(quote! { incan_stdlib::collections::list_repeat((), 0i64) })
+                    Ok(quote! { incan_std_core::collections::list_repeat((), 0i64) })
                 }
             }
         }
@@ -637,11 +637,11 @@ impl<'a> IrEmitter<'a> {
                     let a = self.emit_expr(arg)?;
                     let elem_type = list_elem_type(&arg.ty);
                     let tokens = match elem_type {
-                        IrType::Float => quote! { incan_stdlib::collections::__private::list_min_f64(&#a) },
+                        IrType::Float => quote! { incan_std_core::collections::__private::list_min_f64(&#a) },
                         IrType::String | IrType::FrozenStr => {
-                            quote! { incan_stdlib::collections::__private::list_min_clone(&#a) }
+                            quote! { incan_std_core::collections::__private::list_min_clone(&#a) }
                         }
-                        _ => quote! { incan_stdlib::collections::__private::list_min_copy(&#a) },
+                        _ => quote! { incan_std_core::collections::__private::list_min_copy(&#a) },
                     };
                     Ok(Some(tokens))
                 } else {
@@ -653,11 +653,11 @@ impl<'a> IrEmitter<'a> {
                     let a = self.emit_expr(arg)?;
                     let elem_type = list_elem_type(&arg.ty);
                     let tokens = match elem_type {
-                        IrType::Float => quote! { incan_stdlib::collections::__private::list_max_f64(&#a) },
+                        IrType::Float => quote! { incan_std_core::collections::__private::list_max_f64(&#a) },
                         IrType::String | IrType::FrozenStr => {
-                            quote! { incan_stdlib::collections::__private::list_max_clone(&#a) }
+                            quote! { incan_std_core::collections::__private::list_max_clone(&#a) }
                         }
-                        _ => quote! { incan_stdlib::collections::__private::list_max_copy(&#a) },
+                        _ => quote! { incan_std_core::collections::__private::list_max_copy(&#a) },
                     };
                     Ok(Some(tokens))
                 } else {
@@ -677,7 +677,7 @@ impl<'a> IrEmitter<'a> {
                     let a = self.emit_expr(arg)?;
                     match &arg.ty {
                         IrType::String | IrType::FrozenStr => {
-                            Ok(Some(quote! { incan_stdlib::conversions::int_from_str(&#a) }))
+                            Ok(Some(quote! { incan_std_core::conversions::int_from_str(&#a) }))
                         }
                         IrType::Float => Ok(Some(quote! { (#a) as i64 })),
                         IrType::Bool => Ok(Some(quote! { if #a { 1 } else { 0 } })),
@@ -692,7 +692,7 @@ impl<'a> IrEmitter<'a> {
                     let a = self.emit_expr(arg)?;
                     match &arg.ty {
                         IrType::String | IrType::FrozenStr => {
-                            Ok(Some(quote! { incan_stdlib::conversions::float_from_str(&#a) }))
+                            Ok(Some(quote! { incan_std_core::conversions::float_from_str(&#a) }))
                         }
                         IrType::Int => Ok(Some(quote! { (#a) as f64 })),
                         _ => Ok(Some(quote! { (#a) as f64 })),
@@ -844,7 +844,9 @@ impl<'a> IrEmitter<'a> {
                     return Ok(Some(quote! { (#start as i64)..(#end as i64) }));
                 }
                 let step = self.emit_expr(&args[2])?;
-                Ok(Some(quote! { incan_stdlib::iter::range(#start, #end, (#step) as i64) }))
+                Ok(Some(
+                    quote! { incan_std_core::iter::range(#start, #end, (#step) as i64) },
+                ))
             }
             _ => Ok(None),
         }

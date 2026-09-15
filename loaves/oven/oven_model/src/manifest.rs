@@ -5,7 +5,7 @@
 //! dependency tables into structured specs that the dependency resolver and future library resolver can validate.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};
@@ -338,6 +338,19 @@ pub struct VocabSection {
     pub crate_path: Option<String>,
 }
 
+/// The Rust facet's source root from `[rust.source]` (RFC 119).
+///
+/// A Loaf whose Rust unit sits beside Incan sources names the Rust root explicitly; a conventional Rust-only Loaf
+/// needs no table and keeps `src/`. The root is relative to the project directory and must not overlap the Incan
+/// source root. Declaring it is honest today — a standard library component says where its `incan_std_<component>`
+/// crate lives — and Oven's Rust planner reads it once it plans facets without a neighbouring `Cargo.toml`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustSourceSection {
+    /// Directory holding the Rust unit, relative to the project root (`rust` for a stdlib component).
+    pub root: String,
+}
+
 /// Tool-owned configuration namespace from `[tool]`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToolSection {
@@ -509,6 +522,8 @@ pub struct ProjectManifest {
     pub sdk: Option<SdkSection>,
     /// `[interop]` declared foreign-binding requirements, one table per binding kind.
     pub interop: Option<InteropSection>,
+    /// `[rust.source]`: where a mixed Loaf keeps its Rust facet (optional).
+    pub rust_source: Option<RustSourceSection>,
     /// `[workspace]` topology metadata when this manifest is a workspace root.
     pub workspace: Option<WorkspaceSection>,
     /// `[dependencies]` (Incan library dependencies).
@@ -902,6 +917,8 @@ struct RustTables {
     dependencies: Option<DependencyTable>,
     #[serde(rename = "dev-dependencies", default)]
     dev_dependencies: Option<DependencyTable>,
+    #[serde(default)]
+    source: Option<RustSourceSection>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -1127,6 +1144,31 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
             .validate()
             .map_err(|message| manifest_invalid(path, spans.table_location(&["interop", "c"]), message))?;
     }
+    if let Some(rust_source) = raw.rust.as_ref().and_then(|rust| rust.source.as_ref()) {
+        let root = Path::new(rust_source.root.trim());
+        if rust_source.root.trim().is_empty()
+            || root.is_absolute()
+            || root.components().any(|component| component == Component::ParentDir)
+        {
+            return Err(manifest_invalid(
+                path,
+                spans.entry_location(&["rust", "source"], "root"),
+                "[rust.source].root must be a non-empty path relative to the project directory",
+            ));
+        }
+        let incan_root = raw
+            .build
+            .as_ref()
+            .and_then(|build| build.source_root.as_deref())
+            .unwrap_or("src");
+        if root == Path::new(incan_root) {
+            return Err(manifest_invalid(
+                path,
+                spans.entry_location(&["rust", "source"], "root"),
+                "[rust.source].root must not be the Incan source root; the two roots must not overlap",
+            ));
+        }
+    }
     if let Some(vocab) = &raw.vocab {
         if let Some(crate_path) = &vocab.crate_path {
             if crate_path.trim().is_empty() {
@@ -1153,6 +1195,7 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         tool: raw.tool,
         sdk: raw.sdk,
         interop: raw.interop,
+        rust_source: raw.rust.as_ref().and_then(|rust| rust.source.clone()),
         workspace: raw.workspace,
         library_dependencies: library_dependencies.specs,
         rust_dependencies: rust_dependencies.specs,
@@ -2840,6 +2883,45 @@ crate = "crates/mylib_vocab"
         let vocab = manifest.vocab().ok_or("missing vocab section")?;
         assert_eq!(vocab.crate_path.as_deref(), Some("crates/mylib_vocab"));
         Ok(())
+    }
+
+    #[test]
+    fn a_mixed_loaf_declares_where_its_rust_facet_lives() -> TestResult {
+        let content = r#"
+[project]
+name = "incan_stdlib_data"
+
+[rust.source]
+root = "rust"
+
+[rust-dependencies]
+toml = "0.9"
+"#;
+        let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
+        assert_eq!(
+            manifest.rust_source.as_ref().map(|source| source.root.as_str()),
+            Some("rust")
+        );
+        assert!(manifest.rust_dependencies().contains_key("toml"));
+        let conventional = ProjectManifest::from_str("[project]\nname = \"plain\"\n", Path::new("loaf.toml"))?;
+        assert!(conventional.rust_source.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn the_rust_facet_root_stays_inside_the_project_and_apart_from_the_incan_root() {
+        for (root, expected) in [
+            ("../elsewhere", "relative to the project directory"),
+            ("/abs", "relative to the project directory"),
+            ("src", "must not overlap"),
+        ] {
+            let content = format!("[rust.source]\nroot = \"{root}\"\n");
+            let rendered = match ProjectManifest::from_str(&content, Path::new("loaf.toml")) {
+                Err(err) => err.to_string(),
+                Ok(_) => panic!("expected `{root}` to be refused"),
+            };
+            assert!(rendered.contains(expected), "`{root}`: {rendered}");
+        }
     }
 
     #[test]

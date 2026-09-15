@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 #[inline(always)]
 pub(crate) fn __incan_init_module_statics() {
     static __INCAN_STATIC_INIT_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(
@@ -45,8 +45,11 @@ fn __incan_original_decorated_total(
     for value in rest.iter().copied() {
         total = total + value;
     }
-    if incan_stdlib::strings::str_eq(
-        &incan_stdlib::collections::dict_get(&labels, <_ as AsRef<str>>::as_ref(&"mode"))
+    if incan_std_core::strings::str_eq(
+        &incan_std_core::collections::dict_get(
+                &labels,
+                <_ as AsRef<str>>::as_ref(&"mode"),
+            )
             .clone(),
         &"sum",
     ) {
@@ -55,10 +58,10 @@ fn __incan_original_decorated_total(
     return -1;
 }
 static __INCAN_DECORATED_DECORATED_TOTAL: std::sync::LazyLock<
-    incan_stdlib::storage::StaticCell<
+    incan_std_core::storage::StaticCell<
         fn(i64, i64, Vec<i64>, std::collections::HashMap<String, String>) -> i64,
     >,
-> = std::sync::LazyLock::new(|| incan_stdlib::storage::StaticCell::new(
+> = std::sync::LazyLock::new(|| incan_std_core::storage::StaticCell::new(
     preserve()(__incan_original_decorated_total),
 ));
 pub fn decorated_total(

@@ -175,7 +175,7 @@ fn generic_list_index_assignment_infers_clone_bound_for_later_source_use() -> Te
         "a generic list-index assignment that preserves its source binding must infer T: Clone:\n{rust}"
     );
     assert!(
-        compact.contains("*incan_stdlib::collections::list_get_mut(items,(0)asi64)=value.clone();"),
+        compact.contains("*incan_std_core::collections::list_get_mut(items,(0)asi64)=value.clone();"),
         "the list-index Assignment use must clone a non-Copy source binding that remains live:\n{rust}"
     );
     Ok(())
