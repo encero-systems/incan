@@ -100,10 +100,10 @@ pub fn resolve_toolchain_relative_path(relative_path: &Path) -> PathBuf {
 
 /// Return the external support-crate override only when no sealed runtime closure is authoritative.
 ///
-/// In ordinary commands `INCAN_TOOLCHAIN_CRATES_DIR` remains an intentional developer/test override. A valid
-/// explicit SDK inventory, like a scheduler-owned compiler-suite child, seals the runtime source closure used for
-/// generated manifests and Loaf identities. Honoring a parent checkout override in that situation would make
-/// a Loaf compatible with neither the inventory nor the compiler suite that consumes it.
+/// In ordinary commands `INCAN_TOOLCHAIN_CRATES_DIR` remains an intentional developer/test override. A valid explicit
+/// SDK inventory, like a scheduler-owned compiler-suite child, seals the runtime source closure used for generated
+/// manifests and Loaf identities. Honoring a parent checkout override in that situation would make a Loaf compatible
+/// with neither the inventory nor the compiler suite that consumes it.
 fn external_toolchain_crates_override(
     override_path: Option<PathBuf>,
     scheduler_native_execution: bool,

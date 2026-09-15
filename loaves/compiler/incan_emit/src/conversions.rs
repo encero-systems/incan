@@ -1,0 +1,2698 @@
+//! Centralized ownership conversion policy for IR code generation.
+//!
+//! Incan does not expose Rust's ownership model directly, but generated Rust still needs the right
+//! move/borrow/clone/materialization shape at each sink. This module is the low-level policy engine behind
+//! duckborrowing: it decides which conversion strategy to apply once the emitter identifies a typed use site.
+//!
+//! This module provides the **single source of truth** for deciding when code generation should:
+//! - materialize owned `String` storage,
+//! - borrow or mutably borrow a value for Rust interop,
+//! - preserve last-use moves,
+//! - clone non-`Copy` values when the source must remain usable, or
+//! - keep values as-is.
+//!
+//! ## Main responsibilities
+//!
+//! Strings remain the most common ownership mismatch in generated Rust, but this module now also covers:
+//! - borrowed method-chain results such as `box.as_ref()`,
+//! - field reads that must materialize owned values at storage/return sinks,
+//! - backend-inserted clones for owned tuples/collections/assignments,
+//! - Rust interop argument shaping, and
+//! - numeric coercion planning for binary operators.
+//!
+//! ## Why strings still matter
+//!
+//! Strings are still the most common source of borrow/ownership mismatches when compiling to Rust:
+//!
+//! - **Primitives** (`int`, `float`, `bool`) implement `Copy` in Rust, so they pass by value automatically—no
+//!   conversion needed
+//! - **Strings** have a fundamental split in Rust: `&str` (borrowed, stack) vs `String` (owned, heap)
+//! - Incan's `str` type abstracts this away (like Python), but codegen must handle it
+//! - String literals like `"hello"` are `&'static str` in Rust, requiring `.to_string()` for owned contexts
+//!
+//! ## Architecture
+//!
+//! The main function is [`determine_conversion`], which takes:
+//!
+//! - An IR expression (the value being passed/assigned)
+//! - An optional target type (what type is expected)
+//! - A [`ConversionContext`] (how the value will be used)
+//!
+//! Based on this context and the types involved, it returns a [`Conversion`] strategy.
+//!
+//! ## Conversion Rules by Context
+//!
+//! ### IncanFunctionArg
+//!
+//! Incan functions expect **owned values**:
+//!
+//! ```text
+//! Incan:  def greet(name: str) -> str: return "Hello, " + name
+//! Rust:   fn greet(name: String) -> String { ... }
+//!                        ^^^^^^ owned String, not &str
+//! ```
+//! - String literals → `.to_string()` (e.g., `greet("Alice")` → `greet("Alice".to_string())`)
+//! - String variables → `.to_string()` (may be &str at runtime)
+//!
+//! ### ExternalFunctionArg
+//!
+//! External Rust functions may expect **borrows**:
+//!
+//! ```text
+//! Incan:  result = rust::json_parse(data)
+//! Rust:   let result = json_parse(&data);
+//!                                  ^ borrow for external call
+//! ```
+//! - String literals → `.to_string()` (for enum variants like `Some("x")`)
+//! - String variables → `&` (borrow for &str parameters)
+//!
+//! ### Owned storage sinks
+//!
+//! Struct fields and collection elements are always **owned**:
+//!
+//! ```text
+//! Incan:  user = User(name="Alice", age=30)
+//! Rust:   let user = User { name: "Alice".to_string(), age: 30 };
+//!                                  ^^^^^^^^^^^^^^^^^^ owned String field
+//! ```
+//! - String literals → `.to_string()`
+//!
+//! ### Assignment
+//!
+//! Let bindings must match the variable's type:
+//!
+//! ```text
+//! Incan:  name: str = "Alice"
+//! Rust:   let name: String = "Alice".to_string();
+//!                             ^^^^^^^^^^^^^^^^^^ convert to owned
+//! ```
+//! - String literals to String variables → `.to_string()`
+//!
+//! ### ReturnValue
+//!
+//! Return values must match the function signature:
+//!
+//! ```text
+//! Incan:  def get_name() -> str: return "Alice"
+//! Rust:   fn get_name() -> String { return "Alice".to_string(); }
+//!                                           ^^^^^^^^^^^^^^^^^^ convert to owned
+//! ```
+//! - String literals when returning String → `.to_string()`
+//!
+//! ### MethodArg
+//!
+//! Method arguments usually don't need conversion (Rust's `Borrow` trait handles it):
+//!
+//! ```text
+//! Incan:  text.contains("hello")
+//! Rust:   text.contains("hello")  // &str works directly
+//! ```
+//!
+//! ## Examples
+//!
+//! ### Example 1: Function Call
+//!
+//! ```incan
+//! def greet(name: str) -> str:
+//!     return f"Hello, {name}"
+//!
+//! result = greet("Alice")
+//! ```
+//!
+//! Generated Rust:
+//!
+//! ```rust,ignore
+//! fn greet(name: String) -> String {
+//!     return format!("Hello, {}", name);
+//! }
+//! let result = greet("Alice".to_string());  // ← conversion applied
+//! ```
+//!
+//! ### Example 2: Struct Construction
+//!
+//! ```incan
+//! model User:
+//!     name: str
+//!     email: str
+//!
+//! user = User(name="Alice", email="alice@example.com")
+//! ```
+//!
+//! Generated Rust:
+//!
+//! ```rust,ignore
+//! pub struct User {
+//!     pub name: String,
+//!     pub email: String,
+//! }
+//! let user = User {
+//!     name: "Alice".to_string(),              // ← conversion applied
+//!     email: "alice@example.com".to_string()  // ← conversion applied
+//! };
+//! ```
+//!
+//! ### Example 3: External Function with Borrow
+//!
+//! ```incan
+//! import rust::std::fs::read_to_string
+//!
+//! content: str = "data.txt"
+//! data = read_to_string(content)
+//! ```
+//!
+//! Generated Rust:
+//!
+//! ```rust,ignore
+//! let content: String = "data.txt".to_string();
+//! let data = std::fs::read_to_string(&content);  // ← borrow applied
+//! ```
+
+use crate::reference_shape::expr_has_rust_reference_shape;
+use incan_core::interop::rust_display_is_owned_string;
+use incan_core::lang::types::collections::{self, CollectionTypeId};
+use incan_core::lang::types::numerics::{self, NumericFamily, NumericTypeId};
+use incan_core::{NumericOp, NumericTy, needs_float_promotion, result_numeric_type};
+use incan_ir::decl::FunctionParam;
+use incan_ir::expr::{BinOp, VarAccess};
+use incan_ir::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ir, pow_exponent_kind_from_ir};
+use incan_ir::types::{Mutability, same_exact_binary_float_type};
+use incan_ir::{IrExpr, IrExprKind, IrType, TypedExpr};
+use proc_macro2::TokenStream;
+use quote::quote;
+
+/// Context in which a value is being used - determines conversion rules
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConversionContext {
+    /// Argument to an Incan-defined function (expects owned values)
+    IncanFunctionArg,
+    /// Argument to an Incan function inside a return statement. Values can be moved since there's no code after the
+    /// return.
+    IncanFunctionArgInReturn,
+    /// Argument to an external Rust function (may expect borrows)
+    ExternalFunctionArg,
+    /// Field in struct construction (always owned)
+    StructField,
+    /// Element being stored into an owned collection.
+    CollectionElement,
+    /// Argument to a method call (context-dependent)
+    MethodArg,
+    /// Assignment or let binding
+    Assignment,
+    /// Return value from a function
+    ReturnValue,
+    /// Value consumed by a generated Rust `match` scrutinee.
+    MatchScrutinee,
+}
+
+/// Result of conversion analysis
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Conversion {
+    /// Pass value as-is
+    None,
+    /// Convert &str to String with .to_string()
+    ToString,
+    /// Convert via `.into()` — lets the Rust compiler resolve the target type via the `Into` trait. Used for external
+    /// Rust crate calls where the target type may be a custom string type (e.g., Polars' `PlSmallStr`) or other type
+    /// that implements `From<String>` / `From<&str>`.
+    Into,
+    /// Borrow with &
+    Borrow,
+    /// Mutable borrow with &mut
+    MutBorrow,
+    /// Clone with .clone()
+    Clone,
+    /// Validate an Incan-owned exact `f32` destination before storing the value.
+    RequireFiniteF32,
+    /// Validate an Incan-owned exact `f64` destination, preserving lossless `f32` widening.
+    RequireFiniteF64,
+}
+
+impl Conversion {
+    /// Apply this conversion to an already-emitted token stream
+    pub fn apply(&self, tokens: TokenStream) -> TokenStream {
+        match self {
+            Conversion::None => tokens,
+            Conversion::ToString => quote! { #tokens.to_string() },
+            Conversion::Into => quote! { #tokens.into() },
+            Conversion::Borrow => quote! { &#tokens },
+            Conversion::MutBorrow => quote! { &mut #tokens },
+            Conversion::Clone => quote! { #tokens.clone() },
+            Conversion::RequireFiniteF32 => quote! { incan_stdlib::num::require_finite_f32(#tokens) },
+            Conversion::RequireFiniteF64 => quote! { incan_stdlib::num::require_finite_f64(#tokens) },
+        }
+    }
+}
+
+/// Return the finite-value guard for an exact floating carrier.
+///
+/// This is shared by value-production boundaries and direct observation sites. Ordinary source `float` deliberately
+/// remains outside the exact-width contract and therefore retains normal IEEE `NaN`/infinity behavior.
+pub fn exact_float_value_validation(ty: &IrType) -> Conversion {
+    match ty {
+        IrType::Numeric(NumericTypeId::F32) => Conversion::RequireFiniteF32,
+        IrType::Numeric(NumericTypeId::F64) => Conversion::RequireFiniteF64,
+        _ => Conversion::None,
+    }
+}
+
+/// Select the finite-only guard for one compiler-owned exact-float destination.
+///
+/// Ordinary `float` remains IEEE-compatible; the guard belongs only to boundaries that create an exact `f32` or
+/// `f64` value. Rust-facing call and match boundaries retain their existing Rust API shape.
+fn exact_float_boundary_conversion(
+    expr: &IrExpr,
+    target_ty: Option<&IrType>,
+    context: ConversionContext,
+) -> Option<Conversion> {
+    if !matches!(
+        context,
+        ConversionContext::IncanFunctionArg
+            | ConversionContext::IncanFunctionArgInReturn
+            | ConversionContext::StructField
+            | ConversionContext::CollectionElement
+            | ConversionContext::Assignment
+            | ConversionContext::ReturnValue
+    ) {
+        return None;
+    }
+    match (target_ty, &expr.ty) {
+        (Some(IrType::Numeric(NumericTypeId::F32)), IrType::Numeric(NumericTypeId::F32)) => {
+            Some(Conversion::RequireFiniteF32)
+        }
+        (
+            Some(IrType::Numeric(NumericTypeId::F64)),
+            IrType::Float | IrType::Numeric(NumericTypeId::F32 | NumericTypeId::F64),
+        ) => Some(Conversion::RequireFiniteF64),
+        _ => None,
+    }
+}
+
+/// Numeric coercions for binary operations (int/float promotion).
+///
+/// Promotes integer operands to `f64` when the paired operand is `f64`, or when the operation requires float (e.g.,
+/// division).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NumericConversion {
+    None,
+    ToFloat,
+}
+
+impl NumericConversion {
+    /// Apply the numeric coercion to an emitted token stream.
+    ///
+    /// Uses `as f64` casting to align with the backend's float representation.
+    pub fn apply(&self, tokens: TokenStream) -> TokenStream {
+        match self {
+            NumericConversion::None => tokens,
+            // Use `(expr) as f64` to preserve precedence without wrapping the entire cast expression.
+            // This avoids Rust's `unused_parens` warnings in call arguments like `f(x, (3 as f64))`.
+            NumericConversion::ToFloat => quote! { (#tokens) as f64 },
+        }
+    }
+}
+
+/// Return the concrete operand coercion required by the generated Rust operation.
+///
+/// The shared numeric lattice intentionally treats both source `float` and exact `f32`/`f64` as floating-point
+/// values. Rust does not: it rejects mixed `f32`/`f64` operators and the float helpers selected for a widened result
+/// accept `f64`. Preserve same-width exact `f32` operations, but widen an `f32` operand whenever its paired operand
+/// makes the concrete operation use `f64`.
+fn numeric_operand_conversion(
+    operand_ty: &IrType,
+    paired_ty: &IrType,
+    result_ty: &IrType,
+    lattice_requires_float: bool,
+) -> NumericConversion {
+    let concrete_f32_widening = matches!(operand_ty, IrType::Numeric(NumericTypeId::F32))
+        && !matches!(paired_ty, IrType::Numeric(NumericTypeId::F32))
+        && matches!(result_ty, IrType::Float | IrType::Numeric(NumericTypeId::F64));
+    if lattice_requires_float || concrete_f32_widening {
+        NumericConversion::ToFloat
+    } else {
+        NumericConversion::None
+    }
+}
+
+// ---------------------- BinOpPlan (centralized binop emission strategy) ------------------------
+
+/// Emission strategy for a binary op after conversions are applied.
+#[derive(Debug, Clone)]
+pub enum BinOpEmitKind {
+    /// Emit as infix tokens, e.g., `+`, `-`, `*`, `==`
+    Infix { token: TokenStream },
+    /// Emit a stdlib helper call, e.g., `incan_stdlib::num::py_mod`
+    StdlibCall {
+        path: TokenStream,
+        /// If true, emit as `path(&lhs, &rhs)` to avoid moves and to support &str-based helpers.
+        borrow_args: bool,
+    },
+    /// Emit power; choose powf vs pow based on kind
+    Pow { result_is_int: bool },
+}
+
+/// Plan for emitting a binary operation.
+#[derive(Debug, Clone)]
+pub struct BinOpPlan {
+    pub lhs_conv: NumericConversion,
+    pub rhs_conv: NumericConversion,
+    pub result_ty: IrType,
+    pub emit: BinOpEmitKind,
+}
+
+impl BinOpPlan {
+    /// Reject a non-finite value at the point an exact floating arithmetic result is produced.
+    ///
+    /// Validating the operation itself, rather than relying only on a later assignment or return conversion, keeps a
+    /// non-finite exact value from escaping through effect and observation sites such as `print` and comparisons.
+    pub fn result_validation(&self) -> Conversion {
+        exact_float_value_validation(&self.result_ty)
+    }
+}
+
+fn emit_binop_token(op: &BinOp) -> TokenStream {
+    match op {
+        BinOp::Add => quote! { + },
+        BinOp::Sub => quote! { - },
+        BinOp::Mul => quote! { * },
+        BinOp::Div => quote! { / },
+        BinOp::FloorDiv => quote! { / },
+        BinOp::Mod => quote! { % },
+        BinOp::Pow => quote! { .pow },
+        BinOp::Eq => quote! { == },
+        BinOp::Ne => quote! { != },
+        BinOp::Lt => quote! { < },
+        BinOp::Le => quote! { <= },
+        BinOp::Gt => quote! { > },
+        BinOp::Ge => quote! { >= },
+        BinOp::And => quote! { && },
+        BinOp::Or => quote! { || },
+        BinOp::BitAnd => quote! { & },
+        BinOp::BitOr => quote! { | },
+        BinOp::BitXor => quote! { ^ },
+        BinOp::Shl => quote! { << },
+        BinOp::Shr => quote! { >> },
+    }
+}
+
+/// Return whether an IR type is one of the exact-width unsigned integer types.
+fn exact_unsigned_integer_type(ty: &IrType) -> bool {
+    matches!(
+        ty,
+        IrType::Numeric(id) if numerics::info_for(*id).family == NumericFamily::UnsignedInteger
+    )
+}
+
+/// Return whether an expression is a non-negative integer literal that Rust can infer to an unsigned type.
+fn non_negative_integer_literal(expr: &TypedExpr) -> bool {
+    match &expr.kind {
+        IrExprKind::Int(value) => *value >= 0,
+        IrExprKind::IntLiteral(_) => true,
+        _ => false,
+    }
+}
+
+/// Determine a BinOpPlan: conversions + emit strategy in one place.
+pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> BinOpPlan {
+    let is_runtime_list = |ty: &IrType| matches!(ty, IrType::List(_));
+
+    if matches!(op, BinOp::Add) && is_string_like_type(&left.ty) && is_string_like_type(&right.ty) {
+        return BinOpPlan {
+            lhs_conv: NumericConversion::None,
+            rhs_conv: NumericConversion::None,
+            result_ty: IrType::String,
+            emit: BinOpEmitKind::StdlibCall {
+                path: quote! { incan_stdlib::strings::str_concat },
+                borrow_args: true,
+            },
+        };
+    }
+
+    if matches!(op, BinOp::Add) && is_runtime_list(&left.ty) && is_runtime_list(&right.ty) {
+        return BinOpPlan {
+            lhs_conv: NumericConversion::None,
+            rhs_conv: NumericConversion::None,
+            result_ty: left.ty.clone(),
+            emit: BinOpEmitKind::StdlibCall {
+                path: quote! { incan_stdlib::collections::list_concat },
+                borrow_args: true,
+            },
+        };
+    }
+
+    if matches!(
+        op,
+        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+    ) && is_string_like_type(&left.ty)
+        && is_string_like_type(&right.ty)
+    {
+        let path = match op {
+            BinOp::Eq => quote! { incan_stdlib::strings::str_eq },
+            BinOp::Ne => quote! { incan_stdlib::strings::str_ne },
+            BinOp::Lt => quote! { incan_stdlib::strings::str_lt },
+            BinOp::Le => quote! { incan_stdlib::strings::str_le },
+            BinOp::Gt => quote! { incan_stdlib::strings::str_gt },
+            BinOp::Ge => quote! { incan_stdlib::strings::str_ge },
+            _ => unreachable!(),
+        };
+        return BinOpPlan {
+            lhs_conv: NumericConversion::None,
+            rhs_conv: NumericConversion::None,
+            result_ty: IrType::Bool,
+            emit: BinOpEmitKind::StdlibCall {
+                path,
+                borrow_args: true,
+            },
+        };
+    }
+
+    let num_op = match numeric_op_from_ir(op) {
+        Some(op) => op,
+        None => {
+            return BinOpPlan {
+                lhs_conv: NumericConversion::None,
+                rhs_conv: NumericConversion::None,
+                result_ty: left.ty.clone(),
+                emit: BinOpEmitKind::Infix {
+                    token: emit_binop_token(op),
+                },
+            };
+        }
+    };
+
+    let lhs_num = ir_type_to_numeric_ty(&left.ty);
+    let rhs_num = ir_type_to_numeric_ty(&right.ty);
+
+    // Python modulo/floor-division helpers are i64/f64-only. Unsigned exact-width operands can use Rust's native
+    // operators because their domain has no negative remainder/flooring case to normalize.
+    if matches!(num_op, NumericOp::FloorDiv | NumericOp::Mod)
+        && (exact_unsigned_integer_type(&left.ty)
+            && (matches!(right.ty, IrType::Int) || exact_unsigned_integer_type(&right.ty))
+            || exact_unsigned_integer_type(&right.ty)
+                && matches!(left.ty, IrType::Int)
+                && non_negative_integer_literal(left))
+    {
+        return BinOpPlan {
+            lhs_conv: NumericConversion::None,
+            rhs_conv: NumericConversion::None,
+            result_ty: if exact_unsigned_integer_type(&left.ty) {
+                left.ty.clone()
+            } else {
+                right.ty.clone()
+            },
+            emit: BinOpEmitKind::Infix {
+                token: emit_binop_token(op),
+            },
+        };
+    }
+
+    let pow_exp_kind = if matches!(op, BinOp::Pow) {
+        Some(pow_exponent_kind_from_ir(right))
+    } else {
+        None
+    };
+
+    let exact_float_result = matches!(
+        num_op,
+        NumericOp::Add
+            | NumericOp::Sub
+            | NumericOp::Mul
+            | NumericOp::Div
+            | NumericOp::FloorDiv
+            | NumericOp::Mod
+            | NumericOp::Pow
+    )
+    .then(|| same_exact_binary_float_type(&left.ty, &right.ty))
+    .flatten();
+    let (lhs_conv, rhs_conv, result_ty) = match (lhs_num, rhs_num) {
+        (Some(lhs), Some(rhs)) => {
+            let (l_promote, r_promote) = needs_float_promotion(num_op, lhs, rhs, pow_exp_kind);
+            let res = result_numeric_type(num_op, lhs, rhs, pow_exp_kind);
+            let ty = exact_float_result.unwrap_or(match res {
+                NumericTy::Int => IrType::Int,
+                NumericTy::Float => IrType::Float,
+            });
+            let l = numeric_operand_conversion(&left.ty, &right.ty, &ty, l_promote);
+            let r = numeric_operand_conversion(&right.ty, &left.ty, &ty, r_promote);
+            (l, r, ty)
+        }
+        _ => (NumericConversion::None, NumericConversion::None, left.ty.clone()),
+    };
+
+    let emit = match num_op {
+        NumericOp::Pow => {
+            let result_is_int = matches!(result_ty, IrType::Int);
+            BinOpEmitKind::Pow { result_is_int }
+        }
+        NumericOp::Mod => {
+            let path = match &result_ty {
+                IrType::Int => quote! { incan_stdlib::num::py_mod_i64 },
+                IrType::Float => quote! { incan_stdlib::num::py_mod_f64 },
+                IrType::Numeric(NumericTypeId::F32) => quote! { incan_stdlib::num::py_mod_f32 },
+                IrType::Numeric(NumericTypeId::F64) => quote! { incan_stdlib::num::py_mod_f64 },
+                _ => quote! { incan_stdlib::num::py_mod },
+            };
+            BinOpEmitKind::StdlibCall {
+                path,
+                borrow_args: false,
+            }
+        }
+        NumericOp::FloorDiv => {
+            let path = match &result_ty {
+                IrType::Int => quote! { incan_stdlib::num::py_floor_div_i64 },
+                IrType::Float => quote! { incan_stdlib::num::py_floor_div_f64 },
+                IrType::Numeric(NumericTypeId::F32) => quote! { incan_stdlib::num::py_floor_div_f32 },
+                IrType::Numeric(NumericTypeId::F64) => quote! { incan_stdlib::num::py_floor_div_f64 },
+                _ => quote! { incan_stdlib::num::py_floor_div },
+            };
+            BinOpEmitKind::StdlibCall {
+                path,
+                borrow_args: false,
+            }
+        }
+        NumericOp::Div => {
+            let path = match &result_ty {
+                IrType::Numeric(NumericTypeId::F32) => quote! { incan_stdlib::num::py_div_f32 },
+                _ => quote! { incan_stdlib::num::py_div },
+            };
+            BinOpEmitKind::StdlibCall {
+                path,
+                borrow_args: false,
+            }
+        }
+        NumericOp::Add
+        | NumericOp::Sub
+        | NumericOp::Mul
+        | NumericOp::Eq
+        | NumericOp::NotEq
+        | NumericOp::Lt
+        | NumericOp::LtEq
+        | NumericOp::Gt
+        | NumericOp::GtEq => BinOpEmitKind::Infix {
+            token: emit_binop_token(op),
+        },
+    };
+
+    BinOpPlan {
+        lhs_conv,
+        rhs_conv,
+        result_ty,
+        emit,
+    }
+}
+
+/// Determine conversion for destinations that store an owned value.
+///
+/// Struct fields and collection elements share most of this policy: literals and static `str` reads must become owned
+/// `String`s when the destination type is Incan `str`, while non-Copy field reads and repeated local reads preserve
+/// source-level value semantics by cloning. Unknown struct fields are also allowed to materialize borrowed string-like
+/// values because inspected Rust structs can still be constructible even when field type metadata is unavailable.
+fn determine_owned_storage_conversion(
+    expr: &IrExpr,
+    target_ty: Option<&IrType>,
+    materialize_borrowed_string_when_target_unknown: bool,
+) -> Conversion {
+    match (&expr.kind, target_ty) {
+        (IrExprKind::String(_), Some(target_ty)) if is_owned_string_target(target_ty) => Conversion::ToString,
+        (IrExprKind::StaticRead { .. }, Some(target_ty))
+            if (is_owned_string_target(target_ty) || matches!(target_ty, IrType::Generic(_)))
+                && is_borrowed_string_like_type(&expr.ty) =>
+        {
+            Conversion::ToString
+        }
+        (IrExprKind::StaticRead { .. }, None) if borrowed_string_like_needs_owned_string(&expr.ty, target_ty) => {
+            Conversion::ToString
+        }
+        (_, Some(target_ty)) if is_owned_string_target(target_ty) && is_borrowed_string_like_type(&expr.ty) => {
+            Conversion::ToString
+        }
+        (IrExprKind::String(_), Some(IrType::Generic(_))) => Conversion::ToString,
+        (_, Some(IrType::Generic(_))) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
+        (IrExprKind::String(_), None) if string_literal_needs_owned_string(&expr.ty, target_ty) => Conversion::ToString,
+        (_, None) if materialize_borrowed_string_when_target_unknown && is_borrowed_string_like_type(&expr.ty) => {
+            Conversion::ToString
+        }
+        (_, None) if borrowed_string_like_needs_owned_string(&expr.ty, target_ty) => Conversion::ToString,
+        _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
+        (IrExprKind::Var { access, .. }, Some(target_ty))
+            if is_owned_string_target(target_ty) && matches!(expr.ty, IrType::String) =>
+        {
+            match access {
+                VarAccess::Move => Conversion::None,
+                _ => Conversion::ToString,
+            }
+        }
+        (IrExprKind::Var { access, .. }, _) if !expr.ty.is_copy() => match access {
+            VarAccess::Move => Conversion::None,
+            _ => Conversion::Clone,
+        },
+        (IrExprKind::Field { .. }, _) if matches!(expr.ty, IrType::String) => Conversion::Clone,
+        (IrExprKind::Field { .. }, _) if !expr.ty.is_copy() => Conversion::Clone,
+        _ => Conversion::None,
+    }
+}
+
+/// Whether a borrowed expression must be materialized before entering an owned sink.
+///
+/// This covers true IR borrows (`&T`, `&mut T`) and borrowed method-chain results such as `box.as_ref()`. The helper is
+/// intentionally conservative when target metadata is missing: generated Rust should prefer owned Incan semantics over
+/// leaking a raw borrow that would force users to add `.clone()` manually.
+fn borrowed_expr_needs_owned_materialization(expr: &IrExpr, target_ty: Option<&IrType>) -> bool {
+    if let IrExprKind::InteropCoerce { expr, kind, .. } = &expr.kind {
+        if matches!(kind, incan_ir::expr::IrInteropCoercionKind::RustTypeUnwrap) {
+            return borrowed_expr_needs_owned_materialization(expr, target_ty);
+        }
+        return false;
+    }
+
+    let borrowed_inner = match &expr.ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => inner.as_ref(),
+        _ => match &expr.kind {
+            IrExprKind::MethodCall { receiver, method, .. } if method == "as_ref" => match &receiver.ty {
+                IrType::NamedGeneric(_, args) if args.len() == 1 => &args[0],
+                _ if target_ty.is_none_or(|ty| {
+                    !matches!(ty, IrType::Ref(_) | IrType::RefMut(_)) && !is_owned_string_target(ty)
+                }) =>
+                {
+                    return true;
+                }
+                _ => return false,
+            },
+            _ => return false,
+        },
+    };
+    if borrowed_inner.is_copy() {
+        return false;
+    }
+    match target_ty {
+        Some(IrType::Ref(_) | IrType::RefMut(_)) => false,
+        Some(target_ty) => borrowed_inner == target_ty || matches!(target_ty, IrType::Generic(_)),
+        // Missing target metadata happens in multi-file/library emission when a local helper's exact signature is not
+        // available at the call site. Incan owned sinks still need an owned value; emitting the raw borrow leaks Rust's
+        // `&T` into generated code and makes users write `.clone()` manually.
+        None => true,
+    }
+}
+
+/// Return whether an IR type represents Incan's canonical `Result[Ok, Err]` shape.
+fn is_result_like_type(ty: &IrType) -> bool {
+    match ty {
+        IrType::Result(_, _) => true,
+        IrType::NamedGeneric(name, args) if args.len() == 2 => {
+            collections::from_str(name.rsplit("::").next().unwrap_or(name)) == Some(CollectionTypeId::Result)
+        }
+        _ => false,
+    }
+}
+
+/// Return whether a source value has Rust borrowed/static string shape while representing Incan `str`.
+fn is_borrowed_string_like_type(ty: &IrType) -> bool {
+    matches!(ty, IrType::StaticStr | IrType::StrRef | IrType::FrozenStr)
+}
+
+/// Return whether an IR type stores an owned Rust `String` value.
+///
+/// Incan `str` lowers to [`IrType::String`], while inspected Rust metadata for external structs and functions may
+/// surface the same value as `String`, `std::string::String`, or `alloc::string::String`. Treating those shapes
+/// together keeps string materialization in the duckborrower instead of scattering Rust-path checks through emitters.
+pub fn is_owned_string_type(ty: &IrType) -> bool {
+    matches!(ty, IrType::String)
+        || matches!(
+            ty,
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) | IrType::RustDisplay(name)
+                if rust_display_is_owned_string(name)
+        )
+}
+
+/// Return whether an IR value participates in Incan string operators.
+///
+/// Structured Rust metadata is normalized to [`IrType::String`] at the frontend boundary. Exact displays retained for
+/// Rust callback parameters still need the canonical owned-string fallback until closure metadata carries a semantic
+/// string shape.
+fn is_string_like_type(ty: &IrType) -> bool {
+    is_owned_string_type(ty)
+        || is_borrowed_string_like_type(ty)
+        || matches!(ty, IrType::Ref(inner) | IrType::RefMut(inner) if is_owned_string_type(inner))
+}
+
+/// Return whether a target IR type stores an owned Rust `String` value.
+fn is_owned_string_target(ty: &IrType) -> bool {
+    is_owned_string_type(ty)
+}
+
+/// Return whether a string literal needs ordinary owned `String` materialization at an Incan boundary.
+///
+/// Frozen targets are deliberately excluded because the target-aware emitter materializes those literals as
+/// `FrozenStr` wrappers instead of converting them through `String`.
+fn string_literal_needs_owned_string(source_ty: &IrType, target_ty: Option<&IrType>) -> bool {
+    target_ty.is_some_and(|ty| is_owned_string_target(ty) || matches!(ty, IrType::Generic(_)))
+        || (target_ty.is_none() && !matches!(source_ty, IrType::FrozenStr))
+}
+
+/// Return whether an owned Incan sink needs borrowed/static string materialization.
+fn borrowed_string_like_needs_owned_string(source_ty: &IrType, target_ty: Option<&IrType>) -> bool {
+    is_borrowed_string_like_type(source_ty)
+        && (target_ty.is_some_and(|ty| is_owned_string_target(ty) || matches!(ty, IrType::Generic(_)))
+            || (target_ty.is_none() && !matches!(source_ty, IrType::FrozenStr)))
+}
+
+/// Whether a value type came from Rust interop and can reasonably cross an Incan `str` boundary via `ToString`.
+///
+/// Lowering maps `ResolvedType::RustPath` to `IrType::Struct(path)`, so the stable signal left in IR is a Rust-style
+/// path. Keep this narrower than "any struct" so user-defined Incan structs do not silently stringify at ordinary
+/// `str` parameters.
+fn is_rust_path_value_type(ty: &IrType) -> bool {
+    match ty {
+        IrType::Struct(name) | IrType::NamedGeneric(name, _) => name.contains("::"),
+        IrType::Ref(inner) | IrType::RefMut(inner) => is_rust_path_value_type(inner),
+        _ => false,
+    }
+}
+
+/// Whether a Rust interop value should be stringified for an Incan `str` target.
+fn rust_value_needs_stringification(expr: &IrExpr, target_ty: Option<&IrType>) -> bool {
+    target_ty.is_some_and(is_owned_string_target)
+        && (matches!(expr.ty, IrType::Unknown) || is_rust_path_value_type(&expr.ty))
+}
+
+/// Return whether a field expression reads through the implicit `&self` receiver.
+fn field_access_reads_from_self_receiver(expr: &IrExpr) -> bool {
+    let IrExprKind::Field { object, .. } = &expr.kind else {
+        return false;
+    };
+    matches!(
+        &object.kind,
+        IrExprKind::Var {
+            name,
+            access: VarAccess::Read | VarAccess::Borrow,
+            ..
+        } if name == "self"
+    )
+}
+
+/// Whether a field projection must clone instead of moving directly from its parent object.
+///
+/// Tuple-unpack temporaries are the notable exemption: lowering marks the temporary tuple binding as `VarAccess::Move`,
+/// so moving `tmp.0`, then `tmp.1`, is legitimate and should not introduce a backend clone. Ordinary field reads from
+/// borrowed/shared parents still need owned materialization at storage and return sinks.
+fn field_read_needs_owned_materialization(expr: &IrExpr) -> bool {
+    match &expr.kind {
+        IrExprKind::Field { object, .. } => !matches!(
+            &object.kind,
+            IrExprKind::Var { access, .. }
+                if matches!(access, VarAccess::Move) && !matches!(object.ty, IrType::Ref(_) | IrType::RefMut(_))
+        ),
+        _ => false,
+    }
+}
+
+/// Determines what conversion (if any) is needed for a value
+///
+/// ## Type-Specific Behavior
+///
+/// - **Strings** (`&str` → `String`): Primary focus, requires `.to_string()` in owned contexts
+/// - **Primitives** (int, float, bool): Implement `Copy`, no conversion needed
+/// - **Collections** (`Vec<&str>` → `Vec<String>`): Element-wise conversion
+/// - **Other types**: Currently pass as-is (may be extended in the future)
+///
+/// ## Parameters
+///
+/// - `expr`: The IR expression being passed/assigned
+/// - `target_ty`: Optional target type (what's expected at the destination)
+/// - `context`: How the value will be used (function arg, struct field, return, etc.)
+///
+/// ## Returns
+///
+/// A [`Conversion`] strategy indicating what transformation (if any) to apply
+pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: ConversionContext) -> Conversion {
+    if let IrExprKind::InteropCoerce { expr, kind, .. } = &expr.kind
+        && matches!(kind, incan_ir::expr::IrInteropCoercionKind::RustTypeUnwrap)
+    {
+        return determine_conversion(expr, target_ty, context);
+    }
+    if let Some(conversion) = exact_float_boundary_conversion(expr, target_ty, context) {
+        return conversion;
+    }
+    if matches!(expr.kind, IrExprKind::InteropCoerce { .. }) {
+        if borrowed_expr_needs_owned_materialization(expr, target_ty) {
+            return Conversion::Clone;
+        }
+        return Conversion::None;
+    }
+    match context {
+        ConversionContext::IncanFunctionArg => {
+            // Incan functions expect owned values
+            // Check specific conversions first, then fall back to generic .clone()
+            match (&expr.kind, target_ty) {
+                // String literal to String param → .to_string()
+                (IrExprKind::String(_), Some(target_ty)) if is_owned_string_target(target_ty) => Conversion::ToString,
+                // Static const reads still represent Incan `str` at ordinary call sites.
+                (IrExprKind::StaticRead { .. }, Some(target_ty))
+                    if (is_owned_string_target(target_ty) || matches!(target_ty, IrType::Generic(_)))
+                        && is_borrowed_string_like_type(&expr.ty) =>
+                {
+                    Conversion::ToString
+                }
+                (IrExprKind::StaticRead { .. }, None)
+                    if borrowed_string_like_needs_owned_string(&expr.ty, target_ty) =>
+                {
+                    Conversion::ToString
+                }
+                // Const/imported `str` values can lower as borrowed/static Rust string shapes but still follow Incan
+                // owned-string semantics at call sites.
+                (_, Some(target_ty)) if is_owned_string_target(target_ty) && is_borrowed_string_like_type(&expr.ty) => {
+                    Conversion::ToString
+                }
+                // String literal to generic type param (e.g. assert_eq[T]) → owned String.
+                // Typechecker constrains `T`; this keeps Incan `str` semantics in generic calls.
+                (IrExprKind::String(_), Some(IrType::Generic(_))) => Conversion::ToString,
+                // Generic `T` instantiated with Incan `str` must still materialize to owned `String`.
+                (_, Some(IrType::Generic(_))) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
+                // String literal with unknown target (enum variants, etc.) → .to_string()
+                (IrExprKind::String(_), None) if string_literal_needs_owned_string(&expr.ty, target_ty) => {
+                    Conversion::ToString
+                }
+                // Const `str` values need the same owned-string materialization when the target is inferred.
+                (_, None) if borrowed_string_like_needs_owned_string(&expr.ty, target_ty) => Conversion::ToString,
+                // Borrowed method-chain results such as `box.as_ref()` must materialize owned values at Incan call
+                // boundaries.
+                _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
+                // Rust interop values that cross into an Incan `str` parameter should use Rust's Display/ToString
+                // boundary. This keeps callers from spelling `.to_string()` manually when matching on Rust errors.
+                _ if rust_value_needs_stringification(expr, target_ty) => Conversion::ToString,
+
+                // String variable to String param:
+                // - last-use read can move ownership directly
+                // - non-last-use read materializes owned String without consuming source
+                (IrExprKind::Var { access, .. }, Some(target_ty))
+                    if is_owned_string_target(target_ty) && matches!(expr.ty, IrType::String) =>
+                {
+                    match access {
+                        VarAccess::Move => Conversion::None,
+                        _ => Conversion::ToString,
+                    }
+                }
+                // Variable with non-Copy type (List, Dict, custom structs):
+                // - last-use read (`Move`) can transfer ownership
+                // - otherwise clone to preserve source usability
+                (IrExprKind::Var { access, .. }, _) if !expr.ty.is_copy() => match access {
+                    VarAccess::Move => Conversion::None,
+                    _ => Conversion::Clone,
+                },
+                // Field access with String type → .clone() to avoid moving from struct
+                (IrExprKind::Field { .. }, _) if matches!(expr.ty, IrType::String) => Conversion::Clone,
+                // Field access with non-Copy type (List, Dict, structs) → .clone()
+                (IrExprKind::Field { .. }, _) if !expr.ty.is_copy() => Conversion::Clone,
+                // Everything else passes as-is
+                _ => Conversion::None,
+            }
+        }
+
+        ConversionContext::IncanFunctionArgInReturn => {
+            // Inside a return statement, variables can be moved since there's no code after.
+            // This avoids unnecessary clones like `return merge(left.clone(), right.clone())`
+            match (&expr.kind, target_ty) {
+                // String literal → .to_string()
+                (IrExprKind::String(_), _) if string_literal_needs_owned_string(&expr.ty, target_ty) => {
+                    Conversion::ToString
+                }
+                (IrExprKind::StaticRead { .. }, _) if borrowed_string_like_needs_owned_string(&expr.ty, target_ty) => {
+                    Conversion::ToString
+                }
+                // Const/imported `str` values remain owned `str` at the Incan surface even inside return-context
+                // calls.
+                (_, _) if borrowed_string_like_needs_owned_string(&expr.ty, target_ty) => Conversion::ToString,
+                _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
+                _ if rust_value_needs_stringification(expr, target_ty) => Conversion::ToString,
+
+                // String variable to String param:
+                // - last-use read can move ownership directly
+                // - repeated reads in the same return expression must not consume early
+                (IrExprKind::Var { access, .. }, Some(target_ty))
+                    if is_owned_string_target(target_ty) && matches!(expr.ty, IrType::String) =>
+                {
+                    match access {
+                        VarAccess::Move => Conversion::None,
+                        _ => Conversion::ToString,
+                    }
+                }
+
+                // Non-Copy vars in return-context calls follow VarAccess:
+                // - Move => transfer ownership
+                // - Read/Borrow => preserve source via clone/borrow conversion
+                (IrExprKind::Var { access, .. }, _) if !expr.ty.is_copy() => match access {
+                    VarAccess::Move => Conversion::None,
+                    _ => Conversion::Clone,
+                },
+
+                // Copy vars can always pass by value.
+                (IrExprKind::Var { .. }, _) => Conversion::None,
+
+                // Field access still needs clone (we're borrowing from a struct)
+                (IrExprKind::Field { .. }, _) if !expr.ty.is_copy() => Conversion::Clone,
+
+                // Everything else passes as-is
+                _ => Conversion::None,
+            }
+        }
+
+        ConversionContext::ExternalFunctionArg => {
+            // External Rust functions/enum variants — use `.into()` for strings so the Rust compiler can resolve the
+            // target type via the `Into` trait. This handles crates that use custom string types (e.g., Polars'
+            // `PlSmallStr`) implementing `From<String>` / `From<&str>`.
+            match (&expr.kind, target_ty) {
+                // String literals → .into() (works for String, &str, PlSmallStr, and any From<&str>)
+                (IrExprKind::String(_), _) => Conversion::Into,
+                (IrExprKind::Literal(incan_ir::expr::Literal::StaticStr(_)), Some(_)) => Conversion::Into,
+                // String variables → borrow for external calls (&str param)
+                (IrExprKind::StaticRead { .. }, _) if matches!(expr.ty, IrType::StaticStr) => Conversion::Into,
+                (IrExprKind::Var { .. }, _) if matches!(expr.ty, IrType::StaticStr) => Conversion::Into,
+                (IrExprKind::Var { access, .. }, Some(target_ty))
+                    if is_owned_string_target(target_ty) && is_owned_string_type(&expr.ty) =>
+                {
+                    match access {
+                        VarAccess::Move => Conversion::None,
+                        _ => Conversion::Clone,
+                    }
+                }
+                (IrExprKind::Field { .. }, Some(target_ty))
+                    if is_owned_string_target(target_ty) && is_owned_string_type(&expr.ty) =>
+                {
+                    Conversion::Clone
+                }
+                (_, Some(IrType::StrRef)) if is_owned_string_type(&expr.ty) && !expr_has_rust_reference_shape(expr) => {
+                    Conversion::Borrow
+                }
+                (IrExprKind::Var { .. }, _) if is_owned_string_type(&expr.ty) => {
+                    if expr_has_rust_reference_shape(expr) {
+                        Conversion::None
+                    } else {
+                        Conversion::Borrow
+                    }
+                }
+                (IrExprKind::Field { .. }, None) if is_owned_string_type(&expr.ty) => {
+                    if expr_has_rust_reference_shape(expr) {
+                        Conversion::None
+                    } else {
+                        Conversion::Borrow
+                    }
+                }
+                // Borrowing when the target is unknown is a place-expression heuristic: it preserves a
+                // variable/field the caller still owns for a common `&str` external parameter shape. A
+                // `Call`/`MethodCall` result is a fresh temporary with nothing to preserve, and borrowing
+                // it can force a generic parameter elsewhere (e.g. a `HashMap::insert` key) into a
+                // reference type it was never meant to have. Exclude those kinds so the value passes
+                // through unmodified, matching how they were emitted before this call reached the general
+                // ownership plan at all.
+                (_, None)
+                    if is_owned_string_type(&expr.ty)
+                        && !expr_has_rust_reference_shape(expr)
+                        && !matches!(expr.kind, IrExprKind::Call { .. } | IrExprKind::MethodCall { .. }) =>
+                {
+                    Conversion::Borrow
+                }
+                (_, Some(IrType::Ref(_))) if !expr_has_rust_reference_shape(expr) => Conversion::Borrow,
+                (_, Some(IrType::RefMut(_))) if !expr_has_rust_reference_shape(expr) => Conversion::MutBorrow,
+                // Rust adapter leaves commonly accept borrowed handles (`&Sender<T>`, `&Mutex<T>`, ...).
+                // When metadata is unavailable, do not move non-Copy wrapper fields out of `&self`.
+                (IrExprKind::Field { .. }, None)
+                    if !expr.ty.is_copy() && field_access_reads_from_self_receiver(expr) =>
+                {
+                    Conversion::Borrow
+                }
+                // Everything else as-is (Rust's type system handles it)
+                _ => Conversion::None,
+            }
+        }
+
+        ConversionContext::StructField => determine_owned_storage_conversion(expr, target_ty, true),
+        ConversionContext::CollectionElement => determine_owned_storage_conversion(expr, target_ty, false),
+
+        ConversionContext::MethodArg => {
+            // Method arguments usually don't need conversion (Rust's Borrow trait)
+            Conversion::None
+        }
+
+        ConversionContext::Assignment => {
+            // A reference target is a borrowed sink, including when the source is an owned field. Resolve it before
+            // owned materialization rules so an explicit reference annotation cannot accidentally clone its source.
+            match (&expr.kind, target_ty) {
+                // Opaque Rust payloads already have a native representation that the frontend has not recovered.
+                // Preserve that shape rather than inventing a second borrow of a pattern-bound reference.
+                (_, Some(IrType::Ref(_) | IrType::RefMut(_))) if matches!(expr.ty, IrType::Unknown) => Conversion::None,
+                (_, Some(IrType::Ref(_))) => {
+                    if expr_has_rust_reference_shape(expr) {
+                        Conversion::None
+                    } else {
+                        Conversion::Borrow
+                    }
+                }
+                (_, Some(IrType::RefMut(_))) => {
+                    if expr_has_rust_reference_shape(expr) {
+                        Conversion::None
+                    } else {
+                        Conversion::MutBorrow
+                    }
+                }
+                // String literal assigned to String variable → .to_string()
+                (IrExprKind::String(_), Some(target_ty)) if is_owned_string_target(target_ty) => Conversion::ToString,
+                (IrExprKind::StaticRead { .. }, Some(target_ty))
+                    if (is_owned_string_target(target_ty) || matches!(target_ty, IrType::Generic(_)))
+                        && is_borrowed_string_like_type(&expr.ty) =>
+                {
+                    Conversion::ToString
+                }
+                (_, Some(target_ty)) if is_owned_string_target(target_ty) && is_borrowed_string_like_type(&expr.ty) => {
+                    Conversion::ToString
+                }
+                _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
+                // A Read marks a source binding that remains live after this owned assignment. Preserve compiler-owned
+                // values with the centralized clone policy, but never infer Clone for an opaque Rust boundary type.
+                // Owned Rust strings are the one interop shape whose Clone contract the compiler owns.
+                (IrExprKind::Var { access, .. }, _)
+                    if !expr.ty.is_copy()
+                        && ((!matches!(expr.ty, IrType::RustDisplay(_)) && !is_rust_path_value_type(&expr.ty))
+                            && !matches!(expr.ty, IrType::Unknown)
+                            || is_owned_string_type(&expr.ty)) =>
+                {
+                    match access {
+                        VarAccess::Move => Conversion::None,
+                        _ => Conversion::Clone,
+                    }
+                }
+                (IrExprKind::Field { .. }, _)
+                    if matches!(expr.ty, IrType::String) && field_read_needs_owned_materialization(expr) =>
+                {
+                    Conversion::Clone
+                }
+                (IrExprKind::Field { .. }, _) if !expr.ty.is_copy() && field_read_needs_owned_materialization(expr) => {
+                    Conversion::Clone
+                }
+                _ => Conversion::None,
+            }
+        }
+
+        ConversionContext::ReturnValue => {
+            // Return values must match function signature (owned)
+            match (&expr.kind, target_ty) {
+                // String literal returned when function returns String → .to_string()
+                (IrExprKind::String(_), Some(target_ty)) if is_owned_string_target(target_ty) => Conversion::ToString,
+                (IrExprKind::StaticRead { .. }, Some(target_ty))
+                    if is_owned_string_target(target_ty) && is_borrowed_string_like_type(&expr.ty) =>
+                {
+                    Conversion::ToString
+                }
+                (_, Some(target_ty)) if is_owned_string_target(target_ty) && is_borrowed_string_like_type(&expr.ty) => {
+                    Conversion::ToString
+                }
+                _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
+                // Non-Copy vars can move on last use; otherwise materialize an owned return value.
+                (IrExprKind::Var { access, .. }, _) if !expr.ty.is_copy() => match access {
+                    VarAccess::Move => Conversion::None,
+                    _ => Conversion::Clone,
+                },
+                // Field access returns borrowed data from the parent object; clone to satisfy owned return semantics.
+                (IrExprKind::Field { .. }, _) if !expr.ty.is_copy() => Conversion::Clone,
+                // Other cases: as-is
+                _ => Conversion::None,
+            }
+        }
+
+        ConversionContext::MatchScrutinee => {
+            // Rust `match` can consume its scrutinee. Preserve existing Incan-owned value semantics by cloning
+            // ordinary non-Copy locals when needed, but do not force `.clone()` onto Rust Result values whose Ok/Err
+            // payloads may be non-Clone (`std::fs::DirEntry`, `std::io::Error`, ...).
+            match (&expr.kind, &expr.ty) {
+                (IrExprKind::Var { .. }, IrType::Unknown) => Conversion::None,
+                (IrExprKind::Var { .. }, ty) if is_result_like_type(ty) => Conversion::None,
+                (IrExprKind::Var { access, .. }, _) if !expr.ty.is_copy() => match access {
+                    VarAccess::Move => Conversion::None,
+                    _ => Conversion::Clone,
+                },
+                (IrExprKind::Field { .. }, _) if !expr.ty.is_copy() => Conversion::Clone,
+                _ => Conversion::None,
+            }
+        }
+    }
+}
+
+/// Returns true when lowering/emission treats this Incan parameter like `name: &mut RustTy` rather than `mut name:
+/// RustTy` (small scalars).
+fn mut_param_passed_by_rust_mut_ref(ty: &IrType) -> bool {
+    !matches!(ty, IrType::Int | IrType::Float | IrType::Bool)
+}
+
+/// Returns true when mutable arguments should bypass Incan value materialization at call sites.
+///
+/// Mutable `str` parameters use `&mut String` in Rust but still need normal Incan argument conversions (e.g.
+/// `.to_string()` for literals).
+fn mut_param_skips_incan_value_conversions(ty: &IrType) -> bool {
+    !matches!(ty, IrType::Int | IrType::Float | IrType::Bool | IrType::String)
+}
+
+/// Predicate shared by call emission: mutable non-scalar parameters are reborrowed as `&mut T` at call sites.
+pub fn incan_mutable_param_passed_as_rust_mut_ref(param: &FunctionParam) -> bool {
+    param.mutability == Mutability::Mutable && mut_param_passed_by_rust_mut_ref(&param.ty)
+}
+
+/// Returns whether a mutable callee parameter preserves its existing Rust value at the call boundary.
+///
+/// Ordinary mutable aggregates are passed by mutable reference, while [`Mutability::OwnedMutable`] direct-Rust handles
+/// move their outer value once. Neither form may take Incan's usual clone or collection-materialization path.
+fn incan_mutable_param_skips_incan_value_conversions(param: &FunctionParam) -> bool {
+    matches!(param.mutability, Mutability::Mutable | Mutability::OwnedMutable)
+        && mut_param_skips_incan_value_conversions(&param.ty)
+}
+
+/// Like [`determine_conversion`], but uses callee parameter metadata when available.
+///
+/// For mutable aggregate parameters, codegen emits `&mut` of the binding. For owned mutable Rust handles, it moves the
+/// handle through the Incan call unchanged. In both cases, the generic Incan rule that clones non-copy locals on
+/// non-final reads would produce an invalid Rust call.
+pub fn determine_conversion_for_incan_call(
+    expr: &IrExpr,
+    target_ty: Option<&IrType>,
+    context: ConversionContext,
+    callee_param: Option<&FunctionParam>,
+) -> Conversion {
+    if matches!(
+        context,
+        ConversionContext::IncanFunctionArg | ConversionContext::IncanFunctionArgInReturn
+    ) {
+        match target_ty {
+            Some(IrType::Ref(_)) => match &expr.ty {
+                _ if expr_has_rust_reference_shape(expr) => return Conversion::None,
+                _ => return Conversion::Borrow,
+            },
+            Some(IrType::RefMut(_)) => match &expr.ty {
+                _ if expr_has_rust_reference_shape(expr) => return Conversion::None,
+                _ => return Conversion::MutBorrow,
+            },
+            _ => {}
+        }
+    }
+    if matches!(
+        context,
+        ConversionContext::IncanFunctionArg | ConversionContext::IncanFunctionArgInReturn
+    ) && callee_param.is_some_and(incan_mutable_param_skips_incan_value_conversions)
+    {
+        return Conversion::None;
+    }
+    determine_conversion(expr, target_ty, context)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incan_ir::decl::FunctionParam;
+    use incan_ir::expr::{IrStaticReferenceKind, MethodCallArgPolicy, VarAccess, VarRefKind};
+    use incan_ir::types::Mutability;
+
+    #[test]
+    fn string_addition_recognizes_canonical_rust_string_metadata_issue896() -> Result<(), Box<dyn std::error::Error>> {
+        let left = IrExpr::new(
+            IrExprKind::Var {
+                name: "out".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::String,
+        );
+
+        for right_ty in [
+            IrType::String,
+            IrType::Struct("String".to_string()),
+            IrType::Struct("std::string::String".to_string()),
+            IrType::Struct("alloc::string::String".to_string()),
+            IrType::NamedGeneric("String".to_string(), Vec::new()),
+            IrType::NamedGeneric("std::string::String".to_string(), Vec::new()),
+            IrType::NamedGeneric("alloc::string::String".to_string(), Vec::new()),
+            IrType::RustDisplay("String".to_string()),
+            IrType::RustDisplay("std::string::String".to_string()),
+            IrType::RustDisplay("alloc::string::String".to_string()),
+            IrType::RustDisplay("std::string::String<alloc::alloc::Global>".to_string()),
+            IrType::Ref(Box::new(IrType::String)),
+        ] {
+            let right = IrExpr::new(
+                IrExprKind::Call {
+                    func: Box::new(IrExpr::new(
+                        IrExprKind::Var {
+                            name: "slice".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::ExternalRustName,
+                        },
+                        IrType::Unknown,
+                    )),
+                    args: Vec::new(),
+                    type_args: Vec::new(),
+                    canonical_path: None,
+                    callable_signature: None,
+                },
+                right_ty.clone(),
+            );
+
+            let plan = determine_binop_plan(&BinOp::Add, &left, &right);
+            let BinOpEmitKind::StdlibCall { path, borrow_args } = plan.emit else {
+                return Err(format!(
+                    "canonical Rust string operands must use string-aware lowering, right={right_ty:?}"
+                )
+                .into());
+            };
+            assert_eq!(path.to_string(), "incan_stdlib :: strings :: str_concat");
+            assert!(borrow_args);
+            assert_eq!(plan.result_ty, IrType::String);
+        }
+
+        // Rust callback parameters retain an exact display instead of flowing through structured return metadata.
+        // Both sides of `x + x` therefore arrive as `RustDisplay(String)` in the lowering IR.
+        let callback_param = IrExpr::new(
+            IrExprKind::Var {
+                name: "x".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::RustDisplay("String".to_string()),
+        );
+        let callback_plan = determine_binop_plan(&BinOp::Add, &callback_param, &callback_param);
+        assert!(
+            matches!(callback_plan.emit, BinOpEmitKind::StdlibCall { borrow_args: true, .. }),
+            "a Rust Fn(String) closure body must lower x + x through str_concat"
+        );
+        Ok(())
+    }
+
+    // === IncanFunctionArg Tests ===
+
+    #[test]
+    fn test_incan_call_skips_clone_for_mutable_list_param_issue244() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "pending".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::List(Box::new(IrType::Int)),
+        );
+        let param = FunctionParam {
+            name: "pending".to_string(),
+            ty: IrType::List(Box::new(IrType::Int)),
+            mutability: Mutability::Mutable,
+            is_self: false,
+            kind: incan_frontend::ast::ParamKind::Normal,
+            default: None,
+        };
+        let conv = determine_conversion_for_incan_call(
+            &expr,
+            Some(&param.ty),
+            ConversionContext::IncanFunctionArg,
+            Some(&param),
+        );
+        assert_eq!(
+            conv,
+            Conversion::None,
+            "mutable aggregate args must not clone at call sites"
+        );
+    }
+
+    #[test]
+    fn test_incan_call_moves_owned_mutable_rust_handle() {
+        let items_ty = IrType::NamedGeneric(
+            "ProviderHandle".to_string(),
+            vec![IrType::Tuple(vec![
+                IrType::RefMut(Box::new(IrType::Int)),
+                IrType::RefMut(Box::new(IrType::Int)),
+            ])],
+        );
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "items".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            items_ty.clone(),
+        );
+        let param = FunctionParam {
+            name: "items".to_string(),
+            ty: items_ty,
+            mutability: Mutability::OwnedMutable,
+            is_self: false,
+            kind: incan_frontend::ast::ParamKind::Normal,
+            default: None,
+        };
+
+        let conversion = determine_conversion_for_incan_call(
+            &expr,
+            Some(&param.ty),
+            ConversionContext::IncanFunctionArg,
+            Some(&param),
+        );
+        assert_eq!(
+            conversion,
+            Conversion::None,
+            "an owned mutable Rust handle must move through an Incan adapter instead of requiring Clone"
+        );
+    }
+
+    #[test]
+    fn test_incan_call_keeps_string_conversion_for_mutable_string_param_issue244() {
+        let expr = IrExpr::new(IrExprKind::String("x".to_string()), IrType::String);
+        let param = FunctionParam {
+            name: "s".to_string(),
+            ty: IrType::String,
+            mutability: Mutability::Mutable,
+            is_self: false,
+            kind: incan_frontend::ast::ParamKind::Normal,
+            default: None,
+        };
+        let conv = determine_conversion_for_incan_call(
+            &expr,
+            Some(&param.ty),
+            ConversionContext::IncanFunctionArg,
+            Some(&param),
+        );
+        assert_eq!(
+            conv,
+            Conversion::ToString,
+            "mutable string params still require normal Incan string conversion"
+        );
+    }
+
+    #[test]
+    fn test_incan_function_string_literal_to_string() {
+        let expr = IrExpr::new(IrExprKind::String("test".to_string()), IrType::String);
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_incan_function_string_var_to_string() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "s".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::String,
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_incan_function_string_var_read_to_string() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "s".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::String,
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_incan_function_static_str_var_to_string() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "s".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::StaticBinding,
+            },
+            IrType::StaticStr,
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_incan_function_frozen_str_var_to_string() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "s".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::FrozenStr,
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_incan_function_frozen_str_literal_without_target_stays_frozen() {
+        let expr = IrExpr::new(IrExprKind::String("policy".to_string()), IrType::FrozenStr);
+
+        let conv = determine_conversion(&expr, None, ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_incan_function_frozen_str_static_read_without_target_stays_frozen() {
+        let expr = IrExpr::new(
+            IrExprKind::StaticRead {
+                name: "POLICY".to_string(),
+                reference_kind: IrStaticReferenceKind::Source,
+            },
+            IrType::FrozenStr,
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_incan_function_static_str_var_to_generic() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "s".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::StaticBinding,
+            },
+            IrType::StaticStr,
+        );
+        let target = IrType::Generic("T".to_string());
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_assignment_frozen_str_var_to_string() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "s".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::FrozenStr,
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::Assignment);
+        assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_incan_function_rust_path_value_to_string_param() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "err".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("std::io::Error".to_string()),
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::ToString,
+            "Rust interop values passed to Incan str parameters should stringify instead of cloning"
+        );
+    }
+
+    #[test]
+    fn test_incan_function_unknown_rust_payload_to_string_param() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "err".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Unknown,
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::ToString,
+            "Rust-inspected unknown payloads passed to Incan str parameters should stringify instead of cloning"
+        );
+    }
+
+    #[test]
+    fn test_incan_function_local_struct_to_string_param_does_not_stringify_implicitly() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "user".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("User".to_string()),
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::Clone,
+            "only Rust-path values should receive implicit ToString conversion for str parameters"
+        );
+    }
+
+    #[test]
+    fn test_incan_function_static_read_to_string() {
+        let expr = IrExpr::new(
+            IrExprKind::StaticRead {
+                name: "PREFIX".to_string(),
+                reference_kind: IrStaticReferenceKind::Source,
+            },
+            IrType::StaticStr,
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_incan_function_static_read_int_to_generic_stays_as_is() {
+        let expr = IrExpr::new(
+            IrExprKind::StaticRead {
+                name: "MARKER".to_string(),
+                reference_kind: IrStaticReferenceKind::Source,
+            },
+            IrType::Int,
+        );
+        let target = IrType::Generic("T".to_string());
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_incan_function_string_list_var_uses_owned_incan_semantics() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "items".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::List(Box::new(IrType::String)),
+        );
+        let target = IrType::List(Box::new(IrType::String));
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_incan_function_empty_list_to_string_list_skips_collect_conversion() {
+        let expr = IrExpr::new(IrExprKind::List(Vec::new()), IrType::List(Box::new(IrType::String)));
+        let target = IrType::List(Box::new(IrType::String));
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_incan_function_int_no_conversion() {
+        // Primitives implement Copy - no conversion needed
+        let expr = IrExpr::new(IrExprKind::Int(42), IrType::Int);
+        let target = IrType::Int;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_incan_function_float_no_conversion() {
+        // Primitives implement Copy - no conversion needed
+        let expr = IrExpr::new(IrExprKind::Float(std::f64::consts::PI), IrType::Float);
+        let target = IrType::Float;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_incan_function_bool_no_conversion() {
+        // Primitives implement Copy - no conversion needed
+        let expr = IrExpr::new(IrExprKind::Bool(true), IrType::Bool);
+        let target = IrType::Bool;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_incan_function_noncopy_var_last_use_moves() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "user".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("User".to_string()),
+        );
+        let target = IrType::Struct("User".to_string());
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_incan_function_noncopy_var_non_last_use_clones() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "user".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("User".to_string()),
+        );
+        let target = IrType::Struct("User".to_string());
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::Clone);
+    }
+
+    #[test]
+    fn test_assignment_static_str_to_string() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "prefix".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::StaticBinding,
+            },
+            IrType::StaticStr,
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::Assignment);
+        assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_assignment_static_read_int_stays_as_is() {
+        let expr = IrExpr::new(
+            IrExprKind::StaticRead {
+                name: "MARKER".to_string(),
+                reference_kind: IrStaticReferenceKind::Source,
+            },
+            IrType::Int,
+        );
+        let target = IrType::Int;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::Assignment);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_assignment_does_not_assume_opaque_rust_value_is_clone() {
+        for decoder_ty in [
+            IrType::Unknown,
+            IrType::Struct("zstd::stream::read::Decoder".to_string()),
+            IrType::RustDisplay("zstd::stream::read::Decoder<'a, R>".to_string()),
+        ] {
+            let expr = IrExpr::new(
+                IrExprKind::Var {
+                    name: "reader".to_string(),
+                    access: VarAccess::Read,
+                    ref_kind: VarRefKind::Value,
+                },
+                decoder_ty.clone(),
+            );
+
+            let conv = determine_conversion(&expr, Some(&decoder_ty), ConversionContext::Assignment);
+            assert_eq!(conv, Conversion::None);
+        }
+    }
+
+    #[test]
+    fn test_return_static_str_to_string() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "prefix".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::StaticBinding,
+            },
+            IrType::StaticStr,
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::ReturnValue);
+        assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_return_static_read_to_string() {
+        let expr = IrExpr::new(
+            IrExprKind::StaticRead {
+                name: "PREFIX".to_string(),
+                reference_kind: IrStaticReferenceKind::Source,
+            },
+            IrType::StaticStr,
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::ReturnValue);
+        assert_eq!(conv, Conversion::ToString);
+    }
+
+    // === ExternalFunctionArg Tests ===
+
+    #[test]
+    fn test_external_function_string_literal() {
+        // External Rust function args use `.into()` so the Rust compiler can resolve the target type via the `Into`
+        // trait — handles crates with custom string types (e.g., Polars' `PlSmallStr`) that implement `From<String>` or
+        // `From<&str>`.
+        let expr = IrExpr::new(IrExprKind::String("test".to_string()), IrType::String);
+
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(conv, Conversion::Into);
+    }
+
+    #[test]
+    fn test_external_function_string_var_borrow() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "s".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::String,
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(conv, Conversion::Borrow);
+    }
+
+    #[test]
+    fn test_external_function_string_method_call_result_unknown_target_stays_owned_issue1066() {
+        let receiver = IrExpr::new(
+            IrExprKind::Var {
+                name: "word".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::StrRef,
+        );
+        let expr = IrExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(receiver),
+                method: "to_string".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::String,
+        );
+
+        // The place-expression borrow heuristic above must not reach a `MethodCall` result: it is a fresh
+        // temporary with nothing to preserve, and borrowing it can force an unrelated generic parameter
+        // (e.g. a `HashMap::insert` key) into a reference type it was never meant to have.
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_external_function_string_expression_to_str_ref_borrows_issue716() {
+        let expr = IrExpr::new(IrExprKind::Format { parts: Vec::new() }, IrType::String);
+
+        let conv = determine_conversion(&expr, Some(&IrType::StrRef), ConversionContext::ExternalFunctionArg);
+        assert_eq!(conv, Conversion::Borrow);
+
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(conv, Conversion::Borrow);
+    }
+
+    #[test]
+    fn test_external_function_as_slice_arg_does_not_double_borrow() {
+        let expr = IrExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "data".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Bytes,
+                )),
+                method: "as_slice".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Bytes,
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::None,
+            "an explicit as_slice() argument is already a Rust borrow boundary"
+        );
+
+        let target = IrType::Ref(Box::new(IrType::Bytes));
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::ExternalFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::None,
+            "an explicit as_slice() argument must not become &&[u8] for ref targets"
+        );
+    }
+
+    #[test]
+    fn test_external_function_as_ref_arg_does_not_double_borrow() {
+        // Regression for a real downstream build failure: `array.as_ref()` on an `Arc<dyn Array>`-shaped receiver
+        // already yields `&dyn Array`, so passing it to an external function expecting `&dyn Array` must not wrap it
+        // in a second `&`, which would produce the uninstantiable `&&dyn Array`.
+        let expr = IrExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "array".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::NamedGeneric("Arc".to_string(), vec![IrType::Struct("dyn Array".to_string())]),
+                )),
+                method: "as_ref".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Struct("dyn Array".to_string()),
+        );
+
+        let target = IrType::Ref(Box::new(IrType::Struct("dyn Array".to_string())));
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::ExternalFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::None,
+            "an explicit as_ref() argument must not become &&dyn Array for ref targets"
+        );
+    }
+
+    #[test]
+    fn test_external_function_string_var_with_by_value_target_does_not_borrow() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "s".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::String,
+        );
+
+        let conv = determine_conversion(&expr, Some(&IrType::String), ConversionContext::ExternalFunctionArg);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_external_function_field_with_by_value_target_does_not_borrow() {
+        let rust_duration = IrType::Struct("std::time::Duration".to_string());
+        let expr = IrExpr::new(
+            IrExprKind::Field {
+                object: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "other".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("Duration".to_string()),
+                )),
+                field: "value".to_string(),
+            },
+            rust_duration.clone(),
+        );
+
+        let conv = determine_conversion(&expr, Some(&rust_duration), ConversionContext::ExternalFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::None,
+            "field-backed Rust values passed to by-value Rust params must not be borrowed"
+        );
+    }
+
+    #[test]
+    fn test_external_function_known_field_without_target_does_not_guess_borrow() {
+        let expr = IrExpr::new(
+            IrExprKind::Field {
+                object: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "other".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("Duration".to_string()),
+                )),
+                field: "value".to_string(),
+            },
+            IrType::Struct("std::time::Duration".to_string()),
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::None,
+            "known Rust field values must stay by-value when metadata is unavailable"
+        );
+    }
+
+    #[test]
+    fn test_external_function_string_field_without_target_borrows_like_string_variable() {
+        let expr = IrExpr::new(
+            IrExprKind::Field {
+                object: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "path".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("Path".to_string()),
+                )),
+                field: "0".to_string(),
+            },
+            IrType::String,
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::Borrow,
+            "metadata-free Rust calls should borrow string-backed field projections"
+        );
+    }
+
+    #[test]
+    fn test_external_function_self_field_without_target_borrows_noncopy_receiver_field() {
+        let expr = IrExpr::new(
+            IrExprKind::Field {
+                object: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "self".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("Sender".to_string()),
+                )),
+                field: "0".to_string(),
+            },
+            IrType::Struct("incan_stdlib::async::channel::Sender<T>".to_string()),
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::Borrow,
+            "metadata-free Rust calls must not move non-Copy wrapper fields out of &self"
+        );
+    }
+
+    #[test]
+    fn test_external_function_unknown_field_without_target_keeps_adapter_borrow_fallback() {
+        let expr = IrExpr::new(
+            IrExprKind::Field {
+                object: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "self".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("Wrapper".to_string()),
+                )),
+                field: "0".to_string(),
+            },
+            IrType::Unknown,
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(conv, Conversion::Borrow);
+    }
+
+    #[test]
+    fn test_external_function_field_with_ref_target_borrows() {
+        let rust_duration = IrType::Struct("std::time::Duration".to_string());
+        let expr = IrExpr::new(
+            IrExprKind::Field {
+                object: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "other".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("Duration".to_string()),
+                )),
+                field: "value".to_string(),
+            },
+            rust_duration.clone(),
+        );
+        let target = IrType::Ref(Box::new(rust_duration));
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::ExternalFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::Borrow,
+            "field-backed Rust values still borrow when metadata says the Rust param is by-reference"
+        );
+    }
+
+    #[test]
+    fn test_external_function_int_no_conversion() {
+        let expr = IrExpr::new(IrExprKind::Int(42), IrType::Int);
+
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    // === StructField Tests ===
+
+    #[test]
+    fn test_struct_field_string_literal() {
+        let expr = IrExpr::new(IrExprKind::String("Alice".to_string()), IrType::String);
+
+        let conv = determine_conversion(&expr, None, ConversionContext::StructField);
+        assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_struct_field_static_str_const_to_rust_string_targets() {
+        let expr = IrExpr::new(
+            IrExprKind::StaticRead {
+                name: "OPTION_NAME".to_string(),
+                reference_kind: IrStaticReferenceKind::Source,
+            },
+            IrType::StaticStr,
+        );
+        for target in [
+            IrType::Struct("String".to_string()),
+            IrType::Struct("std::string::String".to_string()),
+            IrType::Struct("alloc::string::String".to_string()),
+        ] {
+            let conv = determine_conversion(&expr, Some(&target), ConversionContext::StructField);
+            assert_eq!(conv, Conversion::ToString, "target={target:?}");
+        }
+    }
+
+    #[test]
+    fn test_struct_field_string_literal_to_rust_string_target() {
+        let expr = IrExpr::new(IrExprKind::String("Alice".to_string()), IrType::String);
+        let target = IrType::Struct("std::string::String".to_string());
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::StructField);
+        assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_unknown_struct_field_borrowed_string_const_materializes_owned_string() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "OPTION_NAME".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::FrozenStr,
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::StructField);
+        assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_unknown_collection_element_preserves_frozen_string_without_target() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "OPTION_NAME".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::FrozenStr,
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::CollectionElement);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_struct_field_int_no_conversion() {
+        let expr = IrExpr::new(IrExprKind::Int(30), IrType::Int);
+
+        let conv = determine_conversion(&expr, None, ConversionContext::StructField);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_struct_field_string_var_no_conversion() {
+        // String variables in struct fields are passed as-is (already owned)
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "name".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::String,
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::StructField);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    // === Assignment Tests ===
+
+    #[test]
+    fn reference_assignment_targets_take_precedence_over_owned_field_materialization() {
+        let item_ty = IrType::Struct("Node".to_string());
+        let field = IrExpr::new(
+            IrExprKind::Field {
+                object: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "self".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("Holder".to_string()),
+                )),
+                field: "item".to_string(),
+            },
+            item_ty.clone(),
+        );
+        for (target, expected) in [
+            (IrType::Ref(Box::new(item_ty.clone())), Conversion::Borrow),
+            (IrType::RefMut(Box::new(item_ty.clone())), Conversion::MutBorrow),
+            (item_ty, Conversion::Clone),
+        ] {
+            assert_eq!(
+                determine_conversion(&field, Some(&target), ConversionContext::Assignment),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn test_assignment_string_literal_to_string() {
+        let expr = IrExpr::new(IrExprKind::String("test".to_string()), IrType::String);
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::Assignment);
+        assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_assignment_int_no_conversion() {
+        let expr = IrExpr::new(IrExprKind::Int(42), IrType::Int);
+        let target = IrType::Int;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::Assignment);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn exact_float_destinations_require_finite_values_without_rejecting_f32_widening() {
+        let exact_f32 = IrType::Numeric(NumericTypeId::F32);
+        let exact_f64 = IrType::Numeric(NumericTypeId::F64);
+        let ordinary_float = IrExpr::new(IrExprKind::Float(1.25), IrType::Float);
+        let f32_value = IrExpr::new(IrExprKind::Float(1.25), exact_f32.clone());
+
+        assert_eq!(
+            determine_conversion(&ordinary_float, Some(&exact_f64), ConversionContext::ReturnValue),
+            Conversion::RequireFiniteF64
+        );
+        assert_eq!(
+            determine_conversion(&f32_value, Some(&exact_f64), ConversionContext::Assignment),
+            Conversion::RequireFiniteF64
+        );
+        assert_eq!(
+            determine_conversion(&f32_value, Some(&exact_f32), ConversionContext::IncanFunctionArg),
+            Conversion::RequireFiniteF32
+        );
+    }
+
+    #[test]
+    fn exact_float_arithmetic_plans_keep_width_and_validate_each_result() {
+        for (kind, expected_validation) in [
+            (NumericTypeId::F32, Conversion::RequireFiniteF32),
+            (NumericTypeId::F64, Conversion::RequireFiniteF64),
+        ] {
+            let exact = IrType::Numeric(kind);
+            let left = IrExpr::new(
+                IrExprKind::Var {
+                    name: "left".to_string(),
+                    access: VarAccess::Read,
+                    ref_kind: VarRefKind::Value,
+                },
+                exact.clone(),
+            );
+            let right = IrExpr::new(
+                IrExprKind::Var {
+                    name: "right".to_string(),
+                    access: VarAccess::Read,
+                    ref_kind: VarRefKind::Value,
+                },
+                exact.clone(),
+            );
+            for op in [
+                BinOp::Add,
+                BinOp::Sub,
+                BinOp::Mul,
+                BinOp::Div,
+                BinOp::FloorDiv,
+                BinOp::Mod,
+                BinOp::Pow,
+            ] {
+                let plan = determine_binop_plan(&op, &left, &right);
+                assert_eq!(plan.result_ty, exact, "{kind:?} plan lost its exact width for {op:?}");
+                assert_eq!(
+                    plan.result_validation(),
+                    expected_validation,
+                    "{kind:?} plan omitted finite validation for {op:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_f32_arithmetic_plans_widen_the_concrete_f32_operand() {
+        let operand = |name: &str, ty: IrType| {
+            IrExpr::new(
+                IrExprKind::Var {
+                    name: name.to_string(),
+                    access: VarAccess::Read,
+                    ref_kind: VarRefKind::Value,
+                },
+                ty,
+            )
+        };
+        let operations = [
+            BinOp::Add,
+            BinOp::Sub,
+            BinOp::Mul,
+            BinOp::Div,
+            BinOp::FloorDiv,
+            BinOp::Mod,
+            BinOp::Pow,
+        ];
+
+        for paired_ty in [IrType::Numeric(NumericTypeId::F64), IrType::Float, IrType::Int] {
+            let f32_value = operand("narrow", IrType::Numeric(NumericTypeId::F32));
+            let paired_value = operand("paired", paired_ty.clone());
+            for op in &operations {
+                let left_plan = determine_binop_plan(op, &f32_value, &paired_value);
+                assert_eq!(
+                    left_plan.result_ty,
+                    IrType::Float,
+                    "unexpected mixed result for {paired_ty:?} {op:?}"
+                );
+                assert_eq!(
+                    left_plan.lhs_conv,
+                    NumericConversion::ToFloat,
+                    "left f32 operand was not widened for {paired_ty:?} {op:?}"
+                );
+                if matches!(paired_ty, IrType::Int) {
+                    assert_eq!(
+                        left_plan.rhs_conv,
+                        NumericConversion::ToFloat,
+                        "integer paired with f32 was not widened for {op:?}"
+                    );
+                }
+
+                let right_plan = determine_binop_plan(op, &paired_value, &f32_value);
+                assert_eq!(
+                    right_plan.result_ty,
+                    IrType::Float,
+                    "unexpected reversed result for {paired_ty:?} {op:?}"
+                );
+                assert_eq!(
+                    right_plan.rhs_conv,
+                    NumericConversion::ToFloat,
+                    "right f32 operand was not widened for {paired_ty:?} {op:?}"
+                );
+                if matches!(paired_ty, IrType::Int) {
+                    assert_eq!(
+                        right_plan.lhs_conv,
+                        NumericConversion::ToFloat,
+                        "reversed integer paired with f32 was not widened for {op:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    // === ReturnValue Tests ===
+
+    #[test]
+    fn test_return_string_literal_to_string() {
+        let expr = IrExpr::new(IrExprKind::String("result".to_string()), IrType::String);
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::ReturnValue);
+        assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_return_int_no_conversion() {
+        let expr = IrExpr::new(IrExprKind::Int(42), IrType::Int);
+        let target = IrType::Int;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::ReturnValue);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_return_call_context_noncopy_var_read_clones() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "user".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("User".to_string()),
+        );
+        let target = IrType::Struct("User".to_string());
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArgInReturn);
+        assert_eq!(conv, Conversion::Clone);
+    }
+
+    #[test]
+    fn test_return_call_context_noncopy_var_move_stays_move() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "user".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("User".to_string()),
+        );
+        let target = IrType::Struct("User".to_string());
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArgInReturn);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_return_call_context_frozen_str_target_preserves_frozen_literal() {
+        let expr = IrExpr::new(IrExprKind::String("policy".to_string()), IrType::FrozenStr);
+
+        let conv = determine_conversion(
+            &expr,
+            Some(&IrType::FrozenStr),
+            ConversionContext::IncanFunctionArgInReturn,
+        );
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_incan_call_borrows_noncopy_var_for_ref_target() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "user".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("User".to_string()),
+        );
+        let target = IrType::Ref(Box::new(IrType::Struct("User".to_string())));
+
+        let conv = determine_conversion_for_incan_call(&expr, Some(&target), ConversionContext::IncanFunctionArg, None);
+        assert_eq!(conv, Conversion::Borrow);
+    }
+
+    #[test]
+    fn test_return_call_context_borrows_noncopy_var_for_ref_target() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "user".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("User".to_string()),
+        );
+        let target = IrType::Ref(Box::new(IrType::Struct("User".to_string())));
+
+        let conv = determine_conversion_for_incan_call(
+            &expr,
+            Some(&target),
+            ConversionContext::IncanFunctionArgInReturn,
+            None,
+        );
+        assert_eq!(conv, Conversion::Borrow);
+    }
+
+    #[test]
+    fn test_incan_call_clones_borrowed_as_ref_result_for_owned_nominal_target() {
+        let expr = IrExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "child".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::NamedGeneric("Box".to_string(), vec![IrType::Struct("Node".to_string())]),
+                )),
+                method: "as_ref".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: incan_ir::expr::MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        );
+        let target = IrType::Struct("Node".to_string());
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::Clone);
+    }
+
+    #[test]
+    fn test_incan_call_clones_borrowed_as_ref_result_when_target_is_unknown() {
+        let expr = IrExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "child".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::NamedGeneric("Box".to_string(), vec![IrType::Struct("Node".to_string())]),
+                )),
+                method: "as_ref".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: incan_ir::expr::MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::Clone);
+    }
+
+    #[test]
+    fn test_incan_call_clones_interop_unwrapped_as_ref_result_when_target_is_unknown() {
+        let inner = IrExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "child".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::NamedGeneric("Box".to_string(), vec![IrType::Struct("Node".to_string())]),
+                )),
+                method: "as_ref".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: incan_ir::expr::MethodCallArgPolicy::Default,
+            },
+            IrType::Ref(Box::new(IrType::Struct("Node".to_string()))),
+        );
+        let expr = IrExpr::new(
+            IrExprKind::InteropCoerce {
+                expr: Box::new(inner),
+                from_ty: IrType::Ref(Box::new(IrType::Struct("Node".to_string()))),
+                to_ty: IrType::Ref(Box::new(IrType::Struct("Node".to_string()))),
+                kind: incan_ir::expr::IrInteropCoercionKind::RustTypeUnwrap,
+            },
+            IrType::Ref(Box::new(IrType::Struct("Node".to_string()))),
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::Clone);
+    }
+
+    #[test]
+    fn test_incan_call_clones_erased_receiver_as_ref_result_when_target_is_unknown() {
+        let expr = IrExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "child".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Unknown,
+                )),
+                method: "as_ref".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: incan_ir::expr::MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::Clone);
+    }
+
+    #[test]
+    fn test_incan_call_clones_erased_receiver_as_ref_result_for_owned_nominal_target() {
+        let expr = IrExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "child".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Unknown,
+                )),
+                method: "as_ref".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: incan_ir::expr::MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        );
+        let target = IrType::Struct("Node".to_string());
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::Clone);
+    }
+
+    #[test]
+    fn test_assignment_clones_interop_unwrapped_string_field() {
+        let inner = IrExpr::new(
+            IrExprKind::Field {
+                object: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "assignment".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("ProjectionAssignment".to_string()),
+                )),
+                field: "output_name".to_string(),
+            },
+            IrType::String,
+        );
+        let expr = IrExpr::new(
+            IrExprKind::InteropCoerce {
+                expr: Box::new(inner),
+                from_ty: IrType::String,
+                to_ty: IrType::String,
+                kind: incan_ir::expr::IrInteropCoercionKind::RustTypeUnwrap,
+            },
+            IrType::String,
+        );
+
+        let conv = determine_conversion(&expr, Some(&IrType::String), ConversionContext::Assignment);
+        assert_eq!(conv, Conversion::Clone);
+    }
+
+    #[test]
+    fn test_assignment_moves_owned_tuple_unpack_field_without_clone() {
+        let expr = IrExpr::new(
+            IrExprKind::Field {
+                object: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "__incan_tuple_unpack_tx_rx".to_string(),
+                        access: VarAccess::Move,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Tuple(vec![
+                        IrType::Struct("Sender".to_string()),
+                        IrType::Struct("Receiver".to_string()),
+                    ]),
+                )),
+                field: "1".to_string(),
+            },
+            IrType::Struct("Receiver".to_string()),
+        );
+
+        let conv = determine_conversion(
+            &expr,
+            Some(&IrType::Struct("Receiver".to_string())),
+            ConversionContext::Assignment,
+        );
+        assert_eq!(conv, Conversion::None);
+    }
+
+    // === MethodArg Tests ===
+
+    #[test]
+    fn test_method_arg_no_conversion() {
+        // Method args rely on Rust's Borrow trait - no conversion needed
+        let expr = IrExpr::new(IrExprKind::String("test".to_string()), IrType::String);
+
+        let conv = determine_conversion(&expr, None, ConversionContext::MethodArg);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    // === Conversion Application Tests ===
+
+    #[test]
+    fn test_apply_none() {
+        let tokens = quote::quote! { value };
+        let result = Conversion::None.apply(tokens.clone());
+        assert_eq!(result.to_string(), tokens.to_string());
+    }
+
+    #[test]
+    fn test_apply_to_string() {
+        let tokens = quote::quote! { "test" };
+        let result = Conversion::ToString.apply(tokens);
+        assert_eq!(result.to_string(), "\"test\" . to_string ()");
+    }
+
+    #[test]
+    fn test_apply_borrow() {
+        let tokens = quote::quote! { value };
+        let result = Conversion::Borrow.apply(tokens);
+        assert_eq!(result.to_string(), "& value");
+    }
+
+    #[test]
+    fn test_apply_mut_borrow() {
+        let tokens = quote::quote! { value };
+        let result = Conversion::MutBorrow.apply(tokens);
+        assert_eq!(result.to_string(), "& mut value");
+    }
+
+    #[test]
+    fn test_apply_clone() {
+        let tokens = quote::quote! { value };
+        let result = Conversion::Clone.apply(tokens);
+        assert_eq!(result.to_string(), "value . clone ()");
+    }
+}

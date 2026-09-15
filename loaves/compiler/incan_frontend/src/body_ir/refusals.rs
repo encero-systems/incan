@@ -116,11 +116,11 @@ pub(super) fn unsupported_provider_operation(
 /// Short diagnostic label for an expression kind v0 does not lower.
 ///
 /// Only reached from [`BodyBuilder::lower_expr_to_operand`]'s fallback arm, so every expression kind that arm
-/// dispatches by name -- closures and partial callables since #1124, range values since #1165 -- is
-/// deliberately absent here. Async surface (`await`, `race for`) and vocab/scoped-DSL surface are named rather than
-/// left to the generic label, because a diagnostic reading only "expression" hides which one a program actually
-/// hit. The two are not the same kind of finding: async surface is remaining Body IR work under #1164, while a
-/// vocab node is a violation of [`build_body_ir_module_v0`]'s input contract (#1166).
+/// dispatches by name -- closures and partial callables since #1124, range values since #1165 -- is deliberately absent
+/// here. Async surface (`await`, `race for`) and vocab/scoped-DSL surface are named rather than left to the generic
+/// label, because a diagnostic reading only "expression" hides which one a program actually hit. The two are not the
+/// same kind of finding: async surface is remaining Body IR work under #1164, while a vocab node is a violation of
+/// [`build_body_ir_module_v0`]'s input contract (#1166).
 pub(super) fn unsupported_expr_label(expr: &ast::Expr) -> String {
     match expr {
         ast::Expr::Yield(_) => "yield expression".to_string(),
@@ -161,12 +161,11 @@ pub(super) fn surface_expr_label(payload: &ast::SurfaceExprPayload) -> String {
 /// [`BodyBuilder::bind_for_pattern_fields`].
 ///
 /// A tuple type reaches lowering in two spellings and both must be understood here. A tuple *literal* resolves to
-/// [`IncanType::Tuple`], while a written `tuple[A, B]` *annotation* resolves through the collection-type registry
-/// and therefore arrives as an [`IncanType::Generic`] whose base is that registry's canonical name. Matching only
-/// the first spelling silently degraded every element of an annotated tuple to `Unknown`, which in turn made each
-/// element read `Borrow` rather than its real Copy/non-Copy fact. The generic base is classified through
-/// [`collections::from_str`] rather than compared against a literal name, so the registry stays the single source
-/// of truth for that vocabulary.
+/// [`IncanType::Tuple`], while a written `tuple[A, B]` *annotation* resolves through the collection-type registry and
+/// therefore arrives as an [`IncanType::Generic`] whose base is that registry's canonical name. Matching only the first
+/// spelling silently degraded every element of an annotated tuple to `Unknown`, which in turn made each element read
+/// `Borrow` rather than its real Copy/non-Copy fact. The generic base is classified through [`collections::from_str`]
+/// rather than compared against a literal name, so the registry stays the single source of truth for that vocabulary.
 /// Why a statement-level destructure of `value_ty` into `arity` names cannot be lowered, or `None` when it can.
 ///
 /// The statement sibling of [`unsupported_for_pattern`], and it exempts the same two types for the same reason:
@@ -223,10 +222,9 @@ pub(super) fn tuple_type_elements(ty: &IncanType) -> Option<&[IncanType]> {
 /// Whether `pattern` is representable by [`bir::Pattern`]'s closed vocabulary. The only unrepresentable shape is a
 /// byte-string literal pattern: [`bir::Constant::Bytes`] represents byte *values*, but Body IR does not yet model
 /// byte-pattern matching semantics. Every other pattern shape lowers structurally, with [`IncanType::Unknown`]
-/// field-type fallbacks where needed rather than an outright failure (see
-/// [`BodyBuilder::lower_match_pattern`]'s own docs). Checked for every arm before [`BodyBuilder::lower_match`]
-/// lowers any of them, mirroring [`BodyBuilder::binary_op_is_supported`]'s "check before partially lowering"
-/// precedent.
+/// field-type fallbacks where needed rather than an outright failure (see [`BodyBuilder::lower_match_pattern`]'s own
+/// docs). Checked for every arm before [`BodyBuilder::lower_match`] lowers any of them, mirroring
+/// [`BodyBuilder::binary_op_is_supported`]'s "check before partially lowering" precedent.
 pub(super) fn match_pattern_is_supported(pattern: &ast::Pattern) -> bool {
     match pattern {
         ast::Pattern::Literal(ast::Literal::Bytes(_)) => false,
@@ -254,11 +252,11 @@ pub(super) fn match_pattern_is_supported(pattern: &ast::Pattern) -> bool {
 /// describing something that does not exist. The typechecker rejects that program first, so this is defence in
 /// depth for hand-built ASTs and for lowering that runs despite type errors, not the primary diagnostic.
 ///
-/// Two item types are exempt from the tuple requirement, mirroring `TypeChecker::define_for_pattern_bindings`
-/// exactly so the two stages cannot disagree about which programs are bindable.
-/// [`IncanType::Unknown`] is recovery-only: it means the type is unresolved, not proven non-tuple, so each element
-/// binds as `Unknown` just as [`tuple_element_types`] already falls back to. [`IncanType::Never`] is the bottom
-/// type, which the typechecker's own `types_compatible` treats as compatible with every type including a tuple.
+/// Two item types are exempt from the tuple requirement, mirroring `TypeChecker::define_for_pattern_bindings` exactly
+/// so the two stages cannot disagree about which programs are bindable. [`IncanType::Unknown`] is recovery-only: it
+/// means the type is unresolved, not proven non-tuple, so each element binds as `Unknown` just as
+/// [`tuple_element_types`] already falls back to. [`IncanType::Never`] is the bottom type, which the typechecker's own
+/// `types_compatible` treats as compatible with every type including a tuple.
 ///
 /// A bare [`IncanType::TypeVar`] is deliberately **not** exempt. An unconstrained `T` is known to be
 /// underdetermined rather than merely unknown, and can be instantiated as `int`; Incan has no tuple-shaped bound

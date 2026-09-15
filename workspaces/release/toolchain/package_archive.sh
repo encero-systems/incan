@@ -56,7 +56,7 @@ rustc_channel_version() {
 }
 
 # Clear ambient Cargo/rustc-wrapper state before an internal Cargo invocation, mirroring
-# `clear_inherited_cargo_environment` in src/oven/rustc.rs. This script's own `cargo metadata`
+# `clear_inherited_cargo_environment` in loaves/oven/oven_rustc/src/rustc.rs. This script's own `cargo metadata`
 # calls are the release support workspace's authority; they must not inherit CARGO_* state
 # (target dir, build jobs, an rustc wrapper meant for a different build, etc.) from an
 # already-running, possibly nested Cargo/toolchain-managed parent process such as `cargo test`.
@@ -313,7 +313,7 @@ publish = false
 path = "release-inspection-authority.rs"
 WORKSPACE
 printf '%s\n' '#![allow(dead_code)]' > "$package_dir/crates/release-inspection-authority.rs"
-git show HEAD:src/oven/fixtures/release_stdlib.toml \
+git show HEAD:loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml \
   | awk '
       /^\[rust-dependencies\]$/ {
         print "[dependencies]"

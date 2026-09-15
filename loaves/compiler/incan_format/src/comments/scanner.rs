@@ -11,8 +11,8 @@ pub(super) enum StringState {
 
 /// Count `#...` comments outside string literals.
 ///
-/// This supports a strict safety check for formatter output:
-/// if formatting would reduce comment count, we refuse to rewrite.
+/// This supports a strict safety check for formatter output: if formatting would reduce comment count, we refuse to
+/// rewrite.
 pub(super) fn count_line_comments(source: &str) -> usize {
     let mut state = StringState::None;
     let mut count = 0usize;

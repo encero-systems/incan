@@ -1,39 +1,72 @@
-//! Layering guardrails to prevent the compiler crate from depending on the runtime stdlib.
+//! Layering guardrails to prevent the compiler from depending on the runtime stdlib.
 //!
-//! The compiler (`incan` crate) may only use `incan_stdlib` as a **dev-dependency** (for parity tests).
-//! This test scans the root `Cargo.toml` and fails if `incan_stdlib` appears in `[dependencies]`.
+//! The compiler — the root `incan` crate and every crate under `loaves/compiler` and `loaves/kernel` — may only use
+//! `incan_stdlib` as a **dev-dependency** (for parity tests). This test scans those manifests and fails if
+//! `incan_stdlib` appears in `[dependencies]`.
+
+use std::path::{Path, PathBuf};
 
 use incan_core::lang::stdlib;
 
-#[test]
-fn compiler_does_not_depend_on_stdlib_in_main_dependencies() {
-    let manifest = include_str!("../Cargo.toml");
-    let mut in_dependencies = false;
+/// The root manifest plus every crate manifest in the compiler and kernel rings.
+fn compiler_manifests() -> Vec<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut manifests = vec![root.join("Cargo.toml")];
+    for ring in ["loaves/compiler", "loaves/kernel"] {
+        let Ok(entries) = std::fs::read_dir(root.join(ring)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let manifest = entry.path().join("Cargo.toml");
+            if manifest.is_file() {
+                manifests.push(manifest);
+            }
+        }
+    }
+    manifests.sort();
+    manifests
+}
 
+/// Return the `[dependencies]` lines of a manifest that name `incan_stdlib`, comments stripped.
+fn stdlib_runtime_dependencies(manifest: &str) -> Vec<String> {
+    let mut in_dependencies = false;
+    let mut offenders = Vec::new();
     for raw_line in manifest.lines() {
         let line = raw_line.trim();
         // Track when we enter/exit the `[dependencies]` table.
         if line.starts_with('[') {
-            if line == "[dependencies]" {
-                in_dependencies = true;
-                continue;
-            }
-            // Any new section after `[dependencies]` ends the scan window.
-            if in_dependencies {
-                break;
-            }
+            in_dependencies = line == "[dependencies]";
+            continue;
         }
-
         if !in_dependencies || line.is_empty() || line.starts_with('#') {
             continue;
         }
-
         // Strip inline comments for robustness.
         let line_no_comment = line.split('#').next().unwrap_or("").trim();
         if line_no_comment.starts_with("incan_stdlib") {
-            panic!("`incan_stdlib` must not appear in [dependencies]; use [dev-dependencies] instead");
+            offenders.push(line_no_comment.to_string());
         }
     }
+    offenders
+}
+
+#[test]
+fn compiler_does_not_depend_on_stdlib_in_main_dependencies() -> Result<(), Box<dyn std::error::Error>> {
+    let manifests = compiler_manifests();
+    assert!(
+        manifests.len() > 1,
+        "the compiler ring manifests were not found beside the root manifest"
+    );
+    for path in manifests {
+        let manifest = std::fs::read_to_string(&path)?;
+        let offenders = stdlib_runtime_dependencies(&manifest);
+        assert!(
+            offenders.is_empty(),
+            "{}: `incan_stdlib` must not appear in [dependencies]; use [dev-dependencies] instead: {offenders:?}",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 #[test]

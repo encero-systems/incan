@@ -1,0 +1,473 @@
+//! Emit Rust code for index, slice, and field access expressions.
+//!
+//! This module handles:
+//! - Index expressions (`list[i]`, `dict[k]`)
+//! - Slice expressions (`list[start:end]`)
+//! - Field access expressions (`obj.field`)
+//!
+//! ## Negative index handling
+//!
+//! Python-style negative indices are converted to `len() - offset` at emit time. This logic is shared across index
+//! expressions, lvalue emission, and assignment targets.
+
+use proc_macro2::TokenStream;
+use quote::{format_ident, quote};
+
+use super::super::{EmitError, IrEmitter};
+use incan_ir::expr::{IrExprKind, TypedExpr, UnaryOp, VarRefKind};
+use incan_ir::types::IrType;
+
+/// Normalize dictionary index probes to the borrow shape expected by runtime lookup helpers.
+///
+/// `Dict[str, V]` should accept borrowed string probes (`"x"`, `&str`, `String`) without forcing owned `String`
+/// materialization at every `dict[key]` read site. Non-string dictionaries keep the ordinary `&key` lookup shape.
+fn emit_dict_lookup_index_key(object: &TypedExpr, index: &TypedExpr, emitted: TokenStream) -> TokenStream {
+    match &object.ty {
+        IrType::Dict(key_ty, _)
+            if matches!(
+                key_ty.as_ref(),
+                IrType::String | IrType::StrRef | IrType::StaticStr | IrType::FrozenStr
+            ) =>
+        {
+            match &index.ty {
+                IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::StaticStr => emitted,
+                _ => quote! { <_ as AsRef<str>>::as_ref(&#emitted) },
+            }
+        }
+        _ => quote! { &#emitted },
+    }
+}
+
+impl<'a> IrEmitter<'a> {
+    /// Emit the stable source name for a function-typed value when the value points at a registered generated
+    /// function. Decorator lowering passes undecorated originals such as `__incan_original_sample`, but source-facing
+    /// metadata should still report `sample`.
+    fn emit_callable_name_expr(&self, object: &TypedExpr) -> Result<TokenStream, EmitError> {
+        let IrType::Function { params, ret } = &object.ty else {
+            return Ok(quote! { "<callable>".to_string() });
+        };
+        let Some(signature_key) = Self::callable_name_signature_key(params, ret) else {
+            return Ok(quote! { "<callable>".to_string() });
+        };
+        let callable = self.emit_expr(object)?;
+        let fn_ty = self.emit_callable_fn_type(params, ret);
+
+        let helper = Self::callable_name_helper_ident(&signature_key);
+        let mut helper_calls = Vec::new();
+        if self.local_callable_name_signature_keys().contains(&signature_key) {
+            helper_calls.push(quote! { #helper(__incan_callable) });
+        }
+        if let Some(resolution) = self.callable_name_resolutions.get(&signature_key) {
+            for module_path in &resolution.module_paths {
+                if module_path == &self.callable_name_current_module_path {
+                    continue;
+                }
+                let helper_path = self.emit_callable_name_helper_path(module_path, &signature_key);
+                helper_calls.push(quote! { #helper_path(__incan_callable) });
+            }
+        }
+        let fallback = proc_macro2::Literal::string("<callable>");
+        let mut resolved = quote! { #fallback.to_string() };
+        for helper_call in helper_calls.into_iter().rev() {
+            resolved = quote! {
+                if let Some(__incan_name) = #helper_call {
+                    __incan_name.to_string()
+                } else {
+                    #resolved
+                }
+            };
+        }
+
+        Ok(quote! {{
+            let __incan_callable: #fn_ty = #callable;
+            #resolved
+        }})
+    }
+
+    /// Emit a callable-name expression for a generic callable.
+    fn emit_generic_callable_name_expr(&self, object: &TypedExpr) -> Result<TokenStream, EmitError> {
+        let object = self.emit_expr(object)?;
+        Ok(quote! { __IncanCallableName::__incan_callable_name(&#object) })
+    }
+
+    /// Emit the path to a callable-name helper function.
+    pub(in crate::emit) fn emit_callable_name_helper_path(
+        &self,
+        module_path: &[String],
+        signature_key: &str,
+    ) -> TokenStream {
+        let helper = Self::callable_name_helper_ident(signature_key);
+        if module_path.is_empty() {
+            return quote! { crate::#helper };
+        }
+        let mut segments = vec![quote! { crate }];
+        for segment in module_path {
+            let ident = Self::rust_ident(segment);
+            segments.push(quote! { #ident });
+        }
+        segments.push(quote! { #helper });
+        let mut iter = segments.into_iter();
+        let first = iter.next().unwrap_or_else(|| quote! { crate });
+        iter.fold(first, |acc, segment| quote! { #acc :: #segment })
+    }
+
+    /// Emit an index expression.
+    ///
+    /// Handles `list[i]` and `dict[k]` access with:
+    /// - Negative index conversion (Python-style)
+    /// - Clone insertion for non-Copy types
+    /// - Type-aware bracket vs method access
+    pub(in super::super) fn emit_index_expr(
+        &self,
+        object: &TypedExpr,
+        index: &TypedExpr,
+    ) -> Result<TokenStream, EmitError> {
+        if Self::expr_is_storage_rooted(object) {
+            let rewritten = Self::rewrite_storage_root_expr(
+                &TypedExpr::new(
+                    IrExprKind::Index {
+                        object: Box::new(object.clone()),
+                        index: Box::new(index.clone()),
+                    },
+                    match &object.ty {
+                        IrType::List(elem) => (**elem).clone(),
+                        IrType::Dict(_, value) => (**value).clone(),
+                        _ => IrType::Unknown,
+                    },
+                ),
+                "__incan_static_value",
+            );
+            let inner = self.emit_expr(&rewritten)?;
+            return self.emit_storage_with_ref(object, quote! { (#inner).clone() });
+        }
+
+        let o = self.emit_expr(object)?;
+        let obj_ty = match &object.ty {
+            IrType::Ref(inner) | IrType::RefMut(inner) => inner.as_ref(),
+            other => other,
+        };
+
+        // Strings: delegate to stdlib helper (Unicode-scalar indexing with bounds/negative support).
+        if matches!(
+            obj_ty,
+            IrType::String | IrType::FrozenStr | IrType::StaticStr | IrType::StrRef
+        ) {
+            let idx_tokens = self.emit_expr(index)?;
+            return Ok(quote! { incan_stdlib::strings::str_index(&#o, (#idx_tokens) as i64) });
+        }
+
+        match obj_ty {
+            IrType::Dict(_, v) => {
+                let i = self.emit_expr(index)?;
+                let key = emit_dict_lookup_index_key(object, index, i);
+                if v.is_copy() {
+                    Ok(quote! { *incan_stdlib::collections::dict_get(&#o, #key) })
+                } else {
+                    Ok(quote! { incan_stdlib::collections::dict_get(&#o, #key).clone() })
+                }
+            }
+            IrType::List(elem) => {
+                let idx_tokens = self.emit_expr(index)?;
+                let idx_i64 = quote! { (#idx_tokens) as i64 };
+                if elem.is_copy() {
+                    Ok(quote! { *incan_stdlib::collections::list_get(&#o, #idx_i64) })
+                } else {
+                    Ok(quote! { incan_stdlib::collections::list_get(&#o, #idx_i64).clone() })
+                }
+            }
+            // Fallback for unknown/unsupported index targets.
+            //
+            // Keep this path total for external/unknown receivers that do not yet have a safe helper-backed route.
+            // Known typed list/dict/string surfaces must use the canonical stdlib helpers above.
+            _ => {
+                let index_expr = self.emit_index_with_negative_handling(object, index, &o)?;
+                match obj_ty {
+                    IrType::Unknown => Ok(quote! { #o[#index_expr].clone() }),
+                    _ => Ok(quote! { #o[#index_expr] }),
+                }
+            }
+        }
+    }
+
+    /// Emit a slice expression.
+    ///
+    /// Handles `list[start:end]` → `list[start..end].to_vec()`.
+    pub(in super::super) fn emit_slice_expr(
+        &self,
+        target: &TypedExpr,
+        start: &Option<Box<TypedExpr>>,
+        end: &Option<Box<TypedExpr>>,
+        step: &Option<Box<TypedExpr>>,
+    ) -> Result<TokenStream, EmitError> {
+        let t_raw = self.emit_expr(target)?;
+
+        // Distinguish string vs list slices to honor Unicode-scalar policy for strings.
+        let obj_ty = match &target.ty {
+            IrType::Ref(inner) | IrType::RefMut(inner) => inner.as_ref(),
+            other => other,
+        };
+
+        if matches!(
+            obj_ty,
+            IrType::String | IrType::FrozenStr | IrType::StaticStr | IrType::StrRef
+        ) {
+            // Strings: delegate to stdlib, which calls into incan_core for policy/alignment.
+            let s_tokens = quote! { #t_raw };
+            let start_expr = if let Some(s) = start {
+                let s_tokens = self.emit_expr(s)?;
+                quote! { Some((#s_tokens) as i64) }
+            } else {
+                quote! { None }
+            };
+            let end_expr = if let Some(e) = end {
+                let e_tokens = self.emit_expr(e)?;
+                quote! { Some((#e_tokens) as i64) }
+            } else {
+                quote! { None }
+            };
+            let step_expr = if let Some(st) = step {
+                let st_tokens = self.emit_expr(st)?;
+                quote! { Some((#st_tokens) as i64) }
+            } else {
+                quote! { None }
+            };
+            return Ok(quote! { incan_stdlib::strings::str_slice(&#s_tokens, #start_expr, #end_expr, #step_expr) });
+        }
+
+        // Lists/other: use stdlib helper for Python-like semantics (negative indices, clamping, step, step==0 error).
+        let start_expr = if let Some(s) = start {
+            let s_tokens = self.emit_expr(s)?;
+            quote! { Some((#s_tokens) as i64) }
+        } else {
+            quote! { None }
+        };
+
+        let end_expr = if let Some(e) = end {
+            let e_tokens = self.emit_expr(e)?;
+            quote! { Some((#e_tokens) as i64) }
+        } else {
+            quote! { None }
+        };
+
+        let step_expr = if let Some(st) = step {
+            let st_tokens = self.emit_expr(st)?;
+            quote! { Some((#st_tokens) as i64) }
+        } else {
+            quote! { None }
+        };
+
+        Ok(quote! { incan_stdlib::collections::list_slice(&#t_raw, #start_expr, #end_expr, #step_expr) })
+    }
+
+    /// Emit a field access expression.
+    ///
+    /// Handles:
+    /// - Enum variant access (`Type.Variant` → `Type::Variant`)
+    /// - Tuple field access (`tuple.0` → `tuple.0`)
+    /// - Regular struct field access (`obj.field` → `obj.field`)
+    pub(in super::super) fn emit_field_expr(&self, object: &TypedExpr, field: &str) -> Result<TokenStream, EmitError> {
+        if field == "__name__" {
+            return match object.ty {
+                IrType::Function { .. } => self.emit_callable_name_expr(object),
+                IrType::Generic(_) => self.emit_generic_callable_name_expr(object),
+                _ => Ok(quote! { "<callable>".to_string() }),
+            };
+        }
+
+        if Self::expr_is_storage_rooted(object) {
+            let rewritten = Self::rewrite_storage_root_expr(
+                &TypedExpr::new(
+                    IrExprKind::Field {
+                        object: Box::new(object.clone()),
+                        field: field.to_string(),
+                    },
+                    IrType::Unknown,
+                ),
+                "__incan_static_value",
+            );
+            let inner = self.emit_expr(&rewritten)?;
+            return self.emit_storage_with_ref(object, quote! { (#inner).clone() });
+        }
+
+        // Check if this is an enum variant access using the actual enum registry, not capitalization heuristics
+        if let IrExprKind::Var { name, .. } = &object.kind {
+            let key = (name.to_string(), field.to_string());
+            let canonical_field = self.enum_variant_aliases.get(&key).map(String::as_str).unwrap_or(field);
+            let canonical_key = (name.to_string(), canonical_field.to_string());
+            if self.enum_variant_fields.contains_key(&canonical_key) {
+                let type_ident = if *self.qualify_internal_canonical_paths.borrow()
+                    && let Some(path) = self.emit_dependency_type_path(name)
+                {
+                    path
+                } else {
+                    let ident = format_ident!("{}", name);
+                    quote! { #ident }
+                };
+                let f = Self::rust_ident(canonical_field);
+                return Ok(quote! { #type_ident::#f });
+            }
+            if Self::expr_is_type_like(object) {
+                let type_ident = if *self.qualify_internal_canonical_paths.borrow()
+                    && let Some(path) = self.emit_dependency_type_path(name)
+                {
+                    path
+                } else {
+                    let ident = format_ident!("{}", name);
+                    quote! { #ident }
+                };
+                let f = Self::rust_ident(field);
+                return Ok(quote! { #type_ident::#f });
+            }
+        }
+        if let Some(path) = Self::type_like_field_path(object, field) {
+            return Ok(path);
+        }
+
+        let o = self.emit_expr(object)?;
+        // Check if field is a numeric index (tuple access)
+        if field.chars().all(|c| c.is_ascii_digit()) {
+            let idx: syn::Index = field
+                .parse::<usize>()
+                .map(syn::Index::from)
+                .unwrap_or_else(|_| syn::Index::from(0));
+            Ok(quote! { #o.#idx })
+        } else {
+            let f = Self::rust_ident(field);
+            Ok(quote! { #o.#f })
+        }
+    }
+
+    /// Emit a field chain rooted in a module-like symbol as a Rust path.
+    fn type_like_field_path(object: &TypedExpr, field: &str) -> Option<TokenStream> {
+        let mut segments = Self::type_like_field_segments(object)?;
+        segments.push(field.to_string());
+        let mut emitted = segments.into_iter().map(|segment| {
+            let ident = Self::rust_ident(&segment);
+            quote! { #ident }
+        });
+        let first = emitted.next()?;
+        Some(emitted.fold(first, |acc, segment| quote! { #acc::#segment }))
+    }
+
+    /// Return the path segments for a field chain rooted in a module-like symbol.
+    fn type_like_field_segments(expr: &TypedExpr) -> Option<Vec<String>> {
+        match &expr.kind {
+            IrExprKind::Var {
+                name,
+                ref_kind: VarRefKind::ExternalName | VarRefKind::ExternalRustName,
+                ..
+            } => Some(vec![name.clone()]),
+            IrExprKind::Field { object, field } => {
+                let mut segments = Self::type_like_field_segments(object)?;
+                segments.push(field.clone());
+                Some(segments)
+            }
+            _ => None,
+        }
+    }
+
+    /// Helper: emit an index expression with negative-index handling.
+    ///
+    /// Converts Python-style negative indices to `len() - offset`. This helper is used by both `emit_index_expr` and
+    /// lvalue emission.
+    pub(in super::super) fn emit_index_with_negative_handling(
+        &self,
+        _object: &TypedExpr,
+        index: &TypedExpr,
+        obj_tokens: &TokenStream,
+    ) -> Result<TokenStream, EmitError> {
+        match &index.kind {
+            IrExprKind::Int(n) if *n < 0 => {
+                let offset = n.abs();
+                Ok(quote! { #obj_tokens.len() - #offset })
+            }
+            IrExprKind::UnaryOp {
+                op: UnaryOp::Neg,
+                operand,
+            } => {
+                if let IrExprKind::Int(n) = &operand.kind {
+                    Ok(quote! { #obj_tokens.len() - #n })
+                } else {
+                    let i = self.emit_expr(operand)?;
+                    Ok(quote! { #obj_tokens.len() - (#i) as usize })
+                }
+            }
+            _ => {
+                let i = self.emit_expr(index)?;
+                match &index.ty {
+                    IrType::Int | IrType::Unknown => Ok(quote! { (#i) as usize }),
+                    _ => Ok(i),
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incan_ir::FunctionRegistry;
+    use incan_ir::expr::VarAccess;
+
+    fn render(tokens: TokenStream) -> String {
+        tokens.to_string().replace(' ', "")
+    }
+
+    fn module_ref(name: &str) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::Var {
+                name: name.to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::ExternalName,
+            },
+            IrType::Unknown,
+        )
+    }
+
+    fn type_ref(name: &str) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::Var {
+                name: name.to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::TypeName,
+            },
+            IrType::Unknown,
+        )
+    }
+
+    #[test]
+    fn module_field_chain_emits_as_path() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let object = TypedExpr::new(
+            IrExprKind::Field {
+                object: Box::new(module_ref("querykit")),
+                field: "helpers".to_string(),
+            },
+            IrType::Unknown,
+        );
+
+        let emitted = emitter.emit_field_expr(&object, "DEFAULT_LABEL")?;
+
+        assert_eq!(render(emitted), "querykit::helpers::DEFAULT_LABEL");
+        Ok(())
+    }
+
+    #[test]
+    fn associated_value_field_chain_keeps_value_field_access() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let object = TypedExpr::new(
+            IrExprKind::Field {
+                object: Box::new(type_ref("Widget")),
+                field: "DEFAULT".to_string(),
+            },
+            IrType::Unknown,
+        );
+
+        let emitted = emitter.emit_field_expr(&object, "name")?;
+
+        assert_eq!(render(emitted), "Widget::DEFAULT.name");
+        Ok(())
+    }
+}

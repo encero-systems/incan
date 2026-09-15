@@ -30,8 +30,9 @@ pub mod lockfile;
 pub mod lsp;
 pub use oven_model::manifest;
 pub mod numeric;
-pub mod numeric_adapters;
+pub use incan_ir::numeric_adapters;
 pub mod oven;
+pub mod oven_facet;
 pub use oven_model::oven_interop;
 pub use oven_model::project_lifecycle;
 pub mod provider;
@@ -39,7 +40,6 @@ pub mod replacement_compatibility;
 #[cfg(feature = "rust_inspect")]
 pub mod rust_inspect;
 pub use incan_core::version;
-pub(crate) use incan_frontend::semantics_registry;
 pub(crate) use oven_model::toolchain_layout;
 pub use oven_model::workspace;
 

@@ -1257,7 +1257,7 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         "INCAN_TEST_LOAF_TOOLCHAIN=${{ matrix.toolchain }}",
         "INCAN_TEST_SUITE_TOOLCHAIN=${{ matrix.toolchain }}",
         "test-prewarm-oven-release-loafs",
-        "src/oven/fixtures/release_core.incn",
+        "loaves/oven/oven_rustc/src/fixtures/release_core.incn",
         "target/oven-alpha-release-toolchain/bin/incan",
     ] {
         assert!(
@@ -1371,7 +1371,11 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         .lines()
         .filter(|line| line.contains("cargo test"))
         .collect::<Vec<_>>();
-    assert_eq!(focused_cargo_tests.len(), 4);
+    assert_eq!(
+        focused_cargo_tests.len(),
+        5,
+        "the focused Oven target runs the Oven crates' unit tests, the CLI's Oven tests, and the three named roots"
+    );
     assert!(
         focused_cargo_tests
             .iter()

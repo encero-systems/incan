@@ -514,6 +514,7 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 .PHONY: test-oven-focused
 test-oven-focused:
 	@echo "\033[1mRunning focused Oven and Loaf regression tests...\033[0m"
+	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked -p oven_model -p oven_store -p oven_rustc
 	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked --lib oven::
 	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked --test cli_interop_target_tests \
 		lock_records_oven_interop_requirements_and_detects_input_drift -- --exact
@@ -577,8 +578,8 @@ test-oven-release-smoke: test-prewarm-oven-release-loafs
 			if [ -n "$$test_source" ]; then (cd "$$project_root" && run_project_incan test "$$test_source"); fi; \
 		done; \
 		for command in build run test; do \
-			source="$(CURDIR)/src/oven/fixtures/release_core.incn"; \
-			if [ "$$command" = test ]; then source="$(CURDIR)/src/oven/fixtures/test_release_core.incn"; fi; \
+			source="$(CURDIR)/loaves/oven/oven_rustc/src/fixtures/release_core.incn"; \
+			if [ "$$command" = test ]; then source="$(CURDIR)/loaves/oven/oven_rustc/src/fixtures/test_release_core.incn"; fi; \
 			run_incan "$$command" "$$source"; \
 		done; \
 		test ! -s "$$smoke_root/cargo-guard/invocations.log"

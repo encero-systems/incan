@@ -6928,8 +6928,8 @@ def f(payload: DemoPayload) -> Container:
     Ok(())
 }
 
-/// Field access on a Rust type that isn't a known inherent associated function should be permissive
-/// (metadata only covers inherent methods, not consts, type aliases, or trait-provided items).
+/// Field access on a Rust type that isn't a known inherent associated function should be permissive (metadata only
+/// covers inherent methods, not consts, type aliases, or trait-provided items).
 #[test]
 fn test_rust_path_field_access_permissive_when_not_module() {
     let source = r#"
@@ -6941,8 +6941,8 @@ def f() -> None:
     assert_check_ok(source);
 }
 
-/// Method calls on Rust types where the specific method isn't in inherent metadata
-/// should be permissive (trait-provided or extension methods aren't extracted yet).
+/// Method calls on Rust types where the specific method isn't in inherent metadata should be permissive (trait-provided
+/// or extension methods aren't extracted yet).
 #[test]
 fn test_rust_path_method_call_permissive_for_unextracted_methods() {
     let source = r#"
@@ -7037,9 +7037,9 @@ fn test_structural_coercion_list_str_to_vec_string() {
     );
 }
 
-/// `maybe_record_rusttype_return_coercion` is metadata-driven; without the `rust-inspect`
-/// feature the cache is empty and the helper is a no-op.  The test below exercises the
-/// *non-metadata* path to assert that the coercion map stays empty (no false positives).
+/// `maybe_record_rusttype_return_coercion` is metadata-driven; without the `rust-inspect` feature the cache is empty
+/// and the helper is a no-op. The test below exercises the *non-metadata* path to assert that the coercion map stays
+/// empty (no false positives).
 #[test]
 fn test_rusttype_return_coercion_no_false_positive_without_metadata() {
     // Declare a rusttype whose underlying path has no metadata loaded.

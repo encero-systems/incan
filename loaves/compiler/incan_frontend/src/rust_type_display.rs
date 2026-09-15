@@ -13,10 +13,10 @@ pub const PROVIDER_RUST_BRIDGE_MODULE: &str = "__incan_provider_rust";
 /// Build the physical module route from an importing library through each admitted bridge hop to an owner.
 ///
 /// One bridge segment precedes each dependency crossed, so a transitive facade renders every hop it actually went
-/// through rather than collapsing to the final owner. Callers differ only in the prefix they put in front --
-/// `::` for a Rust path, `pub::` for a typechecker binding key -- so the segments are built here and the prefix
-/// stays at the call site. Two callers previously grew their own copy of this loop and were reconciled afterwards
-/// by stripping one prefix to produce the other, which meant the convention lived in three places at once.
+/// through rather than collapsing to the final owner. Callers differ only in the prefix they put in front -- `::` for a
+/// Rust path, `pub::` for a typechecker binding key -- so the segments are built here and the prefix stays at the call
+/// site. Two callers previously grew their own copy of this loop and were reconciled afterwards by stripping one prefix
+/// to produce the other, which meant the convention lived in three places at once.
 pub fn provider_bridge_route(library: &str, dependencies: impl IntoIterator<Item = String>) -> Vec<String> {
     let mut route = vec![library.to_string()];
     for dependency in dependencies {

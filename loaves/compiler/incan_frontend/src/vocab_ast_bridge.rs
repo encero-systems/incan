@@ -1,7 +1,7 @@
 //! Adapter layer between compiler-internal AST and public `incan_vocab` AST.
 //!
-//! This module is the single boundary where compiler-internal AST types are translated to/from the
-//! stable public AST contract exposed by `incan_vocab`.
+//! This module is the single boundary where compiler-internal AST types are translated to/from the stable public AST
+//! contract exposed by `incan_vocab`.
 //!
 //! Design goals:
 //! - keep `incan_vocab` types from leaking throughout frontend/typechecker/lowering internals
@@ -395,8 +395,7 @@ fn try_internal_field_set(
 /// # Errors
 ///
 /// Returns [`VocabAstBridgeError::UnsupportedInternalStatement`] or
-/// [`VocabAstBridgeError::UnsupportedInternalExpression`] when a shape cannot be represented in the
-/// current public AST.
+/// [`VocabAstBridgeError::UnsupportedInternalExpression`] when a shape cannot be represented in the current public AST.
 pub fn internal_statement_to_public(stmt: &ast::Statement) -> Result<incan_vocab::IncanStatement, VocabAstBridgeError> {
     match stmt {
         ast::Statement::Pass => Ok(incan_vocab::IncanStatement::Pass),
@@ -658,8 +657,8 @@ fn public_statements_to_internal_with_spans(
 ///
 /// # Errors
 ///
-/// Returns [`VocabAstBridgeError`] when the public statement (or any contained expression) does not
-/// currently have a supported internal mapping.
+/// Returns [`VocabAstBridgeError`] when the public statement (or any contained expression) does not currently have a
+/// supported internal mapping.
 pub fn public_statement_to_internal(stmt: &incan_vocab::IncanStatement) -> Result<ast::Statement, VocabAstBridgeError> {
     let mut spans = SyntheticSpanAllocator::new(ast::Span::default());
     public_statement_to_internal_with_spans(stmt, &mut spans)

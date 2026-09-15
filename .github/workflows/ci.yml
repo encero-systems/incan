@@ -206,7 +206,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: incan-oven-pr-sources-v1-${{ matrix.toolchain }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'src/oven/fixtures/release_stdlib.toml') }}
+          key: incan-oven-pr-sources-v1-${{ matrix.toolchain }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml') }}
           restore-keys: |
             incan-oven-pr-sources-v1-${{ matrix.toolchain }}-${{ runner.os }}-${{ runner.arch }}-
       - name: Fetch locked compiler and Loaf publisher sources
@@ -249,7 +249,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'src/oven/fixtures/release_stdlib.toml') }}
+          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml') }}
           restore-keys: |
             incan-oven-pr-sources-v1-1.98.0-Linux-X64-
       - name: Fetch locked compiler and Loaf publisher sources
@@ -378,7 +378,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'src/oven/fixtures/release_stdlib.toml') }}
+          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml') }}
           restore-keys: |
             incan-oven-pr-sources-v1-1.98.0-Linux-X64-
       - name: Fetch locked compiler sources
@@ -415,7 +415,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'src/oven/fixtures/release_stdlib.toml') }}
+          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml') }}
           restore-keys: |
             incan-oven-pr-sources-v1-1.98.0-Linux-X64-
       - name: Fetch locked compiler and Loaf publisher sources
@@ -465,7 +465,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'src/oven/fixtures/release_stdlib.toml') }}
+          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml') }}
           restore-keys: |
             incan-oven-pr-sources-v1-1.98.0-Linux-X64-
       - name: Fetch locked compiler and Loaf publisher sources
@@ -527,7 +527,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'src/oven/fixtures/release_stdlib.toml') }}
+          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml') }}
           restore-keys: |
             incan-oven-pr-sources-v1-1.98.0-Linux-X64-
       - name: Fetch locked compiler sources
@@ -563,7 +563,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'src/oven/fixtures/release_stdlib.toml') }}
+          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml') }}
           restore-keys: |
             incan-oven-pr-sources-v1-1.98.0-Linux-X64-
       - name: Fetch locked compiler and Loaf publisher sources
@@ -639,7 +639,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'src/oven/fixtures/release_stdlib.toml') }}
+          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml') }}
           restore-keys: |
             incan-oven-pr-sources-v1-1.98.0-Linux-X64-
       - name: Fetch locked compiler and Loaf publisher sources
@@ -823,7 +823,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'src/oven/fixtures/release_stdlib.toml') }}
+          key: incan-oven-pr-sources-v1-1.98.0-Linux-X64-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock', 'loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml') }}
           restore-keys: |
             incan-oven-pr-sources-v1-1.98.0-Linux-X64-
       - name: Fetch locked compiler and Loaf publisher sources

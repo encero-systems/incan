@@ -13,4 +13,4 @@ AST-to-IR lowering and the IR type definitions.
 
 `kernel`, `incan_frontend`
 
-This directory is a layout skeleton. It holds no code yet; `src/` is a placeholder for the conventional crate root.
+The IR type modules, `lower/`, the IR-side numeric adapters and the analyses that read only the IR (`borrow_inference`, the scanners) live here; the IR→manifest type projection came from codegen.

@@ -921,6 +921,8 @@ pub(crate) fn bake_generated_project_compatibility_plan(
     let compile_environment = direct_rustc_reusable_project_plan_environment(generated_project, generated_root)
         .map_err(|error| CliError::failure(error.to_string()))?;
     let publication = prepare_direct_rustc_plan(&OvenLegacyCargoPrepareRequest {
+        compiler: crate::oven_facet::compiler_identity(),
+        provider_hooks: crate::oven_facet::provider_hooks(),
         store,
         receipt: receipt.clone(),
         generated_project: generated_project.to_path_buf(),

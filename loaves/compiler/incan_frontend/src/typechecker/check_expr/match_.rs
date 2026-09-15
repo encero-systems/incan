@@ -1,7 +1,7 @@
 //! Check `match` expressions, patterns, and exhaustiveness.
 //!
-//! This module validates `match` expressions by type-checking each arm, binding pattern variables,
-//! and ensuring exhaustiveness for enums, `Result`, and `Option`.
+//! This module validates `match` expressions by type-checking each arm, binding pattern variables, and ensuring
+//! exhaustiveness for enums, `Result`, and `Option`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -35,8 +35,8 @@ enum PatternBorrow {
     Mutable,
 }
 
-/// Peel reference layers for constructor lookup while preserving Rust match ergonomics for payload bindings.
-/// A shared reference fixes shared binding mode even when another reference layer is mutable.
+/// Peel reference layers for constructor lookup while preserving Rust match ergonomics for payload bindings. A shared
+/// reference fixes shared binding mode even when another reference layer is mutable.
 fn borrowed_pattern_subject(mut subject: &ResolvedType) -> (&ResolvedType, Option<PatternBorrow>) {
     let mut borrow = None;
     loop {
@@ -874,9 +874,8 @@ impl TypeChecker {
 
     /// Check that a match expression covers all possible cases.
     ///
-    /// For enums, `Result`, and `Option`, verifies every variant is handled. Wildcards
-    /// (`_`) satisfy all remaining cases. Emits a [`non_exhaustive_match`](errors::non_exhaustive_match)
-    /// error if patterns are missing.
+    /// For enums, `Result`, and `Option`, verifies every variant is handled. Wildcards (`_`) satisfy all remaining
+    /// cases. Emits a [`non_exhaustive_match`](errors::non_exhaustive_match) error if patterns are missing.
     fn check_match_exhaustiveness(&mut self, subject_ty: &ResolvedType, arms: &[Spanned<MatchArm>], span: Span) {
         if let Some(members) = Self::expected_union_members(subject_ty) {
             let mut remaining = members.to_vec();

@@ -261,8 +261,12 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
         if !project_inspection_authority_supports_dependencies(&self.authority.payload, &promoted) {
             return Err(project_inspection_selection_mismatch("this test dependency subset"));
         }
-        if !project_inspection_test_dependency_envelope_supports_dependencies(&self.authority.payload, &promoted)
-            .map_err(|error| CliError::failure(error.to_string()))?
+        if !project_inspection_test_dependency_envelope_supports_dependencies(
+            &self.authority.payload,
+            &promoted,
+            crate::oven_facet::provider_hooks().as_ref(),
+        )
+        .map_err(|error| CliError::failure(error.to_string()))?
         {
             let expected = self
                 .authority

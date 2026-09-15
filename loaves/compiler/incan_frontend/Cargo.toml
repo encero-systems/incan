@@ -27,7 +27,6 @@ incan_vocab = { path = "../../../crates/incan_vocab" }
 incan_syntax = { path = "../../../crates/incan_syntax" }
 incan_semantics_core = { path = "../../../crates/incan_semantics_core" }
 incan_semantics_stdlib = { path = "../../../crates/incan_semantics_stdlib", optional = true }
-incan_stdlib = { path = "../../../crates/incan_stdlib" }
 incan_format = { path = "../incan_format" }
 oven_model = { path = "../../oven/oven_model" }
 rust_inspect = { path = "../../../crates/rust_inspect", default-features = false }

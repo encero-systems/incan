@@ -26,8 +26,9 @@ fn semantic_compiler_paths_do_not_reverse_emitted_names_into_source_bindings() -
 
     let mut semantic_paths = Vec::new();
     for relative in [
-        "src/backend/ir",
+        "loaves/compiler/incan_emit/src",
         "loaves/compiler/incan_frontend/src",
+        "loaves/compiler/incan_ir/src",
         "src/lsp",
         "src/cli/commands/codegraph.rs",
     ] {
@@ -77,7 +78,7 @@ fn no_new_stringly_vocab_checks_in_rust_sources() {
     let spellings = tier_a_spellings();
     let mut offenders: Vec<(PathBuf, usize, String)> = Vec::new();
 
-    let targets = [root.join("src"), root.join("crates")];
+    let targets = [root.join("src"), root.join("crates"), root.join("loaves")];
     for dir in targets {
         if dir.exists() {
             scan_dir(&root, &dir, &spellings, &mut offenders);
@@ -367,7 +368,8 @@ fn semantic_string_scan_files(root: &Path) -> Vec<PathBuf> {
     const ROOTS: &[&str] = &[
         "crates/incan_core/src/interop",
         "crates/rust_inspect/src",
-        "src/backend/ir",
+        "loaves/compiler/incan_emit/src",
+        "loaves/compiler/incan_ir/src",
         "src/dependency_resolver.rs",
         "src/driver",
         "loaves/compiler/incan_frontend/src/provider",
