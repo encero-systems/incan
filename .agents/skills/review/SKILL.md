@@ -33,7 +33,7 @@ The report must use this exact top-level shape:
 ## Activity
 - [21:54] review started
 - [21:55] scope derived from issue 73 / RFC 015 / dirty worktree
-- [21:57] found 2 warnings in src/project_lifecycle/version.rs
+- [21:57] found 2 warnings in loaves/oven/oven_model/src/project_lifecycle/version.rs
 - [22:01] running make fmt
 - [22:04] make pre-commit passed
 
@@ -175,9 +175,9 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 - [ ] **Feature flows through all relevant stages.** If a new AST node is added:
   - Parsed and stored in the AST?
   - Validated in the typechecker (`check_decl`, `check_expr`, or `collect`)?
-  - Lowered in `src/backend/ir/lower/`?
-  - Emitted in `src/backend/ir/emit/`?
-- [ ] **Out-of-scope features are rejected at the typechecker**, not silently passed to lowering to fail later. Rejection should emit a typed diagnostic from `crates/incan_syntax/src/diagnostics/catalog/errors/`.
+  - Lowered in `loaves/compiler/incan_ir/src/lower/`?
+  - Emitted in `loaves/compiler/incan_emit/src/emit/`?
+- [ ] **Out-of-scope features are rejected at the typechecker**, not silently passed to lowering to fail later. Rejection should emit a typed diagnostic from `loaves/kernel/incan_syntax/src/diagnostics/catalog/errors/`.
 - [ ] **Stdlib changes** (`crates/incan_stdlib/stdlib/`) have matching Rust-side backing in `crates/incan_stdlib/src/` and are registered in `STDLIB_NAMESPACES` (`crates/incan_core/src/lang/stdlib.rs`).
 
 ---

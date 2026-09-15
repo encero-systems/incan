@@ -4,14 +4,14 @@ Ring: **oven**
 
 loaf.toml, oven.lock, workspace discovery, dependency resolution, lifecycle, toolchain layout.
 
-## Moves here from
+## Sources and remaining moves
 
-- `src/manifest.rs`
-- `src/workspace.rs`
-- `src/lockfile.rs` (generic lock only; SDK-provider and library-manifest sections go to `incan_oven_facet`)
-- `src/dependency_resolver.rs` (resolution only; the compiler-diagnostics adapter and stdlib registry lookup go to `incan_oven_facet`)
-- `src/project_lifecycle/`
-- `src/toolchain_layout.rs`
+- `loaves/oven/oven_model/src/manifest.rs`
+- `loaves/oven/oven_model/src/workspace.rs`
+- `loaves/oven/oven_model/src/lock.rs` (generic lock model; compiler semantics are supplied by `incan_provider::lock_semantics`)
+- `loaves/compiler/incan_provider/src/dependency_resolver.rs` remains in the compiler ring because it consumes Incan imports, diagnostics and provider metadata
+- `loaves/oven/oven_model/src/project_lifecycle/`
+- `loaves/oven/oven_model/src/toolchain_layout.rs`
 
 ## May depend on
 

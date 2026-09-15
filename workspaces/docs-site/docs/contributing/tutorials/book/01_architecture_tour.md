@@ -26,27 +26,29 @@ Workspace crates split across stable contracts, compiler/toolchain implementatio
 
 You can orient yourself with these anchors:
 
-- `crates/incan_syntax/`:
+- `loaves/kernel/incan_syntax/`:
     - shared lexer/parser/AST/diagnostics
     - used by compiler, formatter, and LSP to avoid drift
 - `crates/incan_core/`:
     - pure language policy and registries shared across compiler/runtime boundaries
-- `crates/incan_semantics_core/` and `crates/incan_semantics_stdlib/`:
+- `loaves/kernel/incan_semantics_core/` and `loaves/compiler/incan_semantics_stdlib/`:
     - descriptor contracts plus current stdlib semantics-pack implementation
 - `crates/incan_vocab/`:
     - stable library manifest/desugarer contract for import-activated library DSLs
-- `crates/rust_inspect/`:
+- `loaves/compiler/rust_inspect/`:
     - staged Rust metadata preparation/cache subsystem for Rust interop
 - `crates/incan_stdlib/`, `crates/incan_derive/`, and `crates/incan_web_macros/`:
     - runtime-only support used by generated Rust programs
-- `src/frontend/`:
+- `loaves/compiler/incan_frontend/src/`:
     - module resolution (`module.rs`)
     - typechecker (`typechecker/`)
     - symbol table + scope rules (`symbols.rs`)
-- `src/backend/`:
-    - IR + lowering (`ir/lower/`)
-    - emission (`ir/emit/`) producing Rust code
-    - project generation (`project.rs`)
+- `loaves/compiler/incan_ir/src/`:
+    - IR definitions and lowering (`lower/`)
+- `loaves/compiler/incan_emit/src/`:
+    - emission (`emit/`) producing Rust code
+- `loaves/compiler/incan_driver/src/backend/project/`:
+    - generated-project planning and generation
 - `src/cli/`:
     - CLI entrypoints and commands (`build`, `run`, `fmt`, `test`)
 - `src/lsp/`:
