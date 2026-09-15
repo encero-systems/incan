@@ -25,6 +25,8 @@
 //! When this fails, it prints the capabilities that regressed or newly landed. Record the new number in the same
 //! change.
 
+mod support;
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -124,7 +126,7 @@ impl Capability {
 
 /// Return the catalogue path that owns the documented capability surface.
 fn catalogue_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    support::repo_root()
         .join("loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn")
 }
 
@@ -149,10 +151,7 @@ fn example_corpus_text() -> Result<String, Box<dyn std::error::Error>> {
     }
 
     let mut found = Vec::new();
-    walk(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("examples").as_path(),
-        &mut found,
-    )?;
+    walk(support::repo_root().join("examples").as_path(), &mut found)?;
     found.sort();
 
     let mut text = String::new();

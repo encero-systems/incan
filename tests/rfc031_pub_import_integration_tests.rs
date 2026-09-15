@@ -95,9 +95,9 @@ mod rfc031_pub_import_integration_tests {
         main_path: &Path,
         generated_cargo_target: &Path,
     ) -> Result<std::process::Output, Box<dyn std::error::Error>> {
-        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let checkout = support::repo_root();
         Ok(super::incan_command()
-            .env("INCAN_SOURCE_ROOT", checkout)
+            .env("INCAN_SOURCE_ROOT", &checkout)
             .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
@@ -493,9 +493,7 @@ def main() -> None:
     }
 
     fn shared_test_runner_target_dir() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("incan_e2e_shared_target")
+        support::repo_root().join("target").join("incan_e2e_shared_target")
     }
 
     fn test_runner_batch_manifest_path(project_root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -2543,10 +2541,7 @@ pub def display[T](data: DataSet[T]) -> None:
             crate_root.join("Cargo.toml"),
             format!(
                 "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[lib]\npath = \"src/lib.rs\"\n",
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("crates")
-                    .join("incan_vocab")
-                    .display()
+                support::repo_root().join("crates").join("incan_vocab").display()
             ),
         )?;
         std::fs::write(
@@ -2567,10 +2562,7 @@ pub def display[T](data: DataSet[T]) -> None:
             crate_root.join("Cargo.toml"),
             format!(
                 "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[lib]\npath = \"src/lib.rs\"\n",
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("crates")
-                    .join("incan_vocab")
-                    .display()
+                support::repo_root().join("crates").join("incan_vocab").display()
             ),
         )?;
         std::fs::write(
@@ -2592,10 +2584,7 @@ pub def display[T](data: DataSet[T]) -> None:
             crate_root.join("Cargo.toml"),
             format!(
                 "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[lib]\npath = \"src/lib.rs\"\ncrate-type = [\"rlib\", \"cdylib\"]\n",
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("crates")
-                    .join("incan_vocab")
-                    .display()
+                support::repo_root().join("crates").join("incan_vocab").display()
             ),
         )?;
         std::fs::write(crate_root.join("src/lib.rs"), lib_source)?;
@@ -3558,7 +3547,7 @@ pub fn library_vocab() -> VocabRegistration {
     fn compiled_library_preserves_public_computed_property_contract_issue952() -> Result<(), Box<dyn std::error::Error>>
     {
         let tmp = tempfile::tempdir()?;
-        let source_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let source_root = support::repo_root();
         let stdlib = source_root.join("crates/incan_stdlib/stdlib");
         let producer_root = tmp.path().join("computed_property_provider");
         std::fs::create_dir_all(producer_root.join("src"))?;
@@ -3575,7 +3564,7 @@ pub fn library_vocab() -> VocabRegistration {
             .args(["build", "--lib"])
             .current_dir(&producer_root)
             .env("CARGO_NET_OFFLINE", "true")
-            .env("INCAN_SOURCE_ROOT", source_root)
+            .env("INCAN_SOURCE_ROOT", &source_root)
             .env("INCAN_STDLIB", &stdlib)
             .env_remove("INCAN_STDLIB_DIR")
             .output()?;
@@ -3602,7 +3591,7 @@ pub fn library_vocab() -> VocabRegistration {
             .arg("--check")
             .arg(&consumer_main)
             .env("CARGO_NET_OFFLINE", "true")
-            .env("INCAN_SOURCE_ROOT", source_root)
+            .env("INCAN_SOURCE_ROOT", &source_root)
             .env("INCAN_STDLIB", &stdlib)
             .env_remove("INCAN_STDLIB_DIR")
             .output()?;
@@ -5513,9 +5502,9 @@ def main() -> Result[None, SessionError]:
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let checkout = support::repo_root();
         let run_output = super::incan_command()
-            .env("INCAN_SOURCE_ROOT", checkout)
+            .env("INCAN_SOURCE_ROOT", &checkout)
             .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
@@ -5595,9 +5584,9 @@ def main() -> Result[None, SessionError]:
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let checkout = support::repo_root();
         let run_output = super::incan_command()
-            .env("INCAN_SOURCE_ROOT", checkout)
+            .env("INCAN_SOURCE_ROOT", &checkout)
             .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
@@ -5668,9 +5657,9 @@ def main() -> Result[None, str]:
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let checkout = support::repo_root();
         let run_output = super::incan_command()
-            .env("INCAN_SOURCE_ROOT", checkout)
+            .env("INCAN_SOURCE_ROOT", &checkout)
             .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
@@ -5770,9 +5759,9 @@ def main() -> None:
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let checkout = support::repo_root();
         let run_output = super::incan_command()
-            .env("INCAN_SOURCE_ROOT", checkout)
+            .env("INCAN_SOURCE_ROOT", &checkout)
             .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
@@ -5878,9 +5867,9 @@ def main() -> Result[None, str]:
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let checkout = support::repo_root();
         let emitted = super::incan_command()
-            .env("INCAN_SOURCE_ROOT", checkout)
+            .env("INCAN_SOURCE_ROOT", &checkout)
             .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
@@ -5956,9 +5945,9 @@ def random_bytes() -> Result[bytes, str]:
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let checkout = support::repo_root();
         let emitted = super::incan_command()
-            .env("INCAN_SOURCE_ROOT", checkout)
+            .env("INCAN_SOURCE_ROOT", &checkout)
             .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
@@ -6041,9 +6030,9 @@ def sum(values: list[f32]) -> Result[f32, str]:
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let checkout = support::repo_root();
         let emitted = super::incan_command()
-            .env("INCAN_SOURCE_ROOT", checkout)
+            .env("INCAN_SOURCE_ROOT", &checkout)
             .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
@@ -6137,9 +6126,9 @@ def main() -> Result[None, str]:
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let checkout = support::repo_root();
         let emitted = super::incan_command()
-            .env("INCAN_SOURCE_ROOT", checkout)
+            .env("INCAN_SOURCE_ROOT", &checkout)
             .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
@@ -6331,9 +6320,9 @@ def main() -> None:
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let checkout = support::repo_root();
         let emitted = super::incan_command()
-            .env("INCAN_SOURCE_ROOT", checkout)
+            .env("INCAN_SOURCE_ROOT", &checkout)
             .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
@@ -6471,9 +6460,9 @@ def exact_size(value: usize) -> usize:
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let checkout = support::repo_root();
         let emitted = super::incan_command()
-            .env("INCAN_SOURCE_ROOT", checkout)
+            .env("INCAN_SOURCE_ROOT", &checkout)
             .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
@@ -6557,9 +6546,9 @@ def fill() -> Result[list[f32], str]:
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let checkout = support::repo_root();
         let bindings = super::incan_command()
-            .env("INCAN_SOURCE_ROOT", checkout)
+            .env("INCAN_SOURCE_ROOT", &checkout)
             .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
@@ -6669,11 +6658,11 @@ def reject_mismatched_owner(left: list[f32], right: list[f32]) -> f32:
             &sqlite_checked_c_source(&sqlite_header),
         )?;
         let generated_cargo_target = tmp.path().join("generated-cargo-target");
-        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let checkout = support::repo_root();
         let entry_path = main_path.to_string_lossy();
 
         let bindings = super::incan_command()
-            .env("INCAN_SOURCE_ROOT", checkout)
+            .env("INCAN_SOURCE_ROOT", &checkout)
             .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
@@ -6720,7 +6709,7 @@ def reject_mismatched_owner(left: list[f32], right: list[f32]) -> f32:
         );
 
         let codegraph = super::incan_command()
-            .env("INCAN_SOURCE_ROOT", checkout)
+            .env("INCAN_SOURCE_ROOT", &checkout)
             .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))

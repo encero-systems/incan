@@ -22,14 +22,11 @@ fn configured_incan_command_with_binary(binary: PathBuf, project_root: &Path, in
         .env_remove("INCAN_GENERATED_CACHE")
         .env_remove("INCAN_TEST_SHARED_TARGET_DIR")
         .env("INCAN_HOME", incan_home)
-        .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
-        .env(
-            "INCAN_STDLIB",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
-        )
+        .env("INCAN_SOURCE_ROOT", support::repo_root())
+        .env("INCAN_STDLIB", support::repo_root().join("crates/incan_stdlib/stdlib"))
         .env(
             "INCAN_STDLIB_DIR",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+            support::repo_root().join("crates/incan_stdlib/stdlib"),
         )
         .env("CARGO_NET_OFFLINE", "true");
     if !support::oven_compiler_suite_is_active() {

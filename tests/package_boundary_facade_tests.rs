@@ -21,23 +21,9 @@ mod support;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-/// Resolve the compiler binary the way the sibling artifact suites do.
-fn incan_binary() -> PathBuf {
-    if let Ok(path) = std::env::var("CARGO_BIN_EXE_incan") {
-        return PathBuf::from(path);
-    }
-    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
-        let path = PathBuf::from(target_dir).join("debug").join("incan");
-        if path.exists() {
-            return path;
-        }
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/incan")
-}
-
 /// Build one compiler invocation carrying the harness's generated-target and provider-store settings.
 fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Command {
-    let mut command = Command::new(incan_binary());
+    let mut command = support::repo_command();
     command
         .args(args)
         .current_dir(current_dir)

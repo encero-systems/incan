@@ -1,5 +1,4 @@
 use std::fs;
-use std::process::Command;
 
 mod support;
 
@@ -8,7 +7,7 @@ fn run_source_case(source: &str) -> Result<(), Box<dyn std::error::Error>> {
     let source_path = dir.path().join("main.incn");
     fs::write(&source_path, source)?;
 
-    let mut command = Command::new(support::incan_binary());
+    let mut command = support::repo_command();
     command
         .arg("--no-banner")
         .arg("run")

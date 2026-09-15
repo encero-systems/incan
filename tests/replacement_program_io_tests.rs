@@ -1,19 +1,14 @@
 //! Program streams must remain observable independently of successful execution and evidence publication.
 
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+mod support;
 
-/// Locate the binary produced by Cargo, with an explicit override for a recorded baseline probe.
-fn incan_binary() -> PathBuf {
-    std::env::var_os("CARGO_BIN_EXE_incan")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_incan")))
-}
+use std::fs;
+use std::path::Path;
+use std::process::Command;
 
 /// Build a direct replacement command with source and mutable runtime state isolated to this fixture.
 fn replacement_command(directory: &Path) -> Command {
-    let mut command = Command::new(incan_binary());
+    let mut command = support::repo_command();
     command
         .current_dir(directory)
         .env("INCAN_HOME", directory.join("incan-home"))

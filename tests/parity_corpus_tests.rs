@@ -5706,13 +5706,13 @@ fn replacement_body_v0_cases_have_receipt_bound_non_green_execution_evidence() -
 // ============================================================================
 
 /// Where the CI-readable summary is written, honoring a harness-selected `CARGO_TARGET_DIR` when set (matching
-/// `tests/support/mod.rs`'s convention for other generated test artifacts) and falling back to the crate-local
+/// `tests/support/mod.rs`'s convention for other generated test artifacts) and falling back to the repository-local
 /// `target/` directory otherwise.
 fn summary_output_path() -> PathBuf {
     let target_dir = std::env::var_os("CARGO_TARGET_DIR")
         .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target"));
+        .map(|path| support::repo_root().join(path))
+        .unwrap_or_else(|| support::repo_root().join("target"));
     target_dir.join("parity-corpus").join("summary.json")
 }
 

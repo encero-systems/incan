@@ -472,7 +472,7 @@ def main() -> None:
 #[test]
 fn cold_library_build_preserves_rust_string_compound_assignment_issue896() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
-    let stdlib_crate = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib");
+    let stdlib_crate = support::repo_root().join("crates/incan_stdlib");
     let stdlib_path = stdlib_crate.to_string_lossy().replace('\\', "\\\\");
     let _main_path = write_minimal_project(
         tmp.path(),

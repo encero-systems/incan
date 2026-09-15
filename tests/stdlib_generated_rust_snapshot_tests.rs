@@ -8,6 +8,8 @@ use incan::backend::IrCodegen;
 use incan::frontend::{lexer, parser};
 use std::fs;
 
+mod support;
+
 #[path = "support/builtin_stdlib.rs"]
 mod builtin_stdlib_support;
 
@@ -60,7 +62,7 @@ fn normalize_codegen_output(code: &str) -> String {
 }
 
 fn assert_stdlib_source_snapshot(snapshot_name: &str, path: &str) -> TestResult {
-    let source = fs::read_to_string(path)?;
+    let source = fs::read_to_string(support::repo_root().join(path))?;
     let context = path.to_string();
     let rust_code = incan::compiler_stack::run_on_compiler_stack(move || {
         generate_rust(&source, &context).map_err(|error| error.to_string())
