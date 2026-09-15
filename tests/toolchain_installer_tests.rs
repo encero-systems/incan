@@ -1402,7 +1402,11 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         .lines()
         .filter(|line| line.contains("cargo test"))
         .collect::<Vec<_>>();
-    assert_eq!(focused_cargo_tests.len(), 4);
+    assert_eq!(
+        focused_cargo_tests.len(),
+        5,
+        "the focused Oven target runs the Oven crates' unit tests, the CLI's Oven tests, and the three named roots"
+    );
     assert!(
         focused_cargo_tests
             .iter()
