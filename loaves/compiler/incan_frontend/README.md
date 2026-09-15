@@ -14,4 +14,4 @@ Typechecker, semantic analysis, vocab desugar pass, body IR, API metadata.
 
 Owns the wasmtime dependency through the vocab desugar runtime. The `library_manifest` import cycle (106/51 edges) is cut by depending on the provider *contract* crate, not the loader.
 
-This directory is a layout skeleton. It holds no code yet; `src/` is a placeholder for the conventional crate root.
+The frontend lives here, with the provider contract (`provider/{plan,sdk,features,error}`) and the semantics registry; the provider loaders stay with `incan_provider`, and the crate depends on `oven_model` for the project manifest and the toolchain layout.

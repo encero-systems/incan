@@ -20,11 +20,11 @@ pub(crate) mod compiled_sdk;
 pub mod compiler_stack;
 pub mod dependency_resolver;
 pub mod driver;
-pub mod format;
-pub mod frontend;
+pub use incan_format as format;
+pub use incan_frontend as frontend;
 pub(crate) mod generated_cache;
 pub mod inspect;
-pub mod library_manifest;
+pub use incan_frontend::library_manifest;
 pub mod lockfile;
 #[cfg(feature = "lsp")]
 pub mod lsp;
@@ -38,8 +38,8 @@ pub mod provider;
 pub mod replacement_compatibility;
 #[cfg(feature = "rust_inspect")]
 pub mod rust_inspect;
-pub(crate) mod semantics_registry;
 pub use incan_core::version;
+pub(crate) use incan_frontend::semantics_registry;
 pub(crate) use oven_model::toolchain_layout;
 pub use oven_model::workspace;
 

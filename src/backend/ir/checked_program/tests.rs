@@ -9,8 +9,8 @@ use incan_core::interop::{
 
 use crate::frontend::ast::ParamKind;
 use crate::frontend::symbols::{CallableParam, ResolvedType};
+use crate::frontend::test_support::seeded_rust_inspect_workspace;
 use crate::frontend::typechecker::TypeChecker;
-use crate::frontend::typechecker::tests::seeded_rust_inspect_workspace;
 use crate::frontend::{lexer, parser};
 
 #[cfg(feature = "rust_inspect")]
@@ -451,7 +451,7 @@ def f(encoded: bytes) -> None:
 
 use incan_semantics_core::{HirSourceSpan, body_ir as bir};
 
-use crate::frontend::body_ir::tests::{
+use crate::frontend::test_support::{
     build_with_top_level_declaration_injected_after_typecheck, fixture_top_level_vocab_declaration,
 };
 

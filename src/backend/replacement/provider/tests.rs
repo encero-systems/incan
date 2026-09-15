@@ -28,7 +28,7 @@ use crate::backend::replacement::{
     prepare_free_function_execution_with_providers,
 };
 use crate::frontend::body_ir::build_body_ir_module_v0_with_provider_plan;
-use crate::frontend::body_ir::tests::provider_plan_from_checked_source;
+use crate::frontend::test_support::provider_plan_from_checked_source;
 use crate::frontend::typechecker::TypeChecker;
 use crate::frontend::{ast, lexer, parser};
 

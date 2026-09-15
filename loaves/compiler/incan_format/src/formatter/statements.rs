@@ -1,0 +1,331 @@
+//! Statement formatting: assignments, control flow (if/elif/else, while, for), and compound statements.
+
+use incan_core::lang::keywords;
+use incan_semantics_core::SurfaceFeatureKey;
+use incan_syntax::ast::*;
+
+use super::Formatter;
+
+impl Formatter {
+    /// Format one statement and preserve its leading blank-line intent.
+    pub(super) fn format_statement(&mut self, stmt: &Spanned<Statement>) {
+        self.writer.blank_lines(stmt.leading_blank_lines as usize);
+        match &stmt.node {
+            Statement::Expr(expr) => {
+                self.format_expr(&expr.node);
+                if !self.writer.is_at_line_start() {
+                    self.writer.newline();
+                }
+            }
+            Statement::VocabExpressionItem(item) => {
+                self.format_vocab_expression_item_contents(item);
+                self.writer.newline();
+            }
+            Statement::Assert(assert_stmt) => self.format_assert(assert_stmt),
+            Statement::Assignment(assign) => {
+                self.format_assignment(assign);
+            }
+            Statement::FieldAssignment(assign) => {
+                self.format_expr(&assign.object.node);
+                self.writer.write(".");
+                self.writer.write(&assign.field);
+                self.format_assignment_value(&assign.value, assign.compound_op);
+                self.writer.newline();
+            }
+            Statement::IndexAssignment(assign) => {
+                self.format_expr(&assign.object.node);
+                self.writer.write("[");
+                self.format_expr(&assign.index.node);
+                self.writer.write("]");
+                self.format_assignment_value(&assign.value, assign.compound_op);
+                self.writer.newline();
+            }
+            Statement::CompoundAssignment(assign) => {
+                self.writer.write(&assign.name);
+                self.writer.write(" ");
+                self.writer.write(assign.op.source_spelling());
+                self.writer.write(" ");
+                self.format_expr(&assign.value.node);
+                self.writer.newline();
+            }
+            Statement::Return(expr) => {
+                self.writer.write("return");
+                if let Some(e) = expr {
+                    self.writer.write(" ");
+                    self.format_expr(&e.node);
+                }
+                self.writer.newline();
+            }
+            Statement::If(if_stmt) => self.format_if(if_stmt),
+            Statement::Loop(loop_stmt) => self.format_loop(loop_stmt),
+            Statement::While(while_stmt) => self.format_while(while_stmt),
+            Statement::For(for_stmt) => self.format_for(for_stmt),
+            Statement::Unsafe(unsafe_stmt) => self.format_unsafe(unsafe_stmt),
+            Statement::Surface(surface_stmt) => match (&surface_stmt.key, &surface_stmt.payload) {
+                (SurfaceFeatureKey::SoftKeyword(id), SurfaceStmtPayload::KeywordArgs(args)) => {
+                    self.writer.write(keywords::as_str(*id));
+                    self.writer.write(" ");
+                    for (idx, arg) in args.iter().enumerate() {
+                        if idx > 0 {
+                            self.writer.write(", ");
+                        }
+                        self.format_expr(&arg.node);
+                    }
+                    self.writer.newline();
+                }
+                _ => self.writer.writeln("<surface_stmt>"),
+            },
+            Statement::VocabBlock(vocab_block) => {
+                for decorator in &vocab_block.decorators {
+                    self.writer.write("@");
+                    self.writer.writeln(&decorator.node.path.segments.join("."));
+                }
+                self.format_vocab_block_header(vocab_block);
+                self.writer.writeln(":");
+                self.writer.indent();
+                for stmt in &vocab_block.body {
+                    self.format_statement(stmt);
+                }
+                if vocab_block.body.is_empty() {
+                    self.writer.writeln("pass");
+                }
+                self.writer.dedent();
+            }
+            Statement::Pass => self.writer.writeln("pass"),
+            Statement::Break(value) => {
+                self.writer.write("break");
+                if let Some(value) = value {
+                    self.writer.write(" ");
+                    self.format_expr(&value.node);
+                }
+                self.writer.newline();
+            }
+            Statement::Continue => self.writer.writeln("continue"),
+            Statement::TupleUnpack(unpack) => {
+                match unpack.binding {
+                    BindingKind::Let => self.writer.write("let "),
+                    BindingKind::Mutable => self.writer.write("mut "),
+                    BindingKind::Inferred | BindingKind::Reassign => {}
+                }
+                for (i, name) in unpack.names.iter().enumerate() {
+                    if i > 0 {
+                        self.writer.write(", ");
+                    }
+                    self.writer.write(name);
+                }
+                self.writer.write(" = ");
+                self.format_expr(&unpack.value.node);
+                self.writer.newline();
+            }
+            Statement::TupleAssign(assign) => {
+                for (i, target) in assign.targets.iter().enumerate() {
+                    if i > 0 {
+                        self.writer.write(", ");
+                    }
+                    self.format_expr(&target.node);
+                }
+                self.writer.write(" = ");
+                self.format_expr(&assign.value.node);
+                self.writer.newline();
+            }
+            Statement::ChainedAssignment(ca) => {
+                match ca.binding {
+                    BindingKind::Let => self.writer.write("let "),
+                    BindingKind::Mutable => self.writer.write("mut "),
+                    BindingKind::Inferred | BindingKind::Reassign => {}
+                }
+                for (i, target) in ca.targets.iter().enumerate() {
+                    if i > 0 {
+                        self.writer.write(" = ");
+                    }
+                    self.writer.write(target);
+                }
+                self.writer.write(" = ");
+                self.format_expr(&ca.value.node);
+                self.writer.newline();
+            }
+        }
+    }
+
+    /// Format an ordinary or parser-desugared compound assignment value.
+    fn format_assignment_value(&mut self, value: &Spanned<Expr>, compound_op: Option<CompoundOp>) {
+        if let Some(op) = compound_op
+            && let Expr::Binary(_, binary_op, rhs) = &value.node
+            && *binary_op == op.binary_op()
+        {
+            self.writer.write(" ");
+            self.writer.write(op.source_spelling());
+            self.writer.write(" ");
+            self.format_expr(&rhs.node);
+            return;
+        }
+
+        self.writer.write(" = ");
+        self.format_expr(&value.node);
+    }
+
+    fn format_assignment(&mut self, assign: &AssignmentStmt) {
+        match assign.binding {
+            BindingKind::Let => self.writer.write("let "),
+            BindingKind::Mutable => self.writer.write("mut "),
+            BindingKind::Inferred | BindingKind::Reassign => {}
+        }
+        self.writer.write(&assign.name);
+        if let Some(ty) = &assign.ty {
+            self.writer.write(": ");
+            self.format_type(&ty.node);
+        }
+        self.writer.write(" = ");
+        self.format_expr(&assign.value.node);
+        self.writer.newline();
+    }
+
+    /// Format an assert statement.
+    fn format_assert(&mut self, assert_stmt: &AssertStmt) {
+        self.writer.write("assert ");
+        match &assert_stmt.kind {
+            AssertKind::Condition(condition) => self.format_expr(&condition.node),
+            AssertKind::IsPattern { value, pattern } => {
+                self.format_expr(&value.node);
+                self.writer.write(" is ");
+                self.format_pattern(&pattern.node);
+            }
+            AssertKind::Raises { call, error_type } => {
+                self.format_expr(&call.node);
+                self.writer.write(" raises ");
+                self.format_type(&error_type.node);
+            }
+        }
+        if let Some(message) = &assert_stmt.message {
+            self.writer.write(", ");
+            self.format_expr(&message.node);
+        }
+        self.writer.newline();
+    }
+
+    /// Format an if statement.
+    fn format_if(&mut self, if_stmt: &IfStmt) {
+        self.writer.write("if ");
+        self.format_condition(&if_stmt.condition);
+        self.writer.writeln(":");
+        self.writer.indent();
+        for stmt in &if_stmt.then_body {
+            self.format_statement(stmt);
+        }
+        if if_stmt.then_body.is_empty() {
+            self.writer.writeln("pass");
+        }
+        self.writer.dedent();
+
+        for (elif_cond, elif_body) in &if_stmt.elif_branches {
+            self.writer.write("elif ");
+            self.format_expr(&elif_cond.node);
+            self.writer.writeln(":");
+            self.writer.indent();
+            for stmt in elif_body {
+                self.format_statement(stmt);
+            }
+            if elif_body.is_empty() {
+                self.writer.writeln("pass");
+            }
+            self.writer.dedent();
+        }
+
+        if let Some(else_body) = &if_stmt.else_body {
+            self.writer.writeln("else:");
+            self.writer.indent();
+            for stmt in else_body {
+                self.format_statement(stmt);
+            }
+            if else_body.is_empty() {
+                self.writer.writeln("pass");
+            }
+            self.writer.dedent();
+        }
+    }
+
+    /// Format a loop statement.
+    fn format_loop(&mut self, loop_stmt: &LoopStmt) {
+        self.writer.writeln("loop:");
+        self.writer.indent();
+        for stmt in &loop_stmt.body {
+            self.format_statement(stmt);
+        }
+        if loop_stmt.body.is_empty() {
+            self.writer.writeln("pass");
+        }
+        self.writer.dedent();
+    }
+
+    /// Format a while statement.
+    fn format_while(&mut self, while_stmt: &WhileStmt) {
+        self.writer.write("while ");
+        self.format_condition(&while_stmt.condition);
+        self.writer.writeln(":");
+        self.writer.indent();
+        for stmt in &while_stmt.body {
+            self.format_statement(stmt);
+        }
+        if while_stmt.body.is_empty() {
+            self.writer.writeln("pass");
+        }
+        self.writer.dedent();
+    }
+
+    /// Format a `for` statement and its Python-shaped loop pattern.
+    fn format_for(&mut self, for_stmt: &ForStmt) {
+        self.writer.write("for ");
+        self.format_for_pattern(&for_stmt.pattern.node);
+        self.writer.write(" in ");
+        self.format_expr(&for_stmt.iter.node);
+        self.writer.writeln(":");
+        self.writer.indent();
+        for stmt in &for_stmt.body {
+            self.format_statement(stmt);
+        }
+        if for_stmt.body.is_empty() {
+            self.writer.writeln("pass");
+        }
+        self.writer.dedent();
+    }
+
+    /// Format an acknowledgement block without changing the surrounding statement scope.
+    fn format_unsafe(&mut self, unsafe_stmt: &UnsafeStmt) {
+        self.writer.writeln("unsafe:");
+        self.writer.indent();
+        for stmt in &unsafe_stmt.body {
+            self.format_statement(stmt);
+        }
+        if unsafe_stmt.body.is_empty() {
+            self.writer.writeln("pass");
+        }
+        self.writer.dedent();
+    }
+
+    /// Format a `for`-target pattern using the grammar's unparenthesized tuple-target spelling.
+    pub(super) fn format_for_pattern(&mut self, pattern: &Pattern) {
+        if let Pattern::Tuple(items) = pattern {
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    self.writer.write(", ");
+                }
+                self.format_pattern(&item.node);
+            }
+        } else {
+            self.format_pattern(pattern);
+        }
+    }
+
+    /// Format a conditional expression.
+    fn format_condition(&mut self, condition: &Condition) {
+        match condition {
+            Condition::Expr(expr) => self.format_expr(&expr.node),
+            Condition::Let { pattern, value } => {
+                self.writer.write("let ");
+                self.format_pattern(&pattern.node);
+                self.writer.write(" = ");
+                self.format_expr(&value.node);
+            }
+        }
+    }
+}

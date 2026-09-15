@@ -435,6 +435,10 @@ fn exercise_catalog_signature(type_facade: bool) -> Result<(), Box<dyn Error>> {
         .ok_or("checked catalog Product identity missing")?;
     let catalog_digest = crate::library_manifest::digest_provider_artifact(&catalog_root)?;
     let facade_root = temporary.path().join("facade");
+    #[allow(
+        clippy::result_large_err,
+        reason = "the plan error is the frontend's own type; the closure only threads it"
+    )]
     let catalog_plan = || {
         crate::provider::ProviderPlan::from_resolved_inputs(
             index(&catalog_root, "catalog", &catalog),
