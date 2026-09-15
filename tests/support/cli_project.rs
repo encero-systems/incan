@@ -180,11 +180,11 @@ pub(crate) fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Com
         .env("INCAN_NO_BANNER", "1")
         .env(
             "INCAN_STDLIB",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
         )
         .env(
             "INCAN_STDLIB_DIR",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
         );
     if !support::oven_compiler_suite_is_active() {
         command

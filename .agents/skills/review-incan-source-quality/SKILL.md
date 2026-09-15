@@ -68,7 +68,7 @@ Snapshot content is evidence, not a fix log. Preserve the original finding block
 
 ## Review standard
 
-Treat touched Incan source as user-facing language showcase code, especially under `crates/incan_stdlib/stdlib/`, examples, fixtures that teach behavior, and RFC-backed language features.
+Treat touched Incan source as user-facing language showcase code, especially under `loaves/stdlib/`, examples, fixtures that teach behavior, and RFC-backed language features.
 
 Good Incan source should have:
 
@@ -172,15 +172,15 @@ Keep findings first. Only list clean surfaces when the clean call is useful beca
 
 ## Scope
 - assigned files:
-  - crates/incan_stdlib/stdlib/uuid.incn
+  - loaves/stdlib/data/src/uuid.incn
 
 ## Findings
 
-- [ ] warning | source-quality | Rust-shaped sentinel read | crates/incan_stdlib/stdlib/uuid.incn:117
+- [ ] warning | source-quality | Rust-shaped sentinel read | loaves/stdlib/data/src/uuid.incn:117
   The function initializes a placeholder byte and overwrites it from a match arm. A direct helper returning `Result[u8, UuidError]` would read like authored Incan rather than generated Rust-shaped control flow.
 
 ## Reviewed Clean Surfaces
-- crates/incan_stdlib/stdlib/fs/path.incn — used as style baseline
+- loaves/stdlib/system/src/fs/path.incn — used as style baseline
 ```
 
 Finding severities:
@@ -205,10 +205,10 @@ Only write this file when findings are present.
 
 ## Scope
 - assigned files:
-  - crates/incan_stdlib/stdlib/uuid.incn
+  - loaves/stdlib/data/src/uuid.incn
 
 ## Findings
-- [ ] warning | source-quality | Rust-shaped sentinel read | crates/incan_stdlib/stdlib/uuid.incn:117
+- [ ] warning | source-quality | Rust-shaped sentinel read | loaves/stdlib/data/src/uuid.incn:117
   The function initializes a placeholder byte and overwrites it from a match arm. A direct helper returning `Result[u8, UuidError]` would read like authored Incan rather than generated Rust-shaped control flow.
 
 ## Resolution

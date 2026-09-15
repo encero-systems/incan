@@ -81,7 +81,7 @@ Enables the current Axum-backed host runtime for generated Incan web programs.
 
 ### Incan stdlib stubs
 
-The Incan-source stdlib stubs live under `crates/incan_stdlib/stdlib/` (for example `crates/incan_stdlib/stdlib/testing.incn`).
+The Incan-source stdlib stubs live under `loaves/stdlib/` (for example `loaves/stdlib/testing/src/testing.incn`).
 
 These files define the user-facing `std.*` API surface and are parsed by the compiler for signature/validation metadata.
 

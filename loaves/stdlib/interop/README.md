@@ -1,6 +1,6 @@
 # `stdlib/interop`
 
-SDK component `stdlib-interop` (today `crates/incan_stdlib/stdlib/components/stdlib-interop`).
+SDK component `stdlib-interop`; its Incan sources live in `src/` beside this file.
 
 Namespace roots: `std.interop`
 

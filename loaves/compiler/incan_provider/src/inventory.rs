@@ -83,7 +83,7 @@ pub fn prepare_or_discover_sdk_inventory() -> ProviderResult<Option<Arc<SdkInven
     if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
         return Ok(None);
     }
-    let has_source_catalog = oven_model::toolchain_layout::find_stdlib_source_dir()
+    let has_source_catalog = oven_model::toolchain_layout::find_stdlib_root()
         .is_some_and(|root| root.join(SDK_SOURCE_CATALOG_FILE).is_file());
     if has_source_catalog {
         prepare_sdk_provider_inventory().map(Some)
@@ -412,7 +412,7 @@ pub fn sdk_provider_bootstrap_namespace_roots(project_root: &Path) -> ProviderRe
     let Some(component_marker) = env::var_os(SDK_PROVIDER_BUILD_ENV).filter(|value| !value.is_empty()) else {
         return Ok(BTreeSet::new());
     };
-    let stdlib_root = oven_model::toolchain_layout::find_stdlib_source_dir().ok_or_else(|| {
+    let stdlib_root = oven_model::toolchain_layout::find_stdlib_root().ok_or_else(|| {
         ProviderError::failure("cannot locate the SDK source catalog while compiling an SDK provider")
     })?;
     let catalog = SdkSourceCatalog::read_from_path(&stdlib_root.join(SDK_SOURCE_CATALOG_FILE))

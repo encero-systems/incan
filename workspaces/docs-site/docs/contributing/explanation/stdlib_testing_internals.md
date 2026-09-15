@@ -12,7 +12,7 @@ This page documents the internal integration model, runtime boundary design, and
 
 `std.testing` is compiled from Incan source instead of relying on hardcoded Rust assertion helpers.
 
-- **Source of truth**: `crates/incan_stdlib/stdlib/testing.incn`.
+- **Source of truth**: `loaves/stdlib/testing/src/testing.incn`.
 - **Rust module mapping**: the file declares `rust.module("incan_stdlib::testing")`, routing host-boundary calls to the `incan_stdlib::testing` Rust module.
 - **Incan-implemented assertions**: `assert`, `assert_eq`, `assert_ne`, `assert_true`, `assert_false`, `assert_is_some`, `assert_is_none`, `assert_is_ok`, `assert_is_err`, and `fail` are all written in Incan source. They delegate to `fail_t()` for the actual panic.
 - **Host-boundary primitives** (`@rust.extern`):
@@ -63,7 +63,7 @@ Key files:
 
 |                   File                    |                           Role                            |
 | ----------------------------------------- | --------------------------------------------------------- |
-| `crates/incan_stdlib/stdlib/testing.incn` | Canonical stdlib source (assertions + marker decls)       |
+| `loaves/stdlib/testing/src/testing.incn` | Canonical stdlib source (assertions + marker decls)       |
 | `crates/incan_stdlib/src/testing.rs`      | Rust host-boundary implementations (panic stubs)          |
 | `loaves/compiler/incan_frontend/src/testing_markers.rs`         | Parses marker metadata from stdlib; cached via `OnceLock` |
 | `loaves/compiler/incan_driver/src/testing/discovery.rs`        | Consumes marker semantics for test discovery              |

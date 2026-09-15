@@ -1,6 +1,6 @@
 # `stdlib/compression`
 
-SDK component `stdlib-compression` (today `crates/incan_stdlib/stdlib/components/stdlib-compression`).
+SDK component `stdlib-compression`; its Incan sources live in `src/` beside this file.
 
 Namespace roots: `std.compression`
 

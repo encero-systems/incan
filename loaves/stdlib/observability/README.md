@@ -1,6 +1,6 @@
 # `stdlib/observability`
 
-SDK component `stdlib-observability` (today `crates/incan_stdlib/stdlib/components/stdlib-observability`).
+SDK component `stdlib-observability`; its Incan sources live in `src/` beside this file.
 
 Namespace roots: `std.logging`, `std.telemetry`
 

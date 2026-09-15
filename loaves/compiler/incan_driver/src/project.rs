@@ -103,21 +103,8 @@ pub fn resolve_stdlib_module_source_path(module_path: &[String]) -> CliResult<Pa
         )));
     };
 
-    let stdlib_relative = relative_stub_path
-        .strip_prefix("stdlib/")
-        .unwrap_or(relative_stub_path.as_str());
-    let mut candidates: Vec<PathBuf> = Vec::new();
-
-    if let Some(stdlib_dir) = oven_model::toolchain_layout::find_stdlib_source_dir() {
-        candidates.push(stdlib_dir.join(stdlib_relative));
-    }
-    candidates.push(PathBuf::from(&relative_stub_path));
-    candidates.push(PathBuf::from("crates/incan_stdlib").join(&relative_stub_path));
-
-    for candidate in candidates {
-        if candidate.exists() {
-            return Ok(candidate);
-        }
+    if let Some(path) = incan_frontend::provider::find_stdlib_source_file(&relative_stub_path) {
+        return Ok(path);
     }
 
     Err(CliError::failure(format!(

@@ -1,6 +1,6 @@
 # `stdlib/codecs`
 
-SDK component `stdlib-codecs` (today `crates/incan_stdlib/stdlib/components/stdlib-codecs`).
+SDK component `stdlib-codecs`; its Incan sources live in `src/` beside this file.
 
 Namespace roots: `std.checksum`, `std.encoding`
 

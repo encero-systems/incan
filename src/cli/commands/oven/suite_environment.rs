@@ -65,7 +65,7 @@ pub(crate) fn compiler_suite_environment_with_vocab(
             compiler_root.display()
         ))
     })?;
-    let stdlib_root = compiler_root.join("crates/incan_stdlib/stdlib");
+    let stdlib_root = compiler_root.join("loaves/stdlib");
     if !stdlib_root.is_dir() {
         return Err(CliError::failure(format!(
             "compiler-suite root {} has no stdlib directory {}",

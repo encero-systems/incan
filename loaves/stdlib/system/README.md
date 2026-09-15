@@ -1,6 +1,6 @@
 # `stdlib/system`
 
-SDK component `stdlib-system` (today `crates/incan_stdlib/stdlib/components/stdlib-system`).
+SDK component `stdlib-system`; its Incan sources live in `src/` beside this file.
 
 Namespace roots: `std.environ`, `std.io`, `std.tempfile`, `std.fs`
 

@@ -285,12 +285,11 @@ mod tests {
     /// modules to their public facade mirrors provider publication, while `std.interop` is the intentionally
     /// source-less vocabulary-backed provider component.
     fn checked_stdlib_component_modules() -> Result<BTreeSet<String>, Box<dyn std::error::Error>> {
-        let component_root =
-            oven_model::toolchain_layout::development_root().join("crates/incan_stdlib/stdlib/components");
+        let stdlib_root = oven_model::toolchain_layout::development_root().join("loaves/stdlib");
+        let catalog = incan_frontend::provider::StdlibSources::from_root(&stdlib_root)?;
         let mut modules = BTreeSet::from(["std.interop".to_string()]);
-        for entry in fs::read_dir(&component_root)? {
-            let entry = entry?;
-            let source = entry.path().join("src/lib.incn");
+        for component in catalog.catalog().components.values() {
+            let source = component.project_root.join("src/lib.incn");
             if !source.is_file() {
                 continue;
             }

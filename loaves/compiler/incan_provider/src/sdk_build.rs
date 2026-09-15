@@ -44,8 +44,8 @@ pub fn prepare_sdk_provider_inventory_in_store(
     source_root_override: Option<&Path>,
 ) -> ProviderResult<Arc<SdkInventory>> {
     let stdlib_root = match source_root_override {
-        Some(source_root) => source_root.join("crates/incan_stdlib/stdlib"),
-        None => oven_model::toolchain_layout::find_stdlib_source_dir().ok_or_else(|| {
+        Some(source_root) => source_root.join("loaves/stdlib"),
+        None => oven_model::toolchain_layout::find_stdlib_root().ok_or_else(|| {
             ProviderError::failure("cannot locate built-in stdlib sources needed to prepare SDK component providers")
         })?,
     };
@@ -712,7 +712,7 @@ mod tests {
         let mut command = Command::new("incan");
         let target = Path::new("/staging/.cargo-target");
         let compiler_root = Path::new("/compiler");
-        let stdlib_root = Path::new("/compiler/crates/incan_stdlib/stdlib");
+        let stdlib_root = Path::new("/compiler/loaves/stdlib");
         configure_sdk_provider_build_environment(
             &mut command,
             "stdlib-core",
@@ -735,7 +735,7 @@ mod tests {
     #[test]
     fn restricted_sdk_profile_retains_unavailable_provider_catalog_facts() -> Result<(), Box<dyn std::error::Error>> {
         let catalog_path = oven_model::toolchain_layout::development_root()
-            .join("crates/incan_stdlib/stdlib")
+            .join("loaves/stdlib")
             .join(SDK_SOURCE_CATALOG_FILE);
         let catalog = SdkSourceCatalog::read_from_path(&catalog_path)?;
         let tmp = tempfile::tempdir()?;

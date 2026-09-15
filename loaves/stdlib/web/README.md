@@ -1,6 +1,6 @@
 # `stdlib/web`
 
-SDK component `stdlib-web` (today `crates/incan_stdlib/stdlib/components/stdlib-web`).
+SDK component `stdlib-web`; its Incan sources live in `src/` beside this file.
 
 Namespace roots: `std.web`
 

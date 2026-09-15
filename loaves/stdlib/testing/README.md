@@ -1,6 +1,6 @@
 # `stdlib/testing`
 
-SDK component `stdlib-testing` (today `crates/incan_stdlib/stdlib/components/stdlib-testing`).
+SDK component `stdlib-testing`; its Incan sources live in `src/` beside this file.
 
 Namespace roots: `std.testing`
 

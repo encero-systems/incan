@@ -1,6 +1,6 @@
 # `stdlib/core`
 
-SDK component `stdlib-core` (today `crates/incan_stdlib/stdlib/components/stdlib-core`).
+SDK component `stdlib-core`; its Incan sources live in `src/` beside this file.
 
 Namespace roots: `std.features`, `std.prelude`, `std.registry`, `std.result`, `std.reflection`, `std.this`, `std.derives`, `std.traits`, `std.runtime`
 
