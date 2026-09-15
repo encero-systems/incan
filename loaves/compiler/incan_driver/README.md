@@ -2,16 +2,17 @@
 
 Ring: **compiler**
 
-The compile session: module graph, parsed modules, build orchestration, generated cache, replacement compatibility. No clap, no terminal I/O.
+Owns compilation sessions, module graphs, build orchestration, generated caches and replacement compatibility. The CLI owns clap parsing; some driver diagnostics still print directly to stderr, including declared backend-fallback notices.
 
-## Moves here from
+## Current sources
 
-- `src/cli/commands/build.rs (20.8k lines, the logic half)`
-- `src/cli/commands/common.rs (CompilationSession, ParsedModule, SDK discovery)`
-- `src/generated_cache.rs`
-- `src/replacement_compatibility.rs`
-- `src/compiler_stack.rs`
-- `src/backend/project/generator.rs` (renders the generated Rust project from the checked program and provider facts)
+- `loaves/compiler/incan_driver/src/build/` — build orchestration extracted from the CLI
+- `loaves/compiler/incan_driver/src/session.rs` — compilation sessions
+- `loaves/compiler/incan_frontend/src/parsed_module.rs` — parsed-module data consumed by the driver
+- `loaves/compiler/incan_driver/src/generated_cache.rs`
+- `loaves/compiler/incan_driver/src/replacement_compatibility.rs`
+- `loaves/compiler/incan_frontend/src/compiler_stack.rs` — shared frontend stack configuration
+- `loaves/compiler/incan_driver/src/backend/project/generator.rs` — generated Rust project rendering
 
 ## May depend on
 
@@ -19,4 +20,4 @@ The compile session: module graph, parsed modules, build orchestration, generate
 
 This is what `incan-lsp` and `incan` both link. Its existence is what makes the LSP compile without the CLI (audit finding 1).
 
-`src/lib.rs` is the crate root, with the former `src/driver/` modules directly under `src/`; `src/backend/` (the generated project, the shadow comparison and the `backend::ir` shim over `incan_ir`/`incan_emit`), `src/inspect/`, `src/generated_cache.rs`, `src/replacement_compatibility.rs` and `src/shadow_support.rs` sit beside them. `src/backend/project/{plan,lock_projection,cargo_toml,runner}.rs` are still here: their moves into the Oven ring need inversions of their own.
+`loaves/compiler/incan_driver/src/lib.rs` is the crate root. Build orchestration lives directly under the crate's source directory beside `backend/`, `inspect/`, `generated_cache.rs`, `replacement_compatibility.rs` and `shadow_support.rs`. The generated-project modules remain in `loaves/compiler/incan_driver/src/backend/project/`; moving their planning, lock projection, Cargo manifest and runner responsibilities into the Oven ring still requires dependency inversions.

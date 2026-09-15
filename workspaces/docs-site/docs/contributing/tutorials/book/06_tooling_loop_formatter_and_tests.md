@@ -27,7 +27,7 @@ See:
 
 Where it lives:
 
-- `src/format/`
+- `loaves/compiler/incan_format/src/`
 
 ## Testing (Rust tests + integration checks)
 

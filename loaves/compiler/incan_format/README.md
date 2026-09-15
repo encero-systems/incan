@@ -4,9 +4,9 @@ Ring: **compiler**
 
 Source formatter.
 
-## Moves here from
+## Current sources
 
-- `src/format/`
+- `loaves/compiler/incan_format/src/`
 
 ## May depend on
 

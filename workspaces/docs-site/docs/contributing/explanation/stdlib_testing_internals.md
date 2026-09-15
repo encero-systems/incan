@@ -20,11 +20,11 @@ This page documents the internal integration model, runtime boundary design, and
     - Marker entrypoints (`skip`, `xfail`, `slow`, `fixture`, `parametrize`) — their Rust implementations intentionally panic with a "runtime misuse" message; they exist only to satisfy the extern boundary.
 - **Known blocker**:
     - `assert_raises` remains unimplemented as an Incan-side placeholder (fails via `fail_t`) until parser/lowering support for `assert ... raises ...` lands.
-- **Marker metadata**: each marker extern carries `metadata={...}` on its `@rust.extern` annotation. `incan test` reads this metadata from the parsed stdlib source (via `src/frontend/testing_markers.rs`) as the single source of truth for marker semantics.
+- **Marker metadata**: each marker extern carries `metadata={...}` on its `@rust.extern` annotation. `incan test` reads this metadata from the parsed stdlib source (via `loaves/compiler/incan_frontend/src/testing_markers.rs`) as the single source of truth for marker semantics.
 - **Surface semantics routing**:
-    - Pack contracts live in `crates/incan_semantics_core` (`SurfaceFeatureKey`, pack trait, registry).
-    - Stdlib handlers live in `crates/incan_semantics_stdlib` and are feature-gated by `std_testing`.
-    - Frontend/back adapters call into the registry (`src/frontend/surface_semantics.rs` and `src/backend/ir/surface_semantics.rs`).
+    - Pack contracts live in `loaves/kernel/incan_semantics_core` (`SurfaceFeatureKey`, pack trait, registry).
+    - Stdlib handlers live in `loaves/compiler/incan_semantics_stdlib` and are feature-gated by `std_testing`.
+    - Frontend/back adapters call into the registry (`loaves/compiler/incan_frontend/src/surface_semantics.rs` and `loaves/compiler/incan_ir/src/surface_semantics.rs`).
     - `assert` statement syntax is lowered through registry-provided canonical call target metadata.
     - Lowered assert calls carry canonical callee paths (`std.testing.assert_*`) in IR.
     - Emission uses canonical paths for stdlib dispatch, so `import std.testing` and `from std.testing import assert_*` behave consistently.
@@ -42,7 +42,7 @@ The runtime boundary is intentionally narrow:
 ## Marker metadata flow
 
 ```text
-crates/incan_stdlib/stdlib/testing.incn    src/frontend/testing_markers.rs
+stdlib testing declarations             frontend marker metadata
 ┌──────────────────────────┐          ┌──────────────────────────────┐
 │ @rust.extern(metadata={  │  parse   │  TestingMarkerSemantics      │
 │   "marker_kind": "skip", │ ───────► │  ├ markers: { skip, xfail,   │
@@ -51,7 +51,7 @@ crates/incan_stdlib/stdlib/testing.incn    src/frontend/testing_markers.rs
 │ pub def skip(...)        │          │  └ metadata per marker       │
 └──────────────────────────┘          └──────────────┬───────────────┘
                                                      │
-                                      src/cli/test_runner/discovery.rs
+                                      driver test discovery
                                                      │
                                       ┌──────────────▼───────────────┐
                                       │  resolve decorator → marker  │
@@ -65,5 +65,5 @@ Key files:
 | ----------------------------------------- | --------------------------------------------------------- |
 | `crates/incan_stdlib/stdlib/testing.incn` | Canonical stdlib source (assertions + marker decls)       |
 | `crates/incan_stdlib/src/testing.rs`      | Rust host-boundary implementations (panic stubs)          |
-| `src/frontend/testing_markers.rs`         | Parses marker metadata from stdlib; cached via `OnceLock` |
-| `src/cli/test_runner/discovery.rs`        | Consumes marker semantics for test discovery              |
+| `loaves/compiler/incan_frontend/src/testing_markers.rs`         | Parses marker metadata from stdlib; cached via `OnceLock` |
+| `loaves/compiler/incan_driver/src/testing/discovery.rs`        | Consumes marker semantics for test discovery              |

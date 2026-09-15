@@ -4,10 +4,10 @@ Thank you for your interest in contributing to the Incan programming language! T
 
 ## Start Here (Docs)
 
-- **Contributor docs (this repo)**: see `docs/contributing/`
-  - [Contributor Docs Index](docs/contributing/README.md)
-  - [Extending the Language](docs/contributing/extending_language.md) — when to add builtins vs new syntax
-- **Compiler architecture overview**: [docs/architecture.md](docs/architecture.md)
+- **Contributor docs (this repo)**: see `workspaces/docs-site/docs/contributing/`
+  - [Contributor Docs Index](workspaces/docs-site/docs/contributing/index.md)
+  - [Extending the Language](workspaces/docs-site/docs/contributing/how-to/extending_language.md) — when to add builtins vs new syntax
+- **Compiler architecture overview**: [Architecture](workspaces/docs-site/docs/contributing/explanation/architecture.md)
 
 ## Getting Started
 
@@ -44,7 +44,7 @@ The compiler is organized into a **frontend** (lex/parse/typecheck), a **backend
 
 For an up-to-date module map, see:
 
-- [Compiler Architecture](docs/architecture.md) (includes a module layout table)
+- [Compiler Architecture](workspaces/docs-site/docs/contributing/explanation/architecture.md) (includes a module layout table)
 
 ## Key Development Tasks
 
@@ -55,8 +55,8 @@ The toolchain version lives in **one place**, the root `Cargo.toml`'s `[workspac
 1. Edit the root `Cargo.toml` and update `[workspace.package] version = "..."`. Bump a ring's line in the same change only when that ring actually changed: edit its crates' `version` and the matching `version` in the root table — and, for the stdlib ring, `incan_emit::GENERATED_FOR_STDLIB_VERSION`, the line the compiler generates code for (it does not link the runtime, so it declares the line instead).
 2. Verify everything still passes:
    - `cargo test`
-   - `make pre-commit` (fast local gate)
-   - `make pre-commit-full` (before pushing / opening PR)
+   - `make pre-commit-fast` (fast local gate)
+   - `make pre-commit` (full gate before pushing / opening PR)
 3. Commit the change.
 
 Notes:
@@ -76,23 +76,23 @@ Incan AST → AstLowering → IR → IrEmitter (syn/quote) → prettyplease → 
 The single public entry point is `IrCodegen`:
 
 ```rust
-use incan::backend::IrCodegen;
+use incan_emit::IrCodegen;
 
-let mut codegen = IrCodegen::new();
+let codegen = IrCodegen::new();
 let rust_code = codegen.generate(&ast);
 ```
 
 Key files:
 
-- `ir/codegen.rs`: **Public entry point** (`IrCodegen`) - use this!
-- `ir/lower.rs`: AST to IR lowering (`AstLowering`)
-- `ir/emit.rs`: IR to Rust emission using syn/quote (`IrEmitter`)
-- `ir/conversions.rs`: Type conversions (string literals, borrows, ownership)
-- `ir/types.rs`, `ir/expr.rs`, `ir/stmt.rs`, `ir/decl.rs`: IR type definitions
+- `loaves/compiler/incan_emit/src/codegen.rs`: **Public entry point** (`IrCodegen`) - use this!
+- `loaves/compiler/incan_ir/src/lower/mod.rs`: AST to IR lowering (`AstLowering`)
+- `loaves/compiler/incan_emit/src/emit/mod.rs`: IR to Rust emission using syn/quote (`IrEmitter`)
+- `loaves/compiler/incan_emit/src/conversions.rs`: Type conversions (string literals, borrows, ownership)
+- `loaves/compiler/incan_ir/src/`: IR type definitions in `types.rs`, `expr.rs`, `stmt.rs` and `decl.rs`
 
 ### Type Conversions System
 
-The `conversions` module (`src/backend/ir/conversions.rs`) provides centralized handling of type conversions and borrow checking during Rust codegen. This is where we handle the mismatch between Incan's simple `str` type and Rust's `&str` vs `String` split for example.
+The `conversions` module (`loaves/compiler/incan_emit/src/conversions.rs`) provides centralized handling of type conversions and borrow checking during Rust codegen. This is where we handle the mismatch between Incan's simple `str` type and Rust's `&str` vs `String` split for example.
 
 **When to use conversions:**
 
@@ -116,14 +116,14 @@ let conversion = determine_conversion(
 let converted = conversion.apply(emitted_tokens);
 ```
 
-See `src/backend/ir/conversions.rs` for detailed documentation and 23 test cases covering all scenarios.
+See `loaves/compiler/incan_emit/src/conversions.rs` for the conversion policy and its focused regression tests.
 
 ### Adding a New Builtin Function
 
 This guidance can be found here:
 
-- See [Extending the Language](docs/contributing/extending_language.md) for the current builtin pipeline
-- For the builtins emitter implementation, see `src/backend/ir/emit/expressions/builtins.rs`
+- See [Extending the Language](workspaces/docs-site/docs/contributing/how-to/extending_language.md) for the current builtin pipeline
+- For the builtins emitter implementation, see `loaves/compiler/incan_emit/src/emit/expressions/builtins.rs`
 
 Example:
 
@@ -138,7 +138,7 @@ Example:
 
 ### Adding a New Expression Type
 
-See [Extending the Language](docs/contributing/extending_language.md) for the up-to-date end-to-end checklist (lexer → parser/AST → typechecker → lowering → IR → emission).
+See [Extending the Language](workspaces/docs-site/docs/contributing/how-to/extending_language.md) for the up-to-date end-to-end checklist (lexer → parser/AST → typechecker → lowering → IR → emission).
 
 ### Running Snapshot Tests
 
@@ -233,7 +233,7 @@ Macros are powerful but can make code harder to understand. We follow strict gui
 
 ### `quote!` Usage in Backend
 
-**Location**: `src/backend/ir/emit.rs`, `src/backend/ir/conversions.rs`
+**Location**: `loaves/compiler/incan_emit/src/emit/mod.rs`, `loaves/compiler/incan_emit/src/conversions.rs`
 
 **Guidelines**:
 
@@ -260,7 +260,7 @@ format!("pub struct {} {{ name: String }}", name)
 
 ### `syn` Usage
 
-**Location**: `src/backend/ir/emit.rs`
+**Location**: `loaves/compiler/incan_emit/src/emit/mod.rs`
 
 **Guidelines**:
 
@@ -281,3 +281,9 @@ Open an issue or reach out via the repository's discussion board.
 ## License
 
 By contributing, you agree that your contributions will be licensed under the Apache 2.0 license.
+
+## Checking documentation paths
+
+Run `make doc-paths` to check concrete repository paths in contributor documentation: the root contributor documents, `src/README.md`, non-state Markdown under `.agents/`, contributor pages under `workspaces/docs-site/docs/contributing/`, and crate READMEs under `loaves/`. Keep these references aligned with the files and directories that own the behavior.
+
+The checker checks concrete paths in every fenced block, including diagrams and shell examples. Commands and diagrams should name real repository inputs or clearly identified example-project files. Record intentional exceptions in `scripts/check_doc_paths.allow`, one tab-separated document, exact path token, and reason per line. The document field may be `*`; a path exception may use a trailing `/**` for a subtree. Other wildcard exception patterns are unsupported. Prefer a document-specific exact token for an illustrative filename; do not exempt a stale implementation path that should be corrected.
