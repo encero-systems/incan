@@ -33,17 +33,6 @@ clear_inherited_cargo_environment() {
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$repo_root"
 
-for support_crate in incan_core incan_derive incan_stdlib incan_vocab incan_web_macros; do
-  [ -f "crates/${support_crate}/Cargo.toml" ] || fail "support crate is missing: crates/${support_crate}"
-done
-[ -f "loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml" ] || fail "release stdlib dependency fixture is missing"
-
-workdir="$(mktemp -d)"
-trap 'rm -rf -- "$workdir"' EXIT
-package_dir="$workdir/crates"
-mkdir -p "$package_dir"
-
-archive_counter=0
 # The checkout keeps each support crate in its ring; the archive keeps them side by side under `crates/`, the layout
 # every installed toolchain and staged runtime has. This table mirrors `development_support_crate_dir` in
 # `oven_model::toolchain_layout`.
@@ -57,6 +46,17 @@ support_crate_source() {
   esac
 }
 
+for support_crate in incan_core incan_derive incan_stdlib incan_vocab incan_web_macros; do
+  [ -f "$(support_crate_source "$support_crate")/Cargo.toml" ] || fail "support crate is missing: $(support_crate_source "$support_crate")"
+done
+[ -f "loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml" ] || fail "release stdlib dependency fixture is missing"
+
+workdir="$(mktemp -d)"
+trap 'rm -rf -- "$workdir"' EXIT
+package_dir="$workdir/crates"
+mkdir -p "$package_dir"
+
+archive_counter=0
 stage_tracked_tree() {
   local source_tree="${1#./}"
   local destination="$2"
