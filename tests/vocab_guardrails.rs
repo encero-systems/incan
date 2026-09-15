@@ -370,12 +370,11 @@ fn semantic_string_scan_files(root: &Path) -> Vec<PathBuf> {
         "crates/rust_inspect/src",
         "loaves/compiler/incan_emit/src",
         "loaves/compiler/incan_ir/src",
-        "src/dependency_resolver.rs",
-        "src/driver",
+        "loaves/compiler/incan_driver/src",
         "loaves/compiler/incan_frontend/src/provider",
         "loaves/compiler/incan_frontend/src/testing_markers.rs",
         "loaves/compiler/incan_frontend/src/typechecker",
-        "src/provider",
+        "loaves/compiler/incan_provider/src",
     ];
 
     let mut files = Vec::new();

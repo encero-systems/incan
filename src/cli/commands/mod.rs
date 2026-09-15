@@ -29,7 +29,7 @@ pub mod lock;
 pub mod oven;
 pub mod provider_inspect;
 pub mod representation_inspect;
-pub(crate) mod shadow_support;
+mod shadow_support;
 pub mod stdlib_loader;
 pub mod tools;
 pub mod workspace;

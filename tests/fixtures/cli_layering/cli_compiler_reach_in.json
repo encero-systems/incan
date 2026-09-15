@@ -33,13 +33,6 @@
       ]
     },
     {
-      "path": "src/cli/commands/shadow_support.rs",
-      "reaches": [
-        "crate::backend::selection",
-        "crate::backend::shadow"
-      ]
-    },
-    {
       "path": "src/cli/commands/tools.rs",
       "reaches": [
         "crate::frontend::api_metadata",

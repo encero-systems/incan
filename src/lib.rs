@@ -16,13 +16,13 @@
 pub mod backend;
 #[cfg(feature = "cli")]
 pub mod cli;
-pub(crate) mod compiled_sdk;
-pub mod compiler_stack;
-pub mod dependency_resolver;
+pub use incan_frontend::compiler_stack;
+pub use incan_provider::compiled_sdk;
+pub use incan_provider::dependency_resolver;
 pub mod driver;
+pub use incan_driver::generated_cache;
 pub use incan_format as format;
 pub use incan_frontend as frontend;
-pub(crate) mod generated_cache;
 pub mod inspect;
 pub use incan_frontend::library_manifest;
 pub mod lockfile;
@@ -32,15 +32,15 @@ pub use oven_model::manifest;
 pub mod numeric;
 pub use incan_ir::numeric_adapters;
 pub mod oven;
-pub mod oven_facet;
+pub use incan_oven_facet as oven_facet;
 pub use oven_model::oven_interop;
 pub use oven_model::project_lifecycle;
 pub mod provider;
-pub mod replacement_compatibility;
+pub use incan_driver::replacement_compatibility;
 #[cfg(feature = "rust_inspect")]
 pub mod rust_inspect;
 pub use incan_core::version;
-pub(crate) use oven_model::toolchain_layout;
+pub use oven_model::toolchain_layout;
 pub use oven_model::workspace;
 
 pub use frontend::ast;

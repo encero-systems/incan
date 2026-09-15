@@ -1,13 +1,3 @@
-//! Backend-neutral compiled-provider, SDK-component, and package-feature resolution.
+//! The provider crate under its old path, for the callers that still spell `crate::provider::…`.
 
-pub use incan_frontend::provider::*;
-
-pub mod effect_digest;
-pub mod inventory;
-pub mod lock_semantics;
-pub mod requirements;
-pub mod sdk_build;
-pub mod sdk_store;
-#[cfg(test)]
-pub(crate) mod test_support;
-pub(crate) mod vocab_extraction;
+pub use incan_provider::*;

@@ -11,10 +11,13 @@ members = [
     "crates/incan_semantics_stdlib",
     "crates/incan_web_macros",
     "crates/rust_inspect",
+    "loaves/compiler/incan_driver",
     "loaves/compiler/incan_emit",
     "loaves/compiler/incan_format",
     "loaves/compiler/incan_frontend",
     "loaves/compiler/incan_ir",
+    "loaves/compiler/incan_oven_facet",
+    "loaves/compiler/incan_provider",
     "loaves/oven/oven_model",
     "loaves/oven/oven_rustc",
     "loaves/oven/oven_store",
@@ -70,15 +73,15 @@ readme.workspace = true
 
 [features]
 default = ["cli", "std_testing", "std_async", "std_decorators"]
-cli = ["dep:clap", "dep:tracing-subscriber", "rust_inspect"]
-lsp = ["dep:tower-lsp", "dep:tokio", "incan_frontend/lsp"]
-std_testing = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_testing", "incan_frontend/std_testing", "incan_ir/std_testing", "incan_emit/std_testing"]
-std_async = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_async", "incan_frontend/std_async", "incan_ir/std_async", "incan_emit/std_async"]
-std_decorators = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_decorators", "incan_frontend/std_decorators", "incan_ir/std_decorators", "incan_emit/std_decorators"]
+cli = ["dep:clap", "dep:tracing-subscriber", "rust_inspect", "incan_driver/cli"]
+lsp = ["dep:tower-lsp", "dep:tokio", "incan_frontend/lsp", "incan_driver/lsp"]
+std_testing = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_testing", "incan_frontend/std_testing", "incan_ir/std_testing", "incan_emit/std_testing", "incan_provider/std_testing", "incan_driver/std_testing"]
+std_async = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_async", "incan_frontend/std_async", "incan_ir/std_async", "incan_emit/std_async", "incan_provider/std_async", "incan_driver/std_async"]
+std_decorators = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_decorators", "incan_frontend/std_decorators", "incan_ir/std_decorators", "incan_emit/std_decorators", "incan_provider/std_decorators", "incan_driver/std_decorators"]
 # Rust dependency inspection via rust-analyzer (`ra_ap_*`) in the `rust_inspect` crate.
 # Kept optional for non-CLI/library builds; the CLI enables it so ordinary `rust::` imports can preserve
 # real function/type signatures.
-rust_inspect = ["rust_inspect/inspector", "incan_frontend/rust_inspect", "incan_ir/rust_inspect", "incan_emit/rust_inspect"]
+rust_inspect = ["rust_inspect/inspector", "incan_frontend/rust_inspect", "incan_ir/rust_inspect", "incan_emit/rust_inspect", "incan_provider/rust_inspect", "incan_driver/rust_inspect"]
 
 [dependencies]
 # Shared language/semantic helpers (canonical vocab)
@@ -87,6 +90,9 @@ incan_format = { path = "loaves/compiler/incan_format" }
 incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = false }
 incan_ir = { path = "loaves/compiler/incan_ir", default-features = false }
 incan_emit = { path = "loaves/compiler/incan_emit", default-features = false }
+incan_provider = { path = "loaves/compiler/incan_provider", default-features = false }
+incan_driver = { path = "loaves/compiler/incan_driver", default-features = false }
+incan_oven_facet = { path = "loaves/compiler/incan_oven_facet" }
 incan_codegraph = { path = "crates/incan_codegraph" }
 incan_vocab = { path = "crates/incan_vocab" }
 # Shared syntax frontend (lexer, parser, AST, diagnostics)
@@ -184,6 +190,8 @@ incan_stdlib = { path = "crates/incan_stdlib" }
 # Temporary directories for manifest discovery tests
 incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = false, features = ["test_support"] }
 incan_emit = { path = "loaves/compiler/incan_emit", default-features = false, features = ["test_support"] }
+incan_provider = { path = "loaves/compiler/incan_provider", default-features = false, features = ["test_support"] }
+incan_driver = { path = "loaves/compiler/incan_driver", default-features = false, features = ["test_support"] }
 rust_inspect = { path = "crates/rust_inspect", default-features = false, features = ["test_fixtures"] }
 oven_rustc = { path = "loaves/oven/oven_rustc", features = ["test_support"] }
 oven_store = { path = "loaves/oven/oven_store", features = ["test_support"] }
