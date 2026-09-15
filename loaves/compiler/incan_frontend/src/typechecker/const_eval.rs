@@ -1,7 +1,7 @@
 //! Const-evaluation / const-validation for RFC 008.
 //!
-//! This module does not compute runtime values; it validates that an initializer is const-evaluable,
-//! determines its type, classifies it (Rust-native vs frozen), and detects const dependency cycles.
+//! This module does not compute runtime values; it validates that an initializer is const-evaluable, determines its
+//! type, classifies it (Rust-native vs frozen), and detects const dependency cycles.
 //!
 //! Numeric semantics follow Python-like rules (via `crate::numeric`):
 //! - `/` always yields `Float` (even `int / int`)
@@ -89,8 +89,8 @@ pub enum ConstEvalState {
 impl TypeChecker {
     /// Convert a user-written type annotation in a `const` declaration to its frozen form.
     ///
-    /// This makes `const X: List[T] = [...]` behave as `const X: FrozenList[T] = [...]`, ensuring
-    /// the resulting constant has a deeply immutable type (no mutating APIs).
+    /// This makes `const X: List[T] = [...]` behave as `const X: FrozenList[T] = [...]`, ensuring the resulting
+    /// constant has a deeply immutable type (no mutating APIs).
     fn freeze_const_annotation(&self, ty: ResolvedType) -> ResolvedType {
         freeze_const_type(ty)
     }

@@ -63,8 +63,8 @@ def settle(account: str, amount: int) -> int:
 /// One checked provider invocation retained inside a stored closure.
 ///
 /// The outer output makes a late missing-host refusal source-observable. The regression below must make preparation
-/// refuse before that `println` can execute; unexpected admission is exercised with capture writers to expose
-/// any output before the late refusal.
+/// refuse before that `println` can execute; unexpected admission is exercised with capture writers to expose any
+/// output before the late refusal.
 const STORED_CLOSURE_PROVIDER_FIXTURE_SOURCE: &str = r#"
 capability ledger_charge:
   description = "Charge one approved ledger account"

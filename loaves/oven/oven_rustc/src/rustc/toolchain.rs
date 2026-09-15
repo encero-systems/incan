@@ -156,10 +156,10 @@ pub fn incan_owned_target_installed(target: &str) -> Option<bool> {
 /// Resolve the Rust compiler belonging to Incan's own provisioned toolchain.
 ///
 /// Pairs with [`incan_owned_cargo`]. A toolchain-direct Cargo does not imply a matching compiler: Cargo resolves
-/// `rustc` from `RUSTC` or `PATH`, and on a machine with Rustup installed `PATH` reaches the Rustup shim, which
-/// selects the user's default toolchain. Selecting Incan's Cargo without also selecting its compiler therefore
-/// builds one dependency graph with two rustc versions, which Cargo only reports much later as
-/// "found crate `x` compiled by an incompatible version of rustc".
+/// `rustc` from `RUSTC` or `PATH`, and on a machine with Rustup installed `PATH` reaches the Rustup shim, which selects
+/// the user's default toolchain. Selecting Incan's Cargo without also selecting its compiler therefore builds one
+/// dependency graph with two rustc versions, which Cargo only reports much later as "found crate `x` compiled by an
+/// incompatible version of rustc".
 pub fn incan_owned_rustc() -> Option<PathBuf> {
     incan_owned_tool(&incan_owned_rustup_home()?, "rustc")
 }

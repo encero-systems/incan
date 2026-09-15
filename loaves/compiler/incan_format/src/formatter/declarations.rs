@@ -546,8 +546,7 @@ impl Formatter {
         }
     }
 
-    /// Format a trait declaration, including same-trait method aliases.
-    /// Format an RFC 104 `capability` declaration.
+    /// Format a trait declaration, including same-trait method aliases. Format an RFC 104 `capability` declaration.
     ///
     /// Clause order is normalized to description, scope, then requires, regardless of how the source ordered them:
     /// the parser accepts any order, and a formatter that preserved it would make two identical capabilities format
@@ -703,8 +702,8 @@ impl Formatter {
         self.writer.dedent();
     }
 
-    /// Format one enum variant with optional payload fields and raw value assignment.
-    /// Write an enum's header line: visibility, name, type parameters, value-enum carrier, and adopted traits.
+    /// Format one enum variant with optional payload fields and raw value assignment. Write an enum's header line:
+    /// visibility, name, type parameters, value-enum carrier, and adopted traits.
     ///
     /// The adoption clause is part of the declaration's meaning, not decoration: `enum Level with Display` and
     /// `enum Level` are different types. Omitting it here silently rewrote the first into the second, so this mirrors

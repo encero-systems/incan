@@ -1,8 +1,7 @@
 //! Internal prelude for backend modules
 //!
-//! This module re-exports IR types for internal use within the backend.
-//! External users should interact via the public API (`IrCodegen`, `ProjectGenerator`)
-//! rather than manipulating IR types directly.
+//! This module re-exports IR types for internal use within the backend. External users should interact via the public
+//! API (`IrCodegen`, `ProjectGenerator`) rather than manipulating IR types directly.
 
 // IR types
 pub use incan_ir::decl::{FunctionParam, IrDecl, IrDeclKind, IrFunction, IrStruct};

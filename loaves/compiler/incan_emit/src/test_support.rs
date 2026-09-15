@@ -36,8 +36,7 @@ pub fn assert_no_generated_unused_lint_allows(code: &str) {
     assert!(!code.contains("#[allow(dead_code, unused_variables)]"), "{code}");
 }
 
-/// Parse an Incan program into an AST
-/// Lex and parse one source, panicking on a syntax error a test did not expect.
+/// Parse an Incan program into an AST Lex and parse one source, panicking on a syntax error a test did not expect.
 pub fn parse_program(source: &str) -> Program {
     let tokens = must_ok(lexer::lex(source));
     must_ok(parser::parse(&tokens))

@@ -156,13 +156,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Recursively lower one source `ast::Pattern` node into a [`bir::Pattern`], declaring a fresh local in
-    /// `arm_scope` the first time a bound name is encountered and reusing it for any later `Or`-alternative
-    /// occurrence of the same name (`seen`) -- Incan's typechecker (RFC 071) requires every alternative of an
-    /// `A(x) | B(x)` pattern to bind an identical name/type set, so Rust's own single shared binding slot per name
-    /// is the correct target shape, not one local per occurrence. `saved_bindings` accumulates
-    /// `(name, previous_local)` pairs so [`Self::lower_match`] can restore `self.bindings` to the enclosing scope
-    /// once this arm's guard/body have both been lowered, the same save/restore shape [`Self::lower_closure`]
-    /// already uses around its own params/captures.
+    /// `arm_scope` the first time a bound name is encountered and reusing it for any later `Or`-alternative occurrence
+    /// of the same name (`seen`) -- Incan's typechecker (RFC 071) requires every alternative of an `A(x) | B(x)`
+    /// pattern to bind an identical name/type set, so Rust's own single shared binding slot per name is the correct
+    /// target shape, not one local per occurrence. `saved_bindings` accumulates `(name, previous_local)` pairs so
+    /// [`Self::lower_match`] can restore `self.bindings` to the enclosing scope once this arm's guard/body have both
+    /// been lowered, the same save/restore shape [`Self::lower_closure`] already uses around its own params/captures.
     ///
     /// Both `match` arms and `assert value is P` (RFC 018) lower their patterns here, so "arm" below means
     /// whichever construct owns this pattern. The two differ in binding lifetime, and `arm_scope`/`reads` are the
@@ -177,14 +176,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// string for a tuple/enum-variant positional field, mirroring [`Self::lower_tuple_unpack`]'s own tuple-element
     /// projection convention (`.0`/`.1` Rust tuple-field-access spelling) rather than inventing a second one.
     ///
-    /// `expected_ty` is the best available type for this pattern node: propagated through [`Self::lower_match`]'s
-    /// own `Self::resolve_ty` call on the scrutinee for the root pattern, and through
-    /// [`tuple_element_types`] for `Tuple` sub-patterns (both already-established sources elsewhere in this file);
-    /// a `Struct`/`Enum` constructor pattern's own fields fall back to [`IncanType::Unknown`] per field, since
-    /// resolving a model/class/enum-variant's real field types would mean rebuilding the existing Rust-emission
-    /// backend's own field-type-projection machinery (`constructor_field_types_for_pattern` in
-    /// `src/backend/ir/lower/expr/patterns.rs`), which this bucket deliberately does not mirror -- see
-    /// [`bir::Pattern`]'s own docs.
+    /// `expected_ty` is the best available type for this pattern node: propagated through [`Self::lower_match`]'s own
+    /// `Self::resolve_ty` call on the scrutinee for the root pattern, and through [`tuple_element_types`] for `Tuple`
+    /// sub-patterns (both already-established sources elsewhere in this file); a `Struct`/`Enum` constructor pattern's
+    /// own fields fall back to [`IncanType::Unknown`] per field, since resolving a model/class/enum-variant's real
+    /// field types would mean rebuilding the existing Rust-emission backend's own field-type-projection machinery
+    /// (`constructor_field_types_for_pattern` in `src/backend/ir/lower/expr/patterns.rs`), which this bucket
+    /// deliberately does not mirror -- see [`bir::Pattern`]'s own docs.
     #[allow(clippy::too_many_arguments)]
     /// Lower one pattern arm whose body is a statement block, restoring the enclosing bindings afterwards.
     ///

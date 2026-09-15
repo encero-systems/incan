@@ -33,8 +33,8 @@ pub(crate) fn selected_graph_invalid(
 
 /// Require one text field to be non-empty and already trimmed.
 ///
-/// Trimming here instead of accepting and normalizing keeps the wire form canonical: two graphs that differ
-/// only in surrounding whitespace would otherwise digest differently while meaning the same thing.
+/// Trimming here instead of accepting and normalizing keeps the wire form canonical: two graphs that differ only in
+/// surrounding whitespace would otherwise digest differently while meaning the same thing.
 pub(crate) fn validate_selected_graph_text(value: &str, field: &str) -> Result<(), OvenSelectedRustFacetGraphError> {
     if value.is_empty() {
         return Err(selected_graph_missing(field));
@@ -67,8 +67,8 @@ pub(crate) fn validate_selected_graph_digest(value: &str, field: &str) -> Result
 
 /// Require one declared path to be relative, portable and free of components that escape its owner.
 ///
-/// `allow_owner_root` admits the empty path, which names the owner root itself; everywhere else an empty
-/// path is a missing field rather than a reference to the root.
+/// `allow_owner_root` admits the empty path, which names the owner root itself; everywhere else an empty path is a
+/// missing field rather than a reference to the root.
 pub(crate) fn validate_selected_graph_path(
     value: &str,
     field: &str,
@@ -90,14 +90,14 @@ pub(crate) fn validate_selected_graph_path(
 
 /// Reject every host-specific spelling a source identity could smuggle in.
 ///
-/// The checks read the string itself rather than going through `std::path`, because `Path::is_absolute` answers
-/// for the *validating* host: a Windows drive or UNC identity looks like an ordinary relative name to a
-/// macOS or Linux validator, and a POSIX absolute looks ordinary to a Windows one. A portable graph must refuse
-/// both wherever it is checked, so the rule is spelled out once and applied uniformly.
+/// The checks read the string itself rather than going through `std::path`, because `Path::is_absolute` answers for the
+/// *validating* host: a Windows drive or UNC identity looks like an ordinary relative name to a macOS or Linux
+/// validator, and a POSIX absolute looks ordinary to a Windows one. A portable graph must refuse both wherever it is
+/// checked, so the rule is spelled out once and applied uniformly.
 ///
-/// Logical coordinates keep their own punctuation -- a Git URL's `://`, a registry's `@version` -- because those
-/// name a remote or locked coordinate rather than a location on this machine. A `file:` URI is the exception
-/// that proves the rule and is handled by `selected_graph_coordinate_names_a_local_file_uri`.
+/// Logical coordinates keep their own punctuation -- a Git URL's `://`, a registry's `@version` -- because those name a
+/// remote or locked coordinate rather than a location on this machine. A `file:` URI is the exception that proves the
+/// rule and is handled by `selected_graph_coordinate_names_a_local_file_uri`.
 fn validate_selected_graph_portable_coordinate(
     value: &str,
     field: &str,
@@ -239,8 +239,8 @@ pub fn selected_graph_sha256(bytes: &[u8]) -> String {
 
 /// Digest one unit's declared source members into the single identity its selection carries.
 ///
-/// An empty member set is refused rather than digested: a source tree with nothing in it is a declaration
-/// error, and hashing it would mint a perfectly stable identity for no source at all.
+/// An empty member set is refused rather than digested: a source tree with nothing in it is a declaration error, and
+/// hashing it would mint a perfectly stable identity for no source at all.
 pub fn selected_graph_source_digest(
     members: &[OvenSelectedRustFacetSourceMember],
 ) -> Result<String, OvenSelectedRustFacetGraphError> {
@@ -390,8 +390,8 @@ fn selected_graph_environment_requires_path(name: &str) -> bool {
 
 /// Whether one environment variable holds a search-path list rather than a single value.
 ///
-/// A list is validated and relocated element by element, so treating one as a scalar would let an entry
-/// outside the admitted roots through inside a longer string.
+/// A list is validated and relocated element by element, so treating one as a scalar would let an entry outside the
+/// admitted roots through inside a longer string.
 fn selected_graph_environment_is_path_list(name: &str) -> bool {
     matches!(
         name,
@@ -590,8 +590,8 @@ pub const fn selected_graph_unit_role_is_valid(
 
 /// Resolve one owner reference against the owners the graph declares, returning its kind.
 ///
-/// A reference to an owner the graph never declared is refused here rather than at materialization, so the
-/// graph is internally consistent before anything physical is looked for.
+/// A reference to an owner the graph never declared is refused here rather than at materialization, so the graph is
+/// internally consistent before anything physical is looked for.
 pub(crate) fn validate_selected_graph_owner_reference(
     owner: &str,
     owners: &BTreeMap<&str, OvenSelectedRustFacetOwnerKind>,

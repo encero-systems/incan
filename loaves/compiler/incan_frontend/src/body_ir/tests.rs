@@ -336,11 +336,11 @@ fn build_after_expected_typecheck_errors(
     ))
 }
 
-/// Build a Body IR module from `source` after rewriting its first `for a, b in ...:` header into the nested
-/// `for a, (b, c) in ...:` shape the parser has no spelling for (see
-/// `nested_tuple_for_patterns_have_no_source_spelling_yet`). The rewrite happens *before* typechecking, so the
-/// nested pattern flows through `TypeChecker::define_for_pattern_bindings`' own recursion and reaches lowering
-/// with real resolved element types, exactly as a future parser-supported nesting would.
+/// Build a Body IR module from `source` after rewriting its first `for a, b in ...:` header into the nested `for a, (b,
+/// c) in ...:` shape the parser has no spelling for (see `nested_tuple_for_patterns_have_no_source_spelling_yet`). The
+/// rewrite happens *before* typechecking, so the nested pattern flows through
+/// `TypeChecker::define_for_pattern_bindings`' own recursion and reaches lowering with real resolved element types,
+/// exactly as a future parser-supported nesting would.
 fn build_with_nested_for_pattern(
     source: &str,
     module_path: &[&str],
@@ -3528,8 +3528,8 @@ type ResolvedBindingParts<'a> = (&'a [bir::BoundArgument], &'a [usize]);
 
 /// Return a call's resolved argument binding, failing when the call recorded no declared-slot binding.
 ///
-/// Insisting on [`bir::ArgumentBinding::Resolved`] is the point: a test that accepted
-/// `UnresolvedPositional` would silently pass against an implementation that stopped binding named arguments.
+/// Insisting on [`bir::ArgumentBinding::Resolved`] is the point: a test that accepted `UnresolvedPositional` would
+/// silently pass against an implementation that stopped binding named arguments.
 fn resolved_binding(kind: &bir::StatementKind) -> Result<ResolvedBindingParts<'_>, Box<dyn std::error::Error>> {
     match call_binding(kind)? {
         bir::ArgumentBinding::Resolved {
@@ -5742,8 +5742,8 @@ def run() -> int:
     Ok(())
 }
 
-/// An enum method that dispatches on `self`, including a payload variant, lowers a real body rather than an
-/// empty or placeholder one.
+/// An enum method that dispatches on `self`, including a payload variant, lowers a real body rather than an empty or
+/// placeholder one.
 #[test]
 fn an_enum_method_dispatching_on_self_lowers_its_match() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
@@ -7064,10 +7064,9 @@ def run() -> int:
 /// The indentation `render_block` gives a statement nested one block below a body's top-level statements.
 ///
 /// A body renders its own block at depth 1, so a top-level statement carries two spaces and anything inside that
-/// statement's nested block carries four. Tests that care about *where* a statement landed compare against this
-/// rather than merely finding the text somewhere in the body, which would also pass if the statement had escaped
-/// into the enclosing block.
-/// The label fragment every by-design refusal used as a test stand-in renders with.
+/// statement's nested block carries four. Tests that care about *where* a statement landed compare against this rather
+/// than merely finding the text somewhere in the body, which would also pass if the statement had escaped into the
+/// enclosing block. The label fragment every by-design refusal used as a test stand-in renders with.
 ///
 /// Tests that need *some* refusal in a given position -- to prove a refusal stays nested inside the construct
 /// containing it, say -- must not reach for whichever construct happens to be unrepresentable that week. Four have

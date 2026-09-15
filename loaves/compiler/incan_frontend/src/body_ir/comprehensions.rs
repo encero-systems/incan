@@ -7,15 +7,15 @@ use super::reads::*;
 use super::*;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
-    /// Lower a list comprehension `[expr for pattern in iter if filter]` into: an empty
-    /// `AggregateKind::List` temporary, the desugared clause-chain loop (see
-    /// [`Self::lower_comprehension_clauses`]), pushing each accepted element into it via a compiler-synthesized
-    /// `push` [`bir::Callee::Method`] call, then a read of the completed list. Only v0's single mirrored
-    /// `(pattern, iter, filter)` clause is lowered -- `comp.clauses` is intentionally not consulted, since neither
-    /// the typechecker (`check_list_comp` in `src/frontend/typechecker/check_expr/comps.rs`) nor the existing
-    /// Rust-emission backend (`src/backend/ir/lower/expr/comprehensions.rs`) reads it either; a list comprehension
-    /// with more than one `for` clause is not actually type-checked or emitted as multi-clause today; treating
-    /// `comp.clauses` as authoritative here would silently lower a shape nothing else in the pipeline validates.
+    /// Lower a list comprehension `[expr for pattern in iter if filter]` into: an empty `AggregateKind::List`
+    /// temporary, the desugared clause-chain loop (see [`Self::lower_comprehension_clauses`]), pushing each accepted
+    /// element into it via a compiler-synthesized `push` [`bir::Callee::Method`] call, then a read of the completed
+    /// list. Only v0's single mirrored `(pattern, iter, filter)` clause is lowered -- `comp.clauses` is intentionally
+    /// not consulted, since neither the typechecker (`check_list_comp` in
+    /// `src/frontend/typechecker/check_expr/comps.rs`) nor the existing Rust-emission backend
+    /// (`src/backend/ir/lower/expr/comprehensions.rs`) reads it either; a list comprehension with more than one `for`
+    /// clause is not actually type-checked or emitted as multi-clause today; treating `comp.clauses` as authoritative
+    /// here would silently lower a shape nothing else in the pipeline validates.
     pub(super) fn lower_list_comp(
         &mut self,
         comp: &ast::ListComp,

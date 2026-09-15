@@ -644,11 +644,10 @@ pub struct IrEmitter<'a> {
     rust_module_path: Option<String>,
     /// Rust import path tracking: maps imported type names (incl. aliases) to their original module paths.
     ///
-    /// Key: type name as seen in Incan code (e.g., "AxumResponse" for `import Response as AxumResponse`)
-    /// Value: original module path (e.g., ["axum", "response"])
+    /// Key: type name as seen in Incan code (e.g., "AxumResponse" for `import Response as AxumResponse`) Value:
+    /// original module path (e.g., ["axum", "response"])
     ///
-    /// Used by derive passthrough and newtype emission to locate the original Rust crate path for
-    /// imported types.
+    /// Used by derive passthrough and newtype emission to locate the original Rust crate path for imported types.
     rust_import_paths: RefCell<std::collections::HashMap<String, Vec<String>>>,
     /// Local newtype construction plans, including conservative fallbacks when checked metadata is unavailable.
     newtype_construction: HashMap<String, incan_ir::IrNewtypeConstructionPlan>,

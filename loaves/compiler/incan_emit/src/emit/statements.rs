@@ -1,7 +1,7 @@
 //! Statement emission for IR to Rust code generation
 //!
-//! This module handles emitting Rust statements from IR statements,
-//! including let bindings, assignments, control flow, and blocks.
+//! This module handles emitting Rust statements from IR statements, including let bindings, assignments, control flow,
+//! and blocks.
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -319,9 +319,8 @@ fn is_diverging_rust_error_call(expr: &TypedExpr) -> bool {
 
 /// Return the local `StaticBinding` name at the root of a storage-rooted expression.
 ///
-/// This is used by statement-slice analysis to detect aliases like `live` in
-/// `live.append(...)` or `live[i] = ...` so emission can decide whether the local
-/// Rust binding must be declared `mut`.
+/// This is used by statement-slice analysis to detect aliases like `live` in `live.append(...)` or `live[i] = ...` so
+/// emission can decide whether the local Rust binding must be declared `mut`.
 fn expr_storage_binding_root_name(expr: &incan_ir::expr::IrExpr) -> Option<&str> {
     match &expr.kind {
         IrExprKind::Var {
@@ -336,10 +335,9 @@ fn expr_storage_binding_root_name(expr: &incan_ir::expr::IrExpr) -> Option<&str>
 
 /// Collect `StaticBinding` locals whose receiver position implies mutation within one expression tree.
 ///
-/// This walk is intentionally conservative: if an expression path can lower to
-/// `binding.with_mut(...)`, the binding name is recorded so the enclosing statement slice
-/// can emit `let mut binding = ...` even when the source-level binding itself is not declared
-/// `mut`.
+/// This walk is intentionally conservative: if an expression path can lower to `binding.with_mut(...)`, the binding
+/// name is recorded so the enclosing statement slice can emit `let mut binding = ...` even when the source-level
+/// binding itself is not declared `mut`.
 fn expr_mutates_storage_binding(expr: &incan_ir::expr::IrExpr, names: &mut HashSet<String>) {
     // ---- Context: direct receiver mutations from method-call forms ----
     match &expr.kind {
@@ -533,8 +531,8 @@ fn expr_mutates_storage_binding(expr: &incan_ir::expr::IrExpr, names: &mut HashS
 
 /// Collect `StaticBinding` locals whose values are mutated anywhere inside one statement.
 ///
-/// The resulting names feed statement-slice emission so only storage aliases that truly need
-/// mutable Rust handles are emitted with `let mut`.
+/// The resulting names feed statement-slice emission so only storage aliases that truly need mutable Rust handles are
+/// emitted with `let mut`.
 fn stmt_mutates_storage_binding(stmt: &IrStmt, names: &mut HashSet<String>) {
     match &stmt.kind {
         // ---- Context: single-expression statement forms ----

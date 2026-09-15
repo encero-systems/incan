@@ -1,9 +1,8 @@
 //! Centralized ownership conversion policy for IR code generation.
 //!
 //! Incan does not expose Rust's ownership model directly, but generated Rust still needs the right
-//! move/borrow/clone/materialization shape at each sink. This module is the low-level policy engine
-//! behind duckborrowing: it decides which conversion strategy to apply once the emitter identifies a
-//! typed use site.
+//! move/borrow/clone/materialization shape at each sink. This module is the low-level policy engine behind
+//! duckborrowing: it decides which conversion strategy to apply once the emitter identifies a typed use site.
 //!
 //! This module provides the **single source of truth** for deciding when code generation should:
 //! - materialize owned `String` storage,
@@ -14,8 +13,7 @@
 //!
 //! ## Main responsibilities
 //!
-//! Strings remain the most common ownership mismatch in generated Rust, but this module now also
-//! covers:
+//! Strings remain the most common ownership mismatch in generated Rust, but this module now also covers:
 //! - borrowed method-chain results such as `box.as_ref()`,
 //! - field reads that must materialize owned values at storage/return sinks,
 //! - backend-inserted clones for owned tuples/collections/assignments,
@@ -187,8 +185,8 @@ use quote::quote;
 pub enum ConversionContext {
     /// Argument to an Incan-defined function (expects owned values)
     IncanFunctionArg,
-    /// Argument to an Incan function inside a return statement.
-    /// Values can be moved since there's no code after the return.
+    /// Argument to an Incan function inside a return statement. Values can be moved since there's no code after the
+    /// return.
     IncanFunctionArgInReturn,
     /// Argument to an external Rust function (may expect borrows)
     ExternalFunctionArg,
@@ -213,9 +211,9 @@ pub enum Conversion {
     None,
     /// Convert &str to String with .to_string()
     ToString,
-    /// Convert via `.into()` — lets the Rust compiler resolve the target type via the `Into` trait.
-    /// Used for external Rust crate calls where the target type may be a custom string type (e.g., Polars'
-    /// `PlSmallStr`) or other type that implements `From<String>` / `From<&str>`.
+    /// Convert via `.into()` — lets the Rust compiler resolve the target type via the `Into` trait. Used for external
+    /// Rust crate calls where the target type may be a custom string type (e.g., Polars' `PlSmallStr`) or other type
+    /// that implements `From<String>` / `From<&str>`.
     Into,
     /// Borrow with &
     Borrow,
@@ -291,8 +289,8 @@ fn exact_float_boundary_conversion(
 
 /// Numeric coercions for binary operations (int/float promotion).
 ///
-/// Promotes integer operands to `f64` when the paired operand is `f64`,
-/// or when the operation requires float (e.g., division).
+/// Promotes integer operands to `f64` when the paired operand is `f64`, or when the operation requires float (e.g.,
+/// division).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NumericConversion {
     None,
@@ -655,10 +653,9 @@ fn determine_owned_storage_conversion(
 
 /// Whether a borrowed expression must be materialized before entering an owned sink.
 ///
-/// This covers true IR borrows (`&T`, `&mut T`) and borrowed method-chain results such as
-/// `box.as_ref()`. The helper is intentionally conservative when target metadata is missing:
-/// generated Rust should prefer owned Incan semantics over leaking a raw borrow that would force
-/// users to add `.clone()` manually.
+/// This covers true IR borrows (`&T`, `&mut T`) and borrowed method-chain results such as `box.as_ref()`. The helper is
+/// intentionally conservative when target metadata is missing: generated Rust should prefer owned Incan semantics over
+/// leaking a raw borrow that would force users to add `.clone()` manually.
 fn borrowed_expr_needs_owned_materialization(expr: &IrExpr, target_ty: Option<&IrType>) -> bool {
     if let IrExprKind::InteropCoerce { expr, kind, .. } = &expr.kind {
         if matches!(kind, incan_ir::expr::IrInteropCoercionKind::RustTypeUnwrap) {
@@ -794,10 +791,9 @@ fn field_access_reads_from_self_receiver(expr: &IrExpr) -> bool {
 
 /// Whether a field projection must clone instead of moving directly from its parent object.
 ///
-/// Tuple-unpack temporaries are the notable exemption: lowering marks the temporary tuple binding
-/// as `VarAccess::Move`, so moving `tmp.0`, then `tmp.1`, is legitimate and should not introduce
-/// a backend clone. Ordinary field reads from borrowed/shared parents still need owned
-/// materialization at storage and return sinks.
+/// Tuple-unpack temporaries are the notable exemption: lowering marks the temporary tuple binding as `VarAccess::Move`,
+/// so moving `tmp.0`, then `tmp.1`, is legitimate and should not introduce a backend clone. Ordinary field reads from
+/// borrowed/shared parents still need owned materialization at storage and return sinks.
 fn field_read_needs_owned_materialization(expr: &IrExpr) -> bool {
     match &expr.kind {
         IrExprKind::Field { object, .. } => !matches!(
@@ -1139,8 +1135,8 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
     }
 }
 
-/// Returns true when lowering/emission treats this Incan parameter like `name: &mut RustTy` rather than
-/// `mut name: RustTy` (small scalars).
+/// Returns true when lowering/emission treats this Incan parameter like `name: &mut RustTy` rather than `mut name:
+/// RustTy` (small scalars).
 fn mut_param_passed_by_rust_mut_ref(ty: &IrType) -> bool {
     !matches!(ty, IrType::Int | IrType::Float | IrType::Bool)
 }
@@ -1160,9 +1156,8 @@ pub fn incan_mutable_param_passed_as_rust_mut_ref(param: &FunctionParam) -> bool
 
 /// Returns whether a mutable callee parameter preserves its existing Rust value at the call boundary.
 ///
-/// Ordinary mutable aggregates are passed by mutable reference, while [`Mutability::OwnedMutable`]
-/// direct-Rust handles move their outer value once. Neither form may take Incan's usual clone or
-/// collection-materialization path.
+/// Ordinary mutable aggregates are passed by mutable reference, while [`Mutability::OwnedMutable`] direct-Rust handles
+/// move their outer value once. Neither form may take Incan's usual clone or collection-materialization path.
 fn incan_mutable_param_skips_incan_value_conversions(param: &FunctionParam) -> bool {
     matches!(param.mutability, Mutability::Mutable | Mutability::OwnedMutable)
         && mut_param_skips_incan_value_conversions(&param.ty)

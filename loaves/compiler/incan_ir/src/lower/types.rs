@@ -1,7 +1,7 @@
 //! Type lowering utilities for AST to IR conversion.
 //!
-//! This module contains helper functions for converting AST types, operators,
-//! and performing variable lookups during the lowering pass.
+//! This module contains helper functions for converting AST types, operators, and performing variable lookups during
+//! the lowering pass.
 //!
 //! Numeric semantics follow Python-like rules (via `incan_core`):
 //! - `/` always yields `Float` (even `int / int`)

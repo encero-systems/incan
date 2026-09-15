@@ -1,7 +1,7 @@
 //! Type checker for the Incan programming language.
 //!
-//! Validates types, mutability, trait conformance, and error-handling semantics for a parsed Incan program.
-//! The checker runs in two passes over the AST and populates a [`SymbolTable`] with resolved type information.
+//! Validates types, mutability, trait conformance, and error-handling semantics for a parsed Incan program. The checker
+//! runs in two passes over the AST and populates a [`SymbolTable`] with resolved type information.
 //!
 //! ## Notes
 //!
@@ -123,9 +123,8 @@ use rust_inspect::{
 
 /// Type checker state.
 ///
-/// Holds the symbol table, accumulated errors, and context needed for validation.
-/// Create with [`TypeChecker::new`], then call [`check_program`](Self::check_program) or
-/// [`check_with_imports`](Self::check_with_imports).
+/// Holds the symbol table, accumulated errors, and context needed for validation. Create with [`TypeChecker::new`],
+/// then call [`check_program`](Self::check_program) or [`check_with_imports`](Self::check_with_imports).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoopContextKind {
     /// A statement-form loop (`for`, `while`, or `loop:`) where `break` cannot yield a value.
@@ -458,8 +457,8 @@ pub struct TypeChecker {
     pub local_function_decls: HashMap<String, FunctionDecl>,
     /// Function symbols collected in the current module pass, keyed by source name.
     ///
-    /// The checker imports dependency modules into one ambient symbol table.
-    /// Same-name overload grouping is module-local; this map avoids global current-scope identity checks.
+    /// The checker imports dependency modules into one ambient symbol table. Same-name overload grouping is
+    /// module-local; this map avoids global current-scope identity checks.
     pub current_module_function_symbols: HashMap<String, SymbolId>,
     /// Transparent source type aliases, keyed by their local type name.
     pub type_aliases: HashMap<String, TypeAliasTarget>,
@@ -1875,8 +1874,8 @@ impl TypeChecker {
             .to_string()
     }
 
-    /// Return compact Rust display text for comparison.
-    /// Bring a Rust type display into the one normal form every lookup and comparison in the checker uses.
+    /// Return compact Rust display text for comparison. Bring a Rust type display into the one normal form every
+    /// lookup and comparison in the checker uses.
     ///
     /// Lifetimes and formatting whitespace are removed, except the single space that follows a `dyn` or `impl`
     /// token: that space is what distinguishes a trait object (`dyn Trait`) from an ordinary path, and generic
@@ -6453,8 +6452,8 @@ impl TypeChecker {
 
     /// Import all symbols from another module's AST into the symbol table.
     ///
-    /// This is used for internal compiler passes that need type information across modules
-    /// without enforcing `pub` visibility (e.g. codegen-only validation for dependencies).
+    /// This is used for internal compiler passes that need type information across modules without enforcing `pub`
+    /// visibility (e.g. codegen-only validation for dependencies).
     pub fn import_module_all(&mut self, module_ast: &Program, module_name: &str) {
         let previous_surface_context = self.surface_context.clone();
         let previous_module_function_symbols = std::mem::take(&mut self.current_module_function_symbols);
@@ -6962,10 +6961,9 @@ impl TypeChecker {
 
     /// Select one dependency cache entry, resolving the import path against an explicit base module.
     ///
-    /// A module's relative imports resolve against *its own* path. That is the consumer's path for an ordinary
-    /// import, but a facade's own path when caching what that facade re-exports: `pkg.facade` writing
-    /// `from helpers import render` means `pkg.helpers`, and resolving it from the consumer would silently bind the
-    /// root `helpers` instead.
+    /// A module's relative imports resolve against *its own* path. That is the consumer's path for an ordinary import,
+    /// but a facade's own path when caching what that facade re-exports: `pkg.facade` writing `from helpers import
+    /// render` means `pkg.helpers`, and resolving it from the consumer would silently bind the root `helpers` instead.
     fn dependency_module_entry_for_path_from<'a, T>(
         &self,
         base_module_path: &[String],

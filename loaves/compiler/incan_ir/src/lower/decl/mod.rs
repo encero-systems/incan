@@ -365,9 +365,8 @@ impl AstLowering {
 
     /// RFC 023: Check if a decorator list contains `@rust.extern`.
     ///
-    /// Used during lowering to mark functions whose body is provided by a Rust backing module.
-    /// Uses `from_segments` on the full decorator path (e.g. `["rust", "extern"]`) since the `name` field only stores
-    /// the last segment.
+    /// Used during lowering to mark functions whose body is provided by a Rust backing module. Uses `from_segments` on
+    /// the full decorator path (e.g. `["rust", "extern"]`) since the `name` field only stores the last segment.
     pub(in crate::lower) fn has_rust_extern_decorator(decorators_list: &[ast::Spanned<ast::Decorator>]) -> bool {
         decorators_list
             .iter()

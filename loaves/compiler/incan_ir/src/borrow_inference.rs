@@ -444,8 +444,8 @@ impl Visitor for MethodCalls<'_> {
     }
 }
 
-/// Borrow a local tree place when all later uses are shared and its owner is not accessed again in the body.
-/// This deliberately excludes temporaries and overlapping owner uses; the source retains owned semantics there.
+/// Borrow a local tree place when all later uses are shared and its owner is not accessed again in the body. This
+/// deliberately excludes temporaries and overlapping owner uses; the source retains owned semantics there.
 fn infer_local_cursors(
     function: &mut IrFunction,
     contracts: &HashMap<(usize, usize), incan_core::interop::RustReceiverContract>,
@@ -636,8 +636,8 @@ impl Visitor for Escapes {
     }
 }
 
-/// Keep owned call ABI when another argument may consume the same storage or mutate it during evaluation.
-/// Simple independent places are enough for helper and tree traversal calls; more complex calls fail closed.
+/// Keep owned call ABI when another argument may consume the same storage or mutate it during evaluation. Simple
+/// independent places are enough for helper and tree traversal calls; more complex calls fail closed.
 fn independent_arguments(args: &[super::expr::IrCallArg]) -> bool {
     if args.len() < 2 {
         return true;

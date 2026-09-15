@@ -158,16 +158,16 @@ impl OvenRegistryLeafAuthority {
 
     /// Return the first package both authorities carry at the same version but as byte-distinct compiled artifacts.
     ///
-    /// [`Self::first_conflicting_package_with`] only sees packages a plan links as a *named* `--extern`, but a
-    /// shared package can just as easily enter both sides transitively -- the real `tokio` duplication that
-    /// motivated these checks was never a named extern of either compile; both copies loaded purely through
-    /// `-L dependency=...` metadata search from their respective dependents. Whenever the consumer's dependents and
-    /// a provider's dependents both end up in one link (which is always true for a caller-owned provider: the SDK
-    /// runtime and the provider library are both linked), a same-version/different-bytes package in the two catalogs
-    /// means two compiled instances of one crate in one binary. Two *different versions* of a package are deliberate,
-    /// ordinary Cargo semver coexistence and are not flagged; only a same-version byte divergence -- two independent
-    /// compiles of identical source -- is the anomaly this reports.
-    /// Return the first diverging shared package together with the artifact root of the copy `other` pins.
+    /// [`Self::first_conflicting_package_with`] only sees packages a plan links as a *named* `--extern`, but a shared
+    /// package can just as easily enter both sides transitively -- the real `tokio` duplication that motivated these
+    /// checks was never a named extern of either compile; both copies loaded purely through `-L dependency=...`
+    /// metadata search from their respective dependents. Whenever the consumer's dependents and a provider's
+    /// dependents both end up in one link (which is always true for a caller-owned provider: the SDK runtime and the
+    /// provider library are both linked), a same-version/different-bytes package in the two catalogs means two
+    /// compiled instances of one crate in one binary. Two *different versions* of a package are deliberate, ordinary
+    /// Cargo semver coexistence and are not flagged; only a same-version byte divergence -- two independent compiles
+    /// of identical source -- is the anomaly this reports. Return the first diverging shared package together with the
+    /// artifact root of the copy `other` pins.
     ///
     /// The package name alone tells a reader what conflicts but not what to change. The pinning artifact root names
     /// the already-compiled contributor whose copy cannot move, which is the difference between "two versions of
