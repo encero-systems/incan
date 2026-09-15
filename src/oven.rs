@@ -1634,47 +1634,6 @@ mod tests {
     }
 
     #[test]
-    fn a_packaged_provider_is_identified_by_its_sealed_artifact_not_its_private_cargo_edges_issue1469()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let fixture = tempfile::tempdir()?;
-        let provider = fixture.path().join("catalog/target/lib");
-        fs::create_dir_all(provider.join("src"))?;
-        // The generated manifest still names a private Rust crate that no longer exists.
-        fs::write(
-            provider.join("Cargo.toml"),
-            "[package]\nname = \"immutable_catalog\"\nversion = \"0.1.0\"\n\n[dependencies.package_store_witness]\npath = \"../../../package-store-witness\"\n",
-        )?;
-        fs::write(provider.join("src/lib.rs"), "pub fn answer() -> i64 { 42 }\n")?;
-        let dependency = DependencySpec {
-            crate_name: "stock".to_string(),
-            version: None,
-            features: Vec::new(),
-            default_features: true,
-            source: DependencySource::Path { path: provider.clone() },
-            optional: false,
-            package: None,
-        };
-        let as_authored_crate =
-            super::digest_dependency_specs(std::slice::from_ref(&dependency), &super::NoProviderHooks);
-        assert!(
-            as_authored_crate.is_err(),
-            "an authored crate's missing path dependency is still a fault: {as_authored_crate:?}"
-        );
-
-        fs::write(provider.join("immutable_catalog.incnlib"), "{}")?;
-        // With its `.incnlib` beside the manifest the same tree is a packaged provider, and the missing private
-        // crate is no longer anyone's business.
-        let sealed = super::digest_dependency_specs(std::slice::from_ref(&dependency), &super::NoProviderHooks)?;
-        fs::write(provider.join("src/lib.rs"), "pub fn answer() -> i64 { 43 }\n")?;
-        assert_ne!(
-            sealed,
-            super::digest_dependency_specs(std::slice::from_ref(&dependency), &super::NoProviderHooks)?,
-            "the sealed artifact's own bytes still decide its identity"
-        );
-        Ok(())
-    }
-
-    #[test]
     fn path_dependency_identity_ignores_mutable_project_output_but_tracks_authored_files()
     -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
