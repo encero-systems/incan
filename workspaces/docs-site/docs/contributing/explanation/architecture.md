@@ -210,13 +210,13 @@ The extracted compiler, syntax and Oven crates live under `loaves/`. [The layout
 
 | Ring directory | Current contents and boundary |
 | --- | --- |
-| `loaves/kernel/` | Shared syntax, semantics contracts and codegraph records in `incan_syntax`, `incan_semantics_core` and `incan_codegraph`. |
+| `loaves/kernel/` | The language tables and shared semantic helpers in `incan_core`, the vocabulary contract in `incan_vocab`, and shared syntax, semantics contracts and codegraph records in `incan_syntax`, `incan_semantics_core` and `incan_codegraph`. |
 | `loaves/compiler/` | Typechecking (`incan_frontend`), typed IR/lowering (`incan_ir`), Rust emission (`incan_emit`), formatting (`incan_format`), provider operations (`incan_provider`), driver orchestration (`incan_driver`), stdlib semantics packs and Rust inspection. |
 | `loaves/oven/` | Project and lock models (`oven_model`), receipts/stores/process containment (`oven_store`), and native planning, execution and Cargo compatibility (`oven_rustc`). |
-| `loaves/stdlib/` | Layout documentation for a future component split; runtime crates remain under `crates/`. |
+| `loaves/stdlib/` | The derive crates under `derive/` and layout documentation for the component split; the stdlib runtime crate remains under `crates/` until then. |
 | `loaves/toolchain/` | Layout documentation for future binary crates; the CLI, LSP and binary entry points remain under `src/`. |
 
-The extraction has not moved `crates/incan_core`, `crates/incan_vocab`, the runtime crates, or root integration tests. Use their current paths until their own migration lands.
+`incan_core` and `incan_vocab` sit under `loaves/kernel/`, and the derive crates under `loaves/stdlib/derive/`; the extraction has not yet moved the stdlib runtime crate (`crates/incan_stdlib`) or the root integration tests. Use their current paths until their own migration lands.
 
 `incan_frontend` reexports syntax from `incan_syntax` and owns module resolution, symbol tables, typechecking, checked library-manifest records and provider-plan contracts. `incan_provider` consumes those contracts for SDK discovery, building and dependency resolution. `incan_driver` composes the compilation session and build workflow; the CLI and LSP consume its services. These are separate crates rather than subdirectories of a monolithic frontend/backend module.
 
