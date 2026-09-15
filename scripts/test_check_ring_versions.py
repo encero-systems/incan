@@ -14,8 +14,11 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def copy_manifests(destination: Path) -> None:
-    """Copy the root manifest and every member manifest, which is all the gate reads."""
+    """Copy the root manifest, every member manifest, and the emitter's crate root, which is all the gate reads."""
     shutil.copy(ROOT / "Cargo.toml", destination / "Cargo.toml")
+    emitter = Path("loaves/compiler/incan_emit/src/lib.rs")
+    (destination / emitter.parent).mkdir(parents=True, exist_ok=True)
+    shutil.copy(ROOT / emitter, destination / emitter)
     for member in check_ring_versions.workspace_members((ROOT / "Cargo.toml").read_text()):
         (destination / member).mkdir(parents=True, exist_ok=True)
         shutil.copy(ROOT / member / "Cargo.toml", destination / member / "Cargo.toml")
@@ -61,6 +64,15 @@ class RingVersionTests(unittest.TestCase):
         edit(self.root / "loaves/compiler/incan_format/Cargo.toml", r"^version\.workspace = true$", 'version = "0.1.0"')
         failures = check_ring_versions.check(self.root)
         self.assertTrue(any("incan_format has no ring line" in failure for failure in failures), failures)
+
+    def test_an_emitter_that_generates_for_another_stdlib_line_is_reported(self):
+        edit(
+            self.root / "loaves/compiler/incan_emit/src/lib.rs",
+            r'^pub const GENERATED_FOR_STDLIB_VERSION: &str = "[^"]+";$',
+            'pub const GENERATED_FOR_STDLIB_VERSION: &str = "0.0.1";',
+        )
+        failures = check_ring_versions.check(self.root)
+        self.assertTrue(any("GENERATED_FOR_STDLIB_VERSION is '0.0.1'" in failure for failure in failures), failures)
 
     def test_a_member_spelled_by_path_is_reported(self):
         edit(

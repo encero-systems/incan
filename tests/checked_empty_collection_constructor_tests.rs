@@ -45,7 +45,7 @@ fn normalize_codegen_output(code: &str) -> String {
     );
     let stdlib_check = format!(
         "incan_stdlib::__incan_stdlib_version_check!(\"{}\");",
-        incan_stdlib::version::INCAN_STDLIB_VERSION
+        incan_emit::GENERATED_FOR_STDLIB_VERSION
     );
     let normalized = code
         .replace(

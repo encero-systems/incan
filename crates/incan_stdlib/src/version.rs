@@ -10,20 +10,20 @@
 //! incan_stdlib::__incan_stdlib_version_check!("X.Y.Z");
 //! ```
 //!
-//! The literal is the version of `incan_stdlib` the compiler was built against. The macro expands into a `const`
+//! The literal is the `incan_stdlib` version line the compiler generates code for. The macro expands into a `const`
 //! assertion that compares it with the version of the `incan_stdlib` crate the generated code actually links, and a
 //! mismatch becomes a **compile-time error** in the generated Rust code, surfacing the problem before anything runs.
 //! The expansion deliberately does not require Cargo environment variables in the consumer, so Oven may invoke
 //! `rustc` directly.
 //!
 //! The stdlib carries its own version line, so the two versions need not be equal: a release stdlib is compatible
-//! with the one the compiler was built against under the semver caret rule (same major, a later or equal minor and
+//! with the line the compiler generates for under the semver caret rule (same major, a later or equal minor and
 //! patch; for `0.x` the minor is the compatibility line), while a prerelease on either side demands exact equality,
 //! because a `-dev.N` stdlib promises nothing about the next one.
 
 /// The version of this stdlib crate, read from `Cargo.toml` at compile time.
 ///
-/// The compiler embeds the stdlib version it was built against as a literal in the generated code, and the
+/// The compiler embeds the stdlib line it generates for as a literal in the generated code, and the
 /// `__incan_stdlib_version_check!` macro compares the two.
 pub const INCAN_STDLIB_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -101,17 +101,17 @@ pub const fn parse_semantic_version(bytes: &[u8]) -> Option<SemanticVersion> {
     })
 }
 
-/// Whether the `linked` stdlib may serve code the compiler generated against the `built_against` stdlib.
+/// Whether the `linked` stdlib may serve code the compiler generated for the `generated_for` stdlib line.
 ///
 /// A prerelease on either side, or a version that does not parse, demands exact equality. Otherwise the semver caret
-/// rule applies: the same major, and a minor and patch no older than the compiler was built against — with the minor
-/// standing in for the major while the major is `0`.
+/// rule applies: the same major, and a minor and patch no older than the line the compiler generates for — with the
+/// minor standing in for the major while the major is `0`.
 #[doc(hidden)]
-pub const fn stdlib_versions_compatible(built_against: &[u8], linked: &[u8]) -> bool {
-    if const_str_eq(built_against, linked) {
+pub const fn stdlib_versions_compatible(generated_for: &[u8], linked: &[u8]) -> bool {
+    if const_str_eq(generated_for, linked) {
         return true;
     }
-    let (Some(required), Some(candidate)) = (parse_semantic_version(built_against), parse_semantic_version(linked))
+    let (Some(required), Some(candidate)) = (parse_semantic_version(generated_for), parse_semantic_version(linked))
     else {
         return false;
     };
@@ -124,27 +124,27 @@ pub const fn stdlib_versions_compatible(built_against: &[u8], linked: &[u8]) -> 
     candidate.minor > required.minor || (candidate.minor == required.minor && candidate.patch >= required.patch)
 }
 
-/// Compile-time assertion that the linked stdlib is compatible with the one the compiler was built against.
+/// Compile-time assertion that the linked stdlib is compatible with the line the compiler generates for.
 ///
 /// Emitted by the Incan compiler into every generated `main.rs` with the stdlib version the compiler was built
 /// against. Expands to a `const _: () = { ... }` block that panics, which becomes a compile error, when the linked
 /// stdlib cannot serve that code under the rule in [`stdlib_versions_compatible`]. Example output on mismatch:
 ///
 /// ```text
-/// Incan stdlib version mismatch: the compiler was built against incan_stdlib X.Y.Z, and the linked incan_stdlib is not compatible with it
+/// Incan stdlib version mismatch: the compiler generates for incan_stdlib X.Y.Z, and the linked incan_stdlib is not compatible with it
 /// ```
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __incan_stdlib_version_check {
-    ($built_against:literal) => {
+    ($generated_for:literal) => {
         const _: () = {
             if !$crate::version::stdlib_versions_compatible(
-                $built_against.as_bytes(),
+                $generated_for.as_bytes(),
                 $crate::version::INCAN_STDLIB_VERSION.as_bytes(),
             ) {
                 panic!(concat!(
-                    "Incan stdlib version mismatch: the compiler was built against incan_stdlib ",
-                    $built_against,
+                    "Incan stdlib version mismatch: the compiler generates for incan_stdlib ",
+                    $generated_for,
                     ", and the linked incan_stdlib is not compatible with it"
                 ));
             }
@@ -157,12 +157,12 @@ mod tests {
     use super::{parse_semantic_version, stdlib_versions_compatible};
 
     /// Shorthand so the table below reads as version pairs.
-    fn compatible(built_against: &str, linked: &str) -> bool {
-        stdlib_versions_compatible(built_against.as_bytes(), linked.as_bytes())
+    fn compatible(generated_for: &str, linked: &str) -> bool {
+        stdlib_versions_compatible(generated_for.as_bytes(), linked.as_bytes())
     }
 
     #[test]
-    fn the_linked_stdlib_the_compiler_was_built_against_is_always_compatible() {
+    fn the_linked_stdlib_the_compiler_was_generated_for_is_always_compatible() {
         assert!(compatible("0.6.0", "0.6.0"));
         assert!(compatible("0.6.0-dev.4", "0.6.0-dev.4"));
         assert!(compatible("1.2.3+build.7", "1.2.3+build.7"));

@@ -10,6 +10,9 @@ requirement.
 
 The table is also the one place a checkout names a workspace crate's directory: every member is listed there, and no
 member manifest spells a ``path`` to another workspace crate.
+
+The compiler ring does not link the runtime it generates for, so the emitter declares the stdlib line it generates
+code for (``incan_emit::GENERATED_FOR_STDLIB_VERSION``) and this check keeps that declaration equal to the ring line.
 """
 
 from __future__ import annotations
@@ -104,6 +107,18 @@ def check(root: Path) -> list[str]:
                     failures.append(
                         f"{member}/Cargo.toml: {match.group('name')} is spelled by path; inherit it from the table"
                     )
+
+    # ---- The emitter's declared stdlib line ----
+    emitter = root / "loaves/compiler/incan_emit/src/lib.rs"
+    declared = re.search(r'^pub const GENERATED_FOR_STDLIB_VERSION: &str = "([^"]+)";$', emitter.read_text(encoding="utf-8"), re.MULTILINE)
+    stdlib_line = lines["stdlib"].get("incan_stdlib")
+    if declared is None:
+        failures.append(f"{emitter.relative_to(root)}: no GENERATED_FOR_STDLIB_VERSION declaration")
+    elif stdlib_line is not None and declared.group(1) != stdlib_line:
+        failures.append(
+            f"{emitter.relative_to(root)}: GENERATED_FOR_STDLIB_VERSION is {declared.group(1)!r} but the stdlib ring line is "
+            f"{stdlib_line!r}; the emitter must generate for the line the ring ships"
+        )
 
     # ---- Each ring: one line, and the table requires it ----
     for ring, crates in RING_LINES.items():
