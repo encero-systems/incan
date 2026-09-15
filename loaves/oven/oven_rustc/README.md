@@ -8,7 +8,7 @@ Direct-rustc planning and execution, host/target unit graph, build-script and pr
 
 - `loaves/oven/oven_rustc/src/rustc.rs` with `loaf.rs`, `loaf_mirror.rs`, `plan/`, `native_test/`, `native_contract.rs`, `interop.rs` and `legacy_cargo/`, one strongly connected component on dev.5
 - `loaves/compiler/incan_driver/src/backend/project/plan.rs`, `lock_projection.rs`, `mod.rs` remain in the driver pending their dependency inversions
-- the Oven plan API #1266 moves out of `src/cli/commands/build.rs`
+- The Oven-side plan selection and composition API extracted under #1266 already lives in `loaves/oven/oven_rustc/src/plan.rs` and its `plan/` submodules; command-level preparation calls it from `loaves/compiler/incan_driver/src/build/plan_selection.rs`.
 
 ## May depend on
 
