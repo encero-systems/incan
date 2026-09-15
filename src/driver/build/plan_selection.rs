@@ -89,8 +89,11 @@ fn oven_test_dependency_root_digests(dependencies: &[DependencySpec]) -> CliResu
     let mut roots = BTreeMap::new();
     for dependency in dependencies {
         let alias = dependency.crate_name.replace('-', "_");
-        let digest = digest_dependency_specs(std::slice::from_ref(dependency))
-            .map_err(|error| CliError::failure(error.to_string()))?;
+        let digest = digest_dependency_specs(
+            std::slice::from_ref(dependency),
+            crate::oven_facet::provider_hooks().as_ref(),
+        )
+        .map_err(|error| CliError::failure(error.to_string()))?;
         if roots.insert(alias.clone(), digest).is_some() {
             return Err(CliError::failure(format!(
                 "test dependency surface contains duplicate Rust-facing alias `{alias}`"
@@ -126,6 +129,8 @@ fn bake_generated_project_test_dependency_plan(
     let compile_environment = direct_rustc_reusable_project_plan_environment(generated_project, generated_root)
         .map_err(|error| CliError::failure(error.to_string()))?;
     let publication = prepare_direct_rustc_plan(&OvenLegacyCargoPrepareRequest {
+        compiler: crate::oven_facet::compiler_identity(),
+        provider_hooks: crate::oven_facet::provider_hooks(),
         store,
         receipt: receipt.clone(),
         generated_project: generated_project.to_path_buf(),
@@ -173,7 +178,8 @@ pub(crate) fn prepare_oven_test_dependency_envelope(
 ) -> CliResult<PreparedOvenTestDependencyEnvelope> {
     let dependencies = promoted_oven_test_dependencies(resolved)?;
     let dependency_surface_digest =
-        digest_dependency_specs(&dependencies).map_err(|error| CliError::failure(error.to_string()))?;
+        digest_dependency_specs(&dependencies, crate::oven_facet::provider_hooks().as_ref())
+            .map_err(|error| CliError::failure(error.to_string()))?;
     let dependency_root_digests = oven_test_dependency_root_digests(&dependencies)?;
     let base_receipt = debug_target_receipts.first().ok_or_else(|| {
         CliError::failure("explicit Oven project bake prepared no debug target receipt for its test dependency surface")
@@ -189,7 +195,8 @@ pub(crate) fn prepare_oven_test_dependency_envelope(
         .collect::<BTreeSet<_>>();
     let publisher_dependencies = test_dependency_publisher_dependencies(&dependencies, &packaged_provider_aliases);
     let publisher_dependency_surface_digest =
-        digest_dependency_specs(&publisher_dependencies).map_err(|error| CliError::failure(error.to_string()))?;
+        digest_dependency_specs(&publisher_dependencies, crate::oven_facet::provider_hooks().as_ref())
+            .map_err(|error| CliError::failure(error.to_string()))?;
     for receipt in debug_target_receipts {
         let covers =
             debug_target_receipt_covers_test_publisher_dependencies(receipt, &publisher_dependency_surface_digest);

@@ -1448,6 +1448,8 @@ dependencies = [
  "libc",
  "md-5",
  "oven_model",
+ "oven_rustc",
+ "oven_store",
  "prettyplease",
  "proc-macro2",
  "proptest",
@@ -2165,6 +2167,38 @@ dependencies = [
  "thiserror 2.0.18",
  "toml",
  "toml_edit",
+]
+
+[[package]]
+name = "oven_rustc"
+version = "0.6.0-dev.4"
+dependencies = [
+ "hex",
+ "oven_model",
+ "oven_store",
+ "rustix 1.1.4",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "oven_store"
+version = "0.6.0-dev.4"
+dependencies = [
+ "hex",
+ "oven_model",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
 ]
 
 [[package]]

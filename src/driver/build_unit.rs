@@ -30,10 +30,15 @@ pub(crate) fn oven_build_unit_inputs(
     let provider_records = oven_native_provider_records(provider_plan, &semantic_sdk_path_dependencies(requirements))?;
     let mut dependencies = resolved.dependencies.clone();
     dependencies.extend(resolved.dev_dependencies.clone());
-    let dependency_digest =
-        digest_dependency_specs(&dependencies).map_err(|error| CliError::failure(error.to_string()))?;
-    runtime_build_unit_inputs(provider_records, &requirements.stdlib_features, dependency_digest)
-        .map_err(CliError::failure)
+    let dependency_digest = digest_dependency_specs(&dependencies, crate::oven_facet::provider_hooks().as_ref())
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    runtime_build_unit_inputs(
+        &crate::oven_facet::compiler_identity(),
+        provider_records,
+        &requirements.stdlib_features,
+        dependency_digest,
+    )
+    .map_err(CliError::failure)
 }
 
 /// Encode only the compiler-owned SDK capabilities a generated native crate can exercise.

@@ -648,8 +648,8 @@ mod tests {
     #[test]
     fn an_unshipped_release_loaf_is_a_cache_miss_not_a_fault_issue1444() -> Result<(), Box<dyn std::error::Error>> {
         let project = tempfile::tempdir()?;
-        crate::oven::store::tests::write_project(project.path())?;
-        let receipt = crate::oven::store::tests::request(project.path(), "owner", b"payload")?.receipt;
+        crate::oven::test_support::write_project(project.path())?;
+        let receipt = crate::oven::test_support::request(project.path(), "owner", b"payload")?.receipt;
         let unshipped = OvenProjectInspectionConstituent::ReleaseLoaf {
             loaf_identity: format!("sha256:{}", "0".repeat(64)),
             build_unit_identity: receipt.build_unit_identity.clone(),

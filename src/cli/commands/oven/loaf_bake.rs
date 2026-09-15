@@ -328,6 +328,8 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         let result = prepare_loaf_from_generated_project(
             &staged_root,
             &OvenLoafBakerContext {
+                compiler: &crate::oven_facet::compiler_identity(),
+                provider_hooks: crate::oven_facet::provider_hooks(),
                 compiler_root: &options.compiler_root,
                 compiler_support_target: &compiler_support_target,
                 capacity_roots: [&options.output, scratch.path()],
@@ -566,6 +568,8 @@ pub(crate) fn finish_loaf_bake(
     write_receipt(&receipt, &receipt_path).map_err(oven_error)?;
     let store = open_store(&store_options)?;
     let prepare = prepare_compiler_test_suite(&OvenLegacyCargoPrepareRequest {
+        compiler: crate::oven_facet::compiler_identity(),
+        provider_hooks: crate::oven_facet::provider_hooks(),
         store: &store,
         receipt,
         generated_project: options.compiler_root.clone(),

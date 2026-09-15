@@ -108,8 +108,8 @@ jobs:
             --rustc "$(rustup which --toolchain '${{ matrix.toolchain }}' rustc)" \
             --checkout-revision "$GITHUB_SHA" \
             --workload build \
-            --source "$GITHUB_WORKSPACE/src/oven/fixtures/release_core.incn" \
-            --clean-worktree-source "$clean_worktree/src/oven/fixtures/release_core.incn" \
+            --source "$GITHUB_WORKSPACE/loaves/oven/oven_rustc/src/fixtures/release_core.incn" \
+            --clean-worktree-source "$clean_worktree/loaves/oven/oven_rustc/src/fixtures/release_core.incn" \
             --incan-home "$RUNNER_TEMP/incan-oven-alpha-benchmark-home" \
             --output "$GITHUB_WORKSPACE/target/oven-alpha-benchmark" \
             --cargo-guard-dir "$guard" \
