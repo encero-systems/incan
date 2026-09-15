@@ -94,6 +94,18 @@ pub fn stage_sdk_runtime_crates(provider_root: &Path) -> Result<(), OvenLegacyCa
         ),
     );
     workspace.remove("exclude");
+    // The checkout names the support crates once, in `[workspace.dependencies]`, and the copied members inherit
+    // those entries. Their directories in the checkout are not the staged layout, where every runtime crate sits
+    // under `crates/`, so the copied table points each entry at the copy.
+    if let Some(dependencies) = workspace.get_mut("dependencies").and_then(toml::Value::as_table_mut) {
+        for crate_name in RUNTIME_CRATES {
+            if let Some(dependency) = dependencies.get_mut(crate_name).and_then(toml::Value::as_table_mut)
+                && dependency.contains_key("path")
+            {
+                dependency.insert("path".to_string(), toml::Value::String(format!("crates/{crate_name}")));
+            }
+        }
+    }
     let runtime_workspace_manifest = runtime_root.join("Cargo.toml");
     fs::write(
         &runtime_workspace_manifest,

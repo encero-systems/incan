@@ -10,7 +10,7 @@ homepage.workspace = true
 authors.workspace = true
 
 [dependencies]
-incan_core = { path = "../../../crates/incan_core" }
+incan_core = { workspace = true }
 serde = { workspace = true }
 # The wire encoding for the checked representation RFC 123 publishes. Already in the workspace graph through
 # wasmtime and rust-analyzer, so making it direct adds no third-party code, licence surface, or build cost.

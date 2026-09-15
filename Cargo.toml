@@ -56,6 +56,13 @@ quote = "1.0"
 proc-macro2 = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
+# The toolchain support crates ship with every release, so this table is the one place a checkout names their
+# directories; the release archive and the staged SDK runtime write their own entries against `crates/<name>`.
+incan_core = { path = "crates/incan_core" }
+incan_derive = { path = "crates/incan_derive" }
+incan_stdlib = { path = "crates/incan_stdlib" }
+incan_vocab = { path = "crates/incan_vocab" }
+incan_web_macros = { path = "crates/incan_web_macros" }
 
 [package]
 name = "incan"
@@ -85,7 +92,7 @@ rust_inspect = ["rust_inspect/inspector", "incan_frontend/rust_inspect", "incan_
 
 [dependencies]
 # Shared language/semantic helpers (canonical vocab)
-incan_core = { path = "crates/incan_core" }
+incan_core = { workspace = true }
 incan_format = { path = "loaves/compiler/incan_format" }
 incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = false }
 incan_ir = { path = "loaves/compiler/incan_ir", default-features = false }
@@ -94,7 +101,7 @@ incan_provider = { path = "loaves/compiler/incan_provider", default-features = f
 incan_driver = { path = "loaves/compiler/incan_driver", default-features = false }
 incan_oven_facet = { path = "loaves/compiler/incan_oven_facet" }
 incan_codegraph = { path = "loaves/kernel/incan_codegraph" }
-incan_vocab = { path = "crates/incan_vocab" }
+incan_vocab = { workspace = true }
 # Shared syntax frontend (lexer, parser, AST, diagnostics)
 incan_syntax = { path = "loaves/kernel/incan_syntax" }
 # Shared semantics backend (type checker, semantic analysis)
@@ -186,7 +193,7 @@ insta = { version = "1.45", features = ["glob"] }
 # Property-based testing
 proptest = "1"
 # Runtime crate for parity tests
-incan_stdlib = { path = "crates/incan_stdlib" }
+incan_stdlib = { workspace = true }
 # Temporary directories for manifest discovery tests
 incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = false, features = ["test_support"] }
 incan_emit = { path = "loaves/compiler/incan_emit", default-features = false, features = ["test_support"] }

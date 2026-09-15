@@ -10,8 +10,8 @@ homepage.workspace = true
 authors.workspace = true
 
 [dependencies]
-incan_core = { path = "../../../crates/incan_core" }
-incan_vocab = { path = "../../../crates/incan_vocab" }
+incan_core = { workspace = true }
+incan_vocab = { workspace = true }
 incan_semantics_core = { path = "../incan_semantics_core" }
 # The `Diagnostic` implementation only; the `fancy` reporter had no caller and carried fifteen crates.
 miette = "7.0"

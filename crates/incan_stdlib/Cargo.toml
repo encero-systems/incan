@@ -10,8 +10,8 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-incan_core = { path = "../incan_core" }
-incan_derive = { path = "../incan_derive" }
+incan_core = { workspace = true }
+incan_derive = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 axum = { version = "0.8", optional = true }

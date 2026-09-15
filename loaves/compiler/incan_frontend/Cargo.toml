@@ -22,12 +22,12 @@ rust_inspect = ["rust_inspect/inspector"]
 test_support = ["dep:tempfile", "rust_inspect/test_fixtures"]
 
 [dependencies]
-incan_core = { path = "../../../crates/incan_core" }
-incan_vocab = { path = "../../../crates/incan_vocab" }
+incan_core = { workspace = true }
+incan_vocab = { workspace = true }
 incan_syntax = { path = "../../kernel/incan_syntax" }
 incan_semantics_core = { path = "../../kernel/incan_semantics_core" }
 incan_semantics_stdlib = { path = "../incan_semantics_stdlib", optional = true }
-incan_stdlib = { path = "../../../crates/incan_stdlib" }
+incan_stdlib = { workspace = true }
 incan_format = { path = "../incan_format" }
 oven_model = { path = "../../oven/oven_model" }
 rust_inspect = { path = "../rust_inspect", default-features = false }

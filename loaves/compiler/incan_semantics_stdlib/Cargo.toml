@@ -16,5 +16,5 @@ std_async = []
 std_decorators = []
 
 [dependencies]
-incan_core = { path = "../../../crates/incan_core" }
+incan_core = { workspace = true }
 incan_semantics_core = { path = "../../kernel/incan_semantics_core" }

@@ -5805,6 +5805,19 @@ mod tests {
             fs::read_to_string(staged.join("runtime/Cargo.lock"))?,
             "stale sealed runtime lock\n"
         );
+        let runtime_workspace: toml::Value = toml::from_str(&fs::read_to_string(staged.join("runtime/Cargo.toml"))?)?;
+        for crate_name in ["incan_core", "incan_derive", "incan_stdlib", "incan_web_macros"] {
+            assert_eq!(
+                runtime_workspace
+                    .get("workspace")
+                    .and_then(|workspace| workspace.get("dependencies"))
+                    .and_then(|dependencies| dependencies.get(crate_name))
+                    .and_then(|dependency| dependency.get("path"))
+                    .and_then(toml::Value::as_str),
+                Some(format!("crates/{crate_name}").as_str()),
+                "staged runtime workspace must name {crate_name} at its copied location"
+            );
+        }
         assert!(!staged.join("runtime/obsolete-runtime-file").exists());
         assert!(staged.join("runtime/crates/incan_core/src/lib.rs").is_file());
         assert!(staged.join("runtime/crates/incan_derive/src/lib.rs").is_file());

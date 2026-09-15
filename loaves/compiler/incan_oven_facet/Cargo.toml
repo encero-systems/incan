@@ -11,7 +11,7 @@ name = "incan_oven_facet"
 path = "src/lib.rs"
 
 [dependencies]
-incan_core = { path = "../../../crates/incan_core" }
+incan_core = { workspace = true }
 incan_frontend = { path = "../incan_frontend", default-features = false }
 incan_provider = { path = "../incan_provider", default-features = false }
 oven_model = { path = "../../oven/oven_model" }

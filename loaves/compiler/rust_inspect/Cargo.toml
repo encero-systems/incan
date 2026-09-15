@@ -36,7 +36,7 @@ name = "rust_inspect"
 path = "src/lib.rs"
 
 [dependencies]
-incan_core = { path = "../../../crates/incan_core", optional = true }
+incan_core = { workspace = true, optional = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

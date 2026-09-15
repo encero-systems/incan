@@ -19,7 +19,7 @@ proc-macro2 = { workspace = true }
 
 [dev-dependencies]
 axum = "0.8"
-incan_stdlib = { path = "../incan_stdlib", features = ["web"] }
+incan_stdlib = { workspace = true, features = ["web"] }
 inventory = "0.3"
 serde = { workspace = true }
 serde_json = { workspace = true }
