@@ -137,6 +137,23 @@ workspace_version() {
 version="$(workspace_version)"
 [ -n "$version" ] || fail "could not read workspace package version from Cargo.toml"
 
+# The archive's support workspace inherits the same dependency table as the checkout, so a member manifest that says
+# `serde = { workspace = true }` resolves in both. The five support crates name each other through that table too;
+# their checkout paths are rewritten to the archive layout, where every support crate sits beside this manifest.
+workspace_dependencies() {
+  awk '
+    /^\[workspace.dependencies\]/ { in_section=1; next }
+    /^\[/ { in_section=0 }
+    in_section && /^(incan_core|incan_derive|incan_stdlib|incan_vocab|incan_web_macros) = / {
+      printf "%s = { path = \"%s\" }\n", $1, $1
+      next
+    }
+    in_section && /^[A-Za-z0-9_-]+ = / { print }
+  ' Cargo.toml
+}
+workspace_dependencies_table="$(workspace_dependencies)"
+[ -n "$workspace_dependencies_table" ] || fail "could not read [workspace.dependencies] from Cargo.toml"
+
 if [ -n "${TOOLCHAIN_RELEASE:-}" ]; then
   release="$TOOLCHAIN_RELEASE"
 elif [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
@@ -300,6 +317,9 @@ repository = "https://github.com/encero-systems/incan"
 homepage = "https://github.com/encero-systems/incan"
 keywords = ["programming-language", "compiler", "rust", "python"]
 categories = ["compilers", "development-tools"]
+
+[workspace.dependencies]
+${workspace_dependencies_table}
 
 # This non-default package keeps the locked registry-source authority used by the built-in release Loaf fixtures. It
 # is metadata-only release infrastructure; normal support-workspace commands operate on the default members above.
