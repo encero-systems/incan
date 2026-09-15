@@ -9,4 +9,4 @@ profile = "minimal"
 components = ["stdlib-data", "stdlib-async"]
 
 [rust-dependencies]
-incan_web_macros = { path = "../../../../incan_web_macros" }
+incan_web_macros = { path = "../derive/incan_web_macros" }
