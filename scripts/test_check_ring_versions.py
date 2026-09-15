@@ -56,9 +56,9 @@ class RingVersionTests(unittest.TestCase):
         self.assertTrue(any("must require the oven ring" in failure for failure in failures), failures)
 
     def test_a_table_requirement_that_lags_the_ring_line_is_reported(self):
-        edit(self.root / "Cargo.toml", r'^(incan_stdlib = \{ path = "[^"]+", version = )"[^"]+"', r'\1"0.0.1"')
+        edit(self.root / "Cargo.toml", r'^(incan_std_core = \{ path = "[^"]+", version = )"[^"]+"', r'\1"0.0.1"')
         failures = check_ring_versions.check(self.root)
-        self.assertTrue(any("[workspace.dependencies].incan_stdlib must require" in failure for failure in failures), failures)
+        self.assertTrue(any("[workspace.dependencies].incan_std_core must require" in failure for failure in failures), failures)
 
     def test_a_crate_outside_the_rings_must_inherit(self):
         edit(self.root / "loaves/compiler/incan_format/Cargo.toml", r"^version\.workspace = true$", 'version = "0.1.0"')

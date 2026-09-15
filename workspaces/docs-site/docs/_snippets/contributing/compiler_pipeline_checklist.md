@@ -7,6 +7,6 @@ Keep the pipeline aligned (to avoid language/tooling drift):
     - **typechecker** validates and annotates
     - **lowering** turns AST into IR
     - **emission** generates correct Rust
-- **Runtime/stdlib (`crates/incan_stdlib/`, `stdlib/`)**: behavior that can live outside the compiler should live here
+- **Runtime/stdlib (`loaves/stdlib/<component>/{src,rust}/`)**: behavior that can live outside the compiler should live here
 
-*Rule of thumb*: prefer pushing shared meaning “down” into `incan_core`/`incan_syntax`/`incan_stdlib`, and keep the `incan` (root) crate focused on orchestration and pipeline wiring.
+*Rule of thumb*: prefer pushing shared meaning “down” into `incan_core`/`incan_syntax`/the stdlib facets, and keep the `incan` (root) crate focused on orchestration and pipeline wiring.

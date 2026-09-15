@@ -8,9 +8,9 @@ Runtime crates: serde, serde_json, libm, rand, regex, the eight hash crates
 
 ```text
 stdlib/data/
-  loaf.toml        the component is one Loaf; its Rust facet is conventional (RFC 119)
+  loaf.toml        the component is one Loaf; a `[rust.source]` table names its Rust facet's root (RFC 119)
   src/             Incan source: the `.incn` modules for the roots above
-  rust/src/        Rust runtime bridge crate `incan_std_data` (today gated code in `crates/incan_stdlib`)
+  rust/            the `incan_std_data` facet: the Rust half of this component, declared by `[rust.source]` in `loaf.toml`
   tests/           `.incn` and `.rs` tests side by side
 ```
 

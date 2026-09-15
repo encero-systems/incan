@@ -38,7 +38,7 @@ You add a feature, it “works” in the CLI, but:
 
 Another failure mode is treating runtime convenience as compiler policy:
 
-- adding a helper to `incan_stdlib` and calling it from `incan`,
+- adding a helper to a standard library facet (`incan_std_core` and the others) and calling it from `incan`,
 - putting stdlib-owned runtime types into `incan_core` without a clear language-policy reason,
 - or making `rust_inspect` do hidden workspace loading from a semantic hot path.
 

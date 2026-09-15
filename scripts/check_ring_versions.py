@@ -111,7 +111,7 @@ def check(root: Path) -> list[str]:
     # ---- The emitter's declared stdlib line ----
     emitter = root / "loaves/compiler/incan_emit/src/lib.rs"
     declared = re.search(r'^pub const GENERATED_FOR_STDLIB_VERSION: &str = "([^"]+)";$', emitter.read_text(encoding="utf-8"), re.MULTILINE)
-    stdlib_line = lines["stdlib"].get("incan_stdlib")
+    stdlib_line = lines["stdlib"].get("incan_std_core")
     if declared is None:
         failures.append(f"{emitter.relative_to(root)}: no GENERATED_FOR_STDLIB_VERSION declaration")
     elif stdlib_line is not None and declared.group(1) != stdlib_line:

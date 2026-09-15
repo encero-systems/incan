@@ -652,7 +652,7 @@ Incan types map to canonical Rust types:
 | `int`            | `i64`                           |
 | `float`          | `f64`                           |
 | `i8` / `u8` etc. | matching Rust primitive         |
-| `decimal[p, s]`  | `incan_stdlib::num::Decimal128` |
+| `decimal[p, s]`  | `incan_std_core::num::Decimal128` |
 | `str`            | `String`                        |
 | `bytes`          | `Vec<u8>`                       |
 | `bool`           | `bool`                          |

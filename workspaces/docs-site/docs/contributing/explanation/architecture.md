@@ -62,7 +62,7 @@ This diagram shows the Incan compiler pipeline at a high level.
 | Cargo            | Rust’s build system and package manager; Oven Alpha confines it to explicit compatibility publication, compiler development, and repository tools. |
 | CLI              | Command-line entrypoint for compile/build/run/fmt/test workflows.                                                                                |
 | LSP              | IDE server running frontend stages; returns diagnostics/hover/definition via the Language Server Protocol.                                       |
-| Runtime crates   | `incan_stdlib` / `incan_derive` crates used by generated programs (not the compiler).                                                            |
+| Runtime crates   | the standard library facets (`incan_std_core`, `incan_std_data`, `incan_std_async`, `incan_std_web`, `incan_std_testing`) and `incan_derive`, used by generated programs (not the compiler).                                                            |
 
 ## Walkthrough: `incan build`
 
@@ -104,7 +104,7 @@ Notes:
 - **Debugging individual stages**: Use CLI stage flags (`--lex`, `--parse`, `--check`, `--emit-rust`) to inspect intermediate outputs (see [Getting Started](../../tooling/tutorials/getting_started.md)).
 - **Multi-file projects**: Import resolution rules and module layout are described in [Imports & Modules](../../language/explanation/imports_and_modules.md).
 - **Rust interop dependencies**: `rust::` imports contribute checked dependency requirements. The documented Alpha envelope must already contain compatible sealed artifacts; normal commands do not ask Cargo to resolve a miss (see [Rust Interop](../../language/how-to/rust_interop.md) and [RFC 013]).
-- **Runtime boundary**: Generated programs depend on `incan_stdlib` and `incan_derive`, but the compiler does not (see `crates/`).
+- **Runtime boundary**: Generated programs depend on the standard library facets (`incan_std_<component>` under `loaves/stdlib/<component>/rust/`) and `incan_derive`, but the compiler does not.
 
 ## Module Layout
 
@@ -154,9 +154,9 @@ LSP (IDE-facing orchestration)
         - Converts compiler diagnostics into LSP diagnostics (and more over time)
 
 Runtime crates (used by generated Rust programs, not the compiler)
-  ├──▶ incan_stdlib
-  │      - Traits + helpers (prelude, reflection, JSON helpers, etc.)
-  │      - `incan_stdlib::r#async`: Rust backing for source-declared `std.async`
+  ├──▶ incan_std_core (mandatory facet: reflection, frozen constants, numerics, strings, collections)
+  ├──▶ incan_std_data · incan_std_async · incan_std_web · incan_std_testing
+  │      - each component's Rust facet, linked when a program reaches its namespaces
   └──▶ incan_derive
         - Proc-macro derives to generate impls for stdlib traits
 ```
@@ -167,8 +167,8 @@ Workspace crates are not interchangeable buckets for compiler code. Treat each c
 
 - **Stable contract crates**: `incan_core`, `incan_syntax`, `incan_semantics_core`, and `incan_vocab`. These crates hold shared language contracts used across compiler, tooling, library manifests, and generated-package boundaries. Keep them deterministic, dependency-light, and explicit about what is stable.
 - **Compiler/toolchain implementation crates**: the root `incan` adapters, `incan_frontend`, `incan_ir`, `incan_emit`, `incan_format`, `incan_provider`, `incan_driver`, `incan_semantics_stdlib`, and `rust_inspect`. These crates own compiler stages, orchestration, stdlib semantics packs, and Rust metadata preparation. They may evolve with the toolchain and should not be treated as general runtime APIs.
-- **Runtime-only crates**: `incan_stdlib`, `incan_derive`, and `incan_web_macros`. These crates back generated Rust programs and runtime behavior. The compiler must not depend on them in normal builds.
-- **Transitional runtime surfaces**: the current `incan_stdlib::web` backing plus related macro glue. Keep transitional runtime code quarantined behind runtime-only crates until it is either stabilized or replaced by Incan-authored library code.
+- **Runtime-only crates**: the standard library facets (`incan_std_core`, `incan_std_data`, `incan_std_async`, `incan_std_web`, `incan_std_testing`), `incan_derive`, and `incan_web_macros`. These crates back generated Rust programs and runtime behavior. The compiler must not depend on them in normal builds.
+- **Transitional runtime surfaces**: the current `incan_std_web` facet plus related macro glue. Keep transitional runtime code quarantined behind runtime-only crates until it is either stabilized or replaced by Incan-authored library code.
 
 The useful distinction is stable contract versus implementation detail, not "more crates" versus "fewer crates." A new crate boundary is justified when it protects a real contract: syntax shared with formatter/LSP, pure semantic policy shared with runtime, a semantics-pack interface, a library manifest ABI, or a staged interop subsystem. It is not justified when it only hides a pile of toolchain internals behind a new package name.
 
@@ -213,10 +213,10 @@ The extracted compiler, syntax and Oven crates live under `loaves/`. [The layout
 | `loaves/kernel/` | The language tables and shared semantic helpers in `incan_core`, the vocabulary contract in `incan_vocab`, and shared syntax, semantics contracts and codegraph records in `incan_syntax`, `incan_semantics_core` and `incan_codegraph`. |
 | `loaves/compiler/` | Typechecking (`incan_frontend`), typed IR/lowering (`incan_ir`), Rust emission (`incan_emit`), formatting (`incan_format`), provider operations (`incan_provider`), driver orchestration (`incan_driver`), stdlib semantics packs and Rust inspection. |
 | `loaves/oven/` | Project and lock models (`oven_model`), receipts/stores/process containment (`oven_store`), and native planning, execution and Cargo compatibility (`oven_rustc`). |
-| `loaves/stdlib/` | The derive crates under `derive/` and layout documentation for the component split; the stdlib runtime crate remains under `crates/` until then. |
+| `loaves/stdlib/` | One directory per standard library component (`sdk-components.toml` is the catalog), each holding its Incan sources under `src/` and, where the component has Rust, its `incan_std_<component>` facet under `rust/`; the derive crates under `derive/`. |
 | `loaves/toolchain/` | Layout documentation for future binary crates; the CLI, LSP and binary entry points remain under `src/`. |
 
-`incan_core` and `incan_vocab` sit under `loaves/kernel/`, and the derive crates under `loaves/stdlib/derive/`; the extraction has not yet moved the stdlib runtime crate (`crates/incan_stdlib`) or the root integration tests. Use their current paths until their own migration lands.
+`incan_core` and `incan_vocab` sit under `loaves/kernel/`, the derive crates under `loaves/stdlib/derive/`, and each standard library component's Rust facet beside its Incan sources as `loaves/stdlib/<component>/rust/`; the extraction has not yet moved the root integration tests. Use their current paths until their own migration lands.
 
 `incan_frontend` reexports syntax from `incan_syntax` and owns module resolution, symbol tables, typechecking, checked library-manifest records and provider-plan contracts. `incan_provider` consumes those contracts for SDK discovery, building and dependency resolution. `incan_driver` composes the compilation session and build workflow; the CLI and LSP consume its services. These are separate crates rather than subdirectories of a monolithic frontend/backend module.
 
