@@ -2544,7 +2544,9 @@ pub def display[T](data: DataSet[T]) -> None:
             format!(
                 "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[lib]\npath = \"src/lib.rs\"\n",
                 Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join(oven_model::toolchain_layout::development_support_crate_dir("incan_vocab"))
+                    .join(oven_model::toolchain_layout::development_support_crate_dir(
+                        "incan_vocab"
+                    ))
                     .display()
             ),
         )?;
@@ -2567,7 +2569,9 @@ pub def display[T](data: DataSet[T]) -> None:
             format!(
                 "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[lib]\npath = \"src/lib.rs\"\n",
                 Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join(oven_model::toolchain_layout::development_support_crate_dir("incan_vocab"))
+                    .join(oven_model::toolchain_layout::development_support_crate_dir(
+                        "incan_vocab"
+                    ))
                     .display()
             ),
         )?;
@@ -2591,7 +2595,9 @@ pub def display[T](data: DataSet[T]) -> None:
             format!(
                 "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[lib]\npath = \"src/lib.rs\"\ncrate-type = [\"rlib\", \"cdylib\"]\n",
                 Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join(oven_model::toolchain_layout::development_support_crate_dir("incan_vocab"))
+                    .join(oven_model::toolchain_layout::development_support_crate_dir(
+                        "incan_vocab"
+                    ))
                     .display()
             ),
         )?;
