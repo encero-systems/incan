@@ -7,7 +7,7 @@ set -euo pipefail
 # package_archive.sh resolves that workspace with `cargo metadata --offline`, but nothing
 # else in the repository's normal build (`cargo fetch --locked` against the compiler
 # workspace, the vocab companion, or the Oven Loaf test fixtures) is guaranteed to have
-# already fetched every crate named in `src/oven/fixtures/release_stdlib.toml`. When one is
+# already fetched every crate named in `loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml`. When one is
 # missing from the offline registry cache, packaging fails with "could not derive the
 # release support workspace lock from the verified repository lock" and gives no indication
 # that a network-enabled prewarm step was skipped. Run this script -- with network access,
@@ -20,7 +20,7 @@ fail() {
 }
 
 # Clear ambient Cargo/rustc-wrapper state before the internal Cargo invocation below, mirroring
-# `clear_inherited_cargo_environment` in src/oven/rustc.rs and package_archive.sh's own copy.
+# `clear_inherited_cargo_environment` in loaves/oven/oven_rustc/src/rustc.rs and package_archive.sh's own copy.
 # Deliberately keeps `CARGO_HOME` -- callers rely on it to name the cache this script warms.
 clear_inherited_cargo_environment() {
   local name
@@ -36,7 +36,7 @@ cd "$repo_root"
 for support_crate in incan_core incan_derive incan_stdlib incan_vocab incan_web_macros; do
   [ -f "crates/${support_crate}/Cargo.toml" ] || fail "support crate is missing: crates/${support_crate}"
 done
-[ -f "src/oven/fixtures/release_stdlib.toml" ] || fail "release stdlib dependency fixture is missing"
+[ -f "loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml" ] || fail "release stdlib dependency fixture is missing"
 
 workdir="$(mktemp -d)"
 trap 'rm -rf -- "$workdir"' EXIT
@@ -114,7 +114,7 @@ publish = false
 path = "release-inspection-authority.rs"
 WORKSPACE
 printf '%s\n' '#![allow(dead_code)]' > "$package_dir/release-inspection-authority.rs"
-git show HEAD:src/oven/fixtures/release_stdlib.toml \
+git show HEAD:loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml \
   | awk '
       /^\[rust-dependencies\]$/ {
         print "[dependencies]"

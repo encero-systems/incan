@@ -1,7 +1,8 @@
 //! What Oven learns about Incan, in one place: the compiler's identity and the provider facts the ring asks for
 //! through [`OvenProviderHooks`]. Oven's crates name no compiler crate; the driver hands them these values.
 //!
-//! This is the seed of `incan_oven_facet`; it moves to that crate once the Oven ring is its own crates.
+//! This is the seed of `incan_oven_facet`; it moves to that crate once the provider loaders it reads are
+//! `incan_provider`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -219,10 +220,17 @@ fn staged_provider_manifest_path(crate_root: &Path) -> Result<PathBuf, OvenLegac
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::fs;
+    use std::path::Path;
+
+    use incan_core::lang::stdlib::{self, StdlibExtraCrateSource};
 
     use crate::manifest::{DependencySource, DependencySpec};
     use crate::oven::digest_dependency_specs;
+    use crate::oven::loaf::{
+        OvenLoafEnvelope, OvenLoafMemberRole, loaf_envelope_inspection_packages, loaf_envelope_specifications,
+    };
     use crate::oven_facet::provider_hooks;
 
     #[test]
@@ -262,6 +270,146 @@ mod tests {
             digest_dependency_specs(std::slice::from_ref(&dependency), provider_hooks().as_ref())?,
             "the sealed artifact's own bytes still decide its identity"
         );
+        Ok(())
+    }
+
+    /// Return the canonical standard-library modules owned by checked SDK component sources.
+    ///
+    /// Component entrypoints are the source-of-truth provider surface. Normalizing their `*.prelude` implementation
+    /// modules to their public facade mirrors provider publication, while `std.interop` is the intentionally
+    /// source-less vocabulary-backed provider component.
+    fn checked_stdlib_component_modules() -> Result<BTreeSet<String>, Box<dyn std::error::Error>> {
+        let component_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib/components");
+        let mut modules = BTreeSet::from(["std.interop".to_string()]);
+        for entry in fs::read_dir(&component_root)? {
+            let entry = entry?;
+            let source = entry.path().join("src/lib.incn");
+            if !source.is_file() {
+                continue;
+            }
+            for line in fs::read_to_string(&source)?.lines() {
+                let Some(import) = line.trim().strip_prefix("import ") else {
+                    continue;
+                };
+                let module = import
+                    .split_whitespace()
+                    .next()
+                    .ok_or("stdlib component import has no module path")?;
+                let module = match module.strip_suffix(".prelude") {
+                    Some(facade) => facade,
+                    None => module,
+                };
+                modules.insert(format!("std.{module}"));
+            }
+        }
+        Ok(modules)
+    }
+
+    /// Return the standard-library imports a checked complete-stdlib fixture declares.
+    fn checked_stdlib_fixture_imports(source: &str) -> BTreeSet<String> {
+        source
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                let module = line
+                    .strip_prefix("import ")
+                    .or_else(|| line.strip_prefix("from "))?
+                    .split_whitespace()
+                    .next()?;
+                module.starts_with("std.").then(|| module.to_string())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn complete_stdlib_loaf_fixtures_cover_every_checked_component_module() -> Result<(), Box<dyn std::error::Error>> {
+        let expected_modules = checked_stdlib_component_modules()?;
+        for envelope in [OvenLoafEnvelope::Release, OvenLoafEnvelope::CompilerSuite] {
+            for specification in loaf_envelope_specifications(envelope) {
+                let fixture_modules = checked_stdlib_fixture_imports(specification.source);
+                let missing = expected_modules
+                    .difference(&fixture_modules)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if !missing.is_empty() {
+                    return Err(format!(
+                        "{envelope:?}/{}/{} complete stdlib fixture omits checked provider modules: {}",
+                        specification.label,
+                        specification.profile,
+                        missing.join(", ")
+                    )
+                    .into());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn checked_envelope_names_the_complete_declared_repository_test_inspection_surface()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let specifications = loaf_envelope_specifications(OvenLoafEnvelope::CompilerSuite);
+        let packages = loaf_envelope_inspection_packages(OvenLoafEnvelope::CompilerSuite)?;
+        assert_eq!(
+            loaf_envelope_inspection_packages(OvenLoafEnvelope::Release)?,
+            packages,
+            "the release and compiler-suite `stdlib` Loafs must declare one identical complete standard-library dependency surface"
+        );
+        let mut expected_packages = stdlib::extra_crate_deps()
+            .filter(|dependency| matches!(dependency.source, StdlibExtraCrateSource::Version(_)))
+            .map(|dependency| {
+                stdlib::extra_crate_package_alias(dependency.crate_name)
+                    .unwrap_or(dependency.crate_name)
+                    .to_string()
+            })
+            .collect::<BTreeSet<_>>();
+        expected_packages.extend([
+            "bitflags".to_string(),
+            "semver".to_string(),
+            "serde".to_string(),
+            "serde_json".to_string(),
+            "uuid".to_string(),
+        ]);
+        assert_eq!(
+            packages
+                .iter()
+                .map(|package| package.package.clone())
+                .collect::<BTreeSet<_>>(),
+            expected_packages
+        );
+        let provider = specifications
+            .iter()
+            .find(|specification| specification.label == "stdlib" && specification.profile == "debug")
+            .ok_or("missing compiler-suite standard-provider Loaf")?;
+        assert_eq!(
+            provider
+                .inspection_packages()?
+                .iter()
+                .map(|package| package.package.clone())
+                .collect::<BTreeSet<_>>(),
+            expected_packages
+        );
+        for imported_crate in ["rand", "uuid"] {
+            assert!(
+                provider.source.contains(&format!("from rust::{imported_crate}")),
+                "the compiler-suite provider Loaf must retain an actual checked source import for `{imported_crate}` so reachable dependency resolution produces its direct-rustc leaf"
+            );
+        }
+        assert!(
+            provider.source.contains("std.serde"),
+            "the compiler-suite provider Loaf must retain the checked stdlib serde surface that produces its derive-enabled direct-rustc leaf"
+        );
+        for reachable_use in ["Uuid.new_v4()", "thread_rng()", ".gen_range("] {
+            assert!(
+                provider.source.contains(reachable_use),
+                "the compiler-suite provider Loaf must exercise `{reachable_use}` so its declared raw Rust dependency is usable rather than merely imported"
+            );
+        }
+        assert!(provider.role.provides_source_authority());
+        assert!(specifications.iter().all(|specification| {
+            specification.role == OvenLoafMemberRole::CompiledClosureAndSourceAuthority
+                && specification.retain_complete_registry_leaves
+        }));
         Ok(())
     }
 }

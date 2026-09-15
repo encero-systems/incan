@@ -78,7 +78,7 @@ fn no_new_stringly_vocab_checks_in_rust_sources() {
     let spellings = tier_a_spellings();
     let mut offenders: Vec<(PathBuf, usize, String)> = Vec::new();
 
-    let targets = [root.join("src"), root.join("crates")];
+    let targets = [root.join("src"), root.join("crates"), root.join("loaves")];
     for dir in targets {
         if dir.exists() {
             scan_dir(&root, &dir, &spellings, &mut offenders);

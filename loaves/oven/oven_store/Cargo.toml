@@ -1,0 +1,27 @@
+[package]
+name = "oven_store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Oven's receipts, build-unit identities and the bounded content-addressed store that keys on them"
+
+[lib]
+name = "oven_store"
+path = "src/lib.rs"
+
+[features]
+# The frozen fixture project the store tests publish, for the crates above that test against a store.
+test_support = []
+
+[dependencies]
+hex = "0.4.3"
+oven_model = { path = "../oven_model" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10.9"
+thiserror = { workspace = true }
+toml = "0.9"
+
+[dev-dependencies]
+tempfile = "3"

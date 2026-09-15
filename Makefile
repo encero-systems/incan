@@ -577,8 +577,8 @@ test-oven-release-smoke: test-prewarm-oven-release-loafs
 			if [ -n "$$test_source" ]; then (cd "$$project_root" && run_project_incan test "$$test_source"); fi; \
 		done; \
 		for command in build run test; do \
-			source="$(CURDIR)/src/oven/fixtures/release_core.incn"; \
-			if [ "$$command" = test ]; then source="$(CURDIR)/src/oven/fixtures/test_release_core.incn"; fi; \
+			source="$(CURDIR)/loaves/oven/oven_rustc/src/fixtures/release_core.incn"; \
+			if [ "$$command" = test ]; then source="$(CURDIR)/loaves/oven/oven_rustc/src/fixtures/test_release_core.incn"; fi; \
 			run_incan "$$command" "$$source"; \
 		done; \
 		test ! -s "$$smoke_root/cargo-guard/invocations.log"

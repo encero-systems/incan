@@ -16,6 +16,8 @@ members = [
     "loaves/compiler/incan_frontend",
     "loaves/compiler/incan_ir",
     "loaves/oven/oven_model",
+    "loaves/oven/oven_rustc",
+    "loaves/oven/oven_store",
 ]
 exclude = ["target/incan"]
 resolver = "2"
@@ -132,6 +134,8 @@ hmac = { version = "0.12", features = ["reset"] }
 hex = "0.4.3"
 semver = "1.0.27"
 oven_model = { path = "loaves/oven/oven_model" }
+oven_rustc = { path = "loaves/oven/oven_rustc" }
+oven_store = { path = "loaves/oven/oven_store" }
 globset = "0.4.18"
 # Safe, capability-oriented filesystem primitives for no-replace Oven publications.
 rustix = { version = "1.1.4", features = ["fs"] }
@@ -181,6 +185,8 @@ incan_stdlib = { path = "crates/incan_stdlib" }
 incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = false, features = ["test_support"] }
 incan_emit = { path = "loaves/compiler/incan_emit", default-features = false, features = ["test_support"] }
 rust_inspect = { path = "crates/rust_inspect", default-features = false, features = ["test_fixtures"] }
+oven_rustc = { path = "loaves/oven/oven_rustc", features = ["test_support"] }
+oven_store = { path = "loaves/oven/oven_store", features = ["test_support"] }
 tempfile = "3"
 wat = "1"
 

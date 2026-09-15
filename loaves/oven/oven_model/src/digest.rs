@@ -46,6 +46,8 @@ pub enum ProviderArtifactDigestError {
     Normalization { path: PathBuf, message: String },
 }
 
+/// Digest one Cargo package tree the toolchain ships, with a fresh per-call cache; see
+/// [`digest_toolchain_source_tree_with_cache`] for what enters the digest.
 pub fn digest_toolchain_source_tree(root: &Path) -> Result<String, ProviderArtifactDigestError> {
     digest_toolchain_source_tree_with_cache(root, &mut BTreeMap::new())
 }
