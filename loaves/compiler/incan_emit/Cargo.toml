@@ -46,6 +46,6 @@ tracing = { workspace = true }
 incan_frontend = { path = "../incan_frontend", default-features = false, features = ["test_support"] }
 # The runtime crate the emitted code links; the emitter only names it in generated tokens, and links it for the
 # parity tests alone, so the compiler ring never depends on the runtime it generates for.
-incan_stdlib = { path = "../../../crates/incan_stdlib" }
+incan_stdlib = { workspace = true }
 rust_inspect = { path = "../rust_inspect", default-features = false, features = ["test_fixtures"] }
 tempfile = "3"
