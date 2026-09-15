@@ -1,24 +1,6 @@
 {
   "files": [
     {
-      "path": "loaves/kernel/incan_core/src/interop/coercions.rs",
-      "category": "registry-backed Rust-boundary coercion policy",
-      "expected_count": 39,
-      "expected_fingerprint": "0x309683062c796469"
-    },
-    {
-      "path": "loaves/kernel/incan_core/src/interop/extension_traits.rs",
-      "category": "metadata-free Rust extension-trait fallback inventory",
-      "expected_count": 11,
-      "expected_fingerprint": "0x821039893ddb773a"
-    },
-    {
-      "path": "loaves/kernel/incan_core/src/interop/metadata.rs",
-      "category": "registry-backed Rust collection and compiler-owned function metadata policy, plus shared Rust type-shape parsing including canonical owned String displays with allocator arguments",
-      "expected_count": 27,
-      "expected_fingerprint": "0x5b667e9989aff4dc"
-    },
-    {
       "path": "loaves/compiler/incan_driver/src/backend/c_abi.rs",
       "category": "C ABI target-triple selection and clang AST node-kind matching",
       "expected_count": 5,
@@ -647,6 +629,24 @@
       "category": "original Rust signature lifetime elision and static lifetime exclusions",
       "expected_count": 3,
       "expected_fingerprint": "0x1dc2b536c0293d40"
+    },
+    {
+      "path": "loaves/kernel/incan_core/src/interop/coercions.rs",
+      "category": "registry-backed Rust-boundary coercion policy",
+      "expected_count": 39,
+      "expected_fingerprint": "0x309683062c796469"
+    },
+    {
+      "path": "loaves/kernel/incan_core/src/interop/extension_traits.rs",
+      "category": "metadata-free Rust extension-trait fallback inventory",
+      "expected_count": 11,
+      "expected_fingerprint": "0x821039893ddb773a"
+    },
+    {
+      "path": "loaves/kernel/incan_core/src/interop/metadata.rs",
+      "category": "registry-backed Rust collection and compiler-owned function metadata policy, plus shared Rust type-shape parsing including canonical owned String displays with allocator arguments",
+      "expected_count": 27,
+      "expected_fingerprint": "0x5b667e9989aff4dc"
     }
   ]
 }
