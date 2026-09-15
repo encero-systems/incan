@@ -13,18 +13,19 @@ fn canonical_frames_reenter_the_entry_module_through_a_checked_cycle() -> Result
     use crate::session::{CompilationSession, scoped_compilation_session_analysis_invocations};
 
     let temporary = tempfile::tempdir()?;
-    fs::create_dir(temporary.path().join("src"))?;
-    fs::write(
-        temporary.path().join("loaf.toml"),
-        "[project]\nname = \"frame_cycle\"\n",
-    )?;
-    let entry_path = temporary.path().join("src/main.incn");
+    // Module collection keys files by the spelling it reaches them through and deliberately does not resolve
+    // symlinks (#1357); on macOS the temporary directory sits behind one (`/var` → `/private/var`), so the entry
+    // must be spelled the way its own import cycle reaches it back, or it collects twice.
+    let project = temporary.path().canonicalize()?;
+    fs::create_dir(project.join("src"))?;
+    fs::write(project.join("loaf.toml"), "[project]\nname = \"frame_cycle\"\n")?;
+    let entry_path = project.join("src/main.incn");
     fs::write(
         &entry_path,
         "from helper import bounce\n\npub def step(value: int) -> int:\n    if value == 0:\n        return 42\n    return bounce(value - 1)\n\ndef main() -> int:\n    return step(4)\n",
     )?;
     fs::write(
-        temporary.path().join("src/helper.incn"),
+        project.join("src/helper.incn"),
         "from main import step\n\npub def bounce(value: int) -> int:\n    return step(value)\n",
     )?;
     let count = scoped_compilation_session_analysis_invocations();
