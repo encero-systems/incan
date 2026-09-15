@@ -1557,7 +1557,7 @@ mod tests {
     fn progress_never_reaches_the_stream_a_json_report_is_written_to() {
         // stdout carries the caller's machine-readable report. A `--format json` run must still be able to say what
         // it is doing, so progress goes to stderr; anything printed to stdout here would corrupt that document.
-        let mut reporter = NativeTestProgressReporter::new(Some("crates/incan_syntax/src/lib.rs"));
+        let mut reporter = NativeTestProgressReporter::new(Some("loaves/kernel/incan_syntax/src/lib.rs"));
         reporter.render(SUITE_STARTED);
 
         let rendered = reporter.render(CASE_OK);

@@ -367,7 +367,7 @@ fn is_suspicious_line(line: &str, spellings: &[&'static str]) -> bool {
 fn semantic_string_scan_files(root: &Path) -> Vec<PathBuf> {
     const ROOTS: &[&str] = &[
         "crates/incan_core/src/interop",
-        "crates/rust_inspect/src",
+        "loaves/compiler/rust_inspect/src",
         "loaves/compiler/incan_emit/src",
         "loaves/compiler/incan_ir/src",
         "loaves/compiler/incan_driver/src",

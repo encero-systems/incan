@@ -25,12 +25,12 @@ test_support = []
 hex = "0.4.3"
 incan_core = { path = "../../../crates/incan_core" }
 incan_frontend = { path = "../incan_frontend", default-features = false }
-incan_semantics_core = { path = "../../../crates/incan_semantics_core" }
+incan_semantics_core = { path = "../../kernel/incan_semantics_core" }
 incan_vocab = { path = "../../../crates/incan_vocab" }
 oven_model = { path = "../../oven/oven_model" }
 oven_rustc = { path = "../../oven/oven_rustc" }
 oven_store = { path = "../../oven/oven_store" }
-rust_inspect = { path = "../../../crates/rust_inspect", default-features = false }
+rust_inspect = { path = "../rust_inspect", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10.9"

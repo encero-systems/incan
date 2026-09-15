@@ -1,0 +1,20 @@
+[package]
+name = "incan_syntax"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Shared syntax frontend (lexer, AST, parser) for the Incan compiler and tooling"
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[dependencies]
+incan_core = { path = "../../../crates/incan_core" }
+incan_vocab = { path = "../../../crates/incan_vocab" }
+incan_semantics_core = { path = "../incan_semantics_core" }
+# The `Diagnostic` implementation only; the `fancy` reporter had no caller and carried fifteen crates.
+miette = "7.0"
+tracing = { workspace = true }
+serde = { workspace = true }
+

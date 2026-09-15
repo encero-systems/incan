@@ -31,7 +31,7 @@ For non-trivial changes, do a quick pattern intake before writing or changing te
 
 ```text
 Did you change the parser?
-  → Add a test in crates/incan_syntax/src/parser/tests.rs
+  → Add a test in loaves/kernel/incan_syntax/src/parser/tests.rs
 
 Did you change the typechecker?
   → Add a test in src/frontend/typechecker/tests.rs
@@ -64,7 +64,7 @@ For any pipeline feature (parser through emission), write **both**:
 
 ### Parser test pattern
 
-File: `crates/incan_syntax/src/parser/tests.rs`
+File: `loaves/kernel/incan_syntax/src/parser/tests.rs`
 
 ```rust
 #[test]

@@ -28,7 +28,7 @@ test_support = ["incan_provider/test_support", "incan_emit/test_support", "incan
 [dependencies]
 clap = { version = "4.4", features = ["derive"], optional = true }
 hex = "0.4.3"
-incan_codegraph = { path = "../../../crates/incan_codegraph" }
+incan_codegraph = { path = "../../kernel/incan_codegraph" }
 incan_core = { path = "../../../crates/incan_core" }
 incan_emit = { path = "../incan_emit", default-features = false }
 incan_format = { path = "../incan_format" }
@@ -36,12 +36,12 @@ incan_frontend = { path = "../incan_frontend", default-features = false }
 incan_ir = { path = "../incan_ir", default-features = false }
 incan_oven_facet = { path = "../incan_oven_facet" }
 incan_provider = { path = "../incan_provider", default-features = false }
-incan_semantics_core = { path = "../../../crates/incan_semantics_core" }
+incan_semantics_core = { path = "../../kernel/incan_semantics_core" }
 incan_vocab = { path = "../../../crates/incan_vocab" }
 oven_model = { path = "../../oven/oven_model" }
 oven_rustc = { path = "../../oven/oven_rustc" }
 oven_store = { path = "../../oven/oven_store" }
-rust_inspect = { path = "../../../crates/rust_inspect", default-features = false }
+rust_inspect = { path = "../rust_inspect", default-features = false }
 rustix = { version = "1.1.4", features = ["fs"] }
 semver = "1.0.27"
 serde = { workspace = true }
@@ -60,4 +60,4 @@ incan_frontend = { path = "../incan_frontend", default-features = false, feature
 incan_provider = { path = "../incan_provider", default-features = false, features = ["test_support"] }
 oven_rustc = { path = "../../oven/oven_rustc", features = ["test_support"] }
 oven_store = { path = "../../oven/oven_store", features = ["test_support"] }
-rust_inspect = { path = "../../../crates/rust_inspect", default-features = false, features = ["test_fixtures"] }
+rust_inspect = { path = "../rust_inspect", default-features = false, features = ["test_fixtures"] }

@@ -5,17 +5,17 @@ members = [
     "crates/incan_vocab",
     "crates/incan_stdlib",
     "crates/incan_core",
-    "crates/incan_codegraph",
-    "crates/incan_syntax",
-    "crates/incan_semantics_core",
-    "crates/incan_semantics_stdlib",
     "crates/incan_web_macros",
-    "crates/rust_inspect",
     "loaves/compiler/incan_driver",
     "loaves/compiler/incan_emit",
     "loaves/compiler/incan_format",
     "loaves/compiler/incan_frontend",
     "loaves/compiler/incan_ir",
+    "loaves/compiler/incan_semantics_stdlib",
+    "loaves/compiler/rust_inspect",
+    "loaves/kernel/incan_codegraph",
+    "loaves/kernel/incan_semantics_core",
+    "loaves/kernel/incan_syntax",
     "loaves/compiler/incan_oven_facet",
     "loaves/compiler/incan_provider",
     "loaves/oven/oven_model",
@@ -30,7 +30,7 @@ resolver = "2"
 # needs postcard with `alloc`. That default feature pulls `heapless/cas`, which pulls the
 # unmaintained `atomic-polyfill` crate tracked by issue #260. Keep this patch narrow and remove it
 # when the upstream manifest disables postcard defaults.
-ra_ap_proc_macro_api = { path = "crates/third_party/ra_ap_proc_macro_api" }
+ra_ap_proc_macro_api = { path = "loaves/third_party/ra_ap_proc_macro_api" }
 
 [workspace.package]
 version = "0.6.0-dev.4"
@@ -93,13 +93,13 @@ incan_emit = { path = "loaves/compiler/incan_emit", default-features = false }
 incan_provider = { path = "loaves/compiler/incan_provider", default-features = false }
 incan_driver = { path = "loaves/compiler/incan_driver", default-features = false }
 incan_oven_facet = { path = "loaves/compiler/incan_oven_facet" }
-incan_codegraph = { path = "crates/incan_codegraph" }
+incan_codegraph = { path = "loaves/kernel/incan_codegraph" }
 incan_vocab = { path = "crates/incan_vocab" }
 # Shared syntax frontend (lexer, parser, AST, diagnostics)
-incan_syntax = { path = "crates/incan_syntax" }
+incan_syntax = { path = "loaves/kernel/incan_syntax" }
 # Shared semantics backend (type checker, semantic analysis)
-incan_semantics_core = { path = "crates/incan_semantics_core" }
-incan_semantics_stdlib = { path = "crates/incan_semantics_stdlib", optional = true }
+incan_semantics_core = { path = "loaves/kernel/incan_semantics_core" }
+incan_semantics_stdlib = { path = "loaves/compiler/incan_semantics_stdlib", optional = true }
 
 # LSP server implementation
 tower-lsp = { version = "0.20", optional = true }
@@ -145,7 +145,7 @@ oven_store = { path = "loaves/oven/oven_store" }
 globset = "0.4.18"
 # Safe, capability-oriented filesystem primitives for no-replace Oven publications.
 rustix = { version = "1.1.4", features = ["fs"] }
-rust_inspect = { path = "crates/rust_inspect", default-features = false }
+rust_inspect = { path = "loaves/compiler/rust_inspect", default-features = false }
 # WASM runtime for desugarer packaging
 # 36.0.14 is the patched RUSTSEC-2026-0222/RUSTSEC-2026-0269 line compatible with Incan's Rust 1.93 MSRV.
 # Wasmtime 45 remains vulnerable, while the patched 46.0.2 release requires Rust 1.94.
@@ -192,7 +192,7 @@ incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = f
 incan_emit = { path = "loaves/compiler/incan_emit", default-features = false, features = ["test_support"] }
 incan_provider = { path = "loaves/compiler/incan_provider", default-features = false, features = ["test_support"] }
 incan_driver = { path = "loaves/compiler/incan_driver", default-features = false, features = ["test_support"] }
-rust_inspect = { path = "crates/rust_inspect", default-features = false, features = ["test_fixtures"] }
+rust_inspect = { path = "loaves/compiler/rust_inspect", default-features = false, features = ["test_fixtures"] }
 oven_rustc = { path = "loaves/oven/oven_rustc", features = ["test_support"] }
 oven_store = { path = "loaves/oven/oven_store", features = ["test_support"] }
 tempfile = "3"

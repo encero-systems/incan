@@ -12,7 +12,7 @@ path = "src/lib.rs"
 
 [dependencies]
 incan_core = { path = "../../../crates/incan_core" }
-incan_semantics_core = { path = "../../../crates/incan_semantics_core" }
-incan_syntax = { path = "../../../crates/incan_syntax" }
+incan_semantics_core = { path = "../../kernel/incan_semantics_core" }
+incan_syntax = { path = "../../kernel/incan_syntax" }
 incan_vocab = { path = "../../../crates/incan_vocab" }
 thiserror = { workspace = true }

@@ -19,54 +19,6 @@
       "expected_fingerprint": "0x5b667e9989aff4dc"
     },
     {
-      "path": "crates/rust_inspect/src/cache.rs",
-      "category": "rust-inspect cache migration, generated Rust syntax metadata compatibility, and Rust prelude namespace shadowing",
-      "expected_count": 31,
-      "expected_fingerprint": "0x3adea7db74ff9e4a"
-    },
-    {
-      "path": "crates/rust_inspect/src/cache_tests.rs",
-      "category": "rust-inspect generated metadata regression assertions",
-      "expected_count": 26,
-      "expected_fingerprint": "0x5560cdfc009162f8"
-    },
-    {
-      "path": "crates/rust_inspect/src/cache_timing.rs",
-      "category": "rust-inspect timing environment compatibility",
-      "expected_count": 1,
-      "expected_fingerprint": "0xdc8309b97ee19675"
-    },
-    {
-      "path": "crates/rust_inspect/src/digest_tokens.rs",
-      "category": "Rust attribute and macro keywords the declaration digest excludes",
-      "expected_count": 2,
-      "expected_fingerprint": "0x4b52d4b8a76f66fd"
-    },
-    {
-      "path": "crates/rust_inspect/src/extractor.rs",
-      "category": "rust-inspect display-shape normalization",
-      "expected_count": 11,
-      "expected_fingerprint": "0xba1b1488249dc03e"
-    },
-    {
-      "path": "crates/rust_inspect/src/inspector.rs",
-      "category": "rust-inspect environment and unknown-display normalization",
-      "expected_count": 2,
-      "expected_fingerprint": "0xd1080e9767292290"
-    },
-    {
-      "path": "crates/rust_inspect/src/loader.rs",
-      "category": "rust-inspect Rust edition compatibility for compiler-authored direct projects",
-      "expected_count": 2,
-      "expected_fingerprint": "0xfec68511646db439"
-    },
-    {
-      "path": "crates/rust_inspect/src/receiver_contract.rs",
-      "category": "original Rust signature lifetime elision and static lifetime exclusions",
-      "expected_count": 3,
-      "expected_fingerprint": "0x1dc2b536c0293d40"
-    },
-    {
       "path": "loaves/compiler/incan_driver/src/backend/c_abi.rs",
       "category": "C ABI target-triple selection and clang AST node-kind matching",
       "expected_count": 5,
@@ -647,6 +599,54 @@
       "category": "vocab desugarer artifact discovery, profile and crate-type checks",
       "expected_count": 3,
       "expected_fingerprint": "0xe97ac641de1e4572"
+    },
+    {
+      "path": "loaves/compiler/rust_inspect/src/cache.rs",
+      "category": "rust-inspect cache migration, generated Rust syntax metadata compatibility, and Rust prelude namespace shadowing",
+      "expected_count": 31,
+      "expected_fingerprint": "0x3adea7db74ff9e4a"
+    },
+    {
+      "path": "loaves/compiler/rust_inspect/src/cache_tests.rs",
+      "category": "rust-inspect generated metadata regression assertions",
+      "expected_count": 26,
+      "expected_fingerprint": "0x5560cdfc009162f8"
+    },
+    {
+      "path": "loaves/compiler/rust_inspect/src/cache_timing.rs",
+      "category": "rust-inspect timing environment compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0xdc8309b97ee19675"
+    },
+    {
+      "path": "loaves/compiler/rust_inspect/src/digest_tokens.rs",
+      "category": "Rust attribute and macro keywords the declaration digest excludes",
+      "expected_count": 2,
+      "expected_fingerprint": "0x4b52d4b8a76f66fd"
+    },
+    {
+      "path": "loaves/compiler/rust_inspect/src/extractor.rs",
+      "category": "rust-inspect display-shape normalization",
+      "expected_count": 11,
+      "expected_fingerprint": "0xba1b1488249dc03e"
+    },
+    {
+      "path": "loaves/compiler/rust_inspect/src/inspector.rs",
+      "category": "rust-inspect environment and unknown-display normalization",
+      "expected_count": 2,
+      "expected_fingerprint": "0xd1080e9767292290"
+    },
+    {
+      "path": "loaves/compiler/rust_inspect/src/loader.rs",
+      "category": "rust-inspect Rust edition compatibility for compiler-authored direct projects",
+      "expected_count": 2,
+      "expected_fingerprint": "0xfec68511646db439"
+    },
+    {
+      "path": "loaves/compiler/rust_inspect/src/receiver_contract.rs",
+      "category": "original Rust signature lifetime elision and static lifetime exclusions",
+      "expected_count": 3,
+      "expected_fingerprint": "0x1dc2b536c0293d40"
     }
   ]
 }
