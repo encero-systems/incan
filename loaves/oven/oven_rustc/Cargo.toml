@@ -1,6 +1,6 @@
 [package]
 name = "oven_rustc"
-version.workspace = true
+version = "0.6.0-dev.4"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -16,8 +16,8 @@ test_support = ["oven_store/test_support"]
 
 [dependencies]
 hex = "0.4.3"
-oven_model = { path = "../oven_model" }
-oven_store = { path = "../oven_store" }
+oven_model = { workspace = true }
+oven_store = { workspace = true }
 rustix = { version = "1.1.4", features = ["fs"] }
 semver = "1.0.27"
 serde = { workspace = true }
@@ -29,4 +29,4 @@ toml = "0.9"
 tracing = { workspace = true }
 
 [dev-dependencies]
-oven_store = { path = "../oven_store", features = ["test_support"] }
+oven_store = { workspace = true, features = ["test_support"] }

@@ -94,10 +94,17 @@ pub fn stage_sdk_runtime_crates(provider_root: &Path) -> Result<(), OvenLegacyCa
         ),
     );
     workspace.remove("exclude");
-    // The checkout names the support crates once, in `[workspace.dependencies]`, and the copied members inherit
-    // those entries. Their directories in the checkout are not the staged layout, where every runtime crate sits
-    // under `crates/`, so the copied table points each entry at the copy.
+    // The checkout names every workspace crate once, in `[workspace.dependencies]`, and the copied members inherit
+    // their entries from it. Those paths describe the checkout, not the staged layout, where every runtime crate
+    // sits under `crates/`: the runtime crates' entries point at the copies (a ring version requirement beside the
+    // path survives), and the path entries of crates the runtime does not ship are dropped.
     if let Some(dependencies) = workspace.get_mut("dependencies").and_then(toml::Value::as_table_mut) {
+        dependencies.retain(|crate_name, dependency| {
+            RUNTIME_CRATES.contains(&crate_name)
+                || dependency
+                    .as_table()
+                    .is_none_or(|dependency| !dependency.contains_key("path"))
+        });
         for crate_name in RUNTIME_CRATES {
             if let Some(dependency) = dependencies.get_mut(crate_name).and_then(toml::Value::as_table_mut)
                 && dependency.contains_key("path")

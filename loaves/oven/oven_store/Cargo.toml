@@ -1,6 +1,6 @@
 [package]
 name = "oven_store"
-version.workspace = true
+version = "0.6.0-dev.4"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -16,7 +16,7 @@ test_support = []
 
 [dependencies]
 hex = "0.4.3"
-oven_model = { path = "../oven_model" }
+oven_model = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10.9"

@@ -56,11 +56,13 @@ jobs:
           BASE_BRANCH: ${{ github.base_ref }}
         run: |
           python3 scripts/test_release_version_consistency.py
+          python3 scripts/test_check_ring_versions.py
           python3 scripts/test_ci_scope.py
           python3 scripts/test_ci_sdk_handoff.py
           python3 -m unittest discover -s scripts/tests -p test_ci_tool_outputs.py
           python3 scripts/check_release_version_consistency.py \
             --release-branch "$RELEASE_BRANCH" --base-branch "$BASE_BRANCH"
+          python3 scripts/check_ring_versions.py
       - name: Classify the pull request
         id: scope
         shell: bash

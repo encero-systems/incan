@@ -77,15 +77,19 @@ version="$(workspace_version)"
 
 # The archive's support workspace inherits the same dependency table as the checkout, so a member manifest that says
 # `serde = { workspace = true }` resolves in both. The five support crates name each other through that table too;
-# their checkout paths are rewritten to the archive layout, where every support crate sits beside this manifest.
+# their entries are rewritten to the archive layout, where every support crate sits beside this manifest and the
+# stdlib ring's version requirement still applies. Path entries for crates the archive does not ship are dropped.
 workspace_dependencies() {
   awk '
     /^\[workspace.dependencies\]/ { in_section=1; next }
     /^\[/ { in_section=0 }
     in_section && /^(incan_core|incan_derive|incan_stdlib|incan_vocab|incan_web_macros) = / {
-      printf "%s = { path = \"%s\" }\n", $1, $1
+      entry = $0
+      sub(/^[a-z_]+ = \{ path = "[^"]+"/, $1 " = { path = \"" $1 "\"", entry)
+      print entry
       next
     }
+    in_section && /path = "/ { next }
     in_section && /^[A-Za-z0-9_-]+ = / { print }
   ' Cargo.toml
 }

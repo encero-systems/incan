@@ -12,7 +12,7 @@ authors.workspace = true
 [dependencies]
 incan_core = { workspace = true }
 incan_vocab = { workspace = true }
-incan_semantics_core = { path = "../incan_semantics_core" }
+incan_semantics_core = { workspace = true }
 # The `Diagnostic` implementation only; the `fancy` reporter had no caller and carried fifteen crates.
 miette = "7.0"
 tracing = { workspace = true }

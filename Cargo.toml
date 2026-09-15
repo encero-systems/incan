@@ -56,13 +56,29 @@ quote = "1.0"
 proc-macro2 = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
-# The toolchain support crates ship with every release, so this table is the one place a checkout names their
-# directories; the release archive and the staged SDK runtime write their own entries against `crates/<name>`.
+# Every workspace crate is named here once — its directory, its ring's version requirement where that ring has
+# its own line, and `default-features = false` where any member consumes it without defaults — and members
+# inherit the entry. The release archive and the staged SDK runtime write their own tables against `crates/<name>`.
 incan_core = { path = "crates/incan_core" }
-incan_derive = { path = "crates/incan_derive" }
-incan_stdlib = { path = "crates/incan_stdlib" }
-incan_vocab = { path = "crates/incan_vocab" }
-incan_web_macros = { path = "crates/incan_web_macros" }
+incan_derive = { path = "crates/incan_derive", version = "0.6.0-dev.4" }
+incan_stdlib = { path = "crates/incan_stdlib", version = "0.6.0-dev.4" }
+incan_vocab = { path = "crates/incan_vocab", version = "0.3.0" }
+incan_web_macros = { path = "crates/incan_web_macros", version = "0.6.0-dev.4" }
+incan_driver = { path = "loaves/compiler/incan_driver", default-features = false }
+incan_emit = { path = "loaves/compiler/incan_emit", default-features = false }
+incan_format = { path = "loaves/compiler/incan_format" }
+incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = false }
+incan_ir = { path = "loaves/compiler/incan_ir", default-features = false }
+incan_oven_facet = { path = "loaves/compiler/incan_oven_facet" }
+incan_provider = { path = "loaves/compiler/incan_provider", default-features = false }
+incan_semantics_stdlib = { path = "loaves/compiler/incan_semantics_stdlib" }
+rust_inspect = { path = "loaves/compiler/rust_inspect", default-features = false }
+incan_codegraph = { path = "loaves/kernel/incan_codegraph" }
+incan_semantics_core = { path = "loaves/kernel/incan_semantics_core" }
+incan_syntax = { path = "loaves/kernel/incan_syntax" }
+oven_model = { path = "loaves/oven/oven_model", version = "0.6.0-dev.4" }
+oven_rustc = { path = "loaves/oven/oven_rustc", version = "0.6.0-dev.4" }
+oven_store = { path = "loaves/oven/oven_store", version = "0.6.0-dev.4" }
 
 [package]
 name = "incan"
@@ -93,20 +109,20 @@ rust_inspect = ["rust_inspect/inspector", "incan_frontend/rust_inspect", "incan_
 [dependencies]
 # Shared language/semantic helpers (canonical vocab)
 incan_core = { workspace = true }
-incan_format = { path = "loaves/compiler/incan_format" }
-incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = false }
-incan_ir = { path = "loaves/compiler/incan_ir", default-features = false }
-incan_emit = { path = "loaves/compiler/incan_emit", default-features = false }
-incan_provider = { path = "loaves/compiler/incan_provider", default-features = false }
-incan_driver = { path = "loaves/compiler/incan_driver", default-features = false }
-incan_oven_facet = { path = "loaves/compiler/incan_oven_facet" }
-incan_codegraph = { path = "loaves/kernel/incan_codegraph" }
+incan_format = { workspace = true }
+incan_frontend = { workspace = true }
+incan_ir = { workspace = true }
+incan_emit = { workspace = true }
+incan_provider = { workspace = true }
+incan_driver = { workspace = true }
+incan_oven_facet = { workspace = true }
+incan_codegraph = { workspace = true }
 incan_vocab = { workspace = true }
 # Shared syntax frontend (lexer, parser, AST, diagnostics)
-incan_syntax = { path = "loaves/kernel/incan_syntax" }
+incan_syntax = { workspace = true }
 # Shared semantics backend (type checker, semantic analysis)
-incan_semantics_core = { path = "loaves/kernel/incan_semantics_core" }
-incan_semantics_stdlib = { path = "loaves/compiler/incan_semantics_stdlib", optional = true }
+incan_semantics_core = { workspace = true }
+incan_semantics_stdlib = { workspace = true, optional = true }
 
 # LSP server implementation
 tower-lsp = { version = "0.20", optional = true }
@@ -146,13 +162,13 @@ sha1 = "0.10"
 hmac = { version = "0.12", features = ["reset"] }
 hex = "0.4.3"
 semver = "1.0.27"
-oven_model = { path = "loaves/oven/oven_model" }
-oven_rustc = { path = "loaves/oven/oven_rustc" }
-oven_store = { path = "loaves/oven/oven_store" }
+oven_model = { workspace = true }
+oven_rustc = { workspace = true }
+oven_store = { workspace = true }
 globset = "0.4.18"
 # Safe, capability-oriented filesystem primitives for no-replace Oven publications.
 rustix = { version = "1.1.4", features = ["fs"] }
-rust_inspect = { path = "loaves/compiler/rust_inspect", default-features = false }
+rust_inspect = { workspace = true }
 # WASM runtime for desugarer packaging
 # 36.0.14 is the patched RUSTSEC-2026-0222/RUSTSEC-2026-0269 line compatible with Incan's Rust 1.93 MSRV.
 # Wasmtime 45 remains vulnerable, while the patched 46.0.2 release requires Rust 1.94.
@@ -195,13 +211,13 @@ proptest = "1"
 # Runtime crate for parity tests
 incan_stdlib = { workspace = true }
 # Temporary directories for manifest discovery tests
-incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = false, features = ["test_support"] }
-incan_emit = { path = "loaves/compiler/incan_emit", default-features = false, features = ["test_support"] }
-incan_provider = { path = "loaves/compiler/incan_provider", default-features = false, features = ["test_support"] }
-incan_driver = { path = "loaves/compiler/incan_driver", default-features = false, features = ["test_support"] }
-rust_inspect = { path = "loaves/compiler/rust_inspect", default-features = false, features = ["test_fixtures"] }
-oven_rustc = { path = "loaves/oven/oven_rustc", features = ["test_support"] }
-oven_store = { path = "loaves/oven/oven_store", features = ["test_support"] }
+incan_frontend = { workspace = true, features = ["test_support"] }
+incan_emit = { workspace = true, features = ["test_support"] }
+incan_provider = { workspace = true, features = ["test_support"] }
+incan_driver = { workspace = true, features = ["test_support"] }
+rust_inspect = { workspace = true, features = ["test_fixtures"] }
+oven_rustc = { workspace = true, features = ["test_support"] }
+oven_store = { workspace = true, features = ["test_support"] }
 tempfile = "3"
 wat = "1"
 

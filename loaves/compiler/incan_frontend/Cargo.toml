@@ -24,13 +24,13 @@ test_support = ["dep:tempfile", "rust_inspect/test_fixtures"]
 [dependencies]
 incan_core = { workspace = true }
 incan_vocab = { workspace = true }
-incan_syntax = { path = "../../kernel/incan_syntax" }
-incan_semantics_core = { path = "../../kernel/incan_semantics_core" }
-incan_semantics_stdlib = { path = "../incan_semantics_stdlib", optional = true }
+incan_syntax = { workspace = true }
+incan_semantics_core = { workspace = true }
+incan_semantics_stdlib = { workspace = true, optional = true }
 incan_stdlib = { workspace = true }
-incan_format = { path = "../incan_format" }
-oven_model = { path = "../../oven/oven_model" }
-rust_inspect = { path = "../rust_inspect", default-features = false }
+incan_format = { workspace = true }
+oven_model = { workspace = true }
+rust_inspect = { workspace = true }
 hex = "0.4.3"
 quote = { workspace = true }
 regex = "1"
@@ -47,5 +47,5 @@ wasmtime-wasi = { version = "36.0.14", default-features = false, features = ["pr
 tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
-rust_inspect = { path = "../rust_inspect", default-features = false, features = ["test_fixtures"] }
+rust_inspect = { workspace = true, features = ["test_fixtures"] }
 tempfile = "3"

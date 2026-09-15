@@ -5767,6 +5767,19 @@ mod tests {
         Ok(())
     }
 
+    /// The stdlib ring's version line as the checkout declares it, so the assertion below follows a bump.
+    fn incan_stdlib_version_line() -> Result<String, Box<dyn std::error::Error>> {
+        let manifest = oven_model::toolchain_layout::development_root().join("crates/incan_stdlib/Cargo.toml");
+        let text = fs::read_to_string(&manifest)?;
+        text.lines()
+            .find_map(|line| {
+                line.strip_prefix("version = \"")
+                    .and_then(|rest| rest.strip_suffix('"'))
+            })
+            .map(str::to_string)
+            .ok_or_else(|| format!("{} declares no explicit version line", manifest.display()).into())
+    }
+
     #[test]
     fn publisher_seals_sdk_component_runtime_paths_inside_the_suite_entry() -> Result<(), Box<dyn std::error::Error>> {
         let provider = tempfile::tempdir()?;
@@ -5806,18 +5819,37 @@ mod tests {
             "stale sealed runtime lock\n"
         );
         let runtime_workspace: toml::Value = toml::from_str(&fs::read_to_string(staged.join("runtime/Cargo.toml"))?)?;
+        let runtime_dependencies = runtime_workspace
+            .get("workspace")
+            .and_then(|workspace| workspace.get("dependencies"))
+            .and_then(toml::Value::as_table)
+            .ok_or("staged runtime workspace has no [workspace.dependencies] table")?;
         for crate_name in ["incan_core", "incan_derive", "incan_stdlib", "incan_web_macros"] {
             assert_eq!(
-                runtime_workspace
-                    .get("workspace")
-                    .and_then(|workspace| workspace.get("dependencies"))
-                    .and_then(|dependencies| dependencies.get(crate_name))
+                runtime_dependencies
+                    .get(crate_name)
                     .and_then(|dependency| dependency.get("path"))
                     .and_then(toml::Value::as_str),
                 Some(format!("crates/{crate_name}").as_str()),
                 "staged runtime workspace must name {crate_name} at its copied location"
             );
         }
+        assert_eq!(
+            runtime_dependencies
+                .get("incan_stdlib")
+                .and_then(|dependency| dependency.get("version"))
+                .and_then(toml::Value::as_str),
+            Some(incan_stdlib_version_line()?.as_str()),
+            "staged runtime workspace must keep the stdlib ring's version requirement"
+        );
+        assert!(
+            runtime_dependencies.values().all(|dependency| {
+                dependency
+                    .get("path")
+                    .is_none_or(|path| toml::Value::as_str(path).is_some_and(|path| path.starts_with("crates/")))
+            }),
+            "staged runtime workspace must not name a checkout path it does not ship: {runtime_dependencies:?}"
+        );
         assert!(!staged.join("runtime/obsolete-runtime-file").exists());
         assert!(staged.join("runtime/crates/incan_core/src/lib.rs").is_file());
         assert!(staged.join("runtime/crates/incan_derive/src/lib.rs").is_file());
