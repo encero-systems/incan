@@ -6,7 +6,7 @@ Language vocabulary, keyword and builtin tables, the stdlib registry, and shared
 
 ## Moves here from
 
-- `crates/incan_core/ (renamed; frees the word `core` for the stdlib component)`
+- `loaves/kernel/incan_core/` (the crate is here already; the step 5 renames give it this name and free the word `core` for the stdlib component)
 
 ## May depend on
 

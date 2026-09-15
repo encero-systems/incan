@@ -1488,7 +1488,9 @@ pub fn source_compiler_vocab_support_is_available() -> bool {
 /// Return whether `executable` is a source-build binary beneath the checked compiler workspace at `root`.
 fn source_compiler_vocab_support_paths_are_available(root: &Path, executable: &Path) -> bool {
     root.join("Cargo.lock").is_file()
-        && root.join("crates/incan_vocab/Cargo.toml").is_file()
+        && oven_model::toolchain_layout::support_crate_dir_in(root, "incan_vocab")
+            .join("Cargo.toml")
+            .is_file()
         && executable.starts_with(root.join("target"))
 }
 

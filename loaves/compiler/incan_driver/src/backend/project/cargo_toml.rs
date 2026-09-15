@@ -743,7 +743,9 @@ mod tests {
                 features: vec![],
                 default_features: true,
                 source: DependencySource::Path {
-                    path: oven_model::toolchain_layout::development_root().join("crates/incan_web_macros"),
+                    path: oven_model::toolchain_layout::development_root().join(
+                        oven_model::toolchain_layout::development_support_crate_dir("incan_web_macros"),
+                    ),
                 },
                 optional: false,
                 package: None,
@@ -961,7 +963,9 @@ mod tests {
                 features: vec![],
                 default_features: true,
                 source: oven_model::manifest::DependencySource::Path {
-                    path: oven_model::toolchain_layout::development_root().join("crates/incan_web_macros"),
+                    path: oven_model::toolchain_layout::development_root().join(
+                        oven_model::toolchain_layout::development_support_crate_dir("incan_web_macros"),
+                    ),
                 },
                 optional: false,
                 package: None,

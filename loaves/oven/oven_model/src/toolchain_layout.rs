@@ -250,7 +250,56 @@ fn resolve_toolchain_relative_path_in(relative_path: &Path, paths: &ToolchainPat
             return canonical_toolchain_path(candidate);
         }
     }
-    canonical_toolchain_path(paths.development_root.join(relative_path))
+    canonical_toolchain_path(development_toolchain_relative_path(
+        &paths.development_root,
+        relative_path,
+    ))
+}
+
+/// Where a compiler-owned support crate lives in the development checkout, relative to its root.
+///
+/// Installed toolchains, the release archive and the staged SDK runtime keep every support crate at `crates/<name>`,
+/// and that spelling is the toolchain-relative identity everything records. The checkout places each crate in its
+/// ring instead; this table is the one place that difference is written down, so a move edits a line here and the
+/// copiers that produce the installed layout read from it. A crate the table does not name lives at `crates/<name>`.
+pub fn development_support_crate_dir(crate_name: &str) -> PathBuf {
+    let relative = match crate_name {
+        "incan_core" => "loaves/kernel/incan_core",
+        "incan_vocab" => "loaves/kernel/incan_vocab",
+        "incan_derive" => "loaves/stdlib/derive/incan_derive",
+        "incan_web_macros" => "loaves/stdlib/derive/incan_web_macros",
+        other => return Path::new("crates").join(other),
+    };
+    PathBuf::from(relative)
+}
+
+/// Resolve a toolchain-relative path (`crates/<name>[/…]` or any other) inside the development checkout at `root`.
+///
+/// The installed spelling `crates/<name>` is redirected through [`development_support_crate_dir`]; every other path
+/// is the same in both layouts.
+pub fn development_toolchain_relative_path(root: &Path, relative_path: &Path) -> PathBuf {
+    let mut components = relative_path.components();
+    if components.next().is_some_and(|first| first.as_os_str() == "crates")
+        && let Some(crate_name) = components.next().and_then(|name| name.as_os_str().to_str())
+    {
+        return root
+            .join(development_support_crate_dir(crate_name))
+            .join(components.as_path());
+    }
+    root.join(relative_path)
+}
+
+/// The directory of a compiler-owned support crate below `root`, whichever layout `root` has.
+///
+/// An installed toolchain, a release archive and a staged SDK runtime hold `crates/<name>`; a development checkout
+/// holds the ring directory from [`development_support_crate_dir`]. The installed spelling wins when both exist, since
+/// a checkout never carries one and a relocated runtime always does.
+pub fn support_crate_dir_in(root: &Path, crate_name: &str) -> PathBuf {
+    let installed = root.join("crates").join(crate_name);
+    if installed.join("Cargo.toml").is_file() {
+        return installed;
+    }
+    root.join(development_support_crate_dir(crate_name))
 }
 
 /// Return the compact compiler-runtime closure sealed beside an explicitly selected SDK inventory.

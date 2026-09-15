@@ -212,15 +212,15 @@ Macros are powerful but can make code harder to understand. We follow strict gui
 
 ### Declarative Macros (`macro_rules!`)
 
-**Policy**: Declarative macros are **not allowed** in the main codebase outside of `crates/incan_derive`.
+**Policy**: Declarative macros are **not allowed** in the main codebase outside of `loaves/stdlib/derive/incan_derive`.
 
 **Rationale**: `macro_rules!` macros hide control flow and make debugging difficult. Use functions and generics instead.
 
-**Exception**: Derive macros in `crates/incan_derive/` may use `macro_rules!` for internal helpers.
+**Exception**: Derive macros in `loaves/stdlib/derive/incan_derive/` may use `macro_rules!` for internal helpers.
 
 ### Procedural Macros (Derive Macros)
 
-**Location**: `crates/incan_derive/`
+**Location**: `loaves/stdlib/derive/incan_derive/`
 
 **Requirements**:
 
@@ -229,7 +229,7 @@ Macros are powerful but can make code harder to understand. We follow strict gui
 3. **Testing**: Test with and without the derive
 4. **Error messages**: Provide clear compile errors for invalid usage
 
-**Example**: See `crates/incan_derive/src/lib.rs` for current patterns.
+**Example**: See `loaves/stdlib/derive/incan_derive/src/lib.rs` for current patterns.
 
 ### `quote!` Usage in Backend
 

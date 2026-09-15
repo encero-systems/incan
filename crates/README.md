@@ -145,7 +145,7 @@ The Incan compiler handles all of this automatically:
    pub use crate::my_trait::MyTrait;
    ```
 
-3. **Implement the macro** in `crates/incan_derive/src/lib.rs`
+3. **Implement the macro** in `loaves/stdlib/derive/incan_derive/src/lib.rs`
 
    ```rust
    #[proc_macro_derive(MyTrait)]
@@ -186,6 +186,6 @@ Generated code always depends on matching versions to ensure compatibility.
 ## Further Reading
 
 - [`crates/incan_stdlib/README.md`](../crates/incan_stdlib/README.md) - stdlib API reference
-- [`crates/incan_derive/README.md`](../crates/incan_derive/README.md) - derive macro reference
+- [`loaves/stdlib/derive/incan_derive/README.md`](../loaves/stdlib/derive/incan_derive/README.md) - derive macro reference
 - [RFC 002: Testing Framework](../docs/RFCs/002-testing-framework.md) - How fixtures/parametrize work
 - [RFC 005: Rust Interop](../docs/RFCs/005-rust-interop.md) - Using Rust crates from Incan

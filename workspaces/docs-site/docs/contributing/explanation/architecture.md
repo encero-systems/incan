@@ -185,7 +185,7 @@ When moving code, preserve these rules:
 
 Incan has a **semantic core** crate (`incan_core`) that holds pure, deterministic helpers shared by the compiler and runtime, without creating dependency cycles.
 
-- **Location**: `crates/incan_core`
+- **Location**: `loaves/kernel/incan_core`
 - **Purpose**: centralize semantic policy and pure helpers so compile-time behavior and runtime behavior cannot drift.
 - **Used by**: compiler (typechecker, const-eval, lowering/codegen decisions) and stdlib/runtime helpers.
 - **Constraints**: pure/deterministic (no IO, no global state) and no dependencies on compiler crates.
@@ -193,7 +193,7 @@ Incan has a **semantic core** crate (`incan_core`) that holds pure, deterministi
 
 `incan_core` should own language-wide policy, not runtime implementations. Existing stdlib-facing surface type metadata is a compatibility boundary; new work should either justify why the metadata is truly language-core policy or push ownership toward library-defined declarations/semantics packs.
 
-See crate-level documentation in `crates/incan_core` for the contract, extension checklist, and drift-prevention expectations; tests in `tests/semantic_core_*` serve as the source of truth for covered domains.
+See crate-level documentation in `loaves/kernel/incan_core` for the contract, extension checklist, and drift-prevention expectations; tests in `tests/semantic_core_*` serve as the source of truth for covered domains.
 
 ## Syntax Frontend
 

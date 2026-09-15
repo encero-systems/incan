@@ -44,6 +44,19 @@ package_dir="$workdir/crates"
 mkdir -p "$package_dir"
 
 archive_counter=0
+# The checkout keeps each support crate in its ring; the archive keeps them side by side under `crates/`, the layout
+# every installed toolchain and staged runtime has. This table mirrors `development_support_crate_dir` in
+# `oven_model::toolchain_layout`.
+support_crate_source() {
+  case "$1" in
+    incan_core) printf 'loaves/kernel/incan_core' ;;
+    incan_vocab) printf 'loaves/kernel/incan_vocab' ;;
+    incan_derive) printf 'loaves/stdlib/derive/incan_derive' ;;
+    incan_web_macros) printf 'loaves/stdlib/derive/incan_web_macros' ;;
+    *) printf 'crates/%s' "$1" ;;
+  esac
+}
+
 stage_tracked_tree() {
   local source_tree="${1#./}"
   local destination="$2"
@@ -58,7 +71,7 @@ stage_tracked_tree() {
 }
 
 for support_crate in incan_core incan_derive incan_stdlib incan_vocab incan_web_macros; do
-  stage_tracked_tree "crates/${support_crate}" "$package_dir/${support_crate}"
+  stage_tracked_tree "$(support_crate_source "$support_crate")" "$package_dir/${support_crate}"
 done
 
 workspace_version() {

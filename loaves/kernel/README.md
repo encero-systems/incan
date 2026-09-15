@@ -6,7 +6,7 @@ Stable contracts only: deterministic, dependency-light, no runtime side effects.
 
 | Directory | Purpose |
 | --- | --- |
-| `incan_lang/` | Language vocabulary, keyword and builtin tables, the stdlib registry, and shared semantic helpers. `crates/incan_core` moves here with the toolchain support crates in step 4b and takes this name in step 5. |
+| `incan_lang/` | Language vocabulary, keyword and builtin tables, the stdlib registry, and shared semantic helpers. The crate is here as `incan_core/` since step 4b and takes this name in step 5. |
 | `incan_syntax/` | Lexer, parser, AST, and the diagnostics catalog. |
 | `incan_semantics_core/` | Surface-semantics contracts and registry interfaces; `incan_semantics` once the crates are renamed (step 5). |
 | `incan_vocab/` | Vocabulary registration contract for companion crates, including the WASM desugar ABI constants. |

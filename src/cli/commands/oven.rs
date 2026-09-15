@@ -5288,14 +5288,14 @@ mod tests {
             package_name: "incan_core".to_string(),
             crate_name: "incan_core".to_string(),
             target_kind: "lib".to_string(),
-            source_relative_path: "crates/incan_core/src/lib.rs".to_string(),
+            source_relative_path: "loaves/kernel/incan_core/src/lib.rs".to_string(),
             features: Vec::new(),
         };
         let derive = OvenCompilerWorkspaceLibraryKey {
             package_name: "incan_derive".to_string(),
             crate_name: "incan_derive".to_string(),
             target_kind: "proc-macro".to_string(),
-            source_relative_path: "crates/incan_derive/src/lib.rs".to_string(),
+            source_relative_path: "loaves/stdlib/derive/incan_derive/src/lib.rs".to_string(),
             features: Vec::new(),
         };
         let stdlib = OvenCompilerWorkspaceLibraryKey {

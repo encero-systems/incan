@@ -235,7 +235,7 @@ Key directories:
 | Field metadata   | `parser/decl.rs`                                       | `check_decl.rs`                                                     | `lower/decl.rs` | `emit/decls.rs` |
 | Alias resolution | -                                                      | `check_expr/access.rs`, `calls.rs`, `match_.rs`                     | `lower/expr.rs` | -               |
 | Soft keywords    | `parser/core.rs`, `parser/helpers.rs`, `parser/decl/*` | `collect/stdlib_imports.rs`                                         | -               | -               |
-| Stdlib registry  | -                                                      | `incan_core::lang::stdlib` (`crates/incan_core/src/lang/stdlib.rs`) | -               | -               |
+| Stdlib registry  | -                                                      | `incan_core::lang::stdlib` (`loaves/kernel/incan_core/src/lang/stdlib.rs`) | -               | -               |
 | Diagnostics      | -                                                      | `diagnostics/catalog/errors/*` in `loaves/kernel/incan_syntax/src/`        | -               | -               |
 
 ## Available Skills and Agents

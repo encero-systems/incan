@@ -432,8 +432,13 @@ fn surface_types_have_explicit_ownership_metadata() {
 // Drift guardrails for closed-set vocabulary (string literals).
 // -------------------------------------------------------------------------------------------------
 
+/// The repository root: the crate lives at `loaves/kernel/incan_core`, three levels below it.
 fn repo_root() -> PathBuf {
-    let Some(root) = Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(|p| p.parent()) else {
+    let Some(root) = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+    else {
         panic!("INVARIANT: repo root missing — CARGO_MANIFEST_DIR chain must resolve during tests");
     };
     root.to_path_buf()

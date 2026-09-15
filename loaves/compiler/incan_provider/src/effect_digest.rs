@@ -191,10 +191,11 @@ pub const COMPILER_STDLIB_ROOT: &str = "crates/incan_stdlib/stdlib";
 /// excluded and nothing tells you. This list is the other shape. It answers "what can reach a compiled component"
 /// and everything it omits is omitted for a stated reason, each of which is one of exactly two:
 ///
-/// - **Covered by meaning.** `loaves/compiler/incan_frontend`, `loaves/kernel/incan_syntax` and `crates/incan_vocab`
-///   are run, not hashed: the digest lexes, parses, checks and lowers all 104 standard-library sources with this
-///   compiler, so a change to any of them that alters what the compiler understands moves the digest, and one that does
-///   not, does not. That is a stronger answer than hashing their source, not a weaker one.
+/// - **Covered by meaning.** `loaves/compiler/incan_frontend`, `loaves/kernel/incan_syntax` and
+///   `loaves/kernel/incan_vocab` are run, not hashed: the digest lexes, parses, checks and lowers all 104
+///   standard-library sources with this compiler, so a change to any of them that alters what the compiler understands
+///   moves the digest, and one that does not, does not. That is a stronger answer than hashing their source, not a
+///   weaker one.
 /// - **Cannot reach a component.** `src/cli`, `src/lsp`, `src/inspect`, `src/oven`, `loaves/kernel/incan_codegraph`,
 ///   `loaves/compiler/rust_inspect` and `tests/` are the compiler's own tooling. They decide *when* components are
 ///   built and *where* they are written, never what a component contains.
@@ -213,9 +214,9 @@ pub const COMPILER_STDLIB_ROOT: &str = "crates/incan_stdlib/stdlib";
 /// existing fails the digest rather than silently narrowing it, so a move has to update this list.
 pub const COMPILER_RUST_EFFECT_ROOTS: &[(&str, &str)] = &[
     ("stdlib-runtime", "crates/incan_stdlib/src"),
-    ("core", "crates/incan_core"),
-    ("derive", "crates/incan_derive"),
-    ("web-macros", "crates/incan_web_macros"),
+    ("core", "loaves/kernel/incan_core"),
+    ("derive", "loaves/stdlib/derive/incan_derive"),
+    ("web-macros", "loaves/stdlib/derive/incan_web_macros"),
     ("semantics-core", "loaves/kernel/incan_semantics_core"),
     ("semantics-stdlib", "loaves/compiler/incan_semantics_stdlib"),
     ("transitional-lowering", "loaves/compiler/incan_ir/src"),

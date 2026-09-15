@@ -31,9 +31,9 @@ Incan’s “language surface” spans a small number of key crates/modules:
 |     Crate/Module      |                                        Purpose                                         |
 | --------------------- | -------------------------------------------------------------------------------------- |
 | `crates/incan_syntax` | Lexer/parser/AST/diagnostics (shared by compiler, formatter, and LSP to prevent drift) |
-| `crates/incan_core`   | Semantic registries + pure helpers shared across the ecosystem (should not drift)      |
+| `loaves/kernel/incan_core`   | Semantic registries + pure helpers shared across the ecosystem (should not drift)      |
 | `crates/incan_stdlib` | Runtime support for generated programs (preferred home for “just a function” behavior) |
-| `crates/incan_derive` | Derives used by generated Rust programs (runtime-side)                                 |
+| `loaves/stdlib/derive/incan_derive` | Derives used by generated Rust programs (runtime-side)                                 |
 | `src/frontend`        | Module resolution + typechecker (turns syntax into a typed program)                    |
 | `src/backend`         | Lowering + IR + emission (turns typed program into Rust)                               |
 | `src/format/`         | Source formatter (`incan fmt`)                                                         |
@@ -140,15 +140,15 @@ Use this only when the feature is genuinely syntactic/control-flow.
 
 **Lexer**: `crates/incan_syntax/src/lexer/*`
 
-- Add a `KeywordId` **and a `KEYWORDS` entry** (canonical spelling/metadata) in `crates/incan_core/src/lang/keywords.rs`
+- Add a `KeywordId` **and a `KEYWORDS` entry** (canonical spelling/metadata) in `loaves/kernel/incan_core/src/lang/keywords.rs`
 - Ensure tokenization emits `TokenKind::Keyword(KeywordId::YourKeyword)`
 - Update lexer parity tests (keyword/operator/punctuation registry parity)
 
 !!! note "Word-operators (special case)"
     If the new “keyword” is meant to behave like an operator (it participates in expression precedence like `and`, `or`, `not`, `in`, `is`), treat it as a **word-operator**:
 
-    - Add it to `crates/incan_core/src/lang/operators.rs` (precedence/fixity source of truth)
-    - Add a corresponding `KeywordId` + `KEYWORDS` entry in `crates/incan_core/src/lang/keywords.rs` (so the lexer will still lex it as a keyword)
+    - Add it to `loaves/kernel/incan_core/src/lang/operators.rs` (precedence/fixity source of truth)
+    - Add a corresponding `KeywordId` + `KEYWORDS` entry in `loaves/kernel/incan_core/src/lang/keywords.rs` (so the lexer will still lex it as a keyword)
     - Update expression parsing in `crates/incan_syntax/src/parser/expr.rs` to place it at the right precedence level
 
 **Parser**: `crates/incan_syntax/src/parser/*`
@@ -227,7 +227,7 @@ Action descriptors are small enums (e.g., `SurfaceStmtLoweringAction::AssertCall
 
 ### End-to-end checklist
 
-**1. Keyword descriptor** (`crates/incan_core/src/lang/keywords.rs`):
+**1. Keyword descriptor** (`loaves/kernel/incan_core/src/lang/keywords.rs`):
 
 - Add a `KeywordId` variant.
 - Register it with `info_soft()`, specifying the activating stdlib namespace and the `KeywordSurfaceKind` (`StatementKeywordArgs`, `PrefixExpression`, or `DeclarationModifier`).
