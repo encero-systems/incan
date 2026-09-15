@@ -1,8 +1,7 @@
 //! BuiltinHandlers registry (scaffold)
 //!
-//! This module prepares a table-driven approach for builtin function handling
-//! without changing current behavior. The actual emission remains in IrEmitter
-//! until parity is proven.
+//! This module prepares a table-driven approach for builtin function handling without changing current behavior. The
+//! actual emission remains in IrEmitter until parity is proven.
 
 #[derive(Default)]
 pub struct BuiltinHandlers;

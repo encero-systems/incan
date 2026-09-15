@@ -241,8 +241,8 @@ impl AstLowering {
 
     /// Extract derives from decorators.
     ///
-    /// Parses `@derive(...)` decorators and returns the Rust derive names or paths they require.
-    /// Also adds prerequisite derives (e.g., Eq requires PartialEq).
+    /// Parses `@derive(...)` decorators and returns the Rust derive names or paths they require. Also adds
+    /// prerequisite derives (e.g., Eq requires PartialEq).
     pub(in crate::lower) fn extract_derives(
         &mut self,
         decorators: &[Spanned<ast::Decorator>],

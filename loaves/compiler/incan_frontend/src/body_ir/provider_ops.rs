@@ -1,11 +1,10 @@
 //! Lowering an admitted provider-service call into a checked [`bir::ProviderOperationPlan`] (#1213).
 //!
-//! Body IR does not decide what a provider operation *is*. It is told, by canonical identity, through a
-//! private [`ProviderOperationCatalog`] projected from the selected [`ProviderPlan`]. That direction is the point of
-//! this module rather than an implementation convenience: a lowering pass that recognized provider operations by
-//! module name, callee spelling, or emitted Rust name would be a second source-resolution mechanism competing with
-//! the one that already resolved the call, and it would make ordinary package-defined providers impossible to
-//! express.
+//! Body IR does not decide what a provider operation *is*. It is told, by canonical identity, through a private
+//! [`ProviderOperationCatalog`] projected from the selected [`ProviderPlan`]. That direction is the point of this
+//! module rather than an implementation convenience: a lowering pass that recognized provider operations by module
+//! name, callee spelling, or emitted Rust name would be a second source-resolution mechanism competing with the one
+//! that already resolved the call, and it would make ordinary package-defined providers impossible to express.
 //!
 //! What lowering does own is admission. An operation reaches [`bir::Callee::ProviderOperation`] only when its
 //! provider is active in this compilation, its required capability identity really names a capability declaration,

@@ -1327,8 +1327,8 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit a runtime string slice call using shared stdlib/semantics helpers.
     ///
-    /// This ensures emitted Rust uses the same Unicode/panic behavior as runtime and avoids drift
-    /// from direct range slicing on Rust strings.
+    /// This ensures emitted Rust uses the same Unicode/panic behavior as runtime and avoids drift from direct range
+    /// slicing on Rust strings.
     fn emit_runtime_str_slice(&self, info: &ReceiverInfo, args: &[TypedExpr]) -> Result<TokenStream, EmitError> {
         let r_borrow = &info.r_borrow;
 

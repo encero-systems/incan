@@ -1,7 +1,7 @@
 //! Emit Rust code for lvalue (assignment target) expressions.
 //!
-//! This module handles emission of expressions when they appear as assignment targets
-//! (left-hand side of assignments). The key differences from regular expression emission:
+//! This module handles emission of expressions when they appear as assignment targets (left-hand side of assignments).
+//! The key differences from regular expression emission:
 //!
 //! - No `.clone()` insertion for index operations
 //! - Negative index handling for Python-style indexing
@@ -157,9 +157,8 @@ impl<'a> IrEmitter<'a> {
 
     /// Helper: emit index expression for assignment target context.
     ///
-    /// Handles the dict vs list distinction for assignment targets.
-    /// Uses the shared negative-index handling from `emit_index_with_negative_handling`,
-    /// but for dicts with int keys, keeps the key as-is (no usize conversion).
+    /// Handles the dict vs list distinction for assignment targets. Uses the shared negative-index handling from
+    /// `emit_index_with_negative_handling`, but for dicts with int keys, keeps the key as-is (no usize conversion).
     fn emit_assign_target_index(
         &self,
         object: &TypedExpr,

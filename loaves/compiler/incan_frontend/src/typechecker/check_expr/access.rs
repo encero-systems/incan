@@ -4405,8 +4405,8 @@ impl TypeChecker {
         Some(Self::c_raw_call_type(&slot.binding, &slot.value))
     }
 
-    /// Type-check a method call with an optional expected result type for overload disambiguation.
-    /// Resolve one `Enum.Variant(...)` construction against the destination type it is being built for.
+    /// Type-check a method call with an optional expected result type for overload disambiguation. Resolve one
+    /// `Enum.Variant(...)` construction against the destination type it is being built for.
     ///
     /// A variant payload is declared in the enum's own vocabulary — `Items(list[Elem])` — and that vocabulary is bound
     /// nowhere at a construction site. A model constructor can recover from this by falling back to the supplied

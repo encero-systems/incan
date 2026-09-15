@@ -12,9 +12,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// requirement, because every form can panic. The optional failure message applies to all three and is lowered
     /// after the form's own operands, matching source evaluation order.
     ///
-    /// `remaining` is the statement suffix following this assertion in its enclosing block. Only the
-    /// `assert value is P` form uses it: unlike a `match` arm, a pattern assertion binds `P`'s names for the rest
-    /// of that block, so the suffix is what seeds each binding's last-use countdown (see [`PatternReadScope`]).
+    /// `remaining` is the statement suffix following this assertion in its enclosing block. Only the `assert value is
+    /// P` form uses it: unlike a `match` arm, a pattern assertion binds `P`'s names for the rest of that block, so the
+    /// suffix is what seeds each binding's last-use countdown (see [`PatternReadScope`]).
     ///
     /// The pattern form reuses [`Self::lower_match_pattern`] rather than approximating the binding, so `v` in
     /// `assert value is Some(v)` becomes a declared local carrying the same [`bir::PatternBinding`]

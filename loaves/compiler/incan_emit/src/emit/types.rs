@@ -1,7 +1,6 @@
 //! Type emission for IR to Rust code generation
 //!
-//! This module handles emitting Rust type tokens from IR types,
-//! as well as visibility, operators, and pattern matching.
+//! This module handles emitting Rust type tokens from IR types, as well as visibility, operators, and pattern matching.
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};

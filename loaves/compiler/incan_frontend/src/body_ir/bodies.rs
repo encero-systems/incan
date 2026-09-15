@@ -114,15 +114,15 @@ pub(super) fn lower_function_body(
 ///
 /// Ordinary (non-receiver) method parameters declare with the resolved type the typechecker recorded in
 /// [`DeclarationArtifacts::method_bindings_by_span`](
-/// crate::typechecker::type_info::DeclarationArtifacts::method_bindings_by_span), keyed by this method's
-/// own declaration span (#1121) — mirroring exactly how [`lower_function_body`] consumes `function_bindings` for
-/// top-level `def` parameters. This lookup can only miss (falling back to [`IncanType::Unknown`], matching
-/// `lower_function_body`'s own fallback) when the typechecker genuinely produced no fact for this declaration, such
-/// as a method belonging to a declaration kind excluded from `TypeChecker::check_method_with_self_ty`'s call sites;
-/// it is not the normal path for an ordinarily checked method. This does not change the accuracy of ownership facts
-/// computed for actual *reads* of those parameters inside the body: those go through [`BodyBuilder::resolve_ty`] at
-/// each read's own span, which is populated uniformly for every checked expression regardless of whether it sits in
-/// a function or a method body.
+/// crate::typechecker::type_info::DeclarationArtifacts::method_bindings_by_span), keyed by this method's own
+/// declaration span (#1121) — mirroring exactly how [`lower_function_body`] consumes `function_bindings` for top-level
+/// `def` parameters. This lookup can only miss (falling back to [`IncanType::Unknown`], matching
+/// `lower_function_body`'s own fallback) when the typechecker genuinely produced no fact for this declaration, such as
+/// a method belonging to a declaration kind excluded from `TypeChecker::check_method_with_self_ty`'s call sites; it is
+/// not the normal path for an ordinarily checked method. This does not change the accuracy of ownership facts computed
+/// for actual *reads* of those parameters inside the body: those go through [`BodyBuilder::resolve_ty`] at each read's
+/// own span, which is populated uniformly for every checked expression regardless of whether it sits in a function or a
+/// method body.
 ///
 /// The `self`/`mut self` receiver, when present, is declared as the body's first local (before ordinary
 /// parameters) via [`BodyBuilder::declare_receiver_local`], typed with the typechecker-equivalent `receiver_ty`.

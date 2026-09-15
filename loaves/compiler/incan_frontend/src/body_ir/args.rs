@@ -58,9 +58,9 @@ impl DeclaredSlot {
 ///
 /// The typechecker proves a spread's shape when its operand is written as a literal whose arity is visible before
 /// lowering -- `f(*(1, 2))`, `f(**{"a": 1})` -- and records the result as a
-/// [`FixedUnpackPlan`](crate::typechecker::FixedUnpackPlan). Those calls have a perfectly ordinary fixed
-/// arity, so they bind through the same declaration-slot planner as any other call rather than being pushed onto
-/// the runtime-arity path; a `*(1, 2)` against `def add(a, b)` really is `add(1, 2)`.
+/// [`FixedUnpackPlan`](crate::typechecker::FixedUnpackPlan). Those calls have a perfectly ordinary fixed arity, so they
+/// bind through the same declaration-slot planner as any other call rather than being pushed onto the runtime-arity
+/// path; a `*(1, 2)` against `def add(a, b)` really is `add(1, 2)`.
 ///
 /// Returns `None` when the spread has no proven shape, which is the ordinary case (`f(*xs)` for a list variable):
 /// its arity is a runtime fact and it belongs on the unresolved-arity path. Also returns `None` when a plan exists
@@ -138,8 +138,8 @@ pub(super) fn expand_shaped_spread(type_info: &TypeCheckInfo, arg: &ast::CallArg
 /// binding and may be skipped in the vector because the call's [`bir::ArgumentBinding`] records each supplied operand's
 /// declaration slot; an omitted ordinary default is recorded the same way, as a defaulted slot.
 ///
-/// `callee` is the caller's own description of the target (`function \`add\``, `local callable \`g\``,
-/// `method \`add\``), so a refusal names the specific spelling that failed rather than a generic label.
+/// `callee` is the caller's own description of the target (`function \`add\``, `local callable \`g\``, `method
+/// \`add\``), so a refusal names the specific spelling that failed rather than a generic label.
 pub(super) fn plan_declared_args<'a>(
     callee: &str,
     params: &[DeclaredSlot],

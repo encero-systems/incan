@@ -20,8 +20,8 @@ const LIBRARY_CRATE_LIB_RS: &str = "src/lib.rs";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Category for dependency manifest loading failures.
 ///
-/// This is intended for diagnostics and test assertions rather than end-user display; user-facing
-/// messaging should use [`LibraryManifestLoadFailure::message`].
+/// This is intended for diagnostics and test assertions rather than end-user display; user-facing messaging should use
+/// [`LibraryManifestLoadFailure::message`].
 pub enum LibraryManifestFailureKind {
     /// Failed to read or write the manifest file.
     ManifestRead,
@@ -84,8 +84,8 @@ pub enum LibraryArtifactKind {
     ParserSource,
     /// An SDK-provided artifact used only to activate and desugar standard vocabulary.
     ///
-    /// The SDK provider plan remains the authority for executable standard modules,
-    /// so this cannot become a package dependency or ordinary provider record.
+    /// The SDK provider plan remains the authority for executable standard modules, so this cannot become a package
+    /// dependency or ordinary provider record.
     StandardVocab,
 }
 
@@ -318,8 +318,8 @@ impl LibraryManifestIndex {
         dependencies
     }
 
-    /// Return the mapped soft keywords for all successfully loaded library artifacts.
-    /// The keys are the `dependency_key` (alias), making them ready for parser use.
+    /// Return the mapped soft keywords for all successfully loaded library artifacts. The keys are the
+    /// `dependency_key` (alias), making them ready for parser use.
     pub fn library_soft_keywords(&self) -> HashMap<String, Vec<incan_core::lang::keywords::KeywordId>> {
         let mut map = HashMap::new();
         for (key, registrations) in self.library_imported_vocab() {
@@ -599,13 +599,12 @@ fn dependency_crate_root(dependency_root: &Path) -> PathBuf {
 
 /// Return the project root that owns a generated library artifact root, inverting [`dependency_crate_root`].
 ///
-/// A caller-owned `pub::` provider's own project root (where its `loaf.toml` and `.incan/oven/` receipts live) is
-/// not carried anywhere on [`LibraryArtifactMetadata`] -- only its generated `crate_root` is. Re-materializing that
-/// provider's compiled libraries into a different consumer needs the provider's own project root to locate its
-/// receipts and resolve its own registry-leaf authority, so this strips the fixed `target/lib` suffix
-/// [`dependency_crate_root`] appends rather than duplicating that path shape as a second, driftable constant.
-/// Returns `None` when `crate_root` does not end with the expected suffix, which should not happen for a
-/// crate root this module produced itself.
+/// A caller-owned `pub::` provider's own project root (where its `loaf.toml` and `.incan/oven/` receipts live) is not
+/// carried anywhere on [`LibraryArtifactMetadata`] -- only its generated `crate_root` is. Re-materializing that
+/// provider's compiled libraries into a different consumer needs the provider's own project root to locate its receipts
+/// and resolve its own registry-leaf authority, so this strips the fixed `target/lib` suffix [`dependency_crate_root`]
+/// appends rather than duplicating that path shape as a second, driftable constant. Returns `None` when `crate_root`
+/// does not end with the expected suffix, which should not happen for a crate root this module produced itself.
 pub fn dependency_project_root(crate_root: &Path) -> Option<PathBuf> {
     let suffix = Path::new(LIBRARY_ARTIFACT_DIR);
     let suffix_component_count = suffix.components().count();

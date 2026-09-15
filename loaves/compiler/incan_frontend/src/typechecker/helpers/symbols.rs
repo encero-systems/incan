@@ -1,7 +1,7 @@
 //! Shared symbol-resolution predicates used across typechecker phases.
 //!
-//! These helpers keep implicit-root-builtin detection in one place so import collection and
-//! expression checking make the same shadowing decision.
+//! These helpers keep implicit-root-builtin detection in one place so import collection and expression checking make
+//! the same shadowing decision.
 
 use crate::ast::Span;
 use crate::symbols::Symbol;

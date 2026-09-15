@@ -1,33 +1,32 @@
 //! Frontend bridge from typechecked AST function bodies into Body IR v0.
 //!
-//! Declaration-level HIR ([`crate::hir`]) does not model statements or expressions at all (see its module
-//! docs), so Body IR v0 lowers directly from `ast::FunctionDecl` bodies plus [`TypeCheckInfo`], rather than from a
-//! hypothetical body-shaped HIR that does not exist yet. Every [`Body`](incan_semantics_core::body_ir::Body) this
-//! module produces carries a [`CompilerNodeId`] identical to the one [`crate::hir::build_hir_v0`] would
-//! assign the same function's [`crate::hir`] declaration, so the two can be correlated by id without
-//! threading a [`crate::hir`] value through this API.
+//! Declaration-level HIR ([`crate::hir`]) does not model statements or expressions at all (see its module docs), so
+//! Body IR v0 lowers directly from `ast::FunctionDecl` bodies plus [`TypeCheckInfo`], rather than from a hypothetical
+//! body-shaped HIR that does not exist yet. Every [`Body`](incan_semantics_core::body_ir::Body) this module produces
+//! carries a [`CompilerNodeId`] identical to the one [`crate::hir::build_hir_v0`] would assign the same function's
+//! [`crate::hir`] declaration, so the two can be correlated by id without threading a [`crate::hir`] value through this
+//! API.
 //!
 //! Body IR v0 lowers a representative, explicitly documented subset of the language surface (see
 //! [`incan_semantics_core::body_ir`] module docs for the full rationale). Statements fully lowered: assignment
-//! (inferred/let/mutable/reassignment), field/index assignment (including their pre-desugared compound `<op>=`
-//! forms), compound assignment (`x <op>= y`), tuple unpacking, multi-target (lvalue) tuple assignment, chained
-//! assignment, `return`, `if`/`elif`/`else`, `loop:`, `while`, `for` (both a `start..end` range and a general
-//! iterable -- builtin collections or a resolved `__iter__`/`__next__` protocol, including the fallible `for item in
-//! iterable?:` form), expression statements, statement-position `yield value` (see [`BodyBuilder::lower_stmt_into`]
-//! and [`bir::Body::is_generator`]), all three RFC 018 `assert` forms -- plain condition, `assert value is P`
-//! (whose bindings stay live for the rest of the enclosing block), and `assert call() raises E` (see
-//! [`BodyBuilder::lower_assert`]) -- `pass`, `break` (including a value-producing `break` inside a `loop`
-//! expression), `continue`. Expressions fully lowered: identifiers, literals (int/float/decimal/bool/string/bytes),
+//! (inferred/let/mutable/reassignment), field/index assignment (including their pre-desugared compound `<op>=` forms),
+//! compound assignment (`x <op>= y`), tuple unpacking, multi-target (lvalue) tuple assignment, chained assignment,
+//! `return`, `if`/`elif`/`else`, `loop:`, `while`, `for` (both a `start..end` range and a general iterable -- builtin
+//! collections or a resolved `__iter__`/`__next__` protocol, including the fallible `for item in iterable?:` form),
+//! expression statements, statement-position `yield value` (see [`BodyBuilder::lower_stmt_into`] and
+//! [`bir::Body::is_generator`]), all three RFC 018 `assert` forms -- plain condition, `assert value is P` (whose
+//! bindings stay live for the rest of the enclosing block), and `assert call() raises E` (see
+//! [`BodyBuilder::lower_assert`]) -- `pass`, `break` (including a value-producing `break` inside a `loop` expression),
+//! `continue`. Expressions fully lowered: identifiers, literals (int/float/decimal/bool/string/bytes),
 //! arithmetic/comparison/boolean binary operators and all three unary operators, calls and method calls (including
-//! named, out-of-order, defaulted, and explicitly generic argument spellings -- see [`BodyBuilder::lower_call`]),
-//! field access, indexing, slicing, parenthesization, range values, tuples, list/dict/set literals (list and dict
-//! spread entries included; set literals have no spread spelling), `model`/`class`
-//! construction (named-only at the source level, bound to declared field order -- see
-//! [`BodyBuilder::lower_nominal_construction`]), expression-position `if`/`loop`, `try` (`?`), f-strings,
-//! list/dict comprehensions, lazy generator expressions, closure literals, partial callables (see
-//! [`BodyBuilder::lower_closure`]/[`BodyBuilder::lower_partial`] for how captures
-//! are computed and represented explicitly rather than left implicit), and `match` (see [`BodyBuilder::lower_match`]
-//! for how patterns are lowered and their bindings scoped).
+//! named, out-of-order, defaulted, and explicitly generic argument spellings -- see [`BodyBuilder::lower_call`]), field
+//! access, indexing, slicing, parenthesization, range values, tuples, list/dict/set literals (list and dict spread
+//! entries included; set literals have no spread spelling), `model`/`class` construction (named-only at the source
+//! level, bound to declared field order -- see [`BodyBuilder::lower_nominal_construction`]), expression-position
+//! `if`/`loop`, `try` (`?`), f-strings, list/dict comprehensions, lazy generator expressions, closure literals, partial
+//! callables (see [`BodyBuilder::lower_closure`]/[`BodyBuilder::lower_partial`] for how captures are computed and
+//! represented explicitly rather than left implicit), and `match` (see [`BodyBuilder::lower_match`] for how patterns
+//! are lowered and their bindings scoped).
 //!
 //! Everything else lowers to an explicit `Statement::Unsupported` / `Operand::Unknown` node rather than panicking,
 //! so the model stays total over real programs. That residue is now short, and every entry is a decided refusal
@@ -85,10 +84,10 @@ use crate::typechecker::{
 /// `ast::Declaration::Function` items each produce one [`bir::Body`], matching the [`CompilerNodeId`]
 /// [`crate::hir::build_hir_v0`] assigns the corresponding declaration (see that function's docs).
 /// `ast::Declaration::Model`/`Class`/`Trait` items additionally contribute one [`bir::Body`] per non-abstract method
-/// (#1102) — abstract methods (`body: None`, trait requirements with no implementation) contribute nothing, since
-/// there is no body to lower. Method [`CompilerNodeId`]s are *not* assigned by [`crate::hir::build_hir_v0`]
-/// today (declaration-level HIR only assigns ids to top-level declarations), so this function constructs its own
-/// method ids by scoping the method name under its owning declaration's name — see [`lower_method_body`].
+/// (#1102) — abstract methods (`body: None`, trait requirements with no implementation) contribute nothing, since there
+/// is no body to lower. Method [`CompilerNodeId`]s are *not* assigned by [`crate::hir::build_hir_v0`] today
+/// (declaration-level HIR only assigns ids to top-level declarations), so this function constructs its own method ids
+/// by scoping the method name under its owning declaration's name — see [`lower_method_body`].
 ///
 /// # Input contract
 ///
@@ -109,8 +108,8 @@ use crate::typechecker::{
 ///   optimization: a body behind an inactive feature must not be lowered at all, because lowering it would put a body
 ///   into Body IR that the compilation does not contain.
 ///
-/// What must cross it: ordinary declarations, statements, and expressions, including the async surface
-/// (`await`, `race for`), which is genuine language surface no desugarer removes.
+/// What must cross it: ordinary declarations, statements, and expressions, including the async surface (`await`, `race
+/// for`), which is genuine language surface no desugarer removes.
 ///
 /// The contract is enforced rather than assumed. A vocab or scoped-DSL node that still arrives lowers to a
 /// `bir::StatementKind::Unsupported` whose description names it as a caller contract violation (see the `refusals`
@@ -156,10 +155,9 @@ pub fn build_body_ir_module_v0_with_executable_context(
 
 /// Prepare one manifest-free parsed module so it satisfies [`build_body_ir_module_v0`]'s input contract.
 ///
-/// This lives beside the boundary it governs rather than inside any one caller, because every manifest-free caller
-/// owes Body IR the same debt. The parity corpus and source-observable comparison route use this helper; a caller that
-/// skips it hands lowering a program the legacy path would never have produced, which is the
-/// divergence #1166 closes.
+/// This lives beside the boundary it governs rather than inside any one caller, because every manifest-free caller owes
+/// Body IR the same debt. The parity corpus and source-observable comparison route use this helper; a caller that skips
+/// it hands lowering a program the legacy path would never have produced, which is the divergence #1166 closes.
 ///
 /// The legacy pipeline owes Body IR a desugared, feature-projected program, and it pays that debt at parse time:
 /// `CompilationSession::parse_source` (`src/cli/commands/common.rs`) parses, runs
@@ -168,10 +166,10 @@ pub fn build_body_ir_module_v0_with_executable_context(
 /// feature graph, so it applies the same two steps with the empty feature projection. It must reject an explicit
 /// package-feature selection rather than using this helper to approximate one.
 ///
-/// Ordering matters beyond the pair itself. The caller applies this immediately after parsing, ahead of
-/// the backend's `validate_direct_body_profile` and typechecking, because both of those must see the
-/// projected program: an import behind an inactive feature is not part of this compilation, and refusing it as an
-/// unsupported profile boundary would report a declaration the build does not contain.
+/// Ordering matters beyond the pair itself. The caller applies this immediately after parsing, ahead of the backend's
+/// `validate_direct_body_profile` and typechecking, because both of those must see the projected program: an import
+/// behind an inactive feature is not part of this compilation, and refusing it as an unsupported profile boundary would
+/// report a declaration the build does not contain.
 ///
 /// # Errors
 ///
@@ -468,8 +466,8 @@ pub fn is_direct_replacement_value_enum(enum_decl: &ast::EnumDecl) -> bool {
         })
 }
 
-/// Render a module path into the same module identity spelling [`crate::hir`] uses, so declaration ids
-/// line up between the two representations.
+/// Render a module path into the same module identity spelling [`crate::hir`] uses, so declaration ids line up between
+/// the two representations.
 fn body_ir_module_identity(module_path: &[String]) -> String {
     incan_semantics_core::module_identity_for_path(module_path)
 }
@@ -617,9 +615,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Declare a new user-facing local with an already-computed last-use countdown, for declaration sites whose
     /// "remaining reads" context is not a plain statement suffix -- currently only comprehension/generator `for`
     /// clause bindings (see `Self::lower_comprehension_clauses`), whose remaining context is a tail of
-    /// [`ast::ComprehensionClause`]s plus a terminal element/key/value expression, not
-    /// [`ast::Statement`]s. [`Self::declare_new_local`] is a thin wrapper over this that seeds `total_reads` from a
-    /// statement suffix via [`count_reads_in_stmts`].
+    /// [`ast::ComprehensionClause`]s plus a terminal element/key/value expression, not [`ast::Statement`]s.
+    /// [`Self::declare_new_local`] is a thin wrapper over this that seeds `total_reads` from a statement suffix via
+    /// [`count_reads_in_stmts`].
     fn declare_new_local_with_reads(
         &mut self,
         name: String,

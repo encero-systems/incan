@@ -1,7 +1,7 @@
 //! Unified surface-semantics metadata for soft keywords and decorators.
 //!
-//! This module centralizes import-driven activation and feature-key routing for language-surface features.
-//! It is intentionally lightweight so parser/typechecker/lowering can share one source of truth.
+//! This module centralizes import-driven activation and feature-key routing for language-surface features. It is
+//! intentionally lightweight so parser/typechecker/lowering can share one source of truth.
 
 use std::collections::HashSet;
 

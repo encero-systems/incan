@@ -777,12 +777,12 @@ impl SymbolTable {
 
     /// Register and retain one symbol definition.
     ///
-    /// `identity` decides whether this binding mints a declaration identity or preserves a resolved target identity.
-    /// A missing target identity stays missing rather than becoming an alias-site declaration. Builtins
-    /// occupy the fallback tier and deliberately bypass source-binding registration, so a source declaration such as
-    /// `len` can replace that lookup spelling without a collision. `mode` records the source binding form: ordinary
-    /// definitions reject collisions, explicit `let`/`mut` declarations replace an active registration, and member
-    /// convenience bindings such as enum variants retain metadata without stealing an ordinary lexical lookup.
+    /// `identity` decides whether this binding mints a declaration identity or preserves a resolved target identity. A
+    /// missing target identity stays missing rather than becoming an alias-site declaration. Builtins occupy the
+    /// fallback tier and deliberately bypass source-binding registration, so a source declaration such as `len` can
+    /// replace that lookup spelling without a collision. `mode` records the source binding form: ordinary definitions
+    /// reject collisions, explicit `let`/`mut` declarations replace an active registration, and member convenience
+    /// bindings such as enum variants retain metadata without stealing an ordinary lexical lookup.
     fn define_registered(
         &mut self,
         mut symbol: Symbol,
@@ -1519,8 +1519,8 @@ pub struct ClassInfo {
     /// Constructor defaults keyed by field name, including inherited fields.
     ///
     /// Keeping these with the ordered class metadata lets compiled-library exports preserve the same constructor ABI
-    /// as source lowering instead of trying to recover inherited defaults from the child's own AST fields.
-    /// Boxed because default expressions are AST-heavy metadata and should not inflate every `SymbolKind` variant.
+    /// as source lowering instead of trying to recover inherited defaults from the child's own AST fields. Boxed
+    /// because default expressions are AST-heavy metadata and should not inflate every `SymbolKind` variant.
     pub field_defaults: Box<HashMap<String, crate::ast::Spanned<crate::ast::Expr>>>,
     /// Canonical defaults inherited from compiled-library parents.
     ///
@@ -2194,8 +2194,7 @@ pub fn union_ty(members: Vec<ResolvedType>) -> ResolvedType {
     }
 }
 
-/// Convert AST Type to ResolvedType
-/// Normalize type name to canonical form (uppercase for built-in generics)
+/// Convert AST Type to ResolvedType Normalize type name to canonical form (uppercase for built-in generics)
 fn normalize_type_name(name: &str) -> String {
     // Generic base normalization: prefer the canonical spelling from `incan_core` for all builtin
     // collection/generic-base types (and their aliases).

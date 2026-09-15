@@ -51,9 +51,9 @@ fn is_feature_registry_identity(identity: &str) -> bool {
 
 /// Decode every descriptor in the checked `std.features` registry.
 ///
-/// The checked package may include other modules and registries. Only the canonical
-/// `features::features` registry is selected, preserving the checked entry order so existing public
-/// projections do not acquire an unrelated presentation order.
+/// The checked package may include other modules and registries. Only the canonical `features::features` registry is
+/// selected, preserving the checked entry order so existing public projections do not acquire an unrelated presentation
+/// order.
 pub fn public_feature_descriptors(
     package: &CheckedRegistryMetadataPackage,
 ) -> Result<Vec<PublicFeatureDescriptor>, String> {
@@ -126,8 +126,8 @@ fn public_capability_descriptor(entry: &CheckedRegistryEntry) -> Result<PublicFe
     })
 }
 
-/// Return the named fields of a checked model after verifying the descriptor type.
-/// Decode a checked model's fields, accepting either the current or the pre-#1228 model name.
+/// Return the named fields of a checked model after verifying the descriptor type. Decode a checked model's fields,
+/// accepting either the current or the pre-#1228 model name.
 ///
 /// See [`is_feature_registry_identity`]: the frozen v0.5.0 baseline carries the old spelling and must stay readable.
 fn checked_model_fields_either(

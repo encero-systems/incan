@@ -1,7 +1,7 @@
 //! Incan Code Formatter
 //!
-//! This module provides code formatting functionality for Incan source files.
-//! It follows Ruff/Black conventions with customizations:
+//! This module provides code formatting functionality for Incan source files. It follows Ruff/Black conventions with
+//! customizations:
 //! - 4-space indentation
 //! - 120 character line length (target, not strictly enforced)
 //! - Double quotes for strings
@@ -9,8 +9,8 @@
 //!
 //! ## Parse-required
 //!
-//! The formatter operates on the parsed AST, so it **requires valid syntax**.
-//! Files with lexer or parser errors cannot be formatted.
+//! The formatter operates on the parsed AST, so it **requires valid syntax**. Files with lexer or parser errors cannot
+//! be formatted.
 
 mod comments;
 mod config;

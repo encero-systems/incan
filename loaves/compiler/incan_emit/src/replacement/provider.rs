@@ -103,11 +103,10 @@ pub struct ProviderInvocation<'plan, 'inputs> {
 
 /// What one provider host did when an authorized operation was invoked.
 ///
-/// Both variants carry attributes and a replay classification because both are things that happened: an operation
-/// that failed after acquiring a connection still recorded what it attempted, and RFC 104 asks the runtime not to
-/// lose that. The host owns redaction — a value it declines to persist arrives as
-/// [`ReceiptAttribute::redacted`] — because giving redaction a second owner in this backend would eventually mean
-/// two answers about what was recorded.
+/// Both variants carry attributes and a replay classification because both are things that happened: an operation that
+/// failed after acquiring a connection still recorded what it attempted, and RFC 104 asks the runtime not to lose that.
+/// The host owns redaction — a value it declines to persist arrives as [`ReceiptAttribute::redacted`] — because giving
+/// redaction a second owner in this backend would eventually mean two answers about what was recorded.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProviderOperationOutcome {
     /// The operation ran to completion and produced a source-level value.

@@ -1,11 +1,9 @@
 //! Emit Rust expressions from Incan IR.
 //!
-//! This module converts IR expressions ([`TypedExpr`]/[`IrExprKind`]) into Rust expression
-//! fragments ([`TokenStream`]).
+//! This module converts IR expressions ([`TypedExpr`]/[`IrExprKind`]) into Rust expression fragments ([`TokenStream`]).
 //!
-//! It is used by [`IrEmitter`] to implement the "IR → Rust" portion of the backend at the
-//! expression level (literals, operators, calls, method calls, comprehensions, indexing/slicing,
-//! and control flow).
+//! It is used by [`IrEmitter`] to implement the "IR → Rust" portion of the backend at the expression level (literals,
+//! operators, calls, method calls, comprehensions, indexing/slicing, and control flow).
 //!
 //! ## Module organization
 //!

@@ -2195,8 +2195,8 @@ impl TypeChecker {
 
     /// Validate a declaration's body and semantics (second pass).
     ///
-    /// Dispatches to `check_model`, `check_class`, etc. Expects symbols to
-    /// already be registered via [`collect_declaration`](Self::collect_declaration).
+    /// Dispatches to `check_model`, `check_class`, etc. Expects symbols to already be registered via
+    /// [`collect_declaration`](Self::collect_declaration).
     pub fn check_declaration(&mut self, decl: &Spanned<Declaration>) {
         match &decl.node {
             Declaration::Import(_) => {} // Already handled

@@ -2979,9 +2979,9 @@ impl AstLowering {
 
     /// Wrap one call argument in `InteropCoerce` when typechecking recorded a Rust boundary coercion.
     ///
-    /// For `RustTypeInterop`, lowering first attempts to resolve a declared `interop:` adapter. If no
-    /// adapter edge matches, lowering falls back to `RustTypeUnwrap` so the generated Rust call still
-    /// receives the underlying Rust value.
+    /// For `RustTypeInterop`, lowering first attempts to resolve a declared `interop:` adapter. If no adapter edge
+    /// matches, lowering falls back to `RustTypeUnwrap` so the generated Rust call still receives the underlying Rust
+    /// value.
     pub(in crate::lower) fn wrap_with_rust_arg_coercion(
         &mut self,
         arg_expr: TypedExpr,
