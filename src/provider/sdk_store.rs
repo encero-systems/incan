@@ -869,8 +869,9 @@ mod tests {
         );
 
         // The transitional half. Lowering and emission change generated Rust without moving any HIR, so their
-        // source is folded until direct-HIR removes the need.
-        let backend = checkout.join("src/backend/ir/emit");
+        // source is folded until direct-HIR removes the need. Emission lives in its own crate now; an edit written
+        // under the old `src/backend` path would prove nothing.
+        let backend = checkout.join("loaves/compiler/incan_emit/src/emit");
         fs::create_dir_all(&backend)?;
         fs::write(backend.join("decls.rs"), "pub fn emit() -> u8 { 1 }\n")?;
         let with_backend =
