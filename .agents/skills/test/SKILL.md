@@ -34,7 +34,7 @@ Did you change the parser?
   → Add a test in loaves/kernel/incan_syntax/src/parser/tests.rs
 
 Did you change the typechecker?
-  → Add a test in src/frontend/typechecker/tests.rs
+  → Add a test in loaves/compiler/incan_frontend/src/typechecker/tests.rs
 
 Did you change lowering or emission (codegen output)?
   → Add a .incn file in tests/codegen_snapshots/
@@ -83,7 +83,7 @@ Helpers available: `parse_str(source)`, `parse_str_with_module_path(source, path
 
 ### Typechecker test pattern
 
-File: `src/frontend/typechecker/tests.rs`
+File: `loaves/compiler/incan_frontend/src/typechecker/tests.rs`
 
 ```rust
 #[test]

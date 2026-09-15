@@ -4,9 +4,9 @@ Ring: **kernel**
 
 Lexer, parser, AST, and the diagnostics catalog.
 
-## Moved here from
+## Current location
 
-- `crates/incan_syntax/`
+- `loaves/kernel/incan_syntax/`
 
 ## May depend on
 

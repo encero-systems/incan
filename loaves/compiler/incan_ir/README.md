@@ -4,10 +4,10 @@ Ring: **compiler**
 
 AST-to-IR lowering and the IR type definitions.
 
-## Moves here from
+## Current sources
 
-- `src/backend/ir/lower/`
-- `src/backend/ir/{types,expr,stmt,decl}.rs`
+- `loaves/compiler/incan_ir/src/lower/`
+- `loaves/compiler/incan_ir/src/{types,expr,stmt,decl}.rs`
 
 ## May depend on
 

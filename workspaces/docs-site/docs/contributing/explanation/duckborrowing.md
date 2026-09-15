@@ -34,7 +34,7 @@ The ownership module states the local contract directly: keep emitter modules ca
 
 ## Where it runs
 
-Duckborrowing lives in the backend IR path:
+Duckborrowing spans two compiler crates. `incan_ir` owns lowering, access markers and shared-binding inference. `incan_emit` owns the use-site planner, conversions, Rust emission and trait-bound inference. The emitter consumes the ownership facts recorded in IR:
 
 ```text
 typed AST
@@ -50,16 +50,16 @@ The main files are:
 
 | File                                                            | Responsibility                                                                                   |
 | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `src/backend/ir/borrow_inference.rs` | Proves shared helper parameters and local cursors before updating declaration and call signatures. |
-| `src/backend/ir/ownership.rs`                                   | Public ownership-planning facade. Defines `ValueUseSite` and use-site helpers.                   |
-| `src/backend/ir/conversions.rs`                                 | Core conversion policy. Returns `None`, `ToString`, `Into`, `Borrow`, `MutBorrow`, or `Clone`.   |
-| `src/backend/ir/emit/expressions/mod.rs`                        | Applies `emit_expr_for_use` recursively for expressions, literals, tuples, and match scrutinees. |
-| `src/backend/ir/emit/expressions/calls.rs`                      | Applies call-argument ownership policy for Incan and external Rust calls.                        |
-| `src/backend/ir/emit/expressions/methods/collection_methods.rs` | Plans collection receiver/key borrows, including string lookup probes.                           |
-| `src/backend/ir/emit/statements.rs`                             | Applies assignment, return, match, dict-assignment, and loop ownership policy.                   |
-| `src/backend/ir/lower/stmt.rs`                                  | Marks move-vs-read access for statement lowering, including tuple unpacking.                     |
-| `src/backend/ir/trait_bound_inference.rs`                       | Adds generic trait bounds needed by backend-inserted clones.                                     |
-| `src/backend/ir/types.rs`                                       | Defines `IrType::is_copy()` so planning can distinguish cheap copies from owned materialization. |
+| `loaves/compiler/incan_ir/src/borrow_inference.rs` | Proves shared helper parameters and local cursors before updating declaration and call signatures. |
+| `loaves/compiler/incan_emit/src/ownership.rs`                                   | Public ownership-planning facade. Defines `ValueUseSite` and use-site helpers.                   |
+| `loaves/compiler/incan_emit/src/conversions.rs`                                 | Core conversion policy. Returns `None`, `ToString`, `Into`, `Borrow`, `MutBorrow`, or `Clone`.   |
+| `loaves/compiler/incan_emit/src/emit/expressions/mod.rs`                        | Applies `emit_expr_for_use` recursively for expressions, literals, tuples, and match scrutinees. |
+| `loaves/compiler/incan_emit/src/emit/expressions/calls.rs`                      | Applies call-argument ownership policy for Incan and external Rust calls.                        |
+| `loaves/compiler/incan_emit/src/emit/expressions/methods/collection_methods.rs` | Plans collection receiver/key borrows, including string lookup probes.                           |
+| `loaves/compiler/incan_emit/src/emit/statements.rs`                             | Applies assignment, return, match, dict-assignment, and loop ownership policy.                   |
+| `loaves/compiler/incan_ir/src/lower/stmt.rs`                                  | Marks move-vs-read access for statement lowering, including tuple unpacking.                     |
+| `loaves/compiler/incan_emit/src/trait_bound_inference.rs`                       | Adds generic trait bounds needed by backend-inserted clones.                                     |
+| `loaves/compiler/incan_ir/src/types.rs`                                       | Defines `IrType::is_copy()` so planning can distinguish cheap copies from owned materialization. |
 
 ## Use-site model
 
@@ -154,7 +154,7 @@ Generated Rust `match` consumes the scrutinee shape. The planner treats match sc
 
 ### Generic clone bounds
 
-Backend-inserted `.clone()` calls are invisible to source-level trait-bound inference unless the backend mirrors them. When ownership planning can clone a generic value, `src/backend/ir/trait_bound_inference.rs` must add the corresponding `Clone` bound. Otherwise the generated Rust may fail only after codegen.
+Backend-inserted `.clone()` calls are invisible to source-level trait-bound inference unless the backend mirrors them. When ownership planning can clone a generic value, `loaves/compiler/incan_emit/src/trait_bound_inference.rs` must add the corresponding `Clone` bound. Otherwise the generated Rust may fail only after codegen.
 
 ## Contributor rules
 
@@ -172,7 +172,7 @@ Ownership changes need tests at the layer where the behavior is decided and at l
 
 Use these test shapes:
 
-- Conversion planner unit tests in `src/backend/ir/conversions.rs` for pure policy decisions.
+- Conversion planner unit tests in `loaves/compiler/incan_emit/src/conversions.rs` for pure policy decisions.
 - IR/codegen snapshot tests for emitted Rust shapes.
 - Build or run tests for generated Rust when borrow checker behavior is the failure mode.
 - Consumer checks from sibling projects when the bug came from real library patterns rather than a minimized fixture.

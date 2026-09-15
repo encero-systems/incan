@@ -4,12 +4,12 @@ Ring: **oven**
 
 Bounded Loaf store, receipts, identities, publication.
 
-## Moves here from
+## Sources and remaining moves
 
-- `src/oven.rs` (the receipt model, whole: the store keys on it and it names nothing of the bakers)
-- `src/oven/store*.rs`, `closure_proof.rs`, `progress.rs`, `process.rs`
+- `loaves/oven/oven_store/src/lib.rs` (the receipt model, whole: the store keys on it and it names nothing of the bakers)
+- `loaves/oven/oven_store/src/` — store, closure proof, progress and process modules
 
-`src/oven/loaf.rs` went to `oven_rustc` instead: a Loaf is baked, and the module reaches into `rustc` and `legacy_cargo` to do it.
+`loaves/oven/oven_rustc/src/loaf.rs` went to `oven_rustc` instead: a Loaf is baked, and the module reaches into `rustc` and `legacy_cargo` to do it.
 
 ## May depend on
 

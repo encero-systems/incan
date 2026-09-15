@@ -206,6 +206,10 @@ rustdoc-gate:
 rustdoc-gate-ci:
 	@python3 scripts/check_changed_rustdocs.py
 
+.PHONY: doc-paths  ## quality - Check repository paths named in contributor documentation
+doc-paths:
+	@python3 scripts/check_doc_paths.py
+
 .PHONY: version-gate  ## quality - Require hand-written version literals to match the workspace version
 version-gate:
 	@python3 scripts/check_release_version_consistency.py
@@ -262,6 +266,10 @@ pre-commit-fast:
 	$(MAKE) -s rustdoc-gate-ci; \
 	echo "\033[32mDONE\033[0m"; \
 	t2=$$(date +%s); \
+	printf "\033[1mChecking contributor documentation paths...\033[0m "; \
+	$(MAKE) -s doc-paths; \
+	echo "\033[32mDONE\033[0m"; \
+	t2docs=$$(date +%s); \
 	printf "\033[1mChecking version consistency...\033[0m "; \
 	$(MAKE) -s version-gate; \
 	echo "\033[32mDONE\033[0m"; \
@@ -279,7 +287,7 @@ pre-commit-fast:
 	echo "\033[32mDONE\033[0m"; \
 	t4=$$(date +%s); \
 	echo "\033[32m✓ Pre-commit checks passed (fast)\033[0m"; \
-	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, rustdoc=$$((t2-t1))s, version-gate=$$((t2a-t2))s, agents-doc-sync=$$((t2b-t2a))s, check=$$((t3-t2b))s, oven-ring=$$((t4-t3))s, total=$$((t4-start))s"
+	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, rustdoc=$$((t2-t1))s, doc-paths=$$((t2docs-t2))s, version-gate=$$((t2a-t2docs))s, agents-doc-sync=$$((t2b-t2a))s, check=$$((t3-t2b))s, oven-ring=$$((t4-t3))s, total=$$((t4-start))s"
 
 .PHONY: pre-commit-full-gate  ## quality - Full local gate core: fmt-check + tests + clippy + cargo-deny with phase timing
 pre-commit-full-gate:

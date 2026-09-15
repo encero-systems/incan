@@ -4,10 +4,10 @@ Ring: **oven**
 
 Native linkage, carriers, interop bundles, `rust::` dependency closure sealing.
 
-## Moves here from
+## Sources and remaining moves
 
-- `src/oven_interop.rs`
-- `src/oven/interop.rs`
+- `loaves/oven/oven_model/src/oven_interop.rs`
+- `loaves/oven/oven_rustc/src/interop.rs`
 
 ## May depend on
 
