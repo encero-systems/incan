@@ -29,9 +29,7 @@ pub fn stage_self_contained_sdk_provider_tree(
     copy_regular_directory_tree(prepared_root, &provider_root, "SDK provider inventory")?;
     stage_sdk_runtime_crates(&provider_root)?;
     rebase_sdk_component_runtime_paths(&provider_root)?;
-    provider_hooks
-        .refresh_staged_sdk_provider_digests(&provider_root)
-        .map_err(OvenLegacyCargoError::Plan)?;
+    provider_hooks.refresh_staged_sdk_provider_digests(&provider_root)?;
     Ok(provider_root)
 }
 
