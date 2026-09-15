@@ -79,7 +79,7 @@ use std::str::FromStr;
 pub(crate) enum BehaviorCategory {
     /// Documented or intentionally exposed source-level Incan semantics.
     SupportedLanguageContract,
-    /// Behavior owned by `crates/incan_stdlib`, `loaves/kernel/incan_core`, or `.incn` stdlib source.
+    /// Behavior owned by a stdlib facet under `loaves/stdlib/<component>/rust`, `loaves/kernel/incan_core`, or `.incn` stdlib source.
     StdlibRuntimeBehavior,
     /// Behavior crossing `rust::` imports, rust-inspect metadata, or generated Cargo projects.
     ///
