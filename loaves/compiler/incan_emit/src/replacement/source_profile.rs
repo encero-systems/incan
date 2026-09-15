@@ -6,8 +6,8 @@
 //! this backend execute this?" has one owner rather than being reassembled by a caller from separate predicates.
 //!
 //! Every refusal carries the span it was measured at, and the caller pairs that span with the file the module came
-//! from. A span means nothing beside the wrong file, which is why the profile reports per module rather than
-//! per program.
+//! from. A span means nothing beside the wrong file, which is why the profile reports per module rather than per
+//! program.
 
 use incan_semantics_core::HirSourceSpan;
 

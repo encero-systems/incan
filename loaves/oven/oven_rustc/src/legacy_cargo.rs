@@ -64,13 +64,13 @@ pub const OVEN_LEGACY_CARGO_PROVENANCE_SCHEMA_VERSION: u32 = 2;
 /// Wire schema for a receipt-bound project extension Loaf.
 ///
 /// Version 9 binds every direct registry dependency alias to its exact locked package, registry, and checksum. This
-/// preserves source authority when one project intentionally selects multiple compatible versions or renamed aliases
-/// of a package instead of asking a normal command to infer identity from a semver-compatible source catalog.
-/// Version 10 records the generated root's registry packages so recomposition reproduces substitution regimes.
-/// Version 11 re-roots retained extension artifacts that collide with the base execution closure into
-/// `extension-deps`, so plans composed under the older digest-stamping rule must rebake.
-/// Version 12 salts extension crate identities (`-C metadata=incan-extension`) so shared interior units coexist
-/// with the sealed base's twins as distinct crates; plans built with unsalted identities must rebake.
+/// preserves source authority when one project intentionally selects multiple compatible versions or renamed aliases of
+/// a package instead of asking a normal command to infer identity from a semver-compatible source catalog. Version 10
+/// records the generated root's registry packages so recomposition reproduces substitution regimes. Version 11 re-roots
+/// retained extension artifacts that collide with the base execution closure into `extension-deps`, so plans composed
+/// under the older digest-stamping rule must rebake. Version 12 salts extension crate identities (`-C
+/// metadata=incan-extension`) so shared interior units coexist with the sealed base's twins as distinct crates; plans
+/// built with unsalted identities must rebake.
 pub const OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION: u32 = 12;
 /// Wire schema for one independently admitted compiler-suite target shard.
 ///
@@ -1121,8 +1121,8 @@ fn compiler_suite_toolchain_loaf_generation_reference(
 /// Derive the Loaf compatibility inputs from the runtime closure sealed in this suite's SDK inventory.
 ///
 /// The compiler-suite publisher stages that runtime closure as a self-contained immutable input. Its Loafs must
-/// describe the same lockfile and compiler-runtime source trees; accepting a nearby toolchain's Loaf
-/// would make child selection depend on ambient state and later fail closed only after the suite was admitted.
+/// describe the same lockfile and compiler-runtime source trees; accepting a nearby toolchain's Loaf would make child
+/// selection depend on ambient state and later fail closed only after the suite was admitted.
 fn compiler_suite_staged_runtime_inputs(
     staged_sdk_root: &Path,
     compiler: &CompilerIdentity,
@@ -1229,8 +1229,8 @@ pub struct OvenCompilerTestSuitePayload {
     /// Payload schema for the stored compiler-suite runtime.
     pub schema_version: u32,
     /// Receipt-bound native workspace target plan. Schema 8 executes caller-owned direct-rustc and direct-Rustdoc
-    /// shards instead of retaining Cargo-linked test executables, and carries any installed compiler Loaf
-    /// data required by their fixture commands.
+    /// shards instead of retaining Cargo-linked test executables, and carries any installed compiler Loaf data
+    /// required by their fixture commands.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub test_targets: Vec<OvenCompilerTestSuiteTarget>,
     /// Schema-9 immutable index entries for independently admitted compiler-suite target shards.

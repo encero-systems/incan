@@ -1456,11 +1456,11 @@ fn merge_loaf_inspection_sources(
 
 /// Preserve the publisher-selected generated-root dependency set before the loaf adds compiler-only helpers.
 ///
-/// The ordinary Loaf is published from a minimal generated program, so its original direct externs are the
-/// roots that generated caller code may receive. Later preparation adds compiler runtime and vocabulary capabilities
-/// to the same immutable closure. Runtime roots are promoted into every declared entrypoint below, but the vocabulary
-/// helper roots must remain private to vocabulary extraction: passing their independently built `serde` closure to a
-/// generated library would make Rustc see two incompatible `serde` identities.
+/// The ordinary Loaf is published from a minimal generated program, so its original direct externs are the roots that
+/// generated caller code may receive. Later preparation adds compiler runtime and vocabulary capabilities to the same
+/// immutable closure. Runtime roots are promoted into every declared entrypoint below, but the vocabulary helper roots
+/// must remain private to vocabulary extraction: passing their independently built `serde` closure to a generated
+/// library would make Rustc see two incompatible `serde` identities.
 fn record_generated_root_externs(plan: &mut OvenRustcArtifactManifest) -> Result<(), OvenLoafError> {
     if plan.schema_version == crate::rustc::OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION
         && !plan.entrypoint_dependency_search_paths.contains_key("generated-root")

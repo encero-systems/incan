@@ -72,8 +72,8 @@ pub type IrExpr = TypedExpr;
 
 /// A call argument in IR.
 ///
-/// This preserves named-argument information (`foo(x=1)`) so codegen can reorder arguments by parameter name
-/// (or apply targeted policies for known APIs).
+/// This preserves named-argument information (`foo(x=1)`) so codegen can reorder arguments by parameter name (or apply
+/// targeted policies for known APIs).
 ///
 /// For positional and unpack arguments, `name` is `None`.
 #[derive(Debug, Clone)]
@@ -215,14 +215,13 @@ pub enum IrExprKind {
         /// Resolved callable signature when the callee expression carries metadata that is not represented by the
         /// flattened IR function type, such as RFC 038 rest-parameter markers.
         callable_signature: Option<FunctionSignature>,
-        /// Canonical callee path when known (e.g. `["std","testing","assert_eq"]`).
-        /// This lets emission/type-directed policies resolve calls independent of local import style.
+        /// Canonical callee path when known (e.g. `["std","testing","assert_eq"]`). This lets emission/type-directed
+        /// policies resolve calls independent of local import style.
         canonical_path: Option<Vec<String>>,
     },
 
-    /// Built-in function call (enum-dispatched).
-    /// Used for known builtins like `print`, `len`, `range`, etc.
-    /// The emitter matches on `BuiltinFn` instead of string names.
+    /// Built-in function call (enum-dispatched). Used for known builtins like `print`, `len`, `range`, etc. The
+    /// emitter matches on `BuiltinFn` instead of string names.
     BuiltinCall {
         func: BuiltinFn,
         args: Vec<IrExpr>,
@@ -242,9 +241,8 @@ pub enum IrExprKind {
         arg_policy: MethodCallArgPolicy,
     },
 
-    /// Known method call (enum-dispatched).
-    /// Used for known methods like `upper`, `append`, `contains`, etc.
-    /// The emitter matches on `MethodKind` instead of string names.
+    /// Known method call (enum-dispatched). Used for known methods like `upper`, `append`, `contains`, etc. The
+    /// emitter matches on `MethodKind` instead of string names.
     KnownMethodCall {
         receiver: Box<IrExpr>,
         kind: MethodKind,
@@ -545,8 +543,7 @@ pub enum VarAccess {
     Move,
     /// Non-consuming read; caller-side conversion policy decides borrow/clone.
     ///
-    /// Used by lowering when a non-Copy binding is read but may still be used
-    /// later in the same block.
+    /// Used by lowering when a non-Copy binding is read but may still be used later in the same block.
     Read,
     /// Borrow immutably (&)
     Borrow,
@@ -660,8 +657,8 @@ pub enum Pattern {
 
 /// Built-in functions recognized by the Incan compiler.
 ///
-/// These are functions that lower to specific Rust code patterns rather than regular function calls.
-/// The emitter matches on this enum instead of string names to avoid stringly-typing.
+/// These are functions that lower to specific Rust code patterns rather than regular function calls. The emitter
+/// matches on this enum instead of string names to avoid stringly-typing.
 ///
 /// ## Adding a new builtin
 ///

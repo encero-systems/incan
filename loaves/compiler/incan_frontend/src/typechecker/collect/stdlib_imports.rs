@@ -1310,8 +1310,8 @@ impl TypeChecker {
     /// Retain the canonical identity proven for an imported binding, keyed by the local name the import introduced.
     ///
     /// Recorded only when import resolution proves the declaration, so a consumer gets a correct identity or none at
-    /// all. It is deliberately separate from [`crate::typechecker::SourceTargetInfo::module_path`], which
-    /// keeps its existing meaning of the path as written at the import.
+    /// all. It is deliberately separate from [`crate::typechecker::SourceTargetInfo::module_path`], which keeps its
+    /// existing meaning of the path as written at the import.
     fn record_resolved_import_owner(&mut self, module: &ImportPath, item: &ImportItem, local_name: &str) {
         let identity = self
             .dependency_member_identity(module, &item.name)

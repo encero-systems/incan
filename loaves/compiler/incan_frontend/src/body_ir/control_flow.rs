@@ -474,11 +474,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// every other shape writes it into a per-iteration temporary that [`Self::bind_for_pattern`] then projects one
     /// real named binding out of per bound name. Any shape outside that subset -- which the typechecker already
     /// rejects with its own diagnostic before lowering ever runs -- lowers to `Unsupported` naming the offending
-    /// shape, checked up front so a refusal never leaves half-emitted bindings behind (the same
-    /// "check before partially lowering" precedent as [`Self::lower_binary`] and [`Self::lower_match`]). The same
-    /// up-front check also refuses a tuple pattern whose produced item is not a tuple of matching arity, so
-    /// lowering can never invent `.0`/`.1` projections into a value that has no such fields -- see
-    /// [`unsupported_for_pattern`].
+    /// shape, checked up front so a refusal never leaves half-emitted bindings behind (the same "check before
+    /// partially lowering" precedent as [`Self::lower_binary`] and [`Self::lower_match`]). The same up-front check
+    /// also refuses a tuple pattern whose produced item is not a tuple of matching arity, so lowering can never invent
+    /// `.0`/`.1` projections into a value that has no such fields -- see [`unsupported_for_pattern`].
     pub(super) fn lower_for(
         &mut self,
         for_stmt: &ast::ForStmt,
@@ -892,11 +891,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// way down and falls back to [`IncanType::Unknown`] per slot only where the resolved type is not a tuple of
     /// the right arity.
     ///
-    /// Each element is read through [`Self::ownership_fact_for_place`], exactly as
-    /// [`Self::lower_tuple_unpack`] reads its own elements, so a non-Copy element borrows rather than moving out of
-    /// a place v0 does not track partial-move state for. Each bound name becomes a real
-    /// [`bir::LocalOrigin::UserBinding`] local in `loop_scope`, seeded with its own last-use countdown over the
-    /// loop body, so [`Self::insert_scope_drops`] gives every non-Copy binding an explicit per-iteration drop.
+    /// Each element is read through [`Self::ownership_fact_for_place`], exactly as [`Self::lower_tuple_unpack`] reads
+    /// its own elements, so a non-Copy element borrows rather than moving out of a place v0 does not track
+    /// partial-move state for. Each bound name becomes a real [`bir::LocalOrigin::UserBinding`] local in `loop_scope`,
+    /// seeded with its own last-use countdown over the loop body, so [`Self::insert_scope_drops`] gives every non-Copy
+    /// binding an explicit per-iteration drop.
     ///
     /// [`unsupported_for_pattern`] has already rejected every shape outside the accepted subset -- and every item
     /// type that is not a tuple of matching arity -- before [`Self::lower_for`] reaches this walk, so the remaining
@@ -962,11 +961,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// [`bir::StatementKind::TryPropagate`] ahead of the loop via [`Self::lower_expr_to_place`]'s existing
     /// `Expr::Try` handling -- no special-casing needed for that form.
     ///
-    /// The iterable is always read as a [`bir::OwnershipFact::Borrow`], matching
-    /// [`Self::lower_method_call`]'s established receiver-borrow precedent (never an unsound move, and consistent
-    /// with obtaining an iterator conceptually borrowing its source rather than consuming it at this normalized
-    /// level); the materialized iterator local is polled with [`bir::OwnershipFact::MutBorrow`] each iteration,
-    /// since polling advances its internal state.
+    /// The iterable is always read as a [`bir::OwnershipFact::Borrow`], matching [`Self::lower_method_call`]'s
+    /// established receiver-borrow precedent (never an unsound move, and consistent with obtaining an iterator
+    /// conceptually borrowing its source rather than consuming it at this normalized level); the materialized iterator
+    /// local is polled with [`bir::OwnershipFact::MutBorrow`] each iteration, since polling advances its internal
+    /// state.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_general_iteration(
         &mut self,

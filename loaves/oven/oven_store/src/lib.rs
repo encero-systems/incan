@@ -173,12 +173,12 @@ pub const DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES: u64 = 12 * 1024 * 1024 * 1024;
 pub const DEFAULT_OVEN_PUBLISHER_STAGING_FLOOR_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// Default logical artifact-byte cap for one compatibility domain.
 ///
-/// One explicit bake of a project whose closure is not loadable as independently compiled parts retains two
-/// extensions of a compiler Loaf: the library's delta and the test-dependency envelope's, each carrying the unified
-/// closure, its re-rooted copies of shared units, and the extension's own runtime. Measured for IncQL/DataFusion on
-/// Linux, each is 1.5 GiB, so a single debug-profile bake retains 3.0 GiB before its outputs and authority. Six GiB,
-/// half the physical allowance, admits that bake with the release profile or a second project beside it;
-/// callers may still choose a stricter explicit limit.
+/// One explicit bake of a project whose closure is not loadable as independently compiled parts retains two extensions
+/// of a compiler Loaf: the library's delta and the test-dependency envelope's, each carrying the unified closure, its
+/// re-rooted copies of shared units, and the extension's own runtime. Measured for IncQL/DataFusion on Linux, each is
+/// 1.5 GiB, so a single debug-profile bake retains 3.0 GiB before its outputs and authority. Six GiB, half the physical
+/// allowance, admits that bake with the release profile or a second project beside it; callers may still choose a
+/// stricter explicit limit.
 pub const DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES: u64 = 6 * 1024 * 1024 * 1024;
 /// Aggregate physical allowance for the complete compiler-suite Loaf and repository-test closure.
 pub const DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES: u64 = 16 * 1024 * 1024 * 1024;
@@ -189,8 +189,8 @@ pub const DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES: u64 = 16 * 1024 * 1024
 pub const DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES: u64 = 6 * 1024 * 1024 * 1024;
 /// Logical artifact-byte allowance for the compiler-suite compatibility domain.
 ///
-/// The complete LSP closure measures 3,271,283,026 logical bytes on Linux;
-/// 4 GiB leaves practical policy headroom without relaxing its physical bound.
+/// The complete LSP closure measures 3,271,283,026 logical bytes on Linux; 4 GiB leaves practical policy headroom
+/// without relaxing its physical bound.
 pub const DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 /// Explicit, portable build facts for one frozen-project import.
@@ -1106,10 +1106,10 @@ fn digest_generated_source_file(path: &Path) -> Result<String, OvenError> {
 
 /// Hash the workspace source and fixture closure that determines the repository's native test-suite behaviour.
 ///
-/// Oven deliberately excludes caller outputs such as `.incan` and `target`: those are neither compiler source nor
-/// test fixtures, and allowing them into the receipt would make a successful test run invalidate its own stored
-/// suite. Every tracked source, fixture, snapshot, and nested crate manifest below the declared roots remains
-/// identity-bearing.
+/// Oven deliberately excludes caller outputs such as `.incan` and `target`: those are neither compiler source nor test
+/// fixtures, and allowing them into the receipt would make a successful test run invalidate its own stored suite. Every
+/// tracked source, fixture, snapshot, and nested crate manifest below the declared roots remains identity-bearing.
+///
 /// Return the portable source-to-digest records that make up one native compiler-suite receipt.
 fn compiler_suite_source_records(project_root: &Path) -> Result<BTreeMap<String, String>, OvenError> {
     let mut records = BTreeMap::new();

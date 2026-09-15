@@ -34,10 +34,9 @@ pub fn cargo_executable() -> OsString {
 
 /// Resolve the configured Cargo program to a regular file for the bounded Oven compatibility baker.
 ///
-/// Ordinary generated-project commands can pass a bare `cargo` name to
-/// [`Command`], which performs PATH lookup itself. The baker verifies and
-/// records its executable before launching it, so it needs the same lookup as
-/// an explicit path rather than treating a valid bare name as a missing file.
+/// Ordinary generated-project commands can pass a bare `cargo` name to [`Command`], which performs PATH lookup itself.
+/// The baker verifies and records its executable before launching it, so it needs the same lookup as an explicit path
+/// rather than treating a valid bare name as a missing file.
 pub fn resolved_cargo_executable() -> io::Result<PathBuf> {
     // An explicit `CARGO` selection still wins. Otherwise prefer the Cargo belonging to Incan's own provisioned
     // toolchain: the compatibility baker's Cargo and the direct-Rustc compiler must come from one toolchain, and

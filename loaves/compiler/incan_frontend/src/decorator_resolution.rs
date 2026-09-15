@@ -181,8 +181,8 @@ pub fn collect_import_aliases(program: &Program) -> HashMap<String, Vec<String>>
 /// Collect aliases for direct Rust imports.
 ///
 /// This intentionally stays separate from [`collect_import_aliases`] because `rust::...` imports are not Incan module
-/// paths. Lowering uses this for Rust derive macro passthrough such as
-/// `from rust::serde @ "1.0" import Deserialize` → `serde::Deserialize`.
+/// paths. Lowering uses this for Rust derive macro passthrough such as `from rust::serde @ "1.0" import Deserialize` →
+/// `serde::Deserialize`.
 pub fn collect_rust_import_aliases(program: &Program) -> HashMap<String, Vec<String>> {
     let mut aliases = HashMap::new();
     for decl in &program.declarations {

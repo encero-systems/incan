@@ -156,9 +156,8 @@ impl AstLowering {
 
     /// Lower a statement slice into a unit-valued block expression.
     ///
-    /// RFC 049 lowering uses this to reuse statement-body lowering inside match
-    /// arms while preserving the branch-local scope rules of `if let` and
-    /// `while let`.
+    /// RFC 049 lowering uses this to reuse statement-body lowering inside match arms while preserving the branch-local
+    /// scope rules of `if let` and `while let`.
     fn lower_block_expr(
         &mut self,
         stmts: &[Spanned<ast::Statement>],
@@ -182,9 +181,8 @@ impl AstLowering {
 
     /// Lower `elif` / `else` branches into nested IR `if` statements.
     ///
-    /// The returned statement list becomes the else-branch payload for the
-    /// preceding branch, which lets `if let` reuse the same fallback lowering as
-    /// ordinary `if` chains.
+    /// The returned statement list becomes the else-branch payload for the preceding branch, which lets `if let` reuse
+    /// the same fallback lowering as ordinary `if` chains.
     fn lower_if_else_chain(
         &mut self,
         elif_branches: &[(Spanned<ast::Expr>, Vec<Spanned<ast::Statement>>)],

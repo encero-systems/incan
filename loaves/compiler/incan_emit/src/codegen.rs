@@ -22,10 +22,9 @@
 //!
 //! ## Error Handling
 //!
-//! The `try_generate*` family of methods return `Result<_, GenerationError>`,
-//! allowing callers to handle lowering and emission errors explicitly.
-//! The `generate*` methods are convenience wrappers that return error comments
-//! on failure (useful for debugging but not recommended for production).
+//! The `try_generate*` family of methods return `Result<_, GenerationError>`, allowing callers to handle lowering and
+//! emission errors explicitly. The `generate*` methods are convenience wrappers that return error comments on failure
+//! (useful for debugging but not recommended for production).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
@@ -95,8 +94,8 @@ fn source_module_identity_path(
 
 /// Error during Rust code generation.
 ///
-/// This error type wraps all possible errors that can occur during code generation,
-/// including AST lowering errors and IR emission errors.
+/// This error type wraps all possible errors that can occur during code generation, including AST lowering errors and
+/// IR emission errors.
 ///
 /// ## Examples
 ///
@@ -441,8 +440,8 @@ pub struct IrCodegen<'a> {
     current_program: Option<&'a Program>,
     /// Dependency modules to include before main.
     ///
-    /// Stores both the flat module name (used for build graph identity) and the nested module path
-    /// segments (used for correct Rust qualification in codegen).
+    /// Stores both the flat module name (used for build graph identity) and the nested module path segments (used for
+    /// correct Rust qualification in codegen).
     dependency_modules: Vec<(&'a str, &'a Program, Option<Vec<String>>)>,
     /// Source-derived dependency symbols used for Rust qualification but linked from an external artifact.
     ///
@@ -466,8 +465,8 @@ pub struct IrCodegen<'a> {
     foreign_pub_type_remappings: HashMap<String, HashMap<String, String>>,
     /// Whether to emit the Zen of Incan at the start of main (set by `import this`)
     emit_zen_in_main: bool,
-    /// Functions imported from external Rust crates (name -> true for external)
-    /// Rust functions imported by the program, recorded by `collect_external_rust_functions` for the emitter.
+    /// Functions imported from external Rust crates (name -> true for external) Rust functions imported by the
+    /// program, recorded by `collect_external_rust_functions` for the emitter.
     pub external_rust_functions: HashSet<String>,
     /// Declared Rust crate names from `loaf.toml [rust-dependencies]` (RFC 013 / RFC 023).
     ///
@@ -1343,9 +1342,8 @@ impl<'a> IrCodegen<'a> {
 
     /// Backfill nested module path segments for a dependency module by name.
     ///
-    /// This is primarily used by tests or older call sites that only registered a flat
-    /// module name via `add_module()`. If a matching module entry exists and has no
-    /// path segments yet, this sets them.
+    /// This is primarily used by tests or older call sites that only registered a flat module name via `add_module()`.
+    /// If a matching module entry exists and has no path segments yet, this sets them.
     pub fn set_module_path_segments(&mut self, module_name: &str, path_segments: Vec<String>) {
         if let Some((_name, _ast, segs)) = self
             .dependency_modules
@@ -1392,9 +1390,8 @@ impl<'a> IrCodegen<'a> {
 
     /// Scan a program for serde-backed derives.
     ///
-    /// This remains an internal compatibility hook because serde-backed derives and legacy
-    /// `json_stringify` usage can still require serde emission without import-activated provider
-    /// metadata.
+    /// This remains an internal compatibility hook because serde-backed derives and legacy `json_stringify` usage can
+    /// still require serde emission without import-activated provider metadata.
     fn update_serde_requirement(&mut self, program: &Program) {
         if detect_serde_usage(program) {
             self.needs_serde = true;
@@ -1492,9 +1489,8 @@ impl<'a> IrCodegen<'a> {
     /// 3. Emits Rust code using syn/quote
     /// 4. Formats with prettyplease
     ///
-    /// **Note**: This is a convenience method that returns error comments on failure.
-    /// For production use, prefer [`try_generate`](Self::try_generate) which returns
-    /// a proper `Result`.
+    /// **Note**: This is a convenience method that returns error comments on failure. For production use, prefer
+    /// [`try_generate`](Self::try_generate) which returns a proper `Result`.
     #[tracing::instrument(skip_all)]
     pub fn generate(mut self, program: &'a Program) -> String {
         match self.try_generate_internal(program) {
@@ -1851,8 +1847,8 @@ impl<'a> IrCodegen<'a> {
 
     /// Generate Rust code for a dependency module (not the main module)
     ///
-    /// **Note**: This is a convenience method that returns error comments on failure.
-    /// For production use, prefer [`try_generate_module`](Self::try_generate_module).
+    /// **Note**: This is a convenience method that returns error comments on failure. For production use, prefer
+    /// [`try_generate_module`](Self::try_generate_module).
     pub fn generate_module(&mut self, module_name: &str, program: &Program) -> String {
         match self.try_generate_module(module_name, program) {
             Ok(code) => code,
@@ -1975,8 +1971,8 @@ impl<'a> IrCodegen<'a> {
 
     /// Generate Rust code for a multi-file project
     ///
-    /// **Note**: This is a convenience method that returns error comments on failure.
-    /// For production use, prefer [`try_generate_multi_file`](Self::try_generate_multi_file).
+    /// **Note**: This is a convenience method that returns error comments on failure. For production use, prefer
+    /// [`try_generate_multi_file`](Self::try_generate_multi_file).
     pub fn generate_multi_file(
         mut self,
         program: &'a Program,
@@ -1992,8 +1988,8 @@ impl<'a> IrCodegen<'a> {
     ///
     /// ## Errors
     ///
-    /// Returns `GenerationError::Lowering` if AST lowering fails for any module, or
-    /// `GenerationError::Emission` if IR emission fails for any module.
+    /// Returns `GenerationError::Lowering` if AST lowering fails for any module, or `GenerationError::Emission` if IR
+    /// emission fails for any module.
     pub fn try_generate_multi_file(
         mut self,
         program: &'a Program,
@@ -2230,8 +2226,8 @@ impl<'a> IrCodegen<'a> {
 
     /// Generate Rust code for a multi-file project with nested module paths
     ///
-    /// **Note**: This is a convenience method that returns error comments on failure.
-    /// For production use, prefer [`try_generate_multi_file_nested`](Self::try_generate_multi_file_nested).
+    /// **Note**: This is a convenience method that returns error comments on failure. For production use, prefer
+    /// [`try_generate_multi_file_nested`](Self::try_generate_multi_file_nested).
     pub fn generate_multi_file_nested(
         mut self,
         program: &'a Program,
@@ -2247,8 +2243,8 @@ impl<'a> IrCodegen<'a> {
     ///
     /// ## Errors
     ///
-    /// Returns `GenerationError::Lowering` if AST lowering fails for any module, or
-    /// `GenerationError::Emission` if IR emission fails for any module.
+    /// Returns `GenerationError::Lowering` if AST lowering fails for any module, or `GenerationError::Emission` if IR
+    /// emission fails for any module.
     pub fn try_generate_multi_file_nested(
         mut self,
         program: &'a Program,

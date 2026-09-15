@@ -1982,12 +1982,12 @@ impl OvenStore {
 
     /// Return the owned immutable entry path for a validated identity.
     ///
-    /// The physical directory spelling is deliberately loader-safe: a content identity uses `sha256:`, but `:` is
-    /// a path-list separator in ELF `RUNPATH`. Native direct-Rustc consumers may embed this directory in an rpath,
-    /// so preserving the digest identity verbatim would split one immutable directory into two invalid locations on
+    /// The physical directory spelling is deliberately loader-safe: a content identity uses `sha256:`, but `:` is a
+    /// path-list separator in ELF `RUNPATH`. Native direct-Rustc consumers may embed this directory in an rpath, so
+    /// preserving the digest identity verbatim would split one immutable directory into two invalid locations on
     /// Linux. The v2 store root adopts the safe spelling below, so prior entries are never selected into a new
-    /// direct-Rustc runtime closure.
-    /// Test-only view of an entry's root, for sibling modules that verify what a copy placed on disk.
+    /// direct-Rustc runtime closure. Test-only view of an entry's root, for sibling modules that verify what a copy
+    /// placed on disk.
     #[cfg(test)]
     pub fn entry_root_for_tests(&self, identity: &str) -> PathBuf {
         self.entry_root(identity)
@@ -2188,9 +2188,8 @@ fn manifest_file_name(kind: OvenArtifactKind) -> &'static str {
 
 /// Resolve the only accepted manifest file within one complete immutable entry.
 ///
-/// Direct-rustc project plans are written as `<identity>.loaf/loaf.json`.
-/// `artifact.json` remains readable solely for pre-existing generic entries;
-/// a new direct-rustc project closure never receives that spelling.
+/// Direct-rustc project plans are written as `<identity>.loaf/loaf.json`. `artifact.json` remains readable solely for
+/// pre-existing generic entries; a new direct-rustc project closure never receives that spelling.
 fn manifest_path_for_entry(root: &Path) -> PathBuf {
     let loaf = root.join(LOAF_MANIFEST_FILE);
     if loaf.is_file() {
@@ -2528,8 +2527,8 @@ fn round_physical(bytes: u64) -> u64 {
     bytes.saturating_add(BLOCK - 1) / BLOCK * BLOCK
 }
 
-/// Versioned preimage of the receipt identity already authenticated by a native entry header.
-/// The writer borrows its validated request; admission retains the decoded receipt under the selected lease.
+/// Versioned preimage of the receipt identity already authenticated by a native entry header. The writer borrows its
+/// validated request; admission retains the decoded receipt under the selected lease.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NativeReceiptWitness<T = OvenReceipt> {
@@ -2543,8 +2542,8 @@ struct AdmittedNativeReceipt {
     bytes_digest: String,
 }
 
-/// Encode a newly published native entry's original receipt after `artifact_manifest` validates it.
-/// Borrowing the request avoids copying or rehashing its recipe; this metadata does not change the entry identity.
+/// Encode a newly published native entry's original receipt after `artifact_manifest` validates it. Borrowing the
+/// request avoids copying or rehashing its recipe; this metadata does not change the entry identity.
 fn encode_native_receipt(request: &OvenArtifactPublishRequest) -> Result<Option<Vec<u8>>, OvenStoreError> {
     if request.kind != OvenArtifactKind::DirectRustcPlan {
         return Ok(None);
@@ -2758,12 +2757,11 @@ fn write_staged_entry(
 
 /// Return whether a verified materialized source is already immutable and owned by this store.
 ///
-/// `root` is always `<store>/staging/<identity>-...`; its grandparent is the only store root we trust for the
-/// hard-link optimization. A canonical source path may be below the named legacy publisher staging tree or below
-/// one immutable entry's `artifacts/` root. The latter supports receipt-held composition of a sealed runtime plan
-/// with a native interop extension without doubling its physical disk allocation. A caller cannot turn arbitrary
-/// mutable input into a store-owned inode by choosing a convenient path.
-/// Report whether one directory name is a published entry coordinate.
+/// `root` is always `<store>/staging/<identity>-...`; its grandparent is the only store root we trust for the hard-link
+/// optimization. A canonical source path may be below the named legacy publisher staging tree or below one immutable
+/// entry's `artifacts/` root. The latter supports receipt-held composition of a sealed runtime plan with a native
+/// interop extension without doubling its physical disk allocation. A caller cannot turn arbitrary mutable input into a
+/// store-owned inode by choosing a convenient path. Report whether one directory name is a published entry coordinate.
 ///
 /// Entries are filed under the digest of their own content, so the name alone establishes that the directory is an
 /// admitted immutable entry rather than staging or a caller-owned tree that merely sits beside one.
@@ -3452,8 +3450,8 @@ fn related_policy_offending_domains(
         .collect()
 }
 
-/// Sum logical and physical accounting for one compatibility domain.
-/// Fold a superseded-release reclamation report into the retention-prune report that followed it.
+/// Sum logical and physical accounting for one compatibility domain. Fold a superseded-release reclamation report into
+/// the retention-prune report that followed it.
 ///
 /// The two passes run back to back under one manager lock, so the user-visible result must read as a single
 /// reclamation: the earliest `before`, the latest `after`, and the union of what each pass touched.

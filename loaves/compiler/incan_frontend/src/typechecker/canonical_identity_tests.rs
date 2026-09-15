@@ -1,10 +1,9 @@
 //! RFC 120 conformance: canonical symbol identity at declaration sites and on resolved references.
 //!
-//! These tests pin the identity contract itself rather than any consumer: one compiler-owned identity is minted at
-//! each declaration site, an import/alias/re-export binding carries its *target's* identity, same-spelled bindings
-//! in different scopes stay distinct, and reference-side recording answers "do these two references mean the same
-//! thing" structurally. Body IR's consumption of these facts is pinned separately in
-//! `crate::body_ir::tests`.
+//! These tests pin the identity contract itself rather than any consumer: one compiler-owned identity is minted at each
+//! declaration site, an import/alias/re-export binding carries its *target's* identity, same-spelled bindings in
+//! different scopes stay distinct, and reference-side recording answers "do these two references mean the same thing"
+//! structurally. Body IR's consumption of these facts is pinned separately in `crate::body_ir::tests`.
 
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_core::lang::traits::{self, TraitId};

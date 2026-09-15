@@ -13,10 +13,10 @@
 //!
 //! ## Re-export resolution
 //!
-//! Modules with submodules (e.g. `std.web`) resolve to a prelude file (e.g. `stdlib/web/prelude.incn`).
-//! The prelude typically only contains `from std.web.<sub> import ...` re-export statements, not direct declarations.
-//! To support `from std.web import route` (where `route` is declared in `std.web.routing`), the loader follows these
-//! re-export imports and merges the referenced submodule metadata into the parent.
+//! Modules with submodules (e.g. `std.web`) resolve to a prelude file (e.g. `stdlib/web/prelude.incn`). The prelude
+//! typically only contains `from std.web.<sub> import ...` re-export statements, not direct declarations. To support
+//! `from std.web import route` (where `route` is declared in `std.web.routing`), the loader follows these re-export
+//! imports and merges the referenced submodule metadata into the parent.
 //!
 //! ## Limitations
 //!
@@ -372,10 +372,10 @@ impl StdlibAstCache {
 
 /// Load and parse a stdlib `.incn` file, extracting module data.
 ///
-/// For modules with submodules (whose stub path resolves to a prelude file), this function also follows
-/// `from std.<ns>.<submodule> import <name>` re-exports: it loads each referenced submodule and merges
-/// the imported names' metadata into the parent module. This enables `from std.web import route` to resolve
-/// decorator metadata even though `route` is declared in `std.web.routing`, not the prelude itself.
+/// For modules with submodules (whose stub path resolves to a prelude file), this function also follows `from
+/// std.<ns>.<submodule> import <name>` re-exports: it loads each referenced submodule and merges the imported names'
+/// metadata into the parent module. This enables `from std.web import route` to resolve decorator metadata even though
+/// `route` is declared in `std.web.routing`, not the prelude itself.
 ///
 /// Returns `None` if the file cannot be found or parsed.
 #[cfg(test)]
@@ -509,8 +509,8 @@ struct ReexportMetadataTargets<'a> {
 
 /// Scan a program's import declarations and merge metadata from referenced stdlib submodules.
 ///
-/// For each `from std... import name1, name2` statement, loads the referenced module and copies the
-/// corresponding function/trait signatures and metadata into the parent module's collections.
+/// For each `from std... import name1, name2` statement, loads the referenced module and copies the corresponding
+/// function/trait signatures and metadata into the parent module's collections.
 fn merge_reexported_metadata(
     current_module_path: &[String],
     program: &ast::Program,
@@ -1627,9 +1627,9 @@ fn extract_function_meta(program: &ast::Program) -> HashMap<String, FunctionMeta
 
 /// Extract trait metadata from a stdlib module's AST.
 ///
-/// Walks top-level trait declarations and records the `rust.module()` backing path (if any).
-/// This metadata is used by `AstLowering::resolve_derive_module_path` to map `@derive(Trait)` references to their Rust
-/// proc-macro crate paths for derive passthrough.
+/// Walks top-level trait declarations and records the `rust.module()` backing path (if any). This metadata is used by
+/// `AstLowering::resolve_derive_module_path` to map `@derive(Trait)` references to their Rust proc-macro crate paths
+/// for derive passthrough.
 fn extract_trait_meta(program: &ast::Program) -> HashMap<String, TraitMeta> {
     let mut meta = HashMap::new();
     let rust_module_path = program.rust_module_path.as_ref().map(|sp| sp.node.clone());
@@ -1690,9 +1690,8 @@ fn rust_derive_paths_from_decorators(decorators: &[ast::Spanned<ast::Decorator>]
 
 /// Convert an AST `Type` to a `ResolvedType`.
 ///
-/// Type parameter names (from the enclosing function's `type_params`) are resolved to `TypeVar`.
-/// Primitive type names are resolved to their concrete `ResolvedType` variants.
-/// Unknown types are resolved to `Named(name)`.
+/// Type parameter names (from the enclosing function's `type_params`) are resolved to `TypeVar`. Primitive type names
+/// are resolved to their concrete `ResolvedType` variants. Unknown types are resolved to `Named(name)`.
 fn ast_type_to_resolved(ty: &ast::Type, type_params: &[String]) -> ResolvedType {
     ast_type_to_resolved_with_rust_imports(ty, type_params, &HashMap::new())
 }

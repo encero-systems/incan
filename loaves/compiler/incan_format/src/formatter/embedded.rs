@@ -128,10 +128,10 @@ impl Formatter {
     ///
     /// A regex literal keeps its own node, but a template string's backticks and `${...}` delimiters are consumed
     /// during parsing and never stored, so the node tree alone is `Text`/`Hole` runs indistinguishable from raw
-    /// content. Rendering those the way every other submode renders its nodes would emit `hello {name}!` for
-    /// `` `hello ${name}!` `` — not merely different layout, but a fragment this submode rejects outright, so
-    /// `incan fmt` would rewrite a valid file into one that no longer parses. Reconstructing the delimiters is
-    /// what makes the structural mode a faithful round trip here.
+    /// content. Rendering those the way every other submode renders its nodes would emit `hello {name}!` for `` `hello
+    /// ${name}!` `` — not merely different layout, but a fragment this submode rejects outright, so `incan fmt` would
+    /// rewrite a valid file into one that no longer parses. Reconstructing the delimiters is what makes the structural
+    /// mode a faithful round trip here.
     fn format_embedded_regex_template(&mut self, nodes: &[Spanned<EmbeddedNode>]) {
         if let Some(only) = nodes.first()
             && nodes.len() == 1
