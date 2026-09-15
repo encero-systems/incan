@@ -1,8 +1,7 @@
 //! Centralized ownership and coercion planning for IR emission.
 //!
-//! This module is the backend's dedicated decision layer for "duckborrowing":
-//! given a typed IR expression and a Rust sink/source boundary, decide whether emission should move, clone, borrow, or
-//! materialize an owned string.
+//! This module is the backend's dedicated decision layer for "duckborrowing": given a typed IR expression and a Rust
+//! sink/source boundary, decide whether emission should move, clone, borrow, or materialize an owned string.
 //!
 //! Keep emitter modules calling this planner instead of open-coding ad hoc `.clone()`, `&`, `&mut`, `.to_string()`, or
 //! `.into()` decisions.

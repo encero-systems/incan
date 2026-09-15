@@ -1,8 +1,8 @@
 //! Check expressions and resolve their types.
 //!
-//! This module owns the expression-checking entrypoint (`check_expr`) and delegates to themed
-//! submodules for maintainability. Expression checking is error-accumulating: on invalid input it
-//! returns [`ResolvedType::Unknown`] so later checks can continue.
+//! This module owns the expression-checking entrypoint (`check_expr`) and delegates to themed submodules for
+//! maintainability. Expression checking is error-accumulating: on invalid input it returns [`ResolvedType::Unknown`] so
+//! later checks can continue.
 //!
 //! ## See also
 //! - [`super::TypeChecker`]: the main type checker entrypoint.
@@ -233,9 +233,8 @@ impl TypeChecker {
 
     /// Validate an expression and return its resolved type.
     ///
-    /// Dispatches to specialized helpers (`check_call`, `check_binary`, `check_match`, etc.)
-    /// and accumulates errors. Returns [`ResolvedType::Unknown`] when the expression is
-    /// invalid so checking can continue.
+    /// Dispatches to specialized helpers (`check_call`, `check_binary`, `check_match`, etc.) and accumulates errors.
+    /// Returns [`ResolvedType::Unknown`] when the expression is invalid so checking can continue.
     pub fn check_expr(&mut self, expr: &Spanned<Expr>) -> ResolvedType {
         let ty = match &expr.node {
             Expr::Ident(name) => self.check_ident(name, expr.span),

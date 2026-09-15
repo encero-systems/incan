@@ -417,8 +417,8 @@ pub struct LibraryContractMetadata {
 
 /// Immutable binary executable sidecar published before the manifest that selects it.
 ///
-/// The manifest selects immutable semantic content from its checked build, so stale files cannot be selected by
-/// a rebuilt manifest. The surrounding library publication restores ordinary failures; it does not promise atomic
+/// The manifest selects immutable semantic content from its checked build, so stale files cannot be selected by a
+/// rebuilt manifest. The surrounding library publication restores ordinary failures; it does not promise atomic
 /// availability to concurrent readers or across a process crash.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutableRepresentationExport {

@@ -1,21 +1,20 @@
 //! Direct execution of the deliberately narrow #988 Body-IR replacement profile.
 //!
-//! This module consumes [`BodyIrModule`] directly. It never reads generated Rust, never
-//! delegates a requested replacement execution to [`crate::backend::ir`], and rejects every operation outside the
-//! first free-function profile with the original Body-IR source span. The profile is intentionally limited to
-//! scalar arithmetic, compiler-owned string concatenation, branches, normalized loops, assertions, source-local
-//! recursive tuple/list values, fully supplied source-local plain-model values, and exact source-local RFC 032
-//! value-enum members followed by their generated scalar `.value()` extraction. It admits one numeric tuple or
-//! canonical plain-model field projection and one integer list projection or assignment;
-//! builtin iteration admits structural lists, canonical global list enumeration, and list-pair Zip. The selected
-//! entrypoint must produce a scalar observable, although an admitted sibling may return a structural intermediate to
-//! its direct caller. The executor also consumes the retained callable vocabulary directly: captured local closures,
-//! partial presets, source-evaluable defaults, identity-selected local or same-module named calls, generator
-//! expressions and generator functions, and their bounded lazy `map`/`filter` adapters. Published package bodies enter
-//! the same graph after their public executable requirements are resolved. Rust interop, unsupported callable/default
-//! forms, general destructuring, and other projections remain visible refusals. Its enclosing declaration snapshot
-//! retains a deferred generator's shape, but the frame executes and adds execution-frame evidence only when
-//! collection polls it; no path falls back to generated Rust.
+//! This module consumes [`BodyIrModule`] directly. It never reads generated Rust, never delegates a requested
+//! replacement execution to [`crate::backend::ir`], and rejects every operation outside the first free-function profile
+//! with the original Body-IR source span. The profile is intentionally limited to scalar arithmetic, compiler-owned
+//! string concatenation, branches, normalized loops, assertions, source-local recursive tuple/list values, fully
+//! supplied source-local plain-model values, and exact source-local RFC 032 value-enum members followed by their
+//! generated scalar `.value()` extraction. It admits one numeric tuple or canonical plain-model field projection and
+//! one integer list projection or assignment; builtin iteration admits structural lists, canonical global list
+//! enumeration, and list-pair Zip. The selected entrypoint must produce a scalar observable, although an admitted
+//! sibling may return a structural intermediate to its direct caller. The executor also consumes the retained callable
+//! vocabulary directly: captured local closures, partial presets, source-evaluable defaults, identity-selected local or
+//! same-module named calls, generator expressions and generator functions, and their bounded lazy `map`/`filter`
+//! adapters. Published package bodies enter the same graph after their public executable requirements are resolved.
+//! Rust interop, unsupported callable/default forms, general destructuring, and other projections remain visible
+//! refusals. Its enclosing declaration snapshot retains a deferred generator's shape, but the frame executes and adds
+//! execution-frame evidence only when collection polls it; no path falls back to generated Rust.
 //!
 //! One checked provider-service operation also executes directly, from the already-lowered
 //! [`ProviderOperationPlan`] rather than from source or generated Rust (#1156). That vertical is owned by
@@ -995,8 +994,8 @@ pub struct ReplacementExecution {
 ///
 /// The capability retains the exact typed Body IR, source-level function name, and concrete arguments that were
 /// validated. It lets selection/receipt code decide whether direct execution may proceed without rerunning profile
-/// validation or allowing an unvalidated Body IR body to reach the executor.
-/// The set of Body-IR modules one replacement execution may resolve a call into.
+/// validation or allowing an unvalidated Body IR body to reach the executor. The set of Body-IR modules one replacement
+/// execution may resolve a call into.
 ///
 /// The executor previously held a single `&BodyIrModule`, which is exactly right for the bounded #988 profile where
 /// every reachable call is same-module: an imported callable deliberately carries no same-module `direct_call_id`,
@@ -1113,8 +1112,8 @@ pub struct ValidatedFreeFunctionExecution<'module, 'args> {
     args: &'args [ReplacementValue],
     /// The provider runtime this execution's admitted provider operations were validated against.
     ///
-    /// Retained on the capability rather than passed again at execution time so the runtime that answered
-    /// "does any host execute this operation" is necessarily the one that later invokes it.
+    /// Retained on the capability rather than passed again at execution time so the runtime that answered "does any
+    /// host execute this operation" is necessarily the one that later invokes it.
     providers: Option<Rc<ProviderRuntime>>,
 }
 

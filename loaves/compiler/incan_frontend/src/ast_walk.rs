@@ -1,7 +1,7 @@
 //! Shared expression traversal over the frontend AST.
 //!
-//! This module is the canonical place to recurse through expression-bearing AST slots.
-//! Callers provide a predicate and receive `true` on the first match.
+//! This module is the canonical place to recurse through expression-bearing AST slots. Callers provide a predicate and
+//! receive `true` on the first match.
 //!
 //! ## Traversal semantics
 //! - Source-order traversal.

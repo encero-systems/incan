@@ -1,8 +1,7 @@
 //! Emit Rust code for built-in function calls.
 //!
-//! This module handles emission of known built-in functions using enum-based dispatch
-//! (`BuiltinFn`). It also contains the legacy string-based fallback for `Call` expressions
-//! that haven't been lowered to `BuiltinCall`.
+//! This module handles emission of known built-in functions using enum-based dispatch (`BuiltinFn`). It also contains
+//! the legacy string-based fallback for `Call` expressions that haven't been lowered to `BuiltinCall`.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -605,8 +604,8 @@ impl<'a> IrEmitter<'a> {
 
     /// Try to emit a builtin function call (legacy string-based dispatch).
     ///
-    /// This is a fallback for `IrExprKind::Call` expressions where the function name
-    /// matches a known builtin. Prefer using `emit_builtin_call` with enum dispatch.
+    /// This is a fallback for `IrExprKind::Call` expressions where the function name matches a known builtin. Prefer
+    /// using `emit_builtin_call` with enum dispatch.
     pub(in super::super) fn try_emit_builtin_call(
         &self,
         name: &str,

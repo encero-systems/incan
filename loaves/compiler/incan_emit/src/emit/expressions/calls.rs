@@ -605,8 +605,8 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit a function call expression.
     ///
-    /// Handles regular function calls (user-defined functions).
-    /// Built-in functions are handled by `emit_builtin_call` or `try_emit_builtin_call`.
+    /// Handles regular function calls (user-defined functions). Built-in functions are handled by `emit_builtin_call`
+    /// or `try_emit_builtin_call`.
     pub(in super::super) fn emit_call_expr(
         &self,
         func: &TypedExpr,
@@ -1358,8 +1358,8 @@ impl<'a> IrEmitter<'a> {
         Ok(Some(path_tokens))
     }
 
-    /// Emit a binary operation expression.
-    /// Emit one binary operand, letting an empty list literal borrow its element type from the other side.
+    /// Emit a binary operation expression. Emit one binary operand, letting an empty list literal borrow its element
+    /// type from the other side.
     ///
     /// Only the empty case needs this: a populated literal infers from its own elements.
     fn emit_comparison_operand(&self, operand: &TypedExpr, other_ty: &IrType) -> Result<TokenStream, EmitError> {

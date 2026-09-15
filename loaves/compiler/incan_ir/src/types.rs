@@ -294,8 +294,8 @@ impl IrType {
 
     /// Check if this type is Copy in Rust
     ///
-    /// Returns true for primitive types (unit, bool, int, float) and string references
-    /// (`&str`, `&'static str`) since references are Copy.
+    /// Returns true for primitive types (unit, bool, int, float) and string references (`&str`, `&'static str`) since
+    /// references are Copy.
     pub fn is_copy(&self) -> bool {
         match self {
             IrType::Unit
@@ -327,8 +327,8 @@ impl IrType {
 
     /// Return the nominal type constructor name for user-defined or imported nominal types.
     ///
-    /// This treats `Foo` and `Foo[T]` as the same nominal family while preserving generic
-    /// arguments elsewhere in the IR.
+    /// This treats `Foo` and `Foo[T]` as the same nominal family while preserving generic arguments elsewhere in the
+    /// IR.
     pub fn nominal_type_name(&self) -> Option<&str> {
         match self {
             IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) | IrType::NamedGeneric(name, _) => {

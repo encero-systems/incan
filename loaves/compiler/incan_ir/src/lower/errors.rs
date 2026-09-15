@@ -1,8 +1,7 @@
 //! Error types for AST to IR lowering.
 //!
-//! This module defines error types used during the lowering pass from AST to IR.
-//! It provides both single errors (`LoweringError`) and error collections
-//! (`LoweringErrors`) to support aggregated error reporting.
+//! This module defines error types used during the lowering pass from AST to IR. It provides both single errors
+//! (`LoweringError`) and error collections (`LoweringErrors`) to support aggregated error reporting.
 
 use super::super::IrSpan;
 
@@ -30,8 +29,8 @@ impl std::error::Error for LoweringError {}
 
 /// Collection of multiple lowering errors.
 ///
-/// This type allows returning multiple errors from a lowering pass,
-/// similar to how the frontend typechecker reports multiple errors.
+/// This type allows returning multiple errors from a lowering pass, similar to how the frontend typechecker reports
+/// multiple errors.
 ///
 /// # Examples
 ///

@@ -1,9 +1,8 @@
 //! Project manifest (`loaf.toml`) discovery and parsing.
 //!
-//! Implements the `loaf.toml` schema from RFC 013 (Rust crate dependencies), RFC 015 (project discovery), and
-//! RFC 031 Phase 1 (Incan library dependency table split). This module is responsible for locating the manifest and
-//! parsing dependency tables into structured specs that the dependency resolver and future library resolver can
-//! validate.
+//! Implements the `loaf.toml` schema from RFC 013 (Rust crate dependencies), RFC 015 (project discovery), and RFC 031
+//! Phase 1 (Incan library dependency table split). This module is responsible for locating the manifest and parsing
+//! dependency tables into structured specs that the dependency resolver and future library resolver can validate.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -468,8 +467,8 @@ fn is_false(value: &bool) -> bool {
 
 /// A manifest that can be serialized to TOML.
 ///
-/// Used by `incan init` and any future code that needs to write `loaf.toml`.
-/// The canonical field definitions live in [`ProjectSection`] and [`BuildSection`], keeping read and write in sync.
+/// Used by `incan init` and any future code that needs to write `loaf.toml`. The canonical field definitions live in
+/// [`ProjectSection`] and [`BuildSection`], keeping read and write in sync.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct WritableManifest {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2112,8 +2111,8 @@ fn dependency_source_key(source: &DependencySource) -> String {
 
 /// Validate that a version requirement string uses Cargo SemVer syntax.
 ///
-/// Returns `Ok(())` if valid, or an error message describing the problem.
-/// This catches PEP 440 specifiers, typos, and other invalid strings early (RFC 013, Phase 1.2).
+/// Returns `Ok(())` if valid, or an error message describing the problem. This catches PEP 440 specifiers, typos, and
+/// other invalid strings early (RFC 013, Phase 1.2).
 pub fn validate_cargo_version_req(version: &str) -> Result<(), String> {
     match VersionReq::parse(version) {
         Ok(_) => Ok(()),

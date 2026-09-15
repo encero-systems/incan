@@ -1,11 +1,10 @@
 //! Backend-selection identity and execution receipt for the #652 replacement-backend cutover.
 //!
-//! The v0.6 programme tracked by #652 introduces a second compiler backend (the Body IR
-//! "replacement" backend, tracked by #653) alongside the current Rust-source-emission backend
-//! (`IrCodegen`, `src/backend/ir/`, referred to here as "legacy"). #988 supplies a deliberately partial direct
-//! Body-IR profile; the selection boundary still declares and records which backend was intended and actually ran,
-//! so a legacy result is never mistaken for replacement execution and an unsupported replacement source remains a
-//! visible refusal rather than a silent legacy execution.
+//! The v0.6 programme tracked by #652 introduces a second compiler backend (the Body IR "replacement" backend, tracked
+//! by #653) alongside the current Rust-source-emission backend (`IrCodegen`, `src/backend/ir/`, referred to here as
+//! "legacy"). #988 supplies a deliberately partial direct Body-IR profile; the selection boundary still declares and
+//! records which backend was intended and actually ran, so a legacy result is never mistaken for replacement execution
+//! and an unsupported replacement source remains a visible refusal rather than a silent legacy execution.
 //!
 //! This module owns two boundary types:
 //!
@@ -16,15 +15,15 @@
 //!   which backend actually ran, whether a declared fallback occurred, the optional shadow-comparison outcome, the
 //!   diagnostic-contract version in force, and the produced output's identity.
 //!
-//! Both types are plain, IO-free data: this module does not invoke `IrCodegen` or any other
-//! execution machinery. Callers (the CLI build path today) perform the actual dispatch and use
-//! [`resolve_execution`] and [`finalize_receipt`] to turn real outcomes into these records. This
-//! keeps the boundary testable without a full compilation pipeline and keeps it reusable by other
-//! clients (Oven, `incan inspect`) that only need to read a versioned receipt.
+//! Both types are plain, IO-free data: this module does not invoke `IrCodegen` or any other execution machinery.
+//! Callers (the CLI build path today) perform the actual dispatch and use [`resolve_execution`] and
+//! [`finalize_receipt`] to turn real outcomes into these records. This keeps the boundary testable without a full
+//! compilation pipeline and keeps it reusable by other clients (Oven, `incan inspect`) that only need to read a
+//! versioned receipt.
 //!
-//! This is a different axis from Oven's legacy-Cargo-vs-direct-rustc *build* boundary
-//! (`src/oven.rs`, `OvenCompatibilityKind`), which selects how an already-generated artifact is
-//! compiled and never influences which compiler backend produced it.
+//! This is a different axis from Oven's legacy-Cargo-vs-direct-rustc *build* boundary (`src/oven.rs`,
+//! `OvenCompatibilityKind`), which selects how an already-generated artifact is compiled and never influences which
+//! compiler backend produced it.
 
 use serde::{Deserialize, Serialize};
 
@@ -74,9 +73,9 @@ impl SemanticModuleProvenance {
 
 /// Implementation revision of the current Rust-emission ("legacy") backend.
 ///
-/// Independent of [`crate::version::INCAN_VERSION`]: increase it only when a change to the
-/// Rust-emission pipeline can change generated output for a previously accepted program, so a
-/// consumer keying reuse on this revision knows to invalidate.
+/// Independent of [`crate::version::INCAN_VERSION`]: increase it only when a change to the Rust-emission pipeline can
+/// change generated output for a previously accepted program, so a consumer keying reuse on this revision knows to
+/// invalidate.
 pub const LEGACY_BACKEND_REVISION: u32 = 1;
 
 /// Implementation revision of the partial Body-IR replacement backend.
@@ -87,8 +86,8 @@ pub const REPLACEMENT_BACKEND_REVISION: u32 = 1;
 
 /// Compiler backend that can produce or execute a build unit.
 ///
-/// This is the codegen-execution axis tracked by #652/#986. See the module docs for how it
-/// differs from Oven's build-compilation boundary.
+/// This is the codegen-execution axis tracked by #652/#986. See the module docs for how it differs from Oven's
+/// build-compilation boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BackendKind {
@@ -115,8 +114,8 @@ impl BackendKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CompatibilityProfile {
-    /// The backend declares complete coverage of the active release's language/runtime contract.
-    /// The legacy backend is always `Full` today.
+    /// The backend declares complete coverage of the active release's language/runtime contract. The legacy backend is
+    /// always `Full` today.
     Full,
     /// The backend declares only partial coverage. The replacement backend is `Partial` until
     /// #988 proves and expands its execution to the complete v0.6 contract.
@@ -127,9 +126,9 @@ pub enum CompatibilityProfile {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SelectionReason {
-    /// No explicit backend was requested; the compiler-owned default was declared. This is the
-    /// "declared legacy capability selection" case: even the default path produces an explicit,
-    /// recorded selection rather than an implicit, unrecorded one.
+    /// No explicit backend was requested; the compiler-owned default was declared. This is the "declared legacy
+    /// capability selection" case: even the default path produces an explicit, recorded selection rather than an
+    /// implicit, unrecorded one.
     Default,
     /// The caller explicitly requested this backend, for example `incan build --backend <kind>`.
     ExplicitRequest,
@@ -137,25 +136,23 @@ pub enum SelectionReason {
 
 /// Declared policy for what happens if the selected backend cannot execute.
 ///
-/// The policy is decided and recorded as part of [`BackendSelection`], before execution is
-/// attempted, so a later fallback (or refusal) is always a declared outcome rather than a
-/// runtime improvisation.
+/// The policy is decided and recorded as part of [`BackendSelection`], before execution is attempted, so a later
+/// fallback (or refusal) is always a declared outcome rather than a runtime improvisation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FallbackPolicy {
     /// Never silently substitute another backend; an unavailable selection must fail visibly via
     /// [`BackendSelectionError::Refused`].
     Refuse,
-    /// If the selected backend cannot execute, fall back to the named backend and record the
-    /// substitution explicitly in the execution receipt's `fallback_outcome`.
+    /// If the selected backend cannot execute, fall back to the named backend and record the substitution explicitly
+    /// in the execution receipt's `fallback_outcome`.
     AllowTo(BackendKind),
 }
 
 /// Optional shadow-comparison outcome between the executed backend and the replacement backend.
 ///
-/// Recorded explicitly whenever a shadow comparison was requested, even when the comparison
-/// could not run, so an unavailable comparison is a visible non-green state rather than a
-/// silently skipped one.
+/// Recorded explicitly whenever a shadow comparison was requested, even when the comparison could not run, so an
+/// unavailable comparison is a visible non-green state rather than a silently skipped one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ShadowComparisonState {
@@ -216,16 +213,16 @@ pub fn unavailable_shadow_comparison(shadow_requested: bool, reason: &str) -> Sh
 pub enum FallbackOutcome {
     /// The executed backend matches the selected backend; no fallback occurred.
     NotNeeded,
-    /// The selected backend could not execute and [`FallbackPolicy::AllowTo`] authorized this
-    /// substitution, which is recorded explicitly rather than left implicit.
+    /// The selected backend could not execute and [`FallbackPolicy::AllowTo`] authorized this substitution, which is
+    /// recorded explicitly rather than left implicit.
     Declared { from: BackendKind, to: BackendKind },
 }
 
 /// Pre-execution declaration of which backend a compilation will use.
 ///
-/// Built by [`select_backend`] before any codegen or execution starts. `identity` is a content
-/// hash over every other field, so a later stage that only holds a serialized copy can call
-/// [`BackendSelection::verify_identity`] instead of re-deriving trust from scratch.
+/// Built by [`select_backend`] before any codegen or execution starts. `identity` is a content hash over every other
+/// field, so a later stage that only holds a serialized copy can call [`BackendSelection::verify_identity`] instead of
+/// re-deriving trust from scratch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackendSelection {
     /// Selection wire-schema version.
@@ -244,30 +241,28 @@ pub struct BackendSelection {
     pub selection_reason: SelectionReason,
     /// What happens if `selected_backend` cannot execute.
     pub fallback_policy: FallbackPolicy,
-    /// Whether a shadow comparison against the replacement backend was requested alongside
-    /// `selected_backend`'s normal execution.
+    /// Whether a shadow comparison against the replacement backend was requested alongside `selected_backend`'s normal
+    /// execution.
     pub shadow_requested: bool,
 }
 
 /// Post-execution record of how a declared [`BackendSelection`] was actually carried out.
 ///
-/// Binds the backend that actually ran, any declared fallback, the shadow-comparison outcome,
-/// the diagnostic-contract version in force, and the produced output's identity into one
-/// versioned, content-identified record that Oven and other clients can consume without reading
-/// private HIR or Body IR structures.
+/// Binds the backend that actually ran, any declared fallback, the shadow-comparison outcome, the diagnostic-contract
+/// version in force, and the produced output's identity into one versioned, content-identified record that Oven and
+/// other clients can consume without reading private HIR or Body IR structures.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackendExecutionReceipt {
     /// Receipt wire-schema version.
     pub schema_version: u32,
-    /// Content-derived `sha256:` identity over every other field, including the bound
-    /// selection's own identity.
+    /// Content-derived `sha256:` identity over every other field, including the bound selection's own identity.
     pub identity: String,
     /// Compiler version that produced this receipt.
     pub compiler_version: String,
     /// The selection this receipt is bound to.
     pub selection: BackendSelection,
-    /// The backend that actually executed. May differ from `selection.selected_backend` only
-    /// when `fallback_outcome` is [`FallbackOutcome::Declared`].
+    /// The backend that actually executed. May differ from `selection.selected_backend` only when `fallback_outcome`
+    /// is [`FallbackOutcome::Declared`].
     pub executed_backend: BackendKind,
     /// Shadow-comparison outcome, always present and explicit even when unavailable.
     pub shadow_comparison: ShadowComparisonState,
@@ -300,8 +295,8 @@ pub enum BackendSelectionError {
     /// A receipt's claimed content identity did not match its immutable fields.
     #[error("backend-execution-receipt identity mismatch: expected {expected}, got {actual}")]
     ReceiptIdentityMismatch { expected: String, actual: String },
-    /// The selected backend cannot execute and [`FallbackPolicy::Refuse`] applies, so the build
-    /// must stop instead of silently substituting another backend.
+    /// The selected backend cannot execute and [`FallbackPolicy::Refuse`] applies, so the build must stop instead of
+    /// silently substituting another backend.
     #[error(
         "backend `{backend:?}` was selected but cannot execute yet ({reason}); fallback policy is `refuse`, so the \
          build stops instead of silently running another backend"
@@ -334,9 +329,9 @@ pub enum BackendSelectionError {
 ///
 /// `explicit` distinguishes an operator-provided request (for example `incan build --backend
 /// <kind>`) from the compiler-owned default, and is the sole input to `selection_reason`.
-/// `shadow_requested` records whether a shadow comparison against the replacement backend was
-/// also asked for. This function never fails: it only declares intent. Availability is checked
-/// separately by [`resolve_execution`], right before dispatch.
+/// `shadow_requested` records whether a shadow comparison against the replacement backend was also asked for. This
+/// function never fails: it only declares intent. Availability is checked separately by [`resolve_execution`], right
+/// before dispatch.
 #[must_use]
 pub fn select_backend(
     requested: BackendKind,
@@ -383,14 +378,13 @@ pub fn select_backend(
 
 /// Decide which backend a caller must actually invoke for a declared selection.
 ///
-/// `selected_available` reports whether `selection.selected_backend` can execute right now (in
-/// practice, [`BackendKind::is_implemented`] on that backend). Returns the backend to invoke, or
-/// [`BackendSelectionError::Refused`] when the selection is unavailable and
-/// [`FallbackPolicy::Refuse`] applies, or when it is unavailable and the declared
-/// [`FallbackPolicy::AllowTo`] target is *itself* unimplemented — a fallback to a backend that
-/// cannot execute either must still refuse, not silently report the unavailable target as
-/// executed. No receipt is produced on refusal: an unavailable selection must stop the build
-/// rather than emit a receipt that could be mistaken for a successful replacement-backend result.
+/// `selected_available` reports whether `selection.selected_backend` can execute right now (in practice,
+/// [`BackendKind::is_implemented`] on that backend). Returns the backend to invoke, or
+/// [`BackendSelectionError::Refused`] when the selection is unavailable and [`FallbackPolicy::Refuse`] applies, or when
+/// it is unavailable and the declared [`FallbackPolicy::AllowTo`] target is *itself* unimplemented — a fallback to a
+/// backend that cannot execute either must still refuse, not silently report the unavailable target as executed. No
+/// receipt is produced on refusal: an unavailable selection must stop the build rather than emit a receipt that could
+/// be mistaken for a successful replacement-backend result.
 pub fn resolve_execution(
     selection: &BackendSelection,
     selected_available: bool,
@@ -419,10 +413,10 @@ pub fn resolve_execution(
 
 /// Bind a real execution outcome to its declared selection, producing a versioned receipt.
 ///
-/// `executed_backend` must be the value [`resolve_execution`] returned (or
-/// `selection.selected_backend` itself, when it executed directly). This function validates that
-/// the declared fallback policy authorizes any mismatch before creating a receipt, so callers
-/// cannot turn an undeclared backend substitution into an identity-valid provenance record.
+/// `executed_backend` must be the value [`resolve_execution`] returned (or `selection.selected_backend` itself, when it
+/// executed directly). This function validates that the declared fallback policy authorizes any mismatch before
+/// creating a receipt, so callers cannot turn an undeclared backend substitution into an identity-valid provenance
+/// record.
 pub fn finalize_receipt(
     selection: &BackendSelection,
     executed_backend: BackendKind,
@@ -482,9 +476,8 @@ pub fn finalize_receipt_with_semantic_module(
 
 /// Derive the only fallback outcome a declared selection permits for one execution.
 ///
-/// This is shared by receipt finalization and persisted-receipt verification so a receipt that
-/// has a self-consistent content hash still cannot claim an execution the selection never
-/// authorized.
+/// This is shared by receipt finalization and persisted-receipt verification so a receipt that has a self-consistent
+/// content hash still cannot claim an execution the selection never authorized.
 fn fallback_outcome_for_execution(
     selection: &BackendSelection,
     executed_backend: BackendKind,
@@ -508,9 +501,9 @@ fn fallback_outcome_for_execution(
 impl BackendSelection {
     /// Recompute this selection's content identity and confirm it matches `self.identity`.
     ///
-    /// A later stage that only holds a serialized `BackendSelection` (for example, one persisted
-    /// alongside an Oven cache entry) must call this before trusting it, the same way
-    /// [`crate::oven::OvenReceipt::verify_identity`] guards a persisted Oven receipt.
+    /// A later stage that only holds a serialized `BackendSelection` (for example, one persisted alongside an Oven
+    /// cache entry) must call this before trusting it, the same way [`crate::oven::OvenReceipt::verify_identity`]
+    /// guards a persisted Oven receipt.
     pub fn verify_identity(&self) -> Result<(), BackendSelectionError> {
         if self.schema_version != BACKEND_SELECTION_SCHEMA_VERSION {
             return Err(BackendSelectionError::UnsupportedSelectionSchema {
@@ -538,8 +531,8 @@ impl BackendSelection {
 }
 
 impl BackendExecutionReceipt {
-    /// Recompute this receipt's content identity (and its bound selection's identity) and
-    /// confirm both match their recorded values.
+    /// Recompute this receipt's content identity (and its bound selection's identity) and confirm both match their
+    /// recorded values.
     pub fn verify_identity(&self) -> Result<(), BackendSelectionError> {
         self.selection.verify_identity()?;
         if self.schema_version != BACKEND_SELECTION_SCHEMA_VERSION {
@@ -633,19 +626,18 @@ fn receipt_identity(inputs: ReceiptIdentityInputs<'_>) -> String {
 /// Render a `sha256:`-prefixed hex digest of `content`.
 ///
 /// Delegates to [`crate::oven::digest_bytes`] rather than hashing independently, so
-/// `BackendSelection`/`BackendExecutionReceipt` identities share exactly one hashing
-/// implementation with `OvenReceipt` identities instead of two that could drift apart.
+/// `BackendSelection`/`BackendExecutionReceipt` identities share exactly one hashing implementation with `OvenReceipt`
+/// identities instead of two that could drift apart.
 fn digest_content(content: &str) -> String {
     oven_model::digest::digest_bytes(content.as_bytes())
 }
 
 /// Digest one or more content fragments into a single content-derived identity.
 ///
-/// Exposed for callers that need to turn real source or generated-output text into a
-/// `source_identity` or `output_identity` without duplicating the hashing scheme this module
-/// uses internally. `parts` must be presented in a stable, caller-chosen order (for example,
-/// sorted by module path) so the identity does not depend on incidental iteration order, such as
-/// `HashMap` iteration over multi-file codegen output.
+/// Exposed for callers that need to turn real source or generated-output text into a `source_identity` or
+/// `output_identity` without duplicating the hashing scheme this module uses internally. `parts` must be presented in a
+/// stable, caller-chosen order (for example, sorted by module path) so the identity does not depend on incidental
+/// iteration order, such as `HashMap` iteration over multi-file codegen output.
 #[must_use]
 pub fn digest_output(parts: &[&str]) -> String {
     digest_content(&parts.join("\u{1}"))

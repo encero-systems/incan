@@ -3,12 +3,11 @@
 //! A frontend scan rather than a backend one: the provider decides a project's runtime requirements from it and the
 //! code generator decides emission from it, and neither may depend on the other.
 //!
-//! Activation is primarily import-driven (RFC 022): importing from `std.serde` signals
-//! that serde is required.
+//! Activation is primarily import-driven (RFC 022): importing from `std.serde` signals that serde is required.
 //!
-//! We also check for bare `json_stringify()` calls (legacy builtin that doesn't yet require an import).
-//! Once `json_stringify` is behind `from std.serde.json import json_stringify`, the
-//! builtin fallback here can be removed entirely.
+//! We also check for bare `json_stringify()` calls (legacy builtin that doesn't yet require an import). Once
+//! `json_stringify` is behind `from std.serde.json import json_stringify`, the builtin fallback here can be removed
+//! entirely.
 
 use crate::ast::{Expr, Program};
 use crate::ast_walk::any_expr_in_program;

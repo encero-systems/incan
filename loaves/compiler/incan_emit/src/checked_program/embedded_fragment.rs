@@ -30,11 +30,11 @@ fn known_library_index(name: &str) -> LibraryManifestIndex {
     )]))
 }
 
-/// Full parser -> desugar -> typecheck pipeline for one `html:`-block fixture using a hand-built descriptor
-/// map (RFC 081, `#1023`), proving the `vocab_block_body_is_embedded_fragment` bypass this file adds: an
-/// embedded fragment's `VocabBlockStmt` wrapper must reach typecheck as its unwrapped `Expr::Embedded`
-/// directly, never through `runtime.desugar_node` (which would require a registered WASM desugarer that
-/// embedded-fragment descriptors never register).
+/// Full parser -> desugar -> typecheck pipeline for one `html:`-block fixture using a hand-built descriptor map (RFC
+/// 081, `#1023`), proving the `vocab_block_body_is_embedded_fragment` bypass this file adds: an embedded fragment's
+/// `VocabBlockStmt` wrapper must reach typecheck as its unwrapped `Expr::Embedded` directly, never through
+/// `runtime.desugar_node` (which would require a registered WASM desugarer that embedded-fragment descriptors never
+/// register).
 #[test]
 fn embedded_fragment_vocab_block_bypasses_wasm_desugar_and_typechecks() -> Result<(), Box<dyn std::error::Error>> {
     let source = "import pub::webkit\n\ndef render(title: str) -> None:\n    html:\n        <h1>{title}</h1>\n\ndef main() -> None:\n    render(\"Hello\")\n";

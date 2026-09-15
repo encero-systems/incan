@@ -335,8 +335,8 @@ impl TypeChecker {
 
     /// Validate the `?` (try) operator.
     ///
-    /// Ensures the operand is a `Result` and that its error type is compatible with
-    /// the enclosing function's declared error type.
+    /// Ensures the operand is a `Result` and that its error type is compatible with the enclosing function's declared
+    /// error type.
     ///
     /// ## Returns
     ///

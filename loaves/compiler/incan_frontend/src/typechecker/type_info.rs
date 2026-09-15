@@ -303,9 +303,9 @@ pub struct CBindingSymbol {
     pub return_type: CBindingType,
     /// Explicit pointer-to-length contracts admitted for checked typed spans.
     ///
-    /// Each record names a raw checked scalar-pointer parameter and the exact `c.Size` parameter
-    /// that bounds it. This lives with the descriptor so all later stages consume one checked association rather
-    /// than recovering one from argument names or generated Rust.
+    /// Each record names a raw checked scalar-pointer parameter and the exact `c.Size` parameter that bounds it. This
+    /// lives with the descriptor so all later stages consume one checked association rather than recovering one from
+    /// argument names or generated Rust.
     pub buffers: Vec<CBindingBuffer>,
     /// Raw outcomes that establish output-slot state after this call.
     pub outcomes: Vec<CBindingOutcome>,
@@ -893,8 +893,8 @@ pub struct DeclarationArtifacts {
     pub newtype_construction: HashMap<String, NewtypeConstructionInfo>,
     /// Module-local function declarations keyed by source name after annotation resolution.
     ///
-    /// Lowering consumes this instead of re-lowering raw AST annotations so aliases such as
-    /// `type Expr = Union[...]` do not produce a different callable surface from typechecked call sites.
+    /// Lowering consumes this instead of re-lowering raw AST annotations so aliases such as `type Expr = Union[...]`
+    /// do not produce a different callable surface from typechecked call sites.
     pub function_bindings: HashMap<String, FunctionBindingInfo>,
     /// Canonical identity proven for each imported binding, keyed by the local name the import introduced.
     ///
@@ -1278,8 +1278,8 @@ pub struct CallArtifacts {
     /// ## Span stability
     ///
     /// Keys use the same `(start, end)` byte range the typechecker records for the call/`MethodCall` expression and
-    /// that the backend's `AstLowering::lower_expr` receives as `expr_span`
-    /// for those nodes, so lookup stays consistent across phases without holding AST node identities.
+    /// that the backend's `AstLowering::lower_expr` receives as `expr_span` for those nodes, so lookup stays
+    /// consistent across phases without holding AST node identities.
     pub call_site_monomorph_type_args: HashMap<(usize, usize), Vec<ResolvedType>>,
     /// Checked target facts for compiler-owned `isinstance(value, Target)` calls, keyed by the full call span.
     ///

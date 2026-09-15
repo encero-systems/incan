@@ -7,8 +7,8 @@
 //!
 //! ## Negative index handling
 //!
-//! Python-style negative indices are converted to `len() - offset` at emit time.
-//! This logic is shared across index expressions, lvalue emission, and assignment targets.
+//! Python-style negative indices are converted to `len() - offset` at emit time. This logic is shared across index
+//! expressions, lvalue emission, and assignment targets.
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -19,9 +19,8 @@ use incan_ir::types::IrType;
 
 /// Normalize dictionary index probes to the borrow shape expected by runtime lookup helpers.
 ///
-/// `Dict[str, V]` should accept borrowed string probes (`"x"`, `&str`, `String`) without forcing owned
-/// `String` materialization at every `dict[key]` read site. Non-string dictionaries keep the ordinary `&key` lookup
-/// shape.
+/// `Dict[str, V]` should accept borrowed string probes (`"x"`, `&str`, `String`) without forcing owned `String`
+/// materialization at every `dict[key]` read site. Non-string dictionaries keep the ordinary `&key` lookup shape.
 fn emit_dict_lookup_index_key(object: &TypedExpr, index: &TypedExpr, emitted: TokenStream) -> TokenStream {
     match &object.ty {
         IrType::Dict(key_ty, _)
@@ -369,8 +368,8 @@ impl<'a> IrEmitter<'a> {
 
     /// Helper: emit an index expression with negative-index handling.
     ///
-    /// Converts Python-style negative indices to `len() - offset`.
-    /// This helper is used by both `emit_index_expr` and lvalue emission.
+    /// Converts Python-style negative indices to `len() - offset`. This helper is used by both `emit_index_expr` and
+    /// lvalue emission.
     pub(in super::super) fn emit_index_with_negative_handling(
         &self,
         _object: &TypedExpr,

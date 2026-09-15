@@ -320,12 +320,12 @@ pub(super) fn lower_checked_negative_literal(lit: &ast::Literal, ty: &IncanType)
 }
 /// Canonical base name of the checked range-value type, as the typechecker spells it (`Range[int]`).
 ///
-/// `TypeChecker::check_range_expr` (`src/frontend/typechecker/check_expr/control_flow.rs`) produces this spelling,
-/// but a type spelling is not evidence of a Body-IR aggregate layout: parameters, returns, and user declarations
-/// can cross the frontend boundary with the same generic base. [`BodyBuilder::lower_for`] therefore combines this
-/// helper with a local provenance check before reading [`bir::AggregateKind::Range`] fields. The `range()` builtin
-/// is deliberately *not* this type: it resolves to a plain `Named("Range")` iterator
-/// (`src/frontend/symbols.rs`) and keeps its existing iteration path.
+/// `TypeChecker::check_range_expr` (`src/frontend/typechecker/check_expr/control_flow.rs`) produces this spelling, but
+/// a type spelling is not evidence of a Body-IR aggregate layout: parameters, returns, and user declarations can cross
+/// the frontend boundary with the same generic base. [`BodyBuilder::lower_for`] therefore combines this helper with a
+/// local provenance check before reading [`bir::AggregateKind::Range`] fields. The `range()` builtin is deliberately
+/// *not* this type: it resolves to a plain `Named("Range")` iterator (`src/frontend/symbols.rs`) and keeps its existing
+/// iteration path.
 pub(super) const RANGE_TYPE_BASE: &str = incan_core::lang::surface::types::RANGE_TYPE_NAME;
 /// The per-iteration increment of every range the surface can spell.
 ///

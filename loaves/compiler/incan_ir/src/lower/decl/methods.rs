@@ -283,8 +283,8 @@ impl AstLowering {
         format!("__incan_decorated_{}_{}", owner.to_lowercase(), method)
     }
 
-    /// Build the bottom-up decorator application expression for an instance method.
-    /// Trait type-parameter names from either local AST declarations or typechecker metadata.
+    /// Build the bottom-up decorator application expression for an instance method. Trait type-parameter names from
+    /// either local AST declarations or typechecker metadata.
     fn trait_type_param_names(&self, trait_name: &str) -> Option<Vec<String>> {
         if let Some(decl) = self.trait_decls.get(trait_name) {
             return Some(decl.type_params.iter().map(|tp| tp.name.clone()).collect());

@@ -1,7 +1,6 @@
 //! Typed Intermediate Representation (IR)
 //!
-//! This module defines a typed IR that sits between the Incan AST and Rust code
-//! generation. The IR is:
+//! This module defines a typed IR that sits between the Incan AST and Rust code generation. The IR is:
 //!
 //! - **Typed**: Every expression carries its resolved type
 //! - **Ownership-aware**: Tracks borrow, move, and copy semantics

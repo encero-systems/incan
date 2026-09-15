@@ -84,9 +84,9 @@ pub(in crate::typechecker) enum TupleShape {
 
 /// Classify a value type for destructuring.
 ///
-/// A tuple arrives in two spellings: a tuple *literal* infers [`ResolvedType::Tuple`], while a written
-/// `tuple[A, B]` annotation resolves through the collection-type registry as a [`ResolvedType::Generic`] named
-/// `Tuple`. Both are destructurable and both must be recognised here.
+/// A tuple arrives in two spellings: a tuple *literal* infers [`ResolvedType::Tuple`], while a written `tuple[A, B]`
+/// annotation resolves through the collection-type registry as a [`ResolvedType::Generic`] named `Tuple`. Both are
+/// destructurable and both must be recognised here.
 ///
 /// A bare type variable is deliberately [`TupleShape::NotTuple`]. It is not "not yet known" — it is known to be
 /// underdetermined, and `T` can be instantiated as `int`. Incan's bounds are trait-based, so no caller can promise
@@ -151,9 +151,8 @@ impl TypeChecker {
 
     /// Validate a statement and its subexpressions.
     ///
-    /// Handles assignments (including mutability checks), control flow (`if`, `while`, `for`),
-    /// returns, and expression statements. Delegates expression validation to
-    /// [`check_expr`](Self::check_expr).
+    /// Handles assignments (including mutability checks), control flow (`if`, `while`, `for`), returns, and expression
+    /// statements. Delegates expression validation to [`check_expr`](Self::check_expr).
     pub fn check_statement(&mut self, stmt: &Spanned<Statement>) {
         match &stmt.node {
             Statement::Assignment(assign) => self.check_assignment(assign, stmt.span),
@@ -812,9 +811,9 @@ impl TypeChecker {
 
     /// Whether the binding currently selected by lexical lookup is the collected module `const`.
     ///
-    /// `const_decls` is keyed by spelling for constant evaluation, so consulting it alone mistakes an inner
-    /// `mut NAME` for the outer `const NAME`. Pairing it with the active symbol's declaration span preserves normal
-    /// lexical shadowing while retaining the dedicated const-reassignment diagnostic for the const itself.
+    /// `const_decls` is keyed by spelling for constant evaluation, so consulting it alone mistakes an inner `mut NAME`
+    /// for the outer `const NAME`. Pairing it with the active symbol's declaration span preserves normal lexical
+    /// shadowing while retaining the dedicated const-reassignment diagnostic for the const itself.
     fn active_binding_is_const(&self, name: &str) -> bool {
         let Some((_, const_span)) = self.const_decls.get(name) else {
             return false;

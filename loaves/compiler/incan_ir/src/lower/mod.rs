@@ -1,7 +1,6 @@
 //! AST to IR lowering pass.
 //!
-//! This module converts the Incan frontend AST to the typed IR representation.
-//! The lowering pass:
+//! This module converts the Incan frontend AST to the typed IR representation. The lowering pass:
 //!
 //! 1. Resolves types from AST type annotations
 //! 2. Determines ownership/borrowing semantics
@@ -168,8 +167,8 @@ pub struct AstLowering {
     /// Production lowering consumes typechecker-approved plans. Direct AST-lowering tests may use the conservative
     /// fallback documented by `fallback_newtype_construction_plan`.
     pub newtype_construction: HashMap<String, super::IrNewtypeConstructionPlan>,
-    /// When lowering methods inside an impl block, this tracks the current target type name.
-    /// Used to avoid rewriting `T(x)` inside `impl T` bodies (e.g. inside `T.from_underlying`).
+    /// When lowering methods inside an impl block, this tracks the current target type name. Used to avoid rewriting
+    /// `T(x)` inside `impl T` bodies (e.g. inside `T.from_underlying`).
     pub current_impl_type: Option<String>,
     /// Current classmethod constructor target exposed by source `cls(...)` calls.
     pub current_classmethod_constructor: Option<String>,
@@ -819,9 +818,9 @@ impl AstLowering {
 
     /// Build forwarding arguments for a wrapper whose IR parameters already encode rest-parameter containers.
     ///
-    /// An owned mutable Rust handle represents the outer Rust value by value. A generated wrapper
-    /// forwards it once, so reading it through Incan's ordinary value convention would introduce
-    /// an invalid clone for non-cloneable payloads such as `Vec<(&mut T, &mut U)>`.
+    /// An owned mutable Rust handle represents the outer Rust value by value. A generated wrapper forwards it once, so
+    /// reading it through Incan's ordinary value convention would introduce an invalid clone for non-cloneable
+    /// payloads such as `Vec<(&mut T, &mut U)>`.
     fn forwarding_args_from_params(params: &[FunctionParam]) -> Vec<IrCallArg> {
         params
             .iter()
@@ -1817,8 +1816,8 @@ impl AstLowering {
 
     /// RFC 021: Resolve a field name through alias mapping.
     ///
-    /// If `field_name` is an alias for a field on `struct_name`, returns the canonical field name.
-    /// Otherwise returns the original `field_name`.
+    /// If `field_name` is an alias for a field on `struct_name`, returns the canonical field name. Otherwise returns
+    /// the original `field_name`.
     ///
     /// This is used to translate alias-based field references in:
     /// - Constructor args: `Account(type="x")` → uses canonical `type_`
@@ -1888,8 +1887,8 @@ impl AstLowering {
 
     /// RFC 021: Register imported struct aliases that map to known model names.
     ///
-    /// This enables alias-aware lowering when a module imports a model under an alias:
-    /// `from db.schema import Account as A` should resolve `A(type=...)` and `a.type`.
+    /// This enables alias-aware lowering when a module imports a model under an alias: `from db.schema import Account
+    /// as A` should resolve `A(type=...)` and `a.type`.
     pub fn register_imported_struct_aliases(&mut self, program: &ast::Program) {
         for decl in &program.declarations {
             let ast::Declaration::Import(import) = &decl.node else {
@@ -1995,8 +1994,8 @@ impl AstLowering {
     ///
     /// # Errors
     ///
-    /// Returns `LoweringErrors` containing all errors encountered during lowering.
-    /// This allows callers to display multiple errors to the user at once.
+    /// Returns `LoweringErrors` containing all errors encountered during lowering. This allows callers to display
+    /// multiple errors to the user at once.
     #[tracing::instrument(skip_all, fields(decl_count = program.declarations.len()))]
     pub fn lower_program(&mut self, program: &ast::Program) -> Result<IrProgram, LoweringErrors> {
         let mut ir_program = IrProgram::new();

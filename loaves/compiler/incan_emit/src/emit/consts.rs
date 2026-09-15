@@ -182,9 +182,8 @@ impl<'a> IrEmitter<'a> {
 
     /// RFC 008 const expression shape check (defensive backend guard).
     ///
-    /// Frontend const-eval should already reject non-const expressions, but this
-    /// backend guard prevents emitting invalid consts when typechecker info is
-    /// missing and lowering falls back to heuristic typing.
+    /// Frontend const-eval should already reject non-const expressions, but this backend guard prevents emitting
+    /// invalid consts when typechecker info is missing and lowering falls back to heuristic typing.
     fn validate_const_expr_kind(kind: &IrExprKind) -> Result<(), EmitError> {
         use IrExprKind as K;
 
@@ -356,9 +355,8 @@ impl<'a> IrEmitter<'a> {
 
     /// Try to emit a const-friendly concatenation for `&'static str` additions.
     ///
-    /// Supports cases where both sides are string literals or const `&'static str`
-    /// bindings (recorded during program scan). Emits `concat!(.., ..)` which
-    /// is valid in const contexts.
+    /// Supports cases where both sides are string literals or const `&'static str` bindings (recorded during program
+    /// scan). Emits `concat!(.., ..)` which is valid in const contexts.
     pub fn try_emit_static_str_add(
         &self,
         left: &TypedExpr,

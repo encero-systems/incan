@@ -1,7 +1,7 @@
 //! Check basic expressions (identifiers, literals, and `self`).
 //!
-//! These helpers implement the low-level building blocks used throughout expression checking:
-//! name resolution against the [`SymbolTable`], literal typing, and resolving `self` inside methods.
+//! These helpers implement the low-level building blocks used throughout expression checking: name resolution against
+//! the [`SymbolTable`], literal typing, and resolving `self` inside methods.
 
 use crate::ast::*;
 use crate::diagnostics::{CompileError, errors};

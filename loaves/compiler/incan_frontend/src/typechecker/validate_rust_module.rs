@@ -19,8 +19,8 @@ use super::collect::decorators::resolve_decorator_path;
 
 /// Regex-style validation of a Rust module path.
 ///
-/// A valid path consists of one or more Rust identifiers separated by `::`.
-/// Each segment must match `[a-zA-Z_][a-zA-Z0-9_]*`.
+/// A valid path consists of one or more Rust identifiers separated by `::`. Each segment must match
+/// `[a-zA-Z_][a-zA-Z0-9_]*`.
 fn is_valid_rust_module_path(path: &str) -> bool {
     if path.is_empty() {
         return false;

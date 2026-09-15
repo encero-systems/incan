@@ -1,7 +1,7 @@
 //! EmitService: structured façade over IR emission
 //!
-//! This module provides typed emitters for expressions, statements, and declarations.
-//! It currently delegates to `IrEmitter` to preserve behavior.
+//! This module provides typed emitters for expressions, statements, and declarations. It currently delegates to
+//! `IrEmitter` to preserve behavior.
 
 use crate::IrEmitter;
 use crate::emit_service::builtins::BuiltinHandlers;
