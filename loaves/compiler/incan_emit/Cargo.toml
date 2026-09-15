@@ -26,7 +26,6 @@ incan_core = { path = "../../../crates/incan_core" }
 incan_frontend = { path = "../incan_frontend", default-features = false }
 incan_ir = { path = "../incan_ir", default-features = false }
 incan_semantics_core = { path = "../../../crates/incan_semantics_core" }
-incan_stdlib = { path = "../../../crates/incan_stdlib" }
 incan_syntax = { path = "../../../crates/incan_syntax" }
 incan_vocab = { path = "../../../crates/incan_vocab" }
 oven_model = { path = "../../oven/oven_model" }
@@ -45,5 +44,8 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 incan_frontend = { path = "../incan_frontend", default-features = false, features = ["test_support"] }
+# The runtime crate the emitted code links; the emitter only names it in generated tokens, and links it for the
+# parity tests alone, so the compiler ring never depends on the runtime it generates for.
+incan_stdlib = { path = "../../../crates/incan_stdlib" }
 rust_inspect = { path = "../../../crates/rust_inspect", default-features = false, features = ["test_fixtures"] }
 tempfile = "3"
