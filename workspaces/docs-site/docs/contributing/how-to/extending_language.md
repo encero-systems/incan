@@ -4,7 +4,7 @@ This document is for **contributors** who want to add new language features.
 
 Incan is implemented as a **multi-stage compiler**:
 
-- Frontend: Lexer → Parser → AST → Typechecker (`typechecker/`)
+- Frontend: Lexer → Parser → AST → Typechecker (`loaves/compiler/incan_frontend/src/typechecker/`)
 - Backend: Lowering (AST → IR) → Emitter (IR → Rust)
 
 That separation is intentional (clarity, correctness, debuggability), but it means that adding *new syntax* typically touches multiple stages.
@@ -26,17 +26,18 @@ That separation is intentional (clarity, correctness, debuggability), but it mea
 
 ## Where things live (crates and modules)
 
-Incan’s “language surface” spans a small number of key crates/modules:
+Incan’s “language surface” spans a small number of key crates and modules:
 
 |     Crate/Module      |                                        Purpose                                         |
 | --------------------- | -------------------------------------------------------------------------------------- |
-| `crates/incan_syntax` | Lexer/parser/AST/diagnostics (shared by compiler, formatter, and LSP to prevent drift) |
+| `loaves/kernel/incan_syntax` | Lexer/parser/AST/diagnostics (shared by compiler, formatter, and LSP to prevent drift) |
 | `crates/incan_core`   | Semantic registries + pure helpers shared across the ecosystem (should not drift)      |
 | `crates/incan_stdlib` | Runtime support for generated programs (preferred home for “just a function” behavior) |
 | `crates/incan_derive` | Derives used by generated Rust programs (runtime-side)                                 |
-| `src/frontend`        | Module resolution + typechecker (turns syntax into a typed program)                    |
-| `src/backend`         | Lowering + IR + emission (turns typed program into Rust)                               |
-| `src/format/`         | Source formatter (`incan fmt`)                                                         |
+| `loaves/compiler/incan_frontend/src`        | Module resolution + typechecker (turns syntax into a typed program)                    |
+| `loaves/compiler/incan_ir` | Typed IR and lowering from the checked program. |
+| `loaves/compiler/incan_emit` | Rust emission, ownership conversions and codegen orchestration. |
+| `loaves/compiler/incan_format/src/`         | Source formatter (`incan fmt`)                                                         |
 | `src/lsp/`            | Language server (reuses frontend to provide IDE diagnostics)                           |
 
 When you’re unsure where to implement something, start by deciding which crate owns the responsibility.
@@ -96,20 +97,20 @@ Incan already has enum-dispatched builtins in IR (`BuiltinFn`) and emission logi
 
 **End-to-end checklist:**
 
-- **Frontend symbol table**: add the builtin name and signature so it typechecks
-    - `src/frontend/symbols.rs` → `SymbolTable::add_builtins()`
+- **Builtin registry and frontend symbol table**: register the spelling and `BuiltinFnId` in `crates/incan_core/src/lang/builtins.rs`, then add the signature and canonical identity so it typechecks
+    - `loaves/compiler/incan_frontend/src/symbols.rs` → `SymbolTable::add_builtins()`
 - **IR builtin enum**: add a new variant and name mapping
-    - `src/backend/ir/expr.rs` → `enum BuiltinFn` + `BuiltinFn::from_name()`
+    - `loaves/compiler/incan_ir/src/expr.rs` → `enum BuiltinFn` + `BuiltinFn::from_name()`
 - **Lowering**: ensure calls to that name lower to `IrExprKind::BuiltinCall`
-    - `src/backend/ir/lower/expr.rs` uses `BuiltinFn::from_name(name)` for identifiers
+    - `loaves/compiler/incan_ir/src/lower/expr/calls.rs` handles calls using checked call-site facts and `BuiltinFn::from_name()`; preserve builtin identity through aliases and shadowing.
 - **Emission**: emit the Rust code for the new builtin
-    - `src/backend/ir/emit/expressions/builtins.rs` → `emit_builtin_call()`
+    - `loaves/compiler/incan_emit/src/emit/expressions/builtins.rs` → `emit_builtin_call()`
 - **Docs/tests**: add/adjust as needed
 
 This path is often **much cheaper** than adding new syntax, while still letting you control the generated Rust.
 
 <!-- markdownlint-disable MD033 -->
-### <small>*A.2*: </small> Compiler builtin method (special method lowering/emission)
+### <small>*A.3*: </small> Compiler builtin method (special method lowering/emission)
 <!-- markdownlint-enable MD033 -->
 
 Use this when you want to add a method on existing types (e.g. `list.some_method()`) that needs special Rust emission.
@@ -119,11 +120,11 @@ Incan has enum-dispatched methods in IR (`MethodKind`) and emission logic in `em
 **End-to-end checklist:**
 
 - **IR method enum**: add a variant to the appropriate method family and classify it for supported receiver types
-    - `src/backend/ir/expr.rs` → `enum MethodKind` + `MethodKind::for_receiver()`
+    - `loaves/compiler/incan_ir/src/expr.rs` → `enum MethodKind` + `MethodKind::for_receiver()`
 - **Lowering**: receiver-aware classification for builtin-family receivers
-    - `src/backend/ir/lower/expr.rs` calls `MethodKind::for_receiver(&receiver.ty, name)` for method calls
+    - `loaves/compiler/incan_ir/src/lower/expr/mod.rs` calls `MethodKind::for_receiver(&receiver.ty, name)` for method calls
 - **Emission**: emit the Rust code for the new method
-    - `src/backend/ir/emit/expressions/methods.rs` → `emit_known_method_call()`
+    - `loaves/compiler/incan_emit/src/emit/expressions/methods.rs` → `emit_known_method_call()`
 - **Docs/tests**: add/adjust as needed
 
 Unknown methods pass through as regular Rust method calls, so you don't break Rust interop by adding known methods.
@@ -138,7 +139,7 @@ Use this only when the feature is genuinely syntactic/control-flow.
 
 **End-to-end checklist (typical):**
 
-**Lexer**: `crates/incan_syntax/src/lexer/*`
+**Lexer**: `loaves/kernel/incan_syntax/src/lexer/*`
 
 - Add a `KeywordId` **and a `KEYWORDS` entry** (canonical spelling/metadata) in `crates/incan_core/src/lang/keywords.rs`
 - Ensure tokenization emits `TokenKind::Keyword(KeywordId::YourKeyword)`
@@ -149,39 +150,39 @@ Use this only when the feature is genuinely syntactic/control-flow.
 
     - Add it to `crates/incan_core/src/lang/operators.rs` (precedence/fixity source of truth)
     - Add a corresponding `KeywordId` + `KEYWORDS` entry in `crates/incan_core/src/lang/keywords.rs` (so the lexer will still lex it as a keyword)
-    - Update expression parsing in `crates/incan_syntax/src/parser/expr.rs` to place it at the right precedence level
+    - Update expression parsing in `loaves/kernel/incan_syntax/src/parser/expr.rs` to place it at the right precedence level
 
-**Parser**: `crates/incan_syntax/src/parser/*`
+**Parser**: `loaves/kernel/incan_syntax/src/parser/*`
 
 - Parse the syntax and build a new AST node (usually an `Expr` or `Statement` variant)
 
-**AST**: `crates/incan_syntax/src/ast.rs`
+**AST**: `loaves/kernel/incan_syntax/src/ast/mod.rs`
 
 - Add the new `Expr::<YourNode>` or `Statement::<YourNode>` variant
 
-**Formatter**: `src/format/formatter.rs`
+**Formatter**: `loaves/compiler/incan_format/src/formatter/mod.rs`
 
 - Teach the formatter how to print the new node
 
-**Typechecker**:`src/frontend/typechecker/`
+**Typechecker**:`loaves/compiler/incan_frontend/src/typechecker/`
 
 - `check_decl.rs` – add type-level rules (models, classes, traits)
 - `check_stmt.rs` – add statement-level rules (assignments, control flow)
 - `check_expr/*.rs` – add expression-level rules (calls, operators, match)
 
-**(Optional) Scanners**: `src/backend/ir/scanners.rs`
+**(Optional) Scanners**: `loaves/compiler/incan_ir/src/scanners/mod.rs` (backend feature usage) and `loaves/kernel/incan_syntax/src/scanners/` (shared syntax scans)
 
 - Ensure feature detection traverses the new node if relevant
 
-**Lowering (AST → IR)**: `src/backend/ir/lower/*`
+**Lowering (AST → IR)**: `loaves/compiler/incan_ir/src/lower/*`
 
 - Lower the new AST node into an IR representation
 
-**IR (if needed)**: `src/backend/ir/expr.rs` / `stmt.rs` / `decl.rs`
+**IR (if needed)**: `expr.rs`, `stmt.rs` and `decl.rs` in `loaves/compiler/incan_ir/src/`
 
 - Add a new `IrExprKind`/`IrStmtKind` variant if the feature is not expressible via existing IR
 
-**Emitter (IR → Rust)**: `src/backend/ir/emit/**/*.rs`
+**Emitter (IR → Rust)**: `loaves/compiler/incan_emit/src/emit/**/*.rs`
 
 - Emit correct Rust for the new IR node
 
@@ -232,7 +233,7 @@ Action descriptors are small enums (e.g., `SurfaceStmtLoweringAction::AssertCall
 - Add a `KeywordId` variant.
 - Register it with `info_soft()`, specifying the activating stdlib namespace and the `KeywordSurfaceKind` (`StatementKeywordArgs`, `PrefixExpression`, or `DeclarationModifier`).
 
-**2. Semantics pack** (`crates/incan_semantics_stdlib/src/lib.rs`):
+**2. Semantics pack** (`loaves/compiler/incan_semantics_stdlib/src/lib.rs`):
 
 - Implement the **parser routing** method (`statement_payload_for_soft_keyword`, `expression_payload_for_soft_keyword`, or `modifier_payload_for_soft_keyword`).
 - Implement the **typechecker action** method (`typecheck_surface_stmt_action` or `typecheck_surface_expr_action`), returning an existing action descriptor if one fits.
@@ -241,13 +242,13 @@ Action descriptors are small enums (e.g., `SurfaceStmtLoweringAction::AssertCall
 - If the keyword desugars to a stdlib call, implement `assert_call_target()` (or the equivalent for your feature) returning a `SurfaceCallTarget` with the canonical callee path.
 - Gate the handler behind the appropriate Cargo feature (`std_testing`, `std_async`, etc.).
 
-**3. Parser**: No per-keyword code needed. The generic helpers — `current_surface_keyword()` and `match_surface_keyword()` in `crates/incan_syntax/src/parser/helpers.rs`, and `try_surface_keyword_statement()` in `crates/incan_syntax/src/parser/stmts.rs` — automatically pick up any soft keyword whose descriptor has a matching `KeywordSurfaceKind`.
+**3. Parser**: No per-keyword code needed. The generic helpers — `current_surface_keyword()` and `match_surface_keyword()` in `loaves/kernel/incan_syntax/src/parser/helpers.rs`, and `try_surface_keyword_statement()` in `loaves/kernel/incan_syntax/src/parser/stmts.rs` — automatically pick up any soft keyword whose descriptor has a matching `KeywordSurfaceKind`.
 
 **4. Typechecker**: No per-keyword code needed if you returned an existing action descriptor in step 2. `check_surface_stmt()` and `check_surface_expr()` query the registry and dispatch on the action.
 
 **5. Lowering**: No per-keyword code needed if you returned an existing action descriptor in step 2. `lower_surface_statement()` and the `Expr::Surface` arm of `lower_expr()` query the registry and dispatch on the action.
 
-**6. Formatter** (`src/format/formatter/`):
+**6. Formatter** (`loaves/compiler/incan_format/src/formatter/`):
 
 - Handle the new `Statement::Surface` or `Expr::Surface` variant (usually a one-liner using `keywords::as_str()`).
 
@@ -259,7 +260,7 @@ Action descriptors are small enums (e.g., `SurfaceStmtLoweringAction::AssertCall
 !!! note "When you need a new action pattern"
     If no existing action descriptor fits your keyword's behavior, you'll need to:
 
-    1. Add a new variant to the relevant action enum in `crates/incan_semantics_core/src/lib.rs` (e.g., `SurfaceStmtLoweringAction::YourPattern`).
+    1. Add a new variant to the relevant action enum in `loaves/kernel/incan_semantics_core/src/lib.rs` (e.g., `SurfaceStmtLoweringAction::YourPattern`).
     2. Add a handler arm in the corresponding compiler module (`lower_surface_statement()`, `check_surface_stmt()`, etc.).
 
     This is deliberately rare — action descriptors represent *compiler behavior patterns*, not individual keywords. You might add many keywords before needing a new pattern.

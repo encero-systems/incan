@@ -223,17 +223,19 @@ Source → Lexer → Parser/AST → Typechecker → Lowering (AST→IR) → Emis
 
 Key directories:
 
-- `loaves/kernel/incan_syntax/src/parser/` — Parser and AST definitions
-- `src/frontend/typechecker/` — Type checking and semantic analysis
-- `src/backend/ir/lower/` — AST to IR lowering
-- `src/backend/ir/emit/` — IR to Rust code emission
+- `loaves/kernel/incan_syntax/src/parser/` — Parsing; syntax definitions are in `loaves/kernel/incan_syntax/src/ast/`
+- `loaves/compiler/incan_frontend/src/typechecker/` — Type checking and semantic analysis
+- `loaves/compiler/incan_ir/src/lower/` — AST to IR lowering
+- `loaves/compiler/incan_emit/src/emit/` — IR to Rust code emission
 
 ## Code Locations Reference
 
+The parser column is relative to `loaves/kernel/incan_syntax/src/`; typechecker entries are relative to `loaves/compiler/incan_frontend/src/typechecker/`; lowering entries are relative to `loaves/compiler/incan_ir/src/`; emission entries are relative to `loaves/compiler/incan_emit/src/`. Fully qualified paths override those bases.
+
 | Feature          | Parser                                                 | Typechecker                                                         | Lowering        | Emission        |
 | ---------------- | ------------------------------------------------------ | ------------------------------------------------------------------- | --------------- | --------------- |
-| Field metadata   | `parser/decl.rs`                                       | `check_decl.rs`                                                     | `lower/decl.rs` | `emit/decls.rs` |
-| Alias resolution | -                                                      | `check_expr/access.rs`, `calls.rs`, `match_.rs`                     | `lower/expr.rs` | -               |
+| Field metadata   | `parser/decl/`                                       | `check_decl.rs`                                                     | `lower/decl/` | `emit/decls/` |
+| Alias resolution | -                                                      | `check_expr/access.rs`, `check_expr/calls.rs`, `check_expr/match_.rs`                     | `lower/expr/` | -               |
 | Soft keywords    | `parser/core.rs`, `parser/helpers.rs`, `parser/decl/*` | `collect/stdlib_imports.rs`                                         | -               | -               |
 | Stdlib registry  | -                                                      | `incan_core::lang::stdlib` (`crates/incan_core/src/lang/stdlib.rs`) | -               | -               |
 | Diagnostics      | -                                                      | `diagnostics/catalog/errors/*` in `loaves/kernel/incan_syntax/src/`        | -               | -               |
