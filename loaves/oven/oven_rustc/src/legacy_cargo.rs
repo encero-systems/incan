@@ -3296,7 +3296,9 @@ fn run_legacy_cargo_invocation(
             }
         }
         OvenLegacyCargoInvocationTarget::CompilerCli => {
-            command.args(["--bin", "incan"]);
+            // The compiler command line is a workspace member of its own; the binary name is the fact this
+            // selection knows, never the package that carries it, so the whole workspace is searched for it.
+            command.args(["--workspace", "--bin", "incan"]);
         }
         OvenLegacyCargoInvocationTarget::WorkspaceTests => {
             command.args(["--all", "--no-run"]);

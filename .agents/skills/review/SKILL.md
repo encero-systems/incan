@@ -238,7 +238,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 
 - [ ] **New functionality has tests.** For typechecker changes: unit tests in the `#[cfg(test)]` block. For codegen changes: a fixture in `loaves/compiler/incan_emit/tests/codegen_snapshots/` and a corresponding snapshot.
 - [ ] **Snapshots updated** if codegen changed. Command: `INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests`.
-- [ ] **Integration tests** (`tests/integration_tests.rs`) updated if the change affects end-to-end behavior.
+- [ ] **Integration tests** (`loaves/toolchain/incan-cli/tests/integration_tests.rs`) updated if the change affects end-to-end behavior.
 - [ ] Both typechecker-level tests (semantic validation) AND codegen snapshot tests (end-to-end) exist for any pipeline feature.
 - [ ] **Compiler/runtime parity risks are tested** — when behavior exists in both compile-time checks and runtime helpers, add or verify parity coverage for the edge case.
 - [ ] **Tooling parity is preserved** — syntax, diagnostics, formatter, CLI, and LSP behavior stay aligned when shared frontend behavior changes.

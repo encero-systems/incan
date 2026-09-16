@@ -40,7 +40,8 @@ pub struct OvenCompilerSuiteTargetCapabilities {
 impl OvenCompilerSuiteTargetCapabilities {
     /// Resolve the narrow, package-qualified capability registry for one receipt-bound root.
     pub fn for_target(package_name: &str, target_kind: &str, source_relative_path: &str) -> Self {
-        let generated_rust_closure = source_relative_path != "tests/toolchain_installer_tests.rs";
+        let generated_rust_closure =
+            source_relative_path != "loaves/toolchain/incan-cli/tests/toolchain_installer_tests.rs";
         let cargo_fixture = matches!(
             (package_name, target_kind, source_relative_path),
             ("incan", "lib", "src/lib.rs")
@@ -63,22 +64,55 @@ impl OvenCompilerSuiteTargetCapabilities {
         );
         let explicit_bake_cargo = matches!(
             (package_name, target_kind, source_relative_path),
-            ("incan", "test", "tests/cli_decorator_and_partial_tests.rs")
-                | ("incan", "test", "tests/cli_language_regression_tests.rs")
-                | ("incan", "test", "tests/cli_provider_boundary_tests.rs")
-                | ("incan", "test", "tests/cli_rust_interop_tests.rs")
-                | ("incan", "test", "tests/cli_surface_tests.rs")
-                | ("incan", "test", "tests/cli_workspace_and_lock_tests.rs")
-                | ("incan", "test", "tests/integration_tests.rs")
-                | ("incan", "test", "tests/canonical_item_imports.rs")
-                | ("incan", "test", "tests/package_boundary_facade_tests.rs")
-                | ("incan", "test", "tests/package_executable_representation.rs")
-                | (
-                    "incan_driver",
-                    "test",
-                    "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs"
-                )
-                | ("incan", "test", "tests/rfc031_pub_import_integration_tests.rs")
+            (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/cli_decorator_and_partial_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/cli_provider_boundary_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/cli_surface_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/cli_workspace_and_lock_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/integration_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/canonical_item_imports.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/package_boundary_facade_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/package_executable_representation.rs"
+            ) | (
+                "incan_driver",
+                "test",
+                "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/rfc031_pub_import_integration_tests.rs"
+            )
         );
         Self {
             generated_rust_closure,

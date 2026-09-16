@@ -86,7 +86,7 @@ Snapshot content is evidence, not a fix log. Preserve the original finding block
   - ...
 
 ## Findings
-- [ ] warning | design-tension | wrong layer | src/cli/commands/lifecycle.rs:210
+- [ ] warning | design-tension | wrong layer | loaves/toolchain/incan-cli/src/commands/lifecycle.rs:210
   Resolution policy duplicates env semantics that should stay in `loaves/oven/oven_model/src/project_lifecycle/**`.
 
 ## Reviewed Clean Surfaces
@@ -111,7 +111,7 @@ Only write this file when findings are present.
   - ...
 
 ## Findings
-- [ ] warning | design-tension | wrong layer | src/cli/commands/lifecycle.rs:210
+- [ ] warning | design-tension | wrong layer | loaves/toolchain/incan-cli/src/commands/lifecycle.rs:210
   Resolution policy duplicates env semantics that should stay in `loaves/oven/oven_model/src/project_lifecycle/**`.
 
 ## Resolution

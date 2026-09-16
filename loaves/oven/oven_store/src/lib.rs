@@ -830,16 +830,13 @@ pub fn receipt_native_compiler_suite(request: &OvenCompilerSuiteRequest) -> Resu
             "compiler-libtest-root".to_string(),
             digest_generated_source_file(&lib_root)?,
         ),
-        (
-            "compiler-cli-root".to_string(),
-            digest_generated_source_file(&request.project_root.join("src/main.rs"))?,
-        ),
         ("compiler-suite-source-tree".to_string(), compiler_source_tree_digest),
     ]);
-    // A full native-suite plan must authorize each root passed to direct rustc, not just `src/lib.rs`. Source bytes
-    // belong to the exact command receipt, while the reusable build unit above records only inputs that can change
-    // Cargo's target/dependency plan. Editing an existing Rust module therefore reuses the immutable foundation;
-    // adding a new source path or changing a manifest still requires an explicit rebake.
+    // A full native-suite plan must authorize each root passed to direct rustc, not just `src/lib.rs`; the command
+    // line's own `main.rs` is one of these tree records, not a root the receipt names. Source bytes belong to the
+    // exact command receipt, while the reusable build unit above records only inputs that can change Cargo's
+    // target/dependency plan. Editing an existing Rust module therefore reuses the immutable foundation; adding a
+    // new source path or changing a manifest still requires an explicit rebake.
     for (relative_path, digest) in &compiler_source_records {
         if relative_path.ends_with(".rs") {
             supplemental_digests.insert(compiler_suite_source_evidence_key(relative_path), digest.clone());

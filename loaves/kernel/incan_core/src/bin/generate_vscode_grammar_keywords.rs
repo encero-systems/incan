@@ -101,6 +101,29 @@ fn replace_named_pattern_match(contents: &str, pattern_name: &str, regex: &str) 
     Ok(updated)
 }
 
+/// Render one string as a JSON string literal: quotes, backslashes and control characters escaped, everything else
+/// verbatim. The grammar file is JSON, and a regex is mostly backslashes, so this is the one encoder the tool needs
+/// and the kernel crate stays without a JSON dependency for it.
+fn json_string_literal(value: &str) -> String {
+    let mut literal = String::with_capacity(value.len() + 2);
+    literal.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => literal.push_str("\\\""),
+            '\\' => literal.push_str("\\\\"),
+            '\n' => literal.push_str("\\n"),
+            '\r' => literal.push_str("\\r"),
+            '\t' => literal.push_str("\\t"),
+            control if control.is_control() => {
+                literal.push_str(&format!("\\u{:04x}", u32::from(control)));
+            }
+            other => literal.push(other),
+        }
+    }
+    literal.push('"');
+    literal
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,27 +158,4 @@ mod tests {
         assert!(updated.contains(r#""match": "\\b(new|old)\\b","#));
         Ok(())
     }
-}
-
-/// Render one string as a JSON string literal: quotes, backslashes and control characters escaped, everything else
-/// verbatim. The grammar file is JSON, and a regex is mostly backslashes, so this is the one encoder the tool needs
-/// and the kernel crate stays without a JSON dependency for it.
-fn json_string_literal(value: &str) -> String {
-    let mut literal = String::with_capacity(value.len() + 2);
-    literal.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => literal.push_str("\\\""),
-            '\\' => literal.push_str("\\\\"),
-            '\n' => literal.push_str("\\n"),
-            '\r' => literal.push_str("\\r"),
-            '\t' => literal.push_str("\\t"),
-            control if control.is_control() => {
-                literal.push_str(&format!("\\u{:04x}", u32::from(control)));
-            }
-            other => literal.push(other),
-        }
-    }
-    literal.push('"');
-    literal
 }

@@ -335,7 +335,7 @@ The expression emitter is split into focused submodules for maintainability:
 
 **Enum-based dispatch**: Built-in functions and known methods use enum types (`BuiltinFn`, `MethodKind`) instead of string matching. This provides compile-time exhaustiveness checking and makes it easier to add new builtins/methods (see [Extending Incan](../how-to/extending_language.md)).
 
-### CLI (`src/cli/`)
+### CLI (`loaves/toolchain/incan-cli/src/`)
 
 | Module           | Purpose                                   |
 | ---------------- | ----------------------------------------- |
@@ -374,7 +374,7 @@ ast::Type          ──►  IrType               ──►  (syn Type)
 
 ## Entry Points
 
-- **CLI**: `src/main.rs` → `cli::run()`
+- **CLI**: `loaves/toolchain/incan-cli/src/main.rs` → `incan_cli::run()`
 - **Codegen**: `IrCodegen::new()` → `.generate(&ast)`
 - **LSP**: `src/bin/lsp.rs`
 

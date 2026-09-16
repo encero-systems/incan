@@ -57,7 +57,7 @@ cd /path/to/incan
 make build
 ```
 
-On local machines, `make build` builds the compiler and LSP with `cargo build --features lsp`, then links `~/.cargo/bin/incan` to `target/debug/incan` and `~/.cargo/bin/incan-lsp` to `target/debug/incan-lsp`. Keep `~/.cargo/bin` early enough in your `PATH` that both tools resolve there.
+On local machines, `make build` builds the compiler and LSP with `cargo build -p incan-cli -p incan --features incan/lsp`, then links `~/.cargo/bin/incan` to `target/debug/incan` and `~/.cargo/bin/incan-lsp` to `target/debug/incan-lsp`. Keep `~/.cargo/bin` early enough in your `PATH` that both tools resolve there.
 
 If you intentionally want the release binary from a checkout:
 

@@ -237,7 +237,7 @@ default = []
 
 ```bash
 cargo +nightly fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --all --verbose
 cargo audit
 cargo deny check

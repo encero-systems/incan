@@ -14,8 +14,6 @@
 //! That is generated program code, not compiler code.
 
 pub mod backend;
-#[cfg(feature = "cli")]
-pub mod cli;
 pub use incan_frontend::compiler_stack;
 pub use incan_provider::compiled_sdk;
 pub use incan_provider::dependency_resolver;

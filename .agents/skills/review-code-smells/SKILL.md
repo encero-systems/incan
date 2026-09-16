@@ -62,15 +62,15 @@ orchestrator.
 
 ## Scope
 - assigned files:
-  - src/cli/mod.rs
+  - loaves/toolchain/incan-cli/src/lib.rs
 
 ## Findings
 
-- [ ] warning | maintainability | dead cli surface | src/cli/mod.rs:313
+- [ ] warning | maintainability | dead cli surface | loaves/toolchain/incan-cli/src/lib.rs:313
   `--bin` is exposed publicly but has no effect.
 
 ## Reviewed Clean Surfaces
-- src/cli/commands/init.rs — maintainability reviewed; no findings
+- loaves/toolchain/incan-cli/src/commands/init.rs — maintainability reviewed; no findings
 ```
 
 If there are no findings, say so explicitly.

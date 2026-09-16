@@ -166,7 +166,7 @@ Every worker slice report must identify the worker that produced it, and the can
   status: open
   summary: Manually chopped single-paragraph rustdoc.
 
-- [ ] F2 | error | behavior | env dependency overlays are inspectable but not executable | src/cli/commands/lifecycle.rs:193
+- [ ] F2 | error | behavior | env dependency overlays are inspectable but not executable | loaves/toolchain/incan-cli/src/commands/lifecycle.rs:193
   roles: scope, architecture
   sources:
     - .agents/state/review-report.scope.md

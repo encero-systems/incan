@@ -116,28 +116,28 @@ _incan_link_debug_to_cargo_bin:
 .PHONY: build  ## build - Debug build (compiler + LSP); links ~/.cargo/bin/incan + incan-lsp locally
 build:
 	@echo "\033[1mBuilding (debug)...\033[0m"
-	@cargo build --features lsp
+	@cargo build -p incan-cli -p incan --features incan/lsp
 	@$(MAKE) _incan_link_debug_to_cargo_bin
 
 .PHONY: build-fast  ## build - Debug build (compiler only); links ~/.cargo/bin/incan locally
 build-fast:
 	@echo "\033[1mBuilding compiler only (debug)...\033[0m"
-	@cargo build
+	@cargo build -p incan-cli
 	@$(MAKE) _incan_link_debug_to_cargo_bin
 
 .PHONY: build-quiet
 build-quiet:
-	@cargo build --quiet 2>/dev/null || cargo build --quiet
+	@cargo build -p incan-cli --quiet 2>/dev/null || cargo build -p incan-cli --quiet
 
 .PHONY: release  ## build - Release build (optimized)
 release:
 	@echo "\033[1mBuilding (release)...\033[0m"
-	@cargo build --release
+	@cargo build --release -p incan-cli
 
 .PHONY: install  ## build - Install to ~/.cargo/bin
 install:
 	@echo "\033[1mInstalling incan...\033[0m"
-	@cargo install --path .
+	@cargo install --path loaves/toolchain/incan-cli --bin incan
 	@echo "\033[32m✓ Installed to ~/.cargo/bin/incan\033[0m"
 
 .PHONY: install-hooks  ## build - Point git at the repository's commit hooks
@@ -174,7 +174,7 @@ fmt-check:
 .PHONY: lint  ## quality - Run clippy linter
 lint:
 	@echo "\033[1mRunning clippy...\033[0m"
-	@cargo clippy --all-targets --all-features -- -D warnings
+	@cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 .PHONY: lint-fast  ## quality - Run faster clippy profile (workspace + all targets + all-features)
 lint-fast:
@@ -332,7 +332,7 @@ ci-full: fmt lint udeps
 	@echo "\033[1mRunning tests...\033[0m"
 	@$(MAKE) -s test-oven
 	@echo "\033[1mBuilding release...\033[0m"
-	@cargo build --release --quiet
+	@cargo build --release -p incan-cli --quiet
 	@echo "\033[32m✓ Full CI checks passed\033[0m"
 
 # =============================================================================
@@ -427,7 +427,7 @@ test-prewarm-sdk:
 	@if [ "$(INCAN_TEST_COMPILER_ALREADY_BUILT)" = "1" ]; then \
 		test -x "$(TARGET_DIR)/debug/incan"; \
 	else \
-		$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" cargo build --features lsp; \
+		$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" cargo build -p incan-cli -p incan --features incan/lsp; \
 	fi
 	@$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
 		INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
@@ -450,7 +450,7 @@ shadow-comparison-evidence: test-prewarm-sdk
 		if [ "$(INCAN_TEST_COMPILER_ALREADY_BUILT)" = "1" ]; then \
 			test -x "$(TARGET_DIR)/debug/incan"; \
 		else \
-			$(TEST_ENV) cargo build --bin incan; \
+			$(TEST_ENV) cargo build -p incan-cli --bin incan; \
 		fi; \
 		stage="$(INCAN_SHADOW_STAGE_ROOT)"; \
 		rm -rf -- "$$stage"; \
@@ -524,12 +524,12 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 test-oven-focused:
 	@echo "\033[1mRunning focused Oven and Loaf regression tests...\033[0m"
 	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked -p oven_model -p oven_store -p oven_rustc
-	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked --lib oven::
-	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked --test cli_interop_target_tests \
+	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked -p incan-cli --lib commands::oven::
+	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked -p incan-cli --test cli_interop_target_tests \
 		lock_records_oven_interop_requirements_and_detects_input_drift -- --exact
-	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked --test toolchain_installer_tests \
+	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked -p incan-cli --test toolchain_installer_tests \
 		oven_alpha_benchmark_records_a_verified_cargo_guard_verdict -- --exact
-	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked --test toolchain_installer_tests \
+	@CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked -p incan-cli --test toolchain_installer_tests \
 		compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence -- --exact
 
 .PHONY: test-oven-report-retention
@@ -596,8 +596,8 @@ test-oven-release-smoke: test-prewarm-oven-release-loafs
 .PHONY: test-rust-inspect  ## test - Run focused rust-inspect regression tests
 test-rust-inspect:
 	@echo "\033[1mRunning rust-inspect focused tests...\033[0m"
-	@cargo test --lib --features rust_inspect frontend::typechecker::tests::test_rust_inspect_unavailable_stays_permissive_for_method_calls
-	@cargo test --lib --features rust_inspect frontend::typechecker::tests::test_rusttype_return_coercion_recorded_for_generic_newtype_method_call
+	@cargo test -p incan_frontend --lib --features rust_inspect typechecker::tests::test_rust_inspect_unavailable_stays_permissive_for_method_calls
+	@cargo test -p incan_frontend --lib --features rust_inspect typechecker::tests::test_rusttype_return_coercion_recorded_for_generic_newtype_method_call
 
 .PHONY: generated-rust-audit-gate  ## test - Run deterministic generated Rust audit helper checks
 generated-rust-audit-gate:
@@ -828,7 +828,8 @@ vscode-package:
 .PHONY: toolchain-release-build  ## tool - Build toolchain release binaries (compiler + LSP)
 toolchain-release-build:
 	@echo "\033[1mBuilding toolchain release binaries...\033[0m"
-	@cargo build --locked --release --features lsp --bin incan --bin incan-lsp
+	@cargo build --locked --release -p incan-cli --bin incan
+	@cargo build --locked --release --features lsp --bin incan-lsp
 	@echo "\033[32m✓ toolchain release binaries built\033[0m"
 
 .PHONY: toolchain-release-package  ## tool - Package local toolchain archive (TOOLCHAIN_DIST=/private/tmp/incan-local-test)

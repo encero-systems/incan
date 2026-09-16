@@ -23,7 +23,7 @@ cd /path/to/incan
 make build
 ```
 
-This runs `cargo build --features lsp` and then links `~/.cargo/bin/incan` → `target/debug/incan` and `~/.cargo/bin/incan-lsp` → `target/debug/incan-lsp` when that binary exists. Set `INCAN_SKIP_CARGO_BIN_LINK=1` to skip linking, or rely on CI defaults (linking is off when `CI` is set).
+This runs `cargo build -p incan-cli -p incan --features incan/lsp` and then links `~/.cargo/bin/incan` → `target/debug/incan` and `~/.cargo/bin/incan-lsp` → `target/debug/incan-lsp` when that binary exists. Set `INCAN_SKIP_CARGO_BIN_LINK=1` to skip linking, or rely on CI defaults (linking is off when `CI` is set).
 
 Use this path when you are developing the compiler itself or testing behavior from a checkout. It avoids the common split-brain state where your terminal runs one `incan` binary while VS Code or Cursor keeps launching an older `incan-lsp`.
 

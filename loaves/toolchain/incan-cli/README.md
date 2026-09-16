@@ -2,17 +2,14 @@
 
 Ring: **toolchain**
 
-The `incan` binary: clap surface, terminal rendering, exit codes.
+The `incan` binary: clap surface, terminal rendering, exit codes, the test runner, and the `generate_feature_inventory` tool that renders the CLI's documented feature surface. The library target `incan_cli` exists for those two binaries; nothing else depends on it.
 
-## Moves here from
+## Depends on
 
-- `src/main.rs`
-- `src/cli/ (the command-surface half; logic goes to compiler/incan_driver)`
+`compiler` (every crate, including `incan_oven_facet`), `oven`, `kernel`. It links no standard-library facet: the runtime is the generated program's, not the command line's.
 
-## May depend on
+## Tests
 
-`compiler` (including `incan_oven_facet`), `oven`
+`tests/` holds the roots that exercise the command line as a whole — the `cli_*` surfaces, `integration_tests`, the RFC 031 package roots, the installer tests, the layering and vocabulary guardrails — and the fixtures only they use. Shared fixtures stay under the checkout's `tests/fixtures/`. Run one with `cargo test -p incan-cli --test <root>`; the Oven compiler suite runs them all.
 
 Should be small. If a command body grows, it belongs in the driver.
-
-This directory is a layout skeleton. It holds no code yet; `src/` is a placeholder for the conventional crate root.

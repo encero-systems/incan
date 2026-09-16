@@ -15,6 +15,7 @@ members = [
     "loaves/compiler/incan_provider",
     "loaves/compiler/incan_semantics_stdlib",
     "loaves/compiler/incan_test_support",
+    "loaves/toolchain/incan-cli",
     "loaves/compiler/rust_inspect",
     "loaves/kernel/incan_codegraph",
     "loaves/kernel/incan_core",
@@ -77,6 +78,7 @@ incan_driver = { path = "loaves/compiler/incan_driver", default-features = false
 incan_emit = { path = "loaves/compiler/incan_emit", default-features = false }
 incan_format = { path = "loaves/compiler/incan_format" }
 incan_test_support = { path = "loaves/compiler/incan_test_support" }
+incan-cli = { path = "loaves/toolchain/incan-cli" }
 incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = false }
 incan_ir = { path = "loaves/compiler/incan_ir", default-features = false }
 incan_oven_facet = { path = "loaves/compiler/incan_oven_facet" }
@@ -105,8 +107,7 @@ description.workspace = true
 readme.workspace = true
 
 [features]
-default = ["cli", "std_testing", "std_async", "std_decorators"]
-cli = ["dep:clap", "dep:tracing-subscriber", "rust_inspect", "incan_driver/cli"]
+default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
 lsp = ["dep:tower-lsp", "dep:tokio", "incan_frontend/lsp", "incan_driver/lsp"]
 std_testing = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_testing", "incan_frontend/std_testing", "incan_ir/std_testing", "incan_emit/std_testing", "incan_provider/std_testing", "incan_driver/std_testing"]
 std_async = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_async", "incan_frontend/std_async", "incan_ir/std_async", "incan_emit/std_async", "incan_provider/std_async", "incan_driver/std_async"]
@@ -144,7 +145,6 @@ tokio = { workspace = true, features = ["rt-multi-thread", "io-std", "io-util", 
 serde_json = { workspace = true }
 
 # CLI parsing with typed subcommands
-clap = { version = "4.4", features = ["derive"], optional = true }
 # Already a dev-dependency below. The direct-rustc reuse path publishes a verified copy of a retained output through
 # a uniquely named sibling, so it needs the same crate at runtime under `cli`.
 tempfile = "3"
@@ -158,7 +158,6 @@ proc-macro2 = { workspace = true }
 # Code formatting for generated Rust
 prettyplease = "0.2"
 tracing = { workspace = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 # TOML parsing for loaf.toml manifests (RFC 013/023)
 toml = "0.9"
@@ -190,36 +189,6 @@ wasmtime-wasi = { version = "36.0.14", default-features = false, features = ["pr
 incan_test_support = { workspace = true }
 # Artifact-level `incan-v1` conformance decodes the pinned toolchain's v0 symbols independently of compiler state.
 rustc-demangle = "0.1.27"
-# Unix process-group cleanup for bounded subprocess regression tests.
-libc = "0.2"
-# Runtime crate used by std.io generated-project offline smoke tests.
-byteorder = "1"
-# Runtime crate used by std.uuid generated-project offline smoke tests.
-rand = "0.8"
-# Runtime crate used by supported Rust-interop example smoke tests. The compiler-suite foundation Loaf seals this
-# exact feature closure so normal examples can inspect and link `rust::uuid` without a Cargo fallback.
-uuid = { version = "1", features = ["v4", "serde"] }
-# Runtime crate used by std.regex generated-project offline smoke tests.
-regex = "1"
-# Runtime crates used by std.compression generated-project offline smoke tests.
-flate2 = "1"
-zstd = "0.13"
-bzip2 = "0.6"
-xz2 = "0.1"
-snap = "1"
-# Runtime crate used by std.checksum generated-project offline smoke tests.
-crc32fast = "1"
-# Runtime crates used by std.hash generated-project offline smoke tests.
-blake2 = "0.10"
-blake3 = "1"
-md5_010 = { package = "md-5", version = "0.10" }
-sha1 = "0.10"
-sha3 = "0.10"
-xxhash_rust = { package = "xxhash-rust", version = "0.8", features = ["xxh3", "xxh32", "xxh64"] }
-# Snapshot testing for codegen
-insta = { version = "1.45", features = ["glob"] }
-# Property-based testing
-proptest = "1"
 # Runtime crate for parity tests
 incan_std_core = { workspace = true }
 # Temporary directories for manifest discovery tests
@@ -231,7 +200,6 @@ rust_inspect = { workspace = true, features = ["test_fixtures"] }
 oven_rustc = { workspace = true, features = ["test_support"] }
 oven_store = { workspace = true, features = ["test_support"] }
 tempfile = "3"
-wat = "1"
 
 [package.metadata.cargo-udeps.ignore]
 # `regex` deliberately anchors generated std.regex consumers in Cargo.lock for offline test shards; the Rust test
@@ -256,19 +224,9 @@ incremental = false
 opt-level = 3
 
 [[bin]]
-name = "incan"
-path = "src/main.rs"
-required-features = ["cli"]
-
-[[bin]]
 name = "incan-lsp"
 path = "src/bin/lsp.rs"
 required-features = ["lsp"]
-
-[[bin]]
-name = "generate_feature_inventory"
-path = "src/bin/generate_feature_inventory.rs"
-required-features = ["cli"]
 
 [lib]
 name = "incan"
