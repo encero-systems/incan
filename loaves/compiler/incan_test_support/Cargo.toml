@@ -1,0 +1,28 @@
+[package]
+name = "incan_test_support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The integration-test harness the compiler's roots share: checkout anchors, the compiler subprocess, fixture builders and artifact readers"
+publish = false
+
+[lib]
+name = "incan_test_support"
+path = "src/lib.rs"
+
+[dependencies]
+incan_core = { workspace = true }
+incan_frontend = { workspace = true }
+incan_semantics_core = { workspace = true }
+oven_model = { workspace = true }
+# Unix process-group cleanup for bounded subprocess tests.
+libc = "0.2"
+prettyplease = "0.2"
+proc-macro2 = "1"
+rustc-demangle = "0.1.27"
+serde_json = "1"
+sha2 = "0.10"
+syn = { workspace = true, features = ["printing"] }
+tempfile = "3"
+toml = "0.9"

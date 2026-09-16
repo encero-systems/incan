@@ -70,9 +70,9 @@ Before adding a new broad regression lane, check whether the repo already has a 
 | --- | --- |
 | Stringly semantic checks in compiler code | `tests/vocab_guardrails.rs` and `tests/fixtures/vocab_guardrails/semantic_string_audit.json`. |
 | Import/package/facade identity | `tests/fixtures/boundary_parity/README.md` and its fixture families. |
-| Generated Rust public library artifacts | `tests/generated_rust_artifact_tests.rs`, `tests/generated_rust_callability_artifact_tests.rs`, and `tests/generated_rust_native_consumer_tests.rs`. |
-| Stdlib generated-Rust coverage | `workspaces/docs-site/docs/contributing/reference/generated_rust_stdlib_coverage.md` and `tests/stdlib_generated_rust_snapshot_tests.rs`. |
-| Rust interop call/coercion behavior | Focused `tests/codegen_snapshots/rfc041_*`, `tests/codegen_snapshots/rfc043_*`, and `tests/codegen_snapshots/rust_interop_*` fixtures. |
+| Generated Rust public library artifacts | `loaves/compiler/incan_driver/tests/generated_rust_artifact_tests.rs`, `loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs`, and `loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs`. |
+| Stdlib generated-Rust coverage | `workspaces/docs-site/docs/contributing/reference/generated_rust_stdlib_coverage.md` and `loaves/compiler/incan_emit/tests/stdlib_generated_rust_snapshot_tests.rs`. |
+| Rust interop call/coercion behavior | Focused `loaves/compiler/incan_emit/tests/codegen_snapshots/rfc041_*`, `loaves/compiler/incan_emit/tests/codegen_snapshots/rfc043_*`, and `loaves/compiler/incan_emit/tests/codegen_snapshots/rust_interop_*` fixtures. |
 
 ## Review checklist
 

@@ -146,13 +146,13 @@ We use `insta` for golden snapshot tests:
 
 ```bash
 # Run codegen snapshot tests
-cargo test --test codegen_snapshot_tests
+cargo test -p incan_emit --test codegen_snapshot_tests
 
 # Review and accept changes
 cargo insta review
 ```
 
-Snapshot files are in `tests/snapshots/`.
+Snapshot files are in `loaves/compiler/incan_emit/tests/snapshots/`.
 
 ## Code Style
 
@@ -194,7 +194,7 @@ The stdlib surface now compiles through the normal pipeline under `loaves/stdlib
 
 We use `proptest` for property-based testing of complex invariants.
 
-Property tests are in `tests/property_tests.rs` and verify:
+Property tests are in `loaves/compiler/incan_format/tests/property_tests.rs` and verify:
 
 - Formatting is idempotent
 - Formatting preserves parseability
@@ -203,7 +203,7 @@ Property tests are in `tests/property_tests.rs` and verify:
 Run property tests:
 
 ```bash
-cargo test --test property_tests
+cargo test -p incan_format --test property_tests
 ```
 
 ## Macro Discipline

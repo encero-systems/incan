@@ -9,7 +9,7 @@
 //! This suite does not refactor anything and does not judge the existing reach-ins. It records them, so the set can
 //! only shrink. Removing an entry is the work tracked by #1298; adding one fails here first.
 
-mod support;
+use incan_test_support as support;
 use support::repo_root;
 
 use std::collections::{BTreeMap, BTreeSet};

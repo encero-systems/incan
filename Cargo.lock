@@ -1446,6 +1446,7 @@ dependencies = [
  "incan_semantics_stdlib",
  "incan_std_core",
  "incan_syntax",
+ "incan_test_support",
  "incan_vocab",
  "insta",
  "libc",
@@ -1525,10 +1526,12 @@ dependencies = [
  "incan_oven_facet",
  "incan_provider",
  "incan_semantics_core",
+ "incan_test_support",
  "incan_vocab",
  "oven_model",
  "oven_rustc",
  "oven_store",
+ "proc-macro2",
  "rust_inspect",
  "rustix 1.1.4",
  "semver",
@@ -1536,6 +1539,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "sha2",
+ "syn",
  "tempfile",
  "thiserror 2.0.18",
  "toml",
@@ -1554,7 +1558,9 @@ dependencies = [
  "incan_semantics_core",
  "incan_std_core",
  "incan_syntax",
+ "incan_test_support",
  "incan_vocab",
+ "insta",
  "oven_model",
  "prettyplease",
  "proc-macro2",
@@ -1568,6 +1574,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
+ "wat",
 ]
 
 [[package]]
@@ -1577,7 +1584,9 @@ dependencies = [
  "incan_core",
  "incan_semantics_core",
  "incan_syntax",
+ "incan_test_support",
  "incan_vocab",
+ "proptest",
  "thiserror 2.0.18",
 ]
 
@@ -1590,7 +1599,9 @@ dependencies = [
  "incan_format",
  "incan_semantics_core",
  "incan_semantics_stdlib",
+ "incan_std_core",
  "incan_syntax",
+ "incan_test_support",
  "incan_vocab",
  "oven_model",
  "quote",
@@ -1647,6 +1658,7 @@ dependencies = [
  "incan_core",
  "incan_frontend",
  "incan_semantics_core",
+ "incan_test_support",
  "incan_vocab",
  "oven_model",
  "oven_rustc",
@@ -1735,6 +1747,25 @@ dependencies = [
  "miette",
  "serde",
  "tracing",
+]
+
+[[package]]
+name = "incan_test_support"
+version = "0.6.0-dev.4"
+dependencies = [
+ "incan_core",
+ "incan_frontend",
+ "incan_semantics_core",
+ "libc",
+ "oven_model",
+ "prettyplease",
+ "proc-macro2",
+ "rustc-demangle",
+ "serde_json",
+ "sha2",
+ "syn",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

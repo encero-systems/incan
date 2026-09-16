@@ -47,5 +47,9 @@ incan_frontend = { workspace = true, features = ["test_support"] }
 # The mandatory runtime facet the emitted code links; the emitter only names it in generated tokens, and links it
 # for the parity tests alone, so the compiler ring never depends on the runtime it generates for.
 incan_std_core = { workspace = true }
+incan_test_support = { workspace = true }
+insta = { version = "1.45", features = ["glob"] }
 rust_inspect = { workspace = true, features = ["test_fixtures"] }
 tempfile = "3"
+# The vocab desugarer fixtures are assembled from WebAssembly text at test time.
+wat = "1"

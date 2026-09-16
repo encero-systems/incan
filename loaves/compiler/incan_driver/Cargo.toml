@@ -58,6 +58,10 @@ tracing = { workspace = true }
 incan_emit = { workspace = true, features = ["test_support"] }
 incan_frontend = { workspace = true, features = ["test_support"] }
 incan_provider = { workspace = true, features = ["test_support"] }
+incan_test_support = { workspace = true }
+# The parity corpus reads generated Rust as a token stream to locate projected declarations.
+proc-macro2 = "1"
+syn = { workspace = true, features = ["printing"] }
 oven_rustc = { workspace = true, features = ["test_support"] }
 oven_store = { workspace = true, features = ["test_support"] }
 rust_inspect = { workspace = true, features = ["test_fixtures"] }

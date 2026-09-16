@@ -62,7 +62,7 @@ Keep updates to the evidence: what changed, what proves it, what is left, and th
 1. **Branch from main**: Create a feature branch using the naming convention `<type>/<issue>-<slug>`, where type is `feature`, `chore`, or `bugfix`. Examples: `feature/165-implement-rfc-031-library-system-phase-1`, `chore/88-vocab-drift-guardrails`, `bugfix/42-fix-parser-crash`. Use the `/start-work` skill to automate this.
 2. **Follow RFCs**: RFCs in `workspaces/docs-site/docs/RFCs/` are the spec — implement exactly what they say.
 3. **Run tests**: `make test` must pass before considering work complete. Run targeted tests during development; run the full suite when you finish.
-4. **Update snapshots**: `INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests` to update changed snapshots.
+4. **Update snapshots**: `INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests` to update changed snapshots.
 5. **Boy Scout Rule**: Leave every file you touch in better shape than you found it — fix stale TODOs, missing doc comments, unused imports, misleading names.
 6. **Documentation gate (mandatory)**: Before finalizing any change, audit every touched Rust module and ensure rustdocs are present and accurate for all new/changed functions and methods in changed Rust source files. This is enforced mechanically by `scripts/check_changed_rustdocs.py` through `make pre-commit-fast` and `make pre-commit`.
 
@@ -103,7 +103,7 @@ Classify the root cause before editing: lifetime/borrow across boundary, trait b
 | `make pre-commit`                                         | Full local gate (full checks + smoke-test-fast)                       |
 | `make smoke-tests`                                        | Full smoke test: tests + release canary + examples + benchmarks-incan |
 | `make examples`                                           | Smoke test all examples (requires release build)                      |
-| `INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests` | Update codegen snapshots                                              |
+| `INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests` | Update codegen snapshots                                              |
 
 ## Docs-site Workflow (MkDocs Material)
 

@@ -110,8 +110,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// carries the acknowledgement, and Body IR v0 has no such representation.
     ///
     /// The refusal therefore says why rather than only what, and is the corpus's one `Disposition::Unsupported`
-    /// row (`parity-987-0018` in `tests/parity_corpus_tests.rs`), owned by #1162. Reversing it means designing the
-    /// acknowledgement fact first, not adding a dispatch arm.
+    /// row (`parity-987-0018` in `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs`), owned by #1162.
+    /// Reversing it means designing the acknowledgement fact first, not adding a dispatch arm.
     fn refuse_unsafe_region(&self, span: HirSourceSpan, out: &mut Vec<bir::Statement>) {
         self.push_unsupported_stmt(
             "`unsafe:` acknowledgement region: refused by design, because Body IR v0 cannot carry the \

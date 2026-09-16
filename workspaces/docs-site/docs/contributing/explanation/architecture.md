@@ -193,7 +193,7 @@ Incan has a **semantic core** crate (`incan_core`) that holds pure, deterministi
 
 `incan_core` should own language-wide policy, not runtime implementations. Existing stdlib-facing surface type metadata is a compatibility boundary; new work should either justify why the metadata is truly language-core policy or push ownership toward library-defined declarations/semantics packs.
 
-See crate-level documentation in `loaves/kernel/incan_core` for the contract, extension checklist, and drift-prevention expectations; tests in `tests/semantic_core_*` serve as the source of truth for covered domains.
+See crate-level documentation in `loaves/kernel/incan_core` for the contract, extension checklist, and drift-prevention expectations; tests in `loaves/compiler/incan_frontend/tests/semantic_core_*` serve as the source of truth for covered domains.
 
 ## Syntax Frontend
 

@@ -2844,7 +2844,7 @@ fn planned_feature_with_bounded_cases(
         case_ids: case_ids.into_iter().map(str::to_string).collect(),
         anchor: observed_anchor(
             EvidenceSurface::ParityCorpus,
-            "tests/parity_corpus_tests.rs",
+            "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
             anchor_selector,
             "The stable #987 corpus registers only the bounded direct profiles already executable inside this broader planned feature.",
         ),
@@ -2934,7 +2934,7 @@ pub fn planned_feature_at_boundary(
                     owner_issue: 987,
                     anchor: planned_anchor(
                         EvidenceSurface::ParityCorpus,
-                        "tests/parity_corpus_tests.rs",
+                        "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                         "fn seed_corpus",
                         987,
                         "#987 owns materializing the reserved stable corpus case with direct/refusal evidence.",
@@ -3001,7 +3001,7 @@ pub fn partially_materialized_feature_at_boundary(
         case_ids: case_ids.into_iter().map(str::to_string).collect(),
         anchor: observed_anchor(
             EvidenceSurface::ParityCorpus,
-            "tests/parity_corpus_tests.rs",
+            "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
             direct_selector,
             "The stable #987 corpus registers only the bounded source-observable subset already executable here.",
         ),
@@ -3084,7 +3084,7 @@ pub fn preserved_feature_at_boundary(
                     case_ids: case_ids.into_iter().map(str::to_string).collect(),
                     anchor: observed_anchor(
                         EvidenceSurface::ParityCorpus,
-                        "tests/parity_corpus_tests.rs",
+                        "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                         direct_selector,
                         "The stable #987 seed corpus registers this bounded direct-execution evidence.",
                     ),
@@ -3111,7 +3111,7 @@ fn completed_comparison_infrastructure() -> CompletedComparisonInfrastructure {
         issue: COMPLETED_COMPARISON_INFRASTRUCTURE_ISSUE,
         anchor: observed_anchor(
             EvidenceSurface::IndependentComparison,
-            "tests/support/parity_corpus.rs",
+            "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
             "NonGreenShadowUnavailable",
             "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership.",
         ),
@@ -3167,19 +3167,19 @@ fn scoped_comparisons(feature_id: &str) -> Vec<CorpusCaseComparisonEvidence> {
                 evidence: ComparisonEvidence::Paired {
                     legacy_receipt: observed_anchor(
                         EvidenceSurface::IndependentComparison,
-                        "tests/parity_corpus_tests.rs",
+                        "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                         "legacy_receipt_identity",
                         "#1146 verifies the legacy Oven route's receipt identity for replacement-body-v0-001.",
                     ),
                     replacement_receipt: observed_anchor(
                         EvidenceSurface::IndependentComparison,
-                        "tests/parity_corpus_tests.rs",
+                        "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                         "replacement_receipt_identity",
                         "#1146 verifies the direct replacement route's receipt identity for replacement-body-v0-001.",
                     ),
                     comparison_record: observed_anchor(
                         EvidenceSurface::IndependentComparison,
-                        "tests/parity_corpus_tests.rs",
+                        "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                         "fn the_compared_row_carries_two_route_receipts_and_its_oven_authority",
                         "#1146 records the matched two-route source observable for replacement-body-v0-001.",
                     ),
@@ -3191,19 +3191,19 @@ fn scoped_comparisons(feature_id: &str) -> Vec<CorpusCaseComparisonEvidence> {
                 evidence: ComparisonEvidence::Paired {
                     legacy_receipt: observed_anchor(
                         EvidenceSurface::IndependentComparison,
-                        "tests/parity_corpus_tests.rs",
+                        "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                         "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
                         "#1249 verifies the legacy Oven route receipt for replacement-body-v0-022.",
                     ),
                     replacement_receipt: observed_anchor(
                         EvidenceSurface::IndependentComparison,
-                        "tests/parity_corpus_tests.rs",
+                        "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                         "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
                         "#1249 verifies the direct replacement route receipt for replacement-body-v0-022.",
                     ),
                     comparison_record: observed_anchor(
                         EvidenceSurface::IndependentComparison,
-                        "tests/parity_corpus_tests.rs",
+                        "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                         "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
                         "#1249 records the matched typed result and exact streams for replacement-body-v0-022.",
                     ),
@@ -3215,19 +3215,19 @@ fn scoped_comparisons(feature_id: &str) -> Vec<CorpusCaseComparisonEvidence> {
                 evidence: ComparisonEvidence::Paired {
                     legacy_receipt: observed_anchor(
                         EvidenceSurface::IndependentComparison,
-                        "tests/parity_corpus_tests.rs",
+                        "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                         "fn the_scalar_json_row_carries_two_route_receipts_and_exact_output",
                         "#1249 verifies the legacy Oven route receipt for replacement-body-v0-025.",
                     ),
                     replacement_receipt: observed_anchor(
                         EvidenceSurface::IndependentComparison,
-                        "tests/parity_corpus_tests.rs",
+                        "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                         "fn the_scalar_json_row_carries_two_route_receipts_and_exact_output",
                         "#1249 verifies the direct replacement route receipt for replacement-body-v0-025.",
                     ),
                     comparison_record: observed_anchor(
                         EvidenceSurface::IndependentComparison,
-                        "tests/parity_corpus_tests.rs",
+                        "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                         "fn the_scalar_json_row_carries_two_route_receipts_and_exact_output",
                         "#1249 records exact scalar JSON bytes and the matched two-route source observable for replacement-body-v0-025.",
                     ),
@@ -3239,19 +3239,19 @@ fn scoped_comparisons(feature_id: &str) -> Vec<CorpusCaseComparisonEvidence> {
                 evidence: ComparisonEvidence::Paired {
                     legacy_receipt: observed_anchor(
                         EvidenceSurface::IndependentComparison,
-                        "tests/parity_corpus_tests.rs",
+                        "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                         "fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output",
                         "#1249 verifies the legacy Oven route receipt for replacement-body-v0-027.",
                     ),
                     replacement_receipt: observed_anchor(
                         EvidenceSurface::IndependentComparison,
-                        "tests/parity_corpus_tests.rs",
+                        "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                         "fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output",
                         "#1249 verifies the direct replacement route receipt for replacement-body-v0-027.",
                     ),
                     comparison_record: observed_anchor(
                         EvidenceSurface::IndependentComparison,
-                        "tests/parity_corpus_tests.rs",
+                        "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                         "fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output",
                         "#1249 records bounded canonical truthiness and exact streams for replacement-body-v0-027.",
                     ),
@@ -3279,7 +3279,7 @@ fn paired_scoped_comparison(
         evidence: ComparisonEvidence::Paired {
             legacy_receipt: observed_anchor(
                 EvidenceSurface::IndependentComparison,
-                "tests/parity_corpus_tests.rs",
+                "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                 test_selector,
                 &format!(
                     "The paired corpus test verifies the legacy Oven receipt for {bounded_contract} in {case_id}."
@@ -3287,7 +3287,7 @@ fn paired_scoped_comparison(
             ),
             replacement_receipt: observed_anchor(
                 EvidenceSurface::IndependentComparison,
-                "tests/parity_corpus_tests.rs",
+                "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                 test_selector,
                 &format!(
                     "The paired corpus test verifies the direct replacement receipt for {bounded_contract} in {case_id}."
@@ -3295,7 +3295,7 @@ fn paired_scoped_comparison(
             ),
             comparison_record: observed_anchor(
                 EvidenceSurface::IndependentComparison,
-                "tests/parity_corpus_tests.rs",
+                "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                 test_selector,
                 &format!(
                     "The paired corpus test records matching exact streams and the typed result for {bounded_contract} in {case_id}."
@@ -3830,7 +3830,7 @@ mod tests {
             owner_issue: 987,
             anchor: planned_anchor(
                 EvidenceSurface::ParityCorpus,
-                "tests/parity_corpus_tests.rs",
+                "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                 "fn seed_corpus",
                 987,
                 "Mutation fixture.",

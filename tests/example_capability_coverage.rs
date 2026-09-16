@@ -25,7 +25,7 @@
 //! When this fails, it prints the capabilities that regressed or newly landed. Record the new number in the same
 //! change.
 
-mod support;
+use incan_test_support as support;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

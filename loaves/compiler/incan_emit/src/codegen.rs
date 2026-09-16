@@ -2546,13 +2546,6 @@ mod tests {
     use crate::test_support::{
         assert_no_generated_unused_lint_allows, generate, must_ok, must_some, parse_program, parse_program_result,
     };
-    mod canonical_projection {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../tests/support/canonical_projection.rs"
-        ));
-    }
-    use canonical_projection::{projected_identities, projected_identity, projected_name};
     use incan_frontend::library_manifest::{
         ConstExport, FunctionExport, LibraryManifest, ModelExport, ParamExport, ParamKindExport, TypeRef,
     };
@@ -2561,6 +2554,7 @@ mod tests {
     };
     use incan_frontend::{lexer, parser};
     use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
+    use incan_test_support::canonical_projection::{projected_identities, projected_identity, projected_name};
     use std::collections::HashMap;
     #[cfg(feature = "rust_inspect")]
     use std::fs;

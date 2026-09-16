@@ -8,10 +8,9 @@ use incan::library_manifest::LibraryManifest;
 use incan::library_manifest::published_layout::executable_surface_path;
 use incan_semantics_core::executable_representation::SurfaceReader;
 
-mod support;
+use incan_test_support as support;
 
-#[path = "support/package_project.rs"]
-mod package_project;
+use incan_test_support::package_project;
 use package_project::{bake, command, project, success};
 
 /// Capture complete artifact bytes and inventory without following symbolic links into external stores.
