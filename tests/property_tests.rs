@@ -11,7 +11,7 @@ use incan::format::format_source;
 use proptest::prelude::*;
 
 // Note: Conversion module tests are complex due to IR construction requirements.
-// See tests/codegen_snapshot_tests.rs for comprehensive conversion testing via
+// See loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs for comprehensive conversion testing via
 // end-to-end codegen.
 
 // =============================================================================

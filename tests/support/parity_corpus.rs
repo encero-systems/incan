@@ -113,7 +113,8 @@ pub(crate) enum BehaviorCategory {
 pub(crate) enum EvidenceLane {
     /// `src/frontend/**` unit tests, diagnostics tests, parser snapshots — source acceptance/rejection.
     DirectParserTypechecker,
-    /// `tests/codegen_snapshot_tests.rs`, `tests/snapshots/**` — current generated Rust shape.
+    /// `loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs`, `loaves/compiler/incan_emit/tests/snapshots/**` —
+    /// current generated Rust shape.
     CodegenSnapshot,
     /// Integration tests, stdlib runtime tests, smoke tests — compiled/runtime behavior.
     GeneratedProjectRun,

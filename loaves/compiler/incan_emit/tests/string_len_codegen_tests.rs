@@ -1,7 +1,7 @@
 //! Native emission coverage for Unicode-scalar string length.
 
-use incan::backend::IrCodegen;
-use incan::frontend::{lexer, parser};
+use incan_emit::IrCodegen;
+use incan_frontend::{lexer, parser};
 
 fn generate(source: &str, entrypoint: &str) -> Result<String, Box<dyn std::error::Error>> {
     let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;

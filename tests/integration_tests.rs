@@ -8105,7 +8105,7 @@ async def main() -> None:
     fn test_run_rfc088_source_owned_iterator_sum() {
         let Ok(output) = incan_command()
             .arg("run")
-            .arg(repo_root().join("tests/codegen_snapshots/rfc088_iterator_adapters.incn"))
+            .arg(repo_root().join("loaves/compiler/incan_emit/tests/codegen_snapshots/rfc088_iterator_adapters.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()
         else {
@@ -8128,11 +8128,14 @@ async def main() -> None:
     #[test]
     fn test_run_iterator_adapters_as_loop_and_comprehension_sources_issue950_953()
     -> Result<(), Box<dyn std::error::Error>> {
-        let output = incan_command()
-            .arg("run")
-            .arg(repo_root().join("tests/codegen_snapshots/issue950_953_iterator_adapter_sources.incn"))
-            .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
+        let output =
+            incan_command()
+                .arg("run")
+                .arg(repo_root().join(
+                    "loaves/compiler/incan_emit/tests/codegen_snapshots/issue950_953_iterator_adapter_sources.incn",
+                ))
+                .env("CARGO_NET_OFFLINE", "true")
+                .output()?;
 
         assert!(
             output.status.success(),
@@ -8152,7 +8155,7 @@ async def main() -> None:
     fn test_run_builtin_zip_only_keeps_generated_iterator_support_issue950() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
             .arg("run")
-            .arg(repo_root().join("tests/codegen_snapshots/issue950_builtin_zip_only.incn"))
+            .arg(repo_root().join("loaves/compiler/incan_emit/tests/codegen_snapshots/issue950_builtin_zip_only.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
 
@@ -8170,7 +8173,7 @@ async def main() -> None:
     fn test_run_set_constructor_from_values_issue951() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
             .arg("run")
-            .arg(repo_root().join("tests/codegen_snapshots/issue951_set_constructor.incn"))
+            .arg(repo_root().join("loaves/compiler/incan_emit/tests/codegen_snapshots/issue951_set_constructor.incn"))
             .env("INCAN_SOURCE_ROOT", repo_root())
             .env("INCAN_STDLIB", repo_root().join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
@@ -8195,7 +8198,7 @@ async def main() -> None:
     fn test_run_set_add_issue963() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
             .arg("run")
-            .arg(repo_root().join("tests/codegen_snapshots/issue963_set_add.incn"))
+            .arg(repo_root().join("loaves/compiler/incan_emit/tests/codegen_snapshots/issue963_set_add.incn"))
             .env("INCAN_SOURCE_ROOT", repo_root())
             .env("INCAN_STDLIB", repo_root().join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
@@ -8220,7 +8223,7 @@ async def main() -> None:
     fn test_run_user_defined_set_shadowing_issue951() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
             .arg("run")
-            .arg(repo_root().join("tests/codegen_snapshots/issue951_set_shadowing.incn"))
+            .arg(repo_root().join("loaves/compiler/incan_emit/tests/codegen_snapshots/issue951_set_shadowing.incn"))
             .env("INCAN_SOURCE_ROOT", repo_root())
             .env("INCAN_STDLIB", repo_root().join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")

@@ -1,7 +1,7 @@
 //! Generated-Rust regressions for ownership across mutually exclusive `match` arms.
 
-use incan::backend::IrCodegen;
-use incan::frontend::{lexer, parser};
+use incan_emit::IrCodegen;
+use incan_frontend::{lexer, parser};
 use incan_semantics_core::SemanticSourceTargetKind;
 
 use incan_test_support::canonical_projection;

@@ -10,9 +10,9 @@
 //! falls through to `emit_expr` when it is absent, so a bare name is a missing fact rather than a wrong choice.
 //! Patching that fallback would hide the absence instead of supplying the fact.
 
-use incan::backend::IrCodegen;
-use incan::frontend::typechecker::TypeChecker;
-use incan::frontend::{lexer, parser};
+use incan_emit::IrCodegen;
+use incan_frontend::typechecker::TypeChecker;
+use incan_frontend::{lexer, parser};
 
 /// The one local declaration these fixtures call, so the assertions need no hard-coded mangled form.
 const DECLARATION: &str = "describe";

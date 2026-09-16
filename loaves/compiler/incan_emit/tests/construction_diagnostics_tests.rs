@@ -3,7 +3,7 @@
 //! These tests are intentionally “frontend only”: they run lexer+parser+typechecker
 //! and assert that errors are produced at the Incan level (not leaked as Rust errors).
 
-use incan::frontend::{lexer, parser, typechecker};
+use incan_frontend::{lexer, parser, typechecker};
 
 fn typecheck_err_messages(src: &str) -> Result<Vec<String>, Vec<String>> {
     let tokens = lexer::lex(src).map_err(|errs| errs.into_iter().map(|e| e.message).collect::<Vec<_>>())?;

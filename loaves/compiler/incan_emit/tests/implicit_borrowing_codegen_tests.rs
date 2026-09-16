@@ -1,7 +1,7 @@
 //! Regression coverage for reference shape and typed assignment ownership (#1455).
 
-use incan::backend::ir::IrCodegen;
-use incan::frontend::{lexer, parser};
+use incan_emit::IrCodegen;
+use incan_frontend::{lexer, parser};
 
 use oven_model::compiler_suite_env;
 
@@ -152,7 +152,8 @@ pub def observe(item: Item) -> bool:
 
 #[test]
 fn crate_visible_helpers_keep_owned_entry_points_and_borrow_local_calls() -> TestResult {
-    use incan::backend::ir::{AstLowering, IrEmitter};
+    use incan_emit::IrEmitter;
+    use incan_ir::AstLowering;
     let source = r#"
 from rust::toml_edit import Item
 
@@ -169,7 +170,7 @@ pub class Holder:
 "#;
     let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("lex: {errors:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("parse: {errors:?}")))?;
-    let mut checker = incan::frontend::typechecker::TypeChecker::new();
+    let mut checker = incan_frontend::typechecker::TypeChecker::new();
     checker.set_current_module_path(Some(vec!["__incan_std".to_string(), "borrow_fixture".to_string()]));
     checker
         .check_program(&ast)
@@ -193,8 +194,9 @@ pub class Holder:
 
 /// Seed source-proven call facts at the checker/lowering boundary; extractor tests independently prove their origin.
 fn rust_with_receiver_contracts(source: &str, calls: &[(&str, bool)]) -> Result<String, std::io::Error> {
-    use incan::backend::ir::{AstLowering, IrEmitter};
-    use incan::frontend::typechecker::TypeChecker;
+    use incan_emit::IrEmitter;
+    use incan_frontend::typechecker::TypeChecker;
+    use incan_ir::AstLowering;
     let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("lex: {errors:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("parse: {errors:?}")))?;
     let mut checker = TypeChecker::new();
@@ -207,14 +209,14 @@ fn rust_with_receiver_contracts(source: &str, calls: &[(&str, bool)]) -> Result<
             .find(call)
             .ok_or_else(|| std::io::Error::other("missing call fixture"))?;
         let result_type = if *returns_receiver_borrow {
-            incan::frontend::symbols::ResolvedType::Generic(
+            incan_frontend::symbols::ResolvedType::Generic(
                 "Option".to_string(),
-                vec![incan::frontend::symbols::ResolvedType::Ref(Box::new(
-                    incan::frontend::symbols::ResolvedType::Named("Item".to_string()),
+                vec![incan_frontend::symbols::ResolvedType::Ref(Box::new(
+                    incan_frontend::symbols::ResolvedType::Named("Item".to_string()),
                 ))],
             )
         } else {
-            incan::frontend::symbols::ResolvedType::Bool
+            incan_frontend::symbols::ResolvedType::Bool
         };
         info.expressions
             .expr_types
@@ -430,7 +432,7 @@ edition = "2024"
     )?;
     let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("lex: {errors:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("parse: {errors:?}")))?;
-    let mut checker = incan::frontend::typechecker::TypeChecker::new();
+    let mut checker = incan_frontend::typechecker::TypeChecker::new();
     checker.set_rust_inspect_manifest_dir(directory.path().to_path_buf());
     checker
         .check_program(&ast)
@@ -452,10 +454,10 @@ edition = "2024"
             );
         }
     }
-    let ir = incan::backend::ir::AstLowering::new_with_type_info(checker.type_info().clone())
+    let ir = incan_ir::AstLowering::new_with_type_info(checker.type_info().clone())
         .lower_program(&ast)
         .map_err(|error| std::io::Error::other(format!("lower: {error:?}")))?;
-    let generated = incan::backend::ir::IrEmitter::new(&ir.function_registry).emit_program(&ir)?;
+    let generated = incan_emit::IrEmitter::new(&ir.function_registry).emit_program(&ir)?;
     let capability = compiler_suite_env::OvenCompilerSuiteCapability::from_environment(
         compiler_suite_env::OVEN_COMPILER_SUITE_CAPABILITY_ENV,
     )?;

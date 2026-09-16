@@ -1,12 +1,15 @@
 //! Generated-Rust regressions for source-accepted aliases of a canonical Zip value.
 
-use incan::backend::ir::{
+use incan_emit::{
+    IrCodegen,
     conversions::{Conversion, ConversionContext, determine_conversion},
-    expr::{IrExpr, IrExprKind, VarAccess, VarRefKind},
     ownership::{ValueUseSite, value_use_requires_clone_bound},
 };
-use incan::backend::{IrCodegen, ir::IrType};
-use incan::frontend::{lexer, parser};
+use incan_frontend::{lexer, parser};
+use incan_ir::{
+    expr::{IrExpr, IrExprKind, VarAccess, VarRefKind},
+    types::IrType,
+};
 use incan_semantics_core::SemanticSourceTargetKind;
 
 use incan_test_support::canonical_projection;

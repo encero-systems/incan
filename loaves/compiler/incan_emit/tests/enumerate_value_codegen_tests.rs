@@ -1,7 +1,7 @@
 //! Generated-Rust contract coverage for a checked `enumerate` list value.
 
-use incan::backend::IrCodegen;
-use incan::frontend::{lexer, parser};
+use incan_emit::IrCodegen;
+use incan_frontend::{lexer, parser};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

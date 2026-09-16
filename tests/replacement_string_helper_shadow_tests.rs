@@ -17,7 +17,7 @@ fn default_split_separator_compiles_and_matches_native() -> Result<(), Box<dyn s
     }
     let capability = shadow_capability::legacy_capability()?;
     let workspace = tempfile::tempdir()?;
-    let source = include_str!("codegen_snapshots/string_split_default.incn");
+    let source = include_str!("../loaves/compiler/incan_emit/tests/codegen_snapshots/string_split_default.incn");
     let profile = ShadowComparisonProfile::new(
         source,
         "split_default",

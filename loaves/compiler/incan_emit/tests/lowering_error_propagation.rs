@@ -1,5 +1,5 @@
-use incan::backend::{AstLowering, LoweringError};
-use incan::frontend::ast;
+use incan_frontend::ast;
+use incan_ir::{AstLowering, LoweringError};
 
 fn span() -> ast::Span {
     ast::Span { start: 0, end: 0 }

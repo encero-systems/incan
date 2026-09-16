@@ -1557,6 +1557,7 @@ dependencies = [
  "incan_syntax",
  "incan_test_support",
  "incan_vocab",
+ "insta",
  "oven_model",
  "prettyplease",
  "proc-macro2",
@@ -1570,6 +1571,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
+ "wat",
 ]
 
 [[package]]

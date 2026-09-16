@@ -146,13 +146,13 @@ We use `insta` for golden snapshot tests:
 
 ```bash
 # Run codegen snapshot tests
-cargo test --test codegen_snapshot_tests
+cargo test -p incan_emit --test codegen_snapshot_tests
 
 # Review and accept changes
 cargo insta review
 ```
 
-Snapshot files are in `tests/snapshots/`.
+Snapshot files are in `loaves/compiler/incan_emit/tests/snapshots/`.
 
 ## Code Style
 

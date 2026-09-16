@@ -24,17 +24,17 @@ You are a test orchestrator for the Incan compiler. When invoked, you analyze th
 |---|---|
 | `loaves/kernel/incan_syntax/src/parser/` | `cargo test -p incan_syntax --lib parser::tests` |
 | `src/frontend/typechecker/` | `cargo test -p incan --lib typechecker::tests` |
-| `src/backend/ir/lower/` | `cargo test --test codegen_snapshot_tests` |
-| `src/backend/ir/emit/` | `cargo test --test codegen_snapshot_tests` |
-| `src/backend/ir/codegen.rs` | `cargo test --test codegen_snapshot_tests --test integration_tests` |
-| `src/backend/ir/conversions.rs` | `cargo test --test codegen_snapshot_tests` |
+| `src/backend/ir/lower/` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
+| `src/backend/ir/emit/` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
+| `src/backend/ir/codegen.rs` | `cargo test -p incan_emit --test codegen_snapshot_tests` and `cargo test --test integration_tests` |
+| `src/backend/ir/conversions.rs` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
 | `src/backend/project/` | `cargo test --test integration_tests` |
 | `src/cli/` | `cargo test --test integration_tests` |
 | `src/format/` | `cargo test --test property_tests --test integration_tests` |
 | `loaves/kernel/incan_core/` | `cargo test --test semantic_core_parity --test semantic_core_parity_strings` |
-| `loaves/stdlib/*/rust/` | `cargo test --test codegen_snapshot_tests --test integration_tests` |
-| `loaves/stdlib/derive/incan_derive/` | `cargo test --test codegen_snapshot_tests` |
-| `tests/codegen_snapshots/*.incn` | `cargo test --test codegen_snapshot_tests` |
+| `loaves/stdlib/*/rust/` | `cargo test -p incan_emit --test codegen_snapshot_tests` and `cargo test --test integration_tests` |
+| `loaves/stdlib/derive/incan_derive/` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
+| `loaves/compiler/incan_emit/tests/codegen_snapshots/*.incn` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
 | `tests/fixtures/` | `cargo test --test integration_tests` |
 | `tests/*.rs` | `cargo test --test <filename_without_ext>` |
 | `src/lsp/` | No automated tests — inform the user |
@@ -44,7 +44,7 @@ You are a test orchestrator for the Incan compiler. When invoked, you analyze th
 If snapshots need updating, ask the user before running:
 
 ```bash
-INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests
+INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests
 ```
 
 Show the diff of updated snapshots for review.

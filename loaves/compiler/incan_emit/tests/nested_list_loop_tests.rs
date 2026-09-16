@@ -1,12 +1,12 @@
 //! Checked inference and native-emission regressions for empty-first nested lists (#1471).
 
-use incan::backend::IrCodegen;
-use incan::backend::ir::lower::AstLowering;
-use incan::backend::ir::types::IrType;
-use incan::frontend::ast::{Declaration, Span, Statement};
-use incan::frontend::symbols::ResolvedType;
-use incan::frontend::typechecker::TypeChecker;
-use incan::frontend::{lexer, parser};
+use incan_emit::IrCodegen;
+use incan_frontend::ast::{Declaration, Span, Statement};
+use incan_frontend::symbols::ResolvedType;
+use incan_frontend::typechecker::TypeChecker;
+use incan_frontend::{lexer, parser};
+use incan_ir::lower::AstLowering;
+use incan_ir::types::IrType;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -114,8 +114,9 @@ fn nested_list_all_empty_leaves_remain_unknown() -> TestResult {
 /// not erase the later string element type -- so the assertion follows it rather than pinning the older spelling.
 #[test]
 fn nested_list_loop_emits_owned_strings_without_caller_annotation() -> TestResult {
-    let source = include_str!("fixtures/nested_list_loop_1471.incn");
-    let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let source =
+        std::fs::read_to_string(incan_test_support::repo_root().join("tests/fixtures/nested_list_loop_1471.incn"))?;
+    let tokens = lexer::lex(&source).map_err(|errors| format!("{errors:?}"))?;
     let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let rust = IrCodegen::new().try_generate(&program)?;
     let compact: String = rust.chars().filter(|character| !character.is_whitespace()).collect();
