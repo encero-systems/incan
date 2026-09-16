@@ -64,7 +64,7 @@
       "path": "loaves/compiler/incan_driver/src/build/library_project.rs",
       "category": "library build profile selection and stdlib crate exclusion",
       "expected_count": 2,
-      "expected_fingerprint": "0x3d486da99b66d880"
+      "expected_fingerprint": "0x9dfa4c21d588d169"
     },
     {
       "path": "loaves/compiler/incan_driver/src/build/output_materialization.rs",
@@ -88,7 +88,7 @@
       "path": "loaves/compiler/incan_driver/src/build/oven_project.rs",
       "category": "stdlib namespace and crate exclusion, Oven Loaf execution environment flags, existing-plan publication marker",
       "expected_count": 7,
-      "expected_fingerprint": "0xdd7ed5f77dea21c2"
+      "expected_fingerprint": "0x95daa964cac10e1a"
     },
     {
       "path": "loaves/compiler/incan_driver/src/build/plan_authority.rs",
@@ -208,7 +208,7 @@
       "path": "loaves/compiler/incan_driver/src/shadow_support.rs",
       "category": "shadow comparison Oven Loaf environment flag and stdlib import exclusion",
       "expected_count": 2,
-      "expected_fingerprint": "0x57f8599b43c4b38d"
+      "expected_fingerprint": "0x0eda45240df64668"
     },
     {
       "path": "loaves/compiler/incan_driver/src/testing/discovery.rs",
@@ -291,8 +291,8 @@
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/calls.rs",
       "category": "testing helper and public-module emission compatibility",
-      "expected_count": 5,
-      "expected_fingerprint": "0xd50ac3da0a56714a"
+      "expected_count": 4,
+      "expected_fingerprint": "0x7070fb605180f8f9"
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/comprehensions.rs",
@@ -555,8 +555,8 @@
     {
       "path": "loaves/compiler/incan_provider/src/dependency_resolver.rs",
       "category": "dependency resolver registry and package-alias policy",
-      "expected_count": 18,
-      "expected_fingerprint": "0x12d230c26526632c"
+      "expected_count": 17,
+      "expected_fingerprint": "0xde8d324352b42342"
     },
     {
       "path": "loaves/compiler/incan_provider/src/effect_digest.rs",
