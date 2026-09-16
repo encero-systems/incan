@@ -1701,7 +1701,7 @@ fn segments_display(segments: &[Name]) -> String {
     segments.iter().map(|n| n.as_str()).collect::<Vec<_>>().join("::")
 }
 
-/// Parse `crate::a::b` style paths (as used in [`incan::frontend::symbols::RustItemInfo::path`]).
+/// Parse `crate::a::b` style paths (as used in `incan_frontend::symbols::RustItemInfo::path`).
 fn split_canonical_path(path: &str) -> Result<(&str, Vec<Name>), RustMetadataError> {
     let parts: Vec<&str> = path.split("::").filter(|s| !s.is_empty()).collect();
     if parts.len() < 2 {

@@ -904,11 +904,11 @@ watch:
 
 .PHONY: run  ## misc - Build and run (debug mode)
 run:
-	@cargo run --
+	@cargo run -p incan-cli --bin incan --
 
 .PHONY: zen  ## misc - Print the Zen of Incan
 zen:
-	@cargo build --release -q 2>/dev/null
+	@cargo build --release -q -p incan-cli --bin incan 2>/dev/null
 	@INCAN_NO_BANNER=1 "$(TARGET_DIR)/release/incan" run -c "import this"
 
 .PHONY: clean  ## misc - Clean build artifacts

@@ -19,7 +19,7 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! use incan::backend::ir::lower::AstLowering;
+//! use incan_ir::lower::AstLowering;
 //!
 //! let mut lowering = AstLowering::new_with_type_info(type_info);
 //! let ir_program = lowering.lower_program(&ast_program)?;
@@ -94,7 +94,7 @@ pub struct ImportedAliasTarget {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use incan::backend::ir::lower::AstLowering;
+/// use incan_ir::lower::AstLowering;
 ///
 /// let mut lowering = AstLowering::new_with_type_info(type_info);
 /// let ir_program = lowering.lower_program(&ast_program)?;

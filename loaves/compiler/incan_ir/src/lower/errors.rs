@@ -35,7 +35,7 @@ impl std::error::Error for LoweringError {}
 /// # Examples
 ///
 /// ```rust,ignore
-/// use incan::backend::ir::lower::{AstLowering, LoweringErrors};
+/// use incan_ir::lower::{AstLowering, LoweringErrors};
 ///
 /// let mut lowering = AstLowering::new_with_type_info(type_info);
 /// match lowering.lower_program(&ast) {

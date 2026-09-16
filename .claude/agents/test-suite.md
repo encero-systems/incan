@@ -23,12 +23,12 @@ You are a test orchestrator for the Incan compiler. When invoked, you analyze th
 | Changed path pattern | Command |
 |---|---|
 | `loaves/kernel/incan_syntax/src/parser/` | `cargo test -p incan_syntax --lib parser::tests` |
-| `src/frontend/typechecker/` | `cargo test -p incan --lib typechecker::tests` |
-| `src/backend/ir/lower/` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
-| `src/backend/ir/emit/` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
-| `src/backend/ir/codegen.rs` | `cargo test -p incan_emit --test codegen_snapshot_tests` and `cargo test -p incan-cli --test integration_tests` |
-| `src/backend/ir/conversions.rs` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
-| `src/backend/project/` | `cargo test -p incan-cli --test integration_tests` |
+| `loaves/compiler/incan_frontend/src/typechecker/` | `cargo test -p incan_frontend --lib typechecker::tests` |
+| `loaves/compiler/incan_ir/src/lower/` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
+| `loaves/compiler/incan_emit/src/emit/` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
+| `loaves/compiler/incan_emit/src/codegen.rs` | `cargo test -p incan_emit --test codegen_snapshot_tests` and `cargo test -p incan-cli --test integration_tests` |
+| `loaves/compiler/incan_emit/src/conversions.rs` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
+| `loaves/compiler/incan_driver/src/backend/project/` | `cargo test -p incan-cli --test integration_tests` |
 | `loaves/toolchain/incan-cli/src/` | `cargo test -p incan-cli --test integration_tests` |
 | `loaves/compiler/incan_format/src/` | `cargo test -p incan_format --test property_tests` and `cargo test -p incan-cli --test integration_tests` |
 | `loaves/kernel/incan_core/` | `cargo test -p incan_frontend --test semantic_core_parity --test semantic_core_parity_strings` |

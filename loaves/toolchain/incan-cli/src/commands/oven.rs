@@ -3014,7 +3014,13 @@ fn native_test_failure_summary(output: &str) -> String {
     summary
 }
 
-/// Recompute the source-bound compiler root libtest receipt without invoking Cargo.
+/// The name the compiler suite's receipts record for this workspace.
+///
+/// A virtual Cargo workspace has no name and a checkout's directory is not portable evidence, so the suite names the
+/// product whose repository it tests.
+const COMPILER_SUITE_WORKSPACE_NAME: &str = "incan";
+
+/// Recompute the source-bound compiler workspace test-suite receipt without invoking Cargo.
 fn compiler_libtests_receipt(
     compiler_root: &Path,
     rustc: &Path,
@@ -3023,9 +3029,14 @@ fn compiler_libtests_receipt(
 ) -> CliResult<(OvenReceipt, PathBuf)> {
     let target = rustc_host_target(rustc).map_err(oven_error)?;
     let toolchain = rustc_identity(rustc).map_err(oven_error)?;
-    let features = compiler_root_feature_selection(compiler_root, requested_features)?;
-    let mut request =
-        OvenCompilerSuiteRequest::new(compiler_root, target, toolchain, OVEN_COMPILER_TEST_PROFILE, features);
+    let mut request = OvenCompilerSuiteRequest::new(
+        compiler_root,
+        COMPILER_SUITE_WORKSPACE_NAME,
+        target,
+        toolchain,
+        OVEN_COMPILER_TEST_PROFILE,
+        requested_features.to_vec(),
+    );
     if let Some(loaf_root) = loaf_root {
         let compatibility_identity =
             oven_rustc::loaf::committed_loaf_envelope_compatibility_identity(loaf_root, "compiler-suite")
@@ -3034,68 +3045,6 @@ fn compiler_libtests_receipt(
     }
     let receipt = receipt_native_compiler_suite(&request).map_err(oven_error)?;
     Ok((receipt, compiler_root.join(COMPILER_LIBTEST_RECEIPT_RELATIVE_PATH)))
-}
-
-/// Resolve the root package's enabled feature closure from its checked-in manifest, without asking Cargo to plan it.
-///
-/// The explicit compiler-suite publisher uses the same resolved set both for Cargo's one permitted preparation and
-/// for the direct-rustc `--cfg feature=...` consumer. Dependency feature requests (`dep/feature`) are deliberately
-/// ignored here because they are not root-package `cfg(feature)` values.
-fn compiler_root_feature_selection(compiler_root: &Path, requested_features: &[String]) -> CliResult<Vec<String>> {
-    let manifest = compiler_root.join("Cargo.toml");
-    let content = fs::read_to_string(&manifest).map_err(|error| {
-        CliError::failure(format!(
-            "failed to read compiler Cargo manifest {}: {error}",
-            manifest.display()
-        ))
-    })?;
-    let document = toml::from_str::<toml::Value>(&content).map_err(|error| {
-        CliError::failure(format!(
-            "failed to parse compiler Cargo manifest {}: {error}",
-            manifest.display()
-        ))
-    })?;
-    let declared = document
-        .get("features")
-        .and_then(toml::Value::as_table)
-        .ok_or_else(|| {
-            CliError::failure(format!(
-                "compiler Cargo manifest {} has no [features] table",
-                manifest.display()
-            ))
-        })?;
-    let mut pending = vec!["default".to_string()];
-    pending.extend(requested_features.iter().cloned());
-    let mut enabled = std::collections::BTreeSet::new();
-    while let Some(feature) = pending.pop() {
-        let feature = feature.trim();
-        if feature.is_empty()
-            || feature.starts_with("dep:")
-            || feature.contains('/')
-            || !enabled.insert(feature.to_string())
-        {
-            continue;
-        }
-        let values = declared.get(feature).and_then(toml::Value::as_array).ok_or_else(|| {
-            CliError::failure(format!(
-                "compiler Cargo manifest {} does not declare feature `{feature}`",
-                manifest.display()
-            ))
-        })?;
-        for value in values {
-            let value = value.as_str().ok_or_else(|| {
-                CliError::failure(format!(
-                    "compiler Cargo manifest {} has a non-string feature member",
-                    manifest.display()
-                ))
-            })?;
-            if !value.starts_with("dep:") && !value.contains('/') {
-                pending.push(value.to_string());
-            }
-        }
-    }
-    enabled.remove("default");
-    Ok(enabled.into_iter().collect())
 }
 
 /// Print physical allocation and logical artifact-byte accounting from the bounded Oven store.
@@ -5182,6 +5131,7 @@ mod tests {
         let rustc = resolve_active_rustc()?;
         let receipt = receipt_native_compiler_suite(&OvenCompilerSuiteRequest::new(
             compiler_root.path(),
+            "compiler-suite-fixture",
             rustc_host_target(&rustc)?,
             oven_rustc::rustc::rustc_identity(&rustc)?,
             "debug",
@@ -5347,6 +5297,7 @@ mod tests {
         let rustc = resolve_active_rustc()?;
         let receipt = receipt_native_compiler_suite(&OvenCompilerSuiteRequest::new(
             compiler_root.path(),
+            "compiler-suite-fixture",
             rustc_host_target(&rustc)?,
             oven_rustc::rustc::rustc_identity(&rustc)?,
             "debug",
@@ -5638,13 +5589,13 @@ mod tests {
     fn compiler_suite_cargo_fixture_capability_is_package_qualified_and_explicit()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut target = OvenCompilerTestSuiteTarget {
-            package_name: "incan".to_string(),
-            target_name: "incan".to_string(),
+            package_name: "rust_inspect".to_string(),
+            target_name: "rust_inspect".to_string(),
             target_kind: "lib".to_string(),
             runner: "rustc-test".to_string(),
-            source_relative_path: "src/lib.rs".to_string(),
-            source_evidence_key: "compiler-suite-source:src/lib.rs".to_string(),
-            crate_name: "incan".to_string(),
+            source_relative_path: "loaves/compiler/rust_inspect/src/lib.rs".to_string(),
+            source_evidence_key: "compiler-suite-source:loaves/compiler/rust_inspect/src/lib.rs".to_string(),
+            crate_name: "rust_inspect".to_string(),
             edition: "2024".to_string(),
             features: Vec::new(),
             compile_environment: BTreeMap::new(),
@@ -5982,6 +5933,7 @@ fn planned_suite_second_exact_case_keeps_cargo_guarded() -> Result<(), String> {
 
         let receipt = receipt_native_compiler_suite(&OvenCompilerSuiteRequest::new(
             compiler_root.path(),
+            "compiler-suite-fixture",
             rustc_host_target(&rustc)?,
             rustc_identity(&rustc)?,
             "debug",

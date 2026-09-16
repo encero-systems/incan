@@ -9,7 +9,7 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use incan::backend::IrCodegen;
+//! use incan_emit::IrCodegen;
 //!
 //! // Fallible API (recommended):
 //! let codegen = IrCodegen::new();
@@ -100,7 +100,7 @@ fn source_module_identity_path(
 /// ## Examples
 ///
 /// ```rust,ignore
-/// use incan::backend::{IrCodegen, GenerationError};
+/// use incan_emit::{GenerationError, IrCodegen};
 ///
 /// let codegen = IrCodegen::new();
 /// match codegen.try_generate(&ast) {
@@ -1516,7 +1516,7 @@ impl<'a> IrCodegen<'a> {
     /// ## Examples
     ///
     /// ```rust,ignore
-    /// use incan::backend::IrCodegen;
+    /// use incan_emit::IrCodegen;
     ///
     /// let codegen = IrCodegen::new();
     /// let rust_code = codegen.try_generate(&ast)?;
