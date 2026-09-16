@@ -47,9 +47,9 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: incan-oven-evidence-sources-v1-${{ matrix.toolchain }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'loaves/stdlib/*/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock') }}
+          key: incan-oven-evidence-sources-v2-${{ matrix.toolchain }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'loaves/stdlib/*/vocab_companion/Cargo.lock', 'loaves/compiler/incan_test_support/fixtures/oven_loaf_dependencies/Cargo.lock') }}
           restore-keys: |
-            incan-oven-evidence-sources-v1-${{ matrix.toolchain }}-${{ runner.os }}-${{ runner.arch }}-
+            incan-oven-evidence-sources-v2-${{ matrix.toolchain }}-${{ runner.os }}-${{ runner.arch }}-
       - name: Fetch locked compiler and Loaf publisher sources
         run: |
           make fetch-locked-cargo-sources

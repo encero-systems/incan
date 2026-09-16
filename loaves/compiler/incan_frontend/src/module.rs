@@ -772,7 +772,7 @@ mod tests {
 
     /// Shared with `tests/integration_tests.rs` (GitHub #247 export + CLI fmt coverage).
     const BLOCK_DOCSTRING_PUBLIC_TYPE_LIKE: &str =
-        include_str!("../../../../tests/fixtures/block_docstring_public_type_like.incn");
+        include_str!("../../incan_test_support/fixtures/block_docstring_public_type_like.incn");
 
     fn make_spanned<T>(node: T) -> Spanned<T> {
         Spanned {

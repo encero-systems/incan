@@ -12,7 +12,6 @@ make test-prewarm-oven-release-loafs \
 export INCAN_SOURCE_ROOT="$INCAN_CHECKOUT"
 export INCAN_STDLIB="$INCAN_CHECKOUT/loaves/stdlib"
 export INCAN_STDLIB_DIR="$INCAN_STDLIB"
-export INCAN_TOOLCHAIN_CRATES_DIR="$INCAN_CHECKOUT/crates"
 export PATH="$INCAN_CHECKOUT/target/oven-alpha-release-toolchain/bin:$PATH"
 incan --version
 ```

@@ -85,3 +85,9 @@ sha3 = "0.10"
 hmac = { version = "0.12", features = ["reset"] }
 xxhash_rust = { package = "xxhash-rust", version = "0.8", features = ["xxh3", "xxh32", "xxh64"] }
 wat = "1"
+
+[package.metadata.cargo-udeps.ignore]
+# `uuid` anchors the compiler-suite's supported `rust::uuid` smoke closure in Cargo.lock; it is consumed by the
+# explicit compiler-suite publisher, not by the Rust test harness. The other runtime crates above are linked by
+# the tests that name them.
+development = ["uuid"]

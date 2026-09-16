@@ -10,5 +10,4 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-incan_std_core = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync", "net"] }

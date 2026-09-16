@@ -6226,7 +6226,7 @@ fn test_generic_bounds_return_type_codegen() {
 /// Foreign trait obligations must survive source checking and remain on generated callable signatures.
 #[test]
 fn test_rust_generic_bounds() -> TestResult {
-    let source = fs::read_to_string(repo_root().join("tests/fixtures/valid/rust_generic_bounds.incn"))?;
+    let source = fs::read_to_string(incan_test_support::fixture("valid/rust_generic_bounds.incn"))?;
     insta::assert_snapshot!("rust_generic_bounds", generate_rust(&source));
     Ok(())
 }

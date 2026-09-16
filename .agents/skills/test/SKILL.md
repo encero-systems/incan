@@ -49,7 +49,7 @@ Did you change the formatter?
   → Also add a codegen snapshot if formatting affects output
 
 Did you add a diagnostic?
-  → Add a fixture in tests/fixtures/invalid/ that triggers it
+  → Add a fixture in loaves/compiler/incan_test_support/fixtures/invalid/ that triggers it
   → Add an integration test that asserts the diagnostic message
 ```
 
@@ -159,7 +159,7 @@ Helpers available: `compile_source(source)`, `compile_file(path)`.
 
 ### Invalid fixture pattern
 
-1. Create `tests/fixtures/invalid/my_error_case.incn` with code that should fail.
+1. Create `loaves/compiler/incan_test_support/fixtures/invalid/my_error_case.incn` with code that should fail.
 2. Add an integration test that asserts the expected diagnostic.
 
 ## Step 4: Run the tests

@@ -1569,7 +1569,6 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
- "regex",
  "rust_inspect",
  "serde",
  "serde_json",
@@ -1609,7 +1608,6 @@ dependencies = [
  "incan_vocab",
  "oven_model",
  "quote",
- "regex",
  "rust_inspect",
  "semver",
  "serde",
@@ -1702,7 +1700,6 @@ dependencies = [
 name = "incan_std_async"
 version = "0.6.0-dev.4"
 dependencies = [
- "incan_std_core",
  "tokio",
 ]
 

@@ -83,9 +83,7 @@ fn explicit_codec_trait_imports_remain_valid() -> TestResult {
 /// Replay the exact source-only fixture that failed in the Linux integration root.
 #[test]
 fn original_toml_module_fixture_passes_bare_frontend_checking() -> TestResult {
-    let source = std::fs::read_to_string(
-        incan_test_support::repo_root().join("tests/fixtures/valid/std_toml_module_import.incn"),
-    )?;
+    let source = std::fs::read_to_string(incan_test_support::fixture("valid/std_toml_module_import.incn"))?;
     let source = source.as_str();
     TypeChecker::new()
         .check_program(&parsed(source)?)

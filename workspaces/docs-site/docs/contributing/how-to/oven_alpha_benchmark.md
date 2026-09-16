@@ -25,7 +25,7 @@ bash scripts/bench_oven_alpha.sh \
   --rustc "$(rustup which --toolchain 1.98.0 rustc)" \
   --checkout-revision "$(git rev-parse HEAD)" \
   --workload test \
-  --source tests/fixtures/test_assert_canary.incn \
+  --source loaves/compiler/incan_test_support/fixtures/test_assert_canary.incn \
   --incan-home /tmp/incan-oven-test-home \
   --output /tmp/incan-oven-test-evidence \
   --cargo-guard-dir /tmp/incan-oven-cargo-guard \

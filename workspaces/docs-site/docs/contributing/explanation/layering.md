@@ -139,4 +139,4 @@ When you notice drift risk (compiler vs runtime):
 1. Put the *policy* in `incan_core` (pure function + typed error or canonical message).
 2. Add a thin wrapper in the owning facet (`incan_std_core` for language runtime) that calls semantics and performs runtime-only behavior (panic, allocation, conversions).
 3. Update compiler const-eval / typechecking to use the semantics helper directly (never stdlib).
-4. Add a parity test in `tests/` that compares compiler/semantics/runtime behavior for the edge case.
+4. Add a parity test in the owning ring's integration roots (the frontend's `semantic_core_parity` roots under `loaves/compiler/incan_frontend/tests/`, or `incan_emit`'s codegen roots) that compares compiler/semantics/runtime behavior for the edge case.

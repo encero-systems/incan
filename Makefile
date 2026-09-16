@@ -52,8 +52,7 @@ TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS) \
 	INCAN_HOME="$(INCAN_TEST_OVEN_HOME)" \
 	INCAN_SOURCE_ROOT="$(CURDIR)" \
 	INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
-	INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
-	INCAN_TOOLCHAIN_CRATES_DIR="$(CURDIR)/crates"
+	INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib"
 TEST_RUNTIME_ENV = $(TEST_ENV) \
 	INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE="$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)" \
 	INCAN_SDK_INVENTORY="$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json"
@@ -346,7 +345,7 @@ fetch-locked-cargo-sources:
 
 .PHONY: fetch-oven-loaf-sources
 fetch-oven-loaf-sources:
-	@cargo fetch --manifest-path tests/fixtures/oven_loaf_dependencies/Cargo.toml --locked
+	@cargo fetch --manifest-path loaves/compiler/incan_test_support/fixtures/oven_loaf_dependencies/Cargo.toml --locked
 
 .PHONY: fetch-release-support-workspace-sources
 fetch-release-support-workspace-sources:
@@ -433,7 +432,7 @@ test-prewarm-sdk:
 		INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
 		INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
 		INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE="$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)" \
-		"$(TARGET_DIR)/debug/incan" check tests/fixtures/test_assert_canary.incn
+		"$(TARGET_DIR)/debug/incan" check loaves/compiler/incan_test_support/fixtures/test_assert_canary.incn
 	@test -s "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)"
 	@test -f "$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json"
 
@@ -457,7 +456,7 @@ shadow-comparison-evidence: test-prewarm-sdk
 		mkdir -p "$$stage"; \
 		$(SHADOW_STAGE_ENV) "$(TARGET_DIR)/debug/incan" new shadow_probe --yes --dir "$$stage/shadow_probe" >/dev/null; \
 		$(SHADOW_STAGE_ENV) "$(TARGET_DIR)/debug/incan" new shadow_json_probe --yes --dir "$$stage/shadow_json_probe" >/dev/null; \
-		cp "$(CURDIR)/tests/fixtures/replacement/json_stringify_scalars.incn" "$$stage/shadow_json_probe/src/main.incn"; \
+		cp "$(CURDIR)/loaves/compiler/incan_driver/tests/fixtures/replacement/json_stringify_scalars.incn" "$$stage/shadow_json_probe/src/main.incn"; \
 		printf '\n\ndef main() -> None:\n    println(observe())\n' >> "$$stage/shadow_json_probe/src/main.incn"; \
 		$(SHADOW_STAGE_ENV) "$(TARGET_DIR)/debug/incan" oven bake --project "$$stage/shadow_probe" >/dev/null; \
 		$(SHADOW_STAGE_ENV) "$(TARGET_DIR)/debug/incan" oven bake --project "$$stage/shadow_json_probe" >/dev/null; \
@@ -543,6 +542,10 @@ test-oven-pr-regressions: test-oven-report-retention
 	@CARGO_PROFILE_TEST_DEBUG=0 CARGO_BUILD_JOBS=2 cargo test --locked -p incan_oven_facet --test oven_pr_regressions
 
 .PHONY: test-oven-release-smoke
+# The release toolchain staged above is a bare binary plus its Loaf envelope; an installed toolchain would find its
+# SDK inventory beside the binary. Hand the smoke the inventory its Loafs were baked from, the way CI's job
+# environment does, or the compiler reads the stdlib from source, meets `std.io`'s `rust::byteorder` import, and
+# reaches for Cargo inside the guard.
 test-oven-release-smoke: test-prewarm-oven-release-loafs
 	@echo "\033[1mRunning Cargo-guarded Oven release-envelope smoke...\033[0m"
 	@set -e; \
@@ -556,6 +559,7 @@ test-oven-release-smoke: test-prewarm-oven-release-loafs
 			PATH="$$smoke_root/cargo-guard:$$PATH" \
 			INCAN_OVEN_CARGO_GUARD_LOG="$$smoke_root/cargo-guard/invocations.log" \
 			INCAN_HOME="$$smoke_root/incan-home" INCAN_NO_BANNER=1 \
+			INCAN_SDK_INVENTORY="$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json" \
 			RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" \
 			"$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" "$$@"; \
 		}; \
@@ -563,12 +567,11 @@ test-oven-release-smoke: test-prewarm-oven-release-loafs
 			INCAN_SOURCE_ROOT="$(CURDIR)" \
 			INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
 			INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
-			INCAN_TOOLCHAIN_CRATES_DIR="$(CURDIR)/crates" \
 			run_incan "$$@"; \
 		}; \
 		for fixture in oven_project_bake oven_release_bytes_io oven_release_file_lock oven_release_app_bake; do \
 			project_root="$$smoke_root/$$fixture"; \
-			cp -R "$(CURDIR)/tests/fixtures/$$fixture" "$$project_root"; \
+			cp -R "$(CURDIR)/loaves/compiler/incan_test_support/fixtures/$$fixture" "$$project_root"; \
 			run_project_incan oven bake --project "$$project_root" --format json > "$$smoke_root/$$fixture-bake-first.json"; \
 			test "$$(grep -Fc '"action": "toolchain_loaf"' "$$smoke_root/$$fixture-bake-first.json")" -eq 2; \
 			run_project_incan oven bake --project "$$project_root" --format json > "$$smoke_root/$$fixture-bake-second.json"; \
@@ -604,8 +607,8 @@ generated-rust-audit-gate:
 	@echo "\033[1mRunning generated Rust audit helper checks...\033[0m"
 	@cargo test -p incan_driver --test generated_rust_audit_tests
 	@python3 scripts/generated_rust_audit.py --format json --fail-on-missing \
-		--artifact program-main=tests/fixtures/generated_rust_audit/main.rs \
-		--artifact stdlib-copy=tests/fixtures/generated_rust_audit/nested >/dev/null
+		--artifact program-main=loaves/compiler/incan_driver/tests/fixtures/generated_rust_audit/main.rs \
+		--artifact stdlib-copy=loaves/compiler/incan_driver/tests/fixtures/generated_rust_audit/nested >/dev/null
 	@echo "\033[32m✓ Generated Rust audit helper checks passed\033[0m"
 
 .PHONY: examples  ## test - Smoke test examples (check all, run entrypoints with timeout)
@@ -645,7 +648,7 @@ smoke-test-canary:
 	@$(MAKE) -s smoke-test-require-release-bin
 	@echo "\033[1mRunning Incan assertion canary...\033[0m"
 	@$(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" INCAN_NO_BANNER=1 \
-		"$(TARGET_DIR)/release/incan" test tests/fixtures/test_assert_canary.incn
+		"$(TARGET_DIR)/release/incan" test loaves/compiler/incan_test_support/fixtures/test_assert_canary.incn
 	@echo "\033[32m✓ Incan assertion canary passed\033[0m"
 
 .PHONY: smoke-test-web-example
@@ -802,7 +805,7 @@ install-lsp:
 .PHONY: test-incan-canary  ## test - End-to-end Incan test canary (assertion codegen)
 test-incan-canary: release
 	@echo "\033[1mRunning Incan assertion canary...\033[0m"
-	@INCAN_NO_BANNER=1 "$(TARGET_DIR)/release/incan" test tests/fixtures/test_assert_canary.incn
+	@INCAN_NO_BANNER=1 "$(TARGET_DIR)/release/incan" test loaves/compiler/incan_test_support/fixtures/test_assert_canary.incn
 	@echo "\033[32m✓ Incan assertion canary passed\033[0m"
 
 .PHONY: examples-web-build  ## test - Build-only web example (no run)
