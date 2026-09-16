@@ -51,7 +51,8 @@ pub struct ProjectRequirements {
     pub dependencies: Vec<DependencySpec>,
     /// Immutable compiled-library projections that replace obsolete physical SDK cache coordinates.
     pub sdk_dependency_rebindings: Vec<SdkDependencyRebinding>,
-    /// Path dependencies proven to be owned by the active SDK/toolchain rather than an ordinary project source.
+    /// Trusted active SDK/toolchain coordinates, including dependencies of unselected implementation facets in
+    /// compiled providers. Feature flags are neutral here; selected links remain in `dependencies`.
     pub sdk_path_dependencies: Vec<DependencySpec>,
     /// Complete compiled-artifact closure whose transitive coordinates must be projected together.
     pub sdk_artifact_projections: Vec<SdkArtifactProjection>,
@@ -477,7 +478,7 @@ pub fn collect_project_requirements(
         for dep in namespace.extra_crate_deps {
             let spec = dependency_spec_from_stdlib_dep(dep);
             if matches!(spec.source, DependencySource::Path { .. }) {
-                merge_requirement_dependency(
+                merge_sdk_path_dependency(
                     &mut requirements.sdk_path_dependencies,
                     spec.clone(),
                     format!("stdlib namespace `std.{namespace_name}` toolchain path"),
@@ -495,7 +496,7 @@ pub fn collect_project_requirements(
     if needs_serde_runtime {
         let serde = dependency_spec_from_stdlib_extra_crate("serde")?;
         if matches!(serde.source, DependencySource::Path { .. }) {
-            merge_requirement_dependency(
+            merge_sdk_path_dependency(
                 &mut requirements.sdk_path_dependencies,
                 serde.clone(),
                 "std.serde toolchain path".to_string(),
@@ -531,8 +532,10 @@ pub fn collect_project_requirements(
 
 /// Return the exact compiler-owned path catalog used only for semantic generated-artifact identity.
 ///
-/// The catalog is every toolchain-owned crate the generated project links: the support crates every program links,
-/// the facets this program reaches, and the SDK path dependencies already proven compiler-owned.
+/// The catalog includes mandatory support crates, runtime facets reached by the program, and trusted active SDK
+/// artifact coordinates. Those artifacts retain toolchain dependencies from unselected implementation facets too, so
+/// their complete manifests have the same semantic identity for every consumer. Catalog entries do not activate links
+/// or features.
 pub fn semantic_sdk_path_dependencies(requirements: &ProjectRequirements) -> Vec<DependencySpec> {
     let mut dependencies = requirements.sdk_path_dependencies.clone();
     let toolchain_crates = incan_core::lang::generated_support::SUPPORT_CRATES_EVERY_PROGRAM_LINKS
@@ -559,7 +562,7 @@ fn compiler_support_dependency_spec(crate_name: &str) -> DependencySpec {
         crate_name: crate_name.to_string(),
         version: None,
         features: Vec::new(),
-        default_features: true,
+        default_features: false,
         source: DependencySource::Path {
             path: oven_model::toolchain_layout::resolve_toolchain_crate_path(crate_name),
         },
@@ -627,6 +630,21 @@ pub fn merge_requirement_dependency(
     Ok(())
 }
 
+/// Add a trusted SDK coordinate without treating a consumer's link features as catalog identity.
+///
+/// The catalog authorizes source paths and semantic artifact normalization; actual selected links are merged
+/// separately. Facets can request different features of the same package without naming different trusted sources.
+/// Package, version, optionality and canonical source conflicts remain errors.
+pub(crate) fn merge_sdk_path_dependency(
+    merged: &mut Vec<DependencySpec>,
+    mut candidate: DependencySpec,
+    source_label: String,
+) -> ProviderResult<()> {
+    candidate.features.clear();
+    candidate.default_features = false;
+    merge_requirement_dependency(merged, candidate, source_label)
+}
+
 /// Compare dependency specs while treating equivalent path spellings as the same dependency.
 pub fn dependency_specs_match(left: &DependencySpec, right: &DependencySpec) -> bool {
     if left == right {
@@ -691,6 +709,50 @@ mod tests {
     use crate::test_support::parsed_module_for_test;
     use incan_frontend::library_manifest::ProviderFeatureMetadata;
     use std::collections::BTreeMap;
+
+    /// Link flags do not select another source, but every retained coordinate field still constrains trust.
+    #[test]
+    fn sdk_path_catalog_normalizes_link_flags_and_rejects_coordinate_conflicts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("runtime");
+        fs::create_dir_all(&source)?;
+        let candidate = DependencySpec {
+            crate_name: "runtime".to_string(),
+            package: Some("runtime-package".to_string()),
+            version: Some("1.0".to_string()),
+            features: vec!["first".to_string()],
+            default_features: true,
+            optional: false,
+            source: DependencySource::Path { path: source.clone() },
+        };
+        let mut catalog = Vec::new();
+        merge_sdk_path_dependency(&mut catalog, candidate.clone(), "first".to_string())?;
+        let mut equivalent = candidate.clone();
+        equivalent.features = vec!["other".to_string()];
+        equivalent.default_features = false;
+        equivalent.source = DependencySource::Path { path: source.join(".") };
+        merge_sdk_path_dependency(&mut catalog, equivalent, "equivalent source".to_string())?;
+        assert_eq!(catalog.len(), 1);
+        assert!(catalog[0].features.is_empty());
+        assert!(!catalog[0].default_features);
+        let mut changed_path = candidate.clone();
+        changed_path.source = DependencySource::Path {
+            path: root.path().join("other"),
+        };
+        let mut changed_version = candidate.clone();
+        changed_version.version = Some("2.0".to_string());
+        let mut changed_package = candidate.clone();
+        changed_package.package = Some("other-package".to_string());
+        let mut changed_optional = candidate;
+        changed_optional.optional = true;
+        for conflict in [changed_path, changed_version, changed_package, changed_optional] {
+            let previous = catalog.clone();
+            assert!(merge_sdk_path_dependency(&mut catalog, conflict, "conflict".to_string()).is_err());
+            assert_eq!(catalog, previous, "a rejected coordinate must not change the catalog");
+        }
+        Ok(())
+    }
 
     #[test]
     fn an_imported_namespace_links_its_facet_while_its_crates_stay_provider_facts()

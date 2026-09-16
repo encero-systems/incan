@@ -13,7 +13,7 @@ use std::{env, fs};
 use incan_core::lang::stdlib;
 
 use crate::error::{ProviderError, ProviderResult};
-use crate::requirements::{ProjectRequirements, merge_requirement_dependency};
+use crate::requirements::{ProjectRequirements, merge_requirement_dependency, merge_sdk_path_dependency};
 use crate::sdk_build::prepare_sdk_provider_inventory;
 use crate::{
     BackendImplementationRequirement, ProviderPlan, ResolvedSdkComponents, SDK_INVENTORY_FILE, SDK_PROVIDER_BUILD_ENV,
@@ -219,7 +219,7 @@ fn extend_requirements_with_selected_sdk_providers(
     // still carry a non-descriptor Cargo edge to an active provider supplied transitively or unused by this consumer.
     for provider in provider_plan.active_sdk_records() {
         if let Some(artifact) = provider.artifact.as_ref() {
-            merge_requirement_dependency(
+            merge_sdk_path_dependency(
                 &mut requirements.sdk_path_dependencies,
                 artifact.to_dependency_spec(),
                 format!("active SDK provider `{}`", provider.identity.name),
@@ -237,7 +237,7 @@ fn extend_requirements_with_selected_sdk_providers(
                 continue;
             };
             if matches!(dependency.source, ProviderCargoDependencySource::Toolchain { .. }) {
-                merge_requirement_dependency(
+                merge_sdk_path_dependency(
                     &mut requirements.sdk_path_dependencies,
                     provider_cargo_dependency_spec(dependency),
                     format!("active SDK provider `{}` toolchain dependency", provider.identity.name),
@@ -269,7 +269,7 @@ fn extend_requirements_with_selected_sdk_providers(
             if let BackendImplementationRequirement::CargoDependency { dependency } = requirement {
                 let dependency_spec = provider_cargo_dependency_spec(&dependency);
                 if matches!(dependency.source, ProviderCargoDependencySource::Toolchain { .. }) {
-                    merge_requirement_dependency(
+                    merge_sdk_path_dependency(
                         &mut requirements.sdk_path_dependencies,
                         dependency_spec.clone(),
                         format!("compiled provider `{}` toolchain dependency", provider.identity.name),
@@ -668,6 +668,73 @@ mod tests {
             narrow_identity, changed,
             "runtime content must remain identity authority"
         );
+        // A second module can use the same toolchain crate with different link flags. The catalog describes its
+        // trusted source coordinate; each selected link still retains its own feature request.
+        let mut alternative = record.clone();
+        let mut alternate_facet = alternative
+            .implementation_facets
+            .first()
+            .ok_or("fixture needs a facet")?
+            .clone();
+        alternate_facet.id = "alternate".to_string();
+        alternate_facet.required_modules = BTreeSet::from([vec!["alternate".to_string()]]);
+        let Some(BackendImplementationRequirement::CargoDependency { dependency }) =
+            alternate_facet.backend_requirements.first_mut()
+        else {
+            return Err("fixture facet needs its runtime dependency".into());
+        };
+        dependency.features.insert("alternate".to_string());
+        dependency.default_features = false;
+        let alternate_dependency = dependency.clone();
+        let alternate_manifest = Arc::make_mut(alternative.manifest.as_mut().ok_or("fixture needs a manifest")?);
+        alternate_manifest
+            .contract_metadata
+            .provider
+            .implementation_facets
+            .push(ProviderImplementationFacet {
+                id: alternate_facet.id.clone(),
+                required_modules: alternate_facet.required_modules.clone(),
+                required_features: BTreeSet::new(),
+                cargo_features: Default::default(),
+                cargo_dependencies: vec![alternate_dependency],
+            });
+        let artifact = alternative.artifact.as_ref().ok_or("fixture needs an artifact")?;
+        alternate_manifest.write_to_path(&artifact.manifest_path)?;
+        alternative.identity.digest = digest_provider_artifact(&artifact.crate_root)?;
+        alternative.implementation_facets.push(alternate_facet);
+        alternative
+            .namespace_claims
+            .insert(vec!["std".to_string(), "alternate".to_string()]);
+        let selected_requirements = |module: &str| -> Result<_, Box<dyn std::error::Error>> {
+            let selected = ProviderPlan::new(
+                Default::default(),
+                vec![alternative.clone()],
+                [vec!["std".to_string(), module.to_string()]],
+            )?;
+            let mut requirements = ProjectRequirements::default();
+            extend_requirements_with_provider_plan(&mut requirements, &selected)?;
+            let identity =
+                crate::lock_semantics::provider_semantic_identities(&selected, &requirements.sdk_path_dependencies)?;
+            Ok((requirements, identity))
+        };
+        let (rich, rich_identity) = selected_requirements("rich")?;
+        let (alternate, alternate_identity) = selected_requirements("alternate")?;
+        assert_eq!(rich.sdk_path_dependencies, alternate.sdk_path_dependencies);
+        assert_eq!(rich_identity, alternate_identity);
+        let rich_link = rich
+            .dependencies
+            .iter()
+            .find(|spec| spec.crate_name == "facet_runtime")
+            .ok_or("rich runtime link missing")?;
+        let alternate_link = alternate
+            .dependencies
+            .iter()
+            .find(|spec| spec.crate_name == "facet_runtime")
+            .ok_or("alternate runtime link missing")?;
+        assert!(rich_link.features.is_empty());
+        assert!(rich_link.default_features);
+        assert_eq!(alternate_link.features, ["alternate"]);
+        assert!(!alternate_link.default_features);
         Ok(())
     }
 
