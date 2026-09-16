@@ -42,10 +42,16 @@ impl OvenCompilerSuiteTargetCapabilities {
     pub fn for_target(package_name: &str, target_kind: &str, source_relative_path: &str) -> Self {
         let generated_rust_closure =
             source_relative_path != "loaves/toolchain/incan-cli/tests/toolchain_installer_tests.rs";
+        // The ring libraries' unit tests inspect Rust through Cargo metadata exactly as they did when the root
+        // library carried them; the authority follows the tests to the packages that own them now.
         let cargo_fixture = matches!(
             (package_name, target_kind, source_relative_path),
             ("incan", "lib", "src/lib.rs")
                 | ("rust_inspect", "lib", "loaves/compiler/rust_inspect/src/lib.rs")
+                | ("incan_frontend", "lib", "loaves/compiler/incan_frontend/src/lib.rs")
+                | ("incan_emit", "lib", "loaves/compiler/incan_emit/src/lib.rs")
+                | ("incan_driver", "lib", "loaves/compiler/incan_driver/src/lib.rs")
+                | ("oven_rustc", "lib", "loaves/oven/oven_rustc/src/lib.rs")
                 | (
                     "incan_driver",
                     "test",

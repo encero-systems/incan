@@ -1282,8 +1282,10 @@ def use_it(x: Serialize) -> None:
             cargo_toml.contains("serde"),
             "expected inline rust import dependency in generated Cargo.toml, got:\n{cargo_toml}"
         );
+        // `std.serde.json` is implemented by the data component and the Rust facet it declares; the Cargo
+        // feature that once spelled `json` no longer exists.
         assert!(
-            cargo_toml.contains("incan_stdlib_data") && cargo_toml.contains("json"),
+            cargo_toml.contains("incan_stdlib_data") && cargo_toml.contains("incan_std_data"),
             "expected provider implementation facts in generated Cargo.toml, got:\n{cargo_toml}"
         );
         assert!(
