@@ -414,7 +414,7 @@ fn sdk_provider_effect_input_key(checkout_root: &Path, compiler_stamp: &str) -> 
 /// must follow the same source closure as provider publication; hashing development executable bytes would make
 /// identical source checkouts miss after unrelated test builds.
 pub fn sdk_provider_store_identity_for_compiler_root(compiler_root: &Path) -> ProviderResult<String> {
-    let stdlib_root = fs::canonicalize(compiler_root.join("crates/incan_stdlib/stdlib")).map_err(|error| {
+    let stdlib_root = fs::canonicalize(compiler_root.join("loaves/stdlib")).map_err(|error| {
         ProviderError::failure(format!(
             "failed to canonicalize built-in stdlib source directory below {}: {error}",
             compiler_root.display()
@@ -452,7 +452,7 @@ fn is_sdk_provider_compiler_checkout(candidate: &Path, stdlib_root: &Path) -> bo
     if !candidate.join("Cargo.toml").is_file() || !candidate.join("src").is_dir() {
         return false;
     }
-    let expected_stdlib_root = candidate.join("crates/incan_stdlib/stdlib");
+    let expected_stdlib_root = candidate.join("loaves/stdlib");
     fs::canonicalize(&expected_stdlib_root).ok() == fs::canonicalize(stdlib_root).ok()
 }
 
@@ -644,7 +644,7 @@ mod tests {
     fn sdk_provider_build_uses_enclosing_workspace_lock() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let workspace = tmp.path().join("workspace");
-        let stdlib_root = workspace.join("crates/incan_stdlib/stdlib");
+        let stdlib_root = workspace.join("loaves/stdlib");
         let artifact_root = stdlib_root.join("target/lib");
         fs::create_dir_all(&stdlib_root)?;
         fs::write(workspace.join("Cargo.lock"), "workspace lock payload")?;
@@ -769,7 +769,7 @@ mod tests {
     fn sdk_provider_store_identity_keys_on_what_the_compiler_produces() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = tempfile::tempdir()?;
         let checkout = temp_dir.path().join("checkout");
-        let stdlib_root = checkout.join("crates/incan_stdlib/stdlib");
+        let stdlib_root = checkout.join("loaves/stdlib");
         fs::create_dir_all(checkout.join("src"))?;
         fs::create_dir_all(stdlib_root.join("components"))?;
         fs::write(checkout.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
@@ -886,7 +886,7 @@ mod tests {
 
         // The Rust half is mandatory rather than an enhancement: every component links this runtime, so an
         // Incan-only key would report a hit for a change the consumer can observe.
-        let runtime = checkout.join("crates/incan_stdlib/src");
+        let runtime = checkout.join("loaves/stdlib/core/rust/src");
         fs::create_dir_all(&runtime)?;
         fs::write(runtime.join("frozen.rs"), "pub fn limit() -> u8 { 1 }\n")?;
         let with_runtime =

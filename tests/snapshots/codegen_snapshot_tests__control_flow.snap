@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn test_if_statements() {
     let x: i64 = 10;
     if x > 5 {
@@ -80,7 +80,7 @@ fn test_nested_control_flow() {
             let _ = println!(
                 "{}", { let __parts : [& str; 3usize] = ["", ",", ""]; let __args : Vec <
                 String > = vec![format!("{}", i), format!("{}", j)];
-                incan_stdlib::strings::fstring(& __parts, & __args) }
+                incan_std_core::strings::fstring(& __parts, & __args) }
             );
         }
     }

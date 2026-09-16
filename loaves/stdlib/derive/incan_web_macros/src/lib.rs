@@ -1,6 +1,6 @@
 //! Procedural macros for the transitional Incan web runtime.
 //!
-//! This crate is toolchain-locked to `incan_stdlib::web` and compiler-generated Rust. It is not a standalone routing
+//! This crate is toolchain-locked to `incan_std_web` and compiler-generated Rust. It is not a standalone routing
 //! framework API; macro output may change whenever the compiler/runtime contract changes.
 
 use proc_macro::TokenStream;
@@ -177,7 +177,7 @@ fn expand_route(args: RouteArgs, func: ItemFn) -> syn::Result<proc_macro2::Token
         };
         submits.push(quote! {
             inventory::submit! {
-                incan_stdlib::web::RouteEntry::new(
+                incan_std_web::RouteEntry::new(
                     #original_path,
                     #method,
                     |router| router.route(#original_path, axum::routing::#router_method(#route_handler)),

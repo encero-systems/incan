@@ -6,7 +6,7 @@ expression: rust_code
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 pub use crate::__incan_std::r#async;
 pub use crate::__incan_std::web::App;
 pub use crate::__incan_std::web::Json;
@@ -20,42 +20,42 @@ pub use crate::__incan_std::web::GET;
 struct Search {
     q: String,
 }
-impl incan_stdlib::reflection::HasClassName for Search {
+impl incan_std_core::reflection::HasClassName for Search {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for Search {
+impl incan_std_core::reflection::HasTypeClassName for Search {
     fn __class_name__() -> &'static str {
         "Search"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for Search {
+impl incan_std_core::reflection::HasFieldMetadata for Search {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for Search {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for Search {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("q"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("q"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("q"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("q"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for Search {
+impl incan_std_core::reflection::HasFieldValueReflection for Search {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             "q" => Some(format!("{}", self.q)),

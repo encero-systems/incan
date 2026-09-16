@@ -35,10 +35,10 @@ fn omitted_split_separator_has_a_concrete_emitted_type() -> Result<(), Box<dyn s
         )
         .replace(
             &format!(
-                "incan_stdlib::__incan_stdlib_version_check!(\"{}\");",
+                "incan_std_core::__incan_stdlib_version_check!(\"{}\");",
                 incan_emit::GENERATED_FOR_STDLIB_VERSION
             ),
-            "incan_stdlib::__incan_stdlib_version_check!(\"<INCAN_STDLIB_VERSION>\");",
+            "incan_std_core::__incan_stdlib_version_check!(\"<INCAN_STDLIB_VERSION>\");",
         );
     insta::assert_snapshot!("omitted_string_split_separator", normalized);
     Ok(())

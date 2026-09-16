@@ -6,10 +6,10 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 #[derive(Debug, Clone, Copy)]
 struct Attempts(pub i64);
-impl incan_stdlib::reflection::HasTypeClassName for Attempts {
+impl incan_std_core::reflection::HasTypeClassName for Attempts {
     fn __class_name__() -> &'static str {
         "Attempts"
     }
@@ -17,23 +17,23 @@ impl incan_stdlib::reflection::HasTypeClassName for Attempts {
 impl Attempts {
     pub fn from_underlying(
         n: i64,
-    ) -> Result<Attempts, incan_stdlib::validation::ValidationError> {
+    ) -> Result<Attempts, incan_std_core::validation::ValidationError> {
         if n <= 0 {
             return Err::<
                 Attempts,
-                incan_stdlib::validation::ValidationError,
+                incan_std_core::validation::ValidationError,
             >(
-                incan_stdlib::validation::ValidationError::new(
+                incan_std_core::validation::ValidationError::new(
                     "attempts must be >= 1".to_string(),
                 ),
             );
         }
-        return Ok::<Attempts, incan_stdlib::validation::ValidationError>(Attempts(n));
+        return Ok::<Attempts, incan_std_core::validation::ValidationError>(Attempts(n));
     }
 }
 #[derive(Debug)]
 struct RetryAttempts(pub Attempts);
-impl incan_stdlib::reflection::HasTypeClassName for RetryAttempts {
+impl incan_std_core::reflection::HasTypeClassName for RetryAttempts {
     fn __class_name__() -> &'static str {
         "RetryAttempts"
     }
@@ -42,45 +42,45 @@ impl incan_stdlib::reflection::HasTypeClassName for RetryAttempts {
 struct Job {
     attempts: Attempts,
 }
-impl incan_stdlib::reflection::HasClassName for Job {
+impl incan_std_core::reflection::HasClassName for Job {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for Job {
+impl incan_std_core::reflection::HasTypeClassName for Job {
     fn __class_name__() -> &'static str {
         "Job"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for Job {
+impl incan_std_core::reflection::HasFieldMetadata for Job {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for Job {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for Job {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("attempts"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("attempts"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("attempts"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Attempts"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("attempts"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Attempts"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 fn take_attempts(a: Attempts) {
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["", ""]; let __args : Vec < String > =
-        vec![format!("{}", a.0)]; incan_stdlib::strings::fstring(& __parts, & __args) }
+        vec![format!("{}", a.0)]; incan_std_core::strings::fstring(& __parts, & __args) }
     );
 }
 fn main() {
@@ -99,7 +99,7 @@ fn main() {
         match Attempts::from_underlying(3) {
             Ok(__incan_newtype_value) => __incan_newtype_value,
             Err(__incan_validation_error) => {
-                incan_stdlib::validation::raise_validation_error(
+                incan_std_core::validation::raise_validation_error(
                     "Attempts".to_string(),
                     "from_underlying".to_string(),
                     __incan_validation_error,
@@ -110,7 +110,7 @@ fn main() {
     let attempts: Attempts = match Attempts::from_underlying(4) {
         Ok(__incan_newtype_value) => __incan_newtype_value,
         Err(__incan_validation_error) => {
-            incan_stdlib::validation::raise_validation_error(
+            incan_std_core::validation::raise_validation_error(
                 "Attempts".to_string(),
                 "from_underlying".to_string(),
                 __incan_validation_error,
@@ -121,7 +121,7 @@ fn main() {
         match Attempts::from_underlying(5) {
             Ok(__incan_newtype_value) => __incan_newtype_value,
             Err(__incan_validation_error) => {
-                incan_stdlib::validation::raise_validation_error(
+                incan_std_core::validation::raise_validation_error(
                     "Attempts".to_string(),
                     "from_underlying".to_string(),
                     __incan_validation_error,
@@ -130,7 +130,7 @@ fn main() {
         },
     );
     let job = {
-        let mut __incan_validation_errors = incan_stdlib::validation::ValidationErrorsBuilder::new(
+        let mut __incan_validation_errors = incan_std_core::validation::ValidationErrorsBuilder::new(
             "Job".to_string(),
         );
         let __incan_field_0_raw = 6;
@@ -139,7 +139,7 @@ fn main() {
             Ok(__incan_attempts_validation_value) => {
                 Ok::<
                     Attempts,
-                    incan_stdlib::validation::ValidationError,
+                    incan_std_core::validation::ValidationError,
                 >(__incan_attempts_validation_value)
             }
             Err(__incan_attempts_validation_error) => {
@@ -150,7 +150,7 @@ fn main() {
                     );
                 Err::<
                     Attempts,
-                    incan_stdlib::validation::ValidationError,
+                    incan_std_core::validation::ValidationError,
                 >(__incan_attempts_validation_error)
             }
         };
@@ -159,7 +159,7 @@ fn main() {
             attempts: match __incan_field_0_validated_result {
                 Ok(__incan_newtype_value) => __incan_newtype_value,
                 Err(__incan_validation_error) => {
-                    incan_stdlib::validation::raise_validation_error(
+                    incan_std_core::validation::raise_validation_error(
                         "Attempts".to_string(),
                         "from_underlying".to_string(),
                         __incan_validation_error,
@@ -172,7 +172,7 @@ fn main() {
     let _ = println!(
         "{}", { let __parts : [& str; 4usize] = ["", " ", " ", ""]; let __args : Vec <
         String > = vec![format!("{}", attempts.0), format!("{}", retry_attempts.0),
-        format!("{}", job.attempts.0)]; incan_stdlib::strings::fstring(& __parts, &
+        format!("{}", job.attempts.0)]; incan_std_core::strings::fstring(& __parts, &
         __args) }
     );
 }

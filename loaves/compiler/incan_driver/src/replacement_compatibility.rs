@@ -25,7 +25,7 @@ const FROZEN_V0_5_CAPABILITIES_SOURCE: &[u8] =
     include_bytes!("replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn");
 const FROZEN_V0_5_CAPABILITIES_PATH: &str =
     "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn";
-const LIVE_FEATURES_SOURCE: &str = "crates/incan_stdlib/stdlib/features.incn";
+const LIVE_FEATURES_SOURCE: &str = "loaves/stdlib/core/src/features.incn";
 
 /// The same catalogue's path *at the v0.5.0 tag*, before the #1228 rename.
 ///
@@ -765,7 +765,7 @@ impl RegistryValidationError {
 /// Decode the frozen v0.5 release pin and derive its complete capability baseline from checked metadata.
 ///
 /// The committed snapshot is deliberately separate from the present-tense workspace
-/// `crates/incan_stdlib/stdlib/features.incn`. Future public-registry edits therefore cannot alter or invalidate
+/// `loaves/stdlib/core/src/features.incn`. Future public-registry edits therefore cannot alter or invalidate
 /// this released compatibility target. Descriptor field extraction still goes through the shared checked metadata
 /// path rather than a hand-maintained Rust list.
 pub fn checked_v0_5_public_capability_baseline() -> Result<PublicCapabilityBaseline, RegistryValidationError> {

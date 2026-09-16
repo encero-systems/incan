@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn bump() -> i64 {
     let mut x = 1;
     x = x + 1;
@@ -15,8 +15,8 @@ fn bump() -> i64 {
 fn collatz_inner(n: i64) -> i64 {
     let mut num = n;
     while num != 1 {
-        if incan_stdlib::num::py_mod_i64(num, 2) == 0 {
-            num = incan_stdlib::num::py_floor_div_i64(num, 2);
+        if incan_std_core::num::py_mod_i64(num, 2) == 0 {
+            num = incan_std_core::num::py_floor_div_i64(num, 2);
         } else {
             num = 3 * num + 1;
         }

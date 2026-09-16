@@ -4371,12 +4371,12 @@ enum Env(str) with From[str]:
 
     #[test]
     fn test_rust_module_directive_basic() -> Result<(), Vec<CompileError>> {
-        let source = "rust.module(\"incan_stdlib::testing\")\n\ndef foo() -> int:\n    return 1\n";
+        let source = "rust.module(\"incan_std_testing\")\n\ndef foo() -> int:\n    return 1\n";
         let program = parse_str(source)?;
         assert_eq!(program.declarations.len(), 1);
         let rmp = program.rust_module_path.as_ref();
         assert!(rmp.is_some(), "rust_module_path should be set");
-        assert_eq!(rmp.map(|s| s.node.as_str()), Some("incan_stdlib::testing"));
+        assert_eq!(rmp.map(|s| s.node.as_str()), Some("incan_std_testing"));
         Ok(())
     }
 
@@ -4416,7 +4416,7 @@ enum Env(str) with From[str]:
 
     #[test]
     fn test_rust_module_directive_not_at_top_is_error() {
-        let source = "def foo() -> int:\n    return 1\n\nrust.module(\"incan_stdlib::testing\")\n";
+        let source = "def foo() -> int:\n    return 1\n\nrust.module(\"incan_std_testing\")\n";
         let Err(err) = parse_str(source) else {
             panic!("rust.module() after declarations should fail");
         };

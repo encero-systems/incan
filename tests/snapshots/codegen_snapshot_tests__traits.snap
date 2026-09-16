@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 pub trait Named {}
 pub trait Drawable {
     fn draw(&self) -> String;
@@ -19,42 +19,42 @@ pub trait Shape {
 struct Dog {
     pub name: String,
 }
-impl incan_stdlib::reflection::HasClassName for Dog {
+impl incan_std_core::reflection::HasClassName for Dog {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for Dog {
+impl incan_std_core::reflection::HasTypeClassName for Dog {
     fn __class_name__() -> &'static str {
         "Dog"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for Dog {
+impl incan_std_core::reflection::HasFieldMetadata for Dog {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for Dog {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for Dog {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("name"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("name"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("name"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("name"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for Dog {
+impl incan_std_core::reflection::HasFieldValueReflection for Dog {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             "name" => Some(format!("{}", self.name)),
@@ -71,32 +71,32 @@ struct Rectangle {
     width: f64,
     height: f64,
 }
-impl incan_stdlib::reflection::HasClassName for Rectangle {
+impl incan_std_core::reflection::HasClassName for Rectangle {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for Rectangle {
+impl incan_std_core::reflection::HasTypeClassName for Rectangle {
     fn __class_name__() -> &'static str {
         "Rectangle"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for Rectangle {
+impl incan_std_core::reflection::HasFieldMetadata for Rectangle {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for Rectangle {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for Rectangle {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 0] = [];
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for Rectangle {
+impl incan_std_core::reflection::HasFieldValueReflection for Rectangle {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             _ => None,
@@ -126,32 +126,32 @@ impl Shape for Rectangle {
 struct Circle {
     radius: f64,
 }
-impl incan_stdlib::reflection::HasClassName for Circle {
+impl incan_std_core::reflection::HasClassName for Circle {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for Circle {
+impl incan_std_core::reflection::HasTypeClassName for Circle {
     fn __class_name__() -> &'static str {
         "Circle"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for Circle {
+impl incan_std_core::reflection::HasFieldMetadata for Circle {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for Circle {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for Circle {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 0] = [];
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for Circle {
+impl incan_std_core::reflection::HasFieldValueReflection for Circle {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             _ => None,
@@ -166,7 +166,7 @@ impl Circle {
         return {
             let __parts: [&str; 2usize] = ["Circle with radius ", ""];
             let __args: Vec<String> = vec![format!("{}", self.radius)];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         };
     }
 }
@@ -175,7 +175,7 @@ impl Drawable for Circle {
         return {
             let __parts: [&str; 2usize] = ["Circle with radius ", ""];
             let __args: Vec<String> = vec![format!("{}", self.radius)];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         };
     }
 }
@@ -183,32 +183,32 @@ impl Drawable for Circle {
 struct Square {
     side: f64,
 }
-impl incan_stdlib::reflection::HasClassName for Square {
+impl incan_std_core::reflection::HasClassName for Square {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for Square {
+impl incan_std_core::reflection::HasTypeClassName for Square {
     fn __class_name__() -> &'static str {
         "Square"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for Square {
+impl incan_std_core::reflection::HasFieldMetadata for Square {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for Square {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for Square {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 0] = [];
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for Square {
+impl incan_std_core::reflection::HasFieldValueReflection for Square {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             _ => None,
@@ -226,7 +226,7 @@ impl Square {
         return {
             let __parts: [&str; 2usize] = ["Square with side ", ""];
             let __args: Vec<String> = vec![format!("{}", self.side)];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         };
     }
 }
@@ -243,7 +243,7 @@ impl Drawable for Square {
         return {
             let __parts: [&str; 2usize] = ["Square with side ", ""];
             let __args: Vec<String> = vec![format!("{}", self.side)];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         };
     }
 }
@@ -256,32 +256,32 @@ struct Carton {
     height: f64,
     depth: f64,
 }
-impl incan_stdlib::reflection::HasClassName for Carton {
+impl incan_std_core::reflection::HasClassName for Carton {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for Carton {
+impl incan_std_core::reflection::HasTypeClassName for Carton {
     fn __class_name__() -> &'static str {
         "Carton"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for Carton {
+impl incan_std_core::reflection::HasFieldMetadata for Carton {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for Carton {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for Carton {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 0] = [];
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for Carton {
+impl incan_std_core::reflection::HasFieldValueReflection for Carton {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             _ => None,
@@ -319,32 +319,32 @@ struct Document {
     title: String,
     content: String,
 }
-impl incan_stdlib::reflection::HasClassName for Document {
+impl incan_std_core::reflection::HasClassName for Document {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for Document {
+impl incan_std_core::reflection::HasTypeClassName for Document {
     fn __class_name__() -> &'static str {
         "Document"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for Document {
+impl incan_std_core::reflection::HasFieldMetadata for Document {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for Document {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for Document {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 0] = [];
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for Document {
+impl incan_std_core::reflection::HasFieldValueReflection for Document {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             _ => None,
@@ -361,7 +361,7 @@ impl Document {
             let __args: Vec<String> = vec![
                 format!("{}", self.title), format!("{}", self.content)
             ];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         };
     }
     pub fn serialize(&self) -> String {
@@ -370,7 +370,7 @@ impl Document {
             let __args: Vec<String> = vec![
                 format!("{}", self.title), format!("{}", self.content)
             ];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         };
     }
 }
@@ -381,7 +381,7 @@ impl Printable for Document {
             let __args: Vec<String> = vec![
                 format!("{}", self.title), format!("{}", self.content)
             ];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         };
     }
 }
@@ -392,7 +392,7 @@ impl Serializable for Document {
             let __args: Vec<String> = vec![
                 format!("{}", self.title), format!("{}", self.content)
             ];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         };
     }
 }
@@ -418,7 +418,7 @@ fn main() {
     let dog: Dog = Dog { name: "Buddy".to_string() };
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Dog name: ", ""]; let __args : Vec <
-        String > = vec![format!("{}", dog.name)]; incan_stdlib::strings::fstring(&
+        String > = vec![format!("{}", dog.name)]; incan_std_core::strings::fstring(&
         __parts, & __args) }
     );
     let rect: Rectangle = Rectangle {
@@ -430,7 +430,7 @@ fn main() {
     let _ = println!(
         "{}", { let __parts : [& str; 3usize] = ["Rectangle area: ", ", perimeter: ",
         ""]; let __args : Vec < String > = vec![format!("{}", rect_area), format!("{}",
-        rect_perimeter)]; incan_stdlib::strings::fstring(& __parts, & __args) }
+        rect_perimeter)]; incan_std_core::strings::fstring(& __parts, & __args) }
     );
     let circle: Circle = Circle { radius: 2.5 };
     let circle_drawing: String = circle.draw();
@@ -440,7 +440,7 @@ fn main() {
     let square_drawing: String = square.draw();
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Square area: ", ""]; let __args : Vec <
-        String > = vec![format!("{}", square_area)]; incan_stdlib::strings::fstring(&
+        String > = vec![format!("{}", square_area)]; incan_std_core::strings::fstring(&
         __parts, & __args) }
     );
     let _ = println!("{}", square_drawing);
@@ -453,13 +453,13 @@ fn main() {
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Original volume: ", ""]; let __args :
         Vec < String > = vec![format!("{}", original_volume)];
-        incan_stdlib::strings::fstring(& __parts, & __args) }
+        incan_std_core::strings::fstring(& __parts, & __args) }
     );
     let _ = carton.resize(2.0);
     let new_volume: f64 = carton.volume();
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["New volume: ", ""]; let __args : Vec <
-        String > = vec![format!("{}", new_volume)]; incan_stdlib::strings::fstring(&
+        String > = vec![format!("{}", new_volume)]; incan_std_core::strings::fstring(&
         __parts, & __args) }
     );
     let doc: Document = Document {
@@ -477,6 +477,6 @@ fn main() {
     let _ = println!(
         "{}", { let __parts : [& str; 3usize] = ["Areas: ", ", ", ""]; let __args : Vec <
         String > = vec![format!("{}", area1), format!("{}", area2)];
-        incan_stdlib::strings::fstring(& __parts, & __args) }
+        incan_std_core::strings::fstring(& __parts, & __args) }
     );
 }

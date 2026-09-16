@@ -6,37 +6,37 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Box<T: Clone> {
     value: T,
 }
-impl<T: Clone> incan_stdlib::reflection::HasClassName for Box<T> {
+impl<T: Clone> incan_std_core::reflection::HasClassName for Box<T> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T: Clone> incan_stdlib::reflection::HasTypeClassName for Box<T> {
+impl<T: Clone> incan_std_core::reflection::HasTypeClassName for Box<T> {
     fn __class_name__() -> &'static str {
         "Box"
     }
 }
-impl<T: Clone> incan_stdlib::reflection::HasFieldMetadata for Box<T> {
+impl<T: Clone> incan_std_core::reflection::HasFieldMetadata for Box<T> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T: Clone> incan_stdlib::reflection::HasTypeFieldMetadata for Box<T> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl<T: Clone> incan_std_core::reflection::HasTypeFieldMetadata for Box<T> {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 0] = [];
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone> incan_stdlib::reflection::HasFieldValueReflection for Box<T> {
+impl<T: Clone> incan_std_core::reflection::HasFieldValueReflection for Box<T> {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             _ => None,
@@ -56,39 +56,39 @@ struct Shelf<T> {
     #[expect(dead_code, reason = "retained for Incan private field semantics")]
     item: T,
 }
-impl<T> incan_stdlib::reflection::HasClassName for Shelf<T> {
+impl<T> incan_std_core::reflection::HasClassName for Shelf<T> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T> incan_stdlib::reflection::HasTypeClassName for Shelf<T> {
+impl<T> incan_std_core::reflection::HasTypeClassName for Shelf<T> {
     fn __class_name__() -> &'static str {
         "Shelf"
     }
 }
-impl<T> incan_stdlib::reflection::HasFieldMetadata for Shelf<T> {
+impl<T> incan_std_core::reflection::HasFieldMetadata for Shelf<T> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T> incan_stdlib::reflection::HasTypeFieldMetadata for Shelf<T> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl<T> incan_std_core::reflection::HasTypeFieldMetadata for Shelf<T> {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("item"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("item"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("item"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("T"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("item"),
+                type_name: incan_std_core::frozen::FrozenStr::new("T"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone> Shelf<T> {

@@ -590,7 +590,7 @@ pub mod test_support {
     /// Project requirements with nothing selected.
     pub fn empty_project_requirements() -> ProjectRequirements {
         ProjectRequirements {
-            stdlib_features: Vec::new(),
+            stdlib_facets: Vec::new(),
             dependencies: Vec::new(),
             sdk_dependency_rebindings: Vec::new(),
             sdk_path_dependencies: Vec::new(),

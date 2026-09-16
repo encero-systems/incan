@@ -139,7 +139,7 @@ pub enum IrType {
     /// - Codegen emits this as `Name<Arg0, Arg1, ...>`.
     NamedGeneric(String, Vec<IrType>),
 
-    /// Zero-sized value-level marker for an Incan source type, emitted as `incan_stdlib::reflection::TypeToken<T>`.
+    /// Zero-sized value-level marker for an Incan source type, emitted as `incan_std_core::reflection::TypeToken<T>`.
     TypeToken(Box<IrType>),
 
     /// Exact Rust type display carried from interop metadata.
@@ -422,7 +422,7 @@ impl IrType {
             IrType::Int => "i64".to_string(),
             IrType::Float => "f64".to_string(),
             IrType::Numeric(id) => numerics::rust_name(*id).to_string(),
-            IrType::Decimal { .. } => "incan_stdlib::num::Decimal128".to_string(),
+            IrType::Decimal { .. } => "incan_std_core::num::Decimal128".to_string(),
             IrType::String => "String".to_string(),
             IrType::Bytes => "Vec<u8>".to_string(),
             IrType::StaticStr => "&'static str".to_string(),
@@ -453,7 +453,7 @@ impl IrType {
                 let inner: Vec<_> = args.iter().map(|a| a.rust_name()).collect();
                 format!("{}<{}>", name, inner.join(", "))
             }
-            IrType::TypeToken(inner) => format!("incan_stdlib::reflection::TypeToken<{}>", inner.rust_name()),
+            IrType::TypeToken(inner) => format!("incan_std_core::reflection::TypeToken<{}>", inner.rust_name()),
             IrType::ImplTrait(bound) => {
                 let args = if bound.type_args.is_empty() {
                     String::new()

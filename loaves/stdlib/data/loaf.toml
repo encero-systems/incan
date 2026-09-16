@@ -1,0 +1,17 @@
+[project]
+name = "incan_stdlib_data"
+version = "0.5.0"
+license = "Apache-2.0"
+private = true
+
+[rust.source]
+root = "rust"
+
+[rust-dependencies]
+serde_path_to_error = "0.1"
+toml = "0.9"
+toml_edit = { version = "0.25", features = ["parse", "serde"] }
+
+[sdk]
+profile = "minimal"
+components = ["stdlib-system"]

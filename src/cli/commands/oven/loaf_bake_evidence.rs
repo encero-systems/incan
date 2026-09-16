@@ -267,7 +267,7 @@ pub(crate) fn loaf_envelope_evidence(
 ///
 /// The executable digest is provenance only: rebuilding the same release binary must not invalidate an otherwise
 /// compatible envelope. The runtime crates are different: changing their source without selecting a new envelope
-/// could pair an updated compiler with stale `incan_stdlib` or support-crate archives. Keep this evidence portable by
+/// could pair an updated compiler with stale facet or support-crate archives. Keep this evidence portable by
 /// recording named content digests rather than checkout paths.
 pub(crate) fn loaf_runtime_source_digest(compiler_root: &Path) -> CliResult<String> {
     let mut records = BTreeMap::new();
@@ -279,7 +279,7 @@ pub(crate) fn loaf_runtime_source_digest(compiler_root: &Path) -> CliResult<Stri
         ))
     })?;
     records.insert("Cargo.toml".to_string(), digest_bytes(&manifest_bytes));
-    for label in ["incan_core", "incan_derive", "incan_stdlib"] {
+    for label in oven_model::toolchain_layout::SDK_RUNTIME_CRATES {
         let root = oven_model::toolchain_layout::support_crate_dir_in(compiler_root, label);
         let digest = digest_runtime_crate_source(&root).map_err(CliError::failure)?;
         records.insert(label.to_string(), digest);

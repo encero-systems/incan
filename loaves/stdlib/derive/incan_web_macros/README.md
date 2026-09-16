@@ -2,13 +2,13 @@
 
 Procedural macros for the transitional Incan web runtime.
 
-This crate supports compiler-generated Rust that targets `incan_stdlib::web`. It is toolchain-locked to the Incan compiler and stdlib runtime crate; it is not a standalone public web framework API.
+This crate supports compiler-generated Rust that targets `incan_std_web`. It is toolchain-locked to the Incan compiler and stdlib runtime crate; it is not a standalone public web framework API.
 
 ## Boundary
 
 The macros here generate Axum/inventory wiring for Incan web programs:
 
-- `#[route(...)]` registers generated route handlers with `incan_stdlib::web::RouteEntry`.
+- `#[route(...)]` registers generated route handlers with `incan_std_web::RouteEntry`.
 - `#[derive(IntoResponse)]` delegates response conversion for tuple newtypes.
 - `#[derive(FromRequestParts)]` delegates request extraction for tuple newtypes.
 
@@ -16,7 +16,7 @@ Those expansions are part of the current host-runtime bridge. If `std.web` chang
 
 ## Development
 
-Keep changes aligned with `crates/incan_stdlib/src/web.rs` and generated web code. Do not add reusable routing abstractions here unless the corresponding Incan stdlib surface has been defined first.
+Keep changes aligned with `loaves/stdlib/web/rust/src/lib.rs` and generated web code. Do not add reusable routing abstractions here unless the corresponding Incan stdlib surface has been defined first.
 
 ## License
 

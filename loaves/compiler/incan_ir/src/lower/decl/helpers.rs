@@ -585,11 +585,11 @@ impl AstLowering {
 
     /// Check whether a `rust.module()` path qualifies for decorator passthrough.
     ///
-    /// `incan_stdlib::*` decorators are runtime/runner markers (e.g. `std.testing.parametrize`) and must not be emitted
+    /// Facet decorators are runtime/runner markers (e.g. `std.testing.parametrize`) and must not be emitted
     /// as Rust attributes — they are interpreted by the Incan test runner, not by `rustc`. Passthrough is reserved for
     /// external Rust-backed proc-macro crates like `incan_web_macros`.
     fn is_passthrough_rust_module(module_path: &str) -> bool {
-        !module_path.starts_with("incan_stdlib::")
+        !incan_core::lang::stdlib::facets::path_names_a_facet(module_path)
     }
 
     /// Resolve a derive argument through the import alias map as if it were a decorator path.

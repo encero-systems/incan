@@ -1,0 +1,14 @@
+[package]
+name = "incan_std_async"
+description = "Task, timer, channel and synchronisation runtime: the Rust facet of the `async` standard library component"
+version = "0.6.0-dev.4"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+incan_std_core = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync", "net"] }

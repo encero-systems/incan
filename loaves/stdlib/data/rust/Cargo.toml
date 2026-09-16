@@ -1,0 +1,16 @@
+[package]
+name = "incan_std_data"
+description = "JSON, serde and ordinal-map runtime: the Rust facet of the `data` standard library component"
+version = "0.6.0-dev.4"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+incan_std_core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+xxhash_rust = { package = "xxhash-rust", version = "0.8", features = ["xxh3"] }

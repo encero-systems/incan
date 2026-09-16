@@ -3,14 +3,14 @@
 //! Two kinds of evidence live here. Behavioral tests pin the representation's own contract: hashed probes,
 //! key-not-value dict membership, typed-empty answers, refusals for everything outside the key domain, and the
 //! later-entry-wins dict precedence. Agreement tests then compare those answers against the
-//! `incan_stdlib::collections` membership helpers over the same data — the exact functions the Rust-emission
+//! `incan_std_core::collections` membership helpers over the same data — the exact functions the Rust-emission
 //! backend calls for these operators — so the representation demonstrably matches the reference backend's
 //! semantics at the level this slice owns. The executor-level parity runs belong to the #1247 integration work,
 //! not here.
 
 use std::collections::{HashMap, HashSet};
 
-use incan_stdlib::collections as reference;
+use incan_std_core::collections as reference;
 
 use super::{HashedKey, NonScalarKey, ReplacementDict, ReplacementSet, ReplacementValue};
 

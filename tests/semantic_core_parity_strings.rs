@@ -8,7 +8,7 @@ use incan_core::strings::{
     StringAccessError, str_char_at, str_concat, str_contains, str_slice, str_slice_byte_range,
     str_slice_from_byte_offset,
 };
-use incan_stdlib::strings::{
+use incan_std_core::strings::{
     str_concat as rt_str_concat, str_index as rt_str_index, str_slice as rt_str_slice,
     str_slice_byte_range as rt_str_slice_byte_range, str_slice_from_byte_offset as rt_str_slice_from_byte_offset,
 };
@@ -30,9 +30,9 @@ fn semantics_vs_runtime_concat_and_contains() {
     assert_eq!(rt_str_concat("foo", "bar"), str_concat("foo", "bar"));
 
     // Comparisons
-    assert!(incan_stdlib::strings::str_eq("abc", "abc"));
-    assert!(incan_stdlib::strings::str_lt("abc", "abd"));
-    assert!(incan_stdlib::strings::str_gt("abd", "abc"));
+    assert!(incan_std_core::strings::str_eq("abc", "abc"));
+    assert!(incan_std_core::strings::str_lt("abc", "abd"));
+    assert!(incan_std_core::strings::str_gt("abd", "abc"));
 }
 
 #[test]
@@ -79,20 +79,20 @@ fn semantics_vs_runtime_index_and_slice() -> Result<(), StringAccessError> {
     assert_eq!(rt_str_slice_from_byte_offset(s, 3), str_slice_from_byte_offset(s, 3)?);
 
     // Methods parity
-    assert_eq!(incan_stdlib::strings::str_upper("héllo"), "HÉLLO");
-    assert_eq!(incan_stdlib::strings::str_lower("HÉLLO"), "héllo");
-    assert_eq!(incan_stdlib::strings::str_strip("  hi  "), "hi");
-    assert_eq!(incan_stdlib::strings::str_replace("abcabc", "ab", "xy"), "xycxyc");
+    assert_eq!(incan_std_core::strings::str_upper("héllo"), "HÉLLO");
+    assert_eq!(incan_std_core::strings::str_lower("HÉLLO"), "héllo");
+    assert_eq!(incan_std_core::strings::str_strip("  hi  "), "hi");
+    assert_eq!(incan_std_core::strings::str_replace("abcabc", "ab", "xy"), "xycxyc");
     assert_eq!(
-        incan_stdlib::strings::str_split("a,b,c", Some(",")),
+        incan_std_core::strings::str_split("a,b,c", Some(",")),
         vec!["a".to_string(), "b".to_string(), "c".to_string()]
     );
     assert_eq!(
-        incan_stdlib::strings::str_join("-", &["a".to_string(), "b".to_string(), "c".to_string()]),
+        incan_std_core::strings::str_join("-", &["a".to_string(), "b".to_string(), "c".to_string()]),
         "a-b-c"
     );
-    assert!(incan_stdlib::strings::str_starts_with("hello", "he"));
-    assert!(incan_stdlib::strings::str_ends_with("hello", "lo"));
+    assert!(incan_std_core::strings::str_starts_with("hello", "he"));
+    assert!(incan_std_core::strings::str_ends_with("hello", "lo"));
     Ok(())
 }
 
@@ -193,10 +193,10 @@ fn fstring_shared_helper() {
     let args = vec!["world".to_string()];
     assert_eq!(
         incan_core::strings::fstring(&parts, &args),
-        incan_stdlib::strings::fstring(&parts, &args)
+        incan_std_core::strings::fstring(&parts, &args)
     );
 
     let parts2 = ["{", "}", ""];
     let args2 = vec![format!("{}", 42), format!("{}", 7)];
-    assert_eq!(incan_stdlib::strings::fstring(&parts2, &args2), "{42}7");
+    assert_eq!(incan_std_core::strings::fstring(&parts2, &args2), "{42}7");
 }

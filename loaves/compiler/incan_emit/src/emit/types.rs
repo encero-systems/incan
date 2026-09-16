@@ -100,13 +100,13 @@ impl<'a> IrEmitter<'a> {
                 let ident = format_ident!("{}", numerics::rust_name(*id));
                 quote! { #ident }
             }
-            IrType::Decimal { .. } => quote! { incan_stdlib::num::Decimal128 },
+            IrType::Decimal { .. } => quote! { incan_std_core::num::Decimal128 },
             IrType::String => quote! { String },
             IrType::Bytes => quote! { Vec<u8> },
             IrType::StaticStr => quote! { &'static str },
             IrType::StaticBytes => quote! { &'static [u8] },
-            IrType::FrozenStr => quote! { incan_stdlib::frozen::FrozenStr },
-            IrType::FrozenBytes => quote! { incan_stdlib::frozen::FrozenBytes },
+            IrType::FrozenStr => quote! { incan_std_core::frozen::FrozenStr },
+            IrType::FrozenBytes => quote! { incan_std_core::frozen::FrozenBytes },
             IrType::StrRef => quote! { &str },
             IrType::List(elem) => {
                 let e = self.emit_type(elem);
@@ -136,10 +136,10 @@ impl<'a> IrEmitter<'a> {
             }
             IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => {
                 if name == surface_types::as_str(SurfaceTypeId::FieldInfo) {
-                    return quote! { incan_stdlib::reflection::FieldInfo };
+                    return quote! { incan_std_core::reflection::FieldInfo };
                 }
                 if name == surface_types::as_str(SurfaceTypeId::ValidationError) {
-                    return quote! { incan_stdlib::validation::ValidationError };
+                    return quote! { incan_std_core::validation::ValidationError };
                 }
                 if *self.qualify_internal_canonical_paths.borrow()
                     && let Some(path) = self.emit_dependency_type_path(name)
@@ -155,10 +155,10 @@ impl<'a> IrEmitter<'a> {
             }
             IrType::NamedGeneric(name, args) => {
                 let frozen_name = match collections::from_str(name) {
-                    Some(CollectionTypeId::FrozenList) => Some(quote! { incan_stdlib::frozen::FrozenList }),
-                    Some(CollectionTypeId::FrozenSet) => Some(quote! { incan_stdlib::frozen::FrozenSet }),
-                    Some(CollectionTypeId::FrozenDict) => Some(quote! { incan_stdlib::frozen::FrozenDict }),
-                    Some(CollectionTypeId::Generator) => Some(quote! { incan_stdlib::iter::Generator }),
+                    Some(CollectionTypeId::FrozenList) => Some(quote! { incan_std_core::frozen::FrozenList }),
+                    Some(CollectionTypeId::FrozenSet) => Some(quote! { incan_std_core::frozen::FrozenSet }),
+                    Some(CollectionTypeId::FrozenDict) => Some(quote! { incan_std_core::frozen::FrozenDict }),
+                    Some(CollectionTypeId::Generator) => Some(quote! { incan_std_core::iter::Generator }),
                     _ => None,
                 };
                 let ts: Vec<_> = args.iter().map(|t| self.emit_type(t)).collect();
@@ -175,7 +175,7 @@ impl<'a> IrEmitter<'a> {
             }
             IrType::TypeToken(inner) => {
                 let inner_ty = self.emit_type(inner);
-                quote! { incan_stdlib::reflection::TypeToken<#inner_ty> }
+                quote! { incan_std_core::reflection::TypeToken<#inner_ty> }
             }
             IrType::ImplTrait(bound) => {
                 let bound_tokens = self.emit_trait_bound(bound);

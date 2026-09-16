@@ -6,8 +6,8 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-use ::incan_stdlib::errors::raise_value_error;
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+use ::incan_std_core::errors::raise_value_error;
 pub use crate::__incan_std::traits::callable::Callable1;
 pub use crate::__incan_std::traits::callable::Callable2;
 /// Contains trait - Enables `item in collection` membership testing
@@ -228,48 +228,48 @@ pub struct ListIterator<T: Clone> {
     pub items: Vec<T>,
     pub index: i64,
 }
-impl<T: Clone> incan_stdlib::reflection::HasClassName for ListIterator<T> {
+impl<T: Clone> incan_std_core::reflection::HasClassName for ListIterator<T> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T: Clone> incan_stdlib::reflection::HasTypeClassName for ListIterator<T> {
+impl<T: Clone> incan_std_core::reflection::HasTypeClassName for ListIterator<T> {
     fn __class_name__() -> &'static str {
         "ListIterator"
     }
 }
-impl<T: Clone> incan_stdlib::reflection::HasFieldMetadata for ListIterator<T> {
+impl<T: Clone> incan_std_core::reflection::HasFieldMetadata for ListIterator<T> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T: Clone> incan_stdlib::reflection::HasTypeFieldMetadata for ListIterator<T> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl<T: Clone> incan_std_core::reflection::HasTypeFieldMetadata for ListIterator<T> {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("items"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 2] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("items"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("items"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("list[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("items"),
+                type_name: incan_std_core::frozen::FrozenStr::new("list[T]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("index"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("index"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("index"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("index"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone> ListIterator<T> {
@@ -279,7 +279,10 @@ impl<T: Clone> ListIterator<T> {
         if self.index >= ::std::convert::identity(self.items.len() as i64) {
             return None::<_>;
         }
-        let item = incan_stdlib::collections::list_get(&self.items, (self.index) as i64)
+        let item = incan_std_core::collections::list_get(
+                &self.items,
+                (self.index) as i64,
+            )
             .clone();
         self.index = self.index + 1;
         return Some(item);
@@ -287,28 +290,28 @@ impl<T: Clone> ListIterator<T> {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("items"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 2] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("items"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("items"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("list[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("items"),
+                type_name: incan_std_core::frozen::FrozenStr::new("list[T]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("index"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("index"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("index"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("index"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone> ListIterator<T> {
@@ -323,7 +326,10 @@ impl<T: Clone> Iterator<T> for ListIterator<T> {
         if self.index >= ::std::convert::identity(self.items.len() as i64) {
             return None::<_>;
         }
-        let item = incan_stdlib::collections::list_get(&self.items, (self.index) as i64)
+        let item = incan_std_core::collections::list_get(
+                &self.items,
+                (self.index) as i64,
+            )
             .clone();
         self.index = self.index + 1;
         return Some(item);
@@ -353,10 +359,10 @@ impl<
     Source: FallibleIterator<T, E>,
     Output,
     StoredMapFn: Clone + Callable1<T, Output>,
-> incan_stdlib::reflection::HasClassName
+> incan_std_core::reflection::HasClassName
 for MapFallibleIterator<T, E, Source, Output, StoredMapFn> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
 impl<
@@ -365,7 +371,7 @@ impl<
     Source: FallibleIterator<T, E>,
     Output,
     StoredMapFn: Clone + Callable1<T, Output>,
-> incan_stdlib::reflection::HasTypeClassName
+> incan_std_core::reflection::HasTypeClassName
 for MapFallibleIterator<T, E, Source, Output, StoredMapFn> {
     fn __class_name__() -> &'static str {
         "MapFallibleIterator"
@@ -377,12 +383,12 @@ impl<
     Source: FallibleIterator<T, E>,
     Output,
     StoredMapFn: Clone + Callable1<T, Output>,
-> incan_stdlib::reflection::HasFieldMetadata
+> incan_std_core::reflection::HasFieldMetadata
 for MapFallibleIterator<T, E, Source, Output, StoredMapFn> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
 impl<
@@ -391,59 +397,59 @@ impl<
     Source: FallibleIterator<T, E>,
     Output,
     StoredMapFn: Clone + Callable1<T, Output>,
-> incan_stdlib::reflection::HasTypeFieldMetadata
+> incan_std_core::reflection::HasTypeFieldMetadata
 for MapFallibleIterator<T, E, Source, Output, StoredMapFn> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 5] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 5] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("StoredMapFn"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("StoredMapFn"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("input_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("input_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("input_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("input_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("output_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("output_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("output_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[Output]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("output_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[Output]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("error_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[E]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("error_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[E]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<
@@ -482,55 +488,55 @@ impl<
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 5] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 5] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("StoredMapFn"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("StoredMapFn"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("input_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("input_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("input_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("input_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("output_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("output_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("output_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[Output]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("output_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[Output]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("error_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[E]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("error_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[E]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<
@@ -837,10 +843,10 @@ impl<
     E,
     Source: FallibleIterator<T, E>,
     StoredPredicate: Clone + Callable1<T, bool>,
-> incan_stdlib::reflection::HasClassName
+> incan_std_core::reflection::HasClassName
 for FilterFallibleIterator<T, E, Source, StoredPredicate> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
 impl<
@@ -848,7 +854,7 @@ impl<
     E,
     Source: FallibleIterator<T, E>,
     StoredPredicate: Clone + Callable1<T, bool>,
-> incan_stdlib::reflection::HasTypeClassName
+> incan_std_core::reflection::HasTypeClassName
 for FilterFallibleIterator<T, E, Source, StoredPredicate> {
     fn __class_name__() -> &'static str {
         "FilterFallibleIterator"
@@ -859,12 +865,12 @@ impl<
     E,
     Source: FallibleIterator<T, E>,
     StoredPredicate: Clone + Callable1<T, bool>,
-> incan_stdlib::reflection::HasFieldMetadata
+> incan_std_core::reflection::HasFieldMetadata
 for FilterFallibleIterator<T, E, Source, StoredPredicate> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
 impl<
@@ -872,50 +878,50 @@ impl<
     E,
     Source: FallibleIterator<T, E>,
     StoredPredicate: Clone + Callable1<T, bool>,
-> incan_stdlib::reflection::HasTypeFieldMetadata
+> incan_std_core::reflection::HasTypeFieldMetadata
 for FilterFallibleIterator<T, E, Source, StoredPredicate> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("StoredPredicate"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("StoredPredicate"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("item_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("item_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("error_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[E]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("error_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[E]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<
@@ -950,46 +956,46 @@ impl<
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("StoredPredicate"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("StoredPredicate"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("item_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("item_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("error_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[E]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("error_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[E]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<
@@ -1270,10 +1276,10 @@ impl<
     Source: FallibleIterator<T, E>,
     Output,
     StoredExpand: Clone + Callable1<T, Vec<Output>>,
-> incan_stdlib::reflection::HasClassName
+> incan_std_core::reflection::HasClassName
 for FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
 impl<
@@ -1282,7 +1288,7 @@ impl<
     Source: FallibleIterator<T, E>,
     Output,
     StoredExpand: Clone + Callable1<T, Vec<Output>>,
-> incan_stdlib::reflection::HasTypeClassName
+> incan_std_core::reflection::HasTypeClassName
 for FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
     fn __class_name__() -> &'static str {
         "FlatMapFallibleIterator"
@@ -1294,12 +1300,12 @@ impl<
     Source: FallibleIterator<T, E>,
     Output,
     StoredExpand: Clone + Callable1<T, Vec<Output>>,
-> incan_stdlib::reflection::HasFieldMetadata
+> incan_std_core::reflection::HasFieldMetadata
 for FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
 impl<
@@ -1308,68 +1314,68 @@ impl<
     Source: FallibleIterator<T, E>,
     Output,
     StoredExpand: Clone + Callable1<T, Vec<Output>>,
-> incan_stdlib::reflection::HasTypeFieldMetadata
+> incan_std_core::reflection::HasTypeFieldMetadata
 for FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 6] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 6] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("StoredExpand"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("StoredExpand"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("current"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("current"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("current"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("list[Output]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("current"),
+                type_name: incan_std_core::frozen::FrozenStr::new("list[Output]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("index"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("index"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("index"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("index"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("input_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("input_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("input_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("input_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("error_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[E]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("error_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[E]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<
@@ -1384,7 +1390,7 @@ impl<
         let _ = "\n        Yield the current nested list before requesting another source item.\n        ";
         loop {
             if self.index < ::std::convert::identity(self.current.len() as i64) {
-                let item = incan_stdlib::collections::list_get(
+                let item = incan_std_core::collections::list_get(
                         &self.current,
                         (self.index) as i64,
                     )
@@ -1413,64 +1419,64 @@ impl<
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 6] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 6] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("StoredExpand"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("StoredExpand"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("current"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("current"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("current"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("list[Output]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("current"),
+                type_name: incan_std_core::frozen::FrozenStr::new("list[Output]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("index"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("index"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("index"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("index"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("input_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("input_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("input_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("input_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("error_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[E]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("error_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[E]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<
@@ -1504,7 +1510,7 @@ for FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
         let _ = "\n        Yield the current nested list before requesting another source item.\n        ";
         loop {
             if self.index < ::std::convert::identity(self.current.len() as i64) {
-                let item = incan_stdlib::collections::list_get(
+                let item = incan_std_core::collections::list_get(
                         &self.current,
                         (self.index) as i64,
                     )
@@ -1779,70 +1785,74 @@ pub struct TakeFallibleIterator<T, E, Source: FallibleIterator<T, E>> {
     pub item_marker: Option<T>,
     pub error_marker: Option<E>,
 }
-impl<T, E, Source: FallibleIterator<T, E>> incan_stdlib::reflection::HasClassName
+impl<T, E, Source: FallibleIterator<T, E>> incan_std_core::reflection::HasClassName
 for TakeFallibleIterator<T, E, Source> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T, E, Source: FallibleIterator<T, E>> incan_stdlib::reflection::HasTypeClassName
+impl<T, E, Source: FallibleIterator<T, E>> incan_std_core::reflection::HasTypeClassName
 for TakeFallibleIterator<T, E, Source> {
     fn __class_name__() -> &'static str {
         "TakeFallibleIterator"
     }
 }
-impl<T, E, Source: FallibleIterator<T, E>> incan_stdlib::reflection::HasFieldMetadata
+impl<T, E, Source: FallibleIterator<T, E>> incan_std_core::reflection::HasFieldMetadata
 for TakeFallibleIterator<T, E, Source> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T, E, Source: FallibleIterator<T, E>> incan_stdlib::reflection::HasTypeFieldMetadata
+impl<
+    T,
+    E,
+    Source: FallibleIterator<T, E>,
+> incan_std_core::reflection::HasTypeFieldMetadata
 for TakeFallibleIterator<T, E, Source> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("remaining"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("remaining"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("remaining"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("remaining"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("item_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("item_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("error_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[E]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("error_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[E]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T, E, Source: FallibleIterator<T, E>> TakeFallibleIterator<T, E, Source> {
@@ -1868,46 +1878,46 @@ impl<T, E, Source: FallibleIterator<T, E>> TakeFallibleIterator<T, E, Source> {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("remaining"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("remaining"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("remaining"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("remaining"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("item_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("item_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("error_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[E]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("error_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[E]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T, E, Source: FallibleIterator<T, E>> TakeFallibleIterator<T, E, Source> {
@@ -2157,10 +2167,10 @@ impl<
     E,
     Source: FallibleIterator<T, E>,
     StoredObserver: Clone + Callable1<T, ()>,
-> incan_stdlib::reflection::HasClassName
+> incan_std_core::reflection::HasClassName
 for InspectFallibleIterator<T, E, Source, StoredObserver> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
 impl<
@@ -2168,7 +2178,7 @@ impl<
     E,
     Source: FallibleIterator<T, E>,
     StoredObserver: Clone + Callable1<T, ()>,
-> incan_stdlib::reflection::HasTypeClassName
+> incan_std_core::reflection::HasTypeClassName
 for InspectFallibleIterator<T, E, Source, StoredObserver> {
     fn __class_name__() -> &'static str {
         "InspectFallibleIterator"
@@ -2179,12 +2189,12 @@ impl<
     E,
     Source: FallibleIterator<T, E>,
     StoredObserver: Clone + Callable1<T, ()>,
-> incan_stdlib::reflection::HasFieldMetadata
+> incan_std_core::reflection::HasFieldMetadata
 for InspectFallibleIterator<T, E, Source, StoredObserver> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
 impl<
@@ -2192,50 +2202,50 @@ impl<
     E,
     Source: FallibleIterator<T, E>,
     StoredObserver: Clone + Callable1<T, ()>,
-> incan_stdlib::reflection::HasTypeFieldMetadata
+> incan_std_core::reflection::HasTypeFieldMetadata
 for InspectFallibleIterator<T, E, Source, StoredObserver> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("StoredObserver"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("StoredObserver"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("item_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("item_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("error_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[E]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("error_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[E]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<
@@ -2267,46 +2277,46 @@ impl<
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("StoredObserver"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("StoredObserver"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("item_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("item_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("error_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[E]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("error_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[E]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<
@@ -2580,10 +2590,10 @@ impl<
     Source: FallibleIterator<T, E>,
     MappedError,
     StoredErrorMap: Clone + Callable1<E, MappedError>,
-> incan_stdlib::reflection::HasClassName
+> incan_std_core::reflection::HasClassName
 for MapErrFallibleIterator<T, E, Source, MappedError, StoredErrorMap> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
 impl<
@@ -2592,7 +2602,7 @@ impl<
     Source: FallibleIterator<T, E>,
     MappedError,
     StoredErrorMap: Clone + Callable1<E, MappedError>,
-> incan_stdlib::reflection::HasTypeClassName
+> incan_std_core::reflection::HasTypeClassName
 for MapErrFallibleIterator<T, E, Source, MappedError, StoredErrorMap> {
     fn __class_name__() -> &'static str {
         "MapErrFallibleIterator"
@@ -2604,12 +2614,12 @@ impl<
     Source: FallibleIterator<T, E>,
     MappedError,
     StoredErrorMap: Clone + Callable1<E, MappedError>,
-> incan_stdlib::reflection::HasFieldMetadata
+> incan_std_core::reflection::HasFieldMetadata
 for MapErrFallibleIterator<T, E, Source, MappedError, StoredErrorMap> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
 impl<
@@ -2618,59 +2628,59 @@ impl<
     Source: FallibleIterator<T, E>,
     MappedError,
     StoredErrorMap: Clone + Callable1<E, MappedError>,
-> incan_stdlib::reflection::HasTypeFieldMetadata
+> incan_std_core::reflection::HasTypeFieldMetadata
 for MapErrFallibleIterator<T, E, Source, MappedError, StoredErrorMap> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 5] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 5] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("StoredErrorMap"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("StoredErrorMap"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("item_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("item_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source_error_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source_error_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source_error_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[E]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source_error_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[E]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("mapped_error_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("mapped_error_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("mapped_error_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[MappedError]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("mapped_error_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[MappedError]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<
@@ -2704,55 +2714,55 @@ impl<
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 5] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 5] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("StoredErrorMap"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("StoredErrorMap"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("item_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("item_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source_error_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source_error_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source_error_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[E]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source_error_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[E]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("mapped_error_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("mapped_error_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("mapped_error_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[MappedError]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("mapped_error_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[MappedError]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<
@@ -3067,10 +3077,10 @@ impl<
     E,
     Source: FallibleIterator<T, E>,
     StoredErrorObserver: Clone + Callable1<E, ()>,
-> incan_stdlib::reflection::HasClassName
+> incan_std_core::reflection::HasClassName
 for InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
 impl<
@@ -3078,7 +3088,7 @@ impl<
     E,
     Source: FallibleIterator<T, E>,
     StoredErrorObserver: Clone + Callable1<E, ()>,
-> incan_stdlib::reflection::HasTypeClassName
+> incan_std_core::reflection::HasTypeClassName
 for InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
     fn __class_name__() -> &'static str {
         "InspectErrFallibleIterator"
@@ -3089,12 +3099,12 @@ impl<
     E,
     Source: FallibleIterator<T, E>,
     StoredErrorObserver: Clone + Callable1<E, ()>,
-> incan_stdlib::reflection::HasFieldMetadata
+> incan_std_core::reflection::HasFieldMetadata
 for InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
 impl<
@@ -3102,50 +3112,50 @@ impl<
     E,
     Source: FallibleIterator<T, E>,
     StoredErrorObserver: Clone + Callable1<E, ()>,
-> incan_stdlib::reflection::HasTypeFieldMetadata
+> incan_std_core::reflection::HasTypeFieldMetadata
 for InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("StoredErrorObserver"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("StoredErrorObserver"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("item_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("item_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("error_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[E]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("error_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[E]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<
@@ -3174,46 +3184,46 @@ impl<
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("StoredErrorObserver"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("StoredErrorObserver"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("item_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("item_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("item_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("error_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("error_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[E]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("error_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[E]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<
@@ -3491,52 +3501,52 @@ pub struct MapIterator<T, Source: Iterator<T>, U> {
     pub source: Source,
     pub f: fn(T) -> U,
 }
-impl<T, Source: Iterator<T>, U> incan_stdlib::reflection::HasClassName
+impl<T, Source: Iterator<T>, U> incan_std_core::reflection::HasClassName
 for MapIterator<T, Source, U> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T, Source: Iterator<T>, U> incan_stdlib::reflection::HasTypeClassName
+impl<T, Source: Iterator<T>, U> incan_std_core::reflection::HasTypeClassName
 for MapIterator<T, Source, U> {
     fn __class_name__() -> &'static str {
         "MapIterator"
     }
 }
-impl<T, Source: Iterator<T>, U> incan_stdlib::reflection::HasFieldMetadata
+impl<T, Source: Iterator<T>, U> incan_std_core::reflection::HasFieldMetadata
 for MapIterator<T, Source, U> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T, Source: Iterator<T>, U> incan_stdlib::reflection::HasTypeFieldMetadata
+impl<T, Source: Iterator<T>, U> incan_std_core::reflection::HasTypeFieldMetadata
 for MapIterator<T, Source, U> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 2] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("(T) -> U"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> U"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T, Source: Iterator<T>, U> MapIterator<T, Source, U> {
@@ -3556,28 +3566,28 @@ impl<T, Source: Iterator<T>, U> MapIterator<T, Source, U> {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 2] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("(T) -> U"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> U"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T, Source: Iterator<T>, U> MapIterator<T, Source, U> {
@@ -3609,52 +3619,52 @@ pub struct FilterIterator<T, Source: Iterator<T>> {
     pub source: Source,
     pub f: fn(T) -> bool,
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasClassName
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasClassName
 for FilterIterator<T, Source> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeClassName
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasTypeClassName
 for FilterIterator<T, Source> {
     fn __class_name__() -> &'static str {
         "FilterIterator"
     }
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasFieldMetadata
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasFieldMetadata
 for FilterIterator<T, Source> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeFieldMetadata
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasTypeFieldMetadata
 for FilterIterator<T, Source> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 2] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("(T) -> bool"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> bool"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone, Source: Iterator<T> + Clone> FilterIterator<T, Source> {
@@ -3678,28 +3688,28 @@ impl<T: Clone, Source: Iterator<T> + Clone> FilterIterator<T, Source> {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 2] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("(T) -> bool"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> bool"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone, Source: Iterator<T> + Clone> FilterIterator<T, Source> {
@@ -3737,70 +3747,70 @@ pub struct FlatMapIterator<T, Source: Iterator<T>, U> {
     pub current: Vec<U>,
     pub index: i64,
 }
-impl<T, Source: Iterator<T>, U> incan_stdlib::reflection::HasClassName
+impl<T, Source: Iterator<T>, U> incan_std_core::reflection::HasClassName
 for FlatMapIterator<T, Source, U> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T, Source: Iterator<T>, U> incan_stdlib::reflection::HasTypeClassName
+impl<T, Source: Iterator<T>, U> incan_std_core::reflection::HasTypeClassName
 for FlatMapIterator<T, Source, U> {
     fn __class_name__() -> &'static str {
         "FlatMapIterator"
     }
 }
-impl<T, Source: Iterator<T>, U> incan_stdlib::reflection::HasFieldMetadata
+impl<T, Source: Iterator<T>, U> incan_std_core::reflection::HasFieldMetadata
 for FlatMapIterator<T, Source, U> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T, Source: Iterator<T>, U> incan_stdlib::reflection::HasTypeFieldMetadata
+impl<T, Source: Iterator<T>, U> incan_std_core::reflection::HasTypeFieldMetadata
 for FlatMapIterator<T, Source, U> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("(T) -> list[U]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> list[U]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("current"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("current"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("current"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("list[U]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("current"),
+                type_name: incan_std_core::frozen::FrozenStr::new("list[U]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("index"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("index"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("index"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("index"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone, Source: Iterator<T> + Clone, U: Clone> FlatMapIterator<T, Source, U> {
@@ -3809,7 +3819,7 @@ impl<T: Clone, Source: Iterator<T> + Clone, U: Clone> FlatMapIterator<T, Source,
         let _ = "\n        Return the next item from the current nested list, or open a new one.\n        ";
         loop {
             if self.index < ::std::convert::identity(self.current.len() as i64) {
-                let item = incan_stdlib::collections::list_get(
+                let item = incan_std_core::collections::list_get(
                         &self.current,
                         (self.index) as i64,
                     )
@@ -3832,46 +3842,46 @@ impl<T: Clone, Source: Iterator<T> + Clone, U: Clone> FlatMapIterator<T, Source,
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("(T) -> list[U]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> list[U]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("current"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("current"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("current"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("list[U]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("current"),
+                type_name: incan_std_core::frozen::FrozenStr::new("list[U]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("index"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("index"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("index"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("index"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone, Source: Iterator<T> + Clone, U: Clone> FlatMapIterator<T, Source, U> {
@@ -3886,7 +3896,7 @@ for FlatMapIterator<T, Source, U> {
         let _ = "\n        Return the next item from the current nested list, or open a new one.\n        ";
         loop {
             if self.index < ::std::convert::identity(self.current.len() as i64) {
-                let item = incan_stdlib::collections::list_get(
+                let item = incan_std_core::collections::list_get(
                         &self.current,
                         (self.index) as i64,
                     )
@@ -3914,61 +3924,61 @@ pub struct TakeIterator<T, Source: Iterator<T>> {
     pub remaining: i64,
     pub marker: Option<T>,
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasClassName
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasClassName
 for TakeIterator<T, Source> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeClassName
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasTypeClassName
 for TakeIterator<T, Source> {
     fn __class_name__() -> &'static str {
         "TakeIterator"
     }
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasFieldMetadata
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasFieldMetadata
 for TakeIterator<T, Source> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeFieldMetadata
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasTypeFieldMetadata
 for TakeIterator<T, Source> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("remaining"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("remaining"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("remaining"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("remaining"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T, Source: Iterator<T>> TakeIterator<T, Source> {
@@ -3991,37 +4001,37 @@ impl<T, Source: Iterator<T>> TakeIterator<T, Source> {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("remaining"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("remaining"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("remaining"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("remaining"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T, Source: Iterator<T>> TakeIterator<T, Source> {
@@ -4054,61 +4064,61 @@ pub struct SkipIterator<T, Source: Iterator<T>> {
     pub remaining: i64,
     pub marker: Option<T>,
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasClassName
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasClassName
 for SkipIterator<T, Source> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeClassName
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasTypeClassName
 for SkipIterator<T, Source> {
     fn __class_name__() -> &'static str {
         "SkipIterator"
     }
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasFieldMetadata
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasFieldMetadata
 for SkipIterator<T, Source> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeFieldMetadata
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasTypeFieldMetadata
 for SkipIterator<T, Source> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("remaining"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("remaining"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("remaining"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("remaining"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T, Source: Iterator<T>> SkipIterator<T, Source> {
@@ -4130,37 +4140,37 @@ impl<T, Source: Iterator<T>> SkipIterator<T, Source> {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("remaining"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("remaining"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("remaining"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("remaining"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T, Source: Iterator<T>> SkipIterator<T, Source> {
@@ -4193,17 +4203,17 @@ pub struct ChainIterator<T, First: Iterator<T>, Second: Iterator<T>> {
     pub in_second: bool,
     pub marker: Option<T>,
 }
-impl<T, First: Iterator<T>, Second: Iterator<T>> incan_stdlib::reflection::HasClassName
+impl<T, First: Iterator<T>, Second: Iterator<T>> incan_std_core::reflection::HasClassName
 for ChainIterator<T, First, Second> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
 impl<
     T,
     First: Iterator<T>,
     Second: Iterator<T>,
-> incan_stdlib::reflection::HasTypeClassName for ChainIterator<T, First, Second> {
+> incan_std_core::reflection::HasTypeClassName for ChainIterator<T, First, Second> {
     fn __class_name__() -> &'static str {
         "ChainIterator"
     }
@@ -4212,60 +4222,60 @@ impl<
     T,
     First: Iterator<T>,
     Second: Iterator<T>,
-> incan_stdlib::reflection::HasFieldMetadata for ChainIterator<T, First, Second> {
+> incan_std_core::reflection::HasFieldMetadata for ChainIterator<T, First, Second> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
 impl<
     T,
     First: Iterator<T>,
     Second: Iterator<T>,
-> incan_stdlib::reflection::HasTypeFieldMetadata for ChainIterator<T, First, Second> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+> incan_std_core::reflection::HasTypeFieldMetadata for ChainIterator<T, First, Second> {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("first"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("first"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("first"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("First"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("first"),
+                type_name: incan_std_core::frozen::FrozenStr::new("First"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("second"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("second"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("second"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Second"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("second"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Second"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("in_second"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("in_second"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("in_second"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("bool"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("in_second"),
+                type_name: incan_std_core::frozen::FrozenStr::new("bool"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T, First: Iterator<T>, Second: Iterator<T>> ChainIterator<T, First, Second> {
@@ -4287,46 +4297,46 @@ impl<T, First: Iterator<T>, Second: Iterator<T>> ChainIterator<T, First, Second>
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("first"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("first"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("first"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("First"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("first"),
+                type_name: incan_std_core::frozen::FrozenStr::new("First"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("second"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("second"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("second"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Second"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("second"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Second"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("in_second"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("in_second"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("in_second"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("bool"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("in_second"),
+                type_name: incan_std_core::frozen::FrozenStr::new("bool"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T, First: Iterator<T>, Second: Iterator<T>> ChainIterator<T, First, Second> {
@@ -4359,61 +4369,61 @@ pub struct EnumerateIterator<T, Source: Iterator<T>> {
     pub index: i64,
     pub marker: Option<T>,
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasClassName
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasClassName
 for EnumerateIterator<T, Source> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeClassName
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasTypeClassName
 for EnumerateIterator<T, Source> {
     fn __class_name__() -> &'static str {
         "EnumerateIterator"
     }
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasFieldMetadata
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasFieldMetadata
 for EnumerateIterator<T, Source> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeFieldMetadata
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasTypeFieldMetadata
 for EnumerateIterator<T, Source> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("index"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("index"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("index"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("index"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T, Source: Iterator<T>> EnumerateIterator<T, Source> {
@@ -4434,37 +4444,37 @@ impl<T, Source: Iterator<T>> EnumerateIterator<T, Source> {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("index"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("index"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("index"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("index"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T, Source: Iterator<T>> EnumerateIterator<T, Source> {
@@ -4496,10 +4506,14 @@ pub struct ZipIterator<T, Left: Iterator<T>, U, Right: Iterator<U>> {
     pub left_marker: Option<T>,
     pub right_marker: Option<U>,
 }
-impl<T, Left: Iterator<T>, U, Right: Iterator<U>> incan_stdlib::reflection::HasClassName
-for ZipIterator<T, Left, U, Right> {
+impl<
+    T,
+    Left: Iterator<T>,
+    U,
+    Right: Iterator<U>,
+> incan_std_core::reflection::HasClassName for ZipIterator<T, Left, U, Right> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
 impl<
@@ -4507,7 +4521,7 @@ impl<
     Left: Iterator<T>,
     U,
     Right: Iterator<U>,
-> incan_stdlib::reflection::HasTypeClassName for ZipIterator<T, Left, U, Right> {
+> incan_std_core::reflection::HasTypeClassName for ZipIterator<T, Left, U, Right> {
     fn __class_name__() -> &'static str {
         "ZipIterator"
     }
@@ -4517,11 +4531,11 @@ impl<
     Left: Iterator<T>,
     U,
     Right: Iterator<U>,
-> incan_stdlib::reflection::HasFieldMetadata for ZipIterator<T, Left, U, Right> {
+> incan_std_core::reflection::HasFieldMetadata for ZipIterator<T, Left, U, Right> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
 impl<
@@ -4529,49 +4543,49 @@ impl<
     Left: Iterator<T>,
     U,
     Right: Iterator<U>,
-> incan_stdlib::reflection::HasTypeFieldMetadata for ZipIterator<T, Left, U, Right> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+> incan_std_core::reflection::HasTypeFieldMetadata for ZipIterator<T, Left, U, Right> {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("left"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("left"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("left"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Left"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("left"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Left"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("right"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("right"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("right"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Right"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("right"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Right"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("left_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("left_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("left_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("left_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("right_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("right_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("right_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[U]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("right_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[U]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T, Left: Iterator<T>, U, Right: Iterator<U>> ZipIterator<T, Left, U, Right> {
@@ -4597,46 +4611,46 @@ impl<T, Left: Iterator<T>, U, Right: Iterator<U>> ZipIterator<T, Left, U, Right>
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("left"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("left"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("left"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Left"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("left"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Left"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("right"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("right"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("right"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Right"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("right"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Right"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("left_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("left_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("left_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("left_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("right_marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("right_marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("right_marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[U]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("right_marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[U]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T, Left: Iterator<T>, U, Right: Iterator<U>> ZipIterator<T, Left, U, Right> {
@@ -4673,61 +4687,61 @@ pub struct TakeWhileIterator<T: Clone, Source: Iterator<T>> {
     pub f: fn(T) -> bool,
     pub done: bool,
 }
-impl<T: Clone, Source: Iterator<T>> incan_stdlib::reflection::HasClassName
+impl<T: Clone, Source: Iterator<T>> incan_std_core::reflection::HasClassName
 for TakeWhileIterator<T, Source> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T: Clone, Source: Iterator<T>> incan_stdlib::reflection::HasTypeClassName
+impl<T: Clone, Source: Iterator<T>> incan_std_core::reflection::HasTypeClassName
 for TakeWhileIterator<T, Source> {
     fn __class_name__() -> &'static str {
         "TakeWhileIterator"
     }
 }
-impl<T: Clone, Source: Iterator<T>> incan_stdlib::reflection::HasFieldMetadata
+impl<T: Clone, Source: Iterator<T>> incan_std_core::reflection::HasFieldMetadata
 for TakeWhileIterator<T, Source> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T: Clone, Source: Iterator<T>> incan_stdlib::reflection::HasTypeFieldMetadata
+impl<T: Clone, Source: Iterator<T>> incan_std_core::reflection::HasTypeFieldMetadata
 for TakeWhileIterator<T, Source> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("(T) -> bool"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> bool"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("done"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("done"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("done"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("bool"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("done"),
+                type_name: incan_std_core::frozen::FrozenStr::new("bool"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone, Source: Iterator<T>> TakeWhileIterator<T, Source> {
@@ -4755,37 +4769,37 @@ impl<T: Clone, Source: Iterator<T>> TakeWhileIterator<T, Source> {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("(T) -> bool"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> bool"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("done"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("done"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("done"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("bool"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("done"),
+                type_name: incan_std_core::frozen::FrozenStr::new("bool"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone, Source: Iterator<T>> TakeWhileIterator<T, Source> {
@@ -4823,61 +4837,61 @@ pub struct SkipWhileIterator<T: Clone, Source: Iterator<T>> {
     pub f: fn(T) -> bool,
     pub skipping: bool,
 }
-impl<T: Clone, Source: Iterator<T>> incan_stdlib::reflection::HasClassName
+impl<T: Clone, Source: Iterator<T>> incan_std_core::reflection::HasClassName
 for SkipWhileIterator<T, Source> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T: Clone, Source: Iterator<T>> incan_stdlib::reflection::HasTypeClassName
+impl<T: Clone, Source: Iterator<T>> incan_std_core::reflection::HasTypeClassName
 for SkipWhileIterator<T, Source> {
     fn __class_name__() -> &'static str {
         "SkipWhileIterator"
     }
 }
-impl<T: Clone, Source: Iterator<T>> incan_stdlib::reflection::HasFieldMetadata
+impl<T: Clone, Source: Iterator<T>> incan_std_core::reflection::HasFieldMetadata
 for SkipWhileIterator<T, Source> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T: Clone, Source: Iterator<T>> incan_stdlib::reflection::HasTypeFieldMetadata
+impl<T: Clone, Source: Iterator<T>> incan_std_core::reflection::HasTypeFieldMetadata
 for SkipWhileIterator<T, Source> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("(T) -> bool"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> bool"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("skipping"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("skipping"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("skipping"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("bool"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("skipping"),
+                type_name: incan_std_core::frozen::FrozenStr::new("bool"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone, Source: Iterator<T> + Clone> SkipWhileIterator<T, Source> {
@@ -4903,37 +4917,37 @@ impl<T: Clone, Source: Iterator<T> + Clone> SkipWhileIterator<T, Source> {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("f"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("f"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("f"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("(T) -> bool"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("f"),
+                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> bool"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("skipping"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("skipping"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("skipping"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("bool"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("skipping"),
+                type_name: incan_std_core::frozen::FrozenStr::new("bool"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone, Source: Iterator<T> + Clone> SkipWhileIterator<T, Source> {
@@ -4973,61 +4987,61 @@ pub struct BatchIterator<T, Source: Iterator<T>> {
     pub size: i64,
     pub marker: Option<T>,
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasClassName
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasClassName
 for BatchIterator<T, Source> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeClassName
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasTypeClassName
 for BatchIterator<T, Source> {
     fn __class_name__() -> &'static str {
         "BatchIterator"
     }
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasFieldMetadata
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasFieldMetadata
 for BatchIterator<T, Source> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeFieldMetadata
+impl<T, Source: Iterator<T>> incan_std_core::reflection::HasTypeFieldMetadata
 for BatchIterator<T, Source> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("size"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("size"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("size"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("size"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone, Source: Iterator<T>> BatchIterator<T, Source> {
@@ -5054,37 +5068,37 @@ impl<T: Clone, Source: Iterator<T>> BatchIterator<T, Source> {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("source"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("source"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("source"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Source"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("source"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Source"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("size"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("size"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("size"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("size"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("marker"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("marker"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[T]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone, Source: Iterator<T>> BatchIterator<T, Source> {

@@ -6,7 +6,7 @@ use std::process::Command;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let workspace_root = workspace_root()?;
     build_workspace_cli(&workspace_root)?;
-    let source = workspace_root.join("crates/incan_stdlib/stdlib/features.incn");
+    let source = workspace_root.join("loaves/stdlib/core/src/features.incn");
     let output = workspace_root.join("workspaces/docs-site/docs/language/reference/feature_inventory.md");
     incan::cli::commands::tools::write_feature_inventory_reference_from_source(&source, &output)?;
     Ok(())
@@ -37,7 +37,7 @@ fn workspace_root() -> Result<PathBuf, String> {
     }
     let current_dir = std::env::current_dir()
         .map_err(|error| format!("failed to resolve the current workspace directory: {error}"))?;
-    if current_dir.join("Cargo.toml").is_file() && current_dir.join("crates/incan_stdlib/stdlib").is_dir() {
+    if current_dir.join("Cargo.toml").is_file() && current_dir.join("loaves/stdlib").is_dir() {
         return Ok(current_dir);
     }
     Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR")))

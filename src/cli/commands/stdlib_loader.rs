@@ -180,11 +180,12 @@ fn load_stdlib_module(path: &[String]) -> CliResult<StdlibModule> {
 
 /// Find the absolute path to a stdlib `.incn` file.
 ///
-/// The shared toolchain-layout resolver gives explicit overrides priority, then considers the active source workspace,
-/// current project, executable-relative toolchain, and installed layout. Returns an error if the selected stdlib does
-/// not contain the requested file.
+/// The shared toolchain-layout policy gives explicit overrides priority, then considers the active source workspace,
+/// current project, executable-relative toolchain, and installed layout to find the stdlib root; the component
+/// catalog below it says which component holds the file. Returns an error if the selected stdlib does not contain
+/// the requested file.
 fn find_stdlib_file(relative_path: &str) -> CliResult<PathBuf> {
-    crate::toolchain_layout::find_stdlib_source_file(relative_path).ok_or_else(|| {
+    incan_frontend::provider::find_stdlib_source_file(relative_path).ok_or_else(|| {
         CliError::failure(format!(
             "Stdlib file not found: {} (searched explicit overrides, workspace, executable, cwd, and installed layout)",
             relative_path

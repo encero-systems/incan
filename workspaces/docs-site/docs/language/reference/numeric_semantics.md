@@ -33,7 +33,7 @@ For task-oriented guidance, see [Choosing numeric types](../how-to/choosing_nume
 | `float`         | `f64`                           | Broad 64-bit IEEE binary float, including NaN and infinity |
 | `f32`           | `f32`                           | Finite 32-bit IEEE binary value                            |
 | `f64`           | `f64`                           | Finite 64-bit IEEE binary value                            |
-| `decimal[p, s]` | `incan_stdlib::num::Decimal128` | Base-10 fixed-scale value with precision `p` and scale `s` |
+| `decimal[p, s]` | `incan_std_core::num::Decimal128` | Base-10 fixed-scale value with precision `p` and scale `s` |
 
 ## Aliases
 

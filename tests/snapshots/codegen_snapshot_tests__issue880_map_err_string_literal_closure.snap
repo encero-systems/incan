@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 pub use crate::__incan_std::json::JsonValue;
 fn parse(source: String) -> Result<JsonValue, String> {
     return JsonValue::parse(source).map_err(|_error| "malformed_json".to_string());
@@ -16,7 +16,7 @@ fn parse_formatted(source: String) -> Result<JsonValue, String> {
         .map_err(|_error| {
             let __parts: [&str; 1usize] = ["malformed_json"];
             let __args: Vec<String> = vec![];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         });
 }
 fn preserve_error<T: Clone>(value: T) -> Result<i64, T> {

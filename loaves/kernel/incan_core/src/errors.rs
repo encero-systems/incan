@@ -4,7 +4,7 @@
 //! Instead, it provides a typed exception taxonomy (`ErrorKind`) and canonical formatting
 //! (`IncanError` implements `Display`).
 //!
-//! The runtime/stdlib (`incan_stdlib`) may choose to `panic!` with these formatted errors.
+//! The runtime facets (`incan_std_core` and the others) may choose to `panic!` with these formatted errors.
 //!
 //! ## Goals
 //! - Avoid “stringly-typed” exception identity (`"ValueError: ..."` scattered across the repo).

@@ -227,7 +227,7 @@ impl<'a> IrEmitter<'a> {
             {
                 trait_methods.push(quote! {
                     fn to_json(&self) -> String {
-                        incan_stdlib::json::__private::stringify_or_raise(self, stringify!(#target_type))
+                        incan_std_data::json::__private::stringify_or_raise(self, stringify!(#target_type))
                     }
                 });
             }
@@ -236,7 +236,7 @@ impl<'a> IrEmitter<'a> {
             {
                 trait_methods.push(quote! {
                     fn from_json(json_str: String) -> Result<Self, String> {
-                        incan_stdlib::json::__private::parse_or_error(&json_str)
+                        incan_std_data::json::__private::parse_or_error(&json_str)
                     }
                 });
             }
@@ -566,11 +566,11 @@ impl<'a> IrEmitter<'a> {
 
             let alias_token = alias
                 .as_ref()
-                .map(|a| quote! { Some(incan_stdlib::frozen::FrozenStr::new(#a)) })
+                .map(|a| quote! { Some(incan_std_core::frozen::FrozenStr::new(#a)) })
                 .unwrap_or_else(|| quote! { None });
             let description_token = description
                 .as_ref()
-                .map(|d| quote! { Some(incan_stdlib::frozen::FrozenStr::new(#d)) })
+                .map(|d| quote! { Some(incan_std_core::frozen::FrozenStr::new(#d)) })
                 .unwrap_or_else(|| quote! { None });
             let wire_name = alias.as_deref().unwrap_or(field_name);
             // RFC 021: Use Incan-style type name, not Rust type name
@@ -582,14 +582,14 @@ impl<'a> IrEmitter<'a> {
                 .unwrap_or_else(|| ty.incan_name());
 
             field_infos.push(quote! {
-                incan_stdlib::reflection::FieldInfo {
-                    name: incan_stdlib::frozen::FrozenStr::new(#field_name),
+                incan_std_core::reflection::FieldInfo {
+                    name: incan_std_core::frozen::FrozenStr::new(#field_name),
                     alias: #alias_token,
                     description: #description_token,
-                    wire_name: incan_stdlib::frozen::FrozenStr::new(#wire_name),
-                    type_name: incan_stdlib::frozen::FrozenStr::new(#type_name),
+                    wire_name: incan_std_core::frozen::FrozenStr::new(#wire_name),
+                    type_name: incan_std_core::frozen::FrozenStr::new(#type_name),
                     has_default: #has_default,
-                    extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                    extra: incan_std_core::frozen::FrozenDict::new(&[]),
                 }
             });
         }
@@ -624,9 +624,9 @@ impl<'a> IrEmitter<'a> {
         };
         Ok(Some(quote! {
             /// Returns field metadata for this type.
-            pub fn __fields__(&self) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-                static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; #field_count] = [#(#field_infos),*];
-                incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+            pub fn __fields__(&self) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+                static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; #field_count] = [#(#field_infos),*];
+                incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
             }
         }))
     }

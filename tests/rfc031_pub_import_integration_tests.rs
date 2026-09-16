@@ -98,7 +98,7 @@ mod rfc031_pub_import_integration_tests {
         let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
         Ok(super::incan_command()
             .env("INCAN_SOURCE_ROOT", checkout)
-            .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
+            .env("INCAN_STDLIB", checkout.join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
             .env("INCAN_GENERATED_CARGO_TARGET_DIR", generated_cargo_target)
@@ -3562,7 +3562,7 @@ pub fn library_vocab() -> VocabRegistration {
     {
         let tmp = tempfile::tempdir()?;
         let source_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let stdlib = source_root.join("crates/incan_stdlib/stdlib");
+        let stdlib = source_root.join("loaves/stdlib");
         let producer_root = tmp.path().join("computed_property_provider");
         std::fs::create_dir_all(producer_root.join("src"))?;
         std::fs::write(
@@ -5519,7 +5519,7 @@ def main() -> Result[None, SessionError]:
         let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
         let run_output = super::incan_command()
             .env("INCAN_SOURCE_ROOT", checkout)
-            .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
+            .env("INCAN_STDLIB", checkout.join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
             .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
@@ -5601,7 +5601,7 @@ def main() -> Result[None, SessionError]:
         let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
         let run_output = super::incan_command()
             .env("INCAN_SOURCE_ROOT", checkout)
-            .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
+            .env("INCAN_STDLIB", checkout.join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
             .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
@@ -5674,7 +5674,7 @@ def main() -> Result[None, str]:
         let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
         let run_output = super::incan_command()
             .env("INCAN_SOURCE_ROOT", checkout)
-            .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
+            .env("INCAN_STDLIB", checkout.join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
             .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
@@ -5776,7 +5776,7 @@ def main() -> None:
         let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
         let run_output = super::incan_command()
             .env("INCAN_SOURCE_ROOT", checkout)
-            .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
+            .env("INCAN_STDLIB", checkout.join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
             .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
@@ -5884,7 +5884,7 @@ def main() -> Result[None, str]:
         let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
         let emitted = super::incan_command()
             .env("INCAN_SOURCE_ROOT", checkout)
-            .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
+            .env("INCAN_STDLIB", checkout.join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
             .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
@@ -5962,7 +5962,7 @@ def random_bytes() -> Result[bytes, str]:
         let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
         let emitted = super::incan_command()
             .env("INCAN_SOURCE_ROOT", checkout)
-            .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
+            .env("INCAN_STDLIB", checkout.join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
             .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
@@ -6047,7 +6047,7 @@ def sum(values: list[f32]) -> Result[f32, str]:
         let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
         let emitted = super::incan_command()
             .env("INCAN_SOURCE_ROOT", checkout)
-            .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
+            .env("INCAN_STDLIB", checkout.join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
             .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
@@ -6143,7 +6143,7 @@ def main() -> Result[None, str]:
         let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
         let emitted = super::incan_command()
             .env("INCAN_SOURCE_ROOT", checkout)
-            .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
+            .env("INCAN_STDLIB", checkout.join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
             .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
@@ -6337,7 +6337,7 @@ def main() -> None:
         let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
         let emitted = super::incan_command()
             .env("INCAN_SOURCE_ROOT", checkout)
-            .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
+            .env("INCAN_STDLIB", checkout.join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
             .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
@@ -6477,7 +6477,7 @@ def exact_size(value: usize) -> usize:
         let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
         let emitted = super::incan_command()
             .env("INCAN_SOURCE_ROOT", checkout)
-            .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
+            .env("INCAN_STDLIB", checkout.join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
             .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
@@ -6563,7 +6563,7 @@ def fill() -> Result[list[f32], str]:
         let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
         let bindings = super::incan_command()
             .env("INCAN_SOURCE_ROOT", checkout)
-            .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
+            .env("INCAN_STDLIB", checkout.join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
             .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
@@ -6677,7 +6677,7 @@ def reject_mismatched_owner(left: list[f32], right: list[f32]) -> f32:
 
         let bindings = super::incan_command()
             .env("INCAN_SOURCE_ROOT", checkout)
-            .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
+            .env("INCAN_STDLIB", checkout.join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
             .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
@@ -6724,7 +6724,7 @@ def reject_mismatched_owner(left: list[f32], right: list[f32]) -> f32:
 
         let codegraph = super::incan_command()
             .env("INCAN_SOURCE_ROOT", checkout)
-            .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
+            .env("INCAN_STDLIB", checkout.join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
             .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
@@ -7848,7 +7848,7 @@ def main() -> None:
                 "expected provider dependency in generated Cargo.toml, got:\n{cargo_toml}"
             );
             assert!(
-                cargo_toml.contains("incan_stdlib"),
+                cargo_toml.contains("incan_std_core"),
                 "expected stdlib dependency in generated Cargo.toml, got:\n{cargo_toml}"
             );
             assert!(

@@ -767,7 +767,7 @@ fn list_equality_stays_a_primitive_because_that_is_what_the_other_backend_emits(
 -> Result<(), Box<dyn std::error::Error>> {
     // The counterweight to the concatenation test above, and the reason closing the admission hole is not "refuse
     // every primitive over a collection". `determine_binop_plan` in the Rust-emission backend routes list `+` to
-    // `incan_stdlib::collections::list_concat` -- so calling it `BinOp::Add` contradicted that backend -- but it
+    // `incan_std_core::collections::list_concat` -- so calling it `BinOp::Add` contradicted that backend -- but it
     // emits comparisons as an infix operator, which on two `Vec`s resolves to Rust's `PartialEq` and matches
     // Python's element-wise `==`. Both backends therefore agree that this one *is* an operator, and refusing it
     // here would manufacture a divergence instead of closing one.
@@ -3450,7 +3450,7 @@ fn a_tuple_for_pattern_over_an_unconstrained_type_variable_is_a_type_error() -> 
 
 #[test]
 fn a_tuple_for_pattern_over_type_variable_elements_still_binds() -> Result<(), Box<dyn std::error::Error>> {
-    // The shape `crates/incan_stdlib/stdlib/collections.incn` actually uses: the *item* is a tuple, and only
+    // The shape `loaves/stdlib/data/src/collections.incn` actually uses: the *item* is a tuple, and only
     // its elements are type variables. Rejecting bare type variables must not catch this too.
     let source = "def keys[K, V](items: list[Tuple[K, V]]) -> int:\n  mut n = 0\n  for key, value in items:\n    n = n + 1\n  return n\n";
     let module = build(source, &["m", "typevar_elements_for"])?;

@@ -6,7 +6,7 @@ expression: rust_code
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 pub use crate::__incan_std::serde::json::Serialize;
 /// Structured telemetry value kind.
 #[derive(Debug, Clone, PartialEq)]
@@ -20,7 +20,7 @@ pub enum TelemetryValueKind {
     ARRAY,
     MAP,
 }
-impl incan_stdlib::reflection::HasTypeClassName for TelemetryValueKind {
+impl incan_std_core::reflection::HasTypeClassName for TelemetryValueKind {
     fn __class_name__() -> &'static str {
         "TelemetryValueKind"
     }
@@ -114,7 +114,7 @@ impl serde::Serialize for TelemetryValueKind {
 /// layer to one clock implementation.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Timestamp(pub String);
-impl incan_stdlib::reflection::HasTypeClassName for Timestamp {
+impl incan_std_core::reflection::HasTypeClassName for Timestamp {
     fn __class_name__() -> &'static str {
         "Timestamp"
     }
@@ -123,7 +123,7 @@ impl Serialize for Timestamp {
     fn to_json(&self) -> String {
         return {
             let __incan_json_value = &(self);
-            incan_stdlib::json::__private::stringify_or_raise(
+            incan_std_data::json::__private::stringify_or_raise(
                 __incan_json_value,
                 std::any::type_name_of_val(__incan_json_value),
             )
@@ -167,136 +167,138 @@ pub struct TelemetryValue {
     #[serde(rename = "MapValue")]
     pub map_value: std::collections::HashMap<String, TelemetryValue>,
 }
-impl incan_stdlib::reflection::HasClassName for TelemetryValue {
+impl incan_std_core::reflection::HasClassName for TelemetryValue {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for TelemetryValue {
+impl incan_std_core::reflection::HasTypeClassName for TelemetryValue {
     fn __class_name__() -> &'static str {
         "TelemetryValue"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for TelemetryValue {
+impl incan_std_core::reflection::HasFieldMetadata for TelemetryValue {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for TelemetryValue {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for TelemetryValue {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 8] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("kind"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("Type")),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 8] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("kind"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("Type")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Telemetry value kind: none, string, bool, int, float, bytes, array, or map.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("Type"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("TelemetryValueKind"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("Type"),
+                type_name: incan_std_core::frozen::FrozenStr::new("TelemetryValueKind"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("string_value"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("StringValue")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("string_value"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("StringValue")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "String value when kind is string.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("StringValue"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[str]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("StringValue"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[str]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("bool_value"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("BoolValue")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("bool_value"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("BoolValue")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Boolean value when kind is bool.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("BoolValue"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[bool]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("BoolValue"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[bool]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("int_value"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("IntValue")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("int_value"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("IntValue")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Integer value when kind is int.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("IntValue"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[int]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("IntValue"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[int]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("float_value"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("FloatValue")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("float_value"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("FloatValue")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Floating-point value when kind is float.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("FloatValue"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[float]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("FloatValue"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[float]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("bytes_value"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("BytesValue")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("bytes_value"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("BytesValue")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Encoded byte value when kind is bytes.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("BytesValue"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[str]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("BytesValue"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[str]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("array_value"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("ArrayValue")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("array_value"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("ArrayValue")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Nested array values when kind is array.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("ArrayValue"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("list[TelemetryValue]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("ArrayValue"),
+                type_name: incan_std_core::frozen::FrozenStr::new(
+                    "list[TelemetryValue]",
+                ),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("map_value"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("MapValue")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("map_value"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("MapValue")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Nested map values when kind is map.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("MapValue"),
-                type_name: incan_stdlib::frozen::FrozenStr::new(
+                wire_name: incan_std_core::frozen::FrozenStr::new("MapValue"),
+                type_name: incan_std_core::frozen::FrozenStr::new(
                     "dict[str, TelemetryValue]",
                 ),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl TelemetryValue {
@@ -512,123 +514,125 @@ impl TelemetryValue {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 8] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("kind"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("Type")),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 8] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("kind"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("Type")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Telemetry value kind: none, string, bool, int, float, bytes, array, or map.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("Type"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("TelemetryValueKind"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("Type"),
+                type_name: incan_std_core::frozen::FrozenStr::new("TelemetryValueKind"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("string_value"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("StringValue")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("string_value"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("StringValue")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "String value when kind is string.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("StringValue"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[str]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("StringValue"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[str]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("bool_value"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("BoolValue")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("bool_value"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("BoolValue")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Boolean value when kind is bool.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("BoolValue"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[bool]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("BoolValue"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[bool]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("int_value"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("IntValue")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("int_value"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("IntValue")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Integer value when kind is int.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("IntValue"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[int]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("IntValue"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[int]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("float_value"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("FloatValue")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("float_value"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("FloatValue")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Floating-point value when kind is float.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("FloatValue"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[float]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("FloatValue"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[float]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("bytes_value"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("BytesValue")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("bytes_value"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("BytesValue")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Encoded byte value when kind is bytes.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("BytesValue"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[str]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("BytesValue"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[str]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("array_value"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("ArrayValue")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("array_value"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("ArrayValue")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Nested array values when kind is array.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("ArrayValue"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("list[TelemetryValue]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("ArrayValue"),
+                type_name: incan_std_core::frozen::FrozenStr::new(
+                    "list[TelemetryValue]",
+                ),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("map_value"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("MapValue")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("map_value"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("MapValue")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Nested map values when kind is map.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("MapValue"),
-                type_name: incan_stdlib::frozen::FrozenStr::new(
+                wire_name: incan_std_core::frozen::FrozenStr::new("MapValue"),
+                type_name: incan_std_core::frozen::FrozenStr::new(
                     "dict[str, TelemetryValue]",
                 ),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl Serialize for TelemetryValue {
     fn to_json(&self) -> String {
         return {
             let __incan_json_value = &(self);
-            incan_stdlib::json::__private::stringify_or_raise(
+            incan_std_data::json::__private::stringify_or_raise(
                 __incan_json_value,
                 std::any::type_name_of_val(__incan_json_value),
             )
@@ -649,7 +653,7 @@ impl TelemetryValue {
 /// `gen_ai.request.model`. Values remain structured through the telemetry data-model boundary.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Attributes(pub std::collections::HashMap<String, TelemetryValue>);
-impl incan_stdlib::reflection::HasTypeClassName for Attributes {
+impl incan_std_core::reflection::HasTypeClassName for Attributes {
     fn __class_name__() -> &'static str {
         "Attributes"
     }
@@ -668,7 +672,7 @@ impl Attributes {
                 .map(|key| (
                     key.clone(),
                     TelemetryValue::string(
-                        incan_stdlib::collections::dict_get(
+                        incan_std_core::collections::dict_get(
                                 &fields,
                                 <_ as AsRef<str>>::as_ref(&key),
                             )
@@ -693,28 +697,28 @@ impl Attributes {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("0"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("0"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("0"),
-                type_name: incan_stdlib::frozen::FrozenStr::new(
+                wire_name: incan_std_core::frozen::FrozenStr::new("0"),
+                type_name: incan_std_core::frozen::FrozenStr::new(
                     "dict[str, TelemetryValue]",
                 ),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl Serialize for Attributes {
     fn to_json(&self) -> String {
         return {
             let __incan_json_value = &(self);
-            incan_stdlib::json::__private::stringify_or_raise(
+            incan_std_data::json::__private::stringify_or_raise(
                 __incan_json_value,
                 std::any::type_name_of_val(__incan_json_value),
             )
@@ -734,7 +738,7 @@ impl Attributes {
 /// Values use the OpenTelemetry/W3C trace-id spelling when a provider supplies active trace context.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TraceId(pub String);
-impl incan_stdlib::reflection::HasTypeClassName for TraceId {
+impl incan_std_core::reflection::HasTypeClassName for TraceId {
     fn __class_name__() -> &'static str {
         "TraceId"
     }
@@ -743,7 +747,7 @@ impl Serialize for TraceId {
     fn to_json(&self) -> String {
         return {
             let __incan_json_value = &(self);
-            incan_stdlib::json::__private::stringify_or_raise(
+            incan_std_data::json::__private::stringify_or_raise(
                 __incan_json_value,
                 std::any::type_name_of_val(__incan_json_value),
             )
@@ -763,7 +767,7 @@ impl TraceId {
 /// Values use the OpenTelemetry/W3C span-id spelling when a provider supplies active span context.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SpanId(pub String);
-impl incan_stdlib::reflection::HasTypeClassName for SpanId {
+impl incan_std_core::reflection::HasTypeClassName for SpanId {
     fn __class_name__() -> &'static str {
         "SpanId"
     }
@@ -772,7 +776,7 @@ impl Serialize for SpanId {
     fn to_json(&self) -> String {
         return {
             let __incan_json_value = &(self);
-            incan_stdlib::json::__private::stringify_or_raise(
+            incan_std_data::json::__private::stringify_or_raise(
                 __incan_json_value,
                 std::any::type_name_of_val(__incan_json_value),
             )
@@ -792,7 +796,7 @@ impl SpanId {
 /// The value is kept as its wire spelling so propagation code can preserve flags without lossy conversion.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TraceFlags(pub String);
-impl incan_stdlib::reflection::HasTypeClassName for TraceFlags {
+impl incan_std_core::reflection::HasTypeClassName for TraceFlags {
     fn __class_name__() -> &'static str {
         "TraceFlags"
     }
@@ -801,7 +805,7 @@ impl Serialize for TraceFlags {
     fn to_json(&self) -> String {
         return {
             let __incan_json_value = &(self);
-            incan_stdlib::json::__private::stringify_or_raise(
+            incan_std_data::json::__private::stringify_or_raise(
                 __incan_json_value,
                 std::any::type_name_of_val(__incan_json_value),
             )
@@ -831,73 +835,73 @@ pub struct Resource {
     #[serde(rename = "Attributes")]
     pub attributes: Attributes,
 }
-impl incan_stdlib::reflection::HasClassName for Resource {
+impl incan_std_core::reflection::HasClassName for Resource {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for Resource {
+impl incan_std_core::reflection::HasTypeClassName for Resource {
     fn __class_name__() -> &'static str {
         "Resource"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for Resource {
+impl incan_std_core::reflection::HasFieldMetadata for Resource {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for Resource {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for Resource {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("attributes"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("Attributes")),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("attributes"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("Attributes")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Resource attributes such as service.name or service.version.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("Attributes"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Attributes"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("Attributes"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Attributes"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl Resource {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("attributes"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("Attributes")),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("attributes"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("Attributes")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Resource attributes such as service.name or service.version.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("Attributes"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Attributes"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("Attributes"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Attributes"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl Serialize for Resource {
     fn to_json(&self) -> String {
         return {
             let __incan_json_value = &(self);
-            incan_stdlib::json::__private::stringify_or_raise(
+            incan_std_data::json::__private::stringify_or_raise(
                 __incan_json_value,
                 std::any::type_name_of_val(__incan_json_value),
             )
@@ -931,70 +935,70 @@ pub struct InstrumentationScope {
     #[serde(rename = "SchemaUrl")]
     pub schema_url: Option<String>,
 }
-impl incan_stdlib::reflection::HasClassName for InstrumentationScope {
+impl incan_std_core::reflection::HasClassName for InstrumentationScope {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for InstrumentationScope {
+impl incan_std_core::reflection::HasTypeClassName for InstrumentationScope {
     fn __class_name__() -> &'static str {
         "InstrumentationScope"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for InstrumentationScope {
+impl incan_std_core::reflection::HasFieldMetadata for InstrumentationScope {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for InstrumentationScope {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for InstrumentationScope {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("name"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("Name")),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("name"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("Name")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new("Instrumentation scope name."),
+                    incan_std_core::frozen::FrozenStr::new("Instrumentation scope name."),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("Name"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("Name"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("version"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("Version")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("version"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("Version")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Instrumentation scope version, when known.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("Version"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[str]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("Version"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[str]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("schema_url"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("SchemaUrl")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("schema_url"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("SchemaUrl")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Schema URL for scope metadata, when known.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("SchemaUrl"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[str]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("SchemaUrl"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[str]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for InstrumentationScope {
+impl incan_std_core::reflection::HasFieldValueReflection for InstrumentationScope {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             "name" => Some(format!("{}", self.name)),
@@ -1047,54 +1051,54 @@ impl InstrumentationScope {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("name"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("Name")),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("name"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("Name")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new("Instrumentation scope name."),
+                    incan_std_core::frozen::FrozenStr::new("Instrumentation scope name."),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("Name"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("Name"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("version"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("Version")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("version"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("Version")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Instrumentation scope version, when known.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("Version"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[str]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("Version"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[str]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("schema_url"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("SchemaUrl")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("schema_url"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("SchemaUrl")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new(
+                    incan_std_core::frozen::FrozenStr::new(
                         "Schema URL for scope metadata, when known.",
                     ),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("SchemaUrl"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[str]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("SchemaUrl"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[str]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl Serialize for InstrumentationScope {
     fn to_json(&self) -> String {
         return {
             let __incan_json_value = &(self);
-            incan_stdlib::json::__private::stringify_or_raise(
+            incan_std_data::json::__private::stringify_or_raise(
                 __incan_json_value,
                 std::any::type_name_of_val(__incan_json_value),
             )
@@ -1127,113 +1131,113 @@ pub struct SpanContext {
     #[serde(rename = "TraceFlags")]
     pub trace_flags: Option<TraceFlags>,
 }
-impl incan_stdlib::reflection::HasClassName for SpanContext {
+impl incan_std_core::reflection::HasClassName for SpanContext {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for SpanContext {
+impl incan_std_core::reflection::HasTypeClassName for SpanContext {
     fn __class_name__() -> &'static str {
         "SpanContext"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for SpanContext {
+impl incan_std_core::reflection::HasFieldMetadata for SpanContext {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for SpanContext {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for SpanContext {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("trace_id"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("TraceId")),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("trace_id"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("TraceId")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new("Trace identifier."),
+                    incan_std_core::frozen::FrozenStr::new("Trace identifier."),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("TraceId"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("TraceId"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("TraceId"),
+                type_name: incan_std_core::frozen::FrozenStr::new("TraceId"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("span_id"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("SpanId")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("span_id"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("SpanId")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new("Span identifier."),
+                    incan_std_core::frozen::FrozenStr::new("Span identifier."),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("SpanId"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("SpanId"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("SpanId"),
+                type_name: incan_std_core::frozen::FrozenStr::new("SpanId"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("trace_flags"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("TraceFlags")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("trace_flags"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("TraceFlags")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new("W3C trace flags."),
+                    incan_std_core::frozen::FrozenStr::new("W3C trace flags."),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("TraceFlags"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[TraceFlags]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("TraceFlags"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[TraceFlags]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl SpanContext {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("trace_id"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("TraceId")),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("trace_id"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("TraceId")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new("Trace identifier."),
+                    incan_std_core::frozen::FrozenStr::new("Trace identifier."),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("TraceId"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("TraceId"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("TraceId"),
+                type_name: incan_std_core::frozen::FrozenStr::new("TraceId"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("span_id"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("SpanId")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("span_id"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("SpanId")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new("Span identifier."),
+                    incan_std_core::frozen::FrozenStr::new("Span identifier."),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("SpanId"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("SpanId"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("SpanId"),
+                type_name: incan_std_core::frozen::FrozenStr::new("SpanId"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("trace_flags"),
-                alias: Some(incan_stdlib::frozen::FrozenStr::new("TraceFlags")),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("trace_flags"),
+                alias: Some(incan_std_core::frozen::FrozenStr::new("TraceFlags")),
                 description: Some(
-                    incan_stdlib::frozen::FrozenStr::new("W3C trace flags."),
+                    incan_std_core::frozen::FrozenStr::new("W3C trace flags."),
                 ),
-                wire_name: incan_stdlib::frozen::FrozenStr::new("TraceFlags"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[TraceFlags]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("TraceFlags"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[TraceFlags]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl Serialize for SpanContext {
     fn to_json(&self) -> String {
         return {
             let __incan_json_value = &(self);
-            incan_stdlib::json::__private::stringify_or_raise(
+            incan_std_data::json::__private::stringify_or_raise(
                 __incan_json_value,
                 std::any::type_name_of_val(__incan_json_value),
             )

@@ -273,7 +273,7 @@ pub const METADATA_FREE_METHOD_SIGNATURE_RULES: &[MetadataFreeMethodSignatureRul
 /// Authoritative signatures for compiler-owned runtime helpers whose source typing must be cache-independent.
 pub const COMPILER_OWNED_FUNCTION_SIGNATURE_RULES: &[RustFunctionSignatureRule] = &[
     RustFunctionSignatureRule {
-        path: "incan_stdlib::strings::str_slice_byte_range",
+        path: "incan_std_core::strings::str_slice_byte_range",
         params: &[
             RustFunctionParamRule {
                 name: Some("s"),
@@ -293,7 +293,7 @@ pub const COMPILER_OWNED_FUNCTION_SIGNATURE_RULES: &[RustFunctionSignatureRule] 
         is_unsafe: false,
     },
     RustFunctionSignatureRule {
-        path: "incan_stdlib::strings::str_slice_from_byte_offset",
+        path: "incan_std_core::strings::str_slice_from_byte_offset",
         params: &[
             RustFunctionParamRule {
                 name: Some("s"),
@@ -1776,11 +1776,11 @@ pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo)>(callback: D) {
     fn compiler_owned_function_signatures_preserve_owned_stdlib_slice_results() -> Result<(), String> {
         let expected = [
             (
-                "incan_stdlib::strings::str_slice_byte_range",
+                "incan_std_core::strings::str_slice_byte_range",
                 vec![(Some("s"), "&str"), (Some("start"), "i64"), (Some("end"), "i64")],
             ),
             (
-                "incan_stdlib::strings::str_slice_from_byte_offset",
+                "incan_std_core::strings::str_slice_from_byte_offset",
                 vec![(Some("s"), "&str"), (Some("start"), "i64")],
             ),
         ];

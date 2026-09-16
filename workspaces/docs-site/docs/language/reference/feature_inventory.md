@@ -1,7 +1,7 @@
 # Incan feature inventory
 
 !!! warning "Generated file"
-    Do not edit this page by hand. If it looks wrong/outdated, update `crates/incan_stdlib/stdlib/features.incn` and regenerate it.
+    Do not edit this page by hand. If it looks wrong/outdated, update `loaves/stdlib/core/src/features.incn` and regenerate it.
 
     Regenerate with: `cargo run --features cli --bin generate_feature_inventory`
 

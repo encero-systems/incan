@@ -277,7 +277,7 @@ fn foreign_union_keeps_its_producer_wrapper_identity() -> Result<(), Box<dyn std
 #[test]
 fn rust_string_slice_import_add_assign_preserves_owned_rhs_issue896() -> Result<(), String> {
     let source = r#"
-from rust::incan_stdlib::strings import str_slice_byte_range
+from rust::incan_std_core::strings import str_slice_byte_range
 
 def concat_slice(text: str) -> str:
     mut out = ""
@@ -324,7 +324,7 @@ def concat_slice(text: str) -> str:
     let BinOpEmitKind::StdlibCall { path, borrow_args } = determine_binop_plan(op, left, right).emit else {
         return Err("owned Rust string RHS should lower through a stdlib call".to_string());
     };
-    assert_eq!(path.to_string(), "incan_stdlib :: strings :: str_concat");
+    assert_eq!(path.to_string(), "incan_std_core :: strings :: str_concat");
     assert!(borrow_args);
     Ok(())
 }

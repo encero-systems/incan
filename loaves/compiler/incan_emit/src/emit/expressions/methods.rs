@@ -535,7 +535,7 @@ impl<'a> IrEmitter<'a> {
                     emitted = quote! {
                         match u64::try_from(#emitted) {
                             Ok(__incan_take_count) => __incan_take_count,
-                            Err(_) => incan_stdlib::errors::raise_value_error(
+                            Err(_) => incan_std_core::errors::raise_value_error(
                                 "take() count must be non-negative and fit u64",
                             ),
                         }
@@ -1350,7 +1350,7 @@ impl<'a> IrEmitter<'a> {
             quote! { None }
         };
 
-        Ok(quote! { incan_stdlib::strings::str_slice(#r_borrow, #start_tokens, #end_tokens, None) })
+        Ok(quote! { incan_std_core::strings::str_slice(#r_borrow, #start_tokens, #end_tokens, None) })
     }
 
     fn emit_static_collection_get(&self, receiver: &TypedExpr, args: &[TypedExpr]) -> Result<TokenStream, EmitError> {

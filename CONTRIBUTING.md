@@ -62,7 +62,7 @@ The toolchain version lives in **one place**, the root `Cargo.toml`'s `[workspac
 Notes:
 
 - The compiler exposes the toolchain version as `incan::version::INCAN_VERSION`, backed by `env!("CARGO_PKG_VERSION")`, so it updates automatically with the workspace version.
-- Generated code carries `incan_stdlib::__incan_stdlib_version_check!("<stdlib line the compiler generates for>")`; the linked stdlib must be compatible with it (exactly equal for a prerelease line, same major.minor and no older patch for a release), so a stdlib bump that changes what generated code compiles against is a compatibility event, not a formality.
+- Generated code carries `incan_std_core::__incan_stdlib_version_check!("<stdlib line the compiler generates for>")`; the linked stdlib must be compatible with it (exactly equal for a prerelease line, same major.minor and no older patch for a release), so a stdlib bump that changes what generated code compiles against is a compatibility event, not a formality.
 - Codegen snapshots are version-agnostic (they normalize the codegen header to `v<INCAN_VERSION>` and the stdlib check to `<INCAN_STDLIB_VERSION>`), so version bumps should not churn snapshot files.
 
 ### Code Generation Overview
@@ -188,7 +188,7 @@ The CLI uses clap with derive macros. Commands return `CliResult<ExitCode>` inst
 
 ### Prelude Status
 
-The stdlib surface now compiles through the normal pipeline under `crates/incan_stdlib/stdlib/`. Source declarations are the primary contract for `std.*` modules, including the prelude-facing trait definitions. Some behavior is still realized by backend lowering or runtime bridges (for example derive-backed Rust traits and host-backed stdlib leaves), but the compiler no longer treats the stdlib as documentation-only stubs.
+The stdlib surface now compiles through the normal pipeline under `loaves/stdlib/`. Source declarations are the primary contract for `std.*` modules, including the prelude-facing trait definitions. Some behavior is still realized by backend lowering or runtime bridges (for example derive-backed Rust traits and host-backed stdlib leaves), but the compiler no longer treats the stdlib as documentation-only stubs.
 
 ### Property-Based Testing
 

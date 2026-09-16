@@ -1359,8 +1359,8 @@ mod tests {
         bind_source_root(&selection, &mut core, "compiler/incan_core", Vec::new())?;
         let mut stdlib = unit(
             &selection,
-            "incan_stdlib",
-            "incan_stdlib",
+            "incan_std_core",
+            "incan_std_core",
             OvenSelectedRustFacetSourceKind::Compiler,
             &toolchain_owner(),
             OvenSelectedRustFacetUnitRole::Library,
@@ -1371,7 +1371,7 @@ mod tests {
                 unit: core.identity.clone(),
             }],
         )?;
-        bind_source_root(&selection, &mut stdlib, "compiler/incan_stdlib", Vec::new())?;
+        bind_source_root(&selection, &mut stdlib, "compiler/incan_std_core", Vec::new())?;
         let artifacts = artifacts(&selection, &serde.source.digest, &serde_derive.source.digest);
         let units = vec![
             OvenRuntimeFoundationUnit {
@@ -1418,7 +1418,7 @@ mod tests {
                     },
                 ],
                 units: vec![serde, serde_derive, core, stdlib.clone()],
-                exposed_roots: BTreeMap::from([("incan_stdlib".to_string(), stdlib.identity)]),
+                exposed_roots: BTreeMap::from([("incan_std_core".to_string(), stdlib.identity)]),
             },
             units,
         })
@@ -1589,13 +1589,13 @@ mod tests {
         )?;
         write_fixture_file(
             toolchain_root,
-            "compiler/incan_stdlib/Cargo.toml",
-            fixture_cargo_toml("incan_stdlib").as_bytes(),
+            "compiler/incan_std_core/Cargo.toml",
+            fixture_cargo_toml("incan_std_core").as_bytes(),
         )?;
         write_fixture_file(
             toolchain_root,
-            "compiler/incan_stdlib/src/lib.rs",
-            fixture_source_bytes("incan_stdlib").as_bytes(),
+            "compiler/incan_std_core/src/lib.rs",
+            fixture_source_bytes("incan_std_core").as_bytes(),
         )?;
         Ok(())
     }
@@ -1611,7 +1611,7 @@ mod tests {
         fs::remove_file(foundation_root.join("registry-sources/serde-1.0.0/build.rs"))?;
         fs::remove_file(foundation_root.join("registry-sources/serde_derive-1.0.0/build.rs"))?;
         fs::remove_file(toolchain_root.join("compiler/incan_core/Cargo.toml"))?;
-        fs::remove_file(toolchain_root.join("compiler/incan_stdlib/Cargo.toml"))?;
+        fs::remove_file(toolchain_root.join("compiler/incan_std_core/Cargo.toml"))?;
         Ok(())
     }
 
@@ -3056,8 +3056,8 @@ cargo:rerun-if-env-changed=PROVIDER_VALUE\n",
         let stdlib = graph
             .units
             .iter()
-            .find(|unit| unit.crate_name == "incan_stdlib")
-            .ok_or("fixture lost incan_stdlib")?;
+            .find(|unit| unit.crate_name == "incan_std_core")
+            .ok_or("fixture lost incan_std_core")?;
         let foundation_root = tempfile::tempdir()?;
         let toolchain_root = tempfile::tempdir()?;
 

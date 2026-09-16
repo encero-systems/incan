@@ -24,7 +24,6 @@ use incan_frontend::ast::ImportKind;
 use incan_frontend::library_manifest::{ProviderCargoDependency, ProviderCargoDependencySource};
 use incan_frontend::parsed_module::ParsedModule;
 use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
-use oven_model::toolchain_layout::INCAN_STDLIB_CRATE_NAME;
 /// Explicit active SDK inventory override used by toolchain selection and SDK publication.
 pub const SDK_INVENTORY_OVERRIDE_ENV: &str = "INCAN_SDK_INVENTORY";
 
@@ -83,7 +82,7 @@ pub fn prepare_or_discover_sdk_inventory() -> ProviderResult<Option<Arc<SdkInven
     if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
         return Ok(None);
     }
-    let has_source_catalog = oven_model::toolchain_layout::find_stdlib_source_dir()
+    let has_source_catalog = oven_model::toolchain_layout::find_stdlib_root()
         .is_some_and(|root| root.join(SDK_SOURCE_CATALOG_FILE).is_file());
     if has_source_catalog {
         prepare_sdk_provider_inventory().map(Some)
@@ -280,10 +279,6 @@ fn extend_requirements_with_selected_sdk_providers(
             let BackendImplementationRequirement::CargoFeature { crate_name, feature } = requirement else {
                 continue;
             };
-            if crate_name == INCAN_STDLIB_CRATE_NAME {
-                requirements.stdlib_features.push(feature);
-                continue;
-            }
             let Some(dependency) = requirements
                 .dependencies
                 .iter_mut()
@@ -307,8 +302,8 @@ fn extend_requirements_with_selected_sdk_providers(
         .sdk_artifact_projections
         .extend_from_slice(provider_plan.sdk_artifact_projections());
     normalize_sdk_artifact_projections(&mut requirements.sdk_artifact_projections);
-    requirements.stdlib_features.sort();
-    requirements.stdlib_features.dedup();
+    requirements.stdlib_facets.sort();
+    requirements.stdlib_facets.dedup();
     Ok(())
 }
 
@@ -412,7 +407,7 @@ pub fn sdk_provider_bootstrap_namespace_roots(project_root: &Path) -> ProviderRe
     let Some(component_marker) = env::var_os(SDK_PROVIDER_BUILD_ENV).filter(|value| !value.is_empty()) else {
         return Ok(BTreeSet::new());
     };
-    let stdlib_root = oven_model::toolchain_layout::find_stdlib_source_dir().ok_or_else(|| {
+    let stdlib_root = oven_model::toolchain_layout::find_stdlib_root().ok_or_else(|| {
         ProviderError::failure("cannot locate the SDK source catalog while compiling an SDK provider")
     })?;
     let catalog = SdkSourceCatalog::read_from_path(&stdlib_root.join(SDK_SOURCE_CATALOG_FILE))

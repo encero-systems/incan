@@ -38,8 +38,8 @@ runs:
         PATH="$output/cargo-guard:$PATH" INCAN_OVEN_CARGO_GUARD_LOG="$output/cargo-guard/invocations.log" \
           TMPDIR="$RUNNER_TEMP/incan_oven_tmp" CARGO_NET_OFFLINE=true \
           INCAN_SOURCE_ROOT="$GITHUB_WORKSPACE" \
-          INCAN_STDLIB="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib" \
-          INCAN_STDLIB_DIR="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib" \
+          INCAN_STDLIB="$GITHUB_WORKSPACE/loaves/stdlib" \
+          INCAN_STDLIB_DIR="$GITHUB_WORKSPACE/loaves/stdlib" \
           INCAN_TOOLCHAIN_CRATES_DIR="$GITHUB_WORKSPACE/crates" \
           INCAN_SDK_INVENTORY="$provider_root/sdk-inventory.json" \
           INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_path" \

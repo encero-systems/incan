@@ -1363,7 +1363,7 @@ mod tests {
         // The assertion is a ratio rather than a deadline, so it means the same thing on a fast machine, a slow
         // one, and a loaded CI runner: the same content at ten times the length may not cost a hundred times as
         // much. A quadratic pass fails this by a wide margin; a linear one passes with room to spare.
-        let source = std::fs::read_to_string("crates/incan_stdlib/stdlib/collections.incn")
+        let source = std::fs::read_to_string("loaves/stdlib/data/src/collections.incn")
             .map_err(|error| format!("fixture unavailable: {error}"))?;
         let mut small_end = source.len() / 10;
         while small_end < source.len() && !source.is_char_boundary(small_end) {

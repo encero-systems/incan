@@ -4,8 +4,8 @@
 
 /// The stdlib ring's version line this compiler generates code for.
 ///
-/// Every generated crate carries `incan_stdlib::__incan_stdlib_version_check!` with this literal, and the
-/// `incan_stdlib` it links must be compatible with it — exactly equal while the line is a prerelease, the same
+/// Every generated crate carries `incan_std_core::__incan_stdlib_version_check!` with this literal, and the
+/// `incan_std_core` it links must be compatible with it — exactly equal while the line is a prerelease, the same
 /// major.minor with a patch no older than this once it is a release. The compiler ring does not link the runtime it
 /// generates for (`tests/layering_guard.rs`), so this is a declared fact rather than a read from the crate;
 /// `scripts/check_ring_versions.py` keeps it equal to the stdlib ring line in the manifests, and a stdlib bump

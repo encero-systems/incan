@@ -153,7 +153,7 @@ impl<'a> IrEmitter<'a> {
             IrType::String | IrType::FrozenStr | IrType::StaticStr | IrType::StrRef
         ) {
             let idx_tokens = self.emit_expr(index)?;
-            return Ok(quote! { incan_stdlib::strings::str_index(&#o, (#idx_tokens) as i64) });
+            return Ok(quote! { incan_std_core::strings::str_index(&#o, (#idx_tokens) as i64) });
         }
 
         match obj_ty {
@@ -161,18 +161,18 @@ impl<'a> IrEmitter<'a> {
                 let i = self.emit_expr(index)?;
                 let key = emit_dict_lookup_index_key(object, index, i);
                 if v.is_copy() {
-                    Ok(quote! { *incan_stdlib::collections::dict_get(&#o, #key) })
+                    Ok(quote! { *incan_std_core::collections::dict_get(&#o, #key) })
                 } else {
-                    Ok(quote! { incan_stdlib::collections::dict_get(&#o, #key).clone() })
+                    Ok(quote! { incan_std_core::collections::dict_get(&#o, #key).clone() })
                 }
             }
             IrType::List(elem) => {
                 let idx_tokens = self.emit_expr(index)?;
                 let idx_i64 = quote! { (#idx_tokens) as i64 };
                 if elem.is_copy() {
-                    Ok(quote! { *incan_stdlib::collections::list_get(&#o, #idx_i64) })
+                    Ok(quote! { *incan_std_core::collections::list_get(&#o, #idx_i64) })
                 } else {
-                    Ok(quote! { incan_stdlib::collections::list_get(&#o, #idx_i64).clone() })
+                    Ok(quote! { incan_std_core::collections::list_get(&#o, #idx_i64).clone() })
                 }
             }
             // Fallback for unknown/unsupported index targets.
@@ -231,7 +231,7 @@ impl<'a> IrEmitter<'a> {
             } else {
                 quote! { None }
             };
-            return Ok(quote! { incan_stdlib::strings::str_slice(&#s_tokens, #start_expr, #end_expr, #step_expr) });
+            return Ok(quote! { incan_std_core::strings::str_slice(&#s_tokens, #start_expr, #end_expr, #step_expr) });
         }
 
         // Lists/other: use stdlib helper for Python-like semantics (negative indices, clamping, step, step==0 error).
@@ -256,7 +256,7 @@ impl<'a> IrEmitter<'a> {
             quote! { None }
         };
 
-        Ok(quote! { incan_stdlib::collections::list_slice(&#t_raw, #start_expr, #end_expr, #step_expr) })
+        Ok(quote! { incan_std_core::collections::list_slice(&#t_raw, #start_expr, #end_expr, #step_expr) })
     }
 
     /// Emit a field access expression.

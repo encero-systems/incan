@@ -6,12 +6,12 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 pub use crate::__incan_std::traits::error::Error;
 /// Stable handle for one node in a graph instance.
 #[derive(Debug, Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 pub struct NodeId(pub i64);
-impl incan_stdlib::reflection::HasTypeClassName for NodeId {
+impl incan_std_core::reflection::HasTypeClassName for NodeId {
     fn __class_name__() -> &'static str {
         "NodeId"
     }
@@ -25,25 +25,25 @@ impl NodeId {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("0"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("0"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("0"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("0"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 /// Stable handle for one edge in a graph instance.
 #[derive(Debug, Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 pub struct EdgeId(pub i64);
-impl incan_stdlib::reflection::HasTypeClassName for EdgeId {
+impl incan_std_core::reflection::HasTypeClassName for EdgeId {
     fn __class_name__() -> &'static str {
         "EdgeId"
     }
@@ -57,19 +57,19 @@ impl EdgeId {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("0"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("0"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("0"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("0"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 /// Error returned by graph operations when ids are unknown, cycles are rejected, or removal cannot be completed.
@@ -77,42 +77,42 @@ impl EdgeId {
 pub struct GraphError {
     pub detail: String,
 }
-impl incan_stdlib::reflection::HasClassName for GraphError {
+impl incan_std_core::reflection::HasClassName for GraphError {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for GraphError {
+impl incan_std_core::reflection::HasTypeClassName for GraphError {
     fn __class_name__() -> &'static str {
         "GraphError"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for GraphError {
+impl incan_std_core::reflection::HasFieldMetadata for GraphError {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for GraphError {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for GraphError {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("detail"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("detail"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("detail"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("detail"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for GraphError {
+impl incan_std_core::reflection::HasFieldValueReflection for GraphError {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             "detail" => Some(format!("{}", self.detail)),
@@ -133,19 +133,19 @@ impl GraphError {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("detail"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("detail"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("detail"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("detail"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl Error for GraphError {
@@ -162,94 +162,94 @@ pub struct GraphNode<T> {
     pub payload: T,
     pub active: bool,
 }
-impl<T> incan_stdlib::reflection::HasClassName for GraphNode<T> {
+impl<T> incan_std_core::reflection::HasClassName for GraphNode<T> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T> incan_stdlib::reflection::HasTypeClassName for GraphNode<T> {
+impl<T> incan_std_core::reflection::HasTypeClassName for GraphNode<T> {
     fn __class_name__() -> &'static str {
         "GraphNode"
     }
 }
-impl<T> incan_stdlib::reflection::HasFieldMetadata for GraphNode<T> {
+impl<T> incan_std_core::reflection::HasFieldMetadata for GraphNode<T> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T> incan_stdlib::reflection::HasTypeFieldMetadata for GraphNode<T> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl<T> incan_std_core::reflection::HasTypeFieldMetadata for GraphNode<T> {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("id"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("id"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("id"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("NodeId"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("id"),
+                type_name: incan_std_core::frozen::FrozenStr::new("NodeId"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("payload"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("payload"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("payload"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("T"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("payload"),
+                type_name: incan_std_core::frozen::FrozenStr::new("T"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("active"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("active"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("active"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("bool"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("active"),
+                type_name: incan_std_core::frozen::FrozenStr::new("bool"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T> GraphNode<T> {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("id"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 3] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("id"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("id"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("NodeId"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("id"),
+                type_name: incan_std_core::frozen::FrozenStr::new("NodeId"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("payload"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("payload"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("payload"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("T"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("payload"),
+                type_name: incan_std_core::frozen::FrozenStr::new("T"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("active"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("active"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("active"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("bool"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("active"),
+                type_name: incan_std_core::frozen::FrozenStr::new("bool"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
@@ -259,112 +259,112 @@ pub struct GraphEdge {
     pub to: NodeId,
     pub active: bool,
 }
-impl incan_stdlib::reflection::HasClassName for GraphEdge {
+impl incan_std_core::reflection::HasClassName for GraphEdge {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for GraphEdge {
+impl incan_std_core::reflection::HasTypeClassName for GraphEdge {
     fn __class_name__() -> &'static str {
         "GraphEdge"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for GraphEdge {
+impl incan_std_core::reflection::HasFieldMetadata for GraphEdge {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for GraphEdge {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for GraphEdge {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("id"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("id"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("id"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("EdgeId"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("id"),
+                type_name: incan_std_core::frozen::FrozenStr::new("EdgeId"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("from_"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("from_"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("from_"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("NodeId"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("from_"),
+                type_name: incan_std_core::frozen::FrozenStr::new("NodeId"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("to"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("to"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("to"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("NodeId"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("to"),
+                type_name: incan_std_core::frozen::FrozenStr::new("NodeId"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("active"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("active"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("active"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("bool"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("active"),
+                type_name: incan_std_core::frozen::FrozenStr::new("bool"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl GraphEdge {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("id"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("id"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("id"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("EdgeId"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("id"),
+                type_name: incan_std_core::frozen::FrozenStr::new("EdgeId"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("from_"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("from_"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("from_"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("NodeId"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("from_"),
+                type_name: incan_std_core::frozen::FrozenStr::new("NodeId"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("to"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("to"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("to"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("NodeId"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("to"),
+                type_name: incan_std_core::frozen::FrozenStr::new("NodeId"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("active"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("active"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("active"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("bool"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("active"),
+                type_name: incan_std_core::frozen::FrozenStr::new("bool"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 /// Directed graph with at most one active edge for each ordered node pair.
@@ -375,66 +375,66 @@ pub struct DiGraph<T> {
     pub nodes: Vec<GraphNode<T>>,
     pub edges: Vec<GraphEdge>,
 }
-impl<T> incan_stdlib::reflection::HasClassName for DiGraph<T> {
+impl<T> incan_std_core::reflection::HasClassName for DiGraph<T> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T> incan_stdlib::reflection::HasTypeClassName for DiGraph<T> {
+impl<T> incan_std_core::reflection::HasTypeClassName for DiGraph<T> {
     fn __class_name__() -> &'static str {
         "DiGraph"
     }
 }
-impl<T> incan_stdlib::reflection::HasFieldMetadata for DiGraph<T> {
+impl<T> incan_std_core::reflection::HasFieldMetadata for DiGraph<T> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T> incan_stdlib::reflection::HasTypeFieldMetadata for DiGraph<T> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl<T> incan_std_core::reflection::HasTypeFieldMetadata for DiGraph<T> {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("next_node_id"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("next_node_id"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("next_node_id"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("next_node_id"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("next_edge_id"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("next_edge_id"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("next_edge_id"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("next_edge_id"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("nodes"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("nodes"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("nodes"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("list[GraphNode[T]]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("nodes"),
+                type_name: incan_std_core::frozen::FrozenStr::new("list[GraphNode[T]]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("edges"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("edges"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("edges"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("list[GraphEdge]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("edges"),
+                type_name: incan_std_core::frozen::FrozenStr::new("list[GraphEdge]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone> DiGraph<T> {
@@ -469,15 +469,18 @@ impl<T: Clone> DiGraph<T> {
         if index < 0 {
             return Err::<(), GraphError>(unknown_node(node.clone()));
         }
-        let mut stored = incan_stdlib::collections::list_get(&self.nodes, (index) as i64)
+        let mut stored = incan_std_core::collections::list_get(
+                &self.nodes,
+                (index) as i64,
+            )
             .clone();
         stored.active = false;
-        *incan_stdlib::collections::list_get_mut(&mut self.nodes, (index) as i64) = stored
+        *incan_std_core::collections::list_get_mut(&mut self.nodes, (index) as i64) = stored
             .clone();
         for edge_index in 0_i64..(::std::convert::identity(self.edges.len() as i64)
             as i64)
         {
-            let mut edge = incan_stdlib::collections::list_get(
+            let mut edge = incan_std_core::collections::list_get(
                     &self.edges,
                     (edge_index) as i64,
                 )
@@ -485,7 +488,7 @@ impl<T: Clone> DiGraph<T> {
             if edge.active {
                 if edge.from_ == node || edge.to == node {
                     edge.active = false;
-                    *incan_stdlib::collections::list_get_mut(
+                    *incan_std_core::collections::list_get_mut(
                         &mut self.edges,
                         (edge_index) as i64,
                     ) = edge.clone();
@@ -510,7 +513,7 @@ impl<T: Clone> DiGraph<T> {
             T,
             GraphError,
         >(
-            incan_stdlib::collections::list_get(&self.nodes, (index) as i64)
+            incan_std_core::collections::list_get(&self.nodes, (index) as i64)
                 .clone()
                 .payload,
         );
@@ -537,14 +540,14 @@ impl<T: Clone> DiGraph<T> {
             return Err::<(), GraphError>(unknown_node(to.clone()));
         }
         for index in 0_i64..(::std::convert::identity(self.edges.len() as i64) as i64) {
-            let mut edge = incan_stdlib::collections::list_get(
+            let mut edge = incan_std_core::collections::list_get(
                     &self.edges,
                     (index) as i64,
                 )
                 .clone();
             if edge.active && edge.from_ == from_ && edge.to == to {
                 edge.active = false;
-                *incan_stdlib::collections::list_get_mut(
+                *incan_std_core::collections::list_get_mut(
                     &mut self.edges,
                     (index) as i64,
                 ) = edge.clone();
@@ -637,7 +640,7 @@ impl<T: Clone> DiGraph<T> {
         let mut queue: Vec<NodeId> = vec![start];
         let mut cursor = 0;
         while cursor < ::std::convert::identity(queue.len() as i64) {
-            let node = incan_stdlib::collections::list_get(&queue, (cursor) as i64)
+            let node = incan_std_core::collections::list_get(&queue, (cursor) as i64)
                 .clone();
             cursor = cursor + 1;
             if contains_node_id(order.clone(), node.clone()) {
@@ -670,7 +673,7 @@ impl<T: Clone> DiGraph<T> {
         let mut order: Vec<NodeId> = Vec::<NodeId>::new();
         let mut stack: Vec<NodeId> = vec![start];
         while ::std::convert::identity(stack.len() as i64) > 0 {
-            let node = incan_stdlib::collections::__private::list_pop(&mut stack);
+            let node = incan_std_core::collections::__private::list_pop(&mut stack);
             if contains_node_id(order.clone(), node.clone()) {
                 continue;
             }
@@ -679,7 +682,7 @@ impl<T: Clone> DiGraph<T> {
                 Ok(nodes) => {
                     let mut index = ::std::convert::identity(nodes.len() as i64) - 1;
                     while index >= 0 {
-                        let successor = incan_stdlib::collections::list_get(
+                        let successor = incan_std_core::collections::list_get(
                                 &nodes,
                                 (index) as i64,
                             )
@@ -716,10 +719,10 @@ impl<T: Clone> DiGraph<T> {
         while made_progress {
             made_progress = false;
             for index in 0_i64..(::std::convert::identity(active.len() as i64) as i64) {
-                let node = incan_stdlib::collections::list_get(&active, (index) as i64)
+                let node = incan_std_core::collections::list_get(&active, (index) as i64)
                     .clone();
-                if *incan_stdlib::collections::list_get(&indegrees, (index) as i64) == 0
-                    && !contains_node_id(consumed.clone(), node.clone())
+                if *incan_std_core::collections::list_get(&indegrees, (index) as i64)
+                    == 0 && !contains_node_id(consumed.clone(), node.clone())
                 {
                     let _ = consumed.push(node.clone());
                     let _ = order.push(node.clone());
@@ -732,10 +735,10 @@ impl<T: Clone> DiGraph<T> {
                                     successor.clone(),
                                 );
                                 if successor_index >= 0 {
-                                    *incan_stdlib::collections::list_get_mut(
+                                    *incan_std_core::collections::list_get_mut(
                                         &mut indegrees,
                                         (successor_index) as i64,
-                                    ) = *incan_stdlib::collections::list_get(
+                                    ) = *incan_std_core::collections::list_get(
                                         &indegrees,
                                         (successor_index) as i64,
                                     ) - 1;
@@ -808,7 +811,10 @@ impl<T: Clone> DiGraph<T> {
     }
     pub fn node_index(&self, node: NodeId) -> i64 {
         for index in 0_i64..(::std::convert::identity(self.nodes.len() as i64) as i64) {
-            let stored = incan_stdlib::collections::list_get(&self.nodes, (index) as i64)
+            let stored = incan_std_core::collections::list_get(
+                    &self.nodes,
+                    (index) as i64,
+                )
                 .clone();
             if stored.active && stored.id == node {
                 return index;
@@ -818,7 +824,7 @@ impl<T: Clone> DiGraph<T> {
     }
     pub fn edge_index(&self, edge_id: EdgeId) -> i64 {
         for index in 0_i64..(::std::convert::identity(self.edges.len() as i64) as i64) {
-            let edge = incan_stdlib::collections::list_get(&self.edges, (index) as i64)
+            let edge = incan_std_core::collections::list_get(&self.edges, (index) as i64)
                 .clone();
             if edge.active && edge.id == edge_id {
                 return index;
@@ -829,46 +835,46 @@ impl<T: Clone> DiGraph<T> {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("next_node_id"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 4] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("next_node_id"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("next_node_id"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("next_node_id"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("next_edge_id"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("next_edge_id"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("next_edge_id"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("next_edge_id"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("nodes"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("nodes"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("nodes"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("list[GraphNode[T]]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("nodes"),
+                type_name: incan_std_core::frozen::FrozenStr::new("list[GraphNode[T]]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("edges"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("edges"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("edges"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("list[GraphEdge]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("edges"),
+                type_name: incan_std_core::frozen::FrozenStr::new("list[GraphEdge]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 /// Directed acyclic graph that rejects cycle-creating edge insertions.
@@ -876,39 +882,39 @@ impl<T: Clone> DiGraph<T> {
 pub struct Dag<T> {
     pub graph: DiGraph<T>,
 }
-impl<T> incan_stdlib::reflection::HasClassName for Dag<T> {
+impl<T> incan_std_core::reflection::HasClassName for Dag<T> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T> incan_stdlib::reflection::HasTypeClassName for Dag<T> {
+impl<T> incan_std_core::reflection::HasTypeClassName for Dag<T> {
     fn __class_name__() -> &'static str {
         "Dag"
     }
 }
-impl<T> incan_stdlib::reflection::HasFieldMetadata for Dag<T> {
+impl<T> incan_std_core::reflection::HasFieldMetadata for Dag<T> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T> incan_stdlib::reflection::HasTypeFieldMetadata for Dag<T> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl<T> incan_std_core::reflection::HasTypeFieldMetadata for Dag<T> {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("graph"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("graph"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("graph"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("DiGraph[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("graph"),
+                type_name: incan_std_core::frozen::FrozenStr::new("DiGraph[T]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone> Dag<T> {
@@ -965,7 +971,7 @@ impl<T: Clone> Dag<T> {
                     let __args: Vec<String> = vec![
                         format!("{}", from_.to_int()), format!("{}", to.to_int())
                     ];
-                    incan_stdlib::strings::fstring(&__parts, &__args)
+                    incan_std_core::strings::fstring(&__parts, &__args)
                 },
             });
         }
@@ -1031,19 +1037,19 @@ impl<T: Clone> Dag<T> {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("graph"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("graph"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("graph"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("DiGraph[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("graph"),
+                type_name: incan_std_core::frozen::FrozenStr::new("DiGraph[T]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 /// Directed multigraph whose edge insertions return stable `EdgeId` handles.
@@ -1051,39 +1057,39 @@ impl<T: Clone> Dag<T> {
 pub struct MultiDiGraph<T> {
     pub graph: DiGraph<T>,
 }
-impl<T> incan_stdlib::reflection::HasClassName for MultiDiGraph<T> {
+impl<T> incan_std_core::reflection::HasClassName for MultiDiGraph<T> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T> incan_stdlib::reflection::HasTypeClassName for MultiDiGraph<T> {
+impl<T> incan_std_core::reflection::HasTypeClassName for MultiDiGraph<T> {
     fn __class_name__() -> &'static str {
         "MultiDiGraph"
     }
 }
-impl<T> incan_stdlib::reflection::HasFieldMetadata for MultiDiGraph<T> {
+impl<T> incan_std_core::reflection::HasFieldMetadata for MultiDiGraph<T> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T> incan_stdlib::reflection::HasTypeFieldMetadata for MultiDiGraph<T> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl<T> incan_std_core::reflection::HasTypeFieldMetadata for MultiDiGraph<T> {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("graph"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("graph"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("graph"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("DiGraph[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("graph"),
+                type_name: incan_std_core::frozen::FrozenStr::new("DiGraph[T]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone> MultiDiGraph<T> {
@@ -1131,17 +1137,17 @@ impl<T: Clone> MultiDiGraph<T> {
                 detail: {
                     let __parts: [&str; 2usize] = ["graph edge does not exist: ", ""];
                     let __args: Vec<String> = vec![format!("{}", edge.to_int())];
-                    incan_stdlib::strings::fstring(&__parts, &__args)
+                    incan_std_core::strings::fstring(&__parts, &__args)
                 },
             });
         }
-        let mut stored = incan_stdlib::collections::list_get(
+        let mut stored = incan_std_core::collections::list_get(
                 &self.graph.edges,
                 (index) as i64,
             )
             .clone();
         stored.active = false;
-        *incan_stdlib::collections::list_get_mut(
+        *incan_std_core::collections::list_get_mut(
             &mut self.graph.edges,
             (index) as i64,
         ) = stored.clone();
@@ -1185,11 +1191,11 @@ impl<T: Clone> MultiDiGraph<T> {
                 detail: {
                     let __parts: [&str; 2usize] = ["graph edge does not exist: ", ""];
                     let __args: Vec<String> = vec![format!("{}", edge.to_int())];
-                    incan_stdlib::strings::fstring(&__parts, &__args)
+                    incan_std_core::strings::fstring(&__parts, &__args)
                 },
             });
         }
-        let stored = incan_stdlib::collections::list_get(
+        let stored = incan_std_core::collections::list_get(
                 &self.graph.edges,
                 (index) as i64,
             )
@@ -1237,19 +1243,19 @@ impl<T: Clone> MultiDiGraph<T> {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("graph"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("graph"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("graph"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("DiGraph[T]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("graph"),
+                type_name: incan_std_core::frozen::FrozenStr::new("DiGraph[T]"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 fn contains_node_id(nodes: Vec<NodeId>, node: NodeId) -> bool {
@@ -1262,7 +1268,8 @@ fn contains_node_id(nodes: Vec<NodeId>, node: NodeId) -> bool {
 }
 fn node_index_in(nodes: Vec<NodeId>, node: NodeId) -> i64 {
     for index in 0_i64..(::std::convert::identity(nodes.len() as i64) as i64) {
-        if incan_stdlib::collections::list_get(&nodes, (index) as i64).clone() == node {
+        if incan_std_core::collections::list_get(&nodes, (index) as i64).clone() == node
+        {
             return index;
         }
     }
@@ -1273,7 +1280,7 @@ fn unknown_node(node: NodeId) -> GraphError {
         detail: {
             let __parts: [&str; 2usize] = ["graph node does not exist: ", ""];
             let __args: Vec<String> = vec![format!("{}", node.to_int())];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         },
     };
 }
@@ -1284,7 +1291,7 @@ fn duplicate_edge(from_: NodeId, to: NodeId) -> GraphError {
             let __args: Vec<String> = vec![
                 format!("{}", from_.to_int()), format!("{}", to.to_int())
             ];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         },
     };
 }
@@ -1295,7 +1302,7 @@ fn missing_edge(from_: NodeId, to: NodeId) -> GraphError {
             let __args: Vec<String> = vec![
                 format!("{}", from_.to_int()), format!("{}", to.to_int())
             ];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         },
     };
 }

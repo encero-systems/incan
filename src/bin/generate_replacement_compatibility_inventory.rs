@@ -23,12 +23,12 @@ fn workspace_root() -> Result<PathBuf, String> {
     if let Some(root) = std::env::var_os("INCAN_SOURCE_ROOT")
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
-        .filter(|root| root.join("Cargo.toml").is_file() && root.join("crates/incan_stdlib/stdlib").is_dir())
+        .filter(|root| root.join("Cargo.toml").is_file() && root.join("loaves/stdlib").is_dir())
     {
         return Ok(root);
     }
     let manifest_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if manifest_root.join("Cargo.toml").is_file() && manifest_root.join("crates/incan_stdlib/stdlib").is_dir() {
+    if manifest_root.join("Cargo.toml").is_file() && manifest_root.join("loaves/stdlib").is_dir() {
         return Ok(manifest_root);
     }
     Err("could not locate an Incan workspace with checked std.features source".to_string())
@@ -37,8 +37,6 @@ fn workspace_root() -> Result<PathBuf, String> {
 /// Return the nearest Incan workspace above the process directory before considering an ambient source-root override.
 fn workspace_ancestor(path: &std::path::Path) -> Option<PathBuf> {
     path.ancestors()
-        .find(|candidate| {
-            candidate.join("Cargo.toml").is_file() && candidate.join("crates/incan_stdlib/stdlib").is_dir()
-        })
+        .find(|candidate| candidate.join("Cargo.toml").is_file() && candidate.join("loaves/stdlib").is_dir())
         .map(std::path::Path::to_path_buf)
 }

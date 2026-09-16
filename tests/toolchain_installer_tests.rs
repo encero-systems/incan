@@ -255,8 +255,8 @@ fn prepare_toolchain_assets(
         .env("INCAN_NO_BANNER", "1")
         .env("INCAN_HOME", dist.join(".incan-home"))
         .env("INCAN_SOURCE_ROOT", repo_root())
-        .env("INCAN_STDLIB", repo_root().join("crates/incan_stdlib/stdlib"))
-        .env("INCAN_STDLIB_DIR", repo_root().join("crates/incan_stdlib/stdlib"))
+        .env("INCAN_STDLIB", repo_root().join("loaves/stdlib"))
+        .env("INCAN_STDLIB_DIR", repo_root().join("loaves/stdlib"))
         .env("INCAN_REPO_ROOT", repo_root())
         .env("INCAN_TOOLCHAIN_DIST_DIR", dist)
         .env("INCAN_TOOLCHAIN_GENERATED_AT", generated_at)
@@ -291,7 +291,11 @@ fn write_fixture_archive(root: &Path) -> Result<(PathBuf, String), Box<dyn std::
     for support_crate in [
         "incan_core",
         "incan_derive",
-        "incan_stdlib",
+        "incan_std_async",
+        "incan_std_core",
+        "incan_std_data",
+        "incan_std_testing",
+        "incan_std_web",
         "incan_vocab",
         "incan_web_macros",
     ] {
@@ -604,7 +608,11 @@ fn assert_packaged_support_workspace_without_cargo(extracted: &Path) -> Result<(
     let expected_members = [
         "incan_core",
         "incan_derive",
-        "incan_stdlib",
+        "incan_std_async",
+        "incan_std_core",
+        "incan_std_data",
+        "incan_std_testing",
+        "incan_std_web",
         "incan_vocab",
         "incan_web_macros",
     ];
@@ -762,7 +770,7 @@ fn assert_toolchain_install(incan_home: &Path, bin_dir: &Path) {
     assert!(incan_home.join("toolchains/0.4.0-test/crates/Cargo.toml").exists());
     assert!(
         incan_home
-            .join("toolchains/0.4.0-test/crates/incan_stdlib/Cargo.toml")
+            .join("toolchains/0.4.0-test/crates/incan_std_core/Cargo.toml")
             .exists()
     );
     assert!(incan_home.join("current").exists());
@@ -821,13 +829,14 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
     assert!(listing.contains("bin/incan"));
     assert!(listing.contains("bin/incan-lsp"));
     assert!(
-        !listing.lines().any(|path| path.starts_with("./stdlib/")),
-        "toolchain archive must not publish legacy top-level stdlib source:\n{listing}"
+        !listing.lines().any(|path| path.starts_with("./crates/incan_stdlib/")),
+        "toolchain archive must not publish the retired incan_stdlib crate:\n{listing}"
     );
     for source in [
-        "crates/incan_stdlib/stdlib/prelude.incn",
-        "crates/incan_stdlib/stdlib/testing.incn",
-        "crates/incan_stdlib/stdlib/encoding/base64.incn",
+        "stdlib/sdk-components.toml",
+        "stdlib/core/src/prelude.incn",
+        "stdlib/testing/src/testing.incn",
+        "stdlib/codecs/src/encoding/base64.incn",
     ] {
         assert!(
             listing.contains(source),
@@ -877,7 +886,15 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
     assert!(listing.contains("crates/Cargo.lock"));
     assert!(listing.contains("crates/incan_core/Cargo.toml"));
     assert!(listing.contains("crates/incan_derive/Cargo.toml"));
-    assert!(listing.contains("crates/incan_stdlib/Cargo.toml"));
+    for facet in incan_core::lang::stdlib::facets::ALL {
+        assert!(listing.contains(&format!("crates/{facet}/Cargo.toml")));
+        assert!(
+            !listing
+                .lines()
+                .any(|path| path.starts_with(&format!("./stdlib/{}/rust/", &facet["incan_std_".len()..]))),
+            "a facet ships as a support crate, not inside the stdlib source bundle:\n{listing}"
+        );
+    }
     assert!(listing.contains("crates/incan_vocab/Cargo.toml"));
     assert!(listing.contains("crates/incan_web_macros/Cargo.toml"));
 
@@ -952,7 +969,7 @@ fn packaged_stdlib_source_bundle_supports_metadata_imports() -> Result<(), Box<d
         "from std.testing import assert_true\n\npub def check() -> None:\n    assert_true(True)\n",
     )?;
 
-    let packaged_stdlib = extracted.join("crates/incan_stdlib/stdlib");
+    let packaged_stdlib = extracted.join("stdlib");
     assert!(
         packaged_stdlib.is_dir(),
         "extracted toolchain is missing its stdlib source bundle: {}",

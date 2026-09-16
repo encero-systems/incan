@@ -80,12 +80,12 @@ def mirrors(version: str) -> list[tuple[Path, re.Pattern[str], str]]:
             pip_form,
         ),
         (
-            Path("crates/incan_stdlib/stdlib/sdk-components.toml"),
+            Path("loaves/stdlib/sdk-components.toml"),
             re.compile(r'^version = "([^"]+)"', re.MULTILINE),
             cargo_form,
         ),
         (
-            Path("crates/incan_stdlib/stdlib/sdk-components.toml"),
+            Path("loaves/stdlib/sdk-components.toml"),
             re.compile(r'^compiler-requirement = "([^"]+)"', re.MULTILINE),
             sdk_requirement,
         ),

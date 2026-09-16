@@ -1,4 +1,4 @@
-rust.module("incan_stdlib::testing")
+rust.module("incan_std_testing")
 
 @rust.extern
 def fail_t(msg: str) -> None:

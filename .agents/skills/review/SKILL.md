@@ -178,7 +178,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
   - Lowered in `loaves/compiler/incan_ir/src/lower/`?
   - Emitted in `loaves/compiler/incan_emit/src/emit/`?
 - [ ] **Out-of-scope features are rejected at the typechecker**, not silently passed to lowering to fail later. Rejection should emit a typed diagnostic from `loaves/kernel/incan_syntax/src/diagnostics/catalog/errors/`.
-- [ ] **Stdlib changes** (`crates/incan_stdlib/stdlib/`) have matching Rust-side backing in `crates/incan_stdlib/src/` and are registered in `STDLIB_NAMESPACES` (`loaves/kernel/incan_core/src/lang/stdlib.rs`).
+- [ ] **Stdlib changes** (`loaves/stdlib/`) have matching Rust-side backing in the owning component's facet (`loaves/stdlib/<component>/rust/src/`) and are registered in `STDLIB_NAMESPACES` (`loaves/kernel/incan_core/src/lang/stdlib.rs`).
 
 ---
 
@@ -266,7 +266,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 ## Checklist 8 — Architecture and layering
 
 - [ ] **Changes live in the correct layer/crate** — `incan_syntax` stays syntax-only; `incan_core` stays pure/deterministic; orchestration layers stay thin.
-- [ ] **Layering rules are preserved** — `incan` must not depend on `incan_stdlib` except as a dev-dependency; shared policy belongs in `incan_core`, runtime glue belongs in `incan_stdlib`.
+- [ ] **Layering rules are preserved** — `incan` must not depend on a standard library facet (`incan_std_core` and the others) except as a dev-dependency; shared policy belongs in `incan_core`, runtime glue belongs in the facets.
 - [ ] **No duplicated policy across layers** — if parser/typechecker/lowering/CLI/LSP need the same rule, prefer a shared helper, registry, or semantic pack.
 - [ ] **Registry-driven behavior stays registry-driven** — stdlib namespaces, soft keywords, surface semantics, and runtime requirements should extend the canonical registries rather than add hardcoded special cases.
 - [ ] **Runtime/compiler boundaries stay clean** — generated-program helpers belong in runtime crates; compiler logic belongs in compiler crates; avoid hidden drift between the two.

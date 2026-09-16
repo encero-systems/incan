@@ -94,7 +94,7 @@ fn identities_in_module(path: &Path, source: &str) -> Result<Vec<(StableDeclarat
 
 #[test]
 fn stable_declaration_identity_is_unique_across_the_standard_library() -> TestResult {
-    let stdlib_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib");
+    let stdlib_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib");
     let mut sources = Vec::new();
     collect_sources(&stdlib_root, &mut sources)?;
     sources.sort();
@@ -223,7 +223,7 @@ fn conformant_digest_covers_the_standard_library() -> TestResult {
     use incan_semantics_core::semantic_digest::{body_without_docstring, semantic_digest};
     use std::time::Instant;
 
-    let stdlib_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib");
+    let stdlib_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib");
     let mut sources = Vec::new();
     collect_sources(&stdlib_root, &mut sources)?;
     sources.sort();

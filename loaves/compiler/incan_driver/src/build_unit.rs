@@ -35,7 +35,7 @@ pub fn oven_build_unit_inputs(
     runtime_build_unit_inputs(
         &incan_oven_facet::compiler_identity(),
         provider_records,
-        &requirements.stdlib_features,
+        &requirements.stdlib_facets,
         dependency_digest,
     )
     .map_err(CliError::failure)

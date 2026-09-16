@@ -18,7 +18,7 @@ use serde::Serialize;
 use oven_model::manifest::{DependencySource, DependencySpec, GitReference};
 
 use super::generator::{ProjectGenerator, is_sdk_provider_build};
-use super::{INCAN_DERIVE_CRATE_NAME, INCAN_STDLIB_CRATE_NAME};
+use incan_core::lang::generated_support::SUPPORT_CRATES_EVERY_PROGRAM_LINKS;
 
 /// Incan compiler version stamped into generated `Cargo.toml` files and used as the package-version fallback.
 pub const INCAN_VERSION: &str = incan_core::version::INCAN_VERSION;
@@ -220,44 +220,29 @@ impl ProjectGenerator {
         let package_name = self.cargo_package_name().to_string();
         let (dependencies, dev_dependencies) = self.dependencies_with_sdk_rebindings()?;
 
-        // ---- Resolve toolchain-owned support crates for generated Rust projects ----
-        let stdlib_path = toolchain_crate_path(INCAN_STDLIB_CRATE_NAME);
-        let derive_path = toolchain_crate_path(INCAN_DERIVE_CRATE_NAME);
+        // ---- Toolchain-owned crates: the support crates every program links, then the facets this one reaches ----
+        // Their paths are authoritative: a provider source that names one of them as an ordinary Rust dependency
+        // (a component's own facet, say) gets the toolchain's copy, and the duplicate below is skipped.
         let relocatable_toolchain_paths = is_sdk_provider_build();
-
-        // ---- Build dependencies table ----
         let mut deps = toml::Table::new();
         let mut added_crates: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-        // Always add incan_stdlib with the resolved feature set. Provider source may declare private implementation
-        // features through its ordinary Rust dependency; preserve those while keeping the toolchain-owned crate path
-        // authoritative for generated projects.
-        let mut stdlib_features = self.stdlib_features.clone();
-        stdlib_features.extend(
-            dependencies
-                .iter()
-                .filter(|dependency| rendered_dependency_key(dependency) == INCAN_STDLIB_CRATE_NAME)
-                .flat_map(|dependency| dependency.features.iter().cloned()),
-        );
-        stdlib_features.sort();
-        stdlib_features.dedup();
-        deps.insert(
-            INCAN_STDLIB_CRATE_NAME.into(),
-            path_dependency(
-                &stdlib_path,
-                &stdlib_features,
-                &self.output_dir,
-                relocatable_toolchain_paths,
-            ),
-        );
-        added_crates.insert(INCAN_STDLIB_CRATE_NAME.into());
-
-        // Always add incan_derive for derive macros
-        deps.insert(
-            INCAN_DERIVE_CRATE_NAME.into(),
-            path_dependency(&derive_path, &Vec::new(), &self.output_dir, relocatable_toolchain_paths),
-        );
-        added_crates.insert(INCAN_DERIVE_CRATE_NAME.into());
+        let toolchain_crates = SUPPORT_CRATES_EVERY_PROGRAM_LINKS
+            .into_iter()
+            .chain(self.stdlib_facets.iter().map(String::as_str));
+        for crate_name in toolchain_crates {
+            if !added_crates.insert(crate_name.to_string()) {
+                continue;
+            }
+            deps.insert(
+                crate_name.into(),
+                path_dependency(
+                    &toolchain_crate_path(crate_name),
+                    &Vec::new(),
+                    &self.output_dir,
+                    relocatable_toolchain_paths,
+                ),
+            );
+        }
 
         // Add resolved user dependencies
         let mut optional_features = Vec::new();
@@ -399,6 +384,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::backend::project::generator::ProjectGenerator;
+    use incan_core::lang::stdlib;
     use oven_model::manifest::{DependencySource, DependencySpec};
 
     use super::{INCAN_VERSION, dependency_spec_to_toml, path_dependency};
@@ -417,31 +403,13 @@ mod tests {
         Ok(dependencies.keys().cloned().collect())
     }
 
-    fn stdlib_features(toml: &str) -> Result<BTreeSet<String>, Box<dyn std::error::Error>> {
-        let manifest = parsed_manifest(toml)?;
-        let features = manifest
-            .get("dependencies")
-            .and_then(toml::Value::as_table)
-            .and_then(|dependencies| dependencies.get("incan_stdlib"))
-            .and_then(toml::Value::as_table)
-            .and_then(|stdlib| stdlib.get("features"))
-            .and_then(toml::Value::as_array)
-            .map(|features| {
-                features
-                    .iter()
-                    .filter_map(toml::Value::as_str)
-                    .map(ToOwned::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        Ok(features)
-    }
+    /// The facets and derive crate every generated project links, whatever it imports.
+    const BASELINE_TOOLCHAIN_CRATES: [&str; 4] =
+        ["incan_derive", "incan_std_async", "incan_std_core", "incan_std_data"];
 
     fn assert_dependency_contract(
         toml: &str,
         expected_dependencies: &[&str],
-        expected_stdlib_features: &[&str],
         forbidden_dependencies: &[&str],
     ) -> Result<(), Box<dyn std::error::Error>> {
         let actual_dependencies = dependency_keys(toml)?;
@@ -451,17 +419,20 @@ mod tests {
             "generated Cargo.toml dependencies should match the contract, got:\n{toml}"
         );
 
-        let actual_stdlib_features = stdlib_features(toml)?;
-        let expected_stdlib_features = expected_stdlib_features
-            .iter()
-            .map(|feature| (*feature).to_string())
-            .collect();
-        assert_eq!(
-            actual_stdlib_features, expected_stdlib_features,
-            "incan_stdlib features should match the generated-project contract, got:\n{toml}"
-        );
+        let manifest = parsed_manifest(toml)?;
+        for crate_name in BASELINE_TOOLCHAIN_CRATES {
+            let dependency = manifest
+                .get("dependencies")
+                .and_then(toml::Value::as_table)
+                .and_then(|dependencies| dependencies.get(crate_name))
+                .and_then(toml::Value::as_table)
+                .ok_or_else(|| format!("generated Cargo.toml lacks the toolchain crate `{crate_name}`:\n{toml}"))?;
+            assert!(
+                dependency.contains_key("path") && !dependency.contains_key("features"),
+                "`{crate_name}` is a plain toolchain path dependency, never feature-gated, got:\n{toml}"
+            );
+        }
 
-        let actual_dependencies = dependency_keys(toml)?;
         for forbidden in forbidden_dependencies {
             assert!(
                 !actual_dependencies.contains(*forbidden),
@@ -495,11 +466,11 @@ mod tests {
         let support_path = manifest
             .get("dependencies")
             .and_then(toml::Value::as_table)
-            .and_then(|dependencies| dependencies.get("incan_stdlib"))
+            .and_then(|dependencies| dependencies.get("incan_std_core"))
             .and_then(toml::Value::as_table)
             .and_then(|dependency| dependency.get("path"))
             .and_then(toml::Value::as_str)
-            .ok_or("generated Cargo.toml missing incan_stdlib path")?;
+            .ok_or("generated Cargo.toml missing incan_std_core path")?;
         assert!(
             PathBuf::from(support_path).is_absolute(),
             "ordinary generated projects should keep stable absolute toolchain paths"
@@ -533,7 +504,7 @@ mod tests {
             &incan_provider::requirements::ProjectRequirements::default(),
         );
 
-        for crate_name in ["incan_stdlib", "incan_derive"] {
+        for crate_name in BASELINE_TOOLCHAIN_CRATES {
             let rendered_path = rendered
                 .get(crate_name)
                 .and_then(toml::Value::as_table)
@@ -617,7 +588,9 @@ mod tests {
     fn compiled_artifact_support_crate_paths_are_relocatable() -> Result<(), Box<dyn std::error::Error>> {
         let output_dir = Path::new("/tmp/relocatable_incan_artifact");
         let dependency = path_dependency(
-            &oven_model::toolchain_layout::development_root().join("crates/incan_stdlib"),
+            &oven_model::toolchain_layout::development_root().join(
+                oven_model::toolchain_layout::development_support_crate_dir("incan_std_core"),
+            ),
             &[],
             output_dir,
             true,
@@ -670,62 +643,65 @@ mod tests {
 
         assert_dependency_contract(
             &toml,
-            &["incan_derive", "incan_stdlib"],
-            &["async", "json", "ordinal"],
+            &BASELINE_TOOLCHAIN_CRATES,
             &["axum", "incan_web_macros", "inventory", "serde", "serde_json", "tokio"],
         )
     }
 
     #[test]
-    fn json_generated_manifest_keeps_serde_json_behind_stdlib_feature() -> Result<(), Box<dyn std::error::Error>> {
+    fn json_generated_manifest_keeps_serde_json_behind_the_data_facet() -> Result<(), Box<dyn std::error::Error>> {
         let mut generator = ProjectGenerator::new("/tmp/test_json_manifest_contract", "json_contract", true);
-        generator.set_stdlib_features(vec!["json".to_string()]);
+        generator.set_stdlib_facets(vec![stdlib::facets::DATA.to_string()]);
         generator.set_dependencies(vec![dependency_spec("serde", "1.0", &["derive"])]);
         let toml = generator.generate_cargo_toml()?;
 
         assert_dependency_contract(
             &toml,
-            &["incan_derive", "incan_stdlib", "serde"],
-            &["async", "json", "ordinal"],
+            &[
+                "incan_derive",
+                "incan_std_async",
+                "incan_std_core",
+                "incan_std_data",
+                "serde",
+            ],
             &["axum", "incan_web_macros", "inventory", "serde_json", "tokio"],
         )
     }
 
     #[test]
-    fn provider_authored_stdlib_features_merge_with_generated_requirements() -> Result<(), Box<dyn std::error::Error>> {
-        let mut generator = ProjectGenerator::new("/tmp/test_provider_stdlib_features", "provider_contract", false);
-        generator.set_stdlib_features(vec!["json".to_string()]);
+    fn a_provider_naming_its_own_facet_gets_the_toolchain_copy() -> Result<(), Box<dyn std::error::Error>> {
+        let mut generator = ProjectGenerator::new("/tmp/test_provider_stdlib_facets", "provider_contract", false);
+        generator.set_stdlib_facets(vec![stdlib::facets::DATA.to_string()]);
         generator.set_dependencies(vec![DependencySpec {
-            crate_name: "incan_stdlib".to_string(),
+            crate_name: stdlib::facets::DATA.to_string(),
             version: None,
-            features: vec!["ordinal".to_string()],
+            features: vec!["private-implementation".to_string()],
             default_features: true,
             source: DependencySource::Path {
-                path: oven_model::toolchain_layout::development_root().join("crates/incan_stdlib"),
+                path: PathBuf::from("/somewhere/else/incan_std_data"),
             },
             optional: false,
             package: None,
         }]);
         let toml = generator.generate_cargo_toml()?;
 
-        assert_dependency_contract(
-            &toml,
-            &["incan_derive", "incan_stdlib"],
-            &["async", "json", "ordinal"],
-            &["xxhash-rust"],
-        )
+        assert_dependency_contract(&toml, &BASELINE_TOOLCHAIN_CRATES, &["xxhash-rust"])?;
+        assert!(
+            !toml.contains("/somewhere/else"),
+            "the toolchain's facet path is authoritative over a provider-authored one, got:\n{toml}"
+        );
+        Ok(())
     }
 
     #[test]
-    fn async_generated_manifest_keeps_tokio_behind_stdlib_feature() -> Result<(), Box<dyn std::error::Error>> {
+    fn async_generated_manifest_keeps_tokio_behind_the_async_facet() -> Result<(), Box<dyn std::error::Error>> {
         let mut generator = ProjectGenerator::new("/tmp/test_async_manifest_contract", "async_contract", true);
-        generator.set_stdlib_features(vec!["async".to_string()]);
+        generator.set_stdlib_facets(vec![stdlib::facets::ASYNC.to_string()]);
         let toml = generator.generate_cargo_toml()?;
 
         assert_dependency_contract(
             &toml,
-            &["incan_derive", "incan_stdlib"],
-            &["async", "json", "ordinal"],
+            &BASELINE_TOOLCHAIN_CRATES,
             &["axum", "incan_web_macros", "inventory", "serde", "serde_json", "tokio"],
         )
     }
@@ -733,7 +709,7 @@ mod tests {
     #[test]
     fn web_generated_manifest_bounds_transitional_direct_deps() -> Result<(), Box<dyn std::error::Error>> {
         let mut generator = ProjectGenerator::new("/tmp/test_web_manifest_contract", "web_contract", true);
-        generator.set_stdlib_features(vec!["web".to_string()]);
+        generator.set_stdlib_facets(vec![stdlib::facets::WEB.to_string()]);
         generator.set_dependencies(vec![
             dependency_spec("axum", "0.8", &[]),
             dependency_spec("inventory", "0.3", &[]),
@@ -755,8 +731,16 @@ mod tests {
 
         assert_dependency_contract(
             &toml,
-            &["axum", "incan_derive", "incan_stdlib", "incan_web_macros", "inventory"],
-            &["async", "json", "ordinal", "web"],
+            &[
+                "axum",
+                "incan_derive",
+                "incan_std_async",
+                "incan_std_core",
+                "incan_std_data",
+                "incan_std_web",
+                "incan_web_macros",
+                "inventory",
+            ],
             &["serde", "serde_json", "tokio"],
         )
     }
@@ -937,7 +921,7 @@ mod tests {
     #[test]
     fn test_cargo_toml_web_feature_adds_namespace_extra_deps() -> Result<(), Box<dyn std::error::Error>> {
         let mut generator = ProjectGenerator::new("/tmp/test_web_extras", "test_web_extras", true);
-        generator.set_stdlib_features(vec!["web".to_string()]);
+        generator.set_stdlib_facets(vec![stdlib::facets::WEB.to_string()]);
         generator.set_dependencies(vec![
             oven_model::manifest::DependencySpec {
                 crate_name: "inventory".to_string(),

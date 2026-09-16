@@ -26,8 +26,6 @@ pub mod runner;
 #[cfg(test)]
 mod tests;
 
-pub use oven_model::toolchain_layout::{INCAN_DERIVE_CRATE_NAME, INCAN_STDLIB_CRATE_NAME};
-
 // Re-export public types so `crate::backend::project::ProjectGenerator` (etc.) still works.
 pub use generator::{ProjectGenerator, RunProfile};
 pub use plan::{CargoCommand, CompilationPlan, ExecutionResult, Executor, PlannedDirectory, PlannedFile};

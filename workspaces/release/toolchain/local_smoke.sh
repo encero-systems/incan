@@ -157,8 +157,8 @@ write_assets() {
     INCAN_NO_BANNER=1 \
     CARGO_NET_OFFLINE=true \
     INCAN_SOURCE_ROOT="$root" \
-    INCAN_STDLIB="$root/crates/incan_stdlib/stdlib" \
-    INCAN_STDLIB_DIR="$root/crates/incan_stdlib/stdlib" \
+    INCAN_STDLIB="$root/loaves/stdlib" \
+    INCAN_STDLIB_DIR="$root/loaves/stdlib" \
     INCAN_GENERATED_CARGO_TARGET_DIR="$generated_cargo_target_dir" \
     "$incan_run_bin" run "${root}/workspaces/release/toolchain/prepare_assets.incn"
 }
@@ -330,8 +330,8 @@ smoke_homebrew() {
     INCAN_NO_BANNER=1 \
     CARGO_NET_OFFLINE=true \
     INCAN_SOURCE_ROOT="$root" \
-    INCAN_STDLIB="$root/crates/incan_stdlib/stdlib" \
-    INCAN_STDLIB_DIR="$root/crates/incan_stdlib/stdlib" \
+    INCAN_STDLIB="$root/loaves/stdlib" \
+    INCAN_STDLIB_DIR="$root/loaves/stdlib" \
     INCAN_GENERATED_CARGO_TARGET_DIR="$generated_cargo_target_dir" \
     "$incan_run_bin" run "${root}/workspaces/release/toolchain/prepare_assets.incn"
   ruby -c "${dist_dir}/incan.rb"

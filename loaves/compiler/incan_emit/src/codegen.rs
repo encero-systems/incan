@@ -2925,7 +2925,7 @@ def main() -> None:
         );
 
         assert!(!code.contains("#![allow(unused_imports, dead_code, unused_variables)]"));
-        assert!(!code.contains("use incan_stdlib::prelude::*;"));
+        assert!(!code.contains("use incan_std_core::prelude::*;"));
         assert!(!code.contains("use incan_derive::{FieldInfo, IncanClass};"));
         assert_no_generated_unused_lint_allows(&code);
     }
@@ -3776,7 +3776,7 @@ def main() -> None:
 
         assert!(code.contains("name: String"), "{code}");
         assert!(
-            code.contains("impl incan_stdlib::reflection::HasFieldValueReflection for User"),
+            code.contains("impl incan_std_core::reflection::HasFieldValueReflection for User"),
             "{code}"
         );
         assert!(code.contains("\"age\" => Some(format!(\"{}\", self.age))"), "{code}");
@@ -3808,7 +3808,7 @@ def main() -> None:
         let compact = code.chars().filter(|c| !c.is_whitespace()).collect::<String>();
 
         assert!(
-            code.contains("impl incan_stdlib::reflection::HasFieldValueReflection for ProbeRow"),
+            code.contains("impl incan_std_core::reflection::HasFieldValueReflection for ProbeRow"),
             "{code}"
         );
         assert!(
@@ -3951,7 +3951,7 @@ def main() -> None:
         );
 
         assert!(
-            !code.contains("impl incan_stdlib::reflection::HasFieldValueReflection for Batch"),
+            !code.contains("impl incan_std_core::reflection::HasFieldValueReflection for Batch"),
             "{code}"
         );
         assert!(
@@ -4354,14 +4354,14 @@ pub def from_csv[T]() -> str:
         );
 
         assert!(
-            code.contains("fn __incan_original_from_csv<\n    T: incan_stdlib::reflection::HasTypeClassName")
+            code.contains("fn __incan_original_from_csv<\n    T: incan_std_core::reflection::HasTypeClassName")
                 || code
-                    .contains("fn __incan_original_from_csv<\n    T: incan_stdlib::reflection::HasTypeFieldMetadata"),
+                    .contains("fn __incan_original_from_csv<\n    T: incan_std_core::reflection::HasTypeFieldMetadata"),
             "{code}"
         );
         assert!(
-            code.contains("incan_stdlib::reflection::HasTypeClassName")
-                && code.contains("incan_stdlib::reflection::HasTypeFieldMetadata")
+            code.contains("incan_std_core::reflection::HasTypeClassName")
+                && code.contains("incan_std_core::reflection::HasTypeFieldMetadata")
                 && code.contains("+ Clone"),
             "{code}"
         );
@@ -4490,7 +4490,7 @@ pub def greet(name: str) -> str:
   return f"Hello, {name}!"
 "#,
         );
-        assert!(code.contains(r#"incan_stdlib::strings::fstring"#));
+        assert!(code.contains(r#"incan_std_core::strings::fstring"#));
         assert!(code.contains(r#"["Hello, ", "!"]"#));
     }
 
@@ -5074,10 +5074,10 @@ def main() -> None:
   return
 "#,
         )?;
-        let testing_module = read_stdlib_program("crates/incan_stdlib/stdlib/testing.incn")?;
-        let async_task_module = read_stdlib_program("crates/incan_stdlib/stdlib/async/task.incn")?;
-        let async_time_module = read_stdlib_program("crates/incan_stdlib/stdlib/async/time.incn")?;
-        let traits_error_module = read_stdlib_program("crates/incan_stdlib/stdlib/traits/error.incn")?;
+        let testing_module = read_stdlib_program("loaves/stdlib/testing/src/testing.incn")?;
+        let async_task_module = read_stdlib_program("loaves/stdlib/async/src/async/task.incn")?;
+        let async_time_module = read_stdlib_program("loaves/stdlib/async/src/async/time.incn")?;
+        let traits_error_module = read_stdlib_program("loaves/stdlib/core/src/traits/error.incn")?;
 
         let testing_path = vec!["__incan_std".to_string(), "testing".to_string()];
         let async_task_path = vec!["__incan_std".to_string(), "async".to_string(), "task".to_string()];
@@ -5129,8 +5129,8 @@ def main() -> None:
   return
 "#,
         )?;
-        let io_module = read_stdlib_program("crates/incan_stdlib/stdlib/io.incn")?;
-        let traits_error_module = read_stdlib_program("crates/incan_stdlib/stdlib/traits/error.incn")?;
+        let io_module = read_stdlib_program("loaves/stdlib/system/src/io.incn")?;
+        let traits_error_module = read_stdlib_program("loaves/stdlib/core/src/traits/error.incn")?;
 
         let io_path = vec!["__incan_std".to_string(), "io".to_string()];
         let traits_error_path = vec!["__incan_std".to_string(), "traits".to_string(), "error".to_string()];
@@ -5180,8 +5180,8 @@ pub def oven_bytes() -> bytes:
   return BytesIO(b"oven").getvalue()
 "#,
         )?;
-        let io_module = read_stdlib_program("crates/incan_stdlib/stdlib/io.incn")?;
-        let traits_error_module = read_stdlib_program("crates/incan_stdlib/stdlib/traits/error.incn")?;
+        let io_module = read_stdlib_program("loaves/stdlib/system/src/io.incn")?;
+        let traits_error_module = read_stdlib_program("loaves/stdlib/core/src/traits/error.incn")?;
 
         let io_path = vec!["__incan_std".to_string(), "io".to_string()];
         let traits_error_path = vec!["__incan_std".to_string(), "traits".to_string(), "error".to_string()];
@@ -5223,7 +5223,7 @@ pub def oven_bytes() -> bytes:
 
     #[test]
     fn streaming_hash_helpers_import_io_error_for_reader_chunk_failures() -> Result<(), Box<dyn std::error::Error>> {
-        let streaming_module = read_stdlib_program("crates/incan_stdlib/stdlib/hash/_streaming.incn")?;
+        let streaming_module = read_stdlib_program("loaves/stdlib/data/src/hash/_streaming.incn")?;
         let streaming_code = IrCodegen::new().try_generate(&streaming_module)?;
         let compact_streaming_code = compact_rust(&streaming_code);
 
@@ -5259,7 +5259,7 @@ pub def oven_bytes() -> bytes:
 
     #[test]
     fn compression_auto_moves_non_clone_decoder_match_bindings() -> Result<(), Box<dyn std::error::Error>> {
-        let auto_module = read_stdlib_program("crates/incan_stdlib/stdlib/compression/_auto.incn")?;
+        let auto_module = read_stdlib_program("loaves/stdlib/compression/src/compression/_auto.incn")?;
         let auto_code = IrCodegen::new().try_generate(&auto_module)?;
 
         assert!(
@@ -6970,7 +6970,7 @@ pub def translate(time: f32, velocity: f32) -> f32:
                 "pubfn{}(time:f32,velocity:f32,)->f32",
                 projected_name(&code, "translate", SemanticSourceTargetKind::Function)
             )) && code.contains("accept_f32(")
-                && code.matches("incan_stdlib::num::require_finite_f32").count() == 6,
+                && code.matches("incan_std_core::num::require_finite_f32").count() == 6,
             "expected exact f32 arithmetic to retain its width and finite invariant across the imported Rust f32 \
              boundary, got:\n{code}"
         );

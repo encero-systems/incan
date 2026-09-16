@@ -548,7 +548,7 @@ fn collect_path_root(path: &syn::Path, type_params: &[String], roots: &mut BTree
 
 /// Return whether one Rust crate root is supplied by the compiler toolchain instead of a package dependency bridge.
 pub fn is_shared_rust_crate(name: &str) -> bool {
-    matches!(name, "std" | "core" | "alloc" | "incan_core" | "incan_stdlib")
+    matches!(name, "std" | "core" | "alloc" | "incan_core") || incan_core::lang::stdlib::facets::is_facet(name)
 }
 
 /// Return whether one unqualified Rust type is supplied by the language prelude.

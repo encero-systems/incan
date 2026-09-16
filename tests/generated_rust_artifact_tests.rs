@@ -204,8 +204,8 @@ license-files = ["LICENSE"]
     );
     let dependencies = toml_table_at(&cargo_toml, "dependencies")?;
     assert!(
-        toml_at(dependencies, "incan_stdlib").is_ok(),
-        "generated application Cargo.toml should include incan_stdlib"
+        toml_at(dependencies, "incan_std_core").is_ok(),
+        "generated application Cargo.toml should include incan_std_core"
     );
     assert!(
         toml_at(dependencies, "incan_derive").is_ok(),

@@ -6,35 +6,35 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 #[derive(Clone, Debug, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Cursor {}
-impl incan_stdlib::reflection::HasClassName for Cursor {
+impl incan_std_core::reflection::HasClassName for Cursor {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for Cursor {
+impl incan_std_core::reflection::HasTypeClassName for Cursor {
     fn __class_name__() -> &'static str {
         "Cursor"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for Cursor {
+impl incan_std_core::reflection::HasFieldMetadata for Cursor {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for Cursor {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for Cursor {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 0] = [];
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for Cursor {
+impl incan_std_core::reflection::HasFieldValueReflection for Cursor {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             _ => None,
@@ -53,32 +53,32 @@ impl Cursor {
 struct Wrapper {
     _cursor: Cursor,
 }
-impl incan_stdlib::reflection::HasClassName for Wrapper {
+impl incan_std_core::reflection::HasClassName for Wrapper {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for Wrapper {
+impl incan_std_core::reflection::HasTypeClassName for Wrapper {
     fn __class_name__() -> &'static str {
         "Wrapper"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for Wrapper {
+impl incan_std_core::reflection::HasFieldMetadata for Wrapper {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for Wrapper {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for Wrapper {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 0] = [];
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for Wrapper {
+impl incan_std_core::reflection::HasFieldValueReflection for Wrapper {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             _ => None,

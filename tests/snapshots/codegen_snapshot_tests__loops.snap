@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn test_while_loop() {
     let mut count: i64 = 0;
     while count < 5 {
@@ -25,7 +25,7 @@ fn test_for_range_two_args() {
     }
 }
 fn test_for_range_three_args() {
-    for i in incan_stdlib::iter::range(0, 100, (10) as i64) {
+    for i in incan_std_core::iter::range(0, 100, (10) as i64) {
         let _ = println!("{}", i);
     }
 }
@@ -45,7 +45,7 @@ fn test_for_with_break() {
 }
 fn test_for_with_continue() {
     for i in 0_i64..(10 as i64) {
-        if incan_stdlib::num::py_mod_i64(i, 2) == 0 {
+        if incan_std_core::num::py_mod_i64(i, 2) == 0 {
             continue;
         }
         let _ = println!("{}", i);

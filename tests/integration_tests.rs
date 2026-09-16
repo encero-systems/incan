@@ -5074,7 +5074,7 @@ def main() -> None:
             .env("CARGO_NET_OFFLINE", "true")
             .env(
                 "INCAN_STDLIB",
-                format!("{}/crates/incan_stdlib/stdlib", env!("CARGO_MANIFEST_DIR")),
+                format!("{}/loaves/stdlib", env!("CARGO_MANIFEST_DIR")),
             )
             .output()?;
         assert!(
@@ -7608,7 +7608,7 @@ pub def selected_value() -> str:
             .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
             .env(
                 "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
             )
             .env_remove("INCAN_STDLIB_DIR")
             .env("CARGO_NET_OFFLINE", "true")
@@ -7670,7 +7670,7 @@ pub def registered_columns() -> str:
             .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
             .env(
                 "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
             )
             .env_remove("INCAN_STDLIB_DIR")
             .env("CARGO_NET_OFFLINE", "true")
@@ -8175,7 +8175,7 @@ async def main() -> None:
             .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
             .env(
                 "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
             )
             .env_remove("INCAN_STDLIB_DIR")
             .env("CARGO_NET_OFFLINE", "true")
@@ -8202,7 +8202,7 @@ async def main() -> None:
             .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
             .env(
                 "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
             )
             .env_remove("INCAN_STDLIB_DIR")
             .env("CARGO_NET_OFFLINE", "true")
@@ -8229,7 +8229,7 @@ async def main() -> None:
             .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
             .env(
                 "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
             )
             .env_remove("INCAN_STDLIB_DIR")
             .env("CARGO_NET_OFFLINE", "true")
@@ -8366,7 +8366,7 @@ async def main() -> None:
         // written against. Require the splice and both arguments without pinning either spelling or a line break.
         let compact_collections: String = generated_collections.split_whitespace().collect();
         let spliced_with_support_functions = compact_collections
-            .split_once("incan_stdlib::__incan_ordinal_map_string_fast_impls!(")
+            .split_once("incan_std_data::__incan_ordinal_map_string_fast_impls!(")
             .and_then(|(_, rest)| rest.split_once(");"))
             .is_some_and(|(arguments, _)| {
                 arguments.matches(',').count() == 1
@@ -8406,7 +8406,7 @@ async def main() -> None:
             .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
             .env(
                 "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
             )
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_HOME", &oven_home)
@@ -8529,14 +8529,14 @@ async def main() -> None:
             .collect::<String>();
         assert_eq!(
             compact_generated_core
-                .matches("incan_stdlib::strings::str_concat(&out,&str_slice_byte_range(&text,last_end,start),)")
+                .matches("incan_std_core::strings::str_concat(&out,&str_slice_byte_range(&text,last_end,start),)")
                 .count(),
             3,
             "every replacement loop should pass the owned Rust byte-range result directly to str_concat:\n{generated_core}"
         );
         assert_eq!(
             compact_generated_core
-                .matches("incan_stdlib::strings::str_concat(&out,&str_slice_from_byte_offset(&text,last_end),)")
+                .matches("incan_std_core::strings::str_concat(&out,&str_slice_from_byte_offset(&text,last_end),)")
                 .count(),
             3,
             "every replacement loop should pass the owned Rust suffix directly to str_concat:\n{generated_core}"
@@ -8834,9 +8834,9 @@ def main() -> None:
             rust_code
         );
 
-        // Note: This test uses standalone rustc compilation, which can't access incan_stdlib/incan_derive.
+        // Note: This test uses standalone rustc compilation, which can't access the stdlib facets or incan_derive.
         // Skip the compilation check if generated Rust references external Incan crates.
-        if rust_code.contains("incan_stdlib::") || rust_code.contains("incan_derive::") {
+        if rust_code.contains("incan_std_") || rust_code.contains("incan_derive::") {
             // Skip rustc compilation test for code that requires Incan support crates.
             return;
         }
@@ -9135,15 +9135,15 @@ def main() -> None:
             "expected lossless resize to emit a Rust cast, got:\n{rust_code}"
         );
         assert!(
-            rust_code.contains("incan_stdlib::num::try_resize::<_, i8>(wide)"),
+            rust_code.contains("incan_std_core::num::try_resize::<_, i8>(wide)"),
             "expected try_resize to call stdlib checked resize helper, got:\n{rust_code}"
         );
         assert!(
-            rust_code.contains("incan_stdlib::num::saturating_resize::<_, i8>(wide)"),
+            rust_code.contains("incan_std_core::num::saturating_resize::<_, i8>(wide)"),
             "expected saturating_resize to call stdlib saturating helper, got:\n{rust_code}"
         );
         assert!(
-            rust_code.contains("let _price: incan_stdlib::num::Decimal128")
+            rust_code.contains("let _price: incan_std_core::num::Decimal128")
                 && rust_code.contains("Decimal128::from_literal")
                 && rust_code.contains("\"19.99d\""),
             "expected decimal annotation/literal to lower to Decimal128, got:\n{rust_code}"
@@ -9331,12 +9331,10 @@ def main() -> None:
 
     #[test]
     fn test_std_datetime_surface_runs_with_std_time_runtime_boundary() -> Result<(), Box<dyn std::error::Error>> {
-        let runtime_source = std::fs::read_to_string("crates/incan_stdlib/stdlib/datetime/runtime.incn")?;
+        let runtime_source = std::fs::read_to_string("loaves/stdlib/data/src/datetime/runtime.incn")?;
         let mut civil_sources = Vec::new();
-        civil_sources.push(std::fs::read_to_string(
-            "crates/incan_stdlib/stdlib/datetime/civil.incn",
-        )?);
-        for entry in std::fs::read_dir("crates/incan_stdlib/stdlib/datetime/civil")? {
+        civil_sources.push(std::fs::read_to_string("loaves/stdlib/data/src/datetime/civil.incn")?);
+        for entry in std::fs::read_dir("loaves/stdlib/data/src/datetime/civil")? {
             let entry = entry?;
             if entry.path().extension().is_some_and(|extension| extension == "incn") {
                 civil_sources.push(std::fs::read_to_string(entry.path())?);
@@ -10785,7 +10783,7 @@ def main() -> None:
     println("production")
 
 module tests:
-    from rust::incan_stdlib::testing import TestEnv
+    from rust::incan_std_testing import TestEnv
     from rust::std::path import PathBuf
     import std.testing as testing
     from std.testing import assert_eq, assert_is_some, fixture, test

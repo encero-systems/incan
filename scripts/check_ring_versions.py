@@ -28,7 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # companion crates compile against, versioned on its own since before the rings existed.
 RING_LINES: dict[str, tuple[str, ...]] = {
     "oven": ("oven_model", "oven_store", "oven_rustc"),
-    "stdlib": ("incan_stdlib", "incan_derive", "incan_web_macros"),
+    "stdlib": ("incan_std_core", "incan_std_data", "incan_std_async", "incan_std_web", "incan_std_testing", "incan_derive", "incan_web_macros"),
     "vocab contract": ("incan_vocab",),
 }
 
@@ -111,7 +111,7 @@ def check(root: Path) -> list[str]:
     # ---- The emitter's declared stdlib line ----
     emitter = root / "loaves/compiler/incan_emit/src/lib.rs"
     declared = re.search(r'^pub const GENERATED_FOR_STDLIB_VERSION: &str = "([^"]+)";$', emitter.read_text(encoding="utf-8"), re.MULTILINE)
-    stdlib_line = lines["stdlib"].get("incan_stdlib")
+    stdlib_line = lines["stdlib"].get("incan_std_core")
     if declared is None:
         failures.append(f"{emitter.relative_to(root)}: no GENERATED_FOR_STDLIB_VERSION declaration")
     elif stdlib_line is not None and declared.group(1) != stdlib_line:

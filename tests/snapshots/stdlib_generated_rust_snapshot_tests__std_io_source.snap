@@ -6,7 +6,7 @@ expression: rust_code
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use ::std::cell::RefCell;
 use ::std::io::Cursor;
 use ::std::io::Read;
@@ -41,78 +41,78 @@ pub struct IoError {
     pub position: i64,
     pub path: Option<String>,
 }
-impl incan_stdlib::reflection::HasClassName for IoError {
+impl incan_std_core::reflection::HasClassName for IoError {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for IoError {
+impl incan_std_core::reflection::HasTypeClassName for IoError {
     fn __class_name__() -> &'static str {
         "IoError"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for IoError {
+impl incan_std_core::reflection::HasFieldMetadata for IoError {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for IoError {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for IoError {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 5] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("kind"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 5] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("kind"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("kind"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("kind"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("detail"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("detail"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("detail"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("detail"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("operation"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("operation"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("operation"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("operation"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("position"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("position"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("position"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("position"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("path"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("path"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("path"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[str]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("path"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[str]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl incan_stdlib::reflection::HasFieldValueReflection for IoError {
+impl incan_std_core::reflection::HasFieldValueReflection for IoError {
     fn __field_value__(&self, name: &str) -> Option<String> {
         match name {
             "kind" => Some(format!("{}", self.kind)),
@@ -162,55 +162,55 @@ impl IoError {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 5] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("kind"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 5] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("kind"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("kind"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("kind"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("detail"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("detail"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("detail"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("detail"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("operation"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("operation"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("operation"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("operation"),
+                type_name: incan_std_core::frozen::FrozenStr::new("str"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("position"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("position"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("position"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("position"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("path"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("path"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("path"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[str]"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("path"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[str]"),
                 has_default: true,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl Error for IoError {
@@ -266,49 +266,49 @@ pub struct ReaderChunks<R: BinaryReader> {
     pub reader: R,
     pub chunk_size: i64,
 }
-impl<R: BinaryReader> incan_stdlib::reflection::HasClassName for ReaderChunks<R> {
+impl<R: BinaryReader> incan_std_core::reflection::HasClassName for ReaderChunks<R> {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<R: BinaryReader> incan_stdlib::reflection::HasTypeClassName for ReaderChunks<R> {
+impl<R: BinaryReader> incan_std_core::reflection::HasTypeClassName for ReaderChunks<R> {
     fn __class_name__() -> &'static str {
         "ReaderChunks"
     }
 }
-impl<R: BinaryReader> incan_stdlib::reflection::HasFieldMetadata for ReaderChunks<R> {
+impl<R: BinaryReader> incan_std_core::reflection::HasFieldMetadata for ReaderChunks<R> {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<R: BinaryReader> incan_stdlib::reflection::HasTypeFieldMetadata
+impl<R: BinaryReader> incan_std_core::reflection::HasTypeFieldMetadata
 for ReaderChunks<R> {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("reader"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 2] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("reader"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("reader"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("R"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("reader"),
+                type_name: incan_std_core::frozen::FrozenStr::new("R"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("chunk_size"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("chunk_size"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("chunk_size"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("chunk_size"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<R: BinaryReader> ReaderChunks<R> {
@@ -345,28 +345,28 @@ impl<R: BinaryReader> ReaderChunks<R> {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("reader"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 2] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("reader"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("reader"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("R"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("reader"),
+                type_name: incan_std_core::frozen::FrozenStr::new("R"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("chunk_size"),
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("chunk_size"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("chunk_size"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                wire_name: incan_std_core::frozen::FrozenStr::new("chunk_size"),
+                type_name: incan_std_core::frozen::FrozenStr::new("int"),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<R: BinaryReader> ReaderChunks<R> {
@@ -421,7 +421,7 @@ impl<R: BinaryReader + Clone> FallibleIterator<Vec<u8>, IoError> for ReaderChunk
             f: f,
             input_marker: None::<_>,
             output_marker: None::<_>,
-            error_marker: None::<_>,
+            error_marker: None,
         };
     }
     fn filter<
@@ -635,7 +635,7 @@ pub enum Endian {
     Little,
     Big,
 }
-impl incan_stdlib::reflection::HasTypeClassName for Endian {
+impl incan_std_core::reflection::HasTypeClassName for Endian {
     fn __class_name__() -> &'static str {
         "Endian"
     }
@@ -666,41 +666,41 @@ impl Endian {
 pub struct _BytesIO {
     pub handle: ::std::rc::Rc<::std::cell::RefCell<::std::io::Cursor<Vec<u8>>>>,
 }
-impl incan_stdlib::reflection::HasClassName for _BytesIO {
+impl incan_std_core::reflection::HasClassName for _BytesIO {
     fn __class_name__(&self) -> &'static str {
-        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl incan_stdlib::reflection::HasTypeClassName for _BytesIO {
+impl incan_std_core::reflection::HasTypeClassName for _BytesIO {
     fn __class_name__() -> &'static str {
         "_BytesIO"
     }
 }
-impl incan_stdlib::reflection::HasFieldMetadata for _BytesIO {
+impl incan_std_core::reflection::HasFieldMetadata for _BytesIO {
     fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl incan_stdlib::reflection::HasTypeFieldMetadata for _BytesIO {
-    fn __fields__() -> incan_stdlib::frozen::FrozenList<
-        incan_stdlib::reflection::FieldInfo,
+impl incan_std_core::reflection::HasTypeFieldMetadata for _BytesIO {
+    fn __fields__() -> incan_std_core::frozen::FrozenList<
+        incan_std_core::reflection::FieldInfo,
     > {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("handle"),
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("handle"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("handle"),
-                type_name: incan_stdlib::frozen::FrozenStr::new(
+                wire_name: incan_std_core::frozen::FrozenStr::new("handle"),
+                type_name: incan_std_core::frozen::FrozenStr::new(
                     "Rc[RefCell[Cursor[bytes]]]",
                 ),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl _BytesIO {
@@ -745,7 +745,7 @@ impl _BytesIO {
                 match u64::try_from(size) {
                     Ok(__incan_take_count) => __incan_take_count,
                     Err(_) => {
-                        incan_stdlib::errors::raise_value_error(
+                        incan_std_core::errors::raise_value_error(
                             "take() count must be non-negative and fit u64",
                         )
                     }
@@ -1407,21 +1407,21 @@ impl _BytesIO {
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("handle"),
+    ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 1] = [
+            incan_std_core::reflection::FieldInfo {
+                name: incan_std_core::frozen::FrozenStr::new("handle"),
                 alias: None,
                 description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("handle"),
-                type_name: incan_stdlib::frozen::FrozenStr::new(
+                wire_name: incan_std_core::frozen::FrozenStr::new("handle"),
+                type_name: incan_std_core::frozen::FrozenStr::new(
                     "Rc[RefCell[Cursor[bytes]]]",
                 ),
                 has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+                extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+        incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl BinaryReader for _BytesIO {
@@ -1866,10 +1866,10 @@ impl _BytesIO {
 }
 impl BinaryWrite<f32> for _BytesIO {
     fn write(&self, value: f32, endian: Endian) -> Result<(), IoError> {
-        let _ = incan_stdlib::num::require_finite_f32(value);
+        let _ = incan_std_core::num::require_finite_f32(value);
         return _write_f32_value(
             self.clone(),
-            incan_stdlib::num::require_finite_f32(value),
+            incan_std_core::num::require_finite_f32(value),
             endian,
             "write".to_string(),
         );
@@ -1887,10 +1887,10 @@ impl _BytesIO {
 }
 impl BinaryWrite<f64> for _BytesIO {
     fn write(&self, value: f64, endian: Endian) -> Result<(), IoError> {
-        let _ = incan_stdlib::num::require_finite_f64(value);
+        let _ = incan_std_core::num::require_finite_f64(value);
         return _write_f64_value(
             self.clone(),
-            incan_stdlib::num::require_finite_f64(value),
+            incan_std_core::num::require_finite_f64(value),
             endian,
             "write".to_string(),
         );
@@ -1937,7 +1937,7 @@ fn _zeros(
 ) -> Vec<u8> {
     let _ = "\n    Build a zero-filled byte vector for numeric writes.\n    ";
     let zero: u8 = 0;
-    return incan_stdlib::collections::list_repeat(zero, (size) as i64);
+    return incan_std_core::collections::list_repeat(zero, (size) as i64);
 }
 fn _finish_numeric_write(
     stream: _BytesIO,
@@ -3137,7 +3137,10 @@ fn _truncate_target_usize(
     position: i64,
 ) -> Result<usize, IoError> {
     let _ = "\n    Convert a validated truncate target into the host vector size type.\n    ";
-    let maybe_target: Option<usize> = incan_stdlib::num::try_resize::<_, usize>(target);
+    let maybe_target: Option<usize> = incan_std_core::num::try_resize::<
+        _,
+        usize,
+    >(target);
     let _ = match maybe_target {
         Some(value) => {
             return Ok::<usize, IoError>(value);
@@ -3161,7 +3164,7 @@ fn _truncate_target_u64(
     position: i64,
 ) -> Result<u64, IoError> {
     let _ = "\n    Convert a validated truncate target into the cursor position type.\n    ";
-    let maybe_target: Option<u64> = incan_stdlib::num::try_resize::<_, u64>(target);
+    let maybe_target: Option<u64> = incan_std_core::num::try_resize::<_, u64>(target);
     let _ = match maybe_target {
         Some(value) => {
             return Ok::<u64, IoError>(value);
@@ -3200,7 +3203,7 @@ fn _rust_io_error(
     detail: String,
 ) -> IoError {
     let _ = "\n    Convert host I/O error text into a `std.io` error.\n    ";
-    if incan_stdlib::strings::str_contains(&detail, &"invalid") {
+    if incan_std_core::strings::str_contains(&detail, &"invalid") {
         return IoError {
             kind: "invalid_input".to_string(),
             detail: detail.to_string(),
@@ -3209,8 +3212,8 @@ fn _rust_io_error(
             path: None::<_>,
         };
     } else {
-        if incan_stdlib::strings::str_contains(&detail, &"failed to fill whole buffer")
-            || incan_stdlib::strings::str_contains(&detail, &"early eof")
+        if incan_std_core::strings::str_contains(&detail, &"failed to fill whole buffer")
+            || incan_std_core::strings::str_contains(&detail, &"early eof")
         {
             return IoError {
                 kind: "unexpected_eof".to_string(),

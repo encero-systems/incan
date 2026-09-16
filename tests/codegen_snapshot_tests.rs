@@ -702,8 +702,8 @@ fn normalize_projected_codegen_output(code: &str) -> String {
     code.replace(&from, to)
         .lines()
         .map(|line| {
-            if line.starts_with("incan_stdlib::__incan_stdlib_version_check!(") {
-                "incan_stdlib::__incan_stdlib_version_check!(\"<INCAN_STDLIB_VERSION>\");"
+            if line.starts_with("incan_std_core::__incan_stdlib_version_check!(") {
+                "incan_std_core::__incan_stdlib_version_check!(\"<INCAN_STDLIB_VERSION>\");"
             } else {
                 line
             }
@@ -1849,9 +1849,9 @@ def main() -> None:
         let projection = encode_incan_symbol_identity(fail_t);
 
         assert!(rust_code.contains(&format!("fn {projection}")), "{rust_code}");
-        assert!(rust_code.contains("incan_stdlib::testing::fail_t"), "{rust_code}");
+        assert!(rust_code.contains("incan_std_testing::fail_t"), "{rust_code}");
         assert!(
-            !rust_code.contains(&format!("incan_stdlib::testing::{projection}")),
+            !rust_code.contains(&format!("incan_std_testing::{projection}")),
             "{rust_code}"
         );
         Ok(())
@@ -2144,13 +2144,13 @@ fn test_web_route_extractors_codegen() {
 
 #[test]
 fn test_std_web_routing_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/web/routing.incn";
+    let path = "loaves/stdlib/web/src/web/routing.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
     assert!(
-        rust_code.contains("incan_stdlib::errors::__private::raise_runtime_misuse"),
+        rust_code.contains("incan_std_core::errors::__private::raise_runtime_misuse"),
         "proc-macro decorator runtime misuse should route through a named helper:\n{rust_code}"
     );
     assert!(
@@ -2352,20 +2352,20 @@ async def main() -> None:
 }
 
 // ============================================================================
-// RFC 022: Codegen emits incan_stdlib handoff, not framework crate references
+// RFC 022: Codegen emits the standard library handoff, not framework crate references
 // ============================================================================
 
 #[test]
 fn test_web_route_codegen_no_framework_crate_leakage() {
-    // RFC 022 requires that generated Rust for web programs references incan_stdlib::web::... but never directly
+    // RFC 022 requires that generated Rust for web programs references incan_std_web::... but never directly
     // references framework crates like axum::, actix_web::, etc.
     let source = load_test_file("web_route_extractors");
     let rust_code = generate_rust(&source);
 
-    // Must reference the stdlib handoff
+    // Must reference the stdlib handoff: the runtime the program links, never a framework crate
     assert!(
-        rust_code.contains("incan_stdlib"),
-        "Generated web code should reference incan_stdlib"
+        rust_code.contains("incan_std_core"),
+        "Generated web code should reference the standard library runtime"
     );
     assert!(
         rust_code.contains("incan_web_macros::route"),
@@ -3569,7 +3569,7 @@ fn test_rfc006_generator_expression_codegen() {
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("incan_stdlib::iter::Generator::new"),
+        compact.contains("incan_std_core::iter::Generator::new"),
         "expected generator expression to construct stdlib Generator; generated:\n{rust_code}"
     );
     assert!(
@@ -3605,7 +3605,7 @@ def main() -> None:
             .map_err(|err| std::io::Error::other(format!("generator function codegen failed: {err:?}")))?,
     );
     assert!(
-        rust_code.contains("incan_stdlib::iter::Generator::spawn"),
+        rust_code.contains("incan_std_core::iter::Generator::spawn"),
         "expected generator function to use runtime generator spawn; generated:\n{rust_code}"
     );
     assert!(
@@ -3640,12 +3640,12 @@ fn test_filtered_dict_comp_predicate_codegen() {
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
         compact.contains(
-            ".iter().filter_map(|x|{letx=*x;ifincan_stdlib::num::py_mod_i64(x,2)==0{Some((x,x*x))}else{None}})"
+            ".iter().filter_map(|x|{letx=*x;ifincan_std_core::num::py_mod_i64(x,2)==0{Some((x,x*x))}else{None}})"
         ),
         "expected filtered dict comprehension over Copy items to copy inside filter_map before evaluating the predicate; generated:\n{rust_code}"
     );
     assert!(
-        !compact.contains(".filter(|x|incan_stdlib::num::py_mod_i64(x,2)==0)"),
+        !compact.contains(".filter(|x|incan_std_core::num::py_mod_i64(x,2)==0)"),
         "filtered dict comprehension must not leave the predicate closure borrowing `x`; generated:\n{rust_code}"
     );
     assert!(
@@ -3802,12 +3802,12 @@ pub def ordinary(value: str) -> float:
 "#;
     let rust_code = generate_rust(source);
     assert_eq!(
-        rust_code.matches("incan_stdlib::num::require_finite_f64").count(),
+        rust_code.matches("incan_std_core::num::require_finite_f64").count(),
         2,
         "ordinary float must remain unguarded while exact f64 returns and f32 widening are guarded:\n{rust_code}"
     );
     assert_eq!(
-        rust_code.matches("incan_stdlib::num::require_finite_f32").count(),
+        rust_code.matches("incan_std_core::num::require_finite_f32").count(),
         3,
         "public exact f32 inputs and exact f32 returns must be guarded:\n{rust_code}"
     );
@@ -3845,12 +3845,12 @@ pub def printed_f64(left: f64, right: f64) -> None:
     );
     assert!(
         compact.contains(
-            "println!(\"{}\",incan_stdlib::num::require_finite_f64(incan_stdlib::num::require_finite_f64(left*right)))"
+            "println!(\"{}\",incan_std_core::num::require_finite_f64(incan_std_core::num::require_finite_f64(left*right)))"
         ),
         "print must not observe a non-finite exact f64 arithmetic result:\n{rust_code}"
     );
     assert!(
-        compact.contains(">incan_stdlib::num::require_finite_f32(left)"),
+        compact.contains(">incan_std_core::num::require_finite_f32(left)"),
         "comparison must not observe a non-finite exact f32 arithmetic result:\n{rust_code}"
     );
 }
@@ -3858,7 +3858,7 @@ pub def printed_f64(left: f64, right: f64) -> None:
 #[test]
 fn exact_float_public_and_rust_ingress_is_guarded_before_observation() {
     let source = r#"
-rust.module("incan_stdlib::num")
+rust.module("incan_std_core::num")
 
 @rust.extern
 pub def require_finite_f32(value: f32) -> f32:
@@ -3881,14 +3881,15 @@ pub def observe_ieee(value: float) -> bool:
         .collect::<String>();
 
     for expected in [
-        "let_=incan_stdlib::num::require_finite_f32(value);",
-        "incan_stdlib::num::require_finite_f32(incan_stdlib::num::require_finite_f32(value))",
-        "let_=incan_stdlib::num::require_finite_f32(left);",
-        "let_=incan_stdlib::num::require_finite_f64(right);",
-        "println!(\"{}\",incan_stdlib::num::require_finite_f32(left))",
-        "incan_stdlib::num::require_finite_f64(right).to_string()",
-        "format!(\"{}\",incan_stdlib::num::require_finite_f32(left))",
-        "((incan_stdlib::num::require_finite_f32(left))asf64)<incan_stdlib::num::require_finite_f64(right)",
+        "let_=incan_std_core::num::require_finite_f32(value);",
+        // prettyplease wraps the nested call across lines and leaves a trailing comma behind the inner one
+        "incan_std_core::num::require_finite_f32(incan_std_core::num::require_finite_f32(value),)",
+        "let_=incan_std_core::num::require_finite_f32(left);",
+        "let_=incan_std_core::num::require_finite_f64(right);",
+        "println!(\"{}\",incan_std_core::num::require_finite_f32(left))",
+        "incan_std_core::num::require_finite_f64(right).to_string()",
+        "format!(\"{}\",incan_std_core::num::require_finite_f32(left))",
+        "((incan_std_core::num::require_finite_f32(left))asf64)<incan_std_core::num::require_finite_f64(right)",
     ] {
         assert!(
             compact.contains(expected),
@@ -3904,7 +3905,7 @@ pub def observe_ieee(value: float) -> bool:
 #[test]
 fn exact_float_scalars_extracted_from_aggregates_are_guarded_before_use() {
     let source = r#"
-rust.module("incan_stdlib::num")
+rust.module("incan_std_core::num")
 
 @rust.extern
 def consume_exact(value: f32) -> f32:
@@ -3927,9 +3928,9 @@ pub def observe_aggregate(samples: ExactSamples, values: list[f64]) -> bool:
 
     for expected in [
         "require_finite_f32(samples.narrow).is_nan()",
-        "require_finite_f64(*incan_stdlib::collections::list_get(&values,(0)asi64)",
+        "require_finite_f64(*incan_std_core::collections::list_get(&values,(0)asi64)",
         "require_finite_f64(samples.wide).is_finite()",
-        "consume_exact(incan_stdlib::num::require_finite_f32",
+        "consume_exact(incan_std_core::num::require_finite_f32",
     ] {
         assert!(
             compact.contains(expected),
@@ -3977,9 +3978,9 @@ pub def with_int(left: f32, right: int) -> float:
 
     for expected in [
         "(left)asf64+right",
-        "incan_stdlib::num::py_div((left)asf64,right)",
-        "incan_stdlib::num::py_floor_div_f64((left)asf64,right)",
-        "incan_stdlib::num::py_mod_f64((left)asf64,right)",
+        "incan_std_core::num::py_div((left)asf64,right)",
+        "incan_std_core::num::py_floor_div_f64((left)asf64,right)",
+        "incan_std_core::num::py_mod_f64((left)asf64,right)",
         "((left)asf64).powf(right)",
         "return(left)asf64+right;",
         "return(left)asf64+(right)asf64;",
@@ -4012,7 +4013,7 @@ fn test_list_pop_clone_only_model_codegen() {
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("incan_stdlib::collections::__private::list_pop"),
+        compact.contains("incan_std_core::collections::__private::list_pop"),
         "expected list.pop() emission to route through the stdlib helper; generated:\n{rust_code}"
     );
     assert!(
@@ -4073,7 +4074,7 @@ fn test_issue383_dict_comp_reuses_noncopy_key_codegen() {
     let source = load_test_file("issue383_dict_comp_reuses_noncopy_key");
     let rust_code = generate_rust(&source);
     assert!(
-        rust_code.contains(".map(|name| (name.clone(), incan_stdlib::strings::str_len(&(name))))"),
+        rust_code.contains(".map(|name| (name.clone(), incan_std_core::strings::str_len(&(name))))"),
         "expected dict comprehension to clone the non-Copy key before reading it again in the value expression; generated:\n{rust_code}"
     );
     assert_codegen_snapshot!("issue383_dict_comp_reuses_noncopy_key", rust_code);
@@ -4511,15 +4512,15 @@ fn test_builtins_codegen() {
         .expect("builtins fixture must retain its min/max function before abs");
     let compact_min_max = min_max.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("incan_stdlib::collections::__private::list_min_copy")
-            || compact.contains("incan_stdlib::collections::__private::list_min_clone")
-            || compact.contains("incan_stdlib::collections::__private::list_min_f64"),
+        compact.contains("incan_std_core::collections::__private::list_min_copy")
+            || compact.contains("incan_std_core::collections::__private::list_min_clone")
+            || compact.contains("incan_std_core::collections::__private::list_min_f64"),
         "expected min() emission to route through stdlib helpers; generated:\n{rust_code}"
     );
     assert!(
-        compact.contains("incan_stdlib::collections::__private::list_max_copy")
-            || compact.contains("incan_stdlib::collections::__private::list_max_clone")
-            || compact.contains("incan_stdlib::collections::__private::list_max_f64"),
+        compact.contains("incan_std_core::collections::__private::list_max_copy")
+            || compact.contains("incan_std_core::collections::__private::list_max_clone")
+            || compact.contains("incan_std_core::collections::__private::list_max_f64"),
         "expected max() emission to route through stdlib helpers; generated:\n{rust_code}"
     );
     assert!(
@@ -4591,7 +4592,7 @@ def main() -> None:
         .collect::<String>();
     assert!(
         compact.contains(
-            "constNO_CHANGES:incan_stdlib::frozen::FrozenList<Change>=incan_stdlib::frozen::FrozenList::new(&[],);"
+            "constNO_CHANGES:incan_std_core::frozen::FrozenList<Change>=incan_std_core::frozen::FrozenList::new(&[],);"
         ),
         "empty FrozenList descriptor constants must emit a const-safe Rust initializer; generated:\n{rust_code}"
     );
@@ -4719,7 +4720,7 @@ fn test_issue880_map_err_string_literal_closure_emits_owned_error() {
     );
     assert!(
         compact.contains("fnparse_formatted(source:String)->Result<JsonValue,String>")
-            && compact.contains("incan_stdlib::strings::fstring(&__parts,&__args)"),
+            && compact.contains("incan_std_core::strings::fstring(&__parts,&__args)"),
         "expected the existing owned f-string closure path to remain unchanged; generated:\n{rust_code}"
     );
     assert!(
@@ -4986,7 +4987,7 @@ fn test_newtype_checked_construction_codegen() {
         "checked newtype construction should not emit .expect():\n{rust_code}"
     );
     assert!(
-        rust_code.contains("incan_stdlib::validation::raise_validation_error"),
+        rust_code.contains("incan_std_core::validation::raise_validation_error"),
         "checked newtype construction should route validation failures through the runtime helper:\n{rust_code}"
     );
     assert_codegen_snapshot!("newtype_checked_construction", rust_code);
@@ -5048,7 +5049,7 @@ def main() -> None:
 "#;
     let rust_code = generate_rust(source);
     assert!(
-        rust_code.contains("incan_stdlib::validation::raise_constraint_error"),
+        rust_code.contains("incan_std_core::validation::raise_constraint_error"),
         "generated constrained newtype validation should use the runtime helper:\n{rust_code}"
     );
     assert!(
@@ -5133,7 +5134,7 @@ fn test_rust_extern_delegation_codegen() {
 #[test]
 fn rust_extern_method_projection_preserves_rust_abi_symbol() {
     let source = r#"
-rust.module("incan_stdlib::web")
+rust.module("incan_std_web")
 
 pub class App:
     @staticmethod
@@ -5145,11 +5146,11 @@ pub class App:
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
 
     assert!(
-        compact.contains("pubfn__incan_v1_") && compact.contains("incan_stdlib::web::run(host,port)"),
+        compact.contains("pubfn__incan_v1_") && compact.contains("incan_std_web::run(host,port)"),
         "the Incan wrapper must be canonical while its Rust ABI target keeps the source-declared name:\n{rust_code}"
     );
     assert!(
-        !compact.contains("incan_stdlib::web::__incan_v1_"),
+        !compact.contains("incan_std_web::__incan_v1_"),
         "canonical Incan identity must not be projected onto a host-owned Rust ABI symbol:\n{rust_code}"
     );
 }
@@ -5157,7 +5158,7 @@ pub class App:
 /// RFC 023 Phase 5: compile the real `std.testing` module source.
 #[test]
 fn test_std_testing_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/testing.incn";
+    let path = "loaves/stdlib/testing/src/testing.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5168,7 +5169,7 @@ fn test_std_testing_compiled_codegen() {
 /// RFC 041 / Phase E: compile `std.async.task` from `.incn` source.
 #[test]
 fn test_std_async_task_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/async/task.incn";
+    let path = "loaves/stdlib/async/src/async/task.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5179,7 +5180,7 @@ fn test_std_async_task_compiled_codegen() {
 /// RFC 041 / Phase E: compile `std.async.time` from `.incn` source.
 #[test]
 fn test_std_async_time_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/async/time.incn";
+    let path = "loaves/stdlib/async/src/async/time.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5190,7 +5191,7 @@ fn test_std_async_time_compiled_codegen() {
 /// Compile `std.async.channel` from `.incn` source.
 #[test]
 fn test_std_async_channel_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/async/channel.incn";
+    let path = "loaves/stdlib/async/src/async/channel.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5201,7 +5202,7 @@ fn test_std_async_channel_compiled_codegen() {
 /// Compile `std.async.sync` from `.incn` source.
 #[test]
 fn test_std_async_sync_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/async/sync.incn";
+    let path = "loaves/stdlib/async/src/async/sync.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5212,7 +5213,7 @@ fn test_std_async_sync_compiled_codegen() {
 /// Compile `std.async.race` from `.incn` source.
 #[test]
 fn test_std_async_race_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/async/race.incn";
+    let path = "loaves/stdlib/async/src/async/race.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5271,7 +5272,7 @@ pub async def wait_for(box: TaskBox[int]) -> Result[int, TaskJoinError]:
 /// `__ge__`) compile through the full pipeline without a fake `rust.module()` boundary.
 #[test]
 fn test_std_derives_comparison_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/derives/comparison.incn";
+    let path = "loaves/stdlib/core/src/derives/comparison.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5282,7 +5283,7 @@ fn test_std_derives_comparison_compiled_codegen() {
 /// compile `std.derives.copying` (Clone, Copy, Default) from `.incn` source.
 #[test]
 fn test_std_derives_copying_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/derives/copying.incn";
+    let path = "loaves/stdlib/core/src/derives/copying.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5293,7 +5294,7 @@ fn test_std_derives_copying_compiled_codegen() {
 /// compile `std.derives.string` (Debug, Display) from `.incn` source.
 #[test]
 fn test_std_derives_string_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/derives/string.incn";
+    let path = "loaves/stdlib/core/src/derives/string.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5304,7 +5305,7 @@ fn test_std_derives_string_compiled_codegen() {
 /// compile `std.derives.collection` (collection/iterator protocols and adapters) from `.incn` source.
 #[test]
 fn test_std_derives_collection_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/derives/collection.incn";
+    let path = "loaves/stdlib/core/src/derives/collection.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5330,7 +5331,7 @@ fn test_std_derives_collection_compiled_codegen() {
 /// is in IncanSource mode.
 #[test]
 fn test_std_serde_json_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/serde/json.incn";
+    let path = "loaves/stdlib/data/src/serde/json.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5347,11 +5348,11 @@ fn test_std_serde_json_import_codegen() {
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("incan_stdlib::json::__private::stringify_or_raise"),
+        compact.contains("incan_std_data::json::__private::stringify_or_raise"),
         "expected JSON stringify emission to route through stdlib helper; generated:\n{rust_code}"
     );
     assert!(
-        compact.contains("incan_stdlib::json::__private::parse_or_error"),
+        compact.contains("incan_std_data::json::__private::parse_or_error"),
         "expected JSON decode emission to route through stdlib helper; generated:\n{rust_code}"
     );
     assert!(
@@ -5400,7 +5401,7 @@ fn test_std_registry_type_token_codegen() {
 /// RFC 047: compile `std.graph` declarations from `.incn` source.
 #[test]
 fn test_std_graph_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/graph.incn";
+    let path = "loaves/stdlib/data/src/graph.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5412,17 +5413,17 @@ fn test_std_graph_compiled_codegen() {
 #[test]
 fn test_std_compression_modules_compile_codegen() -> Result<(), Box<dyn std::error::Error>> {
     let paths = [
-        "crates/incan_stdlib/stdlib/compression/prelude.incn",
-        "crates/incan_stdlib/stdlib/compression/_core.incn",
-        "crates/incan_stdlib/stdlib/compression/_auto.incn",
-        "crates/incan_stdlib/stdlib/compression/gzip.incn",
-        "crates/incan_stdlib/stdlib/compression/zlib.incn",
-        "crates/incan_stdlib/stdlib/compression/deflate.incn",
-        "crates/incan_stdlib/stdlib/compression/zstd.incn",
-        "crates/incan_stdlib/stdlib/compression/bz2.incn",
-        "crates/incan_stdlib/stdlib/compression/lzma.incn",
-        "crates/incan_stdlib/stdlib/compression/snappy.incn",
-        "crates/incan_stdlib/stdlib/compression/snappy/raw.incn",
+        "loaves/stdlib/compression/src/compression/prelude.incn",
+        "loaves/stdlib/compression/src/compression/_core.incn",
+        "loaves/stdlib/compression/src/compression/_auto.incn",
+        "loaves/stdlib/compression/src/compression/gzip.incn",
+        "loaves/stdlib/compression/src/compression/zlib.incn",
+        "loaves/stdlib/compression/src/compression/deflate.incn",
+        "loaves/stdlib/compression/src/compression/zstd.incn",
+        "loaves/stdlib/compression/src/compression/bz2.incn",
+        "loaves/stdlib/compression/src/compression/lzma.incn",
+        "loaves/stdlib/compression/src/compression/snappy.incn",
+        "loaves/stdlib/compression/src/compression/snappy/raw.incn",
     ];
 
     for path in paths {
@@ -5464,7 +5465,7 @@ fn test_std_graph_import_codegen() {
 /// RFC 060: compile `std.uuid` declarations from `.incn` source.
 #[test]
 fn test_std_uuid_compiled_codegen() -> Result<(), Box<dyn std::error::Error>> {
-    let path = "crates/incan_stdlib/stdlib/uuid.incn";
+    let path = "loaves/stdlib/data/src/uuid.incn";
     let source = fs::read_to_string(path)?;
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
@@ -5947,7 +5948,7 @@ def main() -> None:
 
 #[test]
 fn test_std_traits_ops_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/traits/ops.incn";
+    let path = "loaves/stdlib/core/src/traits/ops.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5957,7 +5958,7 @@ fn test_std_traits_ops_compiled_codegen() {
 
 #[test]
 fn test_std_traits_error_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/traits/error.incn";
+    let path = "loaves/stdlib/core/src/traits/error.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5967,7 +5968,7 @@ fn test_std_traits_error_compiled_codegen() {
 
 #[test]
 fn test_std_traits_indexing_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/traits/indexing.incn";
+    let path = "loaves/stdlib/core/src/traits/indexing.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5977,7 +5978,7 @@ fn test_std_traits_indexing_compiled_codegen() {
 
 #[test]
 fn test_std_traits_callable_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/traits/callable.incn";
+    let path = "loaves/stdlib/core/src/traits/callable.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5987,7 +5988,7 @@ fn test_std_traits_callable_compiled_codegen() {
 
 #[test]
 fn test_std_traits_prelude_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/traits/prelude.incn";
+    let path = "loaves/stdlib/core/src/traits/prelude.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5997,7 +5998,7 @@ fn test_std_traits_prelude_compiled_codegen() {
 
 #[test]
 fn test_std_traits_convert_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/traits/convert.incn";
+    let path = "loaves/stdlib/core/src/traits/convert.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -6096,7 +6097,7 @@ fn test_trait_bound_explicit_codegen() {
 #[test]
 fn test_ordinal_key_builtin_impls_codegen() -> TestResult {
     let source = load_test_file("ordinal_key_builtin_impls");
-    let collections_source = fs::read_to_string("crates/incan_stdlib/stdlib/collections.incn")?;
+    let collections_source = fs::read_to_string("loaves/stdlib/data/src/collections.incn")?;
     let collections_ast = parse_incan_program(&collections_source, "std.collections metadata");
     let main_ast = parse_incan_program(&source, "ordinal key bridge fixture");
     let mut codegen = codegen_with_builtin_stdlib_inventory();
@@ -6117,7 +6118,7 @@ fn test_ordinal_key_builtin_impls_codegen() -> TestResult {
     assert!(
         compact.contains("implcrate::__incan_std::collections::OrdinalKeyforStatus{")
             && compact
-                .contains("fnordinal_hash(&self)->i64{incan_stdlib::collections::__private::ordinal_key_hash_bytes")
+                .contains("fnordinal_hash(&self)->i64{incan_std_data::collections::__private::ordinal_key_hash_bytes")
             && compact
                 .contains("fnordinal_bytes_equal(&self,data:Vec<u8>)->bool{self.value().as_bytes()==data.as_slice()}"),
         "expected generated OrdinalKey impl for string value enum; generated:\n{rust_code}"
@@ -6125,7 +6126,7 @@ fn test_ordinal_key_builtin_impls_codegen() -> TestResult {
     assert!(
         compact.contains("implcrate::__incan_std::collections::OrdinalKeyforHttpStatus{")
             && compact.contains(
-                "fnordinal_hash(&self)->i64{incan_stdlib::collections::__private::ordinal_key_hash_bytes"
+                "fnordinal_hash(&self)->i64{incan_std_data::collections::__private::ordinal_key_hash_bytes"
             )
             && compact.contains("fnordinal_bytes_equal(&self,data:Vec<u8>)->bool{data.as_slice()==self.value().to_le_bytes().as_slice()}"),
         "expected generated OrdinalKey impl for integer value enum; generated:\n{rust_code}"

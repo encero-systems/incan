@@ -6,24 +6,24 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 #[derive(Debug, Clone, Copy)]
 struct UserId(pub i64);
-impl incan_stdlib::reflection::HasTypeClassName for UserId {
+impl incan_std_core::reflection::HasTypeClassName for UserId {
     fn __class_name__() -> &'static str {
         "UserId"
     }
 }
 #[derive(Debug, Clone, Copy)]
 struct Ratio(pub f64);
-impl incan_stdlib::reflection::HasTypeClassName for Ratio {
+impl incan_std_core::reflection::HasTypeClassName for Ratio {
     fn __class_name__() -> &'static str {
         "Ratio"
     }
 }
 #[derive(Debug, Clone, Copy)]
 struct Attempts(pub i64);
-impl incan_stdlib::reflection::HasTypeClassName for Attempts {
+impl incan_std_core::reflection::HasTypeClassName for Attempts {
     fn __class_name__() -> &'static str {
         "Attempts"
     }
@@ -31,23 +31,23 @@ impl incan_stdlib::reflection::HasTypeClassName for Attempts {
 impl Attempts {
     pub fn from_underlying(
         n: i64,
-    ) -> Result<Attempts, incan_stdlib::validation::ValidationError> {
+    ) -> Result<Attempts, incan_std_core::validation::ValidationError> {
         if n <= 0 {
             return Err::<
                 Attempts,
-                incan_stdlib::validation::ValidationError,
+                incan_std_core::validation::ValidationError,
             >(
-                incan_stdlib::validation::ValidationError::new(
+                incan_std_core::validation::ValidationError::new(
                     "attempts must be >= 1".to_string(),
                 ),
             );
         }
-        return Ok::<Attempts, incan_stdlib::validation::ValidationError>(Attempts(n));
+        return Ok::<Attempts, incan_std_core::validation::ValidationError>(Attempts(n));
     }
 }
 #[derive(Debug)]
 struct Email(pub String);
-impl incan_stdlib::reflection::HasTypeClassName for Email {
+impl incan_std_core::reflection::HasTypeClassName for Email {
     fn __class_name__() -> &'static str {
         "Email"
     }
@@ -69,7 +69,7 @@ fn main() {
     let attempts = match Attempts::from_underlying(5) {
         Ok(__incan_newtype_value) => __incan_newtype_value,
         Err(__incan_validation_error) => {
-            incan_stdlib::validation::raise_validation_error(
+            incan_std_core::validation::raise_validation_error(
                 "Attempts".to_string(),
                 "from_underlying".to_string(),
                 __incan_validation_error,
@@ -80,7 +80,7 @@ fn main() {
     let _ = println!(
         "{}", { let __parts : [& str; 5usize] = ["", " ", " ", " ", ""]; let __args : Vec
         < String > = vec![format!("{}", uid.0), format!("{}", ratio.0), format!("{}",
-        attempts.0), format!("{}", email.0)]; incan_stdlib::strings::fstring(& __parts, &
-        __args) }
+        attempts.0), format!("{}", email.0)]; incan_std_core::strings::fstring(& __parts,
+        & __args) }
     );
 }

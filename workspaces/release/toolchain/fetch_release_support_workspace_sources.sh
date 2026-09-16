@@ -42,11 +42,16 @@ support_crate_source() {
     incan_vocab) printf 'loaves/kernel/incan_vocab' ;;
     incan_derive) printf 'loaves/stdlib/derive/incan_derive' ;;
     incan_web_macros) printf 'loaves/stdlib/derive/incan_web_macros' ;;
+    incan_std_core) printf 'loaves/stdlib/core/rust' ;;
+    incan_std_data) printf 'loaves/stdlib/data/rust' ;;
+    incan_std_async) printf 'loaves/stdlib/async/rust' ;;
+    incan_std_web) printf 'loaves/stdlib/web/rust' ;;
+    incan_std_testing) printf 'loaves/stdlib/testing/rust' ;;
     *) printf 'crates/%s' "$1" ;;
   esac
 }
 
-for support_crate in incan_core incan_derive incan_stdlib incan_vocab incan_web_macros; do
+for support_crate in incan_core incan_derive incan_std_core incan_std_data incan_std_async incan_std_web incan_std_testing incan_vocab incan_web_macros; do
   [ -f "$(support_crate_source "$support_crate")/Cargo.toml" ] || fail "support crate is missing: $(support_crate_source "$support_crate")"
 done
 [ -f "loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml" ] || fail "release stdlib dependency fixture is missing"
@@ -70,7 +75,7 @@ stage_tracked_tree() {
   rm "$source_archive"
 }
 
-for support_crate in incan_core incan_derive incan_stdlib incan_vocab incan_web_macros; do
+for support_crate in incan_core incan_derive incan_std_core incan_std_data incan_std_async incan_std_web incan_std_testing incan_vocab incan_web_macros; do
   stage_tracked_tree "$(support_crate_source "$support_crate")" "$package_dir/${support_crate}"
 done
 
@@ -96,7 +101,7 @@ workspace_dependencies() {
   awk '
     /^\[workspace.dependencies\]/ { in_section=1; next }
     /^\[/ { in_section=0 }
-    in_section && /^(incan_core|incan_derive|incan_stdlib|incan_vocab|incan_web_macros) = / {
+    in_section && /^(incan_core|incan_derive|incan_std_core|incan_std_data|incan_std_async|incan_std_web|incan_std_testing|incan_vocab|incan_web_macros) = / {
       entry = $0
       sub(/^[a-z_]+ = \{ path = "[^"]+"/, $1 " = { path = \"" $1 "\"", entry)
       print entry
@@ -114,14 +119,22 @@ cat > "$package_dir/Cargo.toml" <<WORKSPACE
 members = [
     "incan_core",
     "incan_derive",
-    "incan_stdlib",
+    "incan_std_async",
+    "incan_std_core",
+    "incan_std_data",
+    "incan_std_testing",
+    "incan_std_web",
     "incan_vocab",
     "incan_web_macros",
 ]
 default-members = [
     "incan_core",
     "incan_derive",
-    "incan_stdlib",
+    "incan_std_async",
+    "incan_std_core",
+    "incan_std_data",
+    "incan_std_testing",
+    "incan_std_web",
     "incan_vocab",
     "incan_web_macros",
 ]

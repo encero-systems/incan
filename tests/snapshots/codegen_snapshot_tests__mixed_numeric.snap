@@ -6,13 +6,13 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn mixed_ops(x: i64, y: f64) -> f64 {
     let a = (x) as f64 + y;
     let b = y + (x) as f64;
     let c = (x) as f64 * y;
-    let d = incan_stdlib::num::py_div(y, (x) as f64);
-    let e = incan_stdlib::num::py_div((x) as f64, y);
+    let d = incan_std_core::num::py_div(y, (x) as f64);
+    let e = incan_std_core::num::py_div((x) as f64, y);
     let f = (x) as f64 - y;
     return a + b + c + d + e + f;
 }

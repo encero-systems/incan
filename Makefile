@@ -51,8 +51,8 @@ TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS) \
 	INCAN_INTERNAL_SDK_PROVIDER_STORE="$(INCAN_TEST_SDK_PROVIDER_STORE)" \
 	INCAN_HOME="$(INCAN_TEST_OVEN_HOME)" \
 	INCAN_SOURCE_ROOT="$(CURDIR)" \
-	INCAN_STDLIB="$(CURDIR)/crates/incan_stdlib/stdlib" \
-	INCAN_STDLIB_DIR="$(CURDIR)/crates/incan_stdlib/stdlib" \
+	INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
+	INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
 	INCAN_TOOLCHAIN_CRATES_DIR="$(CURDIR)/crates"
 TEST_RUNTIME_ENV = $(TEST_ENV) \
 	INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE="$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)" \
@@ -342,7 +342,7 @@ ci-full: fmt lint udeps
 .PHONY: fetch-locked-cargo-sources
 fetch-locked-cargo-sources:
 	@cargo fetch --locked
-	@cargo fetch --manifest-path crates/incan_stdlib/stdlib/components/stdlib-interop/vocab_companion/Cargo.toml --locked
+	@cargo fetch --manifest-path loaves/stdlib/interop/vocab_companion/Cargo.toml --locked
 
 .PHONY: fetch-oven-loaf-sources
 fetch-oven-loaf-sources:
@@ -430,8 +430,8 @@ test-prewarm-sdk:
 		$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" cargo build --features lsp; \
 	fi
 	@$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
-		INCAN_STDLIB="$(CURDIR)/crates/incan_stdlib/stdlib" \
-		INCAN_STDLIB_DIR="$(CURDIR)/crates/incan_stdlib/stdlib" \
+		INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
+		INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
 		INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE="$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)" \
 		"$(TARGET_DIR)/debug/incan" check tests/fixtures/test_assert_canary.incn
 	@test -s "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)"
@@ -488,8 +488,8 @@ SHADOW_TEST_ENV = $(TEST_RUNTIME_ENV) CARGO_NET_OFFLINE=true \
 test-prewarm-oven-loafs: test-prewarm-sdk
 	@echo "\033[1mBaking or reusing the compiler-suite standard-library Loaf family...\033[0m" >&2
 	@$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
-		INCAN_STDLIB="$(CURDIR)/crates/incan_stdlib/stdlib" \
-		INCAN_STDLIB_DIR="$(CURDIR)/crates/incan_stdlib/stdlib" \
+		INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
+		INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
 		"$(TARGET_DIR)/debug/incan" oven legacy-cargo bake-loafs \
 			--compiler-root "$(CURDIR)" \
 			--output "$(INCAN_TEST_OVEN_LOAF_ROOT)" \
@@ -510,8 +510,8 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 		codesign --force --sign - "$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan"; \
 	fi
 	@$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
-		INCAN_STDLIB="$(CURDIR)/crates/incan_stdlib/stdlib" \
-		INCAN_STDLIB_DIR="$(CURDIR)/crates/incan_stdlib/stdlib" \
+		INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
+		INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
 		"$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" oven legacy-cargo bake-loafs \
 			--compiler-root "$(CURDIR)" \
 			--output "$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/share/incan/oven/loafs" \
@@ -561,8 +561,8 @@ test-oven-release-smoke: test-prewarm-oven-release-loafs
 		}; \
 		run_project_incan() { \
 			INCAN_SOURCE_ROOT="$(CURDIR)" \
-			INCAN_STDLIB="$(CURDIR)/crates/incan_stdlib/stdlib" \
-			INCAN_STDLIB_DIR="$(CURDIR)/crates/incan_stdlib/stdlib" \
+			INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
+			INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
 			INCAN_TOOLCHAIN_CRATES_DIR="$(CURDIR)/crates" \
 			run_incan "$$@"; \
 		}; \

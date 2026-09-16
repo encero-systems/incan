@@ -93,7 +93,7 @@ fn builtin_collection_id(ty: &IncanType) -> Option<CollectionTypeId> {
 /// two strings asks for substring containment while `in` over a collection asks for element lookup, so neither can
 /// be a [`bir::BinOp`] without silently applying one meaning to the other.
 ///
-/// All seven helpers named here have a runtime function in `incan_stdlib::collections`, and the executor runs the
+/// All seven helpers named here have a runtime function in `incan_std_core::collections`, and the executor runs the
 /// three list forms. Set and dict membership still refuse — not for want of a helper, but because the replacement
 /// executor has no set or dict value at all, so their aggregates refuse before membership is reached. #1247 owns
 /// that value gap and inherits the membership arms with it.
@@ -101,7 +101,7 @@ fn builtin_collection_id(ty: &IncanType) -> Option<CollectionTypeId> {
 /// `+` earns a helper on a narrower ground, and the distinction matters because it is what keeps this table from
 /// swallowing comparisons too. The test is not that a heap container cannot sit under a primitive -- `==` on two
 /// lists does exactly that, faithfully -- but that `determine_binop_plan` routes list `+` to
-/// `incan_stdlib::collections::list_concat` while emitting comparisons as an infix operator. A helper here is
+/// `incan_std_core::collections::list_concat` while emitting comparisons as an infix operator. A helper here is
 /// therefore agreement with the Rust-emission backend, not a judgement about the operand's representation.
 pub(super) fn collection_helper_for_binop(
     op: ast::BinaryOp,

@@ -6,12 +6,12 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn lengths(names: Vec<String>) -> std::collections::HashMap<String, i64> {
     return names
         .iter()
         .cloned()
-        .map(|name| (name.clone(), incan_stdlib::strings::str_len(&(name))))
+        .map(|name| (name.clone(), incan_std_core::strings::str_len(&(name))))
         .collect::<std::collections::HashMap<_, _>>();
 }
 fn main() {
@@ -28,7 +28,7 @@ fn main() {
     );
     let values = lengths(vec!["alice".to_string(), "bob".to_string()]);
     let _ = println!(
-        "{}", * incan_stdlib::collections::dict_get(& values, < _ as AsRef < str >>
+        "{}", * incan_std_core::collections::dict_get(& values, < _ as AsRef < str >>
         ::as_ref(& "alice"))
     );
 }

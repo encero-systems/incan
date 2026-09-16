@@ -353,7 +353,7 @@ fn emit_arg(emitter: &IrEmitter<'_>, args: &[TypedExpr], index: usize) -> Result
 /// Emit a count argument for `take`, `skip`, and `batch`.
 ///
 /// The frontend typechecks these arguments as Incan `int`. Emission keeps integer literals direct so generated code
-/// stays readable, and casts non-literals to `i64` before delegating final boundary behavior to `incan_stdlib::iter`.
+/// stays readable, and casts non-literals to `i64` before delegating final boundary behavior to `incan_std_core::iter`.
 fn emit_count_arg(emitter: &IrEmitter<'_>, args: &[TypedExpr]) -> Result<TokenStream, EmitError> {
     let Some(arg) = args.first() else {
         return Ok(quote! { 0i64 });

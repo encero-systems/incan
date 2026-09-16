@@ -646,7 +646,7 @@ impl OvenLoafCompatibility {
         let mut runtime_inputs = receipt.sources.build_unit_inputs.clone();
         let provider_records = runtime_inputs.remove("providers").unwrap_or_default();
         let _ = runtime_inputs.remove("rust-dependencies");
-        let _ = runtime_inputs.remove("stdlib-features");
+        let _ = runtime_inputs.remove("stdlib-facets");
         // The selected interop receipt proves package-owned archives and headers, not a compiler-owned runtime
         // capability. Its immutable final plan is independently reconstructed and verified before execution; using
         // it as a Loaf compatibility key would require one shipped Loaf per consumer package.
@@ -753,7 +753,7 @@ impl OvenLoafCompatibility {
         let requested = Self::from_receipt(receipt)?;
         if self.runtime_inputs != requested.runtime_inputs {
             // Naming the keys matters more than the fact. `from_receipt` deliberately drops providers,
-            // rust-dependencies, stdlib-features, the interop pair and provider-plan, so a difference here is always
+            // rust-dependencies, stdlib-facets, the interop pair and provider-plan, so a difference here is always
             // a key nobody decided to exclude, and the key's name is the whole lead.
             let mut differences = Vec::new();
             for (key, value) in &requested.runtime_inputs {
@@ -932,7 +932,7 @@ pub struct OvenLoafBakerContext<'a> {
 pub fn runtime_build_unit_inputs(
     compiler: &CompilerIdentity,
     provider_records: Vec<String>,
-    stdlib_features: &[String],
+    stdlib_facets: &[String],
     rust_dependencies_digest: String,
 ) -> Result<BTreeMap<String, String>, String> {
     let mut inputs = BTreeMap::new();
@@ -941,14 +941,11 @@ pub fn runtime_build_unit_inputs(
         "sdk-provider-codegen-revision".to_string(),
         compiler.sdk_provider_codegen_revision.to_string(),
     );
-    for (name, crate_name) in [
-        ("runtime-source-incan-core", "incan_core"),
-        ("runtime-source-incan-derive", "incan_derive"),
-        ("runtime-source-incan-stdlib", "incan_stdlib"),
-    ] {
+    // One receipt input per compiler-owned runtime crate, so a change to any facet's source re-keys the Loaf.
+    for crate_name in oven_model::toolchain_layout::SDK_RUNTIME_CRATES {
         let path = oven_model::toolchain_layout::resolve_toolchain_crate_path(crate_name);
         let digest = digest_runtime_crate_source(&path)?;
-        inputs.insert(name.to_string(), digest);
+        inputs.insert(format!("runtime-source-{}", crate_name.replace('_', "-")), digest);
     }
     let lock_path = oven_model::toolchain_layout::resolve_toolchain_runtime_lockfile();
     let lock = fs::read(&lock_path)
@@ -962,8 +959,8 @@ pub fn runtime_build_unit_inputs(
         inputs.insert("providers".to_string(), provider_records.join("\n"));
     }
     inputs.insert(
-        "stdlib-features".to_string(),
-        digest_bytes(stdlib_features.join(",").as_bytes()),
+        "stdlib-facets".to_string(),
+        digest_bytes(stdlib_facets.join(",").as_bytes()),
     );
     inputs.insert("rust-dependencies".to_string(), rust_dependencies_digest);
     Ok(inputs)
@@ -4410,7 +4407,7 @@ mod tests {
         let loaf_root = tempfile::tempdir()?;
         let source = project.path().join("main.rs");
         fs::write(&source, "fn main() {}\n")?;
-        let core = runtime_receipt(&source, "", "empty-rust-dependencies", "empty-stdlib-features")?;
+        let core = runtime_receipt(&source, "", "empty-rust-dependencies", "empty-stdlib-facets")?;
         let testing = runtime_receipt(
             &source,
             "incan-stdlib|std.testing|testing",
@@ -4421,7 +4418,7 @@ mod tests {
             &source,
             "incan-stdlib|std.testing|unsupported",
             "empty-rust-dependencies",
-            "empty-stdlib-features",
+            "empty-stdlib-facets",
         )?;
         assert_ne!(core.build_unit_identity, testing.build_unit_identity);
 
@@ -4451,9 +4448,8 @@ mod tests {
         let project = tempfile::tempdir()?;
         let source = project.path().join("main.rs");
         fs::write(&source, "fn main() {}\n")?;
-        let ordinary = runtime_receipt(&source, "incan_stdlib_data|||none", "direct-link", "no-stdlib-features")?;
-        let private_sdk_link =
-            runtime_receipt(&source, "incan_stdlib_data|||link", "direct-link", "no-stdlib-features")?;
+        let ordinary = runtime_receipt(&source, "incan_stdlib_data|||none", "direct-link", "no-stdlib-facets")?;
+        let private_sdk_link = runtime_receipt(&source, "incan_stdlib_data|||link", "direct-link", "no-stdlib-facets")?;
 
         let ordinary_compatibility = OvenLoafCompatibility::from_receipt(&ordinary)?;
         let linked_compatibility = OvenLoafCompatibility::from_receipt(&private_sdk_link)?;
@@ -4538,7 +4534,7 @@ mod tests {
         let project = tempfile::tempdir()?;
         let source = project.path().join("main.rs");
         fs::write(&source, "fn main() {}\n")?;
-        let core = runtime_receipt(&source, "", "empty-rust-dependencies", "empty-stdlib-features")?;
+        let core = runtime_receipt(&source, "", "empty-rust-dependencies", "empty-stdlib-facets")?;
         let encoding = runtime_receipt(
             &source,
             "incan-stdlib|std.encoding.base64|codecs",
@@ -4795,8 +4791,8 @@ mod tests {
         let receipt = runtime_receipt_for_plan()?;
         let mut plan = empty_manifest(&receipt);
         plan.externs.push(crate::rustc::OvenRustcArtifactExtern {
-            crate_name: "incan_stdlib".to_string(),
-            relative_path: "target/deps/libincan_stdlib-verified.rlib".to_string(),
+            crate_name: "incan_std_core".to_string(),
+            relative_path: "target/deps/libincan_std_core-verified.rlib".to_string(),
             digest: digest_bytes(b"stdlib runtime"),
         });
         plan.supporting_artifacts = vec![
@@ -4833,7 +4829,7 @@ mod tests {
             Some(&vec![
                 "incan_core".to_string(),
                 "incan_derive".to_string(),
-                "incan_stdlib".to_string(),
+                "incan_std_core".to_string(),
             ])
         );
         Ok(())
@@ -5049,7 +5045,7 @@ mod tests {
         source: &Path,
         providers: &str,
         rust_dependencies: &str,
-        stdlib_features: &str,
+        stdlib_facets: &str,
     ) -> Result<oven_store::OvenReceipt, Box<dyn std::error::Error>> {
         let provider_plan = digest_bytes(providers.as_bytes());
         let mut request = OvenGeneratedProjectRequest::new(
@@ -5064,7 +5060,7 @@ mod tests {
         .with_generated_source("generated-root", source)
         .with_build_unit_input("runtime-lock", "runtime-lock")
         .with_build_unit_input("rust-dependencies", rust_dependencies)
-        .with_build_unit_input("stdlib-features", stdlib_features)
+        .with_build_unit_input("stdlib-facets", stdlib_facets)
         .with_build_unit_input("provider-plan", provider_plan);
         if !providers.is_empty() {
             request = request.with_build_unit_input("providers", providers);
@@ -5078,7 +5074,7 @@ mod tests {
         fs::write(&source, "fn main() {}\n")?;
         // The receipt owns no filesystem path, so retaining only its value is valid after this helper drops the
         // temporary source tree.
-        runtime_receipt(&source, "", "empty-rust-dependencies", "empty-stdlib-features")
+        runtime_receipt(&source, "", "empty-rust-dependencies", "empty-stdlib-facets")
     }
 
     fn empty_manifest(receipt: &oven_store::OvenReceipt) -> OvenRustcArtifactManifest {

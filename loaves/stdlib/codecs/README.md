@@ -1,6 +1,6 @@
 # `stdlib/codecs`
 
-SDK component `stdlib-codecs` (today `crates/incan_stdlib/stdlib/components/stdlib-codecs`).
+SDK component `stdlib-codecs`; its Incan sources live in `src/` beside this file.
 
 Namespace roots: `std.checksum`, `std.encoding`
 
@@ -8,9 +8,9 @@ Runtime crates: crc32fast
 
 ```text
 stdlib/codecs/
-  loaf.toml        the component is one Loaf; its Rust facet is conventional (RFC 119)
+  loaf.toml        the component is one Loaf (RFC 117)
   src/             Incan source: the `.incn` modules for the roots above
-  rust/src/        Rust runtime bridge crate `incan_std_codecs` (today gated code in `crates/incan_stdlib`)
+  rust/src/        reserved for an `incan_std_codecs` facet; this component has no Rust of its own today
   tests/           `.incn` and `.rs` tests side by side
 ```
 

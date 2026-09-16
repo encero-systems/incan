@@ -1079,7 +1079,7 @@ mod tuple_destructure_interop_tests {
     fn readable_rust_tuple_values_still_lower_a_tuple_destructure() {
         assert!(
             unsupported_tuple_destructure(
-                &IncanType::RustInteropPath("(String,incan_stdlib::json::JsonValue)".to_string()),
+                &IncanType::RustInteropPath("(String,incan_std_data::json::JsonValue)".to_string()),
                 2
             )
             .is_none(),
