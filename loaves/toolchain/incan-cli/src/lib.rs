@@ -68,7 +68,7 @@ pub use incan_driver::error::{CliError, CliResult, ExitCode};
 
 /// ASCII art logo - embedded at compile time from the package's assets/logo.txt
 const LOGO: &str = include_str!("../assets/logo.txt");
-const VERSION: &str = incan_core::version::INCAN_VERSION;
+const VERSION: &str = incan_lang::version::INCAN_VERSION;
 
 // ============================================================================
 // Clap CLI definition

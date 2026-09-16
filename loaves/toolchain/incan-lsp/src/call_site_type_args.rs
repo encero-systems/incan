@@ -2,11 +2,11 @@
 
 use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind};
 
-use incan_core::lang::conventions;
-use incan_core::lang::types::{collections, numerics, stringlike};
 use incan_frontend::ast::{
     CallArg, Condition, Declaration, Expr, MatchBody, Program, SliceExpr, Spanned, Statement, Type,
 };
+use incan_lang::lang::conventions;
+use incan_lang::lang::types::{collections, numerics, stringlike};
 
 // ---- Bracket scan (works with nested generics, e.g. `f[Dict[str, int]](...)`) ----
 

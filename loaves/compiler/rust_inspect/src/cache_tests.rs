@@ -2,7 +2,7 @@ use super::*;
 use crate::cache_resolve::{
     dependency_manifest_dir_from_lock_with_search_roots, dependency_manifest_dir_from_manifest,
 };
-use incan_core::interop::{
+use incan_lang::interop::{
     RustFunctionSig, RustItemKind, RustParam, RustTraitAssoc, RustTypeInfo, RustTypeShape, RustVisibility,
 };
 
@@ -469,7 +469,7 @@ fn source_route_records_boxed_variant_payloads_as_the_semantic_type_with_their_c
     let hit = cache
         .get_cached_or_extract_fast_with_registry_src_roots(&root, "inner::Expr", std::slice::from_ref(&inner))?
         .ok_or_else(|| std::io::Error::other("expected sealed source enum metadata"))?;
-    let incan_core::interop::RustItemKind::Type(info) = &hit.metadata.kind else {
+    let incan_lang::interop::RustItemKind::Type(info) = &hit.metadata.kind else {
         return Err(std::io::Error::other("expected a type item").into());
     };
     let boxed = info
@@ -479,14 +479,14 @@ fn source_route_records_boxed_variant_payloads_as_the_semantic_type_with_their_c
         .ok_or_else(|| std::io::Error::other("WindowFunction variant missing"))?;
     assert_eq!(
         boxed.fields,
-        vec![incan_core::interop::RustTypeShape::RustPath {
+        vec![incan_lang::interop::RustTypeShape::RustPath {
             path: "inner::WindowFunction".to_string(),
             args: Vec::new(),
         }]
     );
     assert_eq!(
         boxed.field_carriers,
-        vec![incan_core::interop::RustPayloadCarrier::Boxed]
+        vec![incan_lang::interop::RustPayloadCarrier::Boxed]
     );
     let plain = info
         .variants
@@ -495,7 +495,7 @@ fn source_route_records_boxed_variant_payloads_as_the_semantic_type_with_their_c
         .ok_or_else(|| std::io::Error::other("Literal variant missing"))?;
     assert_eq!(
         plain.field_carriers,
-        vec![incan_core::interop::RustPayloadCarrier::Direct]
+        vec![incan_lang::interop::RustPayloadCarrier::Direct]
     );
     Ok(())
 }
@@ -559,7 +559,7 @@ fn direct_workspace_reads_the_sealed_build_unit_of_the_inspected_version() -> Re
     let hit = cache
         .get_cached_or_extract_fast_with_registry_src_roots(&root, "inner::kind::Kind", std::slice::from_ref(&inner))?
         .ok_or_else(|| std::io::Error::other("expected generated enum metadata through the sealed out dir"))?;
-    let incan_core::interop::RustItemKind::Type(info) = &hit.metadata.kind else {
+    let incan_lang::interop::RustItemKind::Type(info) = &hit.metadata.kind else {
         return Err(std::io::Error::other("expected a type item").into());
     };
     let mut names = info.variants.iter().map(|variant| variant.name.as_str()).collect::<Vec<_>>();
@@ -619,7 +619,7 @@ fn direct_workspace_reads_sealed_build_script_output_for_generated_enums() -> Re
     let hit = cache
         .get_cached_or_extract_fast_with_registry_src_roots(&root, "inner::kind::Kind", std::slice::from_ref(&inner))?
         .ok_or_else(|| std::io::Error::other("expected generated enum metadata through the sealed out dir"))?;
-    let incan_core::interop::RustItemKind::Type(info) = &hit.metadata.kind else {
+    let incan_lang::interop::RustItemKind::Type(info) = &hit.metadata.kind else {
         return Err(std::io::Error::other("expected a type item").into());
     };
     let boxed = info
@@ -629,14 +629,14 @@ fn direct_workspace_reads_sealed_build_script_output_for_generated_enums() -> Re
         .ok_or_else(|| std::io::Error::other("Node variant missing"))?;
     assert_eq!(
         boxed.fields,
-        vec![incan_core::interop::RustTypeShape::RustPath {
+        vec![incan_lang::interop::RustTypeShape::RustPath {
             path: "inner::Node".to_string(),
             args: Vec::new(),
         }]
     );
     assert_eq!(
         boxed.field_carriers,
-        vec![incan_core::interop::RustPayloadCarrier::Boxed]
+        vec![incan_lang::interop::RustPayloadCarrier::Boxed]
     );
     Ok(())
 }

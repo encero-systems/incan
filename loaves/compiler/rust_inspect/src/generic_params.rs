@@ -1,6 +1,6 @@
 //! Canonical projection of Rust source generic declarations into interop metadata.
 
-use incan_core::interop::RustMutableReferenceTypeParam;
+use incan_lang::interop::RustMutableReferenceTypeParam;
 use ra_ap_syntax::ast::{self, HasName};
 
 /// Generic facts retained for an associated-function receiver.

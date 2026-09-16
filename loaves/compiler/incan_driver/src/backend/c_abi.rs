@@ -12,8 +12,8 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use incan_core::lang::c_abi::ScalarTypeId;
 use incan_frontend::typechecker::{CBindingDescriptor, CBindingEnum, CBindingStruct, CBindingType};
+use incan_lang::lang::c_abi::ScalarTypeId;
 use oven_model::oven_interop::{InteropCTarget, InteropTargetPlatform, IosTargetKind, ios_target_kind};
 
 type EnumValueProbeRequest = (String, String, String);
@@ -741,11 +741,11 @@ fn c_identifier_component(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{CAbiTarget, CAbiVerificationPlan, ClangToolchain, verify_checked_c_binding};
-    use incan_core::lang::c_abi::{LinkCapabilityId, ScalarTypeId};
     use incan_frontend::typechecker::{
         CBindingDescriptor, CBindingEnum, CBindingEnumVariant, CBindingParameter, CBindingStruct, CBindingStructField,
         CBindingSymbol, CBindingType,
     };
+    use incan_lang::lang::c_abi::{LinkCapabilityId, ScalarTypeId};
     use oven_model::oven_interop::{InteropCTarget, InteropTargetPlatform, ToolchainRequirement};
 
     fn fixture_binding(header: String) -> CBindingDescriptor {

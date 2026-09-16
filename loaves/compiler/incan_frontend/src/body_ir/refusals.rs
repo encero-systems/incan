@@ -62,7 +62,7 @@ fn surface_stmt_label(key: &SurfaceFeatureKey) -> String {
         }
         SurfaceFeatureKey::SoftKeyword(keyword) => format!(
             "soft-keyword surface statement `{}`",
-            incan_core::lang::keywords::as_str(*keyword)
+            incan_lang::lang::keywords::as_str(*keyword)
         ),
         SurfaceFeatureKey::Decorator(_) => "decorator surface statement".to_string(),
     }

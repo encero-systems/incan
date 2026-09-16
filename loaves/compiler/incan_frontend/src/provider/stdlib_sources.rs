@@ -2,7 +2,7 @@
 //!
 //! The standard library is a ring of components (`loaves/stdlib/<component>/` in a checkout; the same layout below
 //! the installed toolchain's stdlib root), each holding the `.incn` modules for the namespace roots that
-//! `sdk-components.toml` assigns it. The kernel registry (`incan_core::lang::stdlib`) says which namespaces exist and
+//! `sdk-components.toml` assigns it. The kernel registry (`incan_lang::lang::stdlib`) says which namespaces exist and
 //! spells a module's path relative to its owning component's `src/` — `stdlib/fs/path.incn` for `std.fs.path` — and
 //! this module is the one place that turns that spelling into a file: it finds the root through the toolchain layout
 //! policy, reads the catalog once per root, and joins the owner's source directory. Every reader of a standard-library
@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use incan_core::lang::stdlib;
+use incan_lang::lang::stdlib;
 
 use super::sdk::SdkInventoryError;
 use super::sdk::{SDK_SOURCE_CATALOG_FILE, SdkSourceCatalog, SdkSourceComponent};

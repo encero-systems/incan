@@ -9,9 +9,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use incan_core::version::{INCAN_VERSION, SDK_PROVIDER_CODEGEN_REVISION};
 use incan_frontend::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
 use incan_frontend::library_manifest::{LibraryManifest, digest_provider_artifact};
+use incan_lang::version::{INCAN_VERSION, SDK_PROVIDER_CODEGEN_REVISION};
 use incan_provider::inventory::discover_active_sdk_inventory;
 use incan_provider::{SDK_INVENTORY_FILE, SdkInventory};
 use oven_model::compiler_identity::CompilerIdentity;
@@ -230,7 +230,7 @@ mod tests {
     use std::collections::BTreeSet;
     use std::fs;
 
-    use incan_core::lang::stdlib::{self, StdlibExtraCrateSource};
+    use incan_lang::lang::stdlib::{self, StdlibExtraCrateSource};
     use oven_model::manifest::{DependencySource, DependencySpec};
     use oven_rustc::loaf::{
         OvenLoafEnvelope, OvenLoafMemberRole, loaf_envelope_inspection_packages, loaf_envelope_specifications,

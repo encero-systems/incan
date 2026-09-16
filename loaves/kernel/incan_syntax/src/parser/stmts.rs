@@ -155,7 +155,7 @@ impl<'a> Parser<'a> {
     fn try_vocab_block(&mut self, decorators: Vec<Spanned<Decorator>>) -> Result<Option<VocabBlockStmt>, CompileError> {
         let keyword_name = match &self.peek().kind {
             TokenKind::Ident(name) => name.clone(),
-            TokenKind::Keyword(id) => incan_core::lang::keywords::as_str(*id).to_string(),
+            TokenKind::Keyword(id) => incan_lang::lang::keywords::as_str(*id).to_string(),
             _ => {
                 if decorators.is_empty() {
                     return Ok(None);
@@ -457,7 +457,7 @@ impl<'a> Parser<'a> {
     fn current_vocab_keyword_name(&self) -> Option<String> {
         match &self.peek().kind {
             TokenKind::Ident(name) => Some(name.clone()),
-            TokenKind::Keyword(id) => Some(incan_core::lang::keywords::as_str(*id).to_string()),
+            TokenKind::Keyword(id) => Some(incan_lang::lang::keywords::as_str(*id).to_string()),
             _ => None,
         }
     }
@@ -498,7 +498,7 @@ impl<'a> Parser<'a> {
     fn vocab_word_token_from_kind(kind: &TokenKind) -> Option<&str> {
         match kind {
             TokenKind::Ident(name) => Some(name.as_str()),
-            TokenKind::Keyword(id) => Some(incan_core::lang::keywords::as_str(*id)),
+            TokenKind::Keyword(id) => Some(incan_lang::lang::keywords::as_str(*id)),
             _ => None,
         }
     }
@@ -537,7 +537,7 @@ impl<'a> Parser<'a> {
     fn is_assert_statement_keyword(&self) -> bool {
         if !matches!(
             &self.peek().kind,
-            TokenKind::Ident(name) if name == incan_core::lang::keywords::as_str(KeywordId::Assert)
+            TokenKind::Ident(name) if name == incan_lang::lang::keywords::as_str(KeywordId::Assert)
         ) {
             return false;
         }
@@ -1197,7 +1197,7 @@ impl<'a> Parser<'a> {
     fn current_vocab_word_token(&self) -> Option<&str> {
         match &self.peek().kind {
             TokenKind::Ident(name) => Some(name.as_str()),
-            TokenKind::Keyword(id) => Some(incan_core::lang::keywords::as_str(*id)),
+            TokenKind::Keyword(id) => Some(incan_lang::lang::keywords::as_str(*id)),
             _ => None,
         }
     }

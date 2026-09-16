@@ -1,6 +1,6 @@
 //! Lowering for `assert` forms and their explicit panic facts.
 
-use incan_core::lang::errors as runtime_errors;
+use incan_lang::lang::errors as runtime_errors;
 
 use super::match_::PatternReadScope;
 use super::refusals::*;
@@ -135,14 +135,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
 /// Resolve the type named after `raises` to its builtin-exception identity, or `None` when it is not one.
 ///
-/// Body IR stores the resolved [`incan_core::errors::ErrorKind`] instead of the source spelling, so a consumer
+/// Body IR stores the resolved [`incan_lang::errors::ErrorKind`] instead of the source spelling, so a consumer
 /// never has to re-resolve a name against the exception registry to know which error an assertion expects. The
 /// accepted set is exactly the registry the typechecker validates this position against (its own
 /// `check_assert_stmt`), so the two stages cannot disagree about which `raises` spellings are meaningful. A
 /// non-simple type spelling, or a name outside the registry, yields `None` and refuses; the typechecker has
 /// already reported such a program as an unknown symbol, so this only decides how lowering represents a body it
 /// was asked to lower anyway.
-fn expected_runtime_error(error_type: &ast::Type) -> Option<incan_core::errors::ErrorKind> {
+fn expected_runtime_error(error_type: &ast::Type) -> Option<incan_lang::errors::ErrorKind> {
     match error_type {
         ast::Type::Simple(name) => runtime_errors::from_str(name),
         _ => None,

@@ -1,11 +1,11 @@
 //! Boundary tests for canonical `enumerate` and `zip` direct execution.
 
-use incan_core::lang::builtins::BuiltinFnId;
 use incan_driver::backend::replacement::{ReplacementExecutionError, ReplacementValue, execute_free_function};
 use incan_frontend::body_ir::build_body_ir_module_v0;
 use incan_frontend::diagnostics::CompileError;
 use incan_frontend::typechecker::TypeChecker;
 use incan_frontend::{lexer, parser};
+use incan_lang::lang::builtins::BuiltinFnId;
 use incan_semantics_core::body_ir::{
     Body, BodyIrModule, CallableParamDefault, CallableTarget, Callee, IterProtocol, LocalDecl, LocalId, Rvalue,
     Statement, StatementKind,

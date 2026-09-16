@@ -5,8 +5,8 @@ use super::super::super::expr::{IrExprKind, IrGeneratorClause};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
-use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_frontend::ast;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 impl AstLowering {
     /// Lower a generator expression `(expr for ... if ...)`.

@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::{lexer, parser};
-use incan_core::lang::traits::{self, TraitId};
+use incan_lang::lang::traits::{self, TraitId};
 use incan_semantics_core::{SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
 /// Parse one focused identity fixture and preserve compiler diagnostics on failure.

@@ -2,11 +2,11 @@
 
 use std::collections::HashSet;
 
-use incan_core::lang::magic_methods::{self, MagicMethodId};
-use incan_core::lang::surface::methods::iterator_methods::{self, IteratorMethodId};
-use incan_core::lang::traits as core_traits;
-use incan_core::lang::traits::TraitId;
-use incan_core::lang::{callables, stdlib, trait_bounds};
+use incan_lang::lang::magic_methods::{self, MagicMethodId};
+use incan_lang::lang::surface::methods::iterator_methods::{self, IteratorMethodId};
+use incan_lang::lang::traits as core_traits;
+use incan_lang::lang::traits::TraitId;
+use incan_lang::lang::{callables, stdlib, trait_bounds};
 
 use super::super::super::Mutability;
 use super::super::super::decl::{FunctionParam, FunctionParamDefault, IrFunction, IrTrait, Visibility};

@@ -7,7 +7,7 @@
 //!
 //! The LSP communicates via stdin/stdout using the Language Server Protocol.
 
-use incan_core::version::INCAN_VERSION;
+use incan_lang::version::INCAN_VERSION;
 use incan_lsp::IncanLanguageServer;
 use std::ffi::OsString;
 use std::process::ExitCode;

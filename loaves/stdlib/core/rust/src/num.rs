@@ -36,7 +36,7 @@
 /// ```
 use crate::errors::{raise, raise_value_error, raise_zero_division};
 use core::fmt;
-use incan_core::{
+use incan_lang::{
     errors::IncanError,
     numeric_values::{format_decimal_value, parse_decimal_literal_body},
     python_floor_div_i64, python_mod_i64,
@@ -718,7 +718,7 @@ impl_saturating_unsigned_to_unsigned!(u8, u16, u32, u64, u128, usize);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use incan_core::{NumericOp, NumericTy, result_numeric_type};
+    use incan_lang::{NumericOp, NumericTy, result_numeric_type};
     use std::any::Any;
     use std::f64;
 

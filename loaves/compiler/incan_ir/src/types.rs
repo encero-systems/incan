@@ -7,12 +7,12 @@ use incan_frontend::library_manifest::TypeRef;
 use std::fmt;
 
 use super::decl::IrTraitBound;
-use incan_core::lang::traits::{self as core_traits, TraitId};
-use incan_core::lang::types::collections::{self as collections, CollectionTypeId};
-use incan_core::lang::types::numerics::{self, NumericTypeId};
+use incan_lang::lang::traits::{self as core_traits, TraitId};
+use incan_lang::lang::types::collections::{self as collections, CollectionTypeId};
+use incan_lang::lang::types::numerics::{self, NumericTypeId};
 
 /// Canonical IR generic name used for anonymous union types.
-pub const IR_UNION_TYPE_NAME: &str = incan_core::lang::types::UNION_TYPE_NAME;
+pub const IR_UNION_TYPE_NAME: &str = incan_lang::lang::types::UNION_TYPE_NAME;
 
 /// Ownership semantics for a value
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -363,8 +363,8 @@ impl IrType {
     /// RFC 021: This is used for `FieldInfo.type_name` to show the Incan type, not the Rust representation.
     pub fn incan_name(&self) -> String {
         match self {
-            IrType::Unit => incan_core::lang::surface::constructors::as_str(
-                incan_core::lang::surface::constructors::ConstructorId::None,
+            IrType::Unit => incan_lang::lang::surface::constructors::as_str(
+                incan_lang::lang::surface::constructors::ConstructorId::None,
             )
             .to_string(),
             IrType::Bool => "bool".to_string(),
@@ -733,11 +733,11 @@ pub fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
         })
     };
     match ty {
-        IrType::Unit => Ok(named(incan_core::lang::conventions::UNIT_TYPE_NAME)),
+        IrType::Unit => Ok(named(incan_lang::lang::conventions::UNIT_TYPE_NAME)),
         IrType::Bool => Ok(named("bool")),
         IrType::Int => Ok(named("int")),
         IrType::Float => Ok(named("float")),
-        IrType::Numeric(id) => Ok(named(incan_core::lang::types::numerics::as_str(*id))),
+        IrType::Numeric(id) => Ok(named(incan_lang::lang::types::numerics::as_str(*id))),
         IrType::String | IrType::StaticStr | IrType::StrRef => Ok(named("str")),
         IrType::Bytes | IrType::StaticBytes => Ok(named("bytes")),
         IrType::FrozenStr => Ok(named("FrozenStr")),

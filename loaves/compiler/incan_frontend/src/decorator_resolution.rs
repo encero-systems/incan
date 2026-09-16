@@ -16,9 +16,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{Declaration, Decorator, ImportKind, ImportPath, Program};
 use crate::symbols::SymbolTable;
-use incan_core::lang::builtins::{self, BuiltinFnId};
-use incan_core::lang::decorators;
-use incan_core::lang::stdlib;
+use incan_lang::lang::builtins::{self, BuiltinFnId};
+use incan_lang::lang::decorators;
+use incan_lang::lang::stdlib;
 
 /// A lookup source for resolving the first decorator path segment as an import alias.
 ///

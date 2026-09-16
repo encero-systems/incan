@@ -15,13 +15,13 @@ use crate::typechecker::type_info::{
     CBindingBuffer, CBindingDescriptor, CBindingEnum, CBindingEnumVariant, CBindingOutcome, CBindingParameter,
     CBindingResource, CBindingStruct, CBindingStructField, CBindingSymbol, CBindingType, COutputMode, CResourceAccess,
 };
-use incan_core::lang::c_abi::{
+use incan_lang::lang::c_abi::{
     self, BindingArgumentId, BindingMemberId, LinkCapabilityId, ResourceArgumentId, ResourceTypeConstructorId,
     SymbolArgumentId, SymbolOutcomeArgumentId,
 };
-use incan_core::lang::decorators::{self, DecoratorId};
-use incan_core::lang::derives;
-use incan_core::lang::stdlib;
+use incan_lang::lang::decorators::{self, DecoratorId};
+use incan_lang::lang::derives;
+use incan_lang::lang::stdlib;
 use incan_semantics_core::{
     CanonicalSymbolId, DecoratorFeature, HirSourceSpan, SemanticSourceTargetKind, SurfaceFeatureKey, SymbolNamespace,
     SymbolOrigin,

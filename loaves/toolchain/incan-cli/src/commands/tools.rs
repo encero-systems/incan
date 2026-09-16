@@ -711,7 +711,7 @@ impl DoctorReport {
     fn collect() -> Self {
         let cwd = env::current_dir().ok();
         Self {
-            version: incan_core::version::INCAN_VERSION,
+            version: incan_lang::version::INCAN_VERSION,
             current_exe: env::current_exe().ok(),
             cwd: cwd.clone(),
             path_incan: ToolPath::resolve("incan"),
@@ -1784,7 +1784,7 @@ def private_function() -> None:
         let features = CargoFeatureSelection::default();
         let fingerprint = compute_deps_fingerprint(&[], &[], &features, Some(project_root));
         IncanLock::new(
-            incan_core::version::INCAN_VERSION,
+            incan_lang::version::INCAN_VERSION,
             fingerprint,
             features,
             cargo_lock_payload,

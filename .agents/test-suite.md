@@ -28,7 +28,7 @@ You are a test orchestrator for the Incan compiler. When invoked, you analyze th
 | `loaves/compiler/incan_driver/src/backend/project/` | `cargo test -p incan-cli --test integration_tests` |
 | `loaves/toolchain/incan-cli/src/` | `cargo test -p incan-cli --test integration_tests` |
 | `loaves/compiler/incan_format/src/` | `cargo test -p incan_format --test property_tests` and `cargo test -p incan-cli --test integration_tests` |
-| `loaves/kernel/incan_core/` | `cargo test -p incan_frontend --test semantic_core_parity --test semantic_core_parity_strings` |
+| `loaves/kernel/incan_lang/` | `cargo test -p incan_frontend --test semantic_core_parity --test semantic_core_parity_strings` |
 | `loaves/stdlib/*/rust/` | `cargo test -p incan_emit --test codegen_snapshot_tests` and `cargo test -p incan-cli --test integration_tests` |
 | `loaves/stdlib/derive/incan_derive/` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
 | `loaves/compiler/incan_emit/tests/codegen_snapshots/*.incn` | `cargo test -p incan_emit --test codegen_snapshot_tests` |

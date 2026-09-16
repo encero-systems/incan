@@ -16,14 +16,14 @@ use crate::diagnostics::errors;
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved, pow_exponent_kind_from_ast};
 use crate::symbols::{ResolvedType, TypeBoundInfo, TypeInfo};
 use crate::typechecker::{MemberBindingSurface, ProtocolIterationInfo, ResolvedMethodDispatch, ResolvedOperatorKind};
-use incan_core::lang::derives::{self, DeriveId};
-use incan_core::lang::magic_methods::{self, MagicMethodId};
-use incan_core::{NumericTy, result_numeric_type};
+use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::magic_methods::{self, MagicMethodId};
+use incan_lang::{NumericTy, result_numeric_type};
 
 use super::TypeChecker;
 use crate::typechecker::helpers::{collection_type_id, is_str_like};
-use incan_core::lang::types::collections::CollectionTypeId;
-use incan_core::lang::types::numerics::{self, NumericFamily, NumericTypeId};
+use incan_lang::lang::types::collections::CollectionTypeId;
+use incan_lang::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 
 /// Check whether a resolved type is a runtime `List[T]` with one element slot.
 fn is_runtime_list(ty: &ResolvedType) -> bool {

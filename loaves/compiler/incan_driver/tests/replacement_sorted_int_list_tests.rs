@@ -3,10 +3,10 @@
 use incan_test_support as support;
 use std::fs;
 
-use incan_core::lang::builtins::BuiltinFnId;
 use incan_driver::backend::replacement::{ReplacementExecutionError, ReplacementValue, execute_free_function};
 use incan_frontend::body_ir::build_body_ir_module_v0;
 use incan_frontend::{lexer, parser, typechecker::TypeChecker};
+use incan_lang::lang::builtins::BuiltinFnId;
 use incan_semantics_core::body_ir::{BodyIrModule, CallableTarget, Callee, StatementKind};
 
 const SORTED_INT_SOURCE: &str = include_str!("fixtures/replacement/sorted_int_list.incn");

@@ -6,15 +6,15 @@ use super::TypeChecker;
 use crate::resolved_type_subst::substitute_resolved_type;
 use crate::symbols::{ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo};
 use crate::typechecker::helpers::collection_type_id;
-use incan_core::interop::is_rust_capability_bound;
-use incan_core::lang::callables;
-use incan_core::lang::derives::{self, DeriveId};
-use incan_core::lang::trait_capabilities::{
+use incan_lang::interop::is_rust_capability_bound;
+use incan_lang::lang::callables;
+use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::trait_capabilities::{
     self, TraitCapabilityId, TraitCapabilityInfo, TraitCapabilityType, TraitCapabilityTypeArg,
 };
-use incan_core::lang::traits::{self as builtin_traits, TraitId};
-use incan_core::lang::types::collections::CollectionTypeId;
-use incan_core::lang::types::numerics;
+use incan_lang::lang::traits::{self as builtin_traits, TraitId};
+use incan_lang::lang::types::collections::CollectionTypeId;
+use incan_lang::lang::types::numerics;
 
 impl TypeChecker {
     /// Render a type-parameter bound with call-site substitutions applied.
@@ -215,7 +215,7 @@ impl TypeChecker {
         Some(
             info.metadata
                 .as_ref()
-                .is_none_or(|metadata| matches!(metadata.kind, incan_core::interop::RustItemKind::Trait(_))),
+                .is_none_or(|metadata| matches!(metadata.kind, incan_lang::interop::RustItemKind::Trait(_))),
         )
     }
 

@@ -115,7 +115,7 @@ fn concurrent_normal_checks_reuse_sealed_sdk_inventory_without_mutable_publicati
         .ok_or("normal Oven SDK inventory has no immutable provider root")?
         .to_path_buf();
     let inventory = incan_provider::SdkInventory::read_from_path(&inventory_path)?;
-    inventory.validate_compiler_version(incan_core::version::INCAN_VERSION)?;
+    inventory.validate_compiler_version(incan_lang::version::INCAN_VERSION)?;
     assert!(
         inventory.components.values().all(|component| component.available),
         "the reused full-profile provider identity must contain every component"

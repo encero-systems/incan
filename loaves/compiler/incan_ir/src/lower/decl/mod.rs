@@ -26,8 +26,8 @@ use super::super::types::IrType;
 use super::super::{IrSpan, TypedExpr};
 use super::AstLowering;
 use super::errors::LoweringError;
-use incan_core::lang::decorators::{self, DecoratorId};
 use incan_frontend::ast;
+use incan_lang::lang::decorators::{self, DecoratorId};
 
 impl AstLowering {
     /// Map frontend visibility (`pub` / private) to IR visibility for Rust emission.

@@ -11,7 +11,7 @@ name = "incan_format"
 path = "src/lib.rs"
 
 [dependencies]
-incan_core = { workspace = true }
+incan_lang = { workspace = true }
 incan_semantics_core = { workspace = true }
 incan_syntax = { workspace = true }
 incan_vocab = { workspace = true }

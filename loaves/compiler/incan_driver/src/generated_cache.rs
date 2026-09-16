@@ -557,7 +557,7 @@ fn cache_entry_metadata(
     let lock_digest = normalized_lock_digest(lock_payload, generated_package_name)?;
     let mut identity_hasher = Sha256::new();
     identity_hasher.update(b"incan-generated-cargo-cache-v1\0");
-    identity_hasher.update(incan_core::version::INCAN_VERSION.as_bytes());
+    identity_hasher.update(incan_lang::version::INCAN_VERSION.as_bytes());
     identity_hasher.update(b"\0rust-backend\0");
     identity_hasher.update(rust_backend_identity.as_bytes());
     identity_hasher.update(b"\0profile\0");
@@ -578,7 +578,7 @@ fn cache_entry_metadata(
     }
     Ok(CacheEntryMetadata {
         identity: hex::encode(identity_hasher.finalize()),
-        incan_version: incan_core::version::INCAN_VERSION.to_string(),
+        incan_version: incan_lang::version::INCAN_VERSION.to_string(),
         rust_backend_identity: rust_backend_identity.to_string(),
         profile: profile.to_string(),
         lock_digest,

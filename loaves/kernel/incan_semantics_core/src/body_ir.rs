@@ -41,11 +41,11 @@
 
 use std::fmt::Write as _;
 
-use incan_core::errors::ErrorKind;
-use incan_core::lang::builtins::BuiltinFnId;
-use incan_core::lang::errors;
-use incan_core::lang::surface::string_methods::StringMethodId;
-use incan_core::lang::types::numerics::NumericTypeId;
+use incan_lang::errors::ErrorKind;
+use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::errors;
+use incan_lang::lang::surface::string_methods::StringMethodId;
+use incan_lang::lang::types::numerics::NumericTypeId;
 use serde::{Deserialize, Serialize};
 
 use crate::{AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType};
@@ -887,7 +887,7 @@ impl TypedNumericConstant {
     pub fn type_name(&self) -> String {
         match self {
             Self::Signed { kind, .. } | Self::Unsigned { kind, .. } => {
-                incan_core::lang::types::numerics::as_str(*kind).to_string()
+                incan_lang::lang::types::numerics::as_str(*kind).to_string()
             }
             Self::F32 { .. } => "f32".to_string(),
             Self::F64 { .. } => "f64".to_string(),

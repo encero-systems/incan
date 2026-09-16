@@ -13,12 +13,6 @@ use crate::ownership::{
     regular_method_argument_use_site,
 };
 use crate::reference_shape::{expr_has_rust_reference_shape, type_has_rust_reference_shape};
-use incan_core::interop::{
-    METADATA_FREE_METHOD_BORROW_RULES, MetadataFreeArgClass, MetadataFreeMethodArgBorrowPolicy,
-    MetadataFreeReceiverClass, RustCollectionFamily,
-};
-use incan_core::lang::surface::result_methods::{self, ResultMethodId};
-use incan_core::lang::{magic_methods, stdlib, trait_bounds::rust as tb};
 use incan_ir::FunctionSignature;
 use incan_ir::decl::{FunctionParam, FunctionParamDefault};
 use incan_ir::expr::{
@@ -26,6 +20,12 @@ use incan_ir::expr::{
     MethodCallArgPolicy, MethodKind, TypedExpr, VarAccess, VarRefKind,
 };
 use incan_ir::types::IrType;
+use incan_lang::interop::{
+    METADATA_FREE_METHOD_BORROW_RULES, MetadataFreeArgClass, MetadataFreeMethodArgBorrowPolicy,
+    MetadataFreeReceiverClass, RustCollectionFamily,
+};
+use incan_lang::lang::surface::result_methods::{self, ResultMethodId};
+use incan_lang::lang::{magic_methods, stdlib, trait_bounds::rust as tb};
 
 mod collection_methods;
 mod fast_paths;
@@ -1453,7 +1453,7 @@ impl<'a> IrEmitter<'a> {
     /// Return whether a method receiver is the RFC 006 runtime generator wrapper.
     fn is_generator_receiver(receiver: &TypedExpr) -> bool {
         matches!(&receiver.ty, IrType::NamedGeneric(name, _)
-            if incan_core::lang::types::collections::from_str(name.as_str())
-                == Some(incan_core::lang::types::collections::CollectionTypeId::Generator))
+            if incan_lang::lang::types::collections::from_str(name.as_str())
+                == Some(incan_lang::lang::types::collections::CollectionTypeId::Generator))
     }
 }

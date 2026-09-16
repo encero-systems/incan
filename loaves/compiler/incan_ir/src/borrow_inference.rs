@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use incan_core::lang::keywords::{self, KeywordId};
+use incan_lang::lang::keywords::{self, KeywordId};
 
 use super::decl::Visibility;
 use super::expr::{MatchArm, Pattern};
@@ -20,7 +20,7 @@ use super::{
 /// Infer closed helper signatures to a fixed point, then publish the same signatures to every direct call.
 pub fn infer_shared_helpers(
     program: &mut IrProgram,
-    contracts: &HashMap<(usize, usize), incan_core::interop::RustReceiverContract>,
+    contracts: &HashMap<(usize, usize), incan_lang::interop::RustReceiverContract>,
 ) {
     let mut escapes = Escapes::default();
     visit_program(program, &mut escapes);
@@ -102,7 +102,7 @@ pub fn infer_shared_helpers(
 /// Sibling modules and compiled-provider consumers continue to call the authored owned ABI.
 fn infer_crate_helpers(
     program: &mut IrProgram,
-    contracts: &HashMap<(usize, usize), incan_core::interop::RustReceiverContract>,
+    contracts: &HashMap<(usize, usize), incan_lang::interop::RustReceiverContract>,
 ) {
     let mut planned = HashSet::new();
     let mut names: HashSet<String> = program.function_registry.iter().map(|(name, _)| name.clone()).collect();
@@ -233,7 +233,7 @@ impl Visitor for SharedCalls<'_> {
 /// Prove and refine candidate parameters without changing the callable's externally visible identity.
 fn infer_parameters(
     function: &mut IrFunction,
-    contracts: &HashMap<(usize, usize), incan_core::interop::RustReceiverContract>,
+    contracts: &HashMap<(usize, usize), incan_lang::interop::RustReceiverContract>,
 ) -> bool {
     if function
         .params
@@ -294,7 +294,7 @@ fn infer_parameters(
 /// Preserve inherent method ABI by emitting a private borrowed implementation for proven local direct calls.
 fn infer_method_helpers(
     program: &mut IrProgram,
-    contracts: &HashMap<(usize, usize), incan_core::interop::RustReceiverContract>,
+    contracts: &HashMap<(usize, usize), incan_lang::interop::RustReceiverContract>,
 ) {
     let mut plans = HashMap::new();
     for decl in &mut program.declarations {
@@ -448,7 +448,7 @@ impl Visitor for MethodCalls<'_> {
 /// deliberately excludes temporaries and overlapping owner uses; the source retains owned semantics there.
 fn infer_local_cursors(
     function: &mut IrFunction,
-    contracts: &HashMap<(usize, usize), incan_core::interop::RustReceiverContract>,
+    contracts: &HashMap<(usize, usize), incan_lang::interop::RustReceiverContract>,
 ) {
     if function.is_async || function.is_generator || function.is_extern {
         return;
@@ -719,7 +719,7 @@ struct SharedUse<'a> {
     aliases: HashSet<String>,
     valid: bool,
     observed: bool,
-    contracts: &'a HashMap<(usize, usize), incan_core::interop::RustReceiverContract>,
+    contracts: &'a HashMap<(usize, usize), incan_lang::interop::RustReceiverContract>,
 }
 
 impl SharedUse<'_> {

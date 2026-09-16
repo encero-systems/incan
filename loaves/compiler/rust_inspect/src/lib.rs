@@ -60,7 +60,7 @@ mod tests {
     use std::fs;
     use std::sync::Mutex;
 
-    use incan_core::interop::{RustItemKind, RustItemMetadata, RustTypeInfo, RustVisibility};
+    use incan_lang::interop::{RustItemKind, RustItemMetadata, RustTypeInfo, RustVisibility};
 
     use super::*;
 

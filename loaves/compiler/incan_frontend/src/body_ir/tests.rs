@@ -8,7 +8,7 @@ use super::*;
 use crate::test_support::provider_plan_from_checked_source;
 use crate::typechecker::TypeChecker;
 use crate::{lexer, parser};
-use incan_core::lang::surface::constructors;
+use incan_lang::lang::surface::constructors;
 
 /// Lower a module that imports from other modules, declaring each dependency's flattened cache name *and* its
 /// real path segments.
@@ -590,7 +590,7 @@ fn lowers_string_membership_as_an_explicit_helper_call_with_its_runtime_requirem
     )?;
 
     // Membership is the one string operator whose surface order is the reverse of its helper's signature. The call
-    // is emitted haystack-first to match `incan_core::strings::str_contains`, so a backend can bind every string
+    // is emitted haystack-first to match `incan_lang::strings::str_contains`, so a backend can bind every string
     // helper positionally without knowing that one of them disagrees with the rest.
     assert!(
         rendered.contains("_2 = call helper:str_contains(move(_0, last_use), move(_1, last_use))"),
@@ -1522,7 +1522,7 @@ fn top_level_defaults_lower_to_deferred_source_computations() -> Result<(), Box<
     assert_eq!(
         limit.ty,
         IncanType::Primitive(IncanPrimitiveType::Numeric(
-            incan_core::lang::types::numerics::NumericTypeId::U8
+            incan_lang::lang::types::numerics::NumericTypeId::U8
         ))
     );
     let bir::CallableParamDefault::Source(limit_default) = &limit.default else {
@@ -1534,7 +1534,7 @@ fn top_level_defaults_lower_to_deferred_source_computations() -> Result<(), Box<
     assert_eq!(
         limit_default.result,
         bir::Operand::Constant(bir::Constant::TypedNumeric(bir::TypedNumericConstant::Unsigned {
-            kind: incan_core::lang::types::numerics::NumericTypeId::U8,
+            kind: incan_lang::lang::types::numerics::NumericTypeId::U8,
             value: 7,
         }))
     );
@@ -6086,7 +6086,7 @@ fn a_raises_assertion_retains_the_resolved_expected_error_rather_than_its_spelli
     let module = build(source, &["m", "assert_raises"])?;
     let body = body_named(&module, "run")?;
 
-    let expected: Vec<incan_core::errors::ErrorKind> = assertion_kinds(body)
+    let expected: Vec<incan_lang::errors::ErrorKind> = assertion_kinds(body)
         .into_iter()
         .filter_map(|kind| match kind {
             bir::AssertionKind::Raises { expected_error, .. } => Some(*expected_error),
@@ -6096,8 +6096,8 @@ fn a_raises_assertion_retains_the_resolved_expected_error_rather_than_its_spelli
     assert_eq!(
         expected,
         vec![
-            incan_core::errors::ErrorKind::ValueError,
-            incan_core::errors::ErrorKind::IndexError
+            incan_lang::errors::ErrorKind::ValueError,
+            incan_lang::errors::ErrorKind::IndexError
         ],
         "the expected error must be the resolved registry identity, not a source spelling"
     );

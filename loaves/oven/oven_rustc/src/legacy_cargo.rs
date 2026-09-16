@@ -5865,7 +5865,7 @@ mod tests {
             "staged runtime workspace must not name a checkout path it does not ship: {runtime_dependencies:?}"
         );
         assert!(!staged.join("runtime/obsolete-runtime-file").exists());
-        assert!(staged.join("runtime/crates/incan_core/src/lib.rs").is_file());
+        assert!(staged.join("runtime/crates/incan_lang/src/lib.rs").is_file());
         assert!(staged.join("runtime/crates/incan_derive/src/lib.rs").is_file());
         for facet in [
             "incan_std_core",

@@ -9,7 +9,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::{env, fs};
 
-use incan_core::lang::stdlib;
+use incan_lang::lang::stdlib;
 
 use crate::error::{ProviderError, ProviderResult};
 use crate::inventory::SDK_INVENTORY_OVERRIDE_ENV;
@@ -58,7 +58,7 @@ pub fn prepare_sdk_provider_inventory_in_store(
     let catalog = SdkSourceCatalog::read_from_path(&stdlib_root.join(SDK_SOURCE_CATALOG_FILE))
         .map_err(|error| ProviderError::failure(error.to_string()))?;
     catalog
-        .validate_compiler_version(incan_core::version::INCAN_VERSION)
+        .validate_compiler_version(incan_lang::version::INCAN_VERSION)
         .map_err(|error| ProviderError::failure(error.to_string()))?;
     let current_exe = env::current_exe()
         .map_err(|error| ProviderError::failure(format!("failed to resolve current incan executable: {error}")))?;
@@ -105,8 +105,8 @@ pub fn prepare_sdk_provider_inventory_in_store(
             SdkInventory::read_from_path(&inventory_path).map_err(|error| ProviderError::failure(error.to_string()))?;
         inventory
             .validate_compiler_compatibility(
-                incan_core::version::INCAN_VERSION,
-                incan_core::version::SDK_PROVIDER_CODEGEN_REVISION,
+                incan_lang::version::INCAN_VERSION,
+                incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION,
             )
             .map_err(|error| ProviderError::failure(error.to_string()))?;
         record_sdk_provider_root(&artifact_root)?;
@@ -567,7 +567,7 @@ fn source_catalog_inventory(catalog: &SdkSourceCatalog, root: &Path) -> SdkInven
         sdk_id: catalog.sdk_id.clone(),
         sdk_version: catalog.sdk_version.clone(),
         compiler_requirement: catalog.compiler_requirement.clone(),
-        provider_codegen_revision: incan_core::version::SDK_PROVIDER_CODEGEN_REVISION,
+        provider_codegen_revision: incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION,
         components,
         profiles: catalog.profiles.clone(),
     }

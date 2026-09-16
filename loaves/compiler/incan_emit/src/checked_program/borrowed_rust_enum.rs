@@ -83,11 +83,11 @@ pub def inspect(value: &Value) -> None:
 /// Precise metadata and metadata-free fallback both preserve payload reference types at their use sites.
 #[test]
 fn borrowed_rust_enum_payload_types_preserve_reference_modes() -> TestResult {
-    use incan_core::interop::{
-        RustItemKind, RustItemMetadata, RustTypeInfo, RustTypeShape, RustVariantInfo, RustVisibility,
-    };
     use incan_frontend::ast::Span;
     use incan_frontend::symbols::{ResolvedType, RustImportBindingKind, RustItemInfo, Symbol, SymbolKind};
+    use incan_lang::interop::{
+        RustItemKind, RustItemMetadata, RustTypeInfo, RustTypeShape, RustVariantInfo, RustVisibility,
+    };
     let cases = [
         (None, "payload"),
         (Some(RustTypeShape::Str), "payload"),

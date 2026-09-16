@@ -342,7 +342,7 @@ fn resolve_helper_export_name(
 
 #[cfg(test)]
 mod tests {
-    use incan_core::lang::surface::constructors;
+    use incan_lang::lang::surface::constructors;
     use std::collections::HashMap;
     use std::path::PathBuf;
 

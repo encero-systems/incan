@@ -427,7 +427,7 @@ fn provider_implementation_facets(namespace_claims: &[ProviderModuleClaim]) -> V
     roots
         .into_iter()
         .filter_map(|root| {
-            let namespace = incan_core::lang::stdlib::find_namespace(&root)?;
+            let namespace = incan_lang::lang::stdlib::find_namespace(&root)?;
             let required_modules = namespace_claims
                 .iter()
                 .filter(|claim| claim.module_path.first() == Some(&root))
@@ -451,13 +451,13 @@ fn provider_implementation_facets(namespace_claims: &[ProviderModuleClaim]) -> V
                 .chain(namespace.extra_crate_deps.iter().map(|dependency| {
                     ProviderCargoDependency {
                         crate_name: dependency.crate_name.to_string(),
-                        package: incan_core::lang::stdlib::extra_crate_package_alias(dependency.crate_name)
+                        package: incan_lang::lang::stdlib::extra_crate_package_alias(dependency.crate_name)
                             .map(str::to_string),
                         version: match dependency.source {
-                            incan_core::lang::stdlib::StdlibExtraCrateSource::Version(version) => {
+                            incan_lang::lang::stdlib::StdlibExtraCrateSource::Version(version) => {
                                 Some(version.to_string())
                             }
-                            incan_core::lang::stdlib::StdlibExtraCrateSource::Path(_) => None,
+                            incan_lang::lang::stdlib::StdlibExtraCrateSource::Path(_) => None,
                         },
                         features: dependency
                             .features
@@ -466,10 +466,10 @@ fn provider_implementation_facets(namespace_claims: &[ProviderModuleClaim]) -> V
                             .collect(),
                         default_features: true,
                         source: match dependency.source {
-                            incan_core::lang::stdlib::StdlibExtraCrateSource::Version(_) => {
+                            incan_lang::lang::stdlib::StdlibExtraCrateSource::Version(_) => {
                                 ProviderCargoDependencySource::Registry
                             }
-                            incan_core::lang::stdlib::StdlibExtraCrateSource::Path(relative_path) => {
+                            incan_lang::lang::stdlib::StdlibExtraCrateSource::Path(relative_path) => {
                                 ProviderCargoDependencySource::Toolchain {
                                     relative_path: relative_path.to_string(),
                                 }
@@ -491,7 +491,7 @@ fn provider_implementation_facets(namespace_claims: &[ProviderModuleClaim]) -> V
 
 /// Return whether an already-linked SDK provider owns this emitted `__incan_std.*` module.
 fn module_is_owned_by_dependency_provider(provider_plan: &ProviderPlan, emission_path: &[String]) -> bool {
-    let prefix = [incan_core::lang::stdlib::INCAN_STD_NAMESPACE.to_string()];
+    let prefix = [incan_lang::lang::stdlib::INCAN_STD_NAMESPACE.to_string()];
     let relative = if let Some(relative) = emission_path.strip_prefix(prefix.as_slice()) {
         relative
     } else if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
@@ -499,7 +499,7 @@ fn module_is_owned_by_dependency_provider(provider_plan: &ProviderPlan, emission
     } else {
         return false;
     };
-    let mut canonical = vec![incan_core::lang::stdlib::STDLIB_ROOT.to_string()];
+    let mut canonical = vec![incan_lang::lang::stdlib::STDLIB_ROOT.to_string()];
     canonical.extend(relative.iter().cloned());
     provider_plan.active_sdk_provider_for_module(&canonical).is_some()
 }

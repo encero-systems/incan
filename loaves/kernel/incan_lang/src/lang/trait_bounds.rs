@@ -153,7 +153,7 @@ pub mod rust {
 ///
 /// ## Examples
 /// ```rust
-/// use incan_core::lang::trait_bounds;
+/// use incan_lang::lang::trait_bounds;
 ///
 /// assert_eq!(trait_bounds::incan_to_rust("Eq"), Some("PartialEq"));
 /// assert_eq!(

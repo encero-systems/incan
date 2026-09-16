@@ -218,7 +218,7 @@ pub const COMPILER_RUST_EFFECT_ROOTS: &[(&str, &str)] = &[
     ("stdlib-runtime-async", "loaves/stdlib/async/rust/src"),
     ("stdlib-runtime-web", "loaves/stdlib/web/rust/src"),
     ("stdlib-runtime-testing", "loaves/stdlib/testing/rust/src"),
-    ("core", "loaves/kernel/incan_core"),
+    ("lang", "loaves/kernel/incan_lang"),
     ("derive", "loaves/stdlib/derive/incan_derive"),
     ("web-macros", "loaves/stdlib/derive/incan_web_macros"),
     ("semantics-core", "loaves/kernel/incan_semantics_core"),

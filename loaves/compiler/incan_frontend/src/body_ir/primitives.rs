@@ -67,7 +67,7 @@ pub(super) fn string_helper_for_binop(op: ast::BinaryOp) -> Option<bir::HelperOp
 /// represents.
 ///
 /// Reads the collection registry rather than comparing base names against literals, so adding a collection to
-/// `incan_core` cannot silently leave this mapping stale.
+/// `incan_lang` cannot silently leave this mapping stale.
 fn builtin_collection_id(ty: &IncanType) -> Option<CollectionTypeId> {
     let IncanType::Generic { base, args } = ty else {
         return None;
@@ -206,7 +206,7 @@ pub(super) fn lower_literal(lit: &ast::Literal) -> bir::Constant {
 /// [`bir::Constant::TypedNumeric`] so wide integer magnitude, float width/rounding, and decimal scale cannot be lost
 /// before a replacement backend sees them.
 pub(super) fn lower_checked_literal(lit: &ast::Literal, ty: &IncanType) -> bir::Constant {
-    use incan_core::lang::types::numerics::{NumericFamily, NumericTypeId, info_for};
+    use incan_lang::lang::types::numerics::{NumericFamily, NumericTypeId, info_for};
 
     let typed = match (lit, ty) {
         (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Numeric(kind))) => {
@@ -261,7 +261,7 @@ pub(super) fn lower_checked_literal(lit: &ast::Literal, ty: &IncanType) -> bir::
 
 /// Normalize one typechecked decimal literal into the same coefficient/literal-scale pair as `Decimal128`.
 fn decimal_constant(body: &str, precision: u8, scale: u8) -> Option<bir::TypedNumericConstant> {
-    let parsed = incan_core::numeric_values::parse_decimal_literal_body(body)?;
+    let parsed = incan_lang::numeric_values::parse_decimal_literal_body(body)?;
     Some(bir::TypedNumericConstant::Decimal {
         precision,
         scale,
@@ -273,7 +273,7 @@ fn decimal_constant(body: &str, precision: u8, scale: u8) -> Option<bir::TypedNu
 /// Fold a checked negative exact-numeric literal into one typed constant without applying a general runtime
 /// negation rule. Ordinary float/int negation remains an operation and keeps its existing replacement boundary.
 pub(super) fn lower_checked_negative_literal(lit: &ast::Literal, ty: &IncanType) -> Option<bir::Constant> {
-    use incan_core::lang::types::numerics::{NumericFamily, NumericTypeId, info_for};
+    use incan_lang::lang::types::numerics::{NumericFamily, NumericTypeId, info_for};
 
     let value = match (lit, ty) {
         (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Numeric(kind)))
@@ -326,7 +326,7 @@ pub(super) fn lower_checked_negative_literal(lit: &ast::Literal, ty: &IncanType)
 /// local provenance check before reading [`bir::AggregateKind::Range`] fields. The `range()` builtin is deliberately
 /// *not* this type: it resolves to a plain `Named("Range")` iterator (`src/frontend/symbols.rs`) and keeps its existing
 /// iteration path.
-pub(super) const RANGE_TYPE_BASE: &str = incan_core::lang::surface::types::RANGE_TYPE_NAME;
+pub(super) const RANGE_TYPE_BASE: &str = incan_lang::lang::surface::types::RANGE_TYPE_NAME;
 /// The per-iteration increment of every range the surface can spell.
 ///
 /// There is no step spelling in the language (`start..end` and `start..=end` are the only forms the parser

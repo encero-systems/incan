@@ -16,7 +16,7 @@ test_fixtures = []
 # The rust-analyzer-backed inspector. Off, the crate is only the token-level declaration digest, which the
 # compiler needs in every build because the SDK effect digest folds it in.
 inspector = [
-    "dep:incan_core",
+    "dep:incan_lang",
     "dep:toml",
     "dep:semver",
     "dep:ra_ap_hir",
@@ -36,7 +36,7 @@ name = "rust_inspect"
 path = "src/lib.rs"
 
 [dependencies]
-incan_core = { workspace = true, optional = true }
+incan_lang = { workspace = true, optional = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

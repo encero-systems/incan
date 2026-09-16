@@ -18,7 +18,7 @@ use crate::build::{
     PreparedOvenTestDependencyEnvelope, PublishedProjectInspectionAuthority, oven_bake_project_target_identity,
 };
 use crate::error::{CliError, CliResult, oven_rustc_error};
-use incan_core::version::INCAN_VERSION;
+use incan_lang::version::INCAN_VERSION;
 use oven_model::manifest::DependencySpec;
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
 use oven_rustc::rustc::{

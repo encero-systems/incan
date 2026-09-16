@@ -27,8 +27,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use incan_core::lang::types::collections::CollectionTypeId;
-use incan_core::lang::{magic_methods, trait_bounds::rust as tb};
+use incan_lang::lang::types::collections::CollectionTypeId;
+use incan_lang::lang::{magic_methods, trait_bounds::rust as tb};
 
 use crate::ownership::{
     RegularMethodArgumentContext, ValueUseSite, list_index_assignment_element_type, regular_method_argument_use_site,

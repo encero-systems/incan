@@ -5,7 +5,6 @@ use incan_test_support as support;
 use std::fs;
 use std::process::Command;
 
-use incan_core::lang::builtins::BuiltinFnId;
 use incan_driver::backend::replacement::{
     ProgramIo, ReplacementExecution, ReplacementExecutionError, ReplacementValue, execute_free_function,
     execute_free_function_with_io,
@@ -13,6 +12,7 @@ use incan_driver::backend::replacement::{
 use incan_frontend::body_ir::build_body_ir_module_v0;
 use incan_frontend::typechecker::TypeChecker;
 use incan_frontend::{lexer, parser};
+use incan_lang::lang::builtins::BuiltinFnId;
 use incan_semantics_core::body_ir::{
     ArgumentElement, Body, BodyIrModule, CallableTarget, Callee, Constant, NamedCallableTarget, Operand, StatementKind,
 };
@@ -550,7 +550,7 @@ def main() -> float:
                 assert_eq!(span.end, expected_start + call.len(), "{builtin:?}");
                 assert_eq!(
                     description,
-                    format!("call to function `{}`", incan_core::lang::builtins::as_str(builtin))
+                    format!("call to function `{}`", incan_lang::lang::builtins::as_str(builtin))
                 );
             }
             other => {

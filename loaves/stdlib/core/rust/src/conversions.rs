@@ -4,7 +4,7 @@
 //! typed exception messages rather than Rust's default `parse()` panic output.
 
 use crate::errors::raise;
-use incan_core::{
+use incan_lang::{
     errors::IncanError,
     numeric_strings::{parse_float_string, parse_int_string},
 };

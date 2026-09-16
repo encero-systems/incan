@@ -14,7 +14,7 @@ use super::*;
 pub(super) struct DirectCallDeclaration {
     pub(super) slots: Option<Vec<DeclaredSlot>>,
     pub(super) direct_call_id: Option<CompilerNodeId>,
-    pub(super) builtin: Option<incan_core::lang::builtins::BuiltinFnId>,
+    pub(super) builtin: Option<incan_lang::lang::builtins::BuiltinFnId>,
     pub(super) canonical: Option<CanonicalSymbolId>,
 }
 /// One declared callable parameter or nominal field, reduced to the facts call-site binding actually needs.

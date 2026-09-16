@@ -5,15 +5,15 @@ use std::collections::{HashMap, HashSet};
 use super::super::super::decl::{IrRustAttrArg, IrRustAttribute, IrRustLintAllow, IrTraitBound, IrTypeParam};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
-use incan_core::interop::is_rust_capability_bound;
-use incan_core::lang::callables;
-use incan_core::lang::decorators::{self, DecoratorId};
-use incan_core::lang::derives::{self, DeriveId};
-use incan_core::lang::keywords::{self, KeywordId};
-use incan_core::lang::trait_bounds;
-use incan_core::lang::traits as core_traits;
 use incan_frontend::ast::{self, Spanned};
 use incan_frontend::decorator_resolution;
+use incan_lang::interop::is_rust_capability_bound;
+use incan_lang::lang::callables;
+use incan_lang::lang::decorators::{self, DecoratorId};
+use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::keywords::{self, KeywordId};
+use incan_lang::lang::trait_bounds;
+use incan_lang::lang::traits as core_traits;
 
 const SERDE_SERIALIZE_DERIVE: &str = "serde::Serialize";
 const SERDE_DESERIALIZE_DERIVE: &str = "serde::Deserialize";
@@ -95,7 +95,7 @@ impl AstLowering {
 
     /// Map an Incan trait bound to the corresponding Rust trait bound.
     ///
-    /// Uses the `incan_core::lang::trait_bounds` registry to resolve known Incan names to their Rust trait paths (e.g.,
+    /// Uses the `incan_lang::lang::trait_bounds` registry to resolve known Incan names to their Rust trait paths (e.g.,
     /// Incan `Eq` → Rust `PartialEq`). Unknown names are passed through as-is, allowing user-defined trait bounds.
     fn lower_trait_bound(&self, bound: &ast::TraitBound, type_param_names: &HashSet<&str>) -> IrTraitBound {
         let (module_path, source_name) = self.canonical_trait_identity(&bound.name);
@@ -589,7 +589,7 @@ impl AstLowering {
     /// as Rust attributes — they are interpreted by the Incan test runner, not by `rustc`. Passthrough is reserved for
     /// external Rust-backed proc-macro crates like `incan_web_macros`.
     fn is_passthrough_rust_module(module_path: &str) -> bool {
-        !incan_core::lang::stdlib::facets::path_names_a_facet(module_path)
+        !incan_lang::lang::stdlib::facets::path_names_a_facet(module_path)
     }
 
     /// Resolve a derive argument through the import alias map as if it were a decorator path.

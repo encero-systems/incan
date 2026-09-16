@@ -21,9 +21,9 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::{EmitError, IrEmitter};
-use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_ir::expr::{BinOp, IrDictEntry, IrExprKind, IrListEntry, Literal as IrLiteral, TypedExpr};
 use incan_ir::types::IrType;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 impl<'a> IrEmitter<'a> {
     /// RFC 008 const representability check.

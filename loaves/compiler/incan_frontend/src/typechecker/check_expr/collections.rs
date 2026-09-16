@@ -7,7 +7,7 @@ use crate::ast::*;
 use crate::diagnostics::errors;
 use crate::symbols::ResolvedType;
 use crate::typechecker::helpers::{collection_type_id, dict_ty, list_ty, set_ty};
-use incan_core::lang::types::collections::CollectionTypeId;
+use incan_lang::lang::types::collections::CollectionTypeId;
 
 use super::TypeChecker;
 

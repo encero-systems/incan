@@ -38,8 +38,8 @@ pub use scanners::{check_for_this_import, collect_rust_crates, detect_serde_non_
 pub use stmt::{IrStmt, IrStmtKind};
 pub use types::{IrType, Mutability, Ownership};
 
-use incan_core::lang::c_abi::{LinkCapabilityId, ScalarTypeId};
 use incan_frontend::ast::Span;
+use incan_lang::lang::c_abi::{LinkCapabilityId, ScalarTypeId};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin, encode_incan_symbol_identity};
 use std::collections::HashMap;
 
@@ -658,7 +658,7 @@ mod tests {
         FunctionParam, FunctionRegistry, FunctionSignature, IrCheckedCFunction, IrCheckedCType, IrType, Mutability,
         ScalarTypeId,
     };
-    use incan_core::lang::c_abi::LinkCapabilityId;
+    use incan_lang::lang::c_abi::LinkCapabilityId;
 
     fn checked_c_function(binding: &str, symbol: &str) -> IrCheckedCFunction {
         IrCheckedCFunction {

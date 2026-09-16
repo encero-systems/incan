@@ -1,4 +1,4 @@
-//! Generate Markdown reference docs from `incan_core::lang` registries.
+//! Generate Markdown reference docs from `incan_lang::lang` registries.
 //!
 //! This binary renders:
 //! - language-core vocabulary registries (keywords, operators, builtins, types, punctuation)
@@ -8,13 +8,13 @@
 //! ## Notes
 //! - The generated files are meant to be checked into the repo and treated as derived artifacts.
 //! - **Do not edit generated files by hand** (`language.md`).
-//! - Change source registries under `loaves/kernel/incan_core/src/lang/` for core language tables.
+//! - Change source registries under `loaves/kernel/incan_lang/src/lang/` for core language tables.
 //! - Re-run this binary so docs remain in sync.
 //!
 //! ## Examples
 //! Run from the workspace root:
 //! ```bash
-//! cargo run -p incan_core --bin generate_lang_reference
+//! cargo run -p incan_lang --bin generate_lang_reference
 //! ```
 //!
 //! ## Panics
@@ -24,8 +24,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use incan_core::lang::types::{collections, numerics, stringlike};
-use incan_core::lang::{
+use incan_lang::lang::types::{collections, numerics, stringlike};
+use incan_lang::lang::{
     builtins, decorators, derives, errors, keywords, operators, punctuation, stdlib, surface, traits,
 };
 
@@ -88,14 +88,14 @@ fn main() {
 
 /// Write `workspaces/docs-site/docs/language/reference/language.md`.
 ///
-/// This is a single consolidated reference document generated from `incan_core::lang` registries.
+/// This is a single consolidated reference document generated from `incan_lang::lang` registries.
 fn write_language_reference(path: &Path) {
     let mut out = String::new();
     out.push_str("# Incan language reference\n\n");
     out.push_str("!!! warning \"Generated file\"\n");
     out.push_str("    Do not edit this page by hand. If it looks wrong/outdated, regenerate it from source and commit the result.\n");
     out.push('\n');
-    out.push_str("    Regenerate with: `cargo run -p incan_core --bin generate_lang_reference`\n\n");
+    out.push_str("    Regenerate with: `cargo run -p incan_lang --bin generate_lang_reference`\n\n");
 
     out.push_str("## Contents\n\n");
     out.push_str("- [Keywords](#keywords)\n");
@@ -1119,7 +1119,7 @@ fn render_surface_methods_section(out: &mut String) {
 /// Resolve the workspace root directory.
 ///
 /// ## Returns
-/// - The workspace root path (three levels above `loaves/kernel/incan_core`).
+/// - The workspace root path (three levels above `loaves/kernel/incan_lang`).
 ///
 /// ## Panics
 /// - If the path cannot be resolved (this indicates a broken workspace layout).
@@ -1129,12 +1129,12 @@ fn workspace_root() -> PathBuf {
     }
     if let Ok(current_dir) = std::env::current_dir()
         && current_dir.join("Cargo.toml").is_file()
-        && current_dir.join("loaves/kernel/incan_core").is_dir()
+        && current_dir.join("loaves/kernel/incan_lang").is_dir()
     {
         return current_dir;
     }
 
-    // loaves/kernel/incan_core -> kernel -> loaves -> workspace root
+    // loaves/kernel/incan_lang -> kernel -> loaves -> workspace root
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     match manifest_dir
         .parent()
@@ -1143,6 +1143,6 @@ fn workspace_root() -> PathBuf {
         .map(Path::to_path_buf)
     {
         Some(path) => path,
-        None => panic!("workspace root (three levels above loaves/kernel/incan_core)"),
+        None => panic!("workspace root (three levels above loaves/kernel/incan_lang)"),
     }
 }

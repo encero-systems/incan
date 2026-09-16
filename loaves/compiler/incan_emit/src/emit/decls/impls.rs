@@ -6,11 +6,11 @@ use proc_macro2::{Literal, TokenStream};
 use quote::{format_ident, quote};
 use std::collections::HashSet;
 
-use incan_core::lang::conventions;
-use incan_core::lang::derives::{self, DeriveId};
-use incan_core::lang::magic_methods;
-use incan_core::lang::trait_capabilities;
-use incan_core::lang::traits::{self as core_traits, TraitId};
+use incan_lang::lang::conventions;
+use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::magic_methods;
+use incan_lang::lang::trait_capabilities;
+use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_semantics_core::encode_incan_symbol_identity;
 
 use super::super::{EmitError, IrEmitter};
@@ -222,7 +222,7 @@ impl<'a> IrEmitter<'a> {
                 })
                 .map(|m| self.emit_trait_method(m))
                 .collect::<Result<_, _>>()?;
-            if incan_core::lang::stdlib::is_stdlib_json_serialize_trait_name(trait_name)
+            if incan_lang::lang::stdlib::is_stdlib_json_serialize_trait_name(trait_name)
                 && !impl_block.methods.iter().any(|method| method.name == "to_json")
             {
                 trait_methods.push(quote! {
@@ -231,7 +231,7 @@ impl<'a> IrEmitter<'a> {
                     }
                 });
             }
-            if incan_core::lang::stdlib::is_stdlib_json_deserialize_trait_name(trait_name)
+            if incan_lang::lang::stdlib::is_stdlib_json_deserialize_trait_name(trait_name)
                 && !impl_block.methods.iter().any(|method| method.name == "from_json")
             {
                 trait_methods.push(quote! {

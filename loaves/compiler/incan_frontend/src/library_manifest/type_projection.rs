@@ -314,8 +314,8 @@ fn attach_owner_projection(
         }
         TypeRef::Applied { name, origin: None, .. }
             if !name.starts_with("::")
-                && incan_core::lang::types::collections::from_str(name).is_none()
-                && name != incan_core::lang::types::UNION_TYPE_NAME
+                && incan_lang::lang::types::collections::from_str(name).is_none()
+                && name != incan_lang::lang::types::UNION_TYPE_NAME
                 && name != "decimal" =>
         {
             *name = format!("{rust_owner}::{name}");

@@ -1,8 +1,8 @@
 //! Adapters from the frontend's operators, literals and resolved types into the kernel's numeric policy enums.
 use crate::ast::{BinaryOp, Expr, Literal, Spanned, UnaryOp};
 use crate::symbols::ResolvedType;
-use incan_core::lang::types::numerics::{self, NumericFamily};
-use incan_core::{NumericOp, NumericTy, PowExponentKind};
+use incan_lang::lang::types::numerics::{self, NumericFamily};
+use incan_lang::{NumericOp, NumericTy, PowExponentKind};
 
 /// Map frontend AST BinaryOp to NumericOp.
 pub fn numeric_op_from_ast(op: &BinaryOp) -> Option<NumericOp> {

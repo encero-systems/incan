@@ -170,7 +170,7 @@ impl<'a> PublicationAudit<'a> {
             IncanType::Generic { base, args } => {
                 // These are the semantic model's compiler-owned generic constructors. User generic declarations
                 // lack canonical type arguments in this version and stay explicitly uncovered.
-                if incan_core::lang::types::collections::from_str(base).is_none() {
+                if incan_lang::lang::types::collections::from_str(base).is_none() {
                     return Err(CoverageReason::UnresolvedReference);
                 }
                 for arg in args {

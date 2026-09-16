@@ -60,7 +60,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use incan_core::lang::keywords::KeywordId;
+use incan_lang::lang::keywords::KeywordId;
 use incan_semantics_core::SurfaceFeatureKey;
 use incan_semantics_core::body_ir as bir;
 use incan_semantics_core::{
@@ -68,8 +68,8 @@ use incan_semantics_core::{
     IncanCallableParamKind, IncanPrimitiveType, IncanType, SemanticSourceTargetKind, rust_tuple_arity,
 };
 
-use incan_core::lang::surface::constructors::{self, ConstructorId};
-use incan_core::lang::types::collections::{self, CollectionTypeId};
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 use crate::ast;
 use crate::provider::ProviderPlan;

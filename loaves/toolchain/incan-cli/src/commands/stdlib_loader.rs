@@ -4,7 +4,7 @@
 //! Unlike user modules (which are discovered via filesystem traversal in `collect_modules`), stdlib modules are:
 //!
 //! 1. Detected by scanning import statements for `std.*` paths
-//! 2. Resolved via `incan_core::lang::stdlib::stdlib_stub_path()`
+//! 2. Resolved via `incan_lang::lang::stdlib::stdlib_stub_path()`
 //! 3. Parsed and added as dependency modules to the codegen pipeline
 //!
 //! ## Integration
@@ -22,8 +22,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::{CliError, CliResult};
-use incan_core::lang::stdlib;
 use incan_frontend::{ast_walk, diagnostics, lexer::Lexer, parser::Parser, surface_semantics};
+use incan_lang::lang::stdlib;
 use incan_syntax::ast::{Declaration, ImportKind, Program};
 
 /// A parsed stdlib module ready for compilation.
@@ -129,7 +129,7 @@ fn is_stdlib_import(path: &[String]) -> bool {
 
 /// Load and parse a single stdlib module.
 fn load_stdlib_module(path: &[String]) -> CliResult<StdlibModule> {
-    // Resolve stdlib path via incan_core registry
+    // Resolve stdlib path via incan_lang registry
     let relative_path = stdlib::stdlib_stub_path(path).ok_or_else(|| {
         CliError::failure(format!(
             "Stdlib module not found: {} (not in stdlib registry)",

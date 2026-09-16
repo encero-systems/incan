@@ -683,7 +683,7 @@ fn print_summary_table(summaries: &[EnvSummary]) {
 /// Compute current-toolchain compatibility for CLI display.
 fn toolchain_compatibility(constraints: &ToolchainConstraintSet) -> CliResult<ToolchainCompatibility> {
     constraints
-        .compatibility_with(incan_core::version::INCAN_VERSION)
+        .compatibility_with(incan_lang::version::INCAN_VERSION)
         .map_err(|error| CliError::failure(error.to_string()))
 }
 

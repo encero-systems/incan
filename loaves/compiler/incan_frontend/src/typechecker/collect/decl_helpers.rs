@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 use crate::symbols::{CallableParam, FieldInfo, MethodInfo, PropertyInfo, ResolvedType, TypeBoundInfo};
 use crate::typechecker::TypeChecker;
-use incan_core::lang::derives::{self, DeriveId};
+use incan_lang::lang::derives::{self, DeriveId};
 use incan_semantics_core::SemanticSourceTargetKind;
 
 /// Build the resolved surface type for a declaration owner while that owner is still being collected.

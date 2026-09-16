@@ -74,7 +74,7 @@ fn non_root_module_path(path: Option<&[String]>) -> Option<&[String]> {
 /// Return whether a default-expression path is already rooted in a compiler-known namespace.
 fn path_is_already_absolute(path: &[String]) -> bool {
     matches!(path.first().map(String::as_str), Some("std" | "rust" | "pub"))
-        || path.first().map(String::as_str) == Some(incan_core::lang::stdlib::INCAN_STD_NAMESPACE)
+        || path.first().map(String::as_str) == Some(incan_lang::lang::stdlib::INCAN_STD_NAMESPACE)
 }
 
 #[derive(Debug, Clone)]

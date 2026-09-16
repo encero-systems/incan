@@ -10,9 +10,9 @@
 //! - Use `crate::token_helpers` for ergonomic token matching at call sites.
 
 use crate::ast::{DecimalLiteral, FloatLiteral, IntLiteral, Span};
-use incan_core::lang::keywords::{self, KeywordId};
-use incan_core::lang::operators::OperatorId;
-use incan_core::lang::punctuation::PunctuationId;
+use incan_lang::lang::keywords::{self, KeywordId};
+use incan_lang::lang::operators::OperatorId;
+use incan_lang::lang::punctuation::PunctuationId;
 
 // ============================================================================
 // TOKEN TYPES
@@ -21,7 +21,7 @@ use incan_core::lang::punctuation::PunctuationId;
 /// Kind of token produced by the lexer.
 ///
 /// ## Notes
-/// - Keyword/operator/punctuation tokens carry stable IDs from `incan_core::lang`.
+/// - Keyword/operator/punctuation tokens carry stable IDs from `incan_lang::lang`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     // ========== Keyword / operator / punctuation (ID-based) ==========

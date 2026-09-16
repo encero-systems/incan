@@ -12,7 +12,7 @@
 //!
 //! ## Examples
 //! ```rust
-//! use incan_core::lang::operators::{self, OperatorId};
+//! use incan_lang::lang::operators::{self, OperatorId};
 //!
 //! assert_eq!(operators::from_str("+"), Some(OperatorId::Plus));
 //! assert_eq!(operators::info_for(OperatorId::Plus).precedence, 50);

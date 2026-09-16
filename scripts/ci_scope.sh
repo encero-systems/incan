@@ -72,7 +72,7 @@ fi
 if [ "$reference" != "true" ] && [ "$EVENT_NAME" = "pull_request" ]; then
   while IFS= read -r -d '' file; do
     case "$file" in
-      loaves/kernel/incan_core/*) reference=true; break ;;
+      loaves/kernel/incan_lang/*) reference=true; break ;;
       workspaces/docs-site/docs/language/reference/language.md) reference=true; break ;;
       workspaces/docs-site/docs/language/reference/feature_inventory.md) reference=true; break ;;
       workspaces/docs-site/docs/_snippets/language/examples/*) reference=true; break ;;

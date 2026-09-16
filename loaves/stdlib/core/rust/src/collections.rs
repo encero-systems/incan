@@ -9,8 +9,8 @@ use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
 use crate::errors::{raise, raise_value_error};
-use incan_core::errors::{IncanError, key_not_found_in_dict};
-use incan_core::indexing::normalize_slice_bounds;
+use incan_lang::errors::{IncanError, key_not_found_in_dict};
+use incan_lang::indexing::normalize_slice_bounds;
 
 #[inline]
 fn normalize_list_index(len: usize, index: i64) -> usize {

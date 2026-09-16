@@ -1,9 +1,9 @@
 //! Focused checked-identity and Body-IR coverage for the selected #1256 string helpers.
 
-use incan_core::lang::surface::string_methods::StringMethodId;
 use incan_frontend::ast;
 use incan_frontend::body_ir::build_body_ir_module_v0;
 use incan_frontend::typechecker::TypeChecker;
+use incan_lang::lang::surface::string_methods::StringMethodId;
 use incan_semantics_core::body_ir::{BodyIrModule, StatementKind};
 use incan_syntax::{lexer, parser};
 

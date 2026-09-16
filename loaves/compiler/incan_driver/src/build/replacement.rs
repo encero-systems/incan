@@ -290,7 +290,7 @@ pub fn build_replacement_file_report(
     write_backend_receipt(&backend_receipt, &default_backend_receipt_path(&project_root))?;
     Ok(serde_json::json!({
         "schema_version": REPLACEMENT_EXECUTION_REPORT_SCHEMA_VERSION,
-        "compiler_version": incan_core::version::INCAN_VERSION,
+        "compiler_version": incan_lang::version::INCAN_VERSION,
         "status": "success",
         "mode": "executable",
         "entrypoint": entrypoint,

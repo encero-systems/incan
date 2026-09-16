@@ -13,10 +13,10 @@ use crate::diagnostics::{CompileError, errors};
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved, pow_exponent_kind_from_ast};
 use crate::partial_projection::{PartialPresetRef, merge_named_partial_args};
 use crate::symbols::{ResolvedType, SymbolKind, TypeInfo};
-use incan_core::lang::types::numerics::NumericTypeId;
-use incan_core::numeric_values::{IntegerBounds, integer_bounds};
-use incan_core::strings::{self, StringAccessError};
-use incan_core::{NumericTy, result_numeric_type};
+use incan_lang::lang::types::numerics::NumericTypeId;
+use incan_lang::numeric_values::{IntegerBounds, integer_bounds};
+use incan_lang::strings::{self, StringAccessError};
+use incan_lang::{NumericTy, result_numeric_type};
 
 use super::{PartialProjectionTargetKind, TypeChecker};
 use crate::typechecker::helpers::{
@@ -580,7 +580,7 @@ impl TypeChecker {
                     ResolvedType::FrozenList(elem) => Some(elem.as_ref()),
                     ResolvedType::Generic(name, args)
                         if crate::typechecker::helpers::collection_type_id(name.as_str())
-                            == Some(incan_core::lang::types::collections::CollectionTypeId::FrozenList)
+                            == Some(incan_lang::lang::types::collections::CollectionTypeId::FrozenList)
                             && !args.is_empty() =>
                     {
                         Some(&args[0])
@@ -620,7 +620,7 @@ impl TypeChecker {
                     ResolvedType::FrozenSet(elem) => Some(elem.as_ref()),
                     ResolvedType::Generic(name, args)
                         if crate::typechecker::helpers::collection_type_id(name.as_str())
-                            == Some(incan_core::lang::types::collections::CollectionTypeId::FrozenSet)
+                            == Some(incan_lang::lang::types::collections::CollectionTypeId::FrozenSet)
                             && !args.is_empty() =>
                     {
                         Some(&args[0])
@@ -653,7 +653,7 @@ impl TypeChecker {
                     Some(ResolvedType::FrozenDict(k, v)) => (Some(k.as_ref()), Some(v.as_ref())),
                     Some(ResolvedType::Generic(name, args))
                         if crate::typechecker::helpers::collection_type_id(name.as_str())
-                            == Some(incan_core::lang::types::collections::CollectionTypeId::FrozenDict)
+                            == Some(incan_lang::lang::types::collections::CollectionTypeId::FrozenDict)
                             && args.len() >= 2 =>
                     {
                         (Some(&args[0]), Some(&args[1]))

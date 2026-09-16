@@ -65,12 +65,12 @@ impl<'a> Parser<'a> {
         if self.peek().kind.is_keyword(id) {
             return true;
         }
-        if !incan_core::lang::keywords::is_soft(id) || !self.active_soft_keywords.contains(&id) {
+        if !incan_lang::lang::keywords::is_soft(id) || !self.active_soft_keywords.contains(&id) {
             return false;
         }
         matches!(
             &self.peek().kind,
-            TokenKind::Ident(name) if name == incan_core::lang::keywords::as_str(id)
+            TokenKind::Ident(name) if name == incan_lang::lang::keywords::as_str(id)
         )
     }
 
@@ -79,23 +79,23 @@ impl<'a> Parser<'a> {
         let TokenKind::Ident(name) = &self.peek().kind else {
             return None;
         };
-        let id = incan_core::lang::keywords::from_str(name)?;
-        if !incan_core::lang::keywords::is_soft(id) || self.active_soft_keywords.contains(&id) {
+        let id = incan_lang::lang::keywords::from_str(name)?;
+        if !incan_lang::lang::keywords::is_soft(id) || self.active_soft_keywords.contains(&id) {
             return None;
         }
-        let namespace = incan_core::lang::keywords::activation(id)?;
+        let namespace = incan_lang::lang::keywords::activation(id)?;
         Some(errors::soft_keyword_requires_import(name, namespace, self.current_span()))
     }
 
     /// Return the currently-active soft keyword id, if the current token is an active soft keyword spelling.
     fn current_active_soft_keyword(&self) -> Option<KeywordId> {
         match &self.peek().kind {
-            TokenKind::Keyword(id) if incan_core::lang::keywords::is_soft(*id) && self.active_soft_keywords.contains(id) => {
+            TokenKind::Keyword(id) if incan_lang::lang::keywords::is_soft(*id) && self.active_soft_keywords.contains(id) => {
                 Some(*id)
             }
             TokenKind::Ident(name) => {
-                let id = incan_core::lang::keywords::from_str(name)?;
-                if incan_core::lang::keywords::is_soft(id) && self.active_soft_keywords.contains(&id) {
+                let id = incan_lang::lang::keywords::from_str(name)?;
+                if incan_lang::lang::keywords::is_soft(id) && self.active_soft_keywords.contains(&id) {
                     Some(id)
                 } else {
                     None
@@ -109,7 +109,7 @@ impl<'a> Parser<'a> {
     ///
     /// Imported-library registrations are checked first so consumer-side vocab metadata can widen accepted surfaces for active soft keywords; builtin metadata is used as fallback.
     fn keyword_supports_surface_usage(&self, id: KeywordId, usage: KeywordSurfaceKind) -> bool {
-        let keyword_name = incan_core::lang::keywords::as_str(id);
+        let keyword_name = incan_lang::lang::keywords::as_str(id);
         if let Some(specs) = self.active_imported_keyword_specs.get(keyword_name)
             && specs.iter().any(|spec| {
                 keyword_surface_supports_usage(spec.surface_kind, usage)
@@ -118,7 +118,7 @@ impl<'a> Parser<'a> {
         {
             return true;
         }
-        incan_core::lang::keywords::supports_surface_kind(id, usage)
+        incan_lang::lang::keywords::supports_surface_kind(id, usage)
     }
 
     /// Return the active soft keyword id if it is valid for the requested parser surface.
@@ -149,7 +149,7 @@ impl<'a> Parser<'a> {
         while let Some(token) = self.tokens.get(idx) {
             let id = match &token.kind {
                 TokenKind::Keyword(id) => Some(*id),
-                TokenKind::Ident(name) => incan_core::lang::keywords::from_str(name),
+                TokenKind::Ident(name) => incan_lang::lang::keywords::from_str(name),
                 _ => None,
             };
             let Some(id) = id else {

@@ -39,8 +39,6 @@ use std::collections::{HashMap, HashSet};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use incan_core::lang::types::collections::{self, CollectionTypeId};
-use incan_core::lang::{rust_keywords, stdlib};
 use incan_frontend::api_metadata::{
     ApiDeclaration, class_export_from_api, enum_export_from_api, function_export_from_api, model_export_from_api,
     newtype_export_from_api,
@@ -63,6 +61,8 @@ use incan_ir::expr::{
 };
 use incan_ir::types::{IR_UNION_TYPE_NAME, IrType, Mutability};
 use incan_ir::{FunctionRegistry, FunctionSignature, IrProgram};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_lang::lang::{rust_keywords, stdlib};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin, encode_incan_symbol_identity};
 
 /// Value-enum metadata loaded from a `.incnlib` dependency for consumer-side trait bridges.

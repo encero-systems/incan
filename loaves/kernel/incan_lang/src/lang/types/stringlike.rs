@@ -8,7 +8,7 @@
 //!
 //! ## Examples
 //! ```rust
-//! use incan_core::lang::types::stringlike::{self, StringLikeId};
+//! use incan_lang::lang::types::stringlike::{self, StringLikeId};
 //!
 //! assert_eq!(stringlike::from_str("str"), Some(StringLikeId::Str));
 //! assert_eq!(stringlike::from_str("FString"), Some(StringLikeId::FString));

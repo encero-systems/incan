@@ -352,11 +352,11 @@ def f() -> bool:
 "#;
 
 fn case_stdlib_runtime_string_membership() -> ComparisonOutcome {
-    use incan_core::strings::str_contains;
+    use incan_lang::strings::str_contains;
 
     if !str_contains("hello", "hell") || str_contains("hello", "xyz") {
         return ComparisonOutcome::Mismatch {
-            detail: "incan_core::strings::str_contains no longer matches its documented substring policy".to_string(),
+            detail: "incan_lang::strings::str_contains no longer matches its documented substring policy".to_string(),
         };
     }
 

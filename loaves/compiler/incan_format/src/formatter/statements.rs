@@ -1,6 +1,6 @@
 //! Statement formatting: assignments, control flow (if/elif/else, while, for), and compound statements.
 
-use incan_core::lang::keywords;
+use incan_lang::lang::keywords;
 use incan_semantics_core::SurfaceFeatureKey;
 use incan_syntax::ast::*;
 

@@ -67,7 +67,7 @@ impl<'a> Parser<'a> {
                 Ok(name)
             }
             TokenKind::Keyword(kw) => {
-                let name = incan_core::lang::keywords::as_str(*kw).to_string();
+                let name = incan_lang::lang::keywords::as_str(*kw).to_string();
                 self.advance();
                 Ok(name)
             }

@@ -1,7 +1,7 @@
 //! Type name constants and generic constructors used across the typechecker.
 use crate::symbols::ResolvedType;
-use incan_core::lang::types::collections::{self, CollectionTypeId};
-use incan_core::lang::types::stringlike::{self, StringLikeId};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_lang::lang::types::stringlike::{self, StringLikeId};
 
 pub use crate::symbols::render_resolved_type_as_rust_arg;
 

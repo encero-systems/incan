@@ -32,7 +32,7 @@ Each ring has its own version line. Cross-ring edges are semver requirements, ne
 - `oven_<thing>` for the build system.
 - `incan_std_<component>` for stdlib runtime crates, matching the `stdlib-<component>` ids in `sdk-components.toml`.
 - Binaries keep their product names: `incan`, `incan-lsp`, `oven`. Their directories say what they are: `incan-cli`, `incan-lsp`, `oven-cli`.
-- `incan_core` becomes `incan_lang`, so that `core` means the mandatory stdlib component and nothing else.
+- `incan_core` became `incan_lang`, so that `core` means the mandatory stdlib component and nothing else.
 - `incan_semantics_stdlib` is compiler implementation per `layering.md`, not a contract; it goes to `compiler/incan_provider`, never into the kernel.
 
 ## Why these cuts
@@ -109,7 +109,7 @@ Every import from the proposed Oven-ring sources into an Incan ring, measured on
 | --- | --- |
 | `oven/rustc.rs` → `cli::commands::build` (2: plan selection) | internal to `oven_rustc` once #1266 moves the plan API |
 | `oven/legacy_cargo.rs` → `cli::commands::common::discover_active_sdk_inventory`, `provider::SdkInventory`, `library_manifest` digests, `backend::project::runner` | `oven_cargo_compat` takes SDK inventory and provider digests through the facet's provider hook; the runner reference becomes internal |
-| `oven/loaf.rs`, `dependency_resolver.rs` → `incan_core::lang::stdlib::StdlibExtraCrateSource` | `incan_oven_facet` supplies extra crate sources as provider facts |
+| `oven/loaf.rs`, `dependency_resolver.rs` → `incan_lang::lang::stdlib::StdlibExtraCrateSource` | `incan_oven_facet` supplies extra crate sources as provider facts |
 | `lockfile.rs` → `provider::*`, `library_manifest::*`, `frontend::LibraryManifestIndex` | Incan-specific lock sections live in `incan_oven_facet` behind an extension point in `oven_model` |
 | `dependency_resolver.rs` → `frontend::ast::Span`, `frontend::diagnostics::CompileError` | resolution errors are Oven's own type; the facet maps them to compiler diagnostics |
 | `backend/project/runner.rs` → `rust_inspect` (cfg-gated out-dir records) | facet hook |

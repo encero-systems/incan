@@ -37,11 +37,11 @@ use crate::typechecker::{
     ImportedRegistryDefinitionInfo, PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind,
     PublicLibraryTypeIdentity, TypeChecker, canonical_public_library_type_name,
 };
-use incan_core::interop::{RustItemKind, RustTraitAssoc, fallback_rust_trait_methods, is_rust_capability_bound};
-use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
-use incan_core::lang::stdlib::{self, is_typechecker_only_stdlib};
-use incan_core::lang::surface::functions as surface_functions;
-use incan_core::lang::surface::types as surface_types;
+use incan_lang::interop::{RustItemKind, RustTraitAssoc, fallback_rust_trait_methods, is_rust_capability_bound};
+use incan_lang::lang::decorators::{self as core_decorators, DecoratorId};
+use incan_lang::lang::stdlib::{self, is_typechecker_only_stdlib};
+use incan_lang::lang::surface::functions as surface_functions;
+use incan_lang::lang::surface::types as surface_types;
 use incan_semantics_core::{CanonicalSymbolId, DecoratorFeature, SurfaceFeatureKey};
 
 enum ManifestExportRef<'a> {

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use incan_core::interop::RustItemMetadata;
+use incan_lang::interop::RustItemMetadata;
 
 use crate::cache::RustMetadataCache;
 use crate::error::RustMetadataError;
@@ -245,8 +245,8 @@ impl Inspector {
 /// complete metadata.
 fn metadata_has_unknowns(metadata: &RustItemMetadata) -> bool {
     /// Walk one type shape, including its `Option`, `Ref`, `Result` and collection payloads.
-    fn shape_has_unknown(shape: &incan_core::interop::RustTypeShape) -> bool {
-        use incan_core::interop::RustTypeShape;
+    fn shape_has_unknown(shape: &incan_lang::interop::RustTypeShape) -> bool {
+        use incan_lang::interop::RustTypeShape;
         match shape {
             RustTypeShape::Unknown => true,
             RustTypeShape::Option(inner) | RustTypeShape::Ref(inner) => shape_has_unknown(inner),
@@ -258,10 +258,10 @@ fn metadata_has_unknowns(metadata: &RustItemMetadata) -> bool {
     }
 
     match &metadata.kind {
-        incan_core::interop::RustItemKind::Function(sig) => {
+        incan_lang::interop::RustItemKind::Function(sig) => {
             sig.params.iter().any(|param| param.type_display.contains('?'))
         }
-        incan_core::interop::RustItemKind::Type(info) => {
+        incan_lang::interop::RustItemKind::Type(info) => {
             info.fields.iter().any(|field| shape_has_unknown(&field.type_shape))
                 || info
                     .variants

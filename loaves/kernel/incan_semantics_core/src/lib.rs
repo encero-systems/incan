@@ -22,8 +22,8 @@
 //! 2. Extend the payload-kind enums if the parser needs a new generic shape.
 //! 3. Implement [`SurfaceSemanticsPack`] in a pack crate (see `incan_semantics_stdlib`).
 
-use incan_core::lang::decorators::DecoratorId;
-use incan_core::lang::keywords::KeywordId;
+use incan_lang::lang::decorators::DecoratorId;
+use incan_lang::lang::keywords::KeywordId;
 
 pub mod dependencies;
 

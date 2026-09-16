@@ -2,17 +2,17 @@
 
 use std::collections::{HashMap, HashSet};
 
-use incan_core::lang::{
-    generated_support, stdlib,
-    surface::result_methods,
-    traits::{self as core_traits, TraitId},
-};
 use incan_frontend::ast::{self, Declaration, Expr, ImportKind, ImportPath, Program};
 use incan_frontend::decorator_resolution;
 use incan_frontend::module::{canonicalize_source_module_segments, logical_source_import_candidates};
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_ir::expr::{BuiltinFn, IrDictEntry, IrGeneratorClause, IrListEntry, MethodKind, Pattern, VarRefKind};
 use incan_ir::{IrDecl, IrDeclKind, IrExpr, IrExprKind, IrProgram, IrStmt, IrStmtKind, IrType};
+use incan_lang::lang::{
+    generated_support, stdlib,
+    surface::result_methods,
+    traits::{self as core_traits, TraitId},
+};
 
 /// Collect field-alias metadata for exported models.
 pub fn collect_model_field_aliases(

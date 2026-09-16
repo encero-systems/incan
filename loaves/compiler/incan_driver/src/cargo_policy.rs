@@ -100,7 +100,7 @@ pub fn enforce_project_toolchain_constraint(manifest: &ProjectManifest) -> CliRe
 /// Enforce an already-resolved effective `requires-incan` constraint set.
 pub fn enforce_toolchain_constraints(constraints: &ToolchainConstraintSet) -> CliResult<()> {
     constraints
-        .enforce(incan_core::version::INCAN_VERSION)
+        .enforce(incan_lang::version::INCAN_VERSION)
         .map_err(|error| CliError::failure(error.to_string()))
 }
 

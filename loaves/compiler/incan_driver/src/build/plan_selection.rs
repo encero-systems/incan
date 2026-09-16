@@ -17,7 +17,7 @@ use crate::build::{
 };
 use crate::build_unit::promoted_oven_test_dependencies;
 use crate::error::{CliError, CliResult, oven_plan_error, oven_rustc_error};
-use incan_core::version::INCAN_VERSION;
+use incan_lang::version::INCAN_VERSION;
 use incan_provider::dependency_resolver::ResolvedDependencies;
 use oven_model::manifest::{DependencySource, DependencySpec};
 use oven_rustc::interop::OVEN_INTEROP_EXECUTION_RECEIPT_INPUT;

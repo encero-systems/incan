@@ -5605,7 +5605,7 @@ def main() -> str:
 #[test]
 fn replacement_executes_print_by_recording_its_output() -> Result<(), Box<dyn std::error::Error>> {
     // `println` was the single largest blocker in the example corpus: 25 of 68 examples reached Body IR and stopped
-    // at their first call. It is now resolved through `incan_core`'s builtin registry rather than by name, and the
+    // at their first call. It is now resolved through `incan_lang`'s builtin registry rather than by name, and the
     // line is *recorded* rather than written -- output a caller can read back is output a comparison can check.
     let source = r#"
 def main() -> None:

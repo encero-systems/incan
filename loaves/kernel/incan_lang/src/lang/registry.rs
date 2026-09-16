@@ -1,6 +1,6 @@
-//! Shareable metadata for `incan_core::lang` registries.
+//! Shareable metadata for `incan_lang::lang` registries.
 //!
-//! The `incan_core::lang` module is a set of **registry-first** vocabularies: keywords,
+//! The `incan_lang::lang` module is a set of **registry-first** vocabularies: keywords,
 //! operators, builtin functions, builtin types, etc. This submodule provides the small,
 //! dependency-free metadata types that are reused across all registries.
 //!
@@ -21,7 +21,7 @@
 ///
 /// ## Examples
 /// ```rust
-/// use incan_core::lang::registry::RfcId;
+/// use incan_lang::lang::registry::RfcId;
 ///
 /// let rfc: RfcId = "RFC 000";
 /// assert!(rfc.starts_with("RFC "));
@@ -384,7 +384,7 @@ impl RFC {
 ///
 /// ## Examples
 /// ```rust
-/// use incan_core::lang::registry::Since;
+/// use incan_lang::lang::registry::Since;
 ///
 /// let since = Since(0, 1);
 /// assert_eq!(since.to_string(), "0.1");
@@ -405,7 +405,7 @@ impl std::fmt::Display for Since {
 ///
 /// ## Examples
 /// ```rust
-/// use incan_core::lang::registry::Stability;
+/// use incan_lang::lang::registry::Stability;
 ///
 /// let s = Stability::Stable;
 /// assert_eq!(format!("{s:?}"), "Stable");
@@ -425,7 +425,7 @@ pub enum Stability {
 ///
 /// ## Examples
 /// ```rust
-/// use incan_core::lang::registry::Example;
+/// use incan_lang::lang::registry::Example;
 ///
 /// let ex = Example {
 ///     code: "if cond:\n  pass",

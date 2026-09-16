@@ -2527,7 +2527,7 @@ mod tests {
             sdk_id: "incan".to_string(),
             sdk_version: "0.5.0".to_string(),
             compiler_requirement: ">=0.5.0-dev.5,<0.6.0".to_string(),
-            provider_codegen_revision: incan_core::version::SDK_PROVIDER_CODEGEN_REVISION,
+            provider_codegen_revision: incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION,
             components: BTreeMap::from([(
                 "stdlib-core".to_string(),
                 super::super::SdkComponent {

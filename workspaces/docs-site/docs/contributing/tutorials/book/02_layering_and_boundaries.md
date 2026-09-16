@@ -22,7 +22,7 @@ The canonical rules live here:
 In practice, the patterns you want are:
 
 - **`incan_syntax` is shared**: lexer/parser/AST/diagnostics are reused by compiler, formatter, and LSP.
-- **`incan_core` is a semantic core**: shared, pure semantics and registries that must not drift.
+- **`incan_lang` is a semantic core**: shared, pure semantics and registries that must not drift.
 - **`incan_semantics_core` is the descriptor contract**: semantics packs describe compiler actions without calling compiler internals.
 - **`incan_semantics_stdlib` is implementation**: current stdlib packs are toolchain-locked, not general runtime APIs.
 - **`rust_inspect` is staged interop**: prepare/prewarm Rust metadata explicitly, then use cache-oriented reads in semantic paths.
@@ -39,7 +39,7 @@ You add a feature, it “works” in the CLI, but:
 Another failure mode is treating runtime convenience as compiler policy:
 
 - adding a helper to a standard library facet (`incan_std_core` and the others) and calling it from `incan`,
-- putting stdlib-owned runtime types into `incan_core` without a clear language-policy reason,
+- putting stdlib-owned runtime types into `incan_lang` without a clear language-policy reason,
 - or making `rust_inspect` do hidden workspace loading from a semantic hot path.
 
 When you feel tempted to “just implement it in the CLI”:

@@ -13,14 +13,14 @@ use super::super::super::{FunctionSignature, IrSpan, Mutability, TypedExpr};
 use super::super::AstLowering;
 use super::super::TraitImplLoweringInput;
 use super::super::errors::LoweringError;
-use incan_core::lang::callables;
-use incan_core::lang::decorators::{self, DecoratorId};
-use incan_core::lang::keywords::{self, KeywordId};
-use incan_core::lang::magic_methods::{self, MagicMethodId};
-use incan_core::lang::traits as core_traits;
-use incan_core::lang::traits::TraitId;
 use incan_frontend::ast::{self, Spanned};
 use incan_frontend::symbols::ResolvedType;
+use incan_lang::lang::callables;
+use incan_lang::lang::decorators::{self, DecoratorId};
+use incan_lang::lang::keywords::{self, KeywordId};
+use incan_lang::lang::magic_methods::{self, MagicMethodId};
+use incan_lang::lang::traits as core_traits;
+use incan_lang::lang::traits::TraitId;
 
 /// Instantiated trait signature used while matching concrete and alias-backed implementation methods.
 #[derive(Clone, Copy)]
@@ -565,10 +565,10 @@ impl AstLowering {
         if let Some(path) = self.active_trait_default_type_path(visible_name)
             && path.len() >= 4
             && path[0] == keywords::as_str(KeywordId::Crate)
-            && path[1] == incan_core::lang::stdlib::INCAN_STD_NAMESPACE
+            && path[1] == incan_lang::lang::stdlib::INCAN_STD_NAMESPACE
             && let Some((source_name, module_path)) = path.split_last()
         {
-            let mut canonical_module = vec![incan_core::lang::stdlib::STDLIB_ROOT.to_string()];
+            let mut canonical_module = vec![incan_lang::lang::stdlib::STDLIB_ROOT.to_string()];
             canonical_module.extend(module_path.iter().skip(2).cloned());
             return (Some(canonical_module), Some(source_name.clone()));
         }
@@ -1117,10 +1117,10 @@ impl AstLowering {
         if callables::from_str(short_name).is_some() {
             callables::METHOD_NAMES
         } else {
-            match incan_core::lang::stdlib::stdlib_json_trait_id(trait_name)
-                .or_else(|| incan_core::lang::stdlib::stdlib_json_trait_id(short_name))
+            match incan_lang::lang::stdlib::stdlib_json_trait_id(trait_name)
+                .or_else(|| incan_lang::lang::stdlib::stdlib_json_trait_id(short_name))
             {
-                Some(id) => incan_core::lang::stdlib::stdlib_json_trait_method_names(id),
+                Some(id) => incan_lang::lang::stdlib::stdlib_json_trait_method_names(id),
                 None => &[],
             }
         }
@@ -1136,9 +1136,9 @@ impl AstLowering {
             .rsplit(['.', ':'])
             .find(|segment| !segment.is_empty())
             .unwrap_or(trait_name);
-        incan_core::lang::stdlib::stdlib_json_trait_id(trait_name)
-            .or_else(|| incan_core::lang::stdlib::stdlib_json_trait_id(short_name))
-            .is_some_and(|id| incan_core::lang::stdlib::stdlib_json_trait_method_names(id).contains(&method_name))
+        incan_lang::lang::stdlib::stdlib_json_trait_id(trait_name)
+            .or_else(|| incan_lang::lang::stdlib::stdlib_json_trait_id(short_name))
+            .is_some_and(|id| incan_lang::lang::stdlib::stdlib_json_trait_method_names(id).contains(&method_name))
     }
 
     /// Return whether a method is safe to emit into an imported trait impl when the trait declaration is missing.

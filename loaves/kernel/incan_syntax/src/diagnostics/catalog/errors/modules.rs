@@ -5,7 +5,7 @@
 use crate::ast::Span;
 
 use crate::diagnostics::CompileError;
-use incan_core::lang::stdlib;
+use incan_lang::lang::stdlib;
 
 /// Circular import detected.
 pub fn circular_import(path: &std::path::Path, span: Span) -> CompileError {

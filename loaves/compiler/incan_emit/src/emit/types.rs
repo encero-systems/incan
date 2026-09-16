@@ -7,12 +7,12 @@ use quote::{format_ident, quote};
 use std::collections::HashSet;
 
 use super::{EmitError, IrEmitter};
-use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
-use incan_core::lang::types::collections::{self, CollectionTypeId};
-use incan_core::lang::types::numerics;
 use incan_ir::decl::Visibility;
 use incan_ir::expr::{IrExprKind, MatchArm, Pattern};
 use incan_ir::types::IrType;
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_lang::lang::types::numerics;
 
 impl<'a> IrEmitter<'a> {
     /// Emit the generated Rust type path for an anonymous ordinary union.
@@ -640,8 +640,8 @@ mod tests {
         let mut emitter = IrEmitter::new(&registry);
         emitter.set_qualify_union_types_from_crate(true);
         // A prelude constructor is unqualified on both sides, so it names the same registry spelling twice.
-        let bare_none = incan_core::lang::surface::constructors::as_str(
-            incan_core::lang::surface::constructors::ConstructorId::None,
+        let bare_none = incan_lang::lang::surface::constructors::as_str(
+            incan_lang::lang::surface::constructors::ConstructorId::None,
         )
         .to_string();
         for (variant, expected) in [

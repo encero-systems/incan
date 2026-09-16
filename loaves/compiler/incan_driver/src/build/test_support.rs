@@ -17,11 +17,11 @@ use crate::build::{
     OVEN_PROJECT_OUTPUT_ARTIFACT_PATH, OvenBakeProjectTarget, OvenPackagedLibraryLoafManifest,
     OvenPackagedLibraryLoafProfile, OvenProjectOutputBakeFile, OvenProjectOutputBakeRequest, OvenProjectOutputPayload,
 };
-use incan_core::version::INCAN_VERSION;
 use incan_frontend::ast::{Declaration, Span, Spanned};
 use incan_frontend::diagnostics;
 use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::library_manifest_index::LibraryArtifactMetadata;
+use incan_lang::version::INCAN_VERSION;
 use oven_model::manifest::LOAF_MANIFEST_FILENAME;
 use oven_rustc::rustc::{OvenProjectInspectionAuthorityRef, resolve_active_rustc, rustc_host_target, rustc_identity};
 use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project};

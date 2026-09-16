@@ -4,14 +4,12 @@ Ring: **kernel**
 
 Language vocabulary, keyword and builtin tables, the stdlib registry, and shared semantic helpers.
 
-## Moves here from
+## Current location
 
-- `loaves/kernel/incan_core/` (the crate is here already; the step 5 renames give it this name and free the word `core` for the stdlib component)
+- `loaves/kernel/incan_lang/`
 
 ## May depend on
 
 none
 
-Most-imported crate in the repository (134 files in the root crate alone). Do this rename last.
-
-This directory is a layout skeleton. It holds no code yet; `src/` is a placeholder for the conventional crate root.
+The crate was `incan_core` until layout step 5 renamed it, so that `core` names the mandatory standard-library component and nothing else. It is the most-imported crate in the repository; the rename is a substring rewrite over every spelling in the tree, with no change to the crate's contents or API.

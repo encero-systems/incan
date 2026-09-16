@@ -3,7 +3,7 @@
 use super::args::*;
 use super::primitives::*;
 use super::*;
-use incan_core::lang::builtins::BuiltinFnId;
+use incan_lang::lang::builtins::BuiltinFnId;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower planned call arguments in written source order, then place them into declaration-slot order.
@@ -1043,7 +1043,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Return the helper operation selected by a checked string-method call, or a source-span-preserving refusal.
     ///
-    /// Body IR only maps the retained [`StringMethodId`](incan_core::lang::surface::string_methods::StringMethodId)
+    /// Body IR only maps the retained [`StringMethodId`](incan_lang::lang::surface::string_methods::StringMethodId)
     /// to a [`bir::HelperOp`]. The source registry is consulted solely to validate that an admitted spelling still
     /// agrees with the checked identity, so a missing or corrupted fact cannot turn a raw method name into runtime
     /// dispatch.
@@ -1064,7 +1064,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 None => Ok(None),
             };
         }
-        let source = incan_core::lang::surface::string_methods::from_str(name);
+        let source = incan_lang::lang::surface::string_methods::from_str(name);
         match checked {
             Some(method) => {
                 let Some(helper) = bir::HelperOp::for_selected_string_method(method) else {
@@ -1088,12 +1088,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 /// The call-site spelling is deliberately absent from this function. A same-spelled source declaration, import, or
 /// alias cannot become a builtin by textual resemblance, while a canonical builtin alias retains the registry's
 /// declaration name and therefore still projects to the same [`BuiltinFnId`].
-fn canonical_builtin(identity: &CanonicalSymbolId) -> Option<incan_core::lang::builtins::BuiltinFnId> {
+fn canonical_builtin(identity: &CanonicalSymbolId) -> Option<incan_lang::lang::builtins::BuiltinFnId> {
     (identity.origin == incan_semantics_core::SymbolOrigin::Builtin
         && identity.namespace == incan_semantics_core::SymbolNamespace::OrdinaryLexical
         && identity.kind == SemanticSourceTargetKind::Builtin
         && identity.scope_discriminant.is_none()
         && identity.declaration_span == HirSourceSpan::new(0, 0))
-    .then(|| incan_core::lang::builtins::from_str(&identity.declaration_name))
+    .then(|| incan_lang::lang::builtins::from_str(&identity.declaration_name))
     .flatten()
 }

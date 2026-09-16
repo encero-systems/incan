@@ -7,7 +7,7 @@
 //! - runtime/interop types like `Mutex[T]`, `Sender[T]`, `Vec[T]`
 //! - builtin methods like `str.split(...)`
 //!
-//! The goal is the same as other `incan_core::lang` registries: avoid stringly-typed checks
+//! The goal is the same as other `incan_lang::lang` registries: avoid stringly-typed checks
 //! scattered through the compiler/tooling by providing stable IDs + metadata.
 
 pub mod collection_helpers;

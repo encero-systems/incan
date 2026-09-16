@@ -66,8 +66,8 @@ impl<'a> Parser<'a> {
 
         // Parse receiver and params
         let is_classmethod = decorators.iter().any(|decorator| {
-            incan_core::lang::decorators::from_segments(&decorator.node.path.segments)
-                == Some(incan_core::lang::decorators::DecoratorId::ClassMethod)
+            incan_lang::lang::decorators::from_segments(&decorator.node.path.segments)
+                == Some(incan_lang::lang::decorators::DecoratorId::ClassMethod)
         });
         let (receiver, receiver_binding, params) = self.receiver_and_params(is_classmethod)?;
 
@@ -219,7 +219,7 @@ impl<'a> Parser<'a> {
             (
                 Some(Receiver::Mutable),
                 Some(Spanned::new(
-                    incan_core::lang::keywords::as_str(KeywordId::SelfKw).to_string(),
+                    incan_lang::lang::keywords::as_str(KeywordId::SelfKw).to_string(),
                     span,
                 )),
             )
@@ -234,11 +234,11 @@ impl<'a> Parser<'a> {
             (
                 Some(Receiver::Immutable),
                 Some(Spanned::new(
-                    incan_core::lang::keywords::as_str(KeywordId::SelfKw).to_string(),
+                    incan_lang::lang::keywords::as_str(KeywordId::SelfKw).to_string(),
                     span,
                 )),
             )
-        } else if is_classmethod && self.peek_ident_text(incan_core::lang::keywords::as_str(KeywordId::Cls)) {
+        } else if is_classmethod && self.peek_ident_text(incan_lang::lang::keywords::as_str(KeywordId::Cls)) {
             let span = self.current_span();
             self.advance();
             self.skip_newlines();
@@ -249,7 +249,7 @@ impl<'a> Parser<'a> {
             (
                 None,
                 Some(Spanned::new(
-                    incan_core::lang::keywords::as_str(KeywordId::Cls).to_string(),
+                    incan_lang::lang::keywords::as_str(KeywordId::Cls).to_string(),
                     span,
                 )),
             )

@@ -2298,7 +2298,7 @@ fn run_file_tests_batch_oven(
     // explicit publisher's generated manifest and therefore its Oven build-unit identity.
     let inline_imports = collect_test_dependency_inline_imports(&module_for_imports, &source_dependency_modules)
         .into_iter()
-        .filter(|import| !incan_core::lang::stdlib::facets::is_facet(&import.crate_name))
+        .filter(|import| !incan_lang::lang::stdlib::facets::is_facet(&import.crate_name))
         .collect::<Vec<_>>();
     let mut dependency_modules = Vec::with_capacity(1 + source_dependency_modules.len());
     dependency_modules.push(module_for_imports.clone());
@@ -2829,7 +2829,7 @@ fn oven_test_inline_dependency_specs(
 ) -> Vec<DependencySpec> {
     let requested = inline_imports
         .iter()
-        .filter(|import| !incan_core::lang::stdlib::facets::is_facet(&import.crate_name) && import.crate_name != "std")
+        .filter(|import| !incan_lang::lang::stdlib::facets::is_facet(&import.crate_name) && import.crate_name != "std")
         .map(|import| import.crate_name.replace('-', "_"))
         .collect::<BTreeSet<_>>();
     let mut dependencies = resolved

@@ -1338,8 +1338,8 @@ mod tests {
         )?;
         let mut core = unit(
             &selection,
-            "incan_core",
-            "incan_core",
+            "incan_lang",
+            "incan_lang",
             OvenSelectedRustFacetSourceKind::Compiler,
             &toolchain_owner(),
             OvenSelectedRustFacetUnitRole::Library,
@@ -1356,7 +1356,7 @@ mod tests {
                 },
             ],
         )?;
-        bind_source_root(&selection, &mut core, "compiler/incan_core", Vec::new())?;
+        bind_source_root(&selection, &mut core, "compiler/incan_lang", Vec::new())?;
         let mut stdlib = unit(
             &selection,
             "incan_std_core",
@@ -1367,7 +1367,7 @@ mod tests {
             OvenSelectedRustFacetDomain::Target,
             OvenSelectedRustFacetCrateKind::Rlib,
             vec![OvenSelectedRustFacetDependency {
-                alias: "incan_core".to_string(),
+                alias: "incan_lang".to_string(),
                 unit: core.identity.clone(),
             }],
         )?;
@@ -1482,7 +1482,7 @@ mod tests {
         OvenRuntimeFoundationAsset::sealed(foundation.clone(), provider_records(&foundation)?).map_err(Into::into)
     }
 
-    /// Build one Incan provider-intake response for the fixture's compiler-owned `incan_core` unit.
+    /// Build one Incan provider-intake response for the fixture's compiler-owned `incan_lang` unit.
     fn provider_intake_build_script_response(
         selected_identity: &str,
         host_alias: &str,
@@ -1579,13 +1579,13 @@ mod tests {
         write_fixture_file(toolchain_root, "target-spec.json", b"target spec")?;
         write_fixture_file(
             toolchain_root,
-            "compiler/incan_core/Cargo.toml",
-            fixture_cargo_toml("incan_core").as_bytes(),
+            "compiler/incan_lang/Cargo.toml",
+            fixture_cargo_toml("incan_lang").as_bytes(),
         )?;
         write_fixture_file(
             toolchain_root,
-            "compiler/incan_core/src/lib.rs",
-            fixture_source_bytes("incan_core").as_bytes(),
+            "compiler/incan_lang/src/lib.rs",
+            fixture_source_bytes("incan_lang").as_bytes(),
         )?;
         write_fixture_file(
             toolchain_root,
@@ -1610,7 +1610,7 @@ mod tests {
         write_materialization_fixture(foundation_root, toolchain_root)?;
         fs::remove_file(foundation_root.join("registry-sources/serde-1.0.0/build.rs"))?;
         fs::remove_file(foundation_root.join("registry-sources/serde_derive-1.0.0/build.rs"))?;
-        fs::remove_file(toolchain_root.join("compiler/incan_core/Cargo.toml"))?;
+        fs::remove_file(toolchain_root.join("compiler/incan_lang/Cargo.toml"))?;
         fs::remove_file(toolchain_root.join("compiler/incan_std_core/Cargo.toml"))?;
         Ok(())
     }
@@ -1654,8 +1654,8 @@ mod tests {
             .graph()
             .units
             .iter()
-            .find(|unit| unit.crate_name == "incan_core")
-            .ok_or("fixture lost incan_core")?;
+            .find(|unit| unit.crate_name == "incan_lang")
+            .ok_or("fixture lost incan_lang")?;
         let dependencies = foundation.prebuilt_dependencies(&core.identity)?;
         assert_eq!(foundation.compiler_closure_digest(), DIRECT_COMPILER);
         assert_eq!(foundation.rebuild_units().count(), 2);
@@ -1844,9 +1844,9 @@ mod tests {
             .selected_graph
             .units
             .iter()
-            .find(|unit| unit.crate_name == "incan_core")
+            .find(|unit| unit.crate_name == "incan_lang")
             .cloned()
-            .ok_or("fixture lost incan_core")?;
+            .ok_or("fixture lost incan_lang")?;
         let serde_derive_identity = asset
             .foundation
             .selected_graph
@@ -1860,7 +1860,7 @@ mod tests {
         let valid = valid_providers
             .iter_mut()
             .find(|record| record.selected_identity == core.identity)
-            .ok_or("fixture lost incan_core provider record")?;
+            .ok_or("fixture lost incan_lang provider record")?;
         let mut declaration = fixture_build_script_declaration(&core)?;
         let OvenRuntimeFoundationProviderDeclaration::BuildScript { host_dependencies, .. } = &mut declaration else {
             return Err("fixture build-script declaration changed shape".into());
@@ -1879,7 +1879,7 @@ mod tests {
         let detached = detached_providers
             .iter_mut()
             .find(|record| record.selected_identity == core.identity)
-            .ok_or("fixture lost incan_core provider record")?;
+            .ok_or("fixture lost incan_lang provider record")?;
         let mut declaration = fixture_build_script_declaration(&core)?;
         let OvenRuntimeFoundationProviderDeclaration::BuildScript { host_dependencies, .. } = &mut declaration else {
             return Err("fixture build-script declaration changed shape".into());
@@ -1911,21 +1911,21 @@ mod tests {
             .selected_graph
             .units
             .into_iter()
-            .find(|unit| unit.crate_name == "incan_core")
-            .ok_or("fixture lost incan_core")?;
-        unit.source.root = "compiler/incan_core/src".to_string();
+            .find(|unit| unit.crate_name == "incan_lang")
+            .ok_or("fixture lost incan_lang")?;
+        unit.source.root = "compiler/incan_lang/src".to_string();
         unit.root_module = "lib.rs".to_string();
-        unit.source_members = vec![source_member("lib.rs", fixture_source_bytes("incan_core").as_bytes())];
+        unit.source_members = vec![source_member("lib.rs", fixture_source_bytes("incan_lang").as_bytes())];
         unit.source.digest = selected_graph_source_digest(&unit.source_members)?;
         let package = OvenRuntimeFoundationProviderPackageSource {
             root: OvenSelectedRustFacetPath {
                 owner: unit.source.owner.clone(),
-                path: "compiler/incan_core".to_string(),
+                path: "compiler/incan_lang".to_string(),
             },
-            manifest: source_member("Cargo.toml", fixture_cargo_toml("incan_core").as_bytes()),
+            manifest: source_member("Cargo.toml", fixture_cargo_toml("incan_lang").as_bytes()),
             members: vec![
-                source_member("build.rs", fixture_build_script_bytes("incan_core").as_bytes()),
-                source_member("src/lib.rs", fixture_source_bytes("incan_core").as_bytes()),
+                source_member("build.rs", fixture_build_script_bytes("incan_lang").as_bytes()),
+                source_member("src/lib.rs", fixture_source_bytes("incan_lang").as_bytes()),
             ],
         };
         validate_runtime_foundation_provider_package_source(&unit, &package)?;
@@ -1952,8 +1952,8 @@ mod tests {
             .graph()
             .units
             .iter()
-            .find(|unit| unit.crate_name == "incan_core")
-            .ok_or("fixture lost incan_core")?;
+            .find(|unit| unit.crate_name == "incan_lang")
+            .ok_or("fixture lost incan_lang")?;
         let serde_derive = selected
             .graph()
             .units
@@ -1990,7 +1990,7 @@ mod tests {
                 ref host_dependencies,
             } if package == &evidence.package
                 && entrypoint == "build.rs"
-                && digest == &selected_graph_sha256(fixture_build_script_bytes("incan_core").as_bytes())
+                && digest == &selected_graph_sha256(fixture_build_script_bytes("incan_lang").as_bytes())
                 && edition == &core.edition
                 && host_dependencies == &expected_host_dependencies
         ));
@@ -2038,8 +2038,8 @@ mod tests {
             .graph()
             .units
             .iter()
-            .find(|unit| unit.crate_name == "incan_core")
-            .ok_or("fixture lost incan_core")?;
+            .find(|unit| unit.crate_name == "incan_lang")
+            .ok_or("fixture lost incan_lang")?;
         let serde_derive = selected
             .graph()
             .units
@@ -2134,8 +2134,8 @@ mod tests {
             .graph()
             .units
             .iter()
-            .find(|unit| unit.crate_name == "incan_core")
-            .ok_or("fixture lost incan_core")?;
+            .find(|unit| unit.crate_name == "incan_lang")
+            .ok_or("fixture lost incan_lang")?;
         let serde_derive = selected
             .graph()
             .units
@@ -3051,8 +3051,8 @@ cargo:rerun-if-env-changed=PROVIDER_VALUE\n",
         let core = graph
             .units
             .iter()
-            .find(|unit| unit.crate_name == "incan_core")
-            .ok_or("fixture lost incan_core")?;
+            .find(|unit| unit.crate_name == "incan_lang")
+            .ok_or("fixture lost incan_lang")?;
         let stdlib = graph
             .units
             .iter()

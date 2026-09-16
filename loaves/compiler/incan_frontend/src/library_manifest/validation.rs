@@ -1759,10 +1759,10 @@ fn validate_manifest_version(raw: &RawLibraryManifest) -> Result<(), LibraryMani
     let manifest_version = Version::parse(&raw.incan_version).map_err(|err| {
         LibraryManifestError::Invalid(format!("invalid `incan_version` value `{}`: {err}", raw.incan_version))
     })?;
-    let compiler_version = Version::parse(incan_core::version::INCAN_VERSION).map_err(|err| {
+    let compiler_version = Version::parse(incan_lang::version::INCAN_VERSION).map_err(|err| {
         LibraryManifestError::Invalid(format!(
             "invalid compiler version `{}`: {err}",
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         ))
     })?;
 
@@ -1935,7 +1935,7 @@ fn validate_scoped_symbol_descriptor_shape(
             descriptor.key, descriptor.symbol
         )));
     }
-    if incan_core::lang::keywords::from_str_hard_only(&descriptor.symbol).is_some() {
+    if incan_lang::lang::keywords::from_str_hard_only(&descriptor.symbol).is_some() {
         return Err(LibraryManifestError::Invalid(format!(
             "scoped symbol descriptor `{}` symbol `{}` cannot be a hard keyword",
             descriptor.key, descriptor.symbol
@@ -2490,8 +2490,8 @@ fn validate_soft_keyword_activations(raw: &RawLibraryManifest) -> Result<(), Lib
                 "soft keyword activation namespace cannot be empty".to_string(),
             ));
         }
-        if let Some(id) = incan_core::lang::keywords::from_str(&activation.keyword) {
-            if !incan_core::lang::keywords::is_soft(id) {
+        if let Some(id) = incan_lang::lang::keywords::from_str(&activation.keyword) {
+            if !incan_lang::lang::keywords::is_soft(id) {
                 return Err(LibraryManifestError::Invalid(format!(
                     "keyword `{}` is not a soft keyword",
                     activation.keyword

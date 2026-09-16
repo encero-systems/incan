@@ -6,19 +6,19 @@ use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
 use crate::ast::{ParamKind, Receiver, Span, Type, TypeConstraintKey};
-use incan_core::interop::RustItemMetadata;
-use incan_core::lang::builtins::{self, BuiltinFnId};
-use incan_core::lang::conventions;
-use incan_core::lang::surface::constructors;
-use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
-use incan_core::lang::traits;
-use incan_core::lang::traits::TraitId;
-use incan_core::lang::types::collections;
-use incan_core::lang::types::collections::CollectionTypeId;
-use incan_core::lang::types::numerics;
-use incan_core::lang::types::numerics::NumericTypeId;
-use incan_core::lang::types::stringlike;
-use incan_core::lang::types::stringlike::StringLikeId;
+use incan_lang::interop::RustItemMetadata;
+use incan_lang::lang::builtins::{self, BuiltinFnId};
+use incan_lang::lang::conventions;
+use incan_lang::lang::surface::constructors;
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
+use incan_lang::lang::traits;
+use incan_lang::lang::traits::TraitId;
+use incan_lang::lang::types::collections;
+use incan_lang::lang::types::collections::CollectionTypeId;
+use incan_lang::lang::types::numerics;
+use incan_lang::lang::types::numerics::NumericTypeId;
+use incan_lang::lang::types::stringlike;
+use incan_lang::lang::types::stringlike::StringLikeId;
 use incan_semantics_core::{
     CanonicalSymbolId, HirSourceSpan, ScopeDiscriminant, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
 };
@@ -180,7 +180,7 @@ fn canonical_builtin_identity(canonical_name: &str) -> CanonicalSymbolId {
 }
 
 /// Canonical semantic name for anonymous union types (RFC 029).
-pub const UNION_TYPE_NAME: &str = incan_core::lang::types::UNION_TYPE_NAME;
+pub const UNION_TYPE_NAME: &str = incan_lang::lang::types::UNION_TYPE_NAME;
 
 /// Separator used in generated Rust symbols for source overload implementations.
 const OVERLOAD_EMITTED_NAME_SEPARATOR: &str = "_overload_";
@@ -357,7 +357,7 @@ impl SymbolTable {
 
     /// Populate the root scope with built-in type symbols.
     fn add_builtins(&mut self) {
-        // Builtin types (from the canonical `incan_core::lang::types` registries).
+        // Builtin types (from the canonical `incan_lang::lang::types` registries).
         //
         // We define both canonical spellings and aliases so name lookup stays robust and we avoid
         // drift between the compiler and the language vocabulary registries. Each entry pairs the
@@ -384,7 +384,7 @@ impl SymbolTable {
                 builtin_types.extend(t.item.aliases.iter().map(|alias| (*alias, t.item.canonical)));
             }
         }
-        // Unit-ish types that are not yet modeled in `incan_core::lang::types`.
+        // Unit-ish types that are not yet modeled in `incan_lang::lang::types`.
         builtin_types.push((conventions::UNIT_TYPE_NAME, conventions::UNIT_TYPE_NAME));
         builtin_types.push((conventions::NONE_TYPE_NAME, conventions::NONE_TYPE_NAME));
         builtin_types.push((UNION_TYPE_NAME, UNION_TYPE_NAME));
@@ -2196,7 +2196,7 @@ pub fn union_ty(members: Vec<ResolvedType>) -> ResolvedType {
 
 /// Convert AST Type to ResolvedType Normalize type name to canonical form (uppercase for built-in generics)
 fn normalize_type_name(name: &str) -> String {
-    // Generic base normalization: prefer the canonical spelling from `incan_core` for all builtin
+    // Generic base normalization: prefer the canonical spelling from `incan_lang` for all builtin
     // collection/generic-base types (and their aliases).
     if let Some(id) = collections::from_str(name) {
         return collections::as_str(id).to_string();
@@ -2272,7 +2272,7 @@ where
             }
             if let Some(id) = collections::from_str(name.as_str()) {
                 // `List`/`Dict`/... can appear in type position without parameters (e.g. `Tuple` as "any tuple").
-                // Preserve it as a named type, but normalize to the canonical spelling from `incan_core`.
+                // Preserve it as a named type, but normalize to the canonical spelling from `incan_lang`.
                 return ResolvedType::Named(collections::as_str(id).to_string());
             }
 

@@ -23,15 +23,6 @@ use super::super::types::IrType;
 use super::super::{IrCheckedCFunction, IrCheckedCType, IrStmt, IrStmtKind, Mutability, TypedExpr};
 use super::AstLowering;
 use super::errors::LoweringError;
-use incan_core::interop::RustCollectionFamily;
-use incan_core::lang::builtins::BuiltinFnId;
-use incan_core::lang::magic_methods::{self, MagicMethodId};
-use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
-use incan_core::lang::surface::result_methods::ResultMethodId;
-use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
-use incan_core::lang::traits::{self as builtin_traits, TraitId};
-use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
-use incan_core::lang::{stdlib, trait_bounds};
 use incan_frontend::ast::{self, Spanned};
 use incan_frontend::library_manifest_index::LibraryManifestIndexEntry;
 use incan_frontend::partial_projection::{PartialPresetRef, merge_named_partial_args};
@@ -40,6 +31,15 @@ use incan_frontend::typechecker::{
     CAbiSpanAccessKind, IdentKind, PartialProjectionTargetKind, ResolvedMethodDispatch, ResolvedOperatorKind,
     RustArgCoercionKind,
 };
+use incan_lang::interop::RustCollectionFamily;
+use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::magic_methods::{self, MagicMethodId};
+use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
+use incan_lang::lang::surface::result_methods::ResultMethodId;
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
+use incan_lang::lang::traits::{self as builtin_traits, TraitId};
+use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
+use incan_lang::lang::{stdlib, trait_bounds};
 use incan_semantics_core::SurfaceExprLoweringAction;
 
 /// Return the trait's declaration name from however the call site's module spelled it.
@@ -181,7 +181,7 @@ impl AstLowering {
     /// Convert a contained checked-C value contract into its private generated-Rust carrier.
     fn checked_c_value_ir_type(binding: &str, ty: &IrCheckedCType) -> IrType {
         match ty {
-            IrCheckedCType::Scalar(scalar) => incan_core::lang::c_abi::scalar_numeric_type(*scalar)
+            IrCheckedCType::Scalar(scalar) => incan_lang::lang::c_abi::scalar_numeric_type(*scalar)
                 .map(IrType::Numeric)
                 .unwrap_or(IrType::Int),
             IrCheckedCType::Pointer { mutable, pointee } => Self::checked_c_pointer_ir_type(*mutable, pointee),
@@ -198,21 +198,21 @@ impl AstLowering {
     fn checked_c_pointer_ir_type(mutable: bool, pointee: &IrCheckedCType) -> IrType {
         let pointee = match pointee {
             IrCheckedCType::Scalar(scalar) => match scalar {
-                incan_core::lang::c_abi::ScalarTypeId::I8 => "i8",
-                incan_core::lang::c_abi::ScalarTypeId::U8 => "u8",
-                incan_core::lang::c_abi::ScalarTypeId::I16 => "i16",
-                incan_core::lang::c_abi::ScalarTypeId::U16 => "u16",
-                incan_core::lang::c_abi::ScalarTypeId::I32 => "i32",
-                incan_core::lang::c_abi::ScalarTypeId::U32 => "u32",
-                incan_core::lang::c_abi::ScalarTypeId::I64 => "i64",
-                incan_core::lang::c_abi::ScalarTypeId::U64 => "u64",
-                incan_core::lang::c_abi::ScalarTypeId::I128 => "i128",
-                incan_core::lang::c_abi::ScalarTypeId::U128 => "u128",
-                incan_core::lang::c_abi::ScalarTypeId::F32 => "f32",
-                incan_core::lang::c_abi::ScalarTypeId::F64 => "f64",
-                incan_core::lang::c_abi::ScalarTypeId::Size => "usize",
-                incan_core::lang::c_abi::ScalarTypeId::CChar => "::std::os::raw::c_char",
-                incan_core::lang::c_abi::ScalarTypeId::CInt => "::std::os::raw::c_int",
+                incan_lang::lang::c_abi::ScalarTypeId::I8 => "i8",
+                incan_lang::lang::c_abi::ScalarTypeId::U8 => "u8",
+                incan_lang::lang::c_abi::ScalarTypeId::I16 => "i16",
+                incan_lang::lang::c_abi::ScalarTypeId::U16 => "u16",
+                incan_lang::lang::c_abi::ScalarTypeId::I32 => "i32",
+                incan_lang::lang::c_abi::ScalarTypeId::U32 => "u32",
+                incan_lang::lang::c_abi::ScalarTypeId::I64 => "i64",
+                incan_lang::lang::c_abi::ScalarTypeId::U64 => "u64",
+                incan_lang::lang::c_abi::ScalarTypeId::I128 => "i128",
+                incan_lang::lang::c_abi::ScalarTypeId::U128 => "u128",
+                incan_lang::lang::c_abi::ScalarTypeId::F32 => "f32",
+                incan_lang::lang::c_abi::ScalarTypeId::F64 => "f64",
+                incan_lang::lang::c_abi::ScalarTypeId::Size => "usize",
+                incan_lang::lang::c_abi::ScalarTypeId::CChar => "::std::os::raw::c_char",
+                incan_lang::lang::c_abi::ScalarTypeId::CInt => "::std::os::raw::c_int",
             },
             _ => return IrType::Unknown,
         };
@@ -308,7 +308,7 @@ impl AstLowering {
         else {
             return Ok(None);
         };
-        let Some((binding, symbol, parameter)) = incan_core::lang::c_abi::parse_output_slot_type_identity(&identity)
+        let Some((binding, symbol, parameter)) = incan_lang::lang::c_abi::parse_output_slot_type_identity(&identity)
         else {
             return Ok(None);
         };
@@ -368,7 +368,7 @@ impl AstLowering {
             .type_info
             .as_ref()
             .and_then(|info| info.expr_type(receiver.span))
-            .is_some_and(|ty| matches!(ty, ResolvedType::Named(identity) if identity == incan_core::lang::c_abi::C_STRING_TYPE_ID));
+            .is_some_and(|ty| matches!(ty, ResolvedType::Named(identity) if identity == incan_lang::lang::c_abi::C_STRING_TYPE_ID));
         if !is_checked_c_string {
             return Ok(None);
         }
@@ -384,7 +384,7 @@ impl AstLowering {
             },
             Self::checked_c_pointer_ir_type(
                 false,
-                &IrCheckedCType::Scalar(incan_core::lang::c_abi::ScalarTypeId::CChar),
+                &IrCheckedCType::Scalar(incan_lang::lang::c_abi::ScalarTypeId::CChar),
             ),
         )))
     }
@@ -441,7 +441,7 @@ impl AstLowering {
                     func: BuiltinFn::Len,
                     args: vec![self.lower_expr_spanned(receiver)?],
                 },
-                IrType::Numeric(incan_core::lang::types::numerics::NumericTypeId::USize),
+                IrType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::USize),
             )));
         }
         if span_access.access != CAbiSpanAccessKind::Finish || args.len() != 1 {
@@ -463,13 +463,13 @@ impl AstLowering {
             });
         }
         let storage = match span_access.span_kind.element {
-            incan_core::lang::c_abi::ScalarTypeId::U8 => IrType::Bytes,
-            incan_core::lang::c_abi::ScalarTypeId::F32 => IrType::List(Box::new(IrType::Numeric(
-                incan_core::lang::types::numerics::NumericTypeId::F32,
+            incan_lang::lang::c_abi::ScalarTypeId::U8 => IrType::Bytes,
+            incan_lang::lang::c_abi::ScalarTypeId::F32 => IrType::List(Box::new(IrType::Numeric(
+                incan_lang::lang::types::numerics::NumericTypeId::F32,
             ))),
             _ => return Ok(None),
         };
-        let helper = incan_core::lang::c_abi::MUTABLE_SPAN_FINISH_RUST_NAME;
+        let helper = incan_lang::lang::c_abi::MUTABLE_SPAN_FINISH_RUST_NAME;
         let return_type = IrType::Result(Box::new(storage.clone()), Box::new(IrType::String));
         Ok(Some(TypedExpr::new(
             IrExprKind::Call {
@@ -482,7 +482,7 @@ impl AstLowering {
                     IrType::Function {
                         params: vec![
                             storage,
-                            IrType::Numeric(incan_core::lang::types::numerics::NumericTypeId::USize),
+                            IrType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::USize),
                         ],
                         ret: Box::new(return_type.clone()),
                     },
@@ -523,7 +523,7 @@ impl AstLowering {
             .as_ref()
             .and_then(|info| info.expr_type(receiver.span))
             .is_some_and(|ty| {
-                matches!(ty, ResolvedType::Named(identity) if identity == incan_core::lang::c_abi::SCOPED_C_STRING_VIEW_TYPE_ID)
+                matches!(ty, ResolvedType::Named(identity) if identity == incan_lang::lang::c_abi::SCOPED_C_STRING_VIEW_TYPE_ID)
             });
         if !is_scoped_c_string_view {
             return Ok(None);
@@ -531,7 +531,7 @@ impl AstLowering {
         let return_type = IrType::Result(Box::new(IrType::String), Box::new(IrType::String));
         let function = TypedExpr::new(
             IrExprKind::Var {
-                name: incan_core::lang::c_abi::SCOPED_C_STRING_COPY_UTF8_RUST_NAME.to_string(),
+                name: incan_lang::lang::c_abi::SCOPED_C_STRING_COPY_UTF8_RUST_NAME.to_string(),
                 access: VarAccess::Copy,
                 ref_kind: VarRefKind::Value,
             },
@@ -539,7 +539,7 @@ impl AstLowering {
                 params: vec![
                     Self::checked_c_pointer_ir_type(
                         false,
-                        &IrCheckedCType::Scalar(incan_core::lang::c_abi::ScalarTypeId::CChar),
+                        &IrCheckedCType::Scalar(incan_lang::lang::c_abi::ScalarTypeId::CChar),
                     ),
                     IrType::Int,
                 ],

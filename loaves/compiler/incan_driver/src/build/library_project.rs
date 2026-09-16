@@ -226,7 +226,7 @@ pub fn prepare_library_project(
     // materializer used by normal executables and test batches; this library route must not regain a Cargo fallback.
     let source_inline_crates = inline_imports
         .iter()
-        .filter(|import| !incan_core::lang::stdlib::facets::is_facet(&import.crate_name) && import.crate_name != "std")
+        .filter(|import| !incan_lang::lang::stdlib::facets::is_facet(&import.crate_name) && import.crate_name != "std")
         .map(|import| import.crate_name.clone())
         .collect::<BTreeSet<_>>();
     let project_name = manifest

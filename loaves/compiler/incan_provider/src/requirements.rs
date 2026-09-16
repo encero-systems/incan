@@ -10,8 +10,8 @@ use std::process::{Command, Stdio};
 use std::sync::{LazyLock, Mutex};
 use std::{env, fs};
 
-use incan_core::lang::stdlib;
-use incan_core::lang::stdlib::{StdlibExtraCrateDep, StdlibExtraCrateSource};
+use incan_lang::lang::stdlib;
+use incan_lang::lang::stdlib::{StdlibExtraCrateDep, StdlibExtraCrateSource};
 
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::error::{ProviderError, ProviderResult};
@@ -538,7 +538,7 @@ pub fn collect_project_requirements(
 /// or features.
 pub fn semantic_sdk_path_dependencies(requirements: &ProjectRequirements) -> Vec<DependencySpec> {
     let mut dependencies = requirements.sdk_path_dependencies.clone();
-    let toolchain_crates = incan_core::lang::generated_support::SUPPORT_CRATES_EVERY_PROGRAM_LINKS
+    let toolchain_crates = incan_lang::lang::generated_support::SUPPORT_CRATES_EVERY_PROGRAM_LINKS
         .into_iter()
         .chain(requirements.stdlib_facets.iter().map(String::as_str));
     for crate_name in toolchain_crates {

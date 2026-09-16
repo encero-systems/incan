@@ -1,7 +1,7 @@
 //! `TryFrom[str]` bridge planning for compiler-provided primitive and newtype conversions.
 
-use incan_core::lang::trait_capabilities;
 use incan_frontend::ast::{Declaration, ImportKind, Program};
+use incan_lang::lang::trait_capabilities;
 
 use super::capability_bridge;
 

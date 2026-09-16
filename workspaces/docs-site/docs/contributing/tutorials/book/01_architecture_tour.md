@@ -29,7 +29,7 @@ You can orient yourself with these anchors:
 - `loaves/kernel/incan_syntax/`:
     - shared lexer/parser/AST/diagnostics
     - used by compiler, formatter, and LSP to avoid drift
-- `loaves/kernel/incan_core/`:
+- `loaves/kernel/incan_lang/`:
     - pure language policy and registries shared across compiler/runtime boundaries
 - `loaves/kernel/incan_semantics_core/` and `loaves/compiler/incan_semantics_stdlib/`:
     - descriptor contracts plus current stdlib semantics-pack implementation

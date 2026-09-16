@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{env, fs};
 
-use incan_core::lang::stdlib;
+use incan_lang::lang::stdlib;
 
 use crate::error::{ProviderError, ProviderResult};
 use crate::requirements::{ProjectRequirements, merge_requirement_dependency, merge_sdk_path_dependency};
@@ -67,8 +67,8 @@ pub fn discover_active_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory
     let inventory = SdkInventory::read_from_path(&path).map_err(|error| ProviderError::failure(error.to_string()))?;
     inventory
         .validate_compiler_compatibility(
-            incan_core::version::INCAN_VERSION,
-            incan_core::version::SDK_PROVIDER_CODEGEN_REVISION,
+            incan_lang::version::INCAN_VERSION,
+            incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION,
         )
         .map_err(|error| ProviderError::failure(error.to_string()))?;
     Ok(Some(Arc::new(inventory)))

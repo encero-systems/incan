@@ -2,10 +2,10 @@
 
 use std::collections::HashMap;
 
-use incan_core::lang::trait_capabilities;
 use incan_frontend::ast::Program;
 use incan_frontend::library_manifest::{EnumValueExport, EnumValueTypeExport};
 use incan_frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
+use incan_lang::lang::trait_capabilities;
 
 use super::capability_bridge;
 use crate::emit::{ExternalOrdinalCustomKey, ExternalOrdinalValueEnum};

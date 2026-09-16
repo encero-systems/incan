@@ -23,14 +23,6 @@ use crate::diagnostics::{
     compile_error_to_diagnostic_with_phase_and_sources, position_to_offset, span_to_range,
 };
 use crate::semantic_tokens;
-use incan_core::interop::{RustItemKind, RustModuleChildKind, RustTraitAssoc};
-use incan_core::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
-use incan_core::lang::decorators;
-use incan_core::lang::keywords;
-use incan_core::lang::stdlib;
-use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
-use incan_core::lang::surface::constructors;
-use incan_core::lang::types::collections;
 #[cfg(feature = "rust_inspect")]
 use incan_driver::cargo_policy::{CargoPolicy, cargo_command_flags};
 #[cfg(all(test, feature = "rust_inspect"))]
@@ -83,6 +75,14 @@ use incan_frontend::typechecker::{
     CAbiInteropArtifacts, CBindingType, COutputMode, CResourceAccess, TypeCheckInfo, c_binding_descriptor_identity,
 };
 use incan_frontend::{ast_walk, lexer, parser, typechecker};
+use incan_lang::interop::{RustItemKind, RustModuleChildKind, RustTraitAssoc};
+use incan_lang::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
+use incan_lang::lang::decorators;
+use incan_lang::lang::keywords;
+use incan_lang::lang::stdlib;
+use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
+use incan_lang::lang::surface::constructors;
+use incan_lang::lang::types::collections;
 #[cfg(feature = "rust_inspect")]
 use incan_provider::dependency_resolver::{ResolvedDependencies, resolve_dependencies};
 #[cfg(feature = "rust_inspect")]

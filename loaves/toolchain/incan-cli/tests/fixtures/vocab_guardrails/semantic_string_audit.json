@@ -64,7 +64,7 @@
       "path": "loaves/compiler/incan_driver/src/build/library_project.rs",
       "category": "library build profile selection and stdlib crate exclusion",
       "expected_count": 2,
-      "expected_fingerprint": "0x9dfa4c21d588d169"
+      "expected_fingerprint": "0x785d0f85e1758060"
     },
     {
       "path": "loaves/compiler/incan_driver/src/build/output_materialization.rs",
@@ -88,7 +88,7 @@
       "path": "loaves/compiler/incan_driver/src/build/oven_project.rs",
       "category": "stdlib namespace and crate exclusion, Oven Loaf execution environment flags, existing-plan publication marker",
       "expected_count": 7,
-      "expected_fingerprint": "0x95daa964cac10e1a"
+      "expected_fingerprint": "0x577f02c48b929508"
     },
     {
       "path": "loaves/compiler/incan_driver/src/build/plan_authority.rs",
@@ -208,7 +208,7 @@
       "path": "loaves/compiler/incan_driver/src/shadow_support.rs",
       "category": "shadow comparison Oven Loaf environment flag and stdlib import exclusion",
       "expected_count": 2,
-      "expected_fingerprint": "0x0eda45240df64668"
+      "expected_fingerprint": "0x94412866de1f8595"
     },
     {
       "path": "loaves/compiler/incan_driver/src/testing/discovery.rs",
@@ -484,7 +484,7 @@
       "path": "loaves/compiler/incan_frontend/src/typechecker/mod.rs",
       "category": "Rust display type parsing, provider ABI lookup, shared nominal String canonicalization, source type-name validation, stdlib derive compatibility, and dependency registry owner paths",
       "expected_count": 43,
-      "expected_fingerprint": "0x1a1160a72917c035"
+      "expected_fingerprint": "0x2277a136a6feb452"
     },
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs",
@@ -631,19 +631,19 @@
       "expected_fingerprint": "0x1dc2b536c0293d40"
     },
     {
-      "path": "loaves/kernel/incan_core/src/interop/coercions.rs",
+      "path": "loaves/kernel/incan_lang/src/interop/coercions.rs",
       "category": "registry-backed Rust-boundary coercion policy",
       "expected_count": 39,
       "expected_fingerprint": "0x309683062c796469"
     },
     {
-      "path": "loaves/kernel/incan_core/src/interop/extension_traits.rs",
+      "path": "loaves/kernel/incan_lang/src/interop/extension_traits.rs",
       "category": "metadata-free Rust extension-trait fallback inventory",
       "expected_count": 11,
       "expected_fingerprint": "0x821039893ddb773a"
     },
     {
-      "path": "loaves/kernel/incan_core/src/interop/metadata.rs",
+      "path": "loaves/kernel/incan_lang/src/interop/metadata.rs",
       "category": "registry-backed Rust collection and compiler-owned function metadata policy, plus shared Rust type-shape parsing including canonical owned String displays with allocator arguments",
       "expected_count": 27,
       "expected_fingerprint": "0x5b667e9989aff4dc"

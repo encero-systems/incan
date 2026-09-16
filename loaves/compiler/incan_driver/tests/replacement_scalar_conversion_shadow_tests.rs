@@ -4,7 +4,6 @@
 
 use std::path::Path;
 
-use incan_core::lang::types::numerics::NumericTypeId;
 use incan_driver::backend::replacement::{ReplacementNumericValue, ReplacementValue};
 use incan_driver::backend::selection::{FallbackOutcome, ShadowComparisonState};
 use incan_driver::backend::shadow::legacy_oven::LegacyOvenCapability;
@@ -12,6 +11,7 @@ use incan_driver::backend::shadow::{
     FunctionResultKind, RouteEvidence, ShadowComparison, ShadowComparisonProfile, SourceObservable, TypedFunctionResult,
 };
 use incan_driver::shadow_support::compare_source_observable;
+use incan_lang::lang::types::numerics::NumericTypeId;
 
 #[path = "support/shadow_capability.rs"]
 mod shadow_capability;

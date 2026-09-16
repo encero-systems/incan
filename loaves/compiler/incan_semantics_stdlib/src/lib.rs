@@ -24,9 +24,9 @@
 //!    flags.
 //! 3. See [`incan_semantics_core::SurfaceSemanticsPack`] for the trait contract.
 
-use incan_core::lang::decorators;
-use incan_core::lang::keywords::KeywordId;
-use incan_core::lang::stdlib;
+use incan_lang::lang::decorators;
+use incan_lang::lang::keywords::KeywordId;
+use incan_lang::lang::stdlib;
 use incan_semantics_core::{
     AssertShape, DecoratorFeature, RuntimeRequirement, SurfaceCallTarget, SurfaceExprLoweringAction,
     SurfaceExprPayloadKind, SurfaceExprTypeCheck, SurfaceFeatureKey, SurfaceModifierKind, SurfaceModifierTypeCheck,

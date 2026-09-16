@@ -6,7 +6,7 @@
 //! Keep emitter modules calling this planner instead of open-coding ad hoc `.clone()`, `&`, `&mut`, `.to_string()`, or
 //! `.into()` decisions.
 
-use incan_core::interop::{RustTypeShape, RustTypeShapePathFallback, parse_rust_type_shape_text};
+use incan_lang::interop::{RustTypeShape, RustTypeShapePathFallback, parse_rust_type_shape_text};
 use proc_macro2::TokenStream;
 use quote::quote;
 
@@ -489,7 +489,7 @@ pub fn is_byte_buffer_type(ty: &IrType) -> bool {
             if matches!(name.as_str(), "Vec" | "std::vec::Vec" | "alloc::vec::Vec")
                 && matches!(
                     args.as_slice(),
-                    [IrType::Int | IrType::Numeric(incan_core::lang::types::numerics::NumericTypeId::U8)]
+                    [IrType::Int | IrType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::U8)]
                 ) =>
         {
             true
@@ -1245,7 +1245,7 @@ mod tests {
             },
             IrType::NamedGeneric(
                 "Vec".to_string(),
-                vec![IrType::Numeric(incan_core::lang::types::numerics::NumericTypeId::U8)],
+                vec![IrType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::U8)],
             ),
         );
         let target = IrType::Generic("implBuf".to_string());

@@ -8,7 +8,7 @@
 //!
 //! ## Examples
 //! ```rust
-//! use incan_core::lang::types::numerics::{self, NumericTypeId};
+//! use incan_lang::lang::types::numerics::{self, NumericTypeId};
 //!
 //! assert_eq!(numerics::from_str("int"), Some(NumericTypeId::I64));
 //! assert_eq!(numerics::from_str("I64"), Some(NumericTypeId::I64));

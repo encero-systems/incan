@@ -31,7 +31,7 @@ Incan’s “language surface” spans a small number of key crates and modules:
 |     Crate/Module      |                                        Purpose                                         |
 | --------------------- | -------------------------------------------------------------------------------------- |
 | `loaves/kernel/incan_syntax` | Lexer/parser/AST/diagnostics (shared by compiler, formatter, and LSP to prevent drift) |
-| `loaves/kernel/incan_core`   | Semantic registries + pure helpers shared across the ecosystem (should not drift)      |
+| `loaves/kernel/incan_lang`   | Semantic registries + pure helpers shared across the ecosystem (should not drift)      |
 | `loaves/stdlib/<component>/rust` | Runtime support for generated programs, one facet crate per component (preferred home for “just a function” behavior; `core/rust` for the language runtime) |
 | `loaves/stdlib/derive/incan_derive` | Derives used by generated Rust programs (runtime-side)                                 |
 | `loaves/compiler/incan_frontend/src`        | Module resolution + typechecker (turns syntax into a typed program)                    |
@@ -97,7 +97,7 @@ Incan already has enum-dispatched builtins in IR (`BuiltinFn`) and emission logi
 
 **End-to-end checklist:**
 
-- **Builtin registry and frontend symbol table**: register the spelling and `BuiltinFnId` in `loaves/kernel/incan_core/src/lang/builtins.rs`, then add the signature and canonical identity so it typechecks
+- **Builtin registry and frontend symbol table**: register the spelling and `BuiltinFnId` in `loaves/kernel/incan_lang/src/lang/builtins.rs`, then add the signature and canonical identity so it typechecks
     - `loaves/compiler/incan_frontend/src/symbols.rs` → `SymbolTable::add_builtins()`
 - **IR builtin enum**: add a new variant and name mapping
     - `loaves/compiler/incan_ir/src/expr.rs` → `enum BuiltinFn` + `BuiltinFn::from_name()`
@@ -141,15 +141,15 @@ Use this only when the feature is genuinely syntactic/control-flow.
 
 **Lexer**: `loaves/kernel/incan_syntax/src/lexer/*`
 
-- Add a `KeywordId` **and a `KEYWORDS` entry** (canonical spelling/metadata) in `loaves/kernel/incan_core/src/lang/keywords.rs`
+- Add a `KeywordId` **and a `KEYWORDS` entry** (canonical spelling/metadata) in `loaves/kernel/incan_lang/src/lang/keywords.rs`
 - Ensure tokenization emits `TokenKind::Keyword(KeywordId::YourKeyword)`
 - Update lexer parity tests (keyword/operator/punctuation registry parity)
 
 !!! note "Word-operators (special case)"
     If the new “keyword” is meant to behave like an operator (it participates in expression precedence like `and`, `or`, `not`, `in`, `is`), treat it as a **word-operator**:
 
-    - Add it to `loaves/kernel/incan_core/src/lang/operators.rs` (precedence/fixity source of truth)
-    - Add a corresponding `KeywordId` + `KEYWORDS` entry in `loaves/kernel/incan_core/src/lang/keywords.rs` (so the lexer will still lex it as a keyword)
+    - Add it to `loaves/kernel/incan_lang/src/lang/operators.rs` (precedence/fixity source of truth)
+    - Add a corresponding `KeywordId` + `KEYWORDS` entry in `loaves/kernel/incan_lang/src/lang/keywords.rs` (so the lexer will still lex it as a keyword)
     - Update expression parsing in `loaves/kernel/incan_syntax/src/parser/expr.rs` to place it at the right precedence level
 
 **Parser**: `loaves/kernel/incan_syntax/src/parser/*`
@@ -228,7 +228,7 @@ Action descriptors are small enums (e.g., `SurfaceStmtLoweringAction::AssertCall
 
 ### End-to-end checklist
 
-**1. Keyword descriptor** (`loaves/kernel/incan_core/src/lang/keywords.rs`):
+**1. Keyword descriptor** (`loaves/kernel/incan_lang/src/lang/keywords.rs`):
 
 - Add a `KeywordId` variant.
 - Register it with `info_soft()`, specifying the activating stdlib namespace and the `KeywordSurfaceKind` (`StatementKeywordArgs`, `PrefixExpression`, or `DeclarationModifier`).

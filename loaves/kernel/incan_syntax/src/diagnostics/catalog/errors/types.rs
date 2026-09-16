@@ -4,8 +4,8 @@
 //! validation, mutability, and pattern matching.
 
 use crate::ast::Span;
-use incan_core::lang::builtins::{self, BuiltinFnId};
-use incan_core::lang::derives::{self, DeriveId};
+use incan_lang::lang::builtins::{self, BuiltinFnId};
+use incan_lang::lang::derives::{self, DeriveId};
 
 use crate::diagnostics::CompileError;
 

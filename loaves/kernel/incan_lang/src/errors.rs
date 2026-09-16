@@ -1,6 +1,6 @@
 //! Shared, user-facing “Python-like” exceptions used across compiler and runtime.
 //!
-//! The semantic core (`incan_core`) must stay **pure/deterministic** and must not panic.
+//! The semantic core (`incan_lang`) must stay **pure/deterministic** and must not panic.
 //! Instead, it provides a typed exception taxonomy (`ErrorKind`) and canonical formatting
 //! (`IncanError` implements `Display`).
 //!

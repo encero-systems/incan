@@ -25,9 +25,9 @@ use crate::build::{
     ProjectSourceAuthorityDigester, library_publication,
 };
 use crate::error::{CliError, CliResult};
-use incan_core::version::INCAN_VERSION;
 use incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path;
 use incan_frontend::library_manifest_index::LibraryArtifactMetadata;
+use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
 use oven_model::manifest::LOAF_MANIFEST_FILENAME;
 use oven_rustc::loaf::{

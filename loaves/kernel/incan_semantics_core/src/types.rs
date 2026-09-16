@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use incan_core::lang::types::numerics::{self, NumericTypeId};
+use incan_lang::lang::types::numerics::{self, NumericTypeId};
 
 use serde::{Deserialize, Serialize};
 

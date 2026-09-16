@@ -5,9 +5,9 @@ use super::super::super::decl::{IrStruct, IrStructKind, StructField};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
-use incan_core::lang::derives::{self, DeriveId};
 use incan_frontend::ast::{self, Spanned};
 use incan_frontend::rust_type_display;
+use incan_lang::lang::derives::{self, DeriveId};
 
 impl AstLowering {
     /// Lower a checked class declaration into its flattened struct layout.

@@ -4,8 +4,8 @@ use super::super::super::decl::{EnumVariant, EnumVariantAlias, IrEnum, IrEnumVal
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
-use incan_core::lang::derives::{self, DeriveId};
 use incan_frontend::ast;
+use incan_lang::lang::derives::{self, DeriveId};
 
 impl AstLowering {
     /// Lower an enum declaration.

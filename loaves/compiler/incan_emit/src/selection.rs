@@ -449,7 +449,7 @@ pub fn finalize_receipt_with_semantic_module(
     selection.verify_identity()?;
     let output_identity = output_identity.into();
     let fallback_outcome = fallback_outcome_for_execution(selection, executed_backend)?;
-    let compiler_version = incan_core::version::INCAN_VERSION.to_string();
+    let compiler_version = incan_lang::version::INCAN_VERSION.to_string();
     let identity = receipt_identity(ReceiptIdentityInputs {
         selection_identity: &selection.identity,
         compiler_version: &compiler_version,

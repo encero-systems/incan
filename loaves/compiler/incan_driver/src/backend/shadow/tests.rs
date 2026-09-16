@@ -710,11 +710,11 @@ fn canonical_conversion_failures_precede_incidental_diagnostic_words() -> Result
     ] {
         for (payload, expected_label) in [
             (
-                incan_core::errors::IncanError::cannot_convert_to_int(input).to_string(),
+                incan_lang::errors::IncanError::cannot_convert_to_int(input).to_string(),
                 "conversion-int",
             ),
             (
-                incan_core::errors::IncanError::cannot_convert_to_float(input).to_string(),
+                incan_lang::errors::IncanError::cannot_convert_to_float(input).to_string(),
                 "conversion-float",
             ),
         ] {

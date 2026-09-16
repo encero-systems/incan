@@ -2,8 +2,8 @@
 
 use std::collections::HashSet;
 
-use incan_core::lang::stdlib;
 use incan_frontend::ast::{Declaration, ImportKind, Program};
+use incan_lang::lang::stdlib;
 
 /// Collect Rust crates imported via `import rust::` or `from rust::`.
 pub fn collect_rust_crates(program: &Program) -> HashSet<String> {

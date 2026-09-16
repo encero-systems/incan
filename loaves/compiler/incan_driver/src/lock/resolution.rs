@@ -634,7 +634,7 @@ fn generate_oven_lockfile(
         &semantic_sdk_paths,
     );
     let lock = IncanLock::new_with_semantic(
-        incan_core::version::INCAN_VERSION,
+        incan_lang::version::INCAN_VERSION,
         fingerprint,
         cargo_features.clone(),
         semantic.clone(),

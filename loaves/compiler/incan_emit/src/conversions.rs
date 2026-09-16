@@ -168,15 +168,15 @@
 //! ```
 
 use crate::reference_shape::expr_has_rust_reference_shape;
-use incan_core::interop::rust_display_is_owned_string;
-use incan_core::lang::types::collections::{self, CollectionTypeId};
-use incan_core::lang::types::numerics::{self, NumericFamily, NumericTypeId};
-use incan_core::{NumericOp, NumericTy, needs_float_promotion, result_numeric_type};
 use incan_ir::decl::FunctionParam;
 use incan_ir::expr::{BinOp, VarAccess};
 use incan_ir::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ir, pow_exponent_kind_from_ir};
 use incan_ir::types::{Mutability, same_exact_binary_float_type};
 use incan_ir::{IrExpr, IrExprKind, IrType, TypedExpr};
+use incan_lang::interop::rust_display_is_owned_string;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_lang::lang::types::numerics::{self, NumericFamily, NumericTypeId};
+use incan_lang::{NumericOp, NumericTy, needs_float_promotion, result_numeric_type};
 use proc_macro2::TokenStream;
 use quote::quote;
 

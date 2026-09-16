@@ -11,9 +11,9 @@ use quote::quote;
 
 use crate::emit::{EmitError, IrEmitter};
 use crate::ownership::plan_owned_iterator_source;
-use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_ir::expr::{IrExprKind, IteratorMethodKind, TypedExpr};
 use incan_ir::types::IrType;
+use incan_lang::lang::traits::{self as core_traits, TraitId};
 
 use super::ReceiverInfo;
 
@@ -167,8 +167,8 @@ pub(in crate::emit::expressions) fn emit_iter_receiver(receiver: &TypedExpr, r: 
             quote! { crate::__incan_std::derives::collection::ListIterator { items: #items, index: 0i64 } }
         }
         IrType::NamedGeneric(name, _)
-            if incan_core::lang::types::collections::from_str(name)
-                == Some(incan_core::lang::types::collections::CollectionTypeId::FrozenList) =>
+            if incan_lang::lang::types::collections::from_str(name)
+                == Some(incan_lang::lang::types::collections::CollectionTypeId::FrozenList) =>
         {
             let items = plan_owned_iterator_source(receiver).apply(r.clone());
             quote! {

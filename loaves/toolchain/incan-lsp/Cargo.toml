@@ -25,7 +25,7 @@ std_async = ["incan_frontend/std_async", "incan_provider/std_async", "incan_driv
 std_decorators = ["incan_frontend/std_decorators", "incan_provider/std_decorators", "incan_driver/std_decorators"]
 
 [dependencies]
-incan_core = { workspace = true }
+incan_lang = { workspace = true }
 incan_driver = { workspace = true }
 incan_frontend = { workspace = true }
 incan_provider = { workspace = true }

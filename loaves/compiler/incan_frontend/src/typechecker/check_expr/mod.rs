@@ -11,8 +11,8 @@ use crate::ast::*;
 use crate::diagnostics::{CompileError, errors};
 use crate::symbols::{FieldInfo, FunctionInfo, ResolvedType, SymbolKind, VariableInfo};
 use crate::typechecker::helpers::{is_frozen_bytes, is_frozen_str};
-use incan_core::lang::keywords;
-use incan_core::numeric_values::{IntegerBounds, integer_bounds};
+use incan_lang::lang::keywords;
+use incan_lang::numeric_values::{IntegerBounds, integer_bounds};
 use incan_semantics_core::SurfaceExprTypeCheck;
 use std::collections::HashMap;
 
@@ -382,8 +382,8 @@ impl TypeChecker {
                 if matches!(
                     expected_ty,
                     ResolvedType::Numeric(
-                        incan_core::lang::types::numerics::NumericTypeId::F32
-                            | incan_core::lang::types::numerics::NumericTypeId::F64
+                        incan_lang::lang::types::numerics::NumericTypeId::F32
+                            | incan_lang::lang::types::numerics::NumericTypeId::F64
                     )
                 ) =>
             {
@@ -404,8 +404,8 @@ impl TypeChecker {
                 if matches!(
                     expected_ty,
                     ResolvedType::Numeric(
-                        incan_core::lang::types::numerics::NumericTypeId::F32
-                            | incan_core::lang::types::numerics::NumericTypeId::F64
+                        incan_lang::lang::types::numerics::NumericTypeId::F32
+                            | incan_lang::lang::types::numerics::NumericTypeId::F64
                     )
                 ) && matches!(operand.node, Expr::Literal(Literal::Float(_))) =>
             {
@@ -441,7 +441,7 @@ impl TypeChecker {
         let Some(target) = super::numeric_type_id_for_compat(expected_ty) else {
             return self.check_expr(expr);
         };
-        if matches!(target, incan_core::lang::types::numerics::NumericTypeId::U128) {
+        if matches!(target, incan_lang::lang::types::numerics::NumericTypeId::U128) {
             if unsigned_int_literal_magnitude(expr).is_some() {
                 return expected_ty.clone();
             }
@@ -456,18 +456,18 @@ impl TypeChecker {
         }
         if matches!(
             target,
-            incan_core::lang::types::numerics::NumericTypeId::F32
-                | incan_core::lang::types::numerics::NumericTypeId::F64
+            incan_lang::lang::types::numerics::NumericTypeId::F32
+                | incan_lang::lang::types::numerics::NumericTypeId::F64
         ) {
             let finite = match signed_int_literal_value(expr) {
                 Some(value) => match target {
-                    incan_core::lang::types::numerics::NumericTypeId::F32 => (value as f32).is_finite(),
-                    incan_core::lang::types::numerics::NumericTypeId::F64 => (value as f64).is_finite(),
+                    incan_lang::lang::types::numerics::NumericTypeId::F32 => (value as f32).is_finite(),
+                    incan_lang::lang::types::numerics::NumericTypeId::F64 => (value as f64).is_finite(),
                     _ => false,
                 },
                 None => unsigned_int_literal_magnitude(expr).is_some_and(|value| match target {
-                    incan_core::lang::types::numerics::NumericTypeId::F32 => (value as f32).is_finite(),
-                    incan_core::lang::types::numerics::NumericTypeId::F64 => (value as f64).is_finite(),
+                    incan_lang::lang::types::numerics::NumericTypeId::F32 => (value as f32).is_finite(),
+                    incan_lang::lang::types::numerics::NumericTypeId::F64 => (value as f64).is_finite(),
                     _ => false,
                 }),
             };
@@ -508,10 +508,10 @@ impl TypeChecker {
             return self.check_expr(expr);
         };
         let fits = match expected_ty {
-            ResolvedType::Numeric(incan_core::lang::types::numerics::NumericTypeId::F32) => {
+            ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F32) => {
                 value.value.is_finite() && value.value.abs() <= f64::from(f32::MAX)
             }
-            ResolvedType::Numeric(incan_core::lang::types::numerics::NumericTypeId::F64) => value.value.is_finite(),
+            ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F64) => value.value.is_finite(),
             _ => true,
         };
         if !fits {
@@ -536,10 +536,10 @@ impl TypeChecker {
         match &expr.node {
             Expr::Literal(Literal::Float(value)) => {
                 let fits = match expected_ty {
-                    ResolvedType::Numeric(incan_core::lang::types::numerics::NumericTypeId::F32) => {
+                    ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F32) => {
                         value.value.is_finite() && value.value.abs() <= f64::from(f32::MAX)
                     }
-                    ResolvedType::Numeric(incan_core::lang::types::numerics::NumericTypeId::F64) => {
+                    ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F64) => {
                         value.value.is_finite()
                     }
                     _ => return,
@@ -669,7 +669,7 @@ impl TypeChecker {
 fn is_decimal_type(ty: &ResolvedType) -> bool {
     match ty {
         ResolvedType::Generic(name, args) => {
-            incan_core::lang::types::numerics::decimal_constructor_from_str(name.as_str()).is_some() && args.len() == 2
+            incan_lang::lang::types::numerics::decimal_constructor_from_str(name.as_str()).is_some() && args.len() == 2
         }
         _ => false,
     }
@@ -679,7 +679,7 @@ fn is_decimal_type(ty: &ResolvedType) -> bool {
 fn decimal_precision_scale(ty: &ResolvedType) -> Option<(usize, usize)> {
     match ty {
         ResolvedType::Generic(name, args)
-            if incan_core::lang::types::numerics::decimal_constructor_from_str(name.as_str()).is_some()
+            if incan_lang::lang::types::numerics::decimal_constructor_from_str(name.as_str()).is_some()
                 && args.len() == 2 =>
         {
             let precision = decimal_type_arg_usize(&args[0])?;

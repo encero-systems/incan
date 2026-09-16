@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use incan_core::lang::conventions::validate_package_feature_identifier;
+use incan_lang::lang::conventions::validate_package_feature_identifier;
 use serde::Serialize;
 
 use crate::library_manifest::{
@@ -1868,7 +1868,7 @@ serializer = { path = "../serializer", optional = true, default-features = false
             sdk_id: "incan".to_string(),
             sdk_version: "0.5.0".to_string(),
             compiler_requirement: ">=0.5.0-dev.16,<0.6.0".to_string(),
-            provider_codegen_revision: incan_core::version::SDK_PROVIDER_CODEGEN_REVISION,
+            provider_codegen_revision: incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION,
             components: BTreeMap::from([(
                 "runtime".to_string(),
                 crate::provider::SdkComponent {

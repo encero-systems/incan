@@ -1,9 +1,9 @@
 //! Serde derive and JSON activation planning for IR code generation.
 
-use incan_core::lang::decorators::{self, DecoratorId};
-use incan_core::lang::stdlib;
 use incan_frontend::ast::{Declaration, Program};
 use incan_frontend::decorator_resolution;
+use incan_lang::lang::decorators::{self, DecoratorId};
+use incan_lang::lang::stdlib;
 
 const SERDE_SERIALIZE_DERIVE: &str = "serde::Serialize";
 const SERDE_DESERIALIZE_DERIVE: &str = "serde::Deserialize";

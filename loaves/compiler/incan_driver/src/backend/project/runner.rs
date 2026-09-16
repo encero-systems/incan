@@ -595,7 +595,7 @@ mod tests {
     fn minimal_projected_cargo_lock(root_name: &str) -> String {
         format!(
             "version = 4\n\n[[package]]\nname = \"{root_name}\"\nversion = \"{}\"\n",
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         )
     }
 
@@ -788,11 +788,11 @@ mod tests {
         let mut generator = ProjectGenerator::new(tmp.path(), "caller", true);
         let canonical = format!(
             "version = 4\n\n[[package]]\nname = \"incan_workspace\"\nversion = \"{}\"\n",
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         );
         let projected = format!(
             "version = 4\n\n[[package]]\nname = \"caller\"\nversion = \"{}\"\n",
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         );
         generator.set_cargo_lock_payload(Some(canonical));
         generator.set_cargo_lock_projection_root(Some("incan_workspace".to_string()));

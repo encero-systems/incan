@@ -61,8 +61,8 @@ use crate::rust_inspect_workspace::collect_rust_inspect_query_paths;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect_workspace::collect_rust_inspect_query_paths_from_programs;
 use crate::session::CompilationSession;
-use incan_core::version::INCAN_VERSION;
 use incan_frontend::{ParsedModule, diagnostics};
+use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
 use incan_provider::compiled_sdk::CompiledSdkModules;
 use incan_provider::dependency_resolver::resolve_reachable_dependencies;
@@ -255,13 +255,13 @@ pub fn prepare_oven_project(
     // have its own external Rust closure, which the named publisher records in `inline_imports`; caller-owned Rust
     // imports are materialized only through the narrow direct-rustc path-package seam below.
     source_inline_imports
-        .retain(|import| !incan_core::lang::stdlib::facets::is_facet(&import.crate_name) && import.crate_name != "std");
+        .retain(|import| !incan_lang::lang::stdlib::facets::is_facet(&import.crate_name) && import.crate_name != "std");
     let source_inline_crates = source_inline_imports
         .iter()
         .map(|import| import.crate_name.clone())
         .collect::<BTreeSet<_>>();
     inline_imports
-        .retain(|import| !incan_core::lang::stdlib::facets::is_facet(&import.crate_name) && import.crate_name != "std");
+        .retain(|import| !incan_lang::lang::stdlib::facets::is_facet(&import.crate_name) && import.crate_name != "std");
     let cargo_features = CargoFeatureSelection {
         cargo_features,
         cargo_no_default_features,
@@ -800,9 +800,9 @@ fn ensure_loaf_stdlib_facets(stdlib_facets: &mut Vec<String>, loaf: bool) {
     }
 
     stdlib_facets.extend(
-        incan_core::lang::stdlib::facets::ALL
+        incan_lang::lang::stdlib::facets::ALL
             .into_iter()
-            .filter(|facet| *facet != incan_core::lang::stdlib::facets::CORE)
+            .filter(|facet| *facet != incan_lang::lang::stdlib::facets::CORE)
             .map(str::to_string),
     );
     stdlib_facets.sort();

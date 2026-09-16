@@ -13,15 +13,6 @@ use super::super::super::types::IrType;
 use super::super::super::{FunctionSignature, IrCheckedCFunction, IrStmt, Mutability, TypedExpr};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
-use incan_core::lang::builtins::BuiltinFnId;
-use incan_core::lang::c_abi;
-use incan_core::lang::keywords::{self, KeywordId};
-use incan_core::lang::stdlib;
-use incan_core::lang::stdlib::{STDLIB_BUILTINS, STDLIB_ROOT};
-use incan_core::lang::surface::constructors::{self, ConstructorId};
-use incan_core::lang::surface::types as surface_types;
-use incan_core::lang::testing::{self, TestingAssertHelperId};
-use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_frontend::api_metadata::{
     ApiDeclaration, checked_api_modules_for_public_namespace, checked_api_public_namespace, function_export_from_api,
     function_export_from_api_projected, method_export_from_api,
@@ -40,6 +31,15 @@ use incan_frontend::typechecker::{
     FixedUnpackPlan, IdentKind, ResolvedOperatorKind, RustArgCoercionKind, ValidatedNewtypeCoercionMode,
     ValidatedNewtypeCoercionStep,
 };
+use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::c_abi;
+use incan_lang::lang::keywords::{self, KeywordId};
+use incan_lang::lang::stdlib;
+use incan_lang::lang::stdlib::{STDLIB_BUILTINS, STDLIB_ROOT};
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::surface::types as surface_types;
+use incan_lang::lang::testing::{self, TestingAssertHelperId};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
 
 const TYPE_CONSTRUCTOR_HOOK: &str = "__incan_new";
@@ -245,7 +245,7 @@ impl AstLowering {
         let carrier_type = match span_carrier.kind.element {
             c_abi::ScalarTypeId::U8 => IrType::Bytes,
             c_abi::ScalarTypeId::F32 => IrType::List(Box::new(IrType::Numeric(
-                incan_core::lang::types::numerics::NumericTypeId::F32,
+                incan_lang::lang::types::numerics::NumericTypeId::F32,
             ))),
             _ => IrType::Unknown,
         };
@@ -1030,7 +1030,7 @@ impl AstLowering {
         path: &[String],
         method_name: &str,
     ) -> Result<Option<FunctionSignature>, LoweringError> {
-        if path.len() < 3 || path.first().map(String::as_str) != Some(incan_core::lang::stdlib::STDLIB_ROOT) {
+        if path.len() < 3 || path.first().map(String::as_str) != Some(incan_lang::lang::stdlib::STDLIB_ROOT) {
             return Ok(None);
         }
         let Some(type_name) = path.last() else {
@@ -1723,7 +1723,7 @@ impl AstLowering {
         &mut self,
         path: &[String],
     ) -> Result<Option<FunctionSignature>, LoweringError> {
-        if path.len() < 2 || path.first().map(String::as_str) != Some(incan_core::lang::stdlib::STDLIB_ROOT) {
+        if path.len() < 2 || path.first().map(String::as_str) != Some(incan_lang::lang::stdlib::STDLIB_ROOT) {
             return Ok(None);
         }
         let Some(function_name) = path.last() else {
@@ -4157,8 +4157,6 @@ mod tests {
     use crate::expr::{IrExprKind, IrInteropCoercionKind, MethodCallArgPolicy, VarRefKind};
     use crate::stmt::IrStmtKind;
     use crate::types::IrType;
-    use incan_core::interop::CoercionPolicy;
-    use incan_core::lang::surface::constructors::{self, ConstructorId};
     use incan_frontend::api_metadata::{
         ApiDeclaration, ApiFunction, ApiModel, CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadata,
         CheckedApiMetadataPackage, SourceAnchor, SourceSpan, materialize_checked_api_public_namespaces,
@@ -4181,6 +4179,8 @@ mod tests {
         PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind, RustArgCoercionInfo,
         RustArgCoercionKind, TypeCheckInfo,
     };
+    use incan_lang::interop::CoercionPolicy;
+    use incan_lang::lang::surface::constructors::{self, ConstructorId};
 
     fn mk_edge(
         direction: InteropDirection,

@@ -28,7 +28,7 @@ use super::ReplacementExecutionError;
 pub fn module_is_held_to_source_profile(module_path: &[String]) -> bool {
     !matches!(
         module_path.first().map(String::as_str),
-        Some(incan_core::lang::stdlib::STDLIB_ROOT | incan_core::lang::stdlib::INCAN_STD_NAMESPACE)
+        Some(incan_lang::lang::stdlib::STDLIB_ROOT | incan_lang::lang::stdlib::INCAN_STD_NAMESPACE)
     )
 }
 
@@ -47,7 +47,7 @@ fn is_local_module_import(import: &incan_frontend::ast::ImportDecl) -> bool {
     let Some(first) = path.segments.first() else {
         return false;
     };
-    first.as_str() != incan_core::lang::stdlib::STDLIB_ROOT
+    first.as_str() != incan_lang::lang::stdlib::STDLIB_ROOT
 }
 
 /// Describe a Rust-interop import in terms of the boundary it crosses, when it is one.
@@ -173,11 +173,11 @@ mod tests {
         ]));
 
         assert!(!module_is_held_to_source_profile(&[
-            incan_core::lang::stdlib::STDLIB_ROOT.to_string(),
+            incan_lang::lang::stdlib::STDLIB_ROOT.to_string(),
             "io".to_string()
         ]));
         assert!(!module_is_held_to_source_profile(&[
-            incan_core::lang::stdlib::INCAN_STD_NAMESPACE.to_string(),
+            incan_lang::lang::stdlib::INCAN_STD_NAMESPACE.to_string(),
             "async".to_string()
         ]));
     }

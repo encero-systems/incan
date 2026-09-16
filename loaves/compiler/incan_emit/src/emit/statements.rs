@@ -7,7 +7,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::HashSet;
 
-use incan_core::lang::stdlib;
+use incan_lang::lang::stdlib;
 
 use super::{EmitError, IrEmitter};
 use crate::emit::expressions::{

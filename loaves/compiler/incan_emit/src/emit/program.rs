@@ -22,13 +22,13 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use incan_core::lang::c_abi::{LinkCapabilityId, ScalarTypeId};
-use incan_core::lang::surface::result_methods::ResultMethodId;
-use incan_core::lang::types::numerics::{self, NumericFamily};
-use incan_core::lang::{conventions, keywords, magic_methods, stdlib as core_stdlib, trait_capabilities};
 use incan_frontend::ast::TypeConstraintKey;
 use incan_frontend::provider::SDK_PROVIDER_BUILD_ENV;
 use incan_frontend::symbols::{NewtypePrimitiveConstraint, overload_emitted_name_prefix};
+use incan_lang::lang::c_abi::{LinkCapabilityId, ScalarTypeId};
+use incan_lang::lang::surface::result_methods::ResultMethodId;
+use incan_lang::lang::types::numerics::{self, NumericFamily};
+use incan_lang::lang::{conventions, keywords, magic_methods, stdlib as core_stdlib, trait_capabilities};
 use incan_semantics_core::encode_incan_symbol_identity;
 
 use super::{CallableNameUseFacts, EmitError, GeneratedUseAnalysis, IrEmitter, SERDE_DESERIALIZE_DERIVE};
@@ -1498,7 +1498,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit the private fallible constructor used by checked C string temporaries in this module.
     fn emit_checked_c_string_constructor() -> TokenStream {
-        let constructor = format_ident!("{}", incan_core::lang::c_abi::C_STRING_CONSTRUCTOR_RUST_NAME);
+        let constructor = format_ident!("{}", incan_lang::lang::c_abi::C_STRING_CONSTRUCTOR_RUST_NAME);
         quote! {
             #[inline]
             fn #constructor(value: String) -> Result<::std::ffi::CString, String> {
@@ -1510,7 +1510,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit the private bounded owning conversion for one returned C string view.
     fn emit_checked_c_scoped_string_copy() -> TokenStream {
-        let helper = format_ident!("{}", incan_core::lang::c_abi::SCOPED_C_STRING_COPY_UTF8_RUST_NAME);
+        let helper = format_ident!("{}", incan_lang::lang::c_abi::SCOPED_C_STRING_COPY_UTF8_RUST_NAME);
         quote! {
             #[inline]
             fn #helper(value: *const ::std::os::raw::c_char, max_bytes: i64) -> Result<String, String> {
@@ -1537,7 +1537,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit the private validation boundary that returns an existing caller-owned typed allocation after a C write.
     fn emit_checked_c_span_finish() -> TokenStream {
-        let helper = format_ident!("{}", incan_core::lang::c_abi::MUTABLE_SPAN_FINISH_RUST_NAME);
+        let helper = format_ident!("{}", incan_lang::lang::c_abi::MUTABLE_SPAN_FINISH_RUST_NAME);
         quote! {
             #[inline]
             fn #helper<T, W>(mut value: Vec<T>, written: W) -> Result<Vec<T>, String>
@@ -1645,13 +1645,13 @@ impl<'a> IrEmitter<'a> {
                                 "checked C in/out value for {}.{}.{parameter} is outside the declared {} range",
                                 function.binding,
                                 function.symbol,
-                                incan_core::lang::c_abi::scalar_type_as_str(*scalar)
+                                incan_lang::lang::c_abi::scalar_type_as_str(*scalar)
                             );
                             let result_message = format!(
                                 "checked C output value for {}.{}.{parameter} cannot be represented by Incan int",
                                 function.binding, function.symbol
                             );
-                            let from_incan_value = if incan_core::lang::c_abi::scalar_numeric_type(*scalar).is_some() {
+                            let from_incan_value = if incan_lang::lang::c_abi::scalar_numeric_type(*scalar).is_some() {
                                 quote! { value }
                             } else {
                                 quote! {
@@ -1661,7 +1661,7 @@ impl<'a> IrEmitter<'a> {
                                     }
                                 }
                             };
-                            let take_value = if incan_core::lang::c_abi::scalar_numeric_type(*scalar).is_some() {
+                            let take_value = if incan_lang::lang::c_abi::scalar_numeric_type(*scalar).is_some() {
                                 quote! { value }
                             } else {
                                 quote! {
@@ -1789,7 +1789,7 @@ impl<'a> IrEmitter<'a> {
                     "checked C argument {index} for {}.{} is outside the declared {} range",
                     function.binding,
                     function.symbol,
-                    incan_core::lang::c_abi::scalar_type_as_str(*scalar),
+                    incan_lang::lang::c_abi::scalar_type_as_str(*scalar),
                 );
                 quote! {
                     match <_ as ::core::convert::TryInto<#carrier>>::try_into(#name) {
@@ -1830,14 +1830,14 @@ impl<'a> IrEmitter<'a> {
     fn checked_c_wrapper_return(function: &IrCheckedCFunction, ty: &IrCheckedCType) -> TokenStream {
         match ty {
             IrCheckedCType::Scalar(scalar) => {
-                if incan_core::lang::c_abi::scalar_numeric_type(*scalar).is_some() {
+                if incan_lang::lang::c_abi::scalar_numeric_type(*scalar).is_some() {
                     return quote! { __incan_result };
                 }
                 let message = format!(
                     "checked C result for {}.{} cannot be represented by Incan int ({})",
                     function.binding,
                     function.symbol,
-                    incan_core::lang::c_abi::scalar_type_as_str(*scalar),
+                    incan_lang::lang::c_abi::scalar_type_as_str(*scalar),
                 );
                 quote! { match i64::try_from(__incan_result) { Ok(value) => value, Err(_) => panic!(#message) } }
             }
@@ -1892,7 +1892,7 @@ impl<'a> IrEmitter<'a> {
     /// target-defined C aliases remain on the legacy checked `i64` façade until receipt-selected target layout facts
     /// can name a stable Incan numeric identity.
     fn checked_c_source_scalar_rust_type(scalar: ScalarTypeId) -> TokenStream {
-        if incan_core::lang::c_abi::scalar_numeric_type(scalar).is_some() {
+        if incan_lang::lang::c_abi::scalar_numeric_type(scalar).is_some() {
             Self::checked_c_scalar_rust_type(scalar)
         } else {
             quote! { i64 }
@@ -1978,7 +1978,7 @@ impl<'a> IrEmitter<'a> {
     /// Return whether a registered generated-support hook should be spliced into this generated module.
     fn emits_registered_support_module(
         program: &IrProgram,
-        support: &incan_core::lang::generated_support::GeneratedModuleSupport,
+        support: &incan_lang::lang::generated_support::GeneratedModuleSupport,
     ) -> bool {
         matches!(
             program.source_module_name.as_deref(),
@@ -1996,7 +1996,7 @@ impl<'a> IrEmitter<'a> {
     /// Emit a macro invocation from a registered support path.
     fn emit_support_macro_invocation(
         &self,
-        support: &incan_core::lang::generated_support::GeneratedModuleSupport,
+        support: &incan_lang::lang::generated_support::GeneratedModuleSupport,
     ) -> Result<TokenStream, EmitError> {
         let mut segments = support.macro_path.split("::").map(Self::rust_ident);
         let Some(first) = segments.next() else {
@@ -2029,7 +2029,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Splice registered generated-code support into generated modules.
     fn emit_registered_generated_module_supports(&self, program: &IrProgram) -> Result<Vec<TokenStream>, EmitError> {
-        incan_core::lang::generated_support::generated_module_supports()
+        incan_lang::lang::generated_support::generated_module_supports()
             .iter()
             .filter(|support| Self::emits_registered_support_module(program, support))
             .map(|support| self.emit_support_macro_invocation(support))
@@ -3686,7 +3686,7 @@ impl<'a> IrEmitter<'a> {
         // Prepend version header, inner attributes, then mod insertion marker
         let header = format!(
             "// Generated by the Incan compiler v{}\n\n",
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         );
 
         // Find the end of the inner attribute block and insert marker after it. Normal generated Rust no longer emits
@@ -4025,8 +4025,8 @@ impl<'a> IrEmitter<'a> {
                 IrDeclKind::Impl(impl_block)
                     if impl_block.trait_name
                         .as_deref()
-                        .and_then(incan_core::lang::stdlib::stdlib_json_trait_scope_import_id)
-                        == Some(incan_core::lang::stdlib::StdlibJsonTraitId::Serialize)
+                        .and_then(incan_lang::lang::stdlib::stdlib_json_trait_scope_import_id)
+                        == Some(incan_lang::lang::stdlib::StdlibJsonTraitId::Serialize)
             )
         });
         let needs_json_deserialize_trait_scope = emitted_declarations.iter().any(|decl| {
@@ -4035,8 +4035,8 @@ impl<'a> IrEmitter<'a> {
                 IrDeclKind::Impl(impl_block)
                     if impl_block.trait_name
                         .as_deref()
-                        .and_then(incan_core::lang::stdlib::stdlib_json_trait_scope_import_id)
-                        == Some(incan_core::lang::stdlib::StdlibJsonTraitId::Deserialize)
+                        .and_then(incan_lang::lang::stdlib::stdlib_json_trait_scope_import_id)
+                        == Some(incan_lang::lang::stdlib::StdlibJsonTraitId::Deserialize)
             )
         });
         match (needs_json_serialize_trait_scope, needs_json_deserialize_trait_scope) {
@@ -4273,10 +4273,10 @@ impl<'a> IrEmitter<'a> {
 #[cfg(test)]
 mod tests {
     use super::IrEmitter;
-    use incan_core::lang::c_abi::{LinkCapabilityId, ScalarTypeId};
     use incan_frontend::typechecker::COutputMode;
     use incan_ir::types::{IR_UNION_TYPE_NAME, IrType};
     use incan_ir::{IrCheckedCFunction, IrCheckedCType, IrProgram};
+    use incan_lang::lang::c_abi::{LinkCapabilityId, ScalarTypeId};
     use std::collections::HashMap;
 
     /// Model the provider-projected import and marker impl retained after module-derive expansion.

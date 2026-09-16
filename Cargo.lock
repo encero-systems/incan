@@ -1433,12 +1433,12 @@ dependencies = [
  "hex",
  "hmac",
  "incan_codegraph",
- "incan_core",
  "incan_driver",
  "incan_emit",
  "incan_format",
  "incan_frontend",
  "incan_ir",
+ "incan_lang",
  "incan_oven_facet",
  "incan_provider",
  "incan_semantics_core",
@@ -1475,10 +1475,10 @@ dependencies = [
 name = "incan-lsp"
 version = "0.6.0-dev.4"
 dependencies = [
- "incan_core",
  "incan_driver",
  "incan_format",
  "incan_frontend",
+ "incan_lang",
  "incan_provider",
  "incan_semantics_core",
  "incan_syntax",
@@ -1501,13 +1501,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "incan_core"
-version = "0.6.0-dev.4"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "incan_derive"
 version = "0.6.0-dev.4"
 dependencies = [
@@ -1522,11 +1515,11 @@ dependencies = [
  "clap",
  "hex",
  "incan_codegraph",
- "incan_core",
  "incan_emit",
  "incan_format",
  "incan_frontend",
  "incan_ir",
+ "incan_lang",
  "incan_oven_facet",
  "incan_provider",
  "incan_semantics_core",
@@ -1556,9 +1549,9 @@ name = "incan_emit"
 version = "0.6.0-dev.4"
 dependencies = [
  "hex",
- "incan_core",
  "incan_frontend",
  "incan_ir",
+ "incan_lang",
  "incan_semantics_core",
  "incan_std_core",
  "incan_syntax",
@@ -1584,7 +1577,7 @@ dependencies = [
 name = "incan_format"
 version = "0.6.0-dev.4"
 dependencies = [
- "incan_core",
+ "incan_lang",
  "incan_semantics_core",
  "incan_syntax",
  "incan_test_support",
@@ -1598,8 +1591,8 @@ name = "incan_frontend"
 version = "0.6.0-dev.4"
 dependencies = [
  "hex",
- "incan_core",
  "incan_format",
+ "incan_lang",
  "incan_semantics_core",
  "incan_semantics_stdlib",
  "incan_std_core",
@@ -1626,8 +1619,8 @@ dependencies = [
 name = "incan_ir"
 version = "0.6.0-dev.4"
 dependencies = [
- "incan_core",
  "incan_frontend",
+ "incan_lang",
  "incan_semantics_core",
  "incan_syntax",
  "incan_vocab",
@@ -1640,11 +1633,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "incan_lang"
+version = "0.6.0-dev.4"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "incan_oven_facet"
 version = "0.6.0-dev.4"
 dependencies = [
- "incan_core",
  "incan_frontend",
+ "incan_lang",
  "incan_provider",
  "oven_model",
  "oven_rustc",
@@ -1657,8 +1657,8 @@ name = "incan_provider"
 version = "0.6.0-dev.4"
 dependencies = [
  "hex",
- "incan_core",
  "incan_frontend",
+ "incan_lang",
  "incan_semantics_core",
  "incan_test_support",
  "incan_vocab",
@@ -1680,7 +1680,7 @@ name = "incan_semantics_core"
 version = "0.6.0-dev.4"
 dependencies = [
  "hex",
- "incan_core",
+ "incan_lang",
  "postcard",
  "serde",
  "serde_json",
@@ -1692,7 +1692,7 @@ dependencies = [
 name = "incan_semantics_stdlib"
 version = "0.6.0-dev.4"
 dependencies = [
- "incan_core",
+ "incan_lang",
  "incan_semantics_core",
 ]
 
@@ -1707,8 +1707,8 @@ dependencies = [
 name = "incan_std_core"
 version = "0.6.0-dev.4"
 dependencies = [
- "incan_core",
  "incan_derive",
+ "incan_lang",
 ]
 
 [[package]]
@@ -1725,7 +1725,7 @@ dependencies = [
 name = "incan_std_testing"
 version = "0.6.0-dev.4"
 dependencies = [
- "incan_core",
+ "incan_lang",
  "incan_std_core",
 ]
 
@@ -1742,7 +1742,7 @@ dependencies = [
 name = "incan_syntax"
 version = "0.6.0-dev.4"
 dependencies = [
- "incan_core",
+ "incan_lang",
  "incan_semantics_core",
  "incan_vocab",
  "miette",
@@ -1754,8 +1754,8 @@ dependencies = [
 name = "incan_test_support"
 version = "0.6.0-dev.4"
 dependencies = [
- "incan_core",
  "incan_frontend",
+ "incan_lang",
  "incan_semantics_core",
  "libc",
  "oven_model",
@@ -3378,7 +3378,7 @@ name = "rust_inspect"
 version = "0.6.0-dev.4"
 dependencies = [
  "hex",
- "incan_core",
+ "incan_lang",
  "proc-macro2",
  "quote",
  "ra_ap_hir",

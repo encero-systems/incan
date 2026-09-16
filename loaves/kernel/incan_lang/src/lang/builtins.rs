@@ -10,7 +10,7 @@
 //!
 //! ## Examples
 //! ```rust
-//! use incan_core::lang::builtins::{self, BuiltinFnId};
+//! use incan_lang::lang::builtins::{self, BuiltinFnId};
 //!
 //! assert_eq!(builtins::from_str("print"), Some(BuiltinFnId::Print));
 //! assert_eq!(builtins::from_str("println"), Some(BuiltinFnId::Print));
@@ -212,7 +212,7 @@ const PROTECTED_BINDING_BUILTINS: &[BuiltinFnId] = &[BuiltinFnId::Print];
 ///
 /// ## Examples
 /// ```rust
-/// use incan_core::lang::builtins::{self, BuiltinFnId};
+/// use incan_lang::lang::builtins::{self, BuiltinFnId};
 ///
 /// assert_eq!(builtins::as_str(BuiltinFnId::Print), "print");
 /// ```

@@ -1,7 +1,6 @@
 //! Checked SDK metadata retains explicit module derive membership and backend requirements.
 
 use crate::IrCodegen;
-use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadata, CheckedApiMetadataPackage, api_declaration_public_name,
     collect_checked_api_metadata,
@@ -9,6 +8,7 @@ use incan_frontend::api_metadata::{
 use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::typechecker::TypeChecker;
 use incan_frontend::{lexer, parser};
+use incan_lang::lang::traits::{self as core_traits, TraitId};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

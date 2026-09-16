@@ -2,8 +2,8 @@
 
 use super::super::super::types::IrType;
 use super::super::AstLowering;
-use incan_core::PowExponentKind;
 use incan_frontend::ast::{self, Spanned};
+use incan_lang::PowExponentKind;
 
 impl AstLowering {
     /// Determine `PowExponentKind` for a power expression's right operand.

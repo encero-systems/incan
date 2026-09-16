@@ -468,7 +468,7 @@ COMMANDS
 
 [ -f "${extract_dir}/share/incan/sdk/sdk-inventory.json" ] \
   || fail "archive did not contain share/incan/sdk/sdk-inventory.json"
-for support_crate in incan_core incan_derive incan_std_core incan_std_data incan_std_async incan_std_web incan_std_testing incan_vocab incan_web_macros; do
+for support_crate in incan_lang incan_derive incan_std_core incan_std_data incan_std_async incan_std_web incan_std_testing incan_vocab incan_web_macros; do
   [ -f "${extract_dir}/crates/${support_crate}/Cargo.toml" ] || fail "archive did not contain crates/${support_crate}/Cargo.toml"
 done
 [ -f "${extract_dir}/crates/Cargo.toml" ] || fail "archive did not contain crates/Cargo.toml"

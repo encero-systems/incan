@@ -1839,7 +1839,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     // projects, and a final release omits it so a released project does not silently accept prereleases. Pinning
     // one spelling makes this test fail on every transition between the two, which it did on the 0.5.0 bump.
     let expected_requires_incan = {
-        let version = semver::Version::parse(incan_core::version::INCAN_VERSION)?;
+        let version = semver::Version::parse(incan_lang::version::INCAN_VERSION)?;
         let lower = if version.pre.is_empty() {
             format!(">={}.{}.0", version.major, version.minor)
         } else {
@@ -3342,10 +3342,10 @@ def main() -> None:
 
 /// Test specific lexer behavior
 mod lexer_tests {
-    use incan_core::lang::keywords::KeywordId;
-    use incan_core::lang::operators::OperatorId;
-    use incan_core::lang::punctuation::PunctuationId;
     use incan_frontend::lexer::{TokenKind, lex};
+    use incan_lang::lang::keywords::KeywordId;
+    use incan_lang::lang::operators::OperatorId;
+    use incan_lang::lang::punctuation::PunctuationId;
 
     #[test]
     fn lexer_token_surface_cases() {
@@ -8594,7 +8594,7 @@ async def main() -> None:
             stderr.contains("generated with provider codegen revision 4")
                 && stderr.contains(&format!(
                     "requires revision {}",
-                    incan_core::version::SDK_PROVIDER_CODEGEN_REVISION
+                    incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION
                 )),
             "the failure should report the exact incompatible provider revision:\n{stderr}"
         );

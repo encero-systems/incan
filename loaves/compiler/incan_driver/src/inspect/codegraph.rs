@@ -28,13 +28,12 @@ use incan_codegraph::{
     CodegraphSdkProjection, CodegraphSemanticContext, CodegraphSourceSpan, CodegraphStableDeclarationId,
     CodegraphSymbolOrigin,
 };
-use incan_core::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
+use incan_lang::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
 use incan_semantics_core::namespace::{enclosing_namespace, is_namespace_root};
 use incan_semantics_core::stable_identity::{DeclarationNesting, DeclarationSignature, StableDeclarationId};
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SemanticModuleSnapshot, SymbolOrigin};
 use serde_json::{Value, json};
 
-use incan_core::version::INCAN_VERSION;
 use incan_frontend::ast::{
     AssertKind, CallArg, ComprehensionClause, Condition, Declaration, Decorator, DecoratorArg, DecoratorArgValue,
     DictEntry, Expr, FStringPart, FunctionDecl, ImportDecl, ImportItem, ImportKind, ImportPath, ListEntry, MatchBody,
@@ -50,6 +49,7 @@ use incan_frontend::typechecker::{
     CBindingStruct, CBindingStructField, CBindingSymbol, CBindingType, COutputMode, CResourceAccess,
     CapabilityDeclarationInfo, c_binding_descriptor_identity,
 };
+use incan_lang::version::INCAN_VERSION;
 use incan_provider::{
     BackendImplementationRequirement, ComponentSelectionReason, FeatureActivationReason, FeatureSelection,
     ProviderParticipation, ProviderPlan, ProviderProvenance,
@@ -2273,7 +2273,7 @@ impl CodegraphBuilder {
         // an ordinary name is not: `Signal.Ready()` reads the same way but names a type, which
         // `receiver_names_a_declared_type` answers instead.
         if let Expr::Field(base, _) = &receiver.node {
-            return Self::expr_root_ident(&base.node) == Some(incan_core::lang::stdlib::STDLIB_ROOT);
+            return Self::expr_root_ident(&base.node) == Some(incan_lang::lang::stdlib::STDLIB_ROOT);
         }
         let Expr::Ident(name) = &receiver.node else {
             return false;
@@ -3633,8 +3633,8 @@ fn path_string(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use incan_core::lang::c_abi::ScalarTypeId;
     use incan_frontend::{lexer, parser, typechecker};
+    use incan_lang::lang::c_abi::ScalarTypeId;
     use std::path::PathBuf;
 
     /// Execution requirements and inspection consume one checked consumer snapshot, including aliases and nested

@@ -17,25 +17,25 @@ use crate::typechecker::type_info::{
     CBindingEnumAccess, RustArgCoercionInfo, RustArgCoercionKind, RustMethodTraitImportUse, RustTraitImportInfo,
 };
 use crate::typechecker::{IdentKind, MemberBindingSurface, canonical_public_library_type_name};
-use incan_core::interop::{
+use incan_lang::interop::{
     RustCollectionFamily, RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustVisibility,
     metadata_free_method_signature,
 };
-use incan_core::lang::magic_methods;
-use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
-use incan_core::lang::surface::result_methods::ResultMethodId;
-use incan_core::lang::surface::string_methods::{self, SelectedStringMethodArgumentKind, StringMethodId};
-use incan_core::lang::surface::types as surface_types;
-use incan_core::lang::surface::types::{SEMAPHORE_ACQUIRE_ERROR_TYPE_NAME, SEMAPHORE_PERMIT_TYPE_NAME, SurfaceTypeId};
-use incan_core::lang::surface::{
+use incan_lang::lang::magic_methods;
+use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
+use incan_lang::lang::surface::result_methods::ResultMethodId;
+use incan_lang::lang::surface::string_methods::{self, SelectedStringMethodArgumentKind, StringMethodId};
+use incan_lang::lang::surface::types as surface_types;
+use incan_lang::lang::surface::types::{SEMAPHORE_ACQUIRE_ERROR_TYPE_NAME, SEMAPHORE_PERMIT_TYPE_NAME, SurfaceTypeId};
+use incan_lang::lang::surface::{
     dict_methods, float_methods, frozen_bytes_methods, frozen_dict_methods, frozen_list_methods, frozen_set_methods,
     iterator_methods, list_methods, result_methods, set_methods,
 };
-use incan_core::lang::traits::{self as core_traits, TraitId};
-use incan_core::lang::types::collections::CollectionTypeId;
-use incan_core::lang::types::numerics::NumericFamily;
-use incan_core::lang::{conventions, stdlib};
-use incan_core::lang::{enum_helpers, surface::option_methods};
+use incan_lang::lang::traits::{self as core_traits, TraitId};
+use incan_lang::lang::types::collections::CollectionTypeId;
+use incan_lang::lang::types::numerics::NumericFamily;
+use incan_lang::lang::{conventions, stdlib};
+use incan_lang::lang::{enum_helpers, surface::option_methods};
 use incan_semantics_core::body_ir::HelperOp;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 use quote::ToTokens;
@@ -952,7 +952,7 @@ impl TypeChecker {
     /// Validate `.sum()` item types against the source-owned `Sum[T]` capability surface.
     fn iterator_sum_output_type(&mut self, elem: &ResolvedType, span: Span) -> ResolvedType {
         if self
-            .temporary_trait_capability_supports_type(incan_core::lang::trait_capabilities::iterator_sum(), elem)
+            .temporary_trait_capability_supports_type(incan_lang::lang::trait_capabilities::iterator_sum(), elem)
             .is_some_and(|supported| supported)
         {
             return elem.clone();
@@ -1326,14 +1326,14 @@ impl TypeChecker {
         let (owner, member) = match base_ty {
             ResolvedType::Int | ResolvedType::Float | ResolvedType::Numeric(_) | ResolvedType::Bool => {
                 let owner_id = super::super::numeric_type_id_for_compat(base_ty)?;
-                let owner = incan_core::lang::types::numerics::as_str(owner_id);
+                let owner = incan_lang::lang::types::numerics::as_str(owner_id);
                 let member = if matches!(
                     method,
                     "resize" | "try_resize" | "wrapping_resize" | "saturating_resize"
                 ) {
                     method
                 } else if matches!(
-                    incan_core::lang::types::numerics::info_for(owner_id).family,
+                    incan_lang::lang::types::numerics::info_for(owner_id).family,
                     NumericFamily::BinaryFloat
                 ) {
                     float_methods::from_str(method).map(float_methods::as_str)?
@@ -1343,62 +1343,62 @@ impl TypeChecker {
                 (owner, member)
             }
             ResolvedType::Str => (
-                incan_core::lang::types::stringlike::as_str(incan_core::lang::types::stringlike::StringLikeId::Str),
+                incan_lang::lang::types::stringlike::as_str(incan_lang::lang::types::stringlike::StringLikeId::Str),
                 string_methods::from_str(method).map(string_methods::as_str)?,
             ),
             ResolvedType::FrozenStr => (
-                incan_core::lang::types::stringlike::as_str(
-                    incan_core::lang::types::stringlike::StringLikeId::FrozenStr,
+                incan_lang::lang::types::stringlike::as_str(
+                    incan_lang::lang::types::stringlike::StringLikeId::FrozenStr,
                 ),
                 string_methods::from_str(method).map(string_methods::as_str)?,
             ),
             ResolvedType::Bytes if method == "as_slice" => (
-                incan_core::lang::types::stringlike::as_str(incan_core::lang::types::stringlike::StringLikeId::Bytes),
+                incan_lang::lang::types::stringlike::as_str(incan_lang::lang::types::stringlike::StringLikeId::Bytes),
                 "as_slice",
             ),
             ResolvedType::FrozenBytes => (
-                incan_core::lang::types::stringlike::as_str(
-                    incan_core::lang::types::stringlike::StringLikeId::FrozenBytes,
+                incan_lang::lang::types::stringlike::as_str(
+                    incan_lang::lang::types::stringlike::StringLikeId::FrozenBytes,
                 ),
                 frozen_bytes_methods::from_str(method).map(frozen_bytes_methods::as_str)?,
             ),
             ResolvedType::FrozenList(_) => (
-                incan_core::lang::types::collections::as_str(CollectionTypeId::FrozenList),
+                incan_lang::lang::types::collections::as_str(CollectionTypeId::FrozenList),
                 frozen_list_methods::from_str(method).map(frozen_list_methods::as_str)?,
             ),
             ResolvedType::FrozenSet(_) => (
-                incan_core::lang::types::collections::as_str(CollectionTypeId::FrozenSet),
+                incan_lang::lang::types::collections::as_str(CollectionTypeId::FrozenSet),
                 frozen_set_methods::from_str(method).map(frozen_set_methods::as_str)?,
             ),
             ResolvedType::FrozenDict(_, _) => (
-                incan_core::lang::types::collections::as_str(CollectionTypeId::FrozenDict),
+                incan_lang::lang::types::collections::as_str(CollectionTypeId::FrozenDict),
                 frozen_dict_methods::from_str(method).map(frozen_dict_methods::as_str)?,
             ),
             ResolvedType::Generic(name, _) => match collection_type_id(name) {
                 Some(CollectionTypeId::List) => (
-                    incan_core::lang::types::collections::as_str(CollectionTypeId::List),
+                    incan_lang::lang::types::collections::as_str(CollectionTypeId::List),
                     list_methods::from_str(method).map(list_methods::as_str)?,
                 ),
                 Some(CollectionTypeId::Dict) => (
-                    incan_core::lang::types::collections::as_str(CollectionTypeId::Dict),
+                    incan_lang::lang::types::collections::as_str(CollectionTypeId::Dict),
                     dict_methods::from_str(method).map(dict_methods::as_str)?,
                 ),
                 Some(CollectionTypeId::Set) => (
-                    incan_core::lang::types::collections::as_str(CollectionTypeId::Set),
+                    incan_lang::lang::types::collections::as_str(CollectionTypeId::Set),
                     set_methods::from_str(method).map(set_methods::as_str)?,
                 ),
                 Some(CollectionTypeId::Option) => (
-                    incan_core::lang::types::collections::as_str(CollectionTypeId::Option),
+                    incan_lang::lang::types::collections::as_str(CollectionTypeId::Option),
                     option_methods::from_str(method)
                         .map(option_methods::as_str)
                         .or_else(|| (method == "clone").then_some("clone"))?,
                 ),
                 Some(CollectionTypeId::Result) => (
-                    incan_core::lang::types::collections::as_str(CollectionTypeId::Result),
+                    incan_lang::lang::types::collections::as_str(CollectionTypeId::Result),
                     result_methods::from_str(method).map(result_methods::as_str)?,
                 ),
                 Some(CollectionTypeId::Generator) => (
-                    incan_core::lang::types::collections::as_str(CollectionTypeId::Generator),
+                    incan_lang::lang::types::collections::as_str(CollectionTypeId::Generator),
                     iterator_methods::from_str(method).map(iterator_methods::as_str)?,
                 ),
                 _ => return None,
@@ -1474,8 +1474,8 @@ impl TypeChecker {
             return Some(ResolvedType::Unknown);
         };
 
-        let source_info = incan_core::lang::types::numerics::info_for(source);
-        let target_info = incan_core::lang::types::numerics::info_for(target);
+        let source_info = incan_lang::lang::types::numerics::info_for(source);
+        let target_info = incan_lang::lang::types::numerics::info_for(target);
         let integer_to_integer = matches!(
             (source_info.family, target_info.family),
             (
@@ -1485,7 +1485,7 @@ impl TypeChecker {
         );
         match policy {
             NumericResizeMethodPolicy::Lossless => {
-                if !incan_core::numeric_values::numeric_type_losslessly_widens_to(source, target) {
+                if !incan_lang::numeric_values::numeric_type_losslessly_widens_to(source, target) {
                     self.errors.push(
                         errors::type_mismatch("lossless numeric resize target", &target_ty.to_string(), span)
                             .with_hint(
@@ -2042,14 +2042,14 @@ impl TypeChecker {
         // Metadata records the ancestral spelling of an owner (`alloc::boxed::Box`); the source imported the `std`
         // one. Every re-export of one item is an alias of it, so the owner match must happen in the ancestral
         // namespace or a `Self`-returning call like `Box.new(x)` never reconciles with its expected `Box<T>`.
-        let owner = incan_core::interop::ancestral_rust_path(rust_path);
+        let owner = incan_lang::interop::ancestral_rust_path(rust_path);
         match expected {
             ResolvedType::RustPath(path) => path
                 .split('<')
                 .next()
-                .is_some_and(|base| incan_core::interop::ancestral_rust_path(base) == owner),
+                .is_some_and(|base| incan_lang::interop::ancestral_rust_path(base) == owner),
             ResolvedType::Generic(name, _) | ResolvedType::Named(name) => {
-                incan_core::interop::ancestral_rust_path(name) == owner
+                incan_lang::interop::ancestral_rust_path(name) == owner
             }
             _ => false,
         }
@@ -2069,15 +2069,15 @@ impl TypeChecker {
             }
             ResolvedType::RustPath(path)
                 if path.split('<').next().is_some_and(|base| {
-                    incan_core::interop::ancestral_rust_path(base)
-                        == incan_core::interop::ancestral_rust_path(rust_path)
+                    incan_lang::interop::ancestral_rust_path(base)
+                        == incan_lang::interop::ancestral_rust_path(rust_path)
                 }) && Self::contextual_type_matches_rust_owner(expected, rust_path) =>
             {
                 Some(expected.clone())
             }
             ResolvedType::Generic(name, _) | ResolvedType::Named(name)
-                if incan_core::interop::ancestral_rust_path(name)
-                    == incan_core::interop::ancestral_rust_path(rust_path)
+                if incan_lang::interop::ancestral_rust_path(name)
+                    == incan_lang::interop::ancestral_rust_path(rust_path)
                     && Self::contextual_type_matches_rust_owner(expected, rust_path) =>
             {
                 Some(expected.clone())
@@ -2121,15 +2121,15 @@ impl TypeChecker {
             // The receiver may name the owner through any re-export (`alloc::boxed::Box`, a prelude `Box`) while
             // the import spelled `std::boxed::Box`; every spelling of one item must yield its type arguments.
             ResolvedType::Generic(name, args)
-                if incan_core::interop::ancestral_rust_path(name)
-                    == incan_core::interop::ancestral_rust_path(rust_path) =>
+                if incan_lang::interop::ancestral_rust_path(name)
+                    == incan_lang::interop::ancestral_rust_path(rust_path) =>
             {
                 Some(args.clone())
             }
             ResolvedType::RustPath(display) => {
                 let normalized = display.strip_prefix("rust::").unwrap_or(display);
                 let (base, args) = Self::rust_generic_base_and_args(normalized)?;
-                if incan_core::interop::ancestral_rust_path(base) != incan_core::interop::ancestral_rust_path(rust_path)
+                if incan_lang::interop::ancestral_rust_path(base) != incan_lang::interop::ancestral_rust_path(rust_path)
                 {
                     return None;
                 }
@@ -2190,7 +2190,7 @@ impl TypeChecker {
             params: sig
                 .params
                 .iter()
-                .map(|param| incan_core::interop::RustParam {
+                .map(|param| incan_lang::interop::RustParam {
                     name: param.name.clone(),
                     type_display: Self::substitute_rust_owner_display(
                         param.type_display.as_str(),
@@ -2646,7 +2646,7 @@ impl TypeChecker {
     /// import without falling back to backend method-name heuristics.
     fn record_rust_extension_trait_import_for_call(
         &mut self,
-        receiver_metadata: &incan_core::interop::RustItemMetadata,
+        receiver_metadata: &incan_lang::interop::RustItemMetadata,
         method: &str,
         span: Span,
     ) -> Option<RustMethodTraitImportUse> {
@@ -2710,10 +2710,10 @@ impl TypeChecker {
 
     /// Return the trait method signature when `import` is implemented by `type_info` and declares `method`.
     fn rust_trait_import_matches_receiver(
-        type_info: &incan_core::interop::RustTypeInfo,
+        type_info: &incan_lang::interop::RustTypeInfo,
         import: &RustTraitImportInfo,
         method: &str,
-    ) -> Option<Option<incan_core::interop::RustFunctionSig>> {
+    ) -> Option<Option<incan_lang::interop::RustFunctionSig>> {
         if !import.methods.contains(method) {
             return None;
         }
@@ -2733,7 +2733,7 @@ impl TypeChecker {
     fn rust_trait_method_signature(
         import: &RustTraitImportInfo,
         method: &str,
-    ) -> Option<incan_core::interop::RustFunctionSig> {
+    ) -> Option<incan_lang::interop::RustFunctionSig> {
         import.method_signatures.get(method).cloned()
     }
 
@@ -3994,16 +3994,16 @@ impl TypeChecker {
                 RustItemKind::Module(module) => {
                     if let Some(child) = module.children.iter().find(|c| c.name == field) {
                         return match child.kind_hint {
-                            incan_core::interop::RustModuleChildKind::Module
-                            | incan_core::interop::RustModuleChildKind::Type
-                            | incan_core::interop::RustModuleChildKind::Trait
-                            | incan_core::interop::RustModuleChildKind::Other => {
+                            incan_lang::interop::RustModuleChildKind::Module
+                            | incan_lang::interop::RustModuleChildKind::Type
+                            | incan_lang::interop::RustModuleChildKind::Trait
+                            | incan_lang::interop::RustModuleChildKind::Other => {
                                 ResolvedType::RustPath(format!("{path}::{field}"))
                             }
-                            incan_core::interop::RustModuleChildKind::Function => {
+                            incan_lang::interop::RustModuleChildKind::Function => {
                                 ResolvedType::Function(Vec::new(), Box::new(ResolvedType::Unknown))
                             }
-                            incan_core::interop::RustModuleChildKind::Constant => ResolvedType::Unknown,
+                            incan_lang::interop::RustModuleChildKind::Constant => ResolvedType::Unknown,
                         };
                     }
                     // Module membership from rust-analyzer is authoritative.
@@ -4275,7 +4275,7 @@ impl TypeChecker {
             return;
         };
         for (index, (arg, param)) in args.iter().zip(params).enumerate() {
-            if carriers.get(index).copied().unwrap_or_default() != incan_core::interop::RustPayloadCarrier::Boxed {
+            if carriers.get(index).copied().unwrap_or_default() != incan_lang::interop::RustPayloadCarrier::Boxed {
                 continue;
             }
             let CallArg::Positional(arg_expr) = arg else {
@@ -4346,7 +4346,7 @@ impl TypeChecker {
             .and_then(|symbol| match &symbol.kind {
                 SymbolKind::Variable(variable) => match &variable.ty {
                     ResolvedType::Named(identity)
-                        if incan_core::lang::c_abi::parse_output_slot_type_identity(identity).is_some() =>
+                        if incan_lang::lang::c_abi::parse_output_slot_type_identity(identity).is_some() =>
                     {
                         Some(identity.clone())
                     }
@@ -4518,7 +4518,7 @@ impl TypeChecker {
         }
         if Self::is_explicit_builtin_namespace_expr(base) {
             let result = self.check_explicit_builtin_call(method, args, span);
-            if let Some(builtin) = incan_core::lang::builtins::from_str(method)
+            if let Some(builtin) = incan_lang::lang::builtins::from_str(method)
                 && let Some(identity) = self.symbols.builtin_function_identity(builtin)
             {
                 self.type_info.record_resolved_identity(span, identity);
@@ -4537,7 +4537,7 @@ impl TypeChecker {
             self.type_info.record_resolved_identity(
                 span,
                 Self::compiler_builtin_member_identity(
-                    incan_core::lang::types::collections::as_str(CollectionTypeId::List),
+                    incan_lang::lang::types::collections::as_str(CollectionTypeId::List),
                     collection_helpers::member(BuiltinCollectionHelperId::ListRepeat),
                 ),
             );
@@ -5038,8 +5038,8 @@ impl TypeChecker {
             || matches!(
                 base_ty,
                 ResolvedType::Numeric(
-                    incan_core::lang::types::numerics::NumericTypeId::F32
-                        | incan_core::lang::types::numerics::NumericTypeId::F64
+                    incan_lang::lang::types::numerics::NumericTypeId::F32
+                        | incan_lang::lang::types::numerics::NumericTypeId::F64
                 )
             ))
             && let Some(id) = float_methods::from_str(method)
@@ -5719,7 +5719,7 @@ impl TypeChecker {
 
     /// Return known method result types for Rust imports when rust-inspect metadata is not specific enough.
     fn known_rust_path_method_return(path: &str, method: &str) -> Option<ResolvedType> {
-        use incan_core::lang::types::numerics::NumericTypeId as N;
+        use incan_lang::lang::types::numerics::NumericTypeId as N;
 
         match (path, method) {
             ("xxhash_rust::xxh32::Xxh32", "digest") => Some(ResolvedType::Numeric(N::U32)),

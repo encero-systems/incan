@@ -11,7 +11,7 @@
 //!
 //! ## Examples
 //! ```rust
-//! use incan_core::lang::keywords::{self, KeywordId};
+//! use incan_lang::lang::keywords::{self, KeywordId};
 //!
 //! assert_eq!(keywords::from_str("if"), Some(KeywordId::If));
 //! assert_eq!(keywords::as_str(KeywordId::If), "if");
@@ -30,7 +30,7 @@ use super::registry::{Example, RFC, RfcId, Since, Stability};
 ///
 /// ## Examples
 /// ```rust
-/// use incan_core::lang::keywords::{self, KeywordId};
+/// use incan_lang::lang::keywords::{self, KeywordId};
 ///
 /// assert_eq!(keywords::from_str("def"), Some(KeywordId::Def));
 /// assert_eq!(keywords::from_str("fn"), Some(KeywordId::Def)); // alias

@@ -9,7 +9,7 @@
 //!
 //! ## Examples
 //! ```rust
-//! use incan_core::lang::punctuation::{self, PunctuationId};
+//! use incan_lang::lang::punctuation::{self, PunctuationId};
 //!
 //! assert_eq!(punctuation::from_str("::"), Some(PunctuationId::ColonColon));
 //! assert_eq!(punctuation::as_str(PunctuationId::FatArrow), "=>");

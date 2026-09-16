@@ -555,14 +555,14 @@ pub(crate) mod tests {
 
     /// Return the real Rust source compiled for one fixture crate.
     ///
-    /// The call chain is the proof. `incan_core` calls into the sealed prebuilt crate and `incan_std_core` calls into
-    /// `incan_core`, so neither compiles unless the executor passed the right `--extern` for both an SDK-owned
+    /// The call chain is the proof. `incan_lang` calls into the sealed prebuilt crate and `incan_std_core` calls into
+    /// `incan_lang`, so neither compiles unless the executor passed the right `--extern` for both an SDK-owned
     /// artifact and an output it produced itself earlier in the declared order.
     fn fixture_source(crate_name: &str) -> String {
         match crate_name {
             "fixture_dep" => "pub fn dep_marker() -> u8 {\n    3\n}\n".to_string(),
-            "incan_core" => "pub fn core_marker() -> u8 {\n    fixture_dep::dep_marker() + 4\n}\n".to_string(),
-            _ => "pub fn stdlib_marker() -> u8 {\n    incan_core::core_marker()\n}\n".to_string(),
+            "incan_lang" => "pub fn core_marker() -> u8 {\n    fixture_dep::dep_marker() + 4\n}\n".to_string(),
+            _ => "pub fn stdlib_marker() -> u8 {\n    incan_lang::core_marker()\n}\n".to_string(),
         }
     }
 
@@ -648,7 +648,7 @@ pub(crate) mod tests {
         toolchain_root: &Path,
     ) -> Result<String, Box<dyn std::error::Error>> {
         write_fixture_file(toolchain_root, "target-spec.json", b"{}")?;
-        for crate_name in ["incan_core", "incan_std_core"] {
+        for crate_name in ["incan_lang", "incan_std_core"] {
             write_fixture_file(
                 toolchain_root,
                 &format!("compiler/{crate_name}/src/lib.rs"),
@@ -726,11 +726,11 @@ pub(crate) mod tests {
         )?;
         let core = library_unit(
             &selection,
-            "incan_core",
+            "incan_lang",
             package_version,
             OvenSelectedRustFacetSourceKind::Compiler,
             &toolchain_owner(),
-            "compiler/incan_core",
+            "compiler/incan_lang",
             vec![OvenSelectedRustFacetDependency {
                 alias: "fixture_dep".to_string(),
                 unit: dep.identity.clone(),
@@ -744,7 +744,7 @@ pub(crate) mod tests {
             &toolchain_owner(),
             "compiler/incan_std_core",
             vec![OvenSelectedRustFacetDependency {
-                alias: "incan_core".to_string(),
+                alias: "incan_lang".to_string(),
                 unit: core.identity.clone(),
             }],
         )?;
@@ -885,7 +885,7 @@ pub(crate) mod tests {
     /// Real `rustc` compiles the compiler-owned layer in declared order above a sealed prebuilt edge, and a second
     /// execution reproduces it byte for byte.
     #[test]
-    fn host_native_rebuild_compiles_incan_core_then_incan_std_core() -> Result<(), Box<dyn std::error::Error>> {
+    fn host_native_rebuild_compiles_incan_lang_then_incan_std_core() -> Result<(), Box<dyn std::error::Error>> {
         let fixture = fixture()?;
         let output_root = tempfile::tempdir()?;
         let closure = OvenRuntimeCompilerClosure::new(&fixture.rustc, FIXTURE_CLOSURE);
@@ -907,7 +907,7 @@ pub(crate) mod tests {
             .iter()
             .map(|output| output.crate_name.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(produced, vec!["incan_core", "incan_std_core"]);
+        assert_eq!(produced, vec!["incan_lang", "incan_std_core"]);
         for output in build.outputs() {
             assert!(output.artifact.is_file(), "{} produced no rlib", output.crate_name);
             assert!(output.digest.starts_with("sha256:"));
@@ -920,8 +920,8 @@ pub(crate) mod tests {
         let core = build
             .outputs()
             .iter()
-            .find(|output| output.crate_name == "incan_core")
-            .ok_or("build lost incan_core")?;
+            .find(|output| output.crate_name == "incan_lang")
+            .ok_or("build lost incan_lang")?;
         let stdlib = build
             .outputs()
             .iter()
@@ -938,7 +938,7 @@ pub(crate) mod tests {
         assert_eq!(
             stdlib.dependencies,
             vec![OvenRuntimeRebuildDependency {
-                alias: "incan_core".to_string(),
+                alias: "incan_lang".to_string(),
                 identity: core.compiled_identity.as_str().to_string(),
                 kind: OvenRuntimeRebuildDependencyKind::Rebuilt,
             }],
@@ -992,8 +992,8 @@ pub(crate) mod tests {
         let core = build
             .outputs()
             .iter()
-            .find(|output| output.crate_name == "incan_core")
-            .ok_or("build lost incan_core")?
+            .find(|output| output.crate_name == "incan_lang")
+            .ok_or("build lost incan_lang")?
             .clone();
 
         // Bytes `rustc` did not produce, at the exact path the executor writes.
@@ -1010,8 +1010,8 @@ pub(crate) mod tests {
         let rebuilt_core = rebuilt
             .outputs()
             .iter()
-            .find(|output| output.crate_name == "incan_core")
-            .ok_or("rebuild lost incan_core")?;
+            .find(|output| output.crate_name == "incan_lang")
+            .ok_or("rebuild lost incan_lang")?;
         assert_eq!(
             rebuilt_core.digest, core.digest,
             "the planted bytes must be replaced by a real compilation of this identity"
@@ -1110,8 +1110,8 @@ pub(crate) mod tests {
             .selected_graph
             .units
             .iter()
-            .find(|unit| unit.crate_name == "incan_core")
-            .ok_or("fixture lost incan_core")?;
+            .find(|unit| unit.crate_name == "incan_lang")
+            .ok_or("fixture lost incan_lang")?;
 
         let mut host_unit = core.clone();
         host_unit.domain = OvenSelectedRustFacetDomain::Host;

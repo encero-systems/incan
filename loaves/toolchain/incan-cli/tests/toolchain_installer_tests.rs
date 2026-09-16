@@ -274,7 +274,7 @@ fn write_fixture_archive(root: &Path) -> Result<(PathBuf, String), Box<dyn std::
     fs::create_dir_all(&crates)?;
     fs::write(crates.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
     for support_crate in [
-        "incan_core",
+        "incan_lang",
         "incan_derive",
         "incan_std_async",
         "incan_std_core",
@@ -407,13 +407,13 @@ fn write_fixture_sdk_provider_seed(root: &Path, profile: &str) -> Result<PathBuf
     // Prerelease comparators only admit the explicitly named release cohort. Keep this test fixture coupled to the
     // compiler compiled into this integration test so a patch-release dev build exercises the packaged archive rather
     // than failing before metadata inspection on stale fixture compatibility data.
-    let compiler_version = incan_core::version::INCAN_VERSION;
+    let compiler_version = incan_lang::version::INCAN_VERSION;
     let inventory = serde_json::json!({
         "schema_version": 2,
         "sdk_id": "incan-fixture",
         "sdk_version": "0.6.0",
         "compiler_requirement": format!("={compiler_version}"),
-        "provider_codegen_revision": incan_core::version::SDK_PROVIDER_CODEGEN_REVISION,
+        "provider_codegen_revision": incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION,
         "components": inventory_components,
         "profiles": {
             "minimal": ["stdlib-core"],
@@ -591,7 +591,7 @@ fn assert_packaged_support_workspace_without_cargo(extracted: &Path) -> Result<(
         .and_then(toml::Value::as_table)
         .ok_or("packaged support workspace has no [workspace] table")?;
     let expected_members = [
-        "incan_core",
+        "incan_lang",
         "incan_derive",
         "incan_std_async",
         "incan_std_core",
@@ -869,9 +869,9 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
     }
     assert!(listing.contains("crates/Cargo.toml"));
     assert!(listing.contains("crates/Cargo.lock"));
-    assert!(listing.contains("crates/incan_core/Cargo.toml"));
+    assert!(listing.contains("crates/incan_lang/Cargo.toml"));
     assert!(listing.contains("crates/incan_derive/Cargo.toml"));
-    for facet in incan_core::lang::stdlib::facets::ALL {
+    for facet in incan_lang::lang::stdlib::facets::ALL {
         assert!(listing.contains(&format!("crates/{facet}/Cargo.toml")));
         assert!(
             !listing
@@ -895,8 +895,8 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
     let shipped_inventory =
         incan_provider::SdkInventory::read_from_path(&extracted.join("share/incan/sdk/sdk-inventory.json"))?;
     shipped_inventory.validate_compiler_compatibility(
-        incan_core::version::INCAN_VERSION,
-        incan_core::version::SDK_PROVIDER_CODEGEN_REVISION,
+        incan_lang::version::INCAN_VERSION,
+        incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION,
     )?;
     if oven_compiler_suite_is_active() {
         assert_packaged_support_workspace_without_cargo(&extracted)?;
@@ -1223,7 +1223,7 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         .find("cargo build --locked --release -p incan-cli --bin incan --bin generate_feature_inventory")
         .ok_or("pull-request CI is missing the optimized Linux compiler build")?;
     let reference_build = linux_tools_workflow
-        .find("cargo build --locked --release -p incan_core --bin generate_lang_reference")
+        .find("cargo build --locked --release -p incan_lang --bin generate_lang_reference")
         .ok_or("pull-request CI is missing the optimized language reference generator build")?;
     let tool_staging = linux_tools_workflow
         .find("install -m 755 \"target/release/$tool\" \"target/debug/$tool\"")

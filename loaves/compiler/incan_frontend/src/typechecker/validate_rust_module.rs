@@ -64,7 +64,7 @@ impl TypeChecker {
             } else {
                 // Crate validation: first segment must be a standard library facet or a declared dependency.
                 let first_segment = directive.node.split("::").next().unwrap_or("");
-                if !incan_core::lang::stdlib::facets::is_facet(first_segment)
+                if !incan_lang::lang::stdlib::facets::is_facet(first_segment)
                     && let Some(ref crate_names) = self.declared_crate_names
                     && !crate_names.contains(first_segment)
                 {

@@ -1177,7 +1177,7 @@ mod tests {
         let inventory = SdkInventory::from_json(INVENTORY, Path::new("/sdk"))?;
 
         let error = inventory
-            .validate_compiler_compatibility("0.5.0-dev.5", incan_core::version::SDK_PROVIDER_CODEGEN_REVISION)
+            .validate_compiler_compatibility("0.5.0-dev.5", incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION)
             .err()
             .ok_or("expected incompatible provider codegen revision")?;
         assert!(error.to_string().contains("provider codegen revision 5"));
@@ -1285,7 +1285,7 @@ exclude-components = ["stdlib-data"]
         let mut catalog = SdkSourceCatalog::read_from_path(&path)?;
         catalog.compiler_requirement = ">=0.6.0".to_string();
 
-        let error = match catalog.validate_compiler_version(incan_core::version::INCAN_VERSION) {
+        let error = match catalog.validate_compiler_version(incan_lang::version::INCAN_VERSION) {
             Ok(()) => {
                 return Err("an incompatible SDK source catalog must be rejected before provider compilation".into());
             }

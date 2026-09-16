@@ -7,8 +7,8 @@ use std::collections::{HashMap, HashSet};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use incan_core::lang::types::numerics::NumericTypeId;
-use incan_core::lang::{
+use incan_lang::lang::types::numerics::NumericTypeId;
+use incan_lang::lang::{
     callables, conventions,
     traits::{self as core_traits, TraitId},
 };

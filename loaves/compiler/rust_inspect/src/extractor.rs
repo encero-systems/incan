@@ -1,8 +1,8 @@
-//! Map rust-analyzer `hir` definitions into [`incan_core::interop::RustItemMetadata`].
+//! Map rust-analyzer `hir` definitions into [`incan_lang::interop::RustItemMetadata`].
 
 use std::collections::{BTreeMap, HashSet};
 
-use incan_core::interop::{
+use incan_lang::interop::{
     RustAssociatedTypeBinding, RustAssociatedTypeRequirement, RustExpandedDeriveTrait, RustFieldInfo, RustFunctionSig,
     RustImplementedTrait, RustItemKind, RustItemMetadata, RustMacroInfo, RustMethodSig, RustModuleChild,
     RustModuleChildKind, RustModuleInfo, RustMutableReferenceCandidate, RustMutableReferenceTypeParam, RustParam,
@@ -1939,7 +1939,7 @@ fn extract_rust_item_inner(
 mod tests {
     use std::fs;
 
-    use incan_core::interop::{RustItemKind, RustTypeShape};
+    use incan_lang::interop::{RustItemKind, RustTypeShape};
 
     use super::{RustWorkspace, exact_numeric_boundary_display, extract_rust_item};
     use crate::cache::RustMetadataCache;
@@ -2288,7 +2288,7 @@ struct __IncanDeriveProbe3;
             b"test Cargo semantic bootstrap\n",
         )?;
 
-        let assert_contract = |metadata: &incan_core::interop::RustItemMetadata| -> Result<(), std::io::Error> {
+        let assert_contract = |metadata: &incan_lang::interop::RustItemMetadata| -> Result<(), std::io::Error> {
             let RustItemKind::Type(info) = &metadata.kind else {
                 return Err(std::io::Error::other("expected FooBar type metadata"));
             };
@@ -2296,7 +2296,7 @@ struct __IncanDeriveProbe3;
             assert_eq!(info.mutable_reference_type_params[0].tuple_composition_arities, [2, 3]);
             Ok(())
         };
-        let assert_widget_contract = |metadata: &incan_core::interop::RustItemMetadata| -> Result<(), std::io::Error> {
+        let assert_widget_contract = |metadata: &incan_lang::interop::RustItemMetadata| -> Result<(), std::io::Error> {
             let RustItemKind::Type(info) = &metadata.kind else {
                 return Err(std::io::Error::other("expected Widget type metadata"));
             };
@@ -2313,7 +2313,7 @@ struct __IncanDeriveProbe3;
             Ok(())
         };
         let assert_defaulted_contract =
-            |metadata: &incan_core::interop::RustItemMetadata| -> Result<(), std::io::Error> {
+            |metadata: &incan_lang::interop::RustItemMetadata| -> Result<(), std::io::Error> {
                 let RustItemKind::Type(info) = &metadata.kind else {
                     return Err(std::io::Error::other("expected Defaulted type metadata"));
                 };

@@ -6,7 +6,7 @@ use super::Lexer;
 use super::tokens::TokenKind;
 use crate::ast::{DecimalLiteral, FloatLiteral, IntLiteral, Span};
 use crate::diagnostics::errors;
-use incan_core::numeric_strings::normalize_numeric_string;
+use incan_lang::numeric_strings::normalize_numeric_string;
 
 impl<'a> Lexer<'a> {
     /// Scan an integer, float, or decimal literal after the first digit has been consumed.

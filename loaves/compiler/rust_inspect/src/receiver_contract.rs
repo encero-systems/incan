@@ -1,6 +1,6 @@
 //! Preserve receiver lifetime evidence before Rust display normalization erases lifetime labels.
 
-use incan_core::interop::RustReceiverContract;
+use incan_lang::interop::RustReceiverContract;
 use ra_ap_syntax::{AstNode, ast};
 
 /// Recover only ordinary shared receivers and output references tied to that receiver by source lifetime rules.

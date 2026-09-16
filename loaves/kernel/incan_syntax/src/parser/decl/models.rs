@@ -237,7 +237,7 @@ impl<'a> Parser<'a> {
         while let Some(token) = self.tokens.get(idx) {
             let id = match &token.kind {
                 TokenKind::Keyword(id) => Some(*id),
-                TokenKind::Ident(name) => incan_core::lang::keywords::from_str(name),
+                TokenKind::Ident(name) => incan_lang::lang::keywords::from_str(name),
                 _ => None,
             };
             let Some(id) = id else {

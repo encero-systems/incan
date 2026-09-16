@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 
 use crate::modules::{topologically_sort_modules, uses_iterator_adapter_surface, uses_result_combinator_surface};
 use crate::project::resolve_stdlib_module_source_path;
-use incan_core::lang::stdlib;
 use incan_frontend::ParsedModule;
 use incan_frontend::ast::Program;
 use incan_frontend::library_manifest_index::LibraryManifestIndex;
@@ -13,6 +12,7 @@ use incan_frontend::module::{
 };
 use incan_frontend::vocab_desugar_pass;
 use incan_frontend::{diagnostics, lexer, parser};
+use incan_lang::lang::stdlib;
 use incan_provider::ProviderPlan;
 use incan_provider::compiled_sdk::CompiledSdkModules;
 
@@ -389,7 +389,7 @@ def test_map_err_result_helper_is_packaged() -> None:
         assert!(
             !modules.iter().any(|module| module.path_segments
                 == vec![
-                    incan_core::lang::stdlib::INCAN_STD_NAMESPACE.to_string(),
+                    incan_lang::lang::stdlib::INCAN_STD_NAMESPACE.to_string(),
                     "result".to_string()
                 ]),
             "compiled std.result helper source must not be collected, got {:?}",

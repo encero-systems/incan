@@ -420,7 +420,7 @@ impl<'a> Parser<'a> {
                     if import_path_activates_std_async(&path.segments) {
                         self.std_async_vocab_active = true;
                     }
-                    for kw in incan_core::lang::stdlib::soft_keywords_for_import(&path.segments) {
+                    for kw in incan_lang::lang::stdlib::soft_keywords_for_import(&path.segments) {
                         self.active_soft_keywords.insert(kw);
                     }
                     self.activate_imported_keywords_for_import_path(&path.segments);
@@ -429,7 +429,7 @@ impl<'a> Parser<'a> {
                     if import_path_activates_std_async(&module.segments) {
                         self.std_async_vocab_active = true;
                     }
-                    for kw in incan_core::lang::stdlib::soft_keywords_for_import(&module.segments) {
+                    for kw in incan_lang::lang::stdlib::soft_keywords_for_import(&module.segments) {
                         self.active_soft_keywords.insert(kw);
                     }
                     self.activate_imported_keywords_for_import_path(&module.segments);
@@ -555,8 +555,8 @@ impl<'a> Parser<'a> {
                     clause_body_kind,
                     expression_item_modifiers,
                 });
-                if let Some(id) = incan_core::lang::keywords::from_str(&keyword.name)
-                    && incan_core::lang::keywords::is_soft(id)
+                if let Some(id) = incan_lang::lang::keywords::from_str(&keyword.name)
+                    && incan_lang::lang::keywords::is_soft(id)
                 {
                     self.active_soft_keywords.insert(id);
                 }

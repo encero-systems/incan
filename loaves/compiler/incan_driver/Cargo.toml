@@ -28,7 +28,7 @@ test_support = ["incan_provider/test_support", "incan_emit/test_support", "incan
 clap = { version = "4.4", features = ["derive"], optional = true }
 hex = "0.4.3"
 incan_codegraph = { workspace = true }
-incan_core = { workspace = true }
+incan_lang = { workspace = true }
 incan_emit = { workspace = true }
 incan_format = { workspace = true }
 incan_frontend = { workspace = true }

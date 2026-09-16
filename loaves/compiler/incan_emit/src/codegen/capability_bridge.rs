@@ -2,9 +2,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use incan_core::lang::trait_capabilities::{self, TraitCapabilityInfo, TraitCapabilityTypeArg};
 use incan_frontend::ast::{Declaration, ImportKind, Program};
 use incan_frontend::library_manifest::{TraitExport, TypeBoundExport, TypeRef};
+use incan_lang::lang::trait_capabilities::{self, TraitCapabilityInfo, TraitCapabilityTypeArg};
 
 /// Return whether one source program imports a capability contract or one of its trigger items.
 pub fn imports_contract(program: &Program, capability: &TraitCapabilityInfo) -> bool {

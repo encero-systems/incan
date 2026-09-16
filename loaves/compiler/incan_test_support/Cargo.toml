@@ -12,7 +12,7 @@ name = "incan_test_support"
 path = "src/lib.rs"
 
 [dependencies]
-incan_core = { workspace = true }
+incan_lang = { workspace = true }
 incan_frontend = { workspace = true }
 incan_semantics_core = { workspace = true }
 oven_model = { workspace = true }

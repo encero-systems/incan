@@ -283,8 +283,8 @@ fn resolve_package_owned_c_binding_header(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use incan_core::lang::c_abi::LinkCapabilityId;
     use incan_frontend::ast::Span;
+    use incan_lang::lang::c_abi::LinkCapabilityId;
     use incan_provider::test_support::parsed_module_for_test;
 
     #[test]

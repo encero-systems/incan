@@ -413,7 +413,7 @@ where
 /// This is the import-driven feature activation mechanism prescribed by RFC 022: when the compiler resolves an
 /// import from a `std.*` module, it activates the corresponding feature.
 pub fn has_stdlib_import(program: &Program, module: &str) -> bool {
-    use incan_core::lang::stdlib::STDLIB_ROOT;
+    use incan_lang::lang::stdlib::STDLIB_ROOT;
     program.declarations.iter().any(|decl| {
         let Declaration::Import(import) = &decl.node else {
             return false;

@@ -165,7 +165,7 @@ fn canonical_oven_build_unit_inputs(
         .flat_map(|module| collect_rust_dependency_uses(module, false))
         .collect::<Vec<_>>();
     inline_imports
-        .retain(|import| !incan_core::lang::stdlib::facets::is_facet(&import.crate_name) && import.crate_name != "std");
+        .retain(|import| !incan_lang::lang::stdlib::facets::is_facet(&import.crate_name) && import.crate_name != "std");
     let mut resolved = resolve_reachable_dependencies(
         session.manifest.as_ref(),
         &inline_imports,

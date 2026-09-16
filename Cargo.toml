@@ -18,7 +18,7 @@ members = [
     "loaves/toolchain/incan-lsp",
     "loaves/compiler/rust_inspect",
     "loaves/kernel/incan_codegraph",
-    "loaves/kernel/incan_core",
+    "loaves/kernel/incan_lang",
     "loaves/kernel/incan_semantics_core",
     "loaves/kernel/incan_syntax",
     "loaves/kernel/incan_vocab",
@@ -66,7 +66,7 @@ tracing = "0.1"
 # Every workspace crate is named here once — its directory, its ring's version requirement where that ring has
 # its own line, and `default-features = false` where any member consumes it without defaults — and members
 # inherit the entry. The release archive and the staged SDK runtime write their own tables against `crates/<name>`.
-incan_core = { path = "loaves/kernel/incan_core" }
+incan_lang = { path = "loaves/kernel/incan_lang" }
 incan_derive = { path = "loaves/stdlib/derive/incan_derive", version = "0.6.0-dev.4" }
 incan_std_core = { path = "loaves/stdlib/core/rust", version = "0.6.0-dev.4" }
 incan_std_data = { path = "loaves/stdlib/data/rust", version = "0.6.0-dev.4" }

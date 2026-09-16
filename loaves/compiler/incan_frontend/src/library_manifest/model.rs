@@ -25,7 +25,7 @@ use crate::symbols::{
     CallableParam, ImplementationTraitBoundInfo, ImplementationTraitBoundOriginInfo, ImplementationTypeParamInfo,
     NewtypePrimitiveConstraint, ValueEnumBacking, ValueEnumValue,
 };
-use incan_core::interop::RustItemMetadata;
+use incan_lang::interop::RustItemMetadata;
 use incan_semantics_core::{
     AbiV0RuntimeRequirement, CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
 };
@@ -1809,7 +1809,7 @@ impl LibraryManifest {
         Self {
             name: name.into(),
             version: version.into(),
-            incan_version: incan_core::version::INCAN_VERSION.to_string(),
+            incan_version: incan_lang::version::INCAN_VERSION.to_string(),
             manifest_format: LIBRARY_MANIFEST_FORMAT,
             exports: LibraryExports::default(),
             vocab: None,

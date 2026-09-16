@@ -15,9 +15,9 @@ use std::sync::RwLock;
 
 #[cfg(feature = "cli")]
 use crate::generated_cache::GeneratedCacheLease;
-use incan_core::lang::{rust_keywords, stdlib};
 use incan_frontend::library_manifest::{LibraryManifest, ProviderDependencyKind, digest_provider_artifact};
 use incan_frontend::library_manifest_index::LibraryArtifactMetadata;
+use incan_lang::lang::{rust_keywords, stdlib};
 use incan_provider::compiled_sdk::CompiledSdkModules;
 use incan_provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV, SdkArtifactProjection, SdkDependencyRebinding};
 use oven_model::manifest::{DependencySource, DependencySpec};
@@ -279,7 +279,7 @@ pub struct ProjectGenerator {
     /// Whether this binary's generated Cargo manifest also needs a publisher-only library target at `src/main.rs`.
     pub(crate) companion_library_target: bool,
     /// The standard library facets this program reaches beyond the ones every generated project links (see
-    /// `incan_core::lang::generated_support::SUPPORT_CRATES_EVERY_PROGRAM_LINKS`), sorted.
+    /// `incan_lang::lang::generated_support::SUPPORT_CRATES_EVERY_PROGRAM_LINKS`), sorted.
     pub(crate) stdlib_facets: Vec<String>,
     /// Resolved Rust crate dependencies.
     pub(crate) dependencies: Vec<DependencySpec>,
@@ -439,7 +439,7 @@ impl ProjectGenerator {
     pub(crate) fn cargo_package_version(&self) -> &str {
         self.package_version
             .as_deref()
-            .unwrap_or(incan_core::version::INCAN_VERSION)
+            .unwrap_or(incan_lang::version::INCAN_VERSION)
     }
 
     /// Set resolved Rust dependencies.
@@ -1209,7 +1209,7 @@ impl ProjectGenerator {
         sources.sort_by(|left, right| left.0.cmp(&right.0));
         let mut hasher = Sha256::new();
         hasher.update(b"incan-generated-root-source-v1\0");
-        hasher.update(incan_core::version::INCAN_VERSION.as_bytes());
+        hasher.update(incan_lang::version::INCAN_VERSION.as_bytes());
         hasher.update(b"\0name\0");
         hasher.update(self.name.as_bytes());
         hasher.update(b"\0package\0");

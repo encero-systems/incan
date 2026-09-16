@@ -5,13 +5,13 @@ use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
 use crate::diagnostics::errors;
 use crate::symbols::{CallableParam, FunctionInfo, ResolvedType};
 use crate::typechecker::helpers::{collection_type_id, dict_ty, list_ty, option_ty, result_ty, set_ty};
-use incan_core::lang::builtins::{self as core_builtins, BuiltinFnId};
-use incan_core::lang::stdlib;
-use incan_core::lang::surface::constructors::{self as surface_constructors, ConstructorId};
-use incan_core::lang::surface::functions::SurfaceFnId;
-use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
-use incan_core::lang::traits::{self as core_traits, TraitId};
-use incan_core::lang::types::collections::CollectionTypeId;
+use incan_lang::lang::builtins::{self as core_builtins, BuiltinFnId};
+use incan_lang::lang::stdlib;
+use incan_lang::lang::surface::constructors::{self as surface_constructors, ConstructorId};
+use incan_lang::lang::surface::functions::SurfaceFnId;
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
+use incan_lang::lang::traits::{self as core_traits, TraitId};
+use incan_lang::lang::types::collections::CollectionTypeId;
 
 impl TypeChecker {
     /// Return the builtin member name for an explicit `std.builtins.<name>` callee.

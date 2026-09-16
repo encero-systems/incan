@@ -6,13 +6,13 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_driver::backend::replacement::{ReplacementExecutionError, ReplacementValue, execute_free_function};
 use incan_driver::backend::selection::{BackendExecutionReceipt, BackendKind, FallbackOutcome};
 use incan_frontend::body_ir::build_body_ir_module_v0;
 use incan_frontend::diagnostics::CompileError;
 use incan_frontend::typechecker::TypeChecker;
 use incan_frontend::{lexer, parser};
+use incan_lang::lang::builtins::{self, BuiltinFnId};
 use incan_semantics_core::body_ir::{BodyIrModule, CallableTarget, Callee, StatementKind};
 use incan_semantics_core::{HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 

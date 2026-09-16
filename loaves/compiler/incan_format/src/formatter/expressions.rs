@@ -1,6 +1,6 @@
 //! Expression formatting: expressions, literals, operators, patterns, match arms, and types.
 
-use incan_core::lang::keywords;
+use incan_lang::lang::keywords;
 use incan_semantics_core::SurfaceFeatureKey;
 use incan_syntax::ast::*;
 

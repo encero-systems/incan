@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::library_manifest::{LibraryManifest, LibraryManifestError};
-use incan_core::interop::RustItemMetadata;
+use incan_lang::interop::RustItemMetadata;
 use incan_vocab::{CargoDependency, CargoDependencySource, KeywordActivation, KeywordRegistration, KeywordSpec};
 use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
 use serde::Deserialize;
@@ -320,14 +320,14 @@ impl LibraryManifestIndex {
 
     /// Return the mapped soft keywords for all successfully loaded library artifacts. The keys are the
     /// `dependency_key` (alias), making them ready for parser use.
-    pub fn library_soft_keywords(&self) -> HashMap<String, Vec<incan_core::lang::keywords::KeywordId>> {
+    pub fn library_soft_keywords(&self) -> HashMap<String, Vec<incan_lang::lang::keywords::KeywordId>> {
         let mut map = HashMap::new();
         for (key, registrations) in self.library_imported_vocab() {
             let mut ids = Vec::new();
             for registration in registrations {
                 for keyword in registration.keywords {
-                    if let Some(id) = incan_core::lang::keywords::from_str(&keyword.name)
-                        && incan_core::lang::keywords::is_soft(id)
+                    if let Some(id) = incan_lang::lang::keywords::from_str(&keyword.name)
+                        && incan_lang::lang::keywords::is_soft(id)
                     {
                         ids.push(id);
                     }

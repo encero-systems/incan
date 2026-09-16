@@ -3,13 +3,13 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{EmitError, IrEmitter, IrProgram, IrType};
-use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_frontend::api_metadata::{ApiDeclaration, CheckedApiMetadata, SourceAnchor};
 use incan_frontend::library_manifest::{
     CanonicalIdentityExport, CanonicalIdentityOriginExport, LibraryIdentityGraph, LibraryManifest, NativeUnionExport,
     NativeUnionOwnerExport, NominalTypeOriginExport, TypeRef, VisitTypeRefs, contains_native_union,
 };
 use incan_ir::decl::{IrDeclKind, IrFunction, VariantFields};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 /// Type projections for one declaration, scoped by its checked source module and declaration anchor.
 #[derive(Debug, Clone)]
@@ -465,7 +465,7 @@ impl IrEmitter<'_> {
             let mut has_union = false;
             expanded.clone().visit_type_refs(&mut |ty| {
                 has_union |= matches!(ty, TypeRef::NativeUnion(_))
-                    || matches!(ty, TypeRef::Applied { name, .. } if name == incan_core::lang::types::UNION_TYPE_NAME);
+                    || matches!(ty, TypeRef::Applied { name, .. } if name == incan_lang::lang::types::UNION_TYPE_NAME);
             });
             if has_union {
                 return self.project_emitted_union_type(&expanded, &lowered, definitions, origins, local_nominals);

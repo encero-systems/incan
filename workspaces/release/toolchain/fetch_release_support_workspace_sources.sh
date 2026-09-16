@@ -38,7 +38,7 @@ cd "$repo_root"
 # `oven_model::toolchain_layout`.
 support_crate_source() {
   case "$1" in
-    incan_core) printf 'loaves/kernel/incan_core' ;;
+    incan_lang) printf 'loaves/kernel/incan_lang' ;;
     incan_vocab) printf 'loaves/kernel/incan_vocab' ;;
     incan_derive) printf 'loaves/stdlib/derive/incan_derive' ;;
     incan_web_macros) printf 'loaves/stdlib/derive/incan_web_macros' ;;
@@ -51,7 +51,7 @@ support_crate_source() {
   esac
 }
 
-for support_crate in incan_core incan_derive incan_std_core incan_std_data incan_std_async incan_std_web incan_std_testing incan_vocab incan_web_macros; do
+for support_crate in incan_lang incan_derive incan_std_core incan_std_data incan_std_async incan_std_web incan_std_testing incan_vocab incan_web_macros; do
   [ -f "$(support_crate_source "$support_crate")/Cargo.toml" ] || fail "support crate is missing: $(support_crate_source "$support_crate")"
 done
 [ -f "loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml" ] || fail "release stdlib dependency fixture is missing"
@@ -75,7 +75,7 @@ stage_tracked_tree() {
   rm "$source_archive"
 }
 
-for support_crate in incan_core incan_derive incan_std_core incan_std_data incan_std_async incan_std_web incan_std_testing incan_vocab incan_web_macros; do
+for support_crate in incan_lang incan_derive incan_std_core incan_std_data incan_std_async incan_std_web incan_std_testing incan_vocab incan_web_macros; do
   stage_tracked_tree "$(support_crate_source "$support_crate")" "$package_dir/${support_crate}"
 done
 
@@ -101,7 +101,7 @@ workspace_dependencies() {
   awk '
     /^\[workspace.dependencies\]/ { in_section=1; next }
     /^\[/ { in_section=0 }
-    in_section && /^(incan_core|incan_derive|incan_std_core|incan_std_data|incan_std_async|incan_std_web|incan_std_testing|incan_vocab|incan_web_macros) = / {
+    in_section && /^(incan_lang|incan_derive|incan_std_core|incan_std_data|incan_std_async|incan_std_web|incan_std_testing|incan_vocab|incan_web_macros) = / {
       entry = $0
       sub(/^[a-z_]+ = \{ path = "[^"]+"/, $1 " = { path = \"" $1 "\"", entry)
       print entry
@@ -117,7 +117,7 @@ workspace_dependencies_table="$(workspace_dependencies)"
 cat > "$package_dir/Cargo.toml" <<WORKSPACE
 [workspace]
 members = [
-    "incan_core",
+    "incan_lang",
     "incan_derive",
     "incan_std_async",
     "incan_std_core",
@@ -128,7 +128,7 @@ members = [
     "incan_web_macros",
 ]
 default-members = [
-    "incan_core",
+    "incan_lang",
     "incan_derive",
     "incan_std_async",
     "incan_std_core",

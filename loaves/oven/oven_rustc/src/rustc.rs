@@ -7769,7 +7769,7 @@ fi
             vocab_auxiliary_targets: Vec::new(),
             supporting_artifacts: vec![
                 OvenRustcSupportingArtifact {
-                    relative_path: "deps/libincan_core-project.rlib".to_string(),
+                    relative_path: "deps/libincan_lang-project.rlib".to_string(),
                     digest: "sha256:project-core".to_string(),
                 },
                 OvenRustcSupportingArtifact {
@@ -7812,7 +7812,7 @@ fi
             }],
             supporting_artifacts: vec![
                 OvenRustcSupportingArtifact {
-                    relative_path: "deps/libincan_core-release.rlib".to_string(),
+                    relative_path: "deps/libincan_lang-release.rlib".to_string(),
                     digest: "sha256:release-core".to_string(),
                 },
                 OvenRustcSupportingArtifact {
@@ -7845,7 +7845,7 @@ fi
         assert_eq!(
             base.compiler_runtime_crate_names()?,
             BTreeSet::from([
-                "incan_core".to_string(),
+                "incan_lang".to_string(),
                 "incan_derive".to_string(),
                 "incan_std_core".to_string(),
                 "incan_stdlib_system".to_string(),
@@ -7864,12 +7864,12 @@ fi
                     digest: "sha256:base-runtime-dependency".to_string(),
                 },
                 OvenRustcSupportingArtifact {
-                    relative_path: "deps/libincan_core-release.rlib".to_string(),
-                    digest: "sha256:release-core".to_string(),
-                },
-                OvenRustcSupportingArtifact {
                     relative_path: "deps/libincan_derive-release.dylib".to_string(),
                     digest: "sha256:release-derive".to_string(),
+                },
+                OvenRustcSupportingArtifact {
+                    relative_path: "deps/libincan_lang-release.rlib".to_string(),
+                    digest: "sha256:release-core".to_string(),
                 },
                 OvenRustcSupportingArtifact {
                     relative_path: "deps/libincan_partner_helper-project.rlib".to_string(),
@@ -7900,7 +7900,7 @@ fi
             partition.base_paths,
             BTreeSet::from([
                 "deps/libbase_runtime_dependency.rlib".to_string(),
-                "deps/libincan_core-release.rlib".to_string(),
+                "deps/libincan_lang-release.rlib".to_string(),
                 "deps/libincan_derive-release.dylib".to_string(),
                 "deps/libincan_std_core-release.rlib".to_string(),
                 "deps/libincan_stdlib_system-release.rlib".to_string(),

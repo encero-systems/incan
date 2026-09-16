@@ -6,7 +6,7 @@
 mod tests {
     use super::*;
     use crate::lexer;
-    use incan_core::lang::types::collections::{self, CollectionTypeId};
+    use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
     fn parse_str(source: &str) -> Result<Program, Vec<CompileError>> {
         let tokens = lexer::lex(source).map_err(|_| vec![])?;

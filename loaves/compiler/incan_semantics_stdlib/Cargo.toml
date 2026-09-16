@@ -16,5 +16,5 @@ std_async = []
 std_decorators = []
 
 [dependencies]
-incan_core = { workspace = true }
+incan_lang = { workspace = true }
 incan_semantics_core = { workspace = true }

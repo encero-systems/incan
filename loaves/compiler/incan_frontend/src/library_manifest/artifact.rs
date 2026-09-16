@@ -1099,11 +1099,11 @@ mod tests {
             fs::create_dir_all(
                 root.parent()
                     .ok_or("support root has no parent")?
-                    .join("incan_core/src"),
+                    .join("incan_lang/src"),
             )?;
             fs::write(
                 root.join("Cargo.toml"),
-                "[package]\nname = \"incan_std_core\"\nversion = \"0.5.0\"\n\n[package.metadata.incan]\nsemantic-inputs = [\"semantic-inputs/schema.json\"]\n\n[dependencies]\nincan_core = { path = \"../incan_core\" }\n",
+                "[package]\nname = \"incan_std_core\"\nversion = \"0.5.0\"\n\n[package.metadata.incan]\nsemantic-inputs = [\"semantic-inputs/schema.json\"]\n\n[dependencies]\nincan_lang = { path = \"../incan_lang\" }\n",
             )?;
             fs::write(root.join("src/lib.rs"), "pub fn support() {}\n")?;
             fs::write(root.join("src/embedded.txt"), "compiled include input\n")?;
@@ -1112,10 +1112,10 @@ mod tests {
             fs::write(root.join("README.md"), "checkout-specific documentation\n")?;
             fs::write(root.join("tests/not_compiled.rs"), "checkout-specific test\n")?;
             fs::write(root.join(".DS_Store"), "checkout-specific editor state\n")?;
-            let core = root.parent().ok_or("support root has no parent")?.join("incan_core");
+            let core = root.parent().ok_or("support root has no parent")?.join("incan_lang");
             fs::write(
                 core.join("Cargo.toml"),
-                "[package]\nname = \"incan_core\"\nversion = \"0.5.0\"\n",
+                "[package]\nname = \"incan_lang\"\nversion = \"0.5.0\"\n",
             )?;
             fs::write(core.join("src/lib.rs"), "pub fn core() {}\n")?;
         }
@@ -1149,19 +1149,19 @@ mod tests {
 
         fs::write(
             second.join("Cargo.toml"),
-            "[package]\nname = \"incan_std_core\"\nversion = \"0.5.1\"\n\n[package.metadata.incan]\nsemantic-inputs = [\"semantic-inputs/schema.json\"]\n\n[dependencies]\nincan_core = { path = \"../incan_core\" }\n",
+            "[package]\nname = \"incan_std_core\"\nversion = \"0.5.1\"\n\n[package.metadata.incan]\nsemantic-inputs = [\"semantic-inputs/schema.json\"]\n\n[dependencies]\nincan_lang = { path = \"../incan_lang\" }\n",
         )?;
         assert_ne!(stable, digest_toolchain_source_tree(&second)?);
         fs::write(
             second.join("Cargo.toml"),
-            "[package]\nname = \"incan_std_core\"\nversion = \"0.5.0\"\n\n[package.metadata.incan]\nsemantic-inputs = [\"semantic-inputs/schema.json\"]\n\n[dependencies]\nincan_core = { path = \"../incan_core\" }\n",
+            "[package]\nname = \"incan_std_core\"\nversion = \"0.5.0\"\n\n[package.metadata.incan]\nsemantic-inputs = [\"semantic-inputs/schema.json\"]\n\n[dependencies]\nincan_lang = { path = \"../incan_lang\" }\n",
         )?;
 
         fs::write(
             second
                 .parent()
                 .ok_or("support root has no parent")?
-                .join("incan_core/src/lib.rs"),
+                .join("incan_lang/src/lib.rs"),
             "pub fn core() { changed(); }\n",
         )?;
         assert_ne!(stable, digest_toolchain_source_tree(&second)?);

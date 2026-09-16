@@ -7,7 +7,7 @@ use crate::resolved_type_subst::type_param_subst_map_call_site;
 use crate::symbols::{CallableParam, FieldInfo, ResolvedType, SymbolKind, TypeInfo, ValueEnumInfo};
 use crate::typechecker::helpers::option_ty;
 use crate::typechecker::type_info::ConstructorFieldBinding;
-use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 
 const TYPE_CONSTRUCTOR_HOOK: &str = "__incan_new";
 

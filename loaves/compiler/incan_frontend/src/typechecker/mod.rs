@@ -95,26 +95,26 @@ use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map}
 use crate::surface_semantics::SurfaceContext;
 use crate::symbols::*;
 use helpers::{collection_name, collection_type_id, render_resolved_type_as_rust_arg, stringlike_type_id};
-use incan_core::interop::{
+use incan_lang::interop::{
     RUST_NEVER_TYPE_DISPLAY, RustExpandedDeriveTrait, RustFunctionSig, RustItemKind, RustItemMetadata,
     RustMutableReferenceCandidate, RustMutableReferenceTypeParam, RustParam, RustPayloadCarrier, RustTypeShape,
     metadata_free_method_signature, render_rust_type_shape_path, rust_display_is_owned_string,
     split_top_level_rust_args, strip_rust_borrow_lifetimes,
 };
-use incan_core::lang::builtins::{self, BuiltinFnId};
-use incan_core::lang::conventions;
-use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
-use incan_core::lang::errors as runtime_errors;
-use incan_core::lang::stdlib;
-use incan_core::lang::surface::functions::SurfaceFnId;
-use incan_core::lang::surface::types as surface_types;
-use incan_core::lang::surface::types::{SurfaceTypeId, SurfaceTypeKind};
-use incan_core::lang::trait_capabilities;
-use incan_core::lang::traits::{self as builtin_traits, TraitId};
-use incan_core::lang::types::collections::CollectionTypeId;
-use incan_core::lang::types::numerics::{self, NumericTypeId};
-use incan_core::lang::types::stringlike::StringLikeId;
-use incan_core::numeric_values::numeric_type_losslessly_widens_to;
+use incan_lang::lang::builtins::{self, BuiltinFnId};
+use incan_lang::lang::conventions;
+use incan_lang::lang::decorators::{self as core_decorators, DecoratorId};
+use incan_lang::lang::errors as runtime_errors;
+use incan_lang::lang::stdlib;
+use incan_lang::lang::surface::functions::SurfaceFnId;
+use incan_lang::lang::surface::types as surface_types;
+use incan_lang::lang::surface::types::{SurfaceTypeId, SurfaceTypeKind};
+use incan_lang::lang::trait_capabilities;
+use incan_lang::lang::traits::{self as builtin_traits, TraitId};
+use incan_lang::lang::types::collections::CollectionTypeId;
+use incan_lang::lang::types::numerics::{self, NumericTypeId};
+use incan_lang::lang::types::stringlike::StringLikeId;
+use incan_lang::numeric_values::numeric_type_losslessly_widens_to;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 #[cfg(feature = "rust_inspect")]
 use rust_inspect::{
@@ -994,7 +994,7 @@ impl TypeChecker {
             return None;
         }
         // stdlib interop paths are conventionally stable and intentionally stay cache-only.
-        if incan_core::lang::stdlib::facets::path_names_a_facet(lookup_path) {
+        if incan_lang::lang::stdlib::facets::path_names_a_facet(lookup_path) {
             return self.rust_item_metadata_for_path(lookup_path);
         }
         match self.rust_inspect_cache.get_cached(dir, lookup_path) {
@@ -1048,7 +1048,7 @@ impl TypeChecker {
 
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
-        if incan_core::lang::stdlib::facets::path_names_a_facet(lookup_path) {
+        if incan_lang::lang::stdlib::facets::path_names_a_facet(lookup_path) {
             return Some(metadata);
         }
         let dir = self.rust_inspect_manifest_dir.as_ref()?;
@@ -1088,7 +1088,7 @@ impl TypeChecker {
 
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
-        if incan_core::lang::stdlib::facets::path_names_a_facet(lookup_path) {
+        if incan_lang::lang::stdlib::facets::path_names_a_facet(lookup_path) {
             return Some(metadata);
         }
         let dir = self.rust_inspect_manifest_dir.as_ref()?;
@@ -1413,7 +1413,7 @@ impl TypeChecker {
         // metadata's `alloc::boxed::Box` finds a source-level `from rust::std::boxed import Box`, and hand back the
         // import's own spelling so later nominal checks line up with the symbol the source actually bound.
         if display_tail.contains("::") {
-            let wanted = incan_core::interop::ancestral_rust_path(display_tail);
+            let wanted = incan_lang::interop::ancestral_rust_path(display_tail);
             let mut matches = HashSet::new();
             for symbol in self.symbols.all_symbols() {
                 let SymbolKind::RustItem(info) = &symbol.kind else {
@@ -1423,7 +1423,7 @@ impl TypeChecker {
                     continue;
                 }
                 let path = Self::normalize_rust_namespace_path(info.path.as_str()).to_string();
-                if incan_core::interop::ancestral_rust_path(path.as_str()) == wanted {
+                if incan_lang::interop::ancestral_rust_path(path.as_str()) == wanted {
                     matches.insert(path);
                 }
             }
@@ -1930,7 +1930,7 @@ impl TypeChecker {
 
     /// Build a Rust collection identity from a display-type base.
     fn rust_collection_id_from_display_base(base: &str) -> Option<CollectionTypeId> {
-        incan_core::lang::types::collections::from_rust_display_base(base)
+        incan_lang::lang::types::collections::from_rust_display_base(base)
     }
 
     /// Return the resolved Rust display type for a structural parameter.
@@ -2770,10 +2770,10 @@ impl TypeChecker {
 
     /// Return whether a compiler-owned derive provides the visible trait bound, including imported aliases.
     fn builtin_derive_satisfies_trait(&self, derive: &str, trait_name: &str) -> bool {
-        let Some(derive_id) = incan_core::lang::derives::from_str(derive) else {
+        let Some(derive_id) = incan_lang::lang::derives::from_str(derive) else {
             return false;
         };
-        let canonical_derive = incan_core::lang::derives::as_str(derive_id);
+        let canonical_derive = incan_lang::lang::derives::as_str(derive_id);
         if canonical_derive == trait_name && self.import_binding_path(trait_name).is_none() {
             return self.lookup_semantic_trait_info(trait_name).is_some();
         }
@@ -6662,7 +6662,7 @@ impl TypeChecker {
             return Some(kind);
         }
         let module_path = canonicalize_source_module_segments(&module.segments);
-        if module_path.first().map(String::as_str) != Some(incan_core::lang::stdlib::STDLIB_ROOT) {
+        if module_path.first().map(String::as_str) != Some(incan_lang::lang::stdlib::STDLIB_ROOT) {
             return None;
         }
         self.stdlib_cache.lookup_function_symbol(&module_path, item_name)
@@ -6936,7 +6936,7 @@ impl TypeChecker {
         let mut candidates = Vec::new();
         if module.parent_levels == 0
             && self.provider_plan.bootstrap_owns_sdk_module(&module.segments)
-            && module.segments.first().map(String::as_str) == Some(incan_core::lang::stdlib::STDLIB_ROOT)
+            && module.segments.first().map(String::as_str) == Some(incan_lang::lang::stdlib::STDLIB_ROOT)
             && module.segments.len() > 1
         {
             candidates.push(canonicalize_source_module_segments(&module.segments[1..]));
@@ -7374,9 +7374,9 @@ impl TypeChecker {
 
     /// Return whether a module path names generated stdlib dependency code.
     fn is_generated_stdlib_dependency_module(module_name: &str) -> bool {
-        module_name == incan_core::lang::stdlib::INCAN_STD_NAMESPACE
+        module_name == incan_lang::lang::stdlib::INCAN_STD_NAMESPACE
             || module_name
-                .strip_prefix(incan_core::lang::stdlib::INCAN_STD_NAMESPACE)
+                .strip_prefix(incan_lang::lang::stdlib::INCAN_STD_NAMESPACE)
                 .is_some_and(|tail| tail.starts_with('_'))
     }
 
@@ -8040,7 +8040,7 @@ impl TypeChecker {
             (ResolvedType::Generic(name, args), ResolvedType::Bytes)
                 if collection_type_id(name.as_str()) == Some(CollectionTypeId::List)
                     && args.len() == 1
-                    && matches!(args[0], ResolvedType::Numeric(id) if incan_core::lang::types::numerics::as_str(id) == "u8") =>
+                    && matches!(args[0], ResolvedType::Numeric(id) if incan_lang::lang::types::numerics::as_str(id) == "u8") =>
             {
                 true
             }
@@ -8133,7 +8133,7 @@ impl TypeChecker {
             // `alloc`). rust-inspect records the ancestral spelling; Incan source imports the `std` one. Compare in the
             // ancestral namespace so every re-export of the same item is just another alias of it.
             (ResolvedType::RustPath(a), ResolvedType::RustPath(b)) => {
-                incan_core::interop::ancestral_rust_display(a) == incan_core::interop::ancestral_rust_display(b)
+                incan_lang::interop::ancestral_rust_display(a) == incan_lang::interop::ancestral_rust_display(b)
             }
             // Without full Rust type knowledge, treat any `RustPath` as compatible with non-Rust surfaces so mixed
             // Incan/Rust-typed expressions stay checkable (RFC 005/041 permissive model).

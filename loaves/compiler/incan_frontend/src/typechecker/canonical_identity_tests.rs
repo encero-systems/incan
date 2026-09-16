@@ -5,8 +5,8 @@
 //! different scopes stay distinct, and reference-side recording answers "do these two references mean the same thing"
 //! structurally. Body IR's consumption of these facts is pinned separately in `crate::body_ir::tests`.
 
-use incan_core::lang::surface::constructors::{self, ConstructorId};
-use incan_core::lang::traits::{self, TraitId};
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::traits::{self, TraitId};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
 use super::{CompileError, TypeChecker};

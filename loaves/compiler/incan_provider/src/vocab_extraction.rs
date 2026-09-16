@@ -13,8 +13,8 @@ use sha2::{Digest, Sha256};
 use wasmtime::{Config, Engine, ExternType, Module, ValType};
 
 use crate::error::{ProviderError, ProviderResult};
-use incan_core::version::INCAN_VERSION;
 use incan_frontend::library_manifest::{SoftKeywordActivation, VocabDesugarerArtifact, VocabExports};
+use incan_lang::version::INCAN_VERSION;
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::rustc::{
     OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcAuxiliaryTargetPlan, clear_inherited_cargo_environment,
@@ -1375,6 +1375,11 @@ fn validate_wasm_i32_global_export(module: &Module, path: &Path, export_name: &s
     }
 }
 
+/// Project a vocab's keyword registrations onto the soft keywords the compiler activates on import.
+///
+/// Only registrations activated by importing a namespace count, and only for spellings the language tables already
+/// know as soft keywords; anything else is not a compiler activation and is dropped here. The result is
+/// deduplicated per `(namespace, keyword)` pair in first-seen order.
 fn project_soft_keyword_activations(registrations: &[incan_vocab::KeywordRegistration]) -> Vec<SoftKeywordActivation> {
     let mut dedup = HashSet::new();
     let mut projected = Vec::new();
@@ -1384,10 +1389,10 @@ fn project_soft_keyword_activations(registrations: &[incan_vocab::KeywordRegistr
             continue;
         };
         for keyword in &registration.keywords {
-            let Some(id) = incan_core::lang::keywords::from_str(&keyword.name) else {
+            let Some(id) = incan_lang::lang::keywords::from_str(&keyword.name) else {
                 continue;
             };
-            if !incan_core::lang::keywords::is_soft(id) {
+            if !incan_lang::lang::keywords::is_soft(id) {
                 continue;
             }
 

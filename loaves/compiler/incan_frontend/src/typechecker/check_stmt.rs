@@ -6,11 +6,11 @@ use crate::ast::*;
 use crate::diagnostics::errors;
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved};
 use crate::symbols::*;
-use incan_core::lang::errors as runtime_errors;
-use incan_core::lang::keywords;
-use incan_core::lang::surface::constructors::{self, ConstructorId};
-use incan_core::lang::types::collections::CollectionTypeId;
-use incan_core::{NumericTy, result_numeric_type};
+use incan_lang::lang::errors as runtime_errors;
+use incan_lang::lang::keywords;
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::types::collections::CollectionTypeId;
+use incan_lang::{NumericTy, result_numeric_type};
 use incan_semantics_core::SurfaceStmtTypeCheck;
 use incan_semantics_core::rust_tuple_arity;
 
@@ -1855,7 +1855,7 @@ impl TypeChecker {
                 // resolves that expression directly; only a range *bound to a local* arrives as a `Range[T]` value.
                 // Without this arm that binding iterates with an unknown item type, which stays invisible until
                 // something downstream needs the type -- `acc + i` refusing to lower, for instance.
-                if name == incan_core::lang::surface::types::RANGE_TYPE_NAME && !args.is_empty() {
+                if name == incan_lang::lang::surface::types::RANGE_TYPE_NAME && !args.is_empty() {
                     return args[0].clone();
                 }
                 match collection_type_id(name.as_str()) {

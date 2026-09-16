@@ -7,7 +7,7 @@ use crate::ast::*;
 use crate::diagnostics::{CompileError, errors};
 use crate::symbols::*;
 use crate::typechecker::IdentKind;
-use incan_core::lang::types::collections::{self, CollectionTypeId};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::SemanticSourceTargetKind;
 
 use super::TypeChecker;
@@ -197,7 +197,7 @@ impl TypeChecker {
             }
             SymbolKind::RustItem(info) => {
                 if let Some(meta) = &info.metadata
-                    && meta.visibility == incan_core::interop::RustVisibility::Restricted
+                    && meta.visibility == incan_lang::interop::RustVisibility::Restricted
                 {
                     self.errors
                         .push(errors::rust_item_not_public(name, meta.canonical_path.as_str(), span));
@@ -209,7 +209,7 @@ impl TypeChecker {
                 }
                 // RFC 041: carry canonical Rust path and (when available) extracted rust-inspect metadata.
                 let ident_kind = match &info.metadata {
-                    Some(meta) if matches!(meta.kind, incan_core::interop::RustItemKind::Constant { .. }) => {
+                    Some(meta) if matches!(meta.kind, incan_lang::interop::RustItemKind::Constant { .. }) => {
                         IdentKind::RustValue
                     }
                     None if rust_path_last_segment_looks_like_const(info.path.as_str()) => IdentKind::RustValue,
@@ -217,13 +217,13 @@ impl TypeChecker {
                 };
                 let resolved = match &info.metadata {
                     Some(meta) => match &meta.kind {
-                        incan_core::interop::RustItemKind::Function(sig) => {
+                        incan_lang::interop::RustItemKind::Function(sig) => {
                             self.resolved_function_type_from_rust_sig_for_owner_path(sig, false, info.path.as_str())
                         }
-                        incan_core::interop::RustItemKind::Constant { type_display } => {
+                        incan_lang::interop::RustItemKind::Constant { type_display } => {
                             self.resolved_type_from_rust_display(type_display.as_str())
                         }
-                        incan_core::interop::RustItemKind::Unsupported { description } => {
+                        incan_lang::interop::RustItemKind::Unsupported { description } => {
                             self.errors.push(errors::rust_item_shape_not_supported(
                                 info.path.as_str(),
                                 description.as_str(),

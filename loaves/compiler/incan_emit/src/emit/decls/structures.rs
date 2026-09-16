@@ -3,8 +3,8 @@
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{format_ident, quote};
 
-use incan_core::lang::derives::{self, DeriveId};
-use incan_core::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
 
 use super::super::{EmitError, IrEmitter, SERDE_DESERIALIZE_DERIVE, SERDE_SERIALIZE_DERIVE, StructConstructorSurface};
 use crate::conversions::exact_float_value_validation;
@@ -458,8 +458,8 @@ impl<'a> IrEmitter<'a> {
                 let reflected = if matches!(
                     inner.as_ref(),
                     IrType::Numeric(
-                        incan_core::lang::types::numerics::NumericTypeId::F32
-                            | incan_core::lang::types::numerics::NumericTypeId::F64
+                        incan_lang::lang::types::numerics::NumericTypeId::F32
+                            | incan_lang::lang::types::numerics::NumericTypeId::F64
                     )
                 ) {
                     exact_float_value_validation(inner).apply(quote! { *value })
@@ -895,9 +895,9 @@ mod tests {
 
     use super::*;
     use crate::emit::GeneratedUseAnalysis;
-    use incan_core::lang::surface::constructors::{self, ConstructorId};
     use incan_ir::decl::{EnumVariant, IrEnum, IrEnumValue, IrEnumValueType, IrTypeParam, Visibility};
     use incan_ir::{FunctionRegistry, IrType};
+    use incan_lang::lang::surface::constructors::{self, ConstructorId};
 
     fn render_enum(e: &IrEnum) -> Result<String, String> {
         render_enum_with_used_methods(e, HashSet::new())

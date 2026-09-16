@@ -6,8 +6,8 @@
 use crate::ast::Span;
 use crate::symbols::Symbol;
 use crate::typechecker::TypeChecker;
-use incan_core::lang::surface::functions::SurfaceFnId;
-use incan_core::lang::surface::types::SurfaceTypeId;
+use incan_lang::lang::surface::functions::SurfaceFnId;
+use incan_lang::lang::surface::types::SurfaceTypeId;
 
 impl TypeChecker {
     /// Return whether a symbol is one of the ambient builtins seeded into the root symbol table before source

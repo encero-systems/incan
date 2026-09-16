@@ -14,10 +14,10 @@ use super::super::types::{IrType, isinstance_type_matches, isinstance_union_vari
 use super::super::{IrSpan, Mutability, TypedExpr};
 use super::AstLowering;
 use super::errors::LoweringError;
-use incan_core::lang::builtins::BuiltinFnId;
-use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_frontend::ast::{self, Spanned};
 use incan_frontend::typechecker::ResolvedOperatorKind;
+use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_semantics_core::SurfaceStmtLoweringAction;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

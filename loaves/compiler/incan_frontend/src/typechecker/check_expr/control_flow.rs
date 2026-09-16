@@ -10,9 +10,9 @@ use crate::symbols::{ResolvedType, ScopeKind, Symbol, SymbolKind, TypeInfo, Vari
 use super::TypeChecker;
 use crate::typechecker::LoopContextKind;
 use crate::typechecker::helpers::result_ty;
-use incan_core::interop::RustItemKind;
-use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
-use incan_core::lang::traits::{self as builtin_traits, TraitId};
+use incan_lang::interop::RustItemKind;
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
+use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 
 impl TypeChecker {
     /// Type-check an `await` expression.

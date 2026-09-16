@@ -27,7 +27,7 @@ impl CargoLockProjection {
             .into_iter()
             .filter(|package| {
                 package_name(package) == Some(canonical_root_name.as_str())
-                    && package_version(package) == Some(incan_core::version::INCAN_VERSION)
+                    && package_version(package) == Some(incan_lang::version::INCAN_VERSION)
                     && package.get("source").is_none()
             })
             .count();
@@ -35,7 +35,7 @@ impl CargoLockProjection {
             return Err(io::Error::other(format!(
                 "canonical Cargo.lock contains {roots} source-less roots named `{canonical_root_name}` at Incan \
                  version `{}`; expected exactly one",
-                incan_core::version::INCAN_VERSION
+                incan_lang::version::INCAN_VERSION
             )));
         }
         validate_dependency_references(&canonical, "canonical")?;
@@ -172,7 +172,7 @@ impl CargoLockProjection {
             .iter()
             .find(|package| {
                 package_name(package) == Some(self.canonical_root_name.as_str())
-                    && package_version(package) == Some(incan_core::version::INCAN_VERSION)
+                    && package_version(package) == Some(incan_lang::version::INCAN_VERSION)
                     && package.get("source").is_none()
             })
             .ok_or_else(|| io::Error::other("canonical Cargo.lock source root disappeared"))?;
@@ -481,7 +481,7 @@ dependencies = ["foo 1.0.0"]
 name = "foo"
 version = "1.0.0"
 "#,
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         )
     }
 
@@ -501,10 +501,10 @@ dependencies = ["foo 1.0.0"]
 name = "foo"
 version = "1.0.0"
 "#,
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         );
 
-        projection.validate_projected(&projected, "foo", incan_core::version::INCAN_VERSION)?;
+        projection.validate_projected(&projected, "foo", incan_lang::version::INCAN_VERSION)?;
         Ok(())
     }
 
@@ -524,7 +524,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "canonical"
 "#,
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         );
         let projection = CargoLockProjection::new(canonical, "incan_workspace".to_string())?;
         let projected = format!(
@@ -541,12 +541,12 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "different"
 "#,
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         );
 
         assert!(
             projection
-                .validate_projected(&projected, "caller", incan_core::version::INCAN_VERSION)
+                .validate_projected(&projected, "caller", incan_lang::version::INCAN_VERSION)
                 .is_err()
         );
         Ok(())
@@ -563,12 +563,12 @@ name = "caller"
 version = "{}"
 dependencies = ["missing 1.0.0"]
 "#,
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         );
 
         assert!(
             projection
-                .validate_projected(&projected, "caller", incan_core::version::INCAN_VERSION)
+                .validate_projected(&projected, "caller", incan_lang::version::INCAN_VERSION)
                 .is_err()
         );
         Ok(())
@@ -593,7 +593,7 @@ version = "1.0.0"
 name = "foo"
 version = "1.0.0"
 "#,
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         );
         let projection = CargoLockProjection::new(canonical, "incan_workspace".to_string())?;
         let projected = format!(
@@ -612,10 +612,10 @@ version = "1.0.0"
 name = "foo"
 version = "1.0.0"
 "#,
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         );
 
-        let error = match projection.validate_projected(&projected, "caller", incan_core::version::INCAN_VERSION) {
+        let error = match projection.validate_projected(&projected, "caller", incan_lang::version::INCAN_VERSION) {
             Ok(()) => return Err("forged generated-root edge was accepted".into()),
             Err(error) => error,
         };
@@ -642,7 +642,7 @@ version = "1.0.0"
 name = "foo"
 version = "1.0.0"
 "#,
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         );
         let projection = CargoLockProjection::new(canonical, "incan_workspace".to_string())?;
         let projected = format!(
@@ -662,10 +662,10 @@ name = "foo"
 version = "1.0.0"
 dependencies = ["bar"]
 "#,
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         );
 
-        let error = match projection.validate_projected(&projected, "caller", incan_core::version::INCAN_VERSION) {
+        let error = match projection.validate_projected(&projected, "caller", incan_lang::version::INCAN_VERSION) {
             Ok(()) => return Err("forged transitive edge was accepted".into()),
             Err(error) => error,
         };
@@ -700,7 +700,7 @@ version = "1.0.0"
 name = "extra"
 version = "2.0.0"
 "#,
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         );
 
         // Two canonical packages plus three Cargo-projected packages.
@@ -728,7 +728,7 @@ name = "bitflags"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 "#,
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         );
         let projection = CargoLockProjection::new(canonical, "incan_workspace".to_string())?;
         let projected = format!(
@@ -744,11 +744,11 @@ name = "leaf"
 version = "{}"
 dependencies = ["bitflags"]
 "#,
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         );
 
         assert_eq!(
-            projection.next_update_candidates(&projected, "leaf", incan_core::version::INCAN_VERSION)?,
+            projection.next_update_candidates(&projected, "leaf", incan_lang::version::INCAN_VERSION)?,
             Some(vec![
                 CargoLockUpdate {
                     package_spec: "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1".to_string(),
@@ -778,7 +778,7 @@ name = "dep"
 version = "1.0.0"
 source = "registry+https://first.example/index"
 "#,
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         );
         let projection = CargoLockProjection::new(canonical, "incan_workspace".to_string())?;
         let projected = format!(
@@ -799,11 +799,11 @@ name = "dep"
 version = "2.0.0"
 source = "registry+https://second.example/index"
 "#,
-            incan_core::version::INCAN_VERSION
+            incan_lang::version::INCAN_VERSION
         );
 
         let updates = projection
-            .next_update_candidates(&projected, "caller", incan_core::version::INCAN_VERSION)?
+            .next_update_candidates(&projected, "caller", incan_lang::version::INCAN_VERSION)?
             .ok_or("expected canonical update candidates")?;
         assert_eq!(updates.len(), 1);
         assert_eq!(

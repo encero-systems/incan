@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use incan_core::lang::stdlib;
+use incan_lang::lang::stdlib;
 
 use crate::cargo_policy::enforce_project_toolchain_constraint;
 use crate::error::{CliError, CliResult};

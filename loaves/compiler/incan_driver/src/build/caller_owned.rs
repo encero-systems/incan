@@ -766,7 +766,7 @@ headers = ["interop/include/bridge.h"]
         let manifest = ProjectManifest::from_str(manifest_source, &manifest_path)?;
         let locked = locked_oven_interop_targets(&manifest)?;
         IncanLock::new_with_semantic(
-            incan_core::version::INCAN_VERSION,
+            incan_lang::version::INCAN_VERSION,
             "fixture".to_string(),
             CargoFeatureSelection::default(),
             SemanticLockState {

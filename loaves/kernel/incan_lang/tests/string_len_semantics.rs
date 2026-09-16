@@ -1,6 +1,6 @@
 //! Shared semantic-core coverage for Incan string length.
 
-use incan_core::strings::str_len;
+use incan_lang::strings::str_len;
 
 /// String length counts Unicode scalar values without normalizing the source text.
 #[test]

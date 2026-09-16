@@ -144,7 +144,7 @@ impl PowExponentKind {
 ///
 /// ## Examples
 /// ```rust
-/// use incan_core::{NumericOp, NumericTy, PowExponentKind, result_numeric_type};
+/// use incan_lang::{NumericOp, NumericTy, PowExponentKind, result_numeric_type};
 /// assert_eq!(
 ///     result_numeric_type(NumericOp::Div, NumericTy::Int, NumericTy::Int, None),
 ///     NumericTy::Float

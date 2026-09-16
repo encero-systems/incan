@@ -12,9 +12,9 @@ use crate::build::{
     OvenPackagedLibraryLoafProfile,
 };
 use crate::error::{CliError, CliResult, oven_rustc_error};
-use incan_core::version::INCAN_VERSION;
 use incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path;
 use incan_frontend::library_manifest_index::LibraryArtifactMetadata;
+use incan_lang::version::INCAN_VERSION;
 use oven_model::manifest::LOAF_MANIFEST_FILENAME;
 use oven_rustc::plan::{OvenDirectRustcPlanSelection, OvenPackagedLibraryLoafEntry};
 use oven_rustc::rustc::select_direct_rustc_plan_for_execution;
@@ -582,10 +582,10 @@ mod tests {
         CheckedPackagedProviderProfile, OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION, OvenPackagedLibraryLoafManifest,
         OvenPackagedLibraryLoafProfile, packaged_provider_candidates,
     };
-    use incan_core::version::INCAN_VERSION;
     use incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path;
     use incan_frontend::library_manifest::{LibraryManifest, digest_provider_artifact};
     use incan_frontend::library_manifest_index::LibraryArtifactMetadata;
+    use incan_lang::version::INCAN_VERSION;
     use oven_model::manifest::LOAF_MANIFEST_FILENAME;
     use oven_rustc::plan::composition::compose_selected_packaged_provider_plan;
     use oven_rustc::plan::selection::select_packaged_provider_plans;

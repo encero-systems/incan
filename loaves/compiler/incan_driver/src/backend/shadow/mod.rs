@@ -74,7 +74,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::Arc;
 
-use incan_core::lang::surface::constructors::{ConstructorId, as_str as constructor_name};
+use incan_lang::lang::surface::constructors::{ConstructorId, as_str as constructor_name};
 
 use crate::backend::IrCodegen;
 use crate::backend::replacement::{
@@ -88,12 +88,12 @@ use crate::backend::selection::{
 use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::{IncanPrimitiveType, IncanType};
 
-use incan_core::lang::types::numerics::{self, NumericTypeId};
-use incan_core::numeric_values::{decimal_value_fits, format_decimal_value, parse_decimal_literal_body};
 use incan_frontend::body_ir::{apply_body_ir_input_contract, build_body_ir_module_v0};
 use incan_frontend::diagnostics::DIAGNOSTIC_SCHEMA_VERSION;
 use incan_frontend::typechecker::TypeChecker;
 use incan_frontend::{lexer, parser};
+use incan_lang::lang::types::numerics::{self, NumericTypeId};
+use incan_lang::numeric_values::{decimal_value_fits, format_decimal_value, parse_decimal_literal_body};
 use incan_provider::ProviderPlan;
 
 /// Content-stable identity of the one comparison profile this module implements.

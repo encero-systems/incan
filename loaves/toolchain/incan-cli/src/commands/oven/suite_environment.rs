@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use incan_core::lang::stdlib;
+use incan_lang::lang::stdlib;
 use oven_model::toolchain_layout::development_support_crate_dir;
 
 use super::{

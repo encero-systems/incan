@@ -4,7 +4,7 @@
 //! import and each surface modifier implies a particular runtime requirement.
 
 use crate::ast::{Declaration, ImportKind, Program, SurfaceModifier};
-use incan_core::lang::stdlib::STDLIB_ROOT;
+use incan_lang::lang::stdlib::STDLIB_ROOT;
 use incan_semantics_core::{RuntimeRequirement, SurfaceSemanticsRegistry};
 
 /// Detect whether the async runtime is required for the given program.

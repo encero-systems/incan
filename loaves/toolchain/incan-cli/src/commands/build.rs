@@ -820,7 +820,7 @@ impl ChildId {
         let inspector = Inspector::new(InspectorConfig::new(root.clone()));
         inspector.prewarm([query_path.clone()], &|_| ())?;
         let prewarmed = inspector.get(&query_path)?;
-        let incan_core::interop::RustItemKind::Type(prewarmed_type) = &prewarmed.metadata.kind else {
+        let incan_lang::interop::RustItemKind::Type(prewarmed_type) = &prewarmed.metadata.kind else {
             return Err("expected prewarmed ChildId type metadata".into());
         };
         assert!(
@@ -838,7 +838,7 @@ impl ChildId {
             "library ABI publication must not depend on whether a previous compiler query upgraded the shared cache"
         );
         let child_id = warm.get(&query_path).ok_or("expected ChildId ABI item")?;
-        let incan_core::interop::RustItemKind::Type(child_id_type) = &child_id.kind else {
+        let incan_lang::interop::RustItemKind::Type(child_id_type) = &child_id.kind else {
             return Err("expected ChildId ABI type metadata".into());
         };
         assert!(child_id_type.metadata_completeness.has_methods());
@@ -875,7 +875,7 @@ impl ChildId {
             std::fs::read_to_string(oven_model::toolchain_layout::development_root().join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         let incan_lock = IncanLock::new(
-            incan_core::version::INCAN_VERSION,
+            incan_lang::version::INCAN_VERSION,
             fingerprint,
             CargoFeatureSelection::default(),
             cargo_lock_payload,
@@ -949,7 +949,7 @@ impl ChildId {
             std::fs::read_to_string(oven_model::toolchain_layout::development_root().join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         IncanLock::new(
-            incan_core::version::INCAN_VERSION,
+            incan_lang::version::INCAN_VERSION,
             fingerprint,
             CargoFeatureSelection::default(),
             cargo_lock_payload,
@@ -1046,7 +1046,7 @@ pub def answer() -> int:
             std::fs::read_to_string(oven_model::toolchain_layout::development_root().join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         let incan_lock = IncanLock::new(
-            incan_core::version::INCAN_VERSION,
+            incan_lang::version::INCAN_VERSION,
             fingerprint,
             CargoFeatureSelection::default(),
             cargo_lock_payload,
@@ -1173,7 +1173,7 @@ pub def normalize(value: str) -> str:
             std::fs::read_to_string(oven_model::toolchain_layout::development_root().join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         let incan_lock = IncanLock::new(
-            incan_core::version::INCAN_VERSION,
+            incan_lang::version::INCAN_VERSION,
             fingerprint,
             CargoFeatureSelection::default(),
             cargo_lock_payload,

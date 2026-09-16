@@ -9,7 +9,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use clap::ValueEnum;
-use incan_core::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
+use incan_lang::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
 use serde::Serialize;
 
 use crate::{CliError, CliResult, ExitCode};

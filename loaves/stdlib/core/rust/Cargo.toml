@@ -10,5 +10,5 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-incan_core = { workspace = true }
+incan_lang = { workspace = true }
 incan_derive = { workspace = true }

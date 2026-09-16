@@ -6,9 +6,9 @@ use crate::diagnostics::errors;
 use crate::symbols::{CallableParam, ResolvedType, TypeInfo};
 use crate::typechecker::helpers::collection_type_id;
 use crate::typechecker::{RustArgCoercionInfo, RustArgCoercionKind};
-use incan_core::interop::{CoercionPolicy, RustFunctionSig, RustParam, admitted_builtin_coercion};
-use incan_core::lang::types::collections::CollectionTypeId;
-use incan_core::lang::types::numerics;
+use incan_lang::interop::{CoercionPolicy, RustFunctionSig, RustParam, admitted_builtin_coercion};
+use incan_lang::lang::types::collections::CollectionTypeId;
+use incan_lang::lang::types::numerics;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RustArgBoundaryMatch {
@@ -734,7 +734,7 @@ impl TypeChecker {
     /// Record inspected Rust parameter types so codegen can emit the same borrow shape the typechecker accepted.
     fn rust_params_as_callable_params(
         &self,
-        params: &[incan_core::interop::RustParam],
+        params: &[incan_lang::interop::RustParam],
         owner_path: &str,
     ) -> Vec<CallableParam> {
         let params: Vec<CallableParam> = params
@@ -758,7 +758,7 @@ impl TypeChecker {
     pub(in crate::typechecker) fn record_rust_call_site_params(
         &mut self,
         span: Span,
-        params: &[incan_core::interop::RustParam],
+        params: &[incan_lang::interop::RustParam],
         owner_path: &str,
     ) {
         let params: Vec<CallableParam> = params
@@ -963,7 +963,7 @@ impl TypeChecker {
         let Some((base, _)) = target.split_once('<') else {
             return false;
         };
-        incan_core::interop::ancestral_rust_path(base) == incan_core::interop::ancestral_rust_path(arg_owner)
+        incan_lang::interop::ancestral_rust_path(base) == incan_lang::interop::ancestral_rust_path(arg_owner)
     }
 
     /// Validate a Rust method call (`receiver.method(...)`) against metadata and record required arg coercions.
@@ -1100,15 +1100,15 @@ mod validate_rust_function_call_tests {
         CallableParam, NewtypeInfo, ResolvedType, ScopeKind, Symbol, SymbolKind, TypeInfo, VariableInfo,
     };
     use crate::typechecker::{RustArgCoercionInfo, RustArgCoercionKind};
-    use incan_core::interop::{CoercionPolicy, RustFunctionSig, RustParam};
-    use incan_core::lang::types::numerics::NumericTypeId;
+    use incan_lang::interop::{CoercionPolicy, RustFunctionSig, RustParam};
+    use incan_lang::lang::types::numerics::NumericTypeId;
     use std::collections::HashMap;
 
     #[cfg(feature = "rust_inspect")]
-    fn scalar_udf_metadata(path: &str, definition_path: &str) -> incan_core::interop::RustItemMetadata {
-        use incan_core::interop::{RustItemKind, RustTypeInfo, RustVisibility};
+    fn scalar_udf_metadata(path: &str, definition_path: &str) -> incan_lang::interop::RustItemMetadata {
+        use incan_lang::interop::{RustItemKind, RustTypeInfo, RustVisibility};
 
-        incan_core::interop::RustItemMetadata {
+        incan_lang::interop::RustItemMetadata {
             canonical_path: path.to_string(),
             definition_path: Some(definition_path.to_string()),
             visibility: RustVisibility::Public,
@@ -2126,7 +2126,7 @@ mod validate_rust_function_call_tests {
     #[test]
     fn rust_function_call_matches_reexported_borrowed_param_via_definition_path()
     -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{RustItemKind, RustItemMetadata, RustTypeInfo, RustVisibility};
+        use incan_lang::interop::{RustItemKind, RustItemMetadata, RustTypeInfo, RustVisibility};
         let mut checker = TypeChecker::new();
         let tmp = tempfile::tempdir()?;
         std::fs::write(

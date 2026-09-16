@@ -23,8 +23,8 @@ mod structures;
 use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
-use incan_core::lang::{stdlib, surface::types as surface_types};
 use incan_frontend::symbols::is_overload_emitted_name;
+use incan_lang::lang::{stdlib, surface::types as surface_types};
 
 use super::{EmitError, IrEmitter};
 use crate::ownership::{ValueUseSite, plan_value_use};
@@ -235,8 +235,8 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit a const initializer using the declared target type to qualify frozen collection constructors.
     fn emit_const_value_for_type(&self, ty: &IrType, value: &incan_ir::TypedExpr) -> Result<TokenStream, EmitError> {
-        use incan_core::lang::types::collections::{self, CollectionTypeId};
         use incan_ir::types::IrType as T;
+        use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
         match (ty, &value.kind) {
             (T::NamedGeneric(n, args), IrExprKind::List(items))

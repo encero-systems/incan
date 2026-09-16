@@ -5,7 +5,7 @@
 //!
 //! ## Design
 //!
-//! 1. **Discovery**: finds stdlib `.incn` files using `incan_core::lang::stdlib::stdlib_stub_path`.
+//! 1. **Discovery**: finds stdlib `.incn` files using `incan_lang::lang::stdlib::stdlib_stub_path`.
 //! 2. **Parsing**: lexes and parses the file through the normal Incan frontend pipeline.
 //! 3. **Extraction**: walks the parsed AST to extract `FunctionInfo` entries for each `def` and `TraitInfo` entries for
 //!    each `trait`.
@@ -39,14 +39,14 @@ use crate::symbols::{
     TraitInfo, TypeBoundInfo, TypeInfo, overloaded_function_emitted_name, source_member_identity,
 };
 use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
-use incan_core::lang::conventions;
-use incan_core::lang::decorators::{self, DecoratorId};
-use incan_core::lang::rust_keywords;
-use incan_core::lang::stdlib;
-use incan_core::lang::surface::functions::{self as surface_functions, SurfaceFnId};
-use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
-use incan_core::lang::types::numerics::{self as numeric_types, NumericTypeId};
-use incan_core::lang::types::stringlike::{self as string_types, StringLikeId};
+use incan_lang::lang::conventions;
+use incan_lang::lang::decorators::{self, DecoratorId};
+use incan_lang::lang::rust_keywords;
+use incan_lang::lang::stdlib;
+use incan_lang::lang::surface::functions::{self as surface_functions, SurfaceFnId};
+use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
+use incan_lang::lang::types::numerics::{self as numeric_types, NumericTypeId};
+use incan_lang::lang::types::stringlike::{self as string_types, StringLikeId};
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind};
 
 #[derive(Debug, Clone, Default)]
@@ -1725,7 +1725,7 @@ fn ast_type_to_resolved_with_rust_imports(
                 return ResolvedType::RustPath(path.clone());
             }
 
-            // Resolve through incan_core registries (numerics, strings, unit).
+            // Resolve through incan_lang registries (numerics, strings, unit).
             if let Some(id) = numeric_types::from_str(name) {
                 return match name.as_str() {
                     "int" => ResolvedType::Int,
@@ -2785,8 +2785,8 @@ pub type File = rusttype RustFile:
 
     // ---- Phase 6: Derive trait extraction tests ----
 
-    use incan_core::lang::derives::{self as derive_reg, DeriveId};
-    use incan_core::lang::traits::{self as core_traits, TraitId};
+    use incan_lang::lang::derives::{self as derive_reg, DeriveId};
+    use incan_lang::lang::traits::{self as core_traits, TraitId};
 
     /// Helper: canonical derive name from the registry (avoids stringly-typed vocab checks).
     fn derive_name(id: DeriveId) -> &'static str {

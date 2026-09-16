@@ -1,5 +1,5 @@
 [package]
-name = "incan_core"
+name = "incan_lang"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,7 +7,7 @@ authors.workspace = true
 description = "Shared language vocabulary and semantic helpers for the Incan compiler and runtime"
 
 [lib]
-name = "incan_core"
+name = "incan_lang"
 path = "src/lib.rs"
 
 [dependencies]

@@ -34,16 +34,16 @@ use crate::provider::{
 use crate::test_support::seeded_rust_inspect_workspace;
 use crate::testing_markers::TestingFixtureScope;
 use crate::{lexer, parser};
-use incan_core::interop::{
+use incan_lang::interop::{
     CoercionPolicy, RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata,
     RustMethodSig, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustTypeShape, RustVariantInfo,
     RustVisibility,
 };
-use incan_core::lang::c_abi::ScalarTypeId;
-use incan_core::lang::surface::constructors::{self as surface_constructors, ConstructorId};
-use incan_core::lang::traits::{self as builtin_traits, TraitId};
-use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
-use incan_core::lang::types::numerics::NumericTypeId;
+use incan_lang::lang::c_abi::ScalarTypeId;
+use incan_lang::lang::surface::constructors::{self as surface_constructors, ConstructorId};
+use incan_lang::lang::traits::{self as builtin_traits, TraitId};
+use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
+use incan_lang::lang::types::numerics::NumericTypeId;
 use rust_inspect::test_fixtures::{write_borrowed_param_probe_crate, write_substrait_probe_crate};
 #[cfg(feature = "rust_inspect")]
 use rust_inspect::{Inspector, InspectorConfig};
@@ -2824,7 +2824,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
     let mut manifest = LibraryManifest {
         name: "mylib".to_string(),
         version: "0.1.0".to_string(),
-        incan_version: incan_core::version::INCAN_VERSION.to_string(),
+        incan_version: incan_lang::version::INCAN_VERSION.to_string(),
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: Vec::new(),
@@ -3250,7 +3250,7 @@ fn library_index_with_callable_alias_export() -> LibraryManifestIndex {
     let manifest = LibraryManifest {
         name: "mylib".to_string(),
         version: "0.1.0".to_string(),
-        incan_version: incan_core::version::INCAN_VERSION.to_string(),
+        incan_version: incan_lang::version::INCAN_VERSION.to_string(),
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: vec![AliasExport {
@@ -3354,7 +3354,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
     let manifest = LibraryManifest {
         name: "mylib".to_string(),
         version: "0.1.0".to_string(),
-        incan_version: incan_core::version::INCAN_VERSION.to_string(),
+        incan_version: incan_lang::version::INCAN_VERSION.to_string(),
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: vec![AliasExport {
@@ -3423,7 +3423,7 @@ fn library_index_with_trait_export() -> LibraryManifestIndex {
     let manifest = LibraryManifest {
         name: "mylib".to_string(),
         version: "0.1.0".to_string(),
-        incan_version: incan_core::version::INCAN_VERSION.to_string(),
+        incan_version: incan_lang::version::INCAN_VERSION.to_string(),
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: Vec::new(),
@@ -3491,7 +3491,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
     let manifest = LibraryManifest {
         name: "mylib".to_string(),
         version: "0.1.0".to_string(),
-        incan_version: incan_core::version::INCAN_VERSION.to_string(),
+        incan_version: incan_lang::version::INCAN_VERSION.to_string(),
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: Vec::new(),
@@ -3636,7 +3636,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
     let manifest = LibraryManifest {
         name: "pubdemo".to_string(),
         version: "0.1.0".to_string(),
-        incan_version: incan_core::version::INCAN_VERSION.to_string(),
+        incan_version: incan_lang::version::INCAN_VERSION.to_string(),
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: Vec::new(),
@@ -6434,7 +6434,7 @@ def f() -> None:
                     variants: vec![RustVariantInfo {
                         name: "Tuple".to_string(),
                         fields: vec![RustTypeShape::Int],
-                        field_carriers: vec![incan_core::interop::RustPayloadCarrier::Boxed],
+                        field_carriers: vec![incan_lang::interop::RustPayloadCarrier::Boxed],
                     }],
                 }),
             },
@@ -10228,8 +10228,8 @@ def add(mut xs: List[Mutex], value: Mutex) -> None:
         errs.iter().any(|e| {
             e.message.contains("List.append requires element type")
                 && e.message.contains("Mutex")
-                && e.message.contains(incan_core::lang::traits::as_str(
-                    incan_core::lang::traits::TraitId::Clone,
+                && e.message.contains(incan_lang::lang::traits::as_str(
+                    incan_lang::lang::traits::TraitId::Clone,
                 ))
         }),
         "expected List.append / Clone diagnostic for Rust element type; got {errs:?}"
@@ -10311,8 +10311,8 @@ def make(value: Mutex) -> List[Mutex]:
         errs.iter().any(|e| {
             e.message.contains("list.repeat requires element type")
                 && e.message.contains("Mutex")
-                && e.message.contains(incan_core::lang::traits::as_str(
-                    incan_core::lang::traits::TraitId::Clone,
+                && e.message.contains(incan_lang::lang::traits::as_str(
+                    incan_lang::lang::traits::TraitId::Clone,
                 ))
         }),
         "expected list.repeat / Clone diagnostic for Rust element type; got {errs:?}"
@@ -10334,8 +10334,8 @@ def combine(a: List[Mutex], b: List[Mutex]) -> List[Mutex]:
         errs.iter().any(|e| {
             e.message.contains("List concatenation requires element type")
                 && e.message.contains("Mutex")
-                && e.message.contains(incan_core::lang::traits::as_str(
-                    incan_core::lang::traits::TraitId::Clone,
+                && e.message.contains(incan_lang::lang::traits::as_str(
+                    incan_lang::lang::traits::TraitId::Clone,
                 ))
         }),
         "expected List + List / Clone diagnostic for Rust element type; got {errs:?}"
@@ -10357,8 +10357,8 @@ def extend_into(mut xs: List[Mutex], other: List[Mutex]) -> None:
         errs.iter().any(|e| {
             e.message.contains("List.extend requires element type")
                 && e.message.contains("Mutex")
-                && e.message.contains(incan_core::lang::traits::as_str(
-                    incan_core::lang::traits::TraitId::Clone,
+                && e.message.contains(incan_lang::lang::traits::as_str(
+                    incan_lang::lang::traits::TraitId::Clone,
                 ))
         }),
         "expected List.extend / Clone diagnostic for Rust element type; got {errs:?}"
@@ -17116,9 +17116,9 @@ def read_f64(reader: _BytesIO) -> Result[f64, IoError]:
         .collect::<Vec<_>>();
     assert_eq!(read_dispatches.len(), 3, "expected three exact BinaryRead dispatches");
     for expected in [
-        ResolvedType::Numeric(incan_core::lang::types::numerics::NumericTypeId::U32),
-        ResolvedType::Numeric(incan_core::lang::types::numerics::NumericTypeId::U16),
-        ResolvedType::Numeric(incan_core::lang::types::numerics::NumericTypeId::F64),
+        ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::U32),
+        ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::U16),
+        ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F64),
     ] {
         assert!(
             read_dispatches
@@ -22794,7 +22794,7 @@ fn scalar_c_binding_descriptor() -> CBindingDescriptor {
         class_name: "Fixture".to_string(),
         header: "fixture.h".to_string(),
         system_library: "fixture".to_string(),
-        link_capability: incan_core::lang::c_abi::LinkCapabilityId::SystemLibrary,
+        link_capability: incan_lang::lang::c_abi::LinkCapabilityId::SystemLibrary,
         resources: Vec::new(),
         symbols: vec![CBindingSymbol {
             name: "add".to_string(),
@@ -23041,7 +23041,7 @@ fn checked_c_string_view_copy_requires_unsafe_and_a_named_bound() {
     checker.symbols.define(crate::symbols::Symbol {
         name: "view".to_string(),
         kind: crate::symbols::SymbolKind::Variable(crate::symbols::VariableInfo {
-            ty: ResolvedType::Named(incan_core::lang::c_abi::SCOPED_C_STRING_VIEW_TYPE_ID.to_string()),
+            ty: ResolvedType::Named(incan_lang::lang::c_abi::SCOPED_C_STRING_VIEW_TYPE_ID.to_string()),
             is_mutable: false,
             is_used: false,
         }),
@@ -23140,7 +23140,7 @@ fn resource_c_binding_descriptor() -> CBindingDescriptor {
         class_name: "Fixture".to_string(),
         header: "fixture.h".to_string(),
         system_library: "fixture".to_string(),
-        link_capability: incan_core::lang::c_abi::LinkCapabilityId::SystemLibrary,
+        link_capability: incan_lang::lang::c_abi::LinkCapabilityId::SystemLibrary,
         resources: vec![CBindingResource {
             span: Span::default(),
             name: "Handle".to_string(),
@@ -24554,7 +24554,7 @@ fn rust_inspect_records_absolute_reexport_paths_in_the_ancestral_namespace() -> 
     prewarm_metadata(root, &["demo::proto::nested::Wrap"])?;
     let inspector = Inspector::new(InspectorConfig::new(root.to_path_buf()));
     let result = inspector.get("demo::proto::nested::Wrap")?;
-    let incan_core::interop::RustItemKind::Type(info) = &result.metadata.kind else {
+    let incan_lang::interop::RustItemKind::Type(info) = &result.metadata.kind else {
         return Err("expected enum type metadata for demo::proto::nested::Wrap".into());
     };
     let rendered = |name: &str| -> Result<Vec<String>, Box<dyn std::error::Error>> {
@@ -24565,7 +24565,7 @@ fn rust_inspect_records_absolute_reexport_paths_in_the_ancestral_namespace() -> 
             .ok_or_else(|| format!("missing {name} variant"))?
             .fields
             .iter()
-            .map(incan_core::interop::render_rust_type_shape)
+            .map(incan_lang::interop::render_rust_type_shape)
             .collect())
     };
     let (boxed, direct, text) = (rendered("Boxed")?, rendered("Direct")?, rendered("Text")?);
@@ -24578,7 +24578,7 @@ fn rust_inspect_records_absolute_reexport_paths_in_the_ancestral_namespace() -> 
     }
     // Both boxed spellings are the one `alloc::boxed::Box` item: the payload is recorded as its semantic type and
     // the carrier beside it, whether the source reached `Box` directly or through another crate's re-export.
-    let carriers = |name: &str| -> Result<Vec<incan_core::interop::RustPayloadCarrier>, Box<dyn std::error::Error>> {
+    let carriers = |name: &str| -> Result<Vec<incan_lang::interop::RustPayloadCarrier>, Box<dyn std::error::Error>> {
         Ok(info
             .variants
             .iter()
@@ -24599,11 +24599,11 @@ fn rust_inspect_records_absolute_reexport_paths_in_the_ancestral_namespace() -> 
     );
     assert_eq!(
         carriers("Direct")?,
-        vec![incan_core::interop::RustPayloadCarrier::Boxed]
+        vec![incan_lang::interop::RustPayloadCarrier::Boxed]
     );
-    assert_eq!(carriers("Boxed")?, vec![incan_core::interop::RustPayloadCarrier::Boxed]);
+    assert_eq!(carriers("Boxed")?, vec![incan_lang::interop::RustPayloadCarrier::Boxed]);
     assert_eq!(text, vec!["String".to_string()]);
-    assert_eq!(carriers("Text")?, vec![incan_core::interop::RustPayloadCarrier::Direct]);
+    assert_eq!(carriers("Text")?, vec![incan_lang::interop::RustPayloadCarrier::Direct]);
     Ok(())
 }
 

@@ -474,7 +474,7 @@ mod tests {
         let thing = polluted
             .get("abi_surface_api::Thing")
             .ok_or("expected Thing ABI item")?;
-        let incan_core::interop::RustItemKind::Type(thing_type) = &thing.kind else {
+        let incan_lang::interop::RustItemKind::Type(thing_type) = &thing.kind else {
             return Err("expected Thing ABI type metadata".into());
         };
         assert!(

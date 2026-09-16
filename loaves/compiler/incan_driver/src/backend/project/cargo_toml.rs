@@ -18,10 +18,10 @@ use serde::Serialize;
 use oven_model::manifest::{DependencySource, DependencySpec, GitReference};
 
 use super::generator::{ProjectGenerator, is_sdk_provider_build};
-use incan_core::lang::generated_support::SUPPORT_CRATES_EVERY_PROGRAM_LINKS;
+use incan_lang::lang::generated_support::SUPPORT_CRATES_EVERY_PROGRAM_LINKS;
 
 /// Incan compiler version stamped into generated `Cargo.toml` files and used as the package-version fallback.
-pub const INCAN_VERSION: &str = incan_core::version::INCAN_VERSION;
+pub const INCAN_VERSION: &str = incan_lang::version::INCAN_VERSION;
 
 // ============================================================================
 // Serializable Cargo.toml structure
@@ -384,7 +384,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::backend::project::generator::ProjectGenerator;
-    use incan_core::lang::stdlib;
+    use incan_lang::lang::stdlib;
     use oven_model::manifest::{DependencySource, DependencySpec};
 
     use super::{INCAN_VERSION, dependency_spec_to_toml, path_dependency};

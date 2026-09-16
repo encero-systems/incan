@@ -1,4 +1,4 @@
-//! Sync VS Code/TextMate keyword regexes from `incan_core::lang` registries.
+//! Sync VS Code/TextMate keyword regexes from `incan_lang::lang` registries.
 //!
 //! This updates only the keyword-related regex lines inside `workspaces/ide/vscode/incan.tmLanguage.json`. The grammar
 //! file remains a checked-in artifact, but its keyword buckets are derived from stable `KeywordId`-based helpers.
@@ -7,11 +7,11 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
-use incan_core::lang::highlighting;
+use incan_lang::lang::highlighting;
 
 /// Rewrite the checked-in VS Code grammar so keyword regexes match the canonical language registry.
 ///
-/// This is intended for repository maintenance and should be run after changing `incan_core::lang::highlighting` or the
+/// This is intended for repository maintenance and should be run after changing `incan_lang::lang::highlighting` or the
 /// underlying keyword metadata.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let grammar_path = workspace_root().join("workspaces/ide/vscode/incan.tmLanguage.json");

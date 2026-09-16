@@ -39,8 +39,8 @@ use std::{
     rc::Rc,
 };
 
-use incan_core::lang::builtins::{self, BuiltinFnId};
-use incan_core::{
+use incan_lang::lang::builtins::{self, BuiltinFnId};
+use incan_lang::{
     errors::IncanError,
     lang::surface::constructors::{ConstructorId, as_str as constructor_name},
     lang::surface::iterator_methods::{self, IteratorMethodId},
@@ -362,7 +362,7 @@ fn coerce_value_to_checked_type(
     let Some(target_id) = checked_numeric_type_id(target) else {
         return Err(numeric_type_mismatch(&value, target, span));
     };
-    if !incan_core::numeric_values::numeric_type_losslessly_widens_to(source, target_id) {
+    if !incan_lang::numeric_values::numeric_type_losslessly_widens_to(source, target_id) {
         return Err(numeric_type_mismatch(&value, target, span));
     }
 
@@ -1786,7 +1786,7 @@ fn replacement_value_matches_checked_type(value: &ReplacementValue, ty: &IncanTy
         | (IncanType::Primitive(IncanPrimitiveType::Unit), ReplacementValue::Unit) => true,
         (ty, ReplacementValue::Numeric(value)) => numeric_value_matches_type(value, ty),
         (IncanType::Generic { base, args }, value)
-            if base == incan_core::lang::types::UNION_TYPE_NAME && !args.is_empty() =>
+            if base == incan_lang::lang::types::UNION_TYPE_NAME && !args.is_empty() =>
         {
             args.iter()
                 .any(|member| replacement_value_matches_checked_type(value, member))
@@ -3501,7 +3501,7 @@ fn validate_isinstance_value_type_profile(
         || matches!(
             value_ty,
             IncanType::Generic { base, args }
-                if base == incan_core::lang::types::UNION_TYPE_NAME
+                if base == incan_lang::lang::types::UNION_TYPE_NAME
                     && !args.is_empty()
                     && args.iter().all(admitted_scalar)
         );
@@ -5200,7 +5200,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 | ReplacementValue::Tuple(elements) => Ok(ReplacementValue::Int(elements.len() as i64)),
                 ReplacementValue::Set(values) => Ok(ReplacementValue::Int(values.len() as i64)),
                 ReplacementValue::Dict(values) => Ok(ReplacementValue::Int(values.len() as i64)),
-                ReplacementValue::Str(value) => Ok(ReplacementValue::Int(incan_core::strings::str_len(&value))),
+                ReplacementValue::Str(value) => Ok(ReplacementValue::Int(incan_lang::strings::str_len(&value))),
                 other => Err(unsupported(format!("`len` of {}", value_kind(&other)), span)),
             },
             BuiltinFnId::Abs => match value {
@@ -6965,7 +6965,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
             ) => {
                 let left = self.evaluate_operand(left, span)?.into_string(span)?;
                 let right = self.evaluate_operand(right, span)?.into_string(span)?;
-                let ordering = incan_core::strings::str_cmp(&left, &right);
+                let ordering = incan_lang::strings::str_cmp(&left, &right);
                 let matches = match comparison {
                     HelperOp::StrEq => ordering.is_eq(),
                     HelperOp::StrNe => ordering.is_ne(),
@@ -6979,25 +6979,25 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
             }
             (HelperOp::StrUpper, [receiver]) => {
                 let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
-                ReplacementValue::Str(incan_core::strings::str_upper(&receiver))
+                ReplacementValue::Str(incan_lang::strings::str_upper(&receiver))
             }
             (HelperOp::StrLower, [receiver]) => {
                 let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
-                ReplacementValue::Str(incan_core::strings::str_lower(&receiver))
+                ReplacementValue::Str(incan_lang::strings::str_lower(&receiver))
             }
             (HelperOp::StrStrip, [receiver]) => {
                 let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
-                ReplacementValue::Str(incan_core::strings::str_strip(&receiver))
+                ReplacementValue::Str(incan_lang::strings::str_strip(&receiver))
             }
             (HelperOp::StrLen, [receiver]) => {
                 let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
-                ReplacementValue::Int(incan_core::strings::str_len(&receiver))
+                ReplacementValue::Int(incan_lang::strings::str_len(&receiver))
             }
             (HelperOp::StrReplace, [receiver, from, to]) => {
                 let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
                 let from = self.evaluate_operand(from, span)?.into_string(span)?;
                 let to = self.evaluate_operand(to, span)?.into_string(span)?;
-                ReplacementValue::Str(incan_core::strings::str_replace(&receiver, &from, &to))
+                ReplacementValue::Str(incan_lang::strings::str_replace(&receiver, &from, &to))
             }
             (HelperOp::StrJoin, [separator, items]) => {
                 let separator = self.evaluate_operand(separator, span)?.into_string(span)?;
@@ -7006,7 +7006,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                     .into_iter()
                     .map(|item| item.into_string(span))
                     .collect::<Result<Vec<_>, _>>()?;
-                ReplacementValue::Str(incan_core::strings::str_join(&separator, &items))
+                ReplacementValue::Str(incan_lang::strings::str_join(&separator, &items))
             }
             (HelperOp::StrSplit, [receiver, rest @ ..]) if rest.len() <= 1 => {
                 let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
@@ -7015,7 +7015,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                     .map(|separator| self.evaluate_operand(separator, span)?.into_string(span))
                     .transpose()?;
                 ReplacementValue::List {
-                    elements: incan_core::strings::str_split(&receiver, separator.as_deref())
+                    elements: incan_lang::strings::str_split(&receiver, separator.as_deref())
                         .into_iter()
                         .map(ReplacementValue::Str)
                         .collect(),
@@ -7025,7 +7025,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
             (HelperOp::StrContains, [haystack, needle]) => {
                 let haystack = self.evaluate_operand(haystack, span)?.into_string(span)?;
                 let needle = self.evaluate_operand(needle, span)?.into_string(span)?;
-                ReplacementValue::Bool(incan_core::strings::str_contains(&haystack, &needle))
+                ReplacementValue::Bool(incan_lang::strings::str_contains(&haystack, &needle))
             }
             _ => {
                 return Err(unsupported(

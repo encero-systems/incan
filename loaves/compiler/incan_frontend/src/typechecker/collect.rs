@@ -8,7 +8,7 @@ use crate::diagnostics::errors;
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::*;
 use crate::typechecker::helpers::freeze_const_type;
-use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
+use incan_lang::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 use super::{
@@ -981,7 +981,7 @@ impl TypeChecker {
             && info
                 .metadata
                 .as_ref()
-                .is_none_or(|metadata| matches!(metadata.kind, incan_core::interop::RustItemKind::Trait(_)))
+                .is_none_or(|metadata| matches!(metadata.kind, incan_lang::interop::RustItemKind::Trait(_)))
         {
             return Some(format!("::{}", info.path.trim_start_matches("::")));
         }
@@ -992,7 +992,7 @@ impl TypeChecker {
     pub fn collect_derive_trait_adoption_infos(&mut self, derives: &[String]) -> Vec<TypeBoundInfo> {
         let mut out = Vec::new();
         for derive_name in derives {
-            if incan_core::lang::derives::from_str(derive_name).is_some() {
+            if incan_lang::lang::derives::from_str(derive_name).is_some() {
                 continue;
             }
             if let Some(module_path) = self.module_path_for_imported_name(derive_name)
@@ -1230,7 +1230,7 @@ impl TypeChecker {
             if info
                 .metadata
                 .as_ref()
-                .is_some_and(|metadata| !matches!(metadata.kind, incan_core::interop::RustItemKind::Trait(_)))
+                .is_some_and(|metadata| !matches!(metadata.kind, incan_lang::interop::RustItemKind::Trait(_)))
             {
                 self.errors
                     .push(errors::supertrait_bound_not_trait(&trait_name, bound.span));

@@ -1,18 +1,18 @@
 use std::collections::HashMap;
 
-use incan_core::lang::builtins;
-use incan_core::lang::derives;
-use incan_core::lang::errors;
-use incan_core::lang::keywords;
-use incan_core::lang::magic_methods;
-use incan_core::lang::operators;
-use incan_core::lang::punctuation;
-use incan_core::lang::registry::{RFC, Since};
-use incan_core::lang::surface::types::{SurfaceTypeCategory, SurfaceTypeId, SurfaceTypeOwner};
-use incan_core::lang::surface::{constructors, functions, iterator_methods, result_methods, types as surface_types};
-use incan_core::lang::testing;
-use incan_core::lang::traits;
-use incan_core::lang::types::{collections, numerics, stringlike};
+use incan_lang::lang::builtins;
+use incan_lang::lang::derives;
+use incan_lang::lang::errors;
+use incan_lang::lang::keywords;
+use incan_lang::lang::magic_methods;
+use incan_lang::lang::operators;
+use incan_lang::lang::punctuation;
+use incan_lang::lang::registry::{RFC, Since};
+use incan_lang::lang::surface::types::{SurfaceTypeCategory, SurfaceTypeId, SurfaceTypeOwner};
+use incan_lang::lang::surface::{constructors, functions, iterator_methods, result_methods, types as surface_types};
+use incan_lang::lang::testing;
+use incan_lang::lang::traits;
+use incan_lang::lang::types::{collections, numerics, stringlike};
 use std::path::{Path, PathBuf};
 
 struct RegistryRoundTrip<'a, Id, Info> {
@@ -381,7 +381,7 @@ fn surface_types_have_explicit_ownership_metadata() {
         assert_eq!(surface_types::stdlib_module_path(id), info.ownership.stdlib_module_path);
         assert!(
             !info.ownership.rationale.trim().is_empty(),
-            "surface type {:?} must explain why incan_core owns its spelling",
+            "surface type {:?} must explain why incan_lang owns its spelling",
             id
         );
     }
@@ -432,7 +432,7 @@ fn surface_types_have_explicit_ownership_metadata() {
 // Drift guardrails for closed-set vocabulary (string literals).
 // -------------------------------------------------------------------------------------------------
 
-/// The repository root: the crate lives at `loaves/kernel/incan_core`, three levels below it.
+/// The repository root: the crate lives at `loaves/kernel/incan_lang`, three levels below it.
 fn repo_root() -> PathBuf {
     let Some(root) = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -531,7 +531,7 @@ fn no_builtin_trait_string_literals_in_compiler_layers() {
     let hits = find_string_literals(&files, &trait_literals);
     assert!(
         hits.is_empty(),
-        "builtin trait spellings must come from incan_core::lang::traits; found:\n{}",
+        "builtin trait spellings must come from incan_lang::lang::traits; found:\n{}",
         hits.join("\n")
     );
 }
@@ -544,7 +544,7 @@ fn no_constructor_string_literals_in_compiler_layers() {
     let hits = find_string_literals(&files, &constructor_literals);
     assert!(
         hits.is_empty(),
-        "constructor spellings must come from incan_core::lang::surface::constructors; found:\n{}",
+        "constructor spellings must come from incan_lang::lang::surface::constructors; found:\n{}",
         hits.join("\n")
     );
 }
@@ -557,7 +557,7 @@ fn no_frozen_collection_string_literals_in_compiler_layers() {
     let hits = find_string_literals(&files, &frozen_literals);
     assert!(
         hits.is_empty(),
-        "frozen collection spellings must come from incan_core::lang::types::collections; found:\n{}",
+        "frozen collection spellings must come from incan_lang::lang::types::collections; found:\n{}",
         hits.join("\n")
     );
 }

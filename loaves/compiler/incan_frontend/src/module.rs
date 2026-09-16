@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use super::ast::{Declaration, ImportDecl, ImportKind, ImportPath, Program, Span, Visibility};
-use incan_core::lang::stdlib;
+use incan_lang::lang::stdlib;
 
 /// A resolved local source module import.
 ///

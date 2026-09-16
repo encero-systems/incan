@@ -4,7 +4,7 @@ use crate::diagnostics::{CompileError, errors};
 use crate::symbols::ResolvedType;
 
 use super::{collection_type_id, frozen_bytes_ty, frozen_str_ty, tuple_generic_ty};
-use incan_core::lang::types::collections::CollectionTypeId;
+use incan_lang::lang::types::collections::CollectionTypeId;
 
 /// Check whether a type is acceptable for indexing/slicing integer positions.
 ///

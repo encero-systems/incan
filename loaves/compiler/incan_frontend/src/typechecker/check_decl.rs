@@ -20,15 +20,15 @@ use super::{
     DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FunctionBindingInfo, MemberBindingSurface,
     TestingFixtureInfo, TypeChecker, YieldContext,
 };
-use incan_core::interop::{RustItemKind, RustItemMetadata, RustTraitAssoc};
-use incan_core::lang::decorators::{self, DecoratorId};
-use incan_core::lang::derives::{self, DeriveId};
-use incan_core::lang::magic_methods;
-use incan_core::lang::stdlib;
-use incan_core::lang::surface::constructors::{self, ConstructorId};
-use incan_core::lang::testing;
-use incan_core::lang::traits::{self as builtin_traits, TraitId};
-use incan_core::lang::types::collections::CollectionTypeId;
+use incan_lang::interop::{RustItemKind, RustItemMetadata, RustTraitAssoc};
+use incan_lang::lang::decorators::{self, DecoratorId};
+use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::magic_methods;
+use incan_lang::lang::stdlib;
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::testing;
+use incan_lang::lang::traits::{self as builtin_traits, TraitId};
+use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind};
 use incan_semantics_core::{SemanticRegistrySubjectKind, SemanticRegistryValue, SurfaceModifierTypeCheck};
 use std::collections::{HashMap, HashSet};
@@ -4541,7 +4541,7 @@ impl TypeChecker {
         let Some(method_decl) = nt
             .methods
             .iter()
-            .find(|method| method.node.name == incan_core::lang::conventions::NEWTYPE_FROM_UNDERLYING_METHOD)
+            .find(|method| method.node.name == incan_lang::lang::conventions::NEWTYPE_FROM_UNDERLYING_METHOD)
         else {
             return;
         };
@@ -4549,7 +4549,7 @@ impl TypeChecker {
         let method_info = self.lookup_type_info(&nt.name).and_then(|info| match info {
             TypeInfo::Newtype(newtype) => newtype
                 .methods
-                .get(incan_core::lang::conventions::NEWTYPE_FROM_UNDERLYING_METHOD)
+                .get(incan_lang::lang::conventions::NEWTYPE_FROM_UNDERLYING_METHOD)
                 .cloned(),
             _ => None,
         });
@@ -4600,7 +4600,7 @@ impl TypeChecker {
             &method_info.return_type,
             ResolvedType::Generic(name, args)
                 if crate::typechecker::helpers::collection_type_id(name.as_str())
-                    == Some(incan_core::lang::types::collections::CollectionTypeId::Result)
+                    == Some(incan_lang::lang::types::collections::CollectionTypeId::Result)
                     && args.len() == 2
                     && (
                         matches!(&args[0], ResolvedType::Named(name) if name == &nt.name)

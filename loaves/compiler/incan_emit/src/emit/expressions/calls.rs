@@ -10,14 +10,14 @@ use quote::quote;
 use super::super::{EmitError, IrEmitter};
 use crate::conversions::{BinOpEmitKind, NumericConversion, determine_binop_plan, exact_float_value_validation};
 use crate::ownership::{ArgumentPassingPlan, ValueUseSite};
-use incan_core::lang::stdlib;
-use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_frontend::ast::ParamKind;
 use incan_frontend::provider::SDK_PROVIDER_BUILD_ENV;
 use incan_ir::decl::{FunctionParam, FunctionParamDefault};
 use incan_ir::expr::{BinOp, IrCallArg, IrCallArgKind, IrExprKind, TypedExpr, VarRefKind};
 use incan_ir::types::{IrType, union_member_type_matches};
 use incan_ir::{FunctionRegistry, FunctionSignature};
+use incan_lang::lang::stdlib;
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
 
 const INTERNAL_PANIC_FN: &str = "__incan_internal_panic";
 
@@ -1532,13 +1532,13 @@ impl<'a> IrEmitter<'a> {
 mod tests {
     use super::*;
     use crate::IrEmitter;
-    use incan_core::lang::types::numerics::NumericTypeId;
     use incan_ir::decl::FunctionParam;
     use incan_ir::expr::{
         IrCallArg, IrCallArgKind, IrInteropCoercionKind, Literal as IrLiteral, VarAccess, VarRefKind,
     };
     use incan_ir::types::{IR_UNION_TYPE_NAME, IrType, Mutability};
     use incan_ir::{FunctionRegistry, TypedExpr};
+    use incan_lang::lang::types::numerics::NumericTypeId;
     use incan_semantics_core::{
         CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
         encode_incan_symbol_identity,

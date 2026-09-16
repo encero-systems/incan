@@ -2,7 +2,7 @@
 //!
 //! This module is the generic bridge between source-level Incan methods and generated Rust helper methods that exist
 //! for performance-sensitive stdlib surfaces. It deliberately does not know about `OrdinalMap`, or any other concrete
-//! collection, by name. Fast paths are declared in `incan_core::lang::generated_support`; this emitter only checks that
+//! collection, by name. Fast paths are declared in `incan_lang::lang::generated_support`; this emitter only checks that
 //! the lowered receiver and argument shapes match a descriptor and then emits the corresponding helper call.
 //!
 //! Returning `None` is part of the contract: if no descriptor matches, ordinary method-call emission continues. That
@@ -12,9 +12,9 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use crate::emit::{EmitError, IrEmitter};
-use incan_core::lang::generated_support::{self, MethodFastPath, MethodFastPathArgShape};
 use incan_ir::expr::{IrCallArg, IrExprKind, TypedExpr};
 use incan_ir::types::IrType;
+use incan_lang::lang::generated_support::{self, MethodFastPath, MethodFastPathArgShape};
 
 /// Emit a descriptor-backed helper call for a known fast path, if the call shape matches.
 ///

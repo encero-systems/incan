@@ -14,7 +14,7 @@
 //!   Rust iterator chains instead of calling the Incan protocol defaults.
 
 use crate::errors::{raise, raise_value_error};
-use incan_core::errors::IncanError;
+use incan_lang::errors::IncanError;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::thread;
 

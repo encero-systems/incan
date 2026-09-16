@@ -39,7 +39,7 @@ use crate::error::{CliError, CliResult};
 use crate::lock::resolution::validate_oven_lock_policy;
 use crate::oven_store::open_default_oven_store;
 use crate::project::discover_effective_project_manifest;
-use incan_core::version::INCAN_VERSION;
+use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
 use oven_model::manifest::{LOAF_MANIFEST_FILENAME, ProjectManifest};
 use oven_rustc::rustc::{resolve_active_rustc, rustc_host_target, rustc_identity};
@@ -887,8 +887,8 @@ mod tests {
     };
     use crate::build_report::BUILD_REPORT_SCHEMA_VERSION;
     use crate::error::{CliError, CliResult};
-    use incan_core::version::INCAN_VERSION;
     use incan_frontend::diagnostics;
+    use incan_lang::version::INCAN_VERSION;
     use oven_rustc::plan::OvenPackagedLibraryLoafEntry;
     use oven_rustc::rustc::{
         OvenProjectInspectionAuthorityRef, resolve_active_rustc, rustc_host_target, rustc_identity,

@@ -13,14 +13,14 @@
 //!
 //! ## Examples
 //! ```rust
-//! use incan_core::lang::keywords::{self, KeywordId};
+//! use incan_lang::lang::keywords::{self, KeywordId};
 //!
 //! assert_eq!(keywords::from_str("if"), Some(KeywordId::If));
 //! assert_eq!(keywords::as_str(KeywordId::If), "if");
 //! ```
 //!
 //! ## See also
-//! - `cargo run -p incan_core --bin generate_lang_reference` writes
+//! - `cargo run -p incan_lang --bin generate_lang_reference` writes
 //!   `workspaces/docs-site/docs/language/reference/language.md` from these registries. Do not edit that Markdown by
 //!   hand; change the tables here and re-run the binary.
 

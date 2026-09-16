@@ -230,9 +230,9 @@ pub fn sdk_provider_store_identity(
     let mut hasher = Sha256::new();
     hasher.update(b"incan-sdk-provider-store-v4\0");
     hasher.update(b"compiler-version\0");
-    hasher.update(incan_core::version::INCAN_VERSION.as_bytes());
+    hasher.update(incan_lang::version::INCAN_VERSION.as_bytes());
     hasher.update(b"provider-codegen-revision\0");
-    hasher.update(incan_core::version::SDK_PROVIDER_CODEGEN_REVISION.to_le_bytes());
+    hasher.update(incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION.to_le_bytes());
     hasher.update(b"distribution-profile\0");
     hasher.update(distribution_profile.as_bytes());
 

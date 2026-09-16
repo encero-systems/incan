@@ -1,7 +1,7 @@
 //! Foreign supertrait validation at the source/Rust trait boundary (#1427).
 
 use super::*;
-use incan_core::interop::{RustItemKind, RustItemMetadata, RustTraitInfo, RustVisibility};
+use incan_lang::interop::{RustItemKind, RustItemMetadata, RustTraitInfo, RustVisibility};
 
 /// Imported Rust bounds are preserved for native checking, including primitive and collection instantiations.
 #[test]

@@ -5,7 +5,7 @@
 //!
 //! ## Notes
 //! - This crate is intentionally “syntax-only”: it does not do name resolution, type checking, or IR lowering.
-//! - Vocabulary identity (keywords/operators/punctuation) comes from `incan_core::lang` registries.
+//! - Vocabulary identity (keywords/operators/punctuation) comes from `incan_lang::lang` registries.
 //!
 //! ## Examples
 //! ```rust,no_run
@@ -19,7 +19,7 @@
 //! ```
 //!
 //! ## See also
-//! - `incan_core::lang` for registry-backed language vocabulary (keywords/operators/punctuation/etc.).
+//! - `incan_lang::lang` for registry-backed language vocabulary (keywords/operators/punctuation/etc.).
 
 pub mod ast;
 pub mod diagnostics;

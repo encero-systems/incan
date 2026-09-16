@@ -95,8 +95,8 @@ impl<'a> IrEmitter<'a> {
     /// Return whether an iterable expression already yields owned generator items.
     fn is_generator_iterable(iterable: &TypedExpr) -> bool {
         matches!(&iterable.ty, IrType::NamedGeneric(name, _)
-            if incan_core::lang::types::collections::from_str(name.as_str())
-                == Some(incan_core::lang::types::collections::CollectionTypeId::Generator))
+            if incan_lang::lang::types::collections::from_str(name.as_str())
+                == Some(incan_lang::lang::types::collections::CollectionTypeId::Generator))
     }
 
     /// Emit a list comprehension.
@@ -324,8 +324,8 @@ impl<'a> IrEmitter<'a> {
         matches!(&iterable.kind, IrExprKind::Range { .. })
             || matches!(&iterable.kind, IrExprKind::Call { func, .. }
                 if matches!(&func.kind, IrExprKind::Var { name, .. }
-                    if incan_core::lang::builtins::from_str(name.as_str())
-                        == Some(incan_core::lang::builtins::BuiltinFnId::Range)))
+                    if incan_lang::lang::builtins::from_str(name.as_str())
+                        == Some(incan_lang::lang::builtins::BuiltinFnId::Range)))
             || matches!(&iterable.kind, IrExprKind::BuiltinCall { func, .. }
                 if matches!(func, incan_ir::expr::BuiltinFn::Range))
     }

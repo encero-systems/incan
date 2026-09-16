@@ -1,9 +1,9 @@
 //! Conversion helpers between manifest-level [`super::TypeRef`] values and frontend semantic types.
 
-use incan_core::lang::conventions;
-use incan_core::lang::types::collections::{self, CollectionTypeId};
-use incan_core::lang::types::numerics::{self, NumericTypeId};
-use incan_core::lang::types::stringlike::{self, StringLikeId};
+use incan_lang::lang::conventions;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_lang::lang::types::numerics::{self, NumericTypeId};
+use incan_lang::lang::types::stringlike::{self, StringLikeId};
 
 use super::TypeRef;
 use crate::symbols::{CallableParam, ResolvedType};
@@ -121,7 +121,7 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
         TypeRef::RustPath { path } => ResolvedType::RustPath(path.clone()),
         TypeRef::Unknown => ResolvedType::Unknown,
         TypeRef::NativeUnion(native) => ResolvedType::Generic(
-            incan_core::lang::types::UNION_TYPE_NAME.to_string(),
+            incan_lang::lang::types::UNION_TYPE_NAME.to_string(),
             native
                 .members
                 .iter()

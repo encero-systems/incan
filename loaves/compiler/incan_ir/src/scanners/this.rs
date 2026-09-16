@@ -1,7 +1,7 @@
 //! Detect `import this` usage.
 
-use incan_core::lang::stdlib;
 use incan_frontend::ast::{Declaration, ImportKind, Program};
+use incan_lang::lang::stdlib;
 
 /// Check for `import this` usage.
 pub fn check_for_this_import(program: &Program) -> bool {

@@ -55,14 +55,14 @@ use std::sync::LazyLock;
 use super::{EmitError, IrEmitter};
 use crate::conversions::exact_float_value_validation;
 use crate::ownership::{ValueUseSite, plan_value_use, value_use_site_target_ty};
-use incan_core::lang::surface::methods::{dict_methods, list_methods};
-use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_ir::decl::IrInteropAdapterKind;
 use incan_ir::expr::{
     CollectionMethodKind, IrDictEntry, IrExprKind, IrInteropCoercionKind, IrListEntry, IrMethodDispatch,
     IrStaticReferenceKind, Literal as IrLiteral, MethodKind, NumericResizePolicy, TypedExpr, UnaryOp, VarRefKind,
 };
 use incan_ir::types::IrType;
+use incan_lang::lang::surface::methods::{dict_methods, list_methods};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 #[derive(Debug, Clone)]
 pub enum StorageRoot {
@@ -1529,12 +1529,12 @@ impl<'a> IrEmitter<'a> {
                 match kind {
                     IrInteropCoercionKind::Builtin { policy, rust_target } => {
                         let emitted = match policy {
-                            incan_core::interop::CoercionPolicy::Exact => match to_ty {
+                            incan_lang::interop::CoercionPolicy::Exact => match to_ty {
                                 IrType::String => quote! { (#inner_tokens).to_string() },
                                 IrType::Bytes => quote! { (#inner_tokens).to_vec() },
                                 _ => quote! { #inner_tokens },
                             },
-                            incan_core::interop::CoercionPolicy::Lossless => {
+                            incan_lang::interop::CoercionPolicy::Lossless => {
                                 let target = self.emit_type(to_ty);
                                 let _: syn::Type = syn::parse2(target.clone()).map_err(|err| {
                                     EmitError::SynParse(format!(
@@ -1543,10 +1543,10 @@ impl<'a> IrEmitter<'a> {
                                 })?;
                                 quote! { (#inner_tokens) as #target }
                             }
-                            incan_core::interop::CoercionPolicy::Borrow => {
+                            incan_lang::interop::CoercionPolicy::Borrow => {
                                 interop_coercions::emit_builtin_borrow_coercion(inner, inner_tokens, to_ty)
                             }
-                            incan_core::interop::CoercionPolicy::Lossy => match rust_target.as_str() {
+                            incan_lang::interop::CoercionPolicy::Lossy => match rust_target.as_str() {
                                 "f32" => quote! { (#inner_tokens) as f32 },
                                 _ => quote! { #inner_tokens },
                             },
@@ -1610,13 +1610,13 @@ impl<'a> IrEmitter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use incan_core::lang::traits::{self as core_traits, TraitId};
-    use incan_core::lang::types::numerics::NumericTypeId;
     use incan_ir::expr::{
         CollectionMethodKind, IrCallArg, IrCallArgKind, IrMethodDispatch, IteratorMethodKind, MethodCallArgPolicy,
         MethodKind, VarAccess, VarRefKind,
     };
     use incan_ir::{FunctionParam, FunctionRegistry, FunctionSignature, Mutability};
+    use incan_lang::lang::traits::{self as core_traits, TraitId};
+    use incan_lang::lang::types::numerics::NumericTypeId;
 
     fn prost_decode_signature(return_type: IrType) -> FunctionSignature {
         FunctionSignature {
@@ -2635,7 +2635,7 @@ mod tests {
                 from_ty: IrType::String,
                 to_ty: IrType::Ref(Box::new(IrType::Struct("String".to_string()))),
                 kind: IrInteropCoercionKind::Builtin {
-                    policy: incan_core::interop::CoercionPolicy::Borrow,
+                    policy: incan_lang::interop::CoercionPolicy::Borrow,
                     rust_target: "&str".to_string(),
                 },
             },
@@ -2674,7 +2674,7 @@ mod tests {
                 from_ty: IrType::String,
                 to_ty: IrType::Ref(Box::new(IrType::Struct("String".to_string()))),
                 kind: IrInteropCoercionKind::Builtin {
-                    policy: incan_core::interop::CoercionPolicy::Borrow,
+                    policy: incan_lang::interop::CoercionPolicy::Borrow,
                     rust_target: "&str".to_string(),
                 },
             },
@@ -2713,7 +2713,7 @@ mod tests {
                 from_ty: IrType::List(Box::new(IrType::String)),
                 to_ty: IrType::List(Box::new(IrType::StrRef)),
                 kind: IrInteropCoercionKind::Builtin {
-                    policy: incan_core::interop::CoercionPolicy::Borrow,
+                    policy: incan_lang::interop::CoercionPolicy::Borrow,
                     rust_target: "Vec<&str>".to_string(),
                 },
             },
@@ -2782,8 +2782,8 @@ mod tests {
             )
             .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
         let rendered = emitted.to_string();
-        let some_constructor = incan_core::lang::surface::constructors::as_str(
-            incan_core::lang::surface::constructors::ConstructorId::Some,
+        let some_constructor = incan_lang::lang::surface::constructors::as_str(
+            incan_lang::lang::surface::constructors::ConstructorId::Some,
         );
         assert!(
             rendered.contains(some_constructor) && rendered.contains("__IncanUnion"),
@@ -2911,7 +2911,7 @@ mod tests {
                 from_ty: IrType::Bytes,
                 to_ty: IrType::Ref(Box::new(IrType::Bytes)),
                 kind: IrInteropCoercionKind::Builtin {
-                    policy: incan_core::interop::CoercionPolicy::Borrow,
+                    policy: incan_lang::interop::CoercionPolicy::Borrow,
                     rust_target: "&[u8]".to_string(),
                 },
             },
@@ -2943,7 +2943,7 @@ mod tests {
                 from_ty: IrType::StaticBytes,
                 to_ty: IrType::Ref(Box::new(IrType::Struct("Vec<u8>".to_string()))),
                 kind: IrInteropCoercionKind::Builtin {
-                    policy: incan_core::interop::CoercionPolicy::Borrow,
+                    policy: incan_lang::interop::CoercionPolicy::Borrow,
                     rust_target: "&[u8]".to_string(),
                 },
             },

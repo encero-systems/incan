@@ -2176,7 +2176,7 @@ fn parameter_default_materializability_is_all_or_nothing() {
 
 #[test]
 fn manifest_io_round_trip_preserves_rust_abi_metadata() -> Result<(), Box<dyn std::error::Error>> {
-    use incan_core::interop::{
+    use incan_lang::interop::{
         RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeInfo, RustVisibility,
     };
 
@@ -2288,7 +2288,7 @@ fn manifest_validation_rejects_invalid_partial_exports() -> Result<(), Box<dyn s
 
 #[test]
 fn manifest_validation_rejects_duplicate_rust_abi_paths() -> Result<(), Box<dyn std::error::Error>> {
-    use incan_core::interop::{RustItemKind, RustItemMetadata, RustModuleInfo, RustVisibility};
+    use incan_lang::interop::{RustItemKind, RustItemMetadata, RustModuleInfo, RustVisibility};
 
     let duplicate = RustItemMetadata {
         canonical_path: "mylib_runtime::Plan".to_string(),
@@ -2309,7 +2309,7 @@ fn manifest_validation_rejects_duplicate_rust_abi_paths() -> Result<(), Box<dyn 
     "items": [{}, {}]
   }}
 }}"#,
-        incan_core::version::INCAN_VERSION,
+        incan_lang::version::INCAN_VERSION,
         LIBRARY_MANIFEST_FORMAT,
         RUST_ABI_SCHEMA_VERSION,
         serde_json::to_string(&duplicate)?,
@@ -2337,7 +2337,7 @@ fn manifest_validation_rejects_stale_and_future_rust_abi_schema_versions() {
     "items": []
   }}
 }}"#,
-            incan_core::version::INCAN_VERSION,
+            incan_lang::version::INCAN_VERSION,
             LIBRARY_MANIFEST_FORMAT,
             unsupported
         );
@@ -2372,7 +2372,7 @@ fn manifest_validation_rejects_unsupported_api_metadata_package_schema_version()
     }}
   }}
 }}"#,
-        incan_core::version::INCAN_VERSION,
+        incan_lang::version::INCAN_VERSION,
         LIBRARY_MANIFEST_FORMAT,
         crate::api_metadata::CHECKED_API_METADATA_SCHEMA_VERSION + 1
     );
@@ -2405,7 +2405,7 @@ fn manifest_validation_rejects_unsupported_api_metadata_module_schema_version() 
     }}
   }}
 }}"#,
-        incan_core::version::INCAN_VERSION,
+        incan_lang::version::INCAN_VERSION,
         LIBRARY_MANIFEST_FORMAT,
         crate::api_metadata::CHECKED_API_METADATA_SCHEMA_VERSION,
         crate::api_metadata::CHECKED_API_METADATA_SCHEMA_VERSION + 1

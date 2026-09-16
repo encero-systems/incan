@@ -57,8 +57,8 @@ use crate::oven_store::open_default_oven_store;
 use crate::project::discover_effective_project_manifest;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect_workspace::mark_oven_direct_rust_inspection;
-use incan_core::version::INCAN_VERSION;
 use incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path;
+use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::legacy_cargo::direct_rustc_compile_environment;

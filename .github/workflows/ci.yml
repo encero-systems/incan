@@ -283,7 +283,7 @@ jobs:
           set -o pipefail
           mkdir -p target/ci-tool-evidence
           CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan-cli --bin incan --bin generate_feature_inventory --message-format=json-render-diagnostics | python3 scripts/ci_tool_outputs.py record target/ci-tool-private/compiler.jsonl
-          CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan_core --bin generate_lang_reference --message-format=json-render-diagnostics | python3 scripts/ci_tool_outputs.py record target/ci-tool-private/reference.jsonl
+          CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan_lang --bin generate_lang_reference --message-format=json-render-diagnostics | python3 scripts/ci_tool_outputs.py record target/ci-tool-private/reference.jsonl
       - name: Audit cold Linux tool input coverage
         id: tool-admission
         if: steps.tool-restore.outputs.hit != 'true' && steps.tool-inputs.outputs.eligible == 'true'

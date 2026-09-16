@@ -9,9 +9,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use incan_core::lang::stdlib::{self, StdlibExtraCrateSource};
 use incan_frontend::ast::Span;
 use incan_frontend::diagnostics::CompileError;
+use incan_lang::lang::stdlib::{self, StdlibExtraCrateSource};
 use oven_model::lock::CargoFeatureSelection;
 use oven_model::manifest::validate_cargo_version_req;
 use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};

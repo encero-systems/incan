@@ -755,7 +755,7 @@ pub fn collect_rust_inspect_query_paths_from_programs<'a>(
                     if base.is_empty() {
                         continue;
                     }
-                    if !prewarm_all && incan_core::lang::stdlib::facets::path_names_a_facet(&base) {
+                    if !prewarm_all && incan_lang::lang::stdlib::facets::path_names_a_facet(&base) {
                         continue;
                     }
                     let primitive_ns = matches!(base.as_str(), "std::primitive" | "core::primitive");
@@ -847,7 +847,7 @@ pub fn collect_rust_inspect_derive_probe_paths(modules: &[ParsedModule]) -> Vec<
                 continue;
             };
             for decorator in decorators {
-                let Some(decorator_id) = incan_core::lang::decorators::from_segments(&decorator.node.path.segments)
+                let Some(decorator_id) = incan_lang::lang::decorators::from_segments(&decorator.node.path.segments)
                 else {
                     continue;
                 };
@@ -856,14 +856,14 @@ pub fn collect_rust_inspect_derive_probe_paths(modules: &[ParsedModule]) -> Vec<
                         continue;
                     };
                     match (decorator_id, &argument.node) {
-                        (incan_core::lang::decorators::DecoratorId::Derive, Expr::Ident(name))
-                        | (incan_core::lang::decorators::DecoratorId::RustDerive, Expr::Ident(name)) => {
+                        (incan_lang::lang::decorators::DecoratorId::Derive, Expr::Ident(name))
+                        | (incan_lang::lang::decorators::DecoratorId::RustDerive, Expr::Ident(name)) => {
                             if let Some(path) = imported_paths.get(name) {
                                 probes.insert(path.clone());
                             }
                         }
                         (
-                            incan_core::lang::decorators::DecoratorId::RustDerive,
+                            incan_lang::lang::decorators::DecoratorId::RustDerive,
                             Expr::Literal(Literal::String(path)),
                         ) if path.contains("::") && is_valid_rust_path(path) => {
                             probes.insert(path.clone());

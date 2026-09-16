@@ -1559,8 +1559,8 @@ impl<'a> Parser<'a> {
     /// Return the source spelling for an operator or punctuation token at `idx`.
     fn token_symbol_spelling(&self, idx: usize) -> Option<&'static str> {
         match self.tokens.get(idx).map(|token| &token.kind)? {
-            TokenKind::Operator(id) => Some(incan_core::lang::operators::info_for(*id).spellings[0]),
-            TokenKind::Punctuation(id) => Some(incan_core::lang::punctuation::as_str(*id)),
+            TokenKind::Operator(id) => Some(incan_lang::lang::operators::info_for(*id).spellings[0]),
+            TokenKind::Punctuation(id) => Some(incan_lang::lang::punctuation::as_str(*id)),
             _ => None,
         }
     }

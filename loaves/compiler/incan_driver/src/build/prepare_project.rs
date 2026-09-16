@@ -448,7 +448,7 @@ mod tests {
             std::fs::read_to_string(oven_model::toolchain_layout::development_root().join("Cargo.lock"))?;
         let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
         let incan_lock = IncanLock::new(
-            incan_core::version::INCAN_VERSION,
+            incan_lang::version::INCAN_VERSION,
             fingerprint,
             CargoFeatureSelection::default(),
             cargo_lock_payload,

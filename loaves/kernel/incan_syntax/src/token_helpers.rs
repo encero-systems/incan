@@ -4,9 +4,9 @@
 //! tokens.
 
 use crate::lexer::{Token, TokenKind};
-use incan_core::lang::keywords::KeywordId;
-use incan_core::lang::operators::OperatorId;
-use incan_core::lang::punctuation::PunctuationId;
+use incan_lang::lang::keywords::KeywordId;
+use incan_lang::lang::operators::OperatorId;
+use incan_lang::lang::punctuation::PunctuationId;
 
 impl TokenKind {
     /// Return the keyword id, if this is a keyword token.

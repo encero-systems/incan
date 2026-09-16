@@ -1,8 +1,8 @@
 //! Parity checks between compiler-side const-eval expectations and runtime stdlib semantics.
 //! Pilot scope: numeric expressions (small matrix).
 
-use incan_core::strings::str_contains;
-use incan_core::{NumericOp, NumericTy, result_numeric_type};
+use incan_lang::strings::str_contains;
+use incan_lang::{NumericOp, NumericTy, result_numeric_type};
 use incan_std_core::num::{py_div, py_floor_div, py_mod};
 
 fn approx_eq(a: f64, b: f64) -> bool {

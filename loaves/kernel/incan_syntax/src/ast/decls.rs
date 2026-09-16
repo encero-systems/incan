@@ -1,7 +1,7 @@
 //! Declaration AST types: models, classes, traits, newtypes, enums, functions, methods, properties, decorators, type
 //! parameters, and trait bounds.
 
-use incan_core::lang::keywords::KeywordId;
+use incan_lang::lang::keywords::KeywordId;
 use incan_semantics_core::SurfaceFeatureKey;
 
 use super::{Expr, Ident, ImportPath, IntLiteral, PartialArg, Span, Spanned, Statement, Type, Visibility};

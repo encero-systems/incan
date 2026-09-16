@@ -3,7 +3,7 @@
 //! Errors from the compile-time constant evaluator (RFC 008/009) and builtin function arity/type checks.
 
 use crate::ast::Span;
-use incan_core::errors::IncanError;
+use incan_lang::errors::IncanError;
 
 use crate::diagnostics::CompileError;
 

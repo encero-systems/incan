@@ -20,7 +20,7 @@ use crate::build::{
 };
 use crate::build_report::BuildReport;
 use crate::error::{CliError, CliResult};
-use incan_core::version::INCAN_VERSION;
+use incan_lang::version::INCAN_VERSION;
 use oven_model::manifest::{LOAF_MANIFEST_FILENAME, ProjectManifest};
 use oven_rustc::rustc::{
     OvenLoadedProjectInspectionAuthority, load_project_inspection_authority, resolve_active_rustc, rustc_host_target,
@@ -746,8 +746,8 @@ mod tests {
         OvenProjectOutputBakeRequest, OvenProjectOutputFile, OvenProjectOutputPayload, OvenProjectOutputReportSnapshot,
     };
     use crate::build_report::BUILD_REPORT_SCHEMA_VERSION;
-    use incan_core::version::INCAN_VERSION;
     use incan_frontend::diagnostics;
+    use incan_lang::version::INCAN_VERSION;
     use oven_rustc::rustc::{
         OvenProjectInspectionAuthorityRef, resolve_active_rustc, rustc_host_target, rustc_identity,
     };

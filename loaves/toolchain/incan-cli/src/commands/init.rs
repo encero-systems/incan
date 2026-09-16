@@ -385,7 +385,7 @@ fn validate_version(version: &str) -> CliResult<()> {
 
 /// Return the default `requires-incan` constraint for newly generated projects.
 fn default_requires_incan_constraint() -> String {
-    match semver::Version::parse(incan_core::version::INCAN_VERSION) {
+    match semver::Version::parse(incan_lang::version::INCAN_VERSION) {
         Ok(version) => {
             let lower = if version.pre.is_empty() {
                 format!(">={}.{}.0", version.major, version.minor)
@@ -394,7 +394,7 @@ fn default_requires_incan_constraint() -> String {
             };
             format!("{lower},<{}.{}.0", version.major, version.minor + 1)
         }
-        Err(_) => format!(">={}", incan_core::version::INCAN_VERSION),
+        Err(_) => format!(">={}", incan_lang::version::INCAN_VERSION),
     }
 }
 

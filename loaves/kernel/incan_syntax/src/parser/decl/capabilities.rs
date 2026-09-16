@@ -97,7 +97,7 @@ impl<'a> Parser<'a> {
     fn is_capability_declaration_keyword(&self) -> bool {
         if !matches!(
             &self.peek().kind,
-            TokenKind::Ident(name) if name == incan_core::lang::keywords::as_str(KeywordId::Capability)
+            TokenKind::Ident(name) if name == incan_lang::lang::keywords::as_str(KeywordId::Capability)
         ) {
             return false;
         }

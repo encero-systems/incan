@@ -3,8 +3,8 @@
 use super::super::super::decl::{IrStruct, IrStructKind, StructField, Visibility};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
-use incan_core::lang::derives::{self, DeriveId};
 use incan_frontend::ast;
+use incan_lang::lang::derives::{self, DeriveId};
 
 impl AstLowering {
     /// Lower a newtype declaration to tuple struct.

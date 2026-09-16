@@ -2,8 +2,8 @@
 use crate::symbols::ResolvedType;
 
 use super::{list_ty, stringlike_type_id};
-use incan_core::lang::surface::string_methods::{self, StringMethodId};
-use incan_core::lang::types::stringlike::StringLikeId;
+use incan_lang::lang::surface::string_methods::{self, StringMethodId};
+use incan_lang::lang::types::stringlike::StringLikeId;
 
 /// Check whether a resolved type should be treated as string-like.
 ///

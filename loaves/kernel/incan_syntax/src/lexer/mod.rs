@@ -22,8 +22,8 @@ pub use tokens::{FStringPart, Token, TokenKind, keyword_id};
 
 use crate::ast::Span;
 use crate::diagnostics::{CompileError, errors};
-use incan_core::lang::operators::OperatorId;
-use incan_core::lang::punctuation::PunctuationId;
+use incan_lang::lang::operators::OperatorId;
+use incan_lang::lang::punctuation::PunctuationId;
 
 // ============================================================================
 // LEXER STATE
@@ -509,8 +509,8 @@ pub fn lex_tolerant(source: &str) -> (Vec<Token>, Vec<CompileError>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use incan_core::lang::keywords::KeywordId;
-    use incan_core::lang::operators::OperatorId;
+    use incan_lang::lang::keywords::KeywordId;
+    use incan_lang::lang::operators::OperatorId;
 
     fn lex_ok(source: &str) -> Vec<Token> {
         match lex(source) {
@@ -528,7 +528,7 @@ mod tests {
 
     #[test]
     fn test_punctuation_registry_parity() {
-        use incan_core::lang::punctuation::{self, PunctuationId};
+        use incan_lang::lang::punctuation::{self, PunctuationId};
 
         for p in punctuation::PUNCTUATION {
             match p.id {
@@ -586,7 +586,7 @@ mod tests {
 
     #[test]
     fn test_keyword_registry_parity() {
-        use incan_core::lang::keywords;
+        use incan_lang::lang::keywords;
 
         for k in keywords::KEYWORDS {
             let tokens = lex(k.canonical).unwrap_or_else(|errs| panic!("lex({:?}) failed: {:?}", k.canonical, errs));
@@ -621,7 +621,7 @@ mod tests {
 
     #[test]
     fn test_operator_registry_parity() {
-        use incan_core::lang::operators;
+        use incan_lang::lang::operators;
 
         for o in operators::OPERATORS {
             for &sp in o.spellings {

@@ -21,7 +21,7 @@ rust_inspect = ["rust_inspect/inspector"]
 test_support = ["dep:tempfile", "rust_inspect/test_fixtures"]
 
 [dependencies]
-incan_core = { workspace = true }
+incan_lang = { workspace = true }
 incan_vocab = { workspace = true }
 incan_syntax = { workspace = true }
 incan_semantics_core = { workspace = true }

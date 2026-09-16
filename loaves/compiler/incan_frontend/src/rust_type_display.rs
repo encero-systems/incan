@@ -333,7 +333,7 @@ fn manifest_prefix(provider: &str, include_nested_bridge: bool) -> Result<syn::P
 
 /// Convert one Incan dependency key into its legal generated Rust crate identifier.
 fn escaped_crate_name(name: &str) -> String {
-    incan_core::lang::rust_keywords::escape_keyword(&name.replace('-', "_"))
+    incan_lang::lang::rust_keywords::escape_keyword(&name.replace('-', "_"))
 }
 
 /// Rebase type-bearing generic, associated, constrained, and parenthesized Rust path arguments.
@@ -548,7 +548,7 @@ fn collect_path_root(path: &syn::Path, type_params: &[String], roots: &mut BTree
 
 /// Return whether one Rust crate root is supplied by the compiler toolchain instead of a package dependency bridge.
 pub fn is_shared_rust_crate(name: &str) -> bool {
-    matches!(name, "std" | "core" | "alloc" | "incan_core") || incan_core::lang::stdlib::facets::is_facet(name)
+    matches!(name, "std" | "core" | "alloc" | "incan_lang") || incan_lang::lang::stdlib::facets::is_facet(name)
 }
 
 /// Return whether one unqualified Rust type is supplied by the language prelude.

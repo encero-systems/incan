@@ -7,8 +7,8 @@ use std::collections::HashSet;
 
 use crate::ast::{Declaration, Expr, ImportKind, Program};
 use crate::ast_walk;
-use incan_core::lang::keywords::KeywordId;
-use incan_core::lang::stdlib;
+use incan_lang::lang::keywords::KeywordId;
+use incan_lang::lang::stdlib;
 use incan_semantics_core::SurfaceFeatureKey;
 
 use crate::semantics_registry::semantics_registry;
@@ -91,7 +91,7 @@ pub fn uses_ambient_log_surface(program: &Program) -> bool {
 mod tests {
     use super::SurfaceContext;
     use crate::{lexer, parser};
-    use incan_core::lang::keywords::KeywordId;
+    use incan_lang::lang::keywords::KeywordId;
     use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
 
     #[test]

@@ -112,7 +112,7 @@ This function alone does not assert that the bundle's source-input coverage was 
 # tests additionally check that cache verification precedes either conditional build command.
 RECIPE = [
     "CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan-cli --bin incan --bin generate_feature_inventory --message-format=json-render-diagnostics",
-    "CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan_core --bin generate_lang_reference --message-format=json-render-diagnostics",
+    "CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan_lang --bin generate_lang_reference --message-format=json-render-diagnostics",
 ]
 BUILD_ENVIRONMENT = ("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTDOCFLAGS", "CC", "CXX", "AR",
                      "CFLAGS", "CXXFLAGS", "LDFLAGS", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER",

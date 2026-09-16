@@ -14,11 +14,11 @@ use crate::symbols::{
     TypeBoundInfo,
 };
 use crate::testing_markers::TestingFixtureScope;
-use incan_core::interop::{CoercionPolicy, RustFunctionSig};
-use incan_core::lang::builtins::BuiltinFnId;
-use incan_core::lang::c_abi::{LinkCapabilityId, ScalarTypeId, link_capability_as_str, scalar_type_as_str};
-use incan_core::lang::surface::string_methods::StringMethodId;
-use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
+use incan_lang::interop::{CoercionPolicy, RustFunctionSig};
+use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::c_abi::{LinkCapabilityId, ScalarTypeId, link_capability_as_str, scalar_type_as_str};
+use incan_lang::lang::surface::string_methods::StringMethodId;
+use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
 use incan_semantics_core::{
     CanonicalSymbolId, CompilerNodeId, IncanCallableParam, IncanCallableParamKind, IncanPrimitiveType, IncanType,
     SemanticFact, SemanticFactKind, SemanticFactStore, SemanticFactValue, SemanticRegistryEntry,
@@ -767,7 +767,7 @@ pub struct ConstArtifacts {
 pub struct RustInteropArtifacts {
     /// Source-proven receiver and returned-borrow relationships keyed by the exact checked method-call span.
     /// Unknown metadata never authorizes a shared alias; lowering must not reconstruct this from method names.
-    pub receiver_contracts: HashMap<(usize, usize), incan_core::interop::RustReceiverContract>,
+    pub receiver_contracts: HashMap<(usize, usize), incan_lang::interop::RustReceiverContract>,
     /// `rusttype` Incan name → canonical Rust path string (`substrait::proto::type::Binary`), when the checker
     /// resolved the underlying type to [`ResolvedType::RustPath`]. Used by lowering so `m::T` spellings emit full
     /// paths without re-running import resolution.
@@ -2493,7 +2493,7 @@ pub fn semantic_type_from_resolved(ty: &ResolvedType) -> IncanType {
         ResolvedType::Unit => IncanType::Primitive(IncanPrimitiveType::Unit),
         ResolvedType::Named(name) => IncanType::Named(name.clone()),
         ResolvedType::Generic(base, args)
-            if incan_core::lang::types::numerics::decimal_constructor_from_str(base).is_some() =>
+            if incan_lang::lang::types::numerics::decimal_constructor_from_str(base).is_some() =>
         {
             match args.as_slice() {
                 [ResolvedType::TypeVar(precision), ResolvedType::TypeVar(scale)] => {

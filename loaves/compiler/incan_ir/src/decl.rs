@@ -1,7 +1,7 @@
 //! IR declaration definitions
 
 use super::{IrSpan, IrStmt, IrType, Mutability};
-use incan_core::interop::is_rust_capability_bound;
+use incan_lang::interop::is_rust_capability_bound;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin, encode_incan_symbol_identity};
 
 /// An IR declaration
@@ -256,7 +256,7 @@ pub struct IrTrait {
     ///
     /// Keeping this semantic fact in IR prevents emission from rediscovering `std.traits.callable` through a generated
     /// provider's crate-local module path, where the public `std` mount is intentionally absent.
-    pub source_callable: Option<incan_core::lang::callables::CallableTraitId>,
+    pub source_callable: Option<incan_lang::lang::callables::CallableTraitId>,
     /// Source docstring attached to the trait, when present.
     pub docstring: Option<String>,
     /// Generic parameters (`trait Foo[T]: ...`), including `with` bounds from the source (RFC 023 / RFC 042).

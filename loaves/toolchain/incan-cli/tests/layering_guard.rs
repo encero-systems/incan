@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use incan_test_support as support;
 use support::repo_root;
 
-use incan_core::lang::stdlib::{self, facets};
 use incan_frontend::provider::{SDK_SOURCE_CATALOG_FILE, SdkSourceCatalog};
+use incan_lang::lang::stdlib::{self, facets};
 
 /// The root manifest plus every crate manifest in the compiler, kernel and toolchain rings.
 fn compiler_manifests() -> Vec<PathBuf> {

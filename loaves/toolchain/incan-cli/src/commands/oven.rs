@@ -34,8 +34,8 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use crate::{CliError, CliResult, ExitCode, OvenInteropAdapterArgument, OvenLoafEnvelopeArgument, OvenOutputFormat};
-use incan_core::version::INCAN_VERSION;
 use incan_driver::interop_plan::locked_interop_plan_target;
+use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
 use oven_model::oven_interop::{LockedInteropTarget, ToolchainRequirement};
 use oven_rustc::interop::{
@@ -5219,10 +5219,10 @@ mod tests {
         }
 
         let core = OvenCompilerWorkspaceLibraryKey {
-            package_name: "incan_core".to_string(),
-            crate_name: "incan_core".to_string(),
+            package_name: "incan_lang".to_string(),
+            crate_name: "incan_lang".to_string(),
             target_kind: "lib".to_string(),
-            source_relative_path: "loaves/kernel/incan_core/src/lib.rs".to_string(),
+            source_relative_path: "loaves/kernel/incan_lang/src/lib.rs".to_string(),
             features: Vec::new(),
         };
         let derive = OvenCompilerWorkspaceLibraryKey {
@@ -5261,7 +5261,7 @@ mod tests {
                 .iter()
                 .map(|library| library.key.crate_name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["incan_core", "incan_derive", "incan_std_core"]
+            vec!["incan_derive", "incan_lang", "incan_std_core"]
         );
         Ok(())
     }

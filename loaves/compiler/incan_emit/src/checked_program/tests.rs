@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use incan_core::interop::{
+use incan_lang::interop::{
     RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata, RustParam, RustTraitAssoc, RustTraitInfo,
     RustTypeInfo, RustVisibility,
 };

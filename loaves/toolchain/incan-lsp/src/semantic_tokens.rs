@@ -32,7 +32,7 @@
 //! Later layers overwrite earlier ones over the same bytes; the result is sorted, de-overlapped, split at line
 //! boundaries, and delta-encoded by [`encode`].
 
-use incan_core::lang::keywords::{self, KeywordCategory};
+use incan_lang::lang::keywords::{self, KeywordCategory};
 use incan_syntax::ast::{Declaration, EmbeddedNode, Expr, Param, Program, Spanned, Statement, Type};
 use incan_syntax::lexer::{self, FStringPart, Token, TokenKind};
 use tower_lsp::lsp_types::{SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokensLegend};
@@ -524,7 +524,7 @@ fn classify_identifier(
 
     // ---- Declaration names: the identifier introduced by a declaring keyword ----
     if let Some(TokenKind::Keyword(id)) = previous_kind(tokens, index) {
-        use incan_core::lang::keywords::KeywordId;
+        use incan_lang::lang::keywords::KeywordId;
         let declared = match id {
             KeywordId::Def => Some(Category::Function),
             KeywordId::Class => Some(Category::Class),
@@ -567,7 +567,7 @@ fn classify_identifier(
     if matches!(
         previous_kind(tokens, index),
         Some(TokenKind::Punctuation(
-            incan_core::lang::punctuation::PunctuationId::Dot
+            incan_lang::lang::punctuation::PunctuationId::Dot
         ))
     ) {
         let category = if next_is_call(tokens, index) {
@@ -582,7 +582,7 @@ fn classify_identifier(
     if matches!(
         next_kind(tokens, index),
         Some(TokenKind::Punctuation(
-            incan_core::lang::punctuation::PunctuationId::ColonColon
+            incan_lang::lang::punctuation::PunctuationId::ColonColon
         ))
     ) {
         return ClassifiedRange::plain(start, end, Category::Namespace);
@@ -614,7 +614,7 @@ fn next_is_call(tokens: &[Token], index: usize) -> bool {
     matches!(
         next_kind(tokens, index),
         Some(TokenKind::Punctuation(
-            incan_core::lang::punctuation::PunctuationId::LParen
+            incan_lang::lang::punctuation::PunctuationId::LParen
         ))
     )
 }
@@ -635,8 +635,8 @@ enum PathIntroducer {
 /// syntax, and in `from std.runtime import host` the `runtime` segment names a module. Both would otherwise read as
 /// a field access on a local named `policy` or `std`.
 fn dotted_path_introducer(tokens: &[Token], index: usize) -> Option<PathIntroducer> {
-    use incan_core::lang::keywords::KeywordId;
-    use incan_core::lang::punctuation::PunctuationId;
+    use incan_lang::lang::keywords::KeywordId;
+    use incan_lang::lang::punctuation::PunctuationId;
 
     let mut cursor = index;
     loop {

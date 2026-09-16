@@ -6,8 +6,8 @@ use crate::diagnostics::errors;
 use crate::symbols::{CallableParam, ResolvedType};
 use crate::typechecker::FixedUnpackPlan;
 use crate::typechecker::helpers::{collection_type_id, dict_ty, list_ty};
-use incan_core::lang::types::collections::CollectionTypeId;
-use incan_core::lang::types::numerics::{self, NumericFamily};
+use incan_lang::lang::types::collections::CollectionTypeId;
+use incan_lang::lang::types::numerics::{self, NumericFamily};
 
 /// Select the narrow numeric bridge accepted while validating one call surface.
 ///

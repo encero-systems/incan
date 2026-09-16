@@ -5,7 +5,7 @@ use crate::ast::{CallArg, ParamKind, Span, Spanned, Type};
 use crate::diagnostics::errors;
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map_call_site};
 use crate::symbols::{CallableParam, FunctionInfo, MethodInfo, ResolvedType, TypeInfo};
-use incan_core::lang::callables;
+use incan_lang::lang::callables;
 use incan_semantics_core::CanonicalSymbolId;
 
 impl TypeChecker {

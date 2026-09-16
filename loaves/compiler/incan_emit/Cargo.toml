@@ -22,7 +22,7 @@ std_decorators = ["incan_ir/std_decorators", "incan_frontend/std_decorators"]
 
 [dependencies]
 hex = "0.4.3"
-incan_core = { workspace = true }
+incan_lang = { workspace = true }
 incan_frontend = { workspace = true }
 incan_ir = { workspace = true }
 incan_semantics_core = { workspace = true }

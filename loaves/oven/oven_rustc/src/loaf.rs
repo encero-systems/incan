@@ -1484,13 +1484,13 @@ fn record_generated_root_externs(plan: &mut OvenRustcArtifactManifest) -> Result
 /// Promote compiler runtime artifacts required by generated provider libraries to direct externs.
 ///
 /// The minimal loaf program need not use models or provider metadata, while generated caller-owned libraries do.
-/// `incan_derive` and `incan_core` are therefore promoted from the verified support closure. Leaving either only on
+/// `incan_derive` and `incan_lang` are therefore promoted from the verified support closure. Leaving either only on
 /// `-L dependency` relies on Cargo's implicit extern selection and makes a normal direct-Rustc consumer recompile
 /// compiler source instead of linking the selected immutable plan.
 fn promote_compiler_runtime_externs(plan: &mut OvenRustcArtifactManifest) -> Result<(), OvenLoafError> {
     promote_compiler_runtime_extern(plan, "incan_derive", is_incan_derive_artifact)?;
-    promote_compiler_runtime_extern(plan, "incan_core", |relative_path| {
-        is_named_rlib(relative_path, "incan_core")
+    promote_compiler_runtime_extern(plan, "incan_lang", |relative_path| {
+        is_named_rlib(relative_path, "incan_lang")
     })
 }
 
@@ -4747,7 +4747,7 @@ mod tests {
                 digest: digest_bytes(b"derive macro"),
             },
             crate::rustc::OvenRustcSupportingArtifact {
-                relative_path: "target/deps/libincan_core-verified.rlib".to_string(),
+                relative_path: "target/deps/libincan_lang-verified.rlib".to_string(),
                 digest: digest_bytes(b"compiler runtime"),
             },
             crate::rustc::OvenRustcSupportingArtifact {
@@ -4763,14 +4763,14 @@ mod tests {
                 .iter()
                 .map(|artifact| artifact.crate_name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["incan_core", "incan_derive"]
+            vec!["incan_derive", "incan_lang"]
         );
         assert!(plan.externs.iter().any(|artifact| {
             artifact.crate_name == "incan_derive"
                 && artifact.relative_path == "host/deps/libincan_derive-verified.dylib"
         }));
         assert!(plan.externs.iter().any(|artifact| {
-            artifact.crate_name == "incan_core" && artifact.relative_path == "target/deps/libincan_core-verified.rlib"
+            artifact.crate_name == "incan_lang" && artifact.relative_path == "target/deps/libincan_lang-verified.rlib"
         }));
         assert_eq!(
             plan.supporting_artifacts
@@ -4781,7 +4781,7 @@ mod tests {
         );
         assert_eq!(
             plan.entrypoint_externs.get("generated-root"),
-            Some(&vec!["incan_core".to_string(), "incan_derive".to_string()])
+            Some(&vec!["incan_derive".to_string(), "incan_lang".to_string()])
         );
         Ok(())
     }
@@ -4801,7 +4801,7 @@ mod tests {
                 digest: digest_bytes(b"derive macro"),
             },
             crate::rustc::OvenRustcSupportingArtifact {
-                relative_path: "target/deps/libincan_core-verified.rlib".to_string(),
+                relative_path: "target/deps/libincan_lang-verified.rlib".to_string(),
                 digest: digest_bytes(b"compiler runtime"),
             },
         ];
@@ -4827,8 +4827,8 @@ mod tests {
         assert_eq!(
             plan.entrypoint_externs.get("generated-root"),
             Some(&vec![
-                "incan_core".to_string(),
                 "incan_derive".to_string(),
+                "incan_lang".to_string(),
                 "incan_std_core".to_string(),
             ])
         );

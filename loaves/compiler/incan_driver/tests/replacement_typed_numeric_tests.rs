@@ -1,6 +1,5 @@
 //! End-to-end typed-numeric carrier coverage for replacement execution (#1279).
 
-use incan_core::lang::types::numerics::NumericTypeId;
 use incan_driver::backend::replacement::{
     ProgramIo, ReplacementExecutionError, ReplacementNumericValue, ReplacementValue, execute_free_function,
     execute_free_function_with_io,
@@ -8,6 +7,7 @@ use incan_driver::backend::replacement::{
 use incan_frontend::body_ir::build_body_ir_module_v0;
 use incan_frontend::typechecker::TypeChecker;
 use incan_frontend::{lexer, parser};
+use incan_lang::lang::types::numerics::NumericTypeId;
 use incan_semantics_core::body_ir::{BodyIrModule, Constant, Operand, StatementKind, TypedNumericConstant};
 
 /// Parse, typecheck, and lower one isolated typed-numeric source module.

@@ -1,14 +1,14 @@
 //! Runtime error helpers for Incan-generated Rust code.
 //!
-//! The semantic core (`incan_core`) owns the canonical error taxonomy + formatting (`IncanError`).
+//! The semantic core (`incan_lang`) owns the canonical error taxonomy + formatting (`IncanError`).
 //! The runtime (`incan_std_core`) provides convenience helpers to *raise* those errors as panics,
 //! keeping the compiler/runtime user-facing text aligned.
 
 use core::fmt::Write as _;
 use core::fmt::{self, Display};
 
-use incan_core::errors::{ErrorKind, IncanError};
-use incan_core::lang;
+use incan_lang::errors::{ErrorKind, IncanError};
+use incan_lang::lang;
 
 /// Raise a runtime error (implemented as a panic) with canonical formatting.
 #[cold]

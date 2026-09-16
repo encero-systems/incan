@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use incan_core::lang::traits::{self, TraitId};
+use incan_lang::lang::traits::{self, TraitId};
 
 use super::{
     ArgumentElement, Body, CallableParam, CallableParamDefault, CallableTarget, Callee, HirSourceSpan, IncanType,
@@ -15,7 +15,7 @@ use super::{
     bare_local, collections, declared_local_type, explicit_builtin, fixed_operands, is_direct_structural_type,
     is_int_type, local_root, unsupported,
 };
-use incan_core::lang::{builtins::BuiltinFnId, types::collections::CollectionTypeId};
+use incan_lang::lang::{builtins::BuiltinFnId, types::collections::CollectionTypeId};
 
 /// Validate canonical list calls and polling throughout the owning local-id space, retaining checked Zip provenance.
 pub fn validate_body(body: &Body) -> Result<BTreeSet<LocalId>, ReplacementExecutionError> {

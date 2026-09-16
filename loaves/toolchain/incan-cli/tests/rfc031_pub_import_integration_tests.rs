@@ -367,7 +367,7 @@ pub def exercise_callbacks() -> None:
             .as_ref()
             .and_then(|abi| abi.get("receiver_factory::PairFactory"))
             .ok_or("expected PairFactory metadata in compiled provider")?;
-        let incan_core::interop::RustItemKind::Type(factory_metadata) = &factory_metadata.kind else {
+        let incan_lang::interop::RustItemKind::Type(factory_metadata) = &factory_metadata.kind else {
             return Err("expected compiled PairFactory type metadata".into());
         };
         assert_eq!(factory_metadata.type_params, ["T", "U"]);

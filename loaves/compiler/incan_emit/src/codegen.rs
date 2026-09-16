@@ -32,7 +32,6 @@ use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use incan_core::lang::{rust_keywords, stdlib};
 use incan_frontend::api_metadata::ApiDeclaration;
 use incan_frontend::ast::{Declaration, ImportKind, Program};
 use incan_frontend::diagnostics::CompileError;
@@ -45,6 +44,7 @@ use incan_frontend::module::canonicalize_source_module_segments;
 use incan_frontend::provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV};
 use incan_frontend::typechecker::TypeCheckInfo;
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
+use incan_lang::lang::{rust_keywords, stdlib};
 use oven_model::compiler_suite_env::OVEN_LOAF_ENV;
 
 use crate::emit::CallableNameResolution;
@@ -2645,7 +2645,7 @@ pub model Stream[R] with Walk:
                     type_param
                         .bounds
                         .iter()
-                        .any(|bound| bound.trait_path == incan_core::lang::trait_bounds::rust::CLONE)
+                        .any(|bound| bound.trait_path == incan_lang::lang::trait_bounds::rust::CLONE)
                 })
         }));
 
@@ -2677,7 +2677,7 @@ pub model Stream[R] with Walk:
                     && type_param
                         .bounds
                         .iter()
-                        .any(|bound| bound.trait_path == incan_core::lang::trait_bounds::rust::CLONE)
+                        .any(|bound| bound.trait_path == incan_lang::lang::trait_bounds::rust::CLONE)
             })),
             "the checked root adoption must receive its inferred implementation header"
         );
@@ -5413,8 +5413,8 @@ def main() -> None:
     #[cfg(feature = "rust_inspect")]
     #[test]
     fn test_codegen_borrows_rust_backed_free_function_args_from_metadata() -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustVisibility};
         use incan_frontend::typechecker::TypeChecker;
+        use incan_lang::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustVisibility};
 
         let source = r#"
 from rust::demo import Thing
@@ -5478,11 +5478,11 @@ pub def forward(value: Thing) -> None:
     #[cfg(feature = "rust_inspect")]
     #[test]
     fn test_codegen_boxes_variant_payloads_whatever_argument_shape() -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{
+        use incan_frontend::typechecker::TypeChecker;
+        use incan_lang::interop::{
             RustItemKind, RustItemMetadata, RustPayloadCarrier, RustTypeInfo, RustTypeShape, RustVariantInfo,
             RustVisibility,
         };
-        use incan_frontend::typechecker::TypeChecker;
 
         // A Rust enum variant that stores `Box<i64>`; Incan records the payload as `i64` plus its carrier, so every
         // argument shape — a literal, a call result, a method result — must reach the constructor inside `Box::new`.
@@ -5555,8 +5555,8 @@ pub def build(values: List[int]) -> List[Kind]:
     #[cfg(feature = "rust_inspect")]
     #[test]
     fn test_codegen_borrows_as_fd_generic_args_from_metadata() -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustVisibility};
         use incan_frontend::typechecker::TypeChecker;
+        use incan_lang::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustVisibility};
 
         let source = r#"
 from rust::demo import File
@@ -5626,10 +5626,10 @@ pub def retain(file: File) -> File:
     #[test]
     fn test_codegen_materializes_owner_specialized_rust_associated_function_arguments()
     -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{
+        use incan_frontend::typechecker::TypeChecker;
+        use incan_lang::interop::{
             RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTypeInfo, RustVisibility,
         };
-        use incan_frontend::typechecker::TypeChecker;
 
         let source = r#"
 from rust::demo import PairFactory
@@ -5716,10 +5716,10 @@ pub def build_pair() -> None:
     #[test]
     fn test_codegen_emits_named_field_struct_literal_for_imported_rust_type_constructor()
     -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{
+        use incan_frontend::typechecker::TypeChecker;
+        use incan_lang::interop::{
             RustFieldInfo, RustItemKind, RustItemMetadata, RustTypeInfo, RustTypeShape, RustVisibility,
         };
-        use incan_frontend::typechecker::TypeChecker;
 
         let source = r#"
 from rust::demo import Pair
@@ -5794,11 +5794,11 @@ pub def make_pair() -> Pair:
     #[cfg(feature = "rust_inspect")]
     #[test]
     fn test_codegen_emits_tuple_struct_constructor_for_imported_rust_type() -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{
+        use incan_frontend::typechecker::TypeChecker;
+        use incan_lang::interop::{
             RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTypeInfo,
             RustTypeShape, RustVisibility,
         };
-        use incan_frontend::typechecker::TypeChecker;
 
         let source = r#"
 from rust::demo import ClearColor, Color
@@ -5915,10 +5915,10 @@ pub def clear() -> ClearColor:
     #[cfg(feature = "rust_inspect")]
     #[test]
     fn test_codegen_preserves_owned_mutable_direct_rust_parameter() -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{
+        use incan_frontend::typechecker::TypeChecker;
+        use incan_lang::interop::{
             RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTypeInfo, RustVisibility,
         };
-        use incan_frontend::typechecker::TypeChecker;
 
         let source = r#"
 from rust::demo import Commands
@@ -6048,12 +6048,12 @@ pub def move_items(mut items: FooBar[tuple[&mut Widget, &mut Gadget]]) -> None:
     #[test]
     fn test_codegen_projects_metadata_directed_mutable_rust_generic_arguments_without_nominal_matching()
     -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{
+        use incan_frontend::typechecker::TypeChecker;
+        use incan_ir::Mutability;
+        use incan_lang::interop::{
             RustItemKind, RustItemMetadata, RustMutableReferenceCandidate, RustMutableReferenceTypeParam, RustTypeInfo,
             RustVisibility,
         };
-        use incan_frontend::typechecker::TypeChecker;
-        use incan_ir::Mutability;
 
         let source = r#"
 from rust::demo import FooBar as ProviderHandle, Gadget, Widget
@@ -6155,11 +6155,11 @@ pub def move_items(mut items: ProviderHandle[tuple[Widget, Gadget]]) -> None:
     #[test]
     fn test_codegen_does_not_project_tuple_without_inspected_composition_contract()
     -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{
+        use incan_frontend::typechecker::TypeChecker;
+        use incan_lang::interop::{
             RustItemKind, RustItemMetadata, RustMutableReferenceCandidate, RustMutableReferenceTypeParam, RustTypeInfo,
             RustVisibility,
         };
-        use incan_frontend::typechecker::TypeChecker;
 
         let source = r#"
 from rust::demo import FooBar as ProviderHandle, Gadget, Widget
@@ -6225,11 +6225,11 @@ pub def inspect(mut items: ProviderHandle[tuple[Widget, Gadget]]) -> None:
     #[test]
     fn test_codegen_preserves_direct_foreign_argument_when_only_a_sibling_needs_mutable_reference()
     -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{
+        use incan_frontend::typechecker::TypeChecker;
+        use incan_lang::interop::{
             RustImplementedTrait, RustItemKind, RustItemMetadata, RustMutableReferenceCandidate,
             RustMutableReferenceTypeParam, RustTypeInfo, RustVisibility,
         };
-        use incan_frontend::typechecker::TypeChecker;
 
         let source = r#"
 from rust::demo import Entity, FooBar as ProviderHandle, Widget
@@ -6460,12 +6460,12 @@ pub def inspect(mut values: FooBar[Static]) -> None:
     #[cfg(feature = "rust_inspect")]
     #[test]
     fn test_codegen_projects_local_type_from_actual_rust_derive_output() -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{
+        use incan_frontend::typechecker::TypeChecker;
+        use incan_lang::interop::{
             RustAssociatedTypeBinding, RustAssociatedTypeRequirement, RustExpandedDeriveTrait, RustItemKind,
             RustItemMetadata, RustMutableReferenceCandidate, RustMutableReferenceTypeParam, RustTraitInfo,
             RustTypeInfo, RustVisibility,
         };
-        use incan_frontend::typechecker::TypeChecker;
 
         let source = r#"
 from rust::demo import FooBar as ProviderHandle, Component
@@ -6549,7 +6549,7 @@ pub def inspect_string_path(mut values: ProviderHandle[StringPathVelocity]) -> N
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Trait(RustTraitInfo {
                         items: Vec::new(),
-                        derive_macro: Some(incan_core::interop::RustMacroInfo {
+                        derive_macro: Some(incan_lang::interop::RustMacroInfo {
                             expanded_traits: vec![RustExpandedDeriveTrait {
                                 path: "provider::Component".to_string(),
                                 associated_type_bindings: vec![RustAssociatedTypeBinding {
@@ -6570,7 +6570,7 @@ pub def inspect_string_path(mut values: ProviderHandle[StringPathVelocity]) -> N
                     canonical_path: "demo_derive::Component".to_string(),
                     definition_path: Some("demo_derive::Component".to_string()),
                     visibility: RustVisibility::Public,
-                    kind: RustItemKind::Macro(incan_core::interop::RustMacroInfo {
+                    kind: RustItemKind::Macro(incan_lang::interop::RustMacroInfo {
                         expanded_traits: vec![RustExpandedDeriveTrait {
                             path: "provider::Component".to_string(),
                             associated_type_bindings: vec![RustAssociatedTypeBinding {
@@ -6659,12 +6659,12 @@ pub def inspect_string_path(mut values: ProviderHandle[StringPathVelocity]) -> N
     #[cfg(feature = "rust_inspect")]
     #[test]
     fn test_codegen_rejects_inexact_expanded_derive_trait_contracts() -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{
+        use incan_frontend::typechecker::TypeChecker;
+        use incan_lang::interop::{
             RustAssociatedTypeBinding, RustAssociatedTypeRequirement, RustExpandedDeriveTrait, RustItemKind,
             RustItemMetadata, RustMutableReferenceCandidate, RustMutableReferenceTypeParam, RustTypeInfo,
             RustVisibility,
         };
-        use incan_frontend::typechecker::TypeChecker;
 
         let source = r#"
 from rust::demo import FooBar as ProviderHandle, Gadget, Widget
@@ -6910,8 +6910,8 @@ pub def inspect(mut items: FooBar[tuple[Widget, Gadget]]) -> None:
     #[cfg(feature = "rust_inspect")]
     #[test]
     fn test_codegen_preserves_f32_arithmetic_at_rust_boundary_issue1219() -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustVisibility};
         use incan_frontend::typechecker::TypeChecker;
+        use incan_lang::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustVisibility};
 
         let source = r#"
 from rust::demo import accept_f32
@@ -6974,10 +6974,10 @@ pub def translate(time: f32, velocity: f32) -> f32:
     #[cfg(feature = "rust_inspect")]
     #[test]
     fn test_codegen_emits_raw_rust_field_names_for_keyword_fields_issue725() -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{
+        use incan_frontend::typechecker::TypeChecker;
+        use incan_lang::interop::{
             RustFieldInfo, RustItemKind, RustItemMetadata, RustTypeInfo, RustTypeShape, RustVisibility,
         };
-        use incan_frontend::typechecker::TypeChecker;
 
         let source = r#"
 from rust::demo import JoinRel
@@ -7104,10 +7104,10 @@ pub def make_pair() -> Pair:
     #[cfg(feature = "rust_inspect")]
     #[test]
     fn test_codegen_borrows_rust_backed_method_args_from_metadata() -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{
+        use incan_frontend::typechecker::TypeChecker;
+        use incan_lang::interop::{
             RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTypeInfo, RustVisibility,
         };
-        use incan_frontend::typechecker::TypeChecker;
 
         let source = r#"
 from rust::demo import Builder
@@ -7301,8 +7301,8 @@ pub def f(uri: str) -> None:
     #[test]
     fn test_codegen_borrows_async_rust_backed_free_function_args_from_metadata()
     -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustVisibility};
         use incan_frontend::typechecker::TypeChecker;
+        use incan_lang::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustVisibility};
 
         let source = r#"
 from std.async import sleep
@@ -7375,10 +7375,10 @@ pub async def run(state: State, plan: Plan) -> None:
     #[cfg(feature = "rust_inspect")]
     #[test]
     fn test_codegen_awaits_async_rust_backed_method_from_metadata() -> Result<(), Box<dyn std::error::Error>> {
-        use incan_core::interop::{
+        use incan_frontend::typechecker::TypeChecker;
+        use incan_lang::interop::{
             RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTypeInfo, RustVisibility,
         };
-        use incan_frontend::typechecker::TypeChecker;
 
         let source = r#"
 import std.async

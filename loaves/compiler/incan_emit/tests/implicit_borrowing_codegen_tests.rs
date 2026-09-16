@@ -223,7 +223,7 @@ fn rust_with_receiver_contracts(source: &str, calls: &[(&str, bool)]) -> Result<
             .insert((start, start + call.len()), result_type);
         info.rust.receiver_contracts.insert(
             (start, start + call.len()),
-            incan_core::interop::RustReceiverContract {
+            incan_lang::interop::RustReceiverContract {
                 shared: true,
                 returns_receiver_borrow: *returns_receiver_borrow,
             },

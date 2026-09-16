@@ -7,7 +7,7 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
-use incan_core::lang::stdlib as core_stdlib;
+use incan_lang::lang::stdlib as core_stdlib;
 
 use crate::diagnostics::render_module_warnings;
 use crate::error::{CliError, CliResult};

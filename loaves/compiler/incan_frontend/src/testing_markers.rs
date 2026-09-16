@@ -12,7 +12,7 @@ use crate::api_metadata::{ApiDeclaration, DecoratorArgMetadata, DecoratorValue, 
 use crate::ast;
 use crate::decorator_resolution;
 use crate::library_manifest::LibraryManifest;
-use incan_core::lang::stdlib;
+use incan_lang::lang::stdlib;
 
 const RUST_EXTERN_NAMESPACE: &str = "rust";
 const RUST_EXTERN_DECORATOR: &str = "extern";
@@ -390,7 +390,7 @@ fn extract_testing_marker_semantics(program: &ast::Program) -> Result<TestingMar
 
 /// Validate the compile-time testing marker inventory.
 fn validate_testing_marker_inventory(semantics: &TestingMarkerSemantics) -> Result<(), TestingMarkerLoadError> {
-    let expected_names = incan_core::lang::testing::RUNNER_ONLY_MARKER_NAMES;
+    let expected_names = incan_lang::lang::testing::RUNNER_ONLY_MARKER_NAMES;
     let mut missing = Vec::new();
     let mut mismatched = Vec::new();
 
@@ -724,7 +724,7 @@ mod tests {
         let mut metadata_names: Vec<&str> = semantics.marker_kinds.keys().map(String::as_str).collect();
         metadata_names.sort_unstable();
 
-        let mut runtime_names = incan_core::lang::testing::RUNNER_ONLY_MARKER_NAMES.to_vec();
+        let mut runtime_names = incan_lang::lang::testing::RUNNER_ONLY_MARKER_NAMES.to_vec();
         runtime_names.sort_unstable();
 
         assert_eq!(metadata_names, runtime_names);

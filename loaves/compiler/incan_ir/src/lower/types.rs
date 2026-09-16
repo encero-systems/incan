@@ -3,7 +3,7 @@
 //! This module contains helper functions for converting AST types, operators, and performing variable lookups during
 //! the lowering pass.
 //!
-//! Numeric semantics follow Python-like rules (via `incan_core`):
+//! Numeric semantics follow Python-like rules (via `incan_lang`):
 //! - `/` always yields `Float` (even `int / int`)
 //! - `%` supports floats with Python remainder semantics
 //! - `**` yields `Int` only for non-negative int literal exponents; otherwise `Float`
@@ -13,12 +13,6 @@ use super::super::types::{IR_UNION_TYPE_NAME, IrType, same_exact_binary_float_ty
 use super::errors::LoweringError;
 use super::{AstLowering, FunctionSignature};
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ast};
-use incan_core::lang::c_abi;
-use incan_core::lang::conventions;
-use incan_core::lang::types::collections::{self, CollectionTypeId};
-use incan_core::lang::types::numerics::{self, NumericFamily, NumericTypeId};
-use incan_core::lang::types::stringlike::{self, StringLikeId};
-use incan_core::{NumericTy, PowExponentKind, result_numeric_type};
 use incan_frontend::api_metadata::ApiDeclaration;
 use incan_frontend::ast;
 use incan_frontend::library_manifest::{TypeAliasExport, resolved_type_from_manifest_type_ref};
@@ -26,6 +20,12 @@ use incan_frontend::library_manifest_index::LibraryManifestIndexEntry;
 use incan_frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use incan_frontend::symbols::ResolvedType;
 use incan_frontend::typechecker::split_canonical_public_library_type_name;
+use incan_lang::lang::c_abi;
+use incan_lang::lang::conventions;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_lang::lang::types::numerics::{self, NumericFamily, NumericTypeId};
+use incan_lang::lang::types::stringlike::{self, StringLikeId};
+use incan_lang::{NumericTy, PowExponentKind, result_numeric_type};
 
 const API_CRATE_ROOT_SEGMENT: &str = "crate";
 
@@ -946,7 +946,7 @@ impl AstLowering {
                 if name == c_abi::C_F32_SPAN_TYPE_ID || name == c_abi::C_MUTABLE_F32_SPAN_TYPE_ID =>
             {
                 IrType::List(Box::new(IrType::Numeric(
-                    incan_core::lang::types::numerics::NumericTypeId::F32,
+                    incan_lang::lang::types::numerics::NumericTypeId::F32,
                 )))
             }
             ResolvedType::Named(name) if self.active_trait_type_substitution(name).is_some() => self
@@ -1016,7 +1016,7 @@ impl AstLowering {
                         .collect(),
                 ),
                 GenericBaseKind::Collection(CollectionTypeId::Generator) => {
-                    // Normalize to canonical spelling from incan_core.
+                    // Normalize to canonical spelling from incan_lang.
                     let Some(id) = collections::from_str(name.as_str()) else {
                         // Should not happen: `classify_generic_base()` told us this is a collection type.
                         // Preserve the type name rather than panicking during lowering.
@@ -1481,10 +1481,10 @@ impl AstLowering {
 mod tests {
     use super::{AstLowering, CollectionTypeId, collections};
     use crate::types::IrType;
-    use incan_core::lang::types::numerics::NumericTypeId;
     use incan_frontend::ast;
     use incan_frontend::symbols::ResolvedType;
     use incan_frontend::typechecker::canonical_public_library_type_name;
+    use incan_lang::lang::types::numerics::NumericTypeId;
 
     /// Ordinary manifest signatures, including nested callable leaves, consume checked native bridge routes.
     #[test]

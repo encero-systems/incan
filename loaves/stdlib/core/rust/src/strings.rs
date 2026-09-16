@@ -1,11 +1,11 @@
 //! Provide runtime string helpers that delegate to the shared semantic core.
 //!
-//! This module is used by generated Rust code. Its functions intentionally route behavior through `incan_core::strings`
+//! This module is used by generated Rust code. Its functions intentionally route behavior through `incan_lang::strings`
 //! so runtime behavior (including panics/messages) stays aligned with compiler expectations and parity tests.
 
 use crate::errors::raise;
-use incan_core::errors::IncanError;
-use incan_core::strings::{
+use incan_lang::errors::IncanError;
+use incan_lang::strings::{
     StringAccessError, fstring as semantics_fstring, str_char_at as semantics_str_char_at,
     str_cmp as semantics_str_cmp, str_concat as semantics_str_concat, str_contains as semantics_str_contains,
     str_ends_with as semantics_str_ends_with, str_join as semantics_str_join, str_len as semantics_str_len,

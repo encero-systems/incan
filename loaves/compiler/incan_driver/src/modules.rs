@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
-use incan_core::lang::stdlib;
-use incan_core::lang::surface::result_methods;
+use incan_lang::lang::stdlib;
+use incan_lang::lang::surface::result_methods;
 
 use crate::diagnostics::{CliDiagnosticFailure, render_module_warnings};
 use crate::error::{CliError, CliResult};

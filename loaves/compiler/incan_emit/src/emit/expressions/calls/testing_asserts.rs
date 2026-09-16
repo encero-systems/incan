@@ -2,10 +2,10 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use crate::emit::{EmitError, IrEmitter};
-use incan_core::lang::surface::constructors::{self, ConstructorId};
-use incan_core::lang::testing::{self, TestingAssertHelperId};
 use incan_ir::expr::{BinOp, IrCallArg, IrExprKind, TypedExpr};
 use incan_ir::types::IrType;
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::testing::{self, TestingAssertHelperId};
 
 impl<'a> IrEmitter<'a> {
     /// Emit canonical RFC 018 assertion helper calls without requiring a source-level `std.testing` import.

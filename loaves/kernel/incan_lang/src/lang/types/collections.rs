@@ -10,7 +10,7 @@
 //!
 //! ## Examples
 //! ```rust
-//! use incan_core::lang::types::collections::{self, CollectionTypeId};
+//! use incan_lang::lang::types::collections::{self, CollectionTypeId};
 //!
 //! assert_eq!(collections::from_str("List"), Some(CollectionTypeId::List));
 //! assert_eq!(collections::from_str("list"), Some(CollectionTypeId::List));

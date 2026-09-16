@@ -46,13 +46,6 @@ use super::{
     IrProgram, Mutability,
 };
 use decl::callable_docstring;
-use incan_core::lang::conventions;
-use incan_core::lang::decorators::{self, DecoratorId};
-use incan_core::lang::stdlib;
-use incan_core::lang::trait_capabilities;
-use incan_core::lang::traits::{self as core_traits, TraitId};
-use incan_core::lang::types::collections::{self, CollectionTypeId};
-use incan_core::lang::types::numerics::NumericTypeId;
 use incan_frontend::ast;
 use incan_frontend::decorator_resolution;
 use incan_frontend::provider::ProviderPlan;
@@ -60,6 +53,13 @@ use incan_frontend::symbols::ResolvedType;
 use incan_frontend::symbols::{CallableParam, NewtypePrimitiveConstraint};
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_frontend::typechecker::{CBindingType, TypeCheckInfo};
+use incan_lang::lang::conventions;
+use incan_lang::lang::decorators::{self, DecoratorId};
+use incan_lang::lang::stdlib;
+use incan_lang::lang::trait_capabilities;
+use incan_lang::lang::traits::{self as core_traits, TraitId};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_lang::lang::types::numerics::NumericTypeId;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin, encode_incan_symbol_identity};
 
 // Re-export error types
@@ -417,9 +417,9 @@ impl AstLowering {
         let mut identity = identity.clone();
         if rebase_source_stdlib
             && let SymbolOrigin::Module(module_path) = &mut identity.origin
-            && module_path.first().map(String::as_str) == Some(incan_core::lang::stdlib::STDLIB_ROOT)
+            && module_path.first().map(String::as_str) == Some(incan_lang::lang::stdlib::STDLIB_ROOT)
         {
-            module_path[0] = incan_core::lang::stdlib::INCAN_STD_NAMESPACE.to_string();
+            module_path[0] = incan_lang::lang::stdlib::INCAN_STD_NAMESPACE.to_string();
         }
         encode_incan_symbol_identity(&identity)
     }
@@ -455,7 +455,7 @@ impl AstLowering {
             IrType::Float => NumericTypeId::F64,
             _ => return value,
         };
-        if !incan_core::numeric_values::numeric_type_losslessly_widens_to(*actual, expected) {
+        if !incan_lang::numeric_values::numeric_type_losslessly_widens_to(*actual, expected) {
             return value;
         }
         TypedExpr::new(
@@ -1003,7 +1003,7 @@ impl AstLowering {
             ResolvedType::Unit => ast::Type::Unit,
             ResolvedType::Int => ast::Type::Simple("int".to_string()),
             ResolvedType::Float => ast::Type::Simple("float".to_string()),
-            ResolvedType::Numeric(id) => ast::Type::Simple(incan_core::lang::types::numerics::as_str(*id).to_string()),
+            ResolvedType::Numeric(id) => ast::Type::Simple(incan_lang::lang::types::numerics::as_str(*id).to_string()),
             ResolvedType::Bool => ast::Type::Simple("bool".to_string()),
             ResolvedType::Str => ast::Type::Simple("str".to_string()),
             ResolvedType::Bytes => ast::Type::Simple("bytes".to_string()),

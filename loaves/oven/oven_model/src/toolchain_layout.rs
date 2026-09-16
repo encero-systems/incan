@@ -264,7 +264,7 @@ fn resolve_toolchain_relative_path_in(relative_path: &Path, paths: &ToolchainPat
 /// copiers that produce the installed layout read from it. A crate the table does not name lives at `crates/<name>`.
 pub fn development_support_crate_dir(crate_name: &str) -> PathBuf {
     let relative = match crate_name {
-        "incan_core" => "loaves/kernel/incan_core",
+        "incan_lang" => "loaves/kernel/incan_lang",
         "incan_vocab" => "loaves/kernel/incan_vocab",
         "incan_derive" => "loaves/stdlib/derive/incan_derive",
         "incan_web_macros" => "loaves/stdlib/derive/incan_web_macros",
@@ -511,7 +511,7 @@ fn push_unique(paths: &mut Vec<PathBuf>, path: PathBuf) {
 /// generated Rust project can link. Each lives at `crates/<name>` in those layouts and in its ring in the checkout
 /// (see [`development_support_crate_dir`]); a runtime root missing any of them is not a usable closure.
 pub const SDK_RUNTIME_CRATES: [&str; 8] = [
-    "incan_core",
+    "incan_lang",
     "incan_derive",
     "incan_web_macros",
     "incan_std_core",
@@ -675,11 +675,11 @@ mod tests {
     fn toolchain_override_canonicalizes_symlinked_crate_paths() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let real_crates = tmp.path().join("real/crates");
-        let real_core = real_crates.join("incan_core");
+        let real_core = real_crates.join("incan_lang");
         fs::create_dir_all(&real_core)?;
         fs::write(
             real_core.join("Cargo.toml"),
-            "[package]\nname = \"incan_core\"\nversion = \"0.5.0\"\n",
+            "[package]\nname = \"incan_lang\"\nversion = \"0.5.0\"\n",
         )?;
         let alias_crates = tmp.path().join("alias-crates");
         symlink_file(&real_crates, &alias_crates)?;
@@ -690,9 +690,9 @@ mod tests {
             executable_bases: Vec::new(),
         };
 
-        let resolved = resolve_toolchain_relative_path_in(Path::new("crates/incan_core"), &search_paths);
+        let resolved = resolve_toolchain_relative_path_in(Path::new("crates/incan_lang"), &search_paths);
         assert_eq!(resolved, fs::canonicalize(real_core)?);
-        assert_ne!(resolved, PathBuf::from(tmp.path()).join("alias-crates/incan_core"));
+        assert_ne!(resolved, PathBuf::from(tmp.path()).join("alias-crates/incan_lang"));
         Ok(())
     }
 

@@ -32,7 +32,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use incan_core::lang::surface::constructors::{ConstructorId, as_str as constructor_name};
+use incan_lang::lang::surface::constructors::{ConstructorId, as_str as constructor_name};
 
 use super::{ReplacementValue, value_kind};
 

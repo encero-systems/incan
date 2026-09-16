@@ -7,8 +7,8 @@ use super::super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
-use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_frontend::ast::{self, DecoratorArg, DecoratorArgValue, Expr, ImportPath, Spanned};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 /// Return whether a lowered callable return type is the canonical `Generator[...]` wrapper.
 fn return_type_is_generator(ty: &IrType) -> bool {

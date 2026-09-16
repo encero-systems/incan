@@ -12,7 +12,7 @@ use serde::Serialize;
 use crate::backend::selection::BackendExecutionReceipt;
 use crate::cargo_policy::CargoPolicy;
 use crate::error::{CliError, CliResult};
-use incan_core::version::INCAN_VERSION;
+use incan_lang::version::INCAN_VERSION;
 use incan_provider::dependency_resolver::InlineRustImport;
 use incan_provider::{
     BackendImplementationRequirement, ComponentSelectionReason, FeatureActivationReason, PackageFeaturePlan,

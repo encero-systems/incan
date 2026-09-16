@@ -8,8 +8,8 @@ use super::super::super::types::{IrType, union_member_type_matches};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use super::super::types::union_ir_type;
-use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_frontend::ast::{self, Spanned};
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]

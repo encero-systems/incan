@@ -12,7 +12,7 @@ from pygments.token import Keyword, Name, Operator, Token
 def _load_keywords_from_registry() -> list[str]:
     """Load canonical keywords from the Rust registry file."""
     repo_root = Path(__file__).resolve().parents[2]
-    registry_path = repo_root / "crates" / "incan_core" / "src" / "lang" / "keywords.rs"
+    registry_path = repo_root / "loaves" / "kernel" / "incan_lang" / "src" / "lang" / "keywords.rs"
     if not registry_path.exists():
         return []
 
@@ -61,7 +61,7 @@ def _load_lang_items(paths: Sequence[Path]) -> tuple[set[str], set[str]]:
 
 def _load_stdlib_functions() -> set[str]:
     repo_root = Path(__file__).resolve().parents[3]
-    base = repo_root / "crates" / "incan_core" / "src" / "lang"
+    base = repo_root / "loaves" / "kernel" / "incan_lang" / "src" / "lang"
     paths = [
         base / "builtins.rs",
         base / "surface" / "functions.rs",
@@ -75,7 +75,7 @@ def _load_stdlib_functions() -> set[str]:
 
 def _load_stdlib_types() -> set[str]:
     repo_root = Path(__file__).resolve().parents[3]
-    base = repo_root / "crates" / "incan_core" / "src" / "lang"
+    base = repo_root / "loaves" / "kernel" / "incan_lang" / "src" / "lang"
     paths = [
         base / "types" / "numerics.rs",
         base / "types" / "collections.rs",

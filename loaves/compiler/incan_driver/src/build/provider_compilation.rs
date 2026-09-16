@@ -198,7 +198,7 @@ fn checked_provider_macro_dependency(
         package: "incan_derive".to_string(),
         source_root: root,
         source_digest: matching_input("runtime-source-incan-derive")?,
-        core_source_digest: matching_input("runtime-source-incan-core")?,
+        core_source_digest: matching_input("runtime-source-incan-lang")?,
         runtime_lock_digest: matching_input("runtime-lock")?,
     })
 }
@@ -635,7 +635,7 @@ mod tests {
         };
         let inputs = BTreeMap::from([
             ("runtime-source-incan-derive".to_string(), "sha256:macro".to_string()),
-            ("runtime-source-incan-core".to_string(), "sha256:core".to_string()),
+            ("runtime-source-incan-lang".to_string(), "sha256:core".to_string()),
             ("runtime-lock".to_string(), "sha256:lock".to_string()),
         ]);
         let mut request = OvenGeneratedProjectRequest::new(

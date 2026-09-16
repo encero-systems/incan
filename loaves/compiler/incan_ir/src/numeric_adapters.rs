@@ -2,9 +2,9 @@
 //! adapters live in `incan_frontend::numeric_adapters`.
 use crate::expr::{BinOp as IrBinOp, IrExprKind, TypedExpr, UnaryOp as IrUnaryOp};
 use crate::types::IrType;
-use incan_core::lang::types::numerics::{self, NumericFamily};
-use incan_core::{NumericOp, NumericTy, PowExponentKind};
 pub use incan_frontend::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved, pow_exponent_kind_from_ast};
+use incan_lang::lang::types::numerics::{self, NumericFamily};
+use incan_lang::{NumericOp, NumericTy, PowExponentKind};
 
 /// Map backend IR BinOp to NumericOp.
 pub fn numeric_op_from_ir(op: &IrBinOp) -> Option<NumericOp> {

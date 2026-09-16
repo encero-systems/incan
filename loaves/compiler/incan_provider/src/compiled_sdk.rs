@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 
 use crate::ProviderPlan;
-use incan_core::lang::stdlib;
+use incan_lang::lang::stdlib;
 
 /// Canonical module paths supplied by compiled SDK providers.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

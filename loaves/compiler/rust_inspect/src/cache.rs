@@ -13,14 +13,14 @@ use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use incan_core::interop::{
+use incan_lang::interop::{
     RUST_NEVER_TYPE_DISPLAY, RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam,
     RustPayloadCarrier, RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustTypeMetadataCompleteness, RustTypeShape,
     RustTypeShapePathFallback, RustVariantInfo, RustVisibility, is_box_carrier_path, parse_rust_type_shape_text,
     rust_source_borrowed_type_param_bound_display, rust_source_callable_bound_for_type_param,
     rust_source_type_param_has_as_fd_bound, split_top_level_rust_args,
 };
-use incan_core::lang::types::collections::{self, CollectionTypeId};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use ra_ap_syntax::{
     AstNode, Edition, SourceFile,
     ast::{self, HasGenericParams, HasModuleItem, HasName, HasVisibility},
@@ -2390,7 +2390,7 @@ fn source_prelude_trait_is_unshadowed(
     items: &[ast::Item],
     ctx: &SourceMetadataContext<'_>,
 ) -> bool {
-    use incan_core::lang::traits::{self, TraitId};
+    use incan_lang::lang::traits::{self, TraitId};
     let spelling = trait_type.syntax().text().to_string();
     let resolved = ctx.type_display(&spelling);
     let head = spelling.trim_start_matches("::").split("::").next().unwrap_or_default();

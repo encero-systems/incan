@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use incan_core::lang::stdlib;
+use incan_lang::lang::stdlib;
 
 use crate::diagnostics::CliDiagnosticFailure;
 use crate::error::{CliError, CliResult};

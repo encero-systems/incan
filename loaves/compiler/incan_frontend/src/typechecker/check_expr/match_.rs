@@ -8,10 +8,10 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 use crate::diagnostics::errors;
 use crate::symbols::*;
-use incan_core::interop::RustItemKind;
-use incan_core::lang::surface::constructors;
-use incan_core::lang::surface::constructors::ConstructorId;
-use incan_core::lang::types::collections::{self, CollectionTypeId};
+use incan_lang::interop::RustItemKind;
+use incan_lang::lang::surface::constructors;
+use incan_lang::lang::surface::constructors::ConstructorId;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 use super::TypeChecker;
 

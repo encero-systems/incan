@@ -10,13 +10,13 @@ use super::super::{EmitError, IrEmitter};
 use super::methods::iterator_methods::emit_iter_receiver;
 use crate::conversions::exact_float_value_validation;
 use crate::ownership::ValueUseSite;
-use incan_core::lang::builtins::{self, BuiltinFnId};
-use incan_core::lang::surface::constructors::{self, ConstructorId};
-use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_ir::expr::{BuiltinFn, IrExprKind, Pattern, TypedExpr};
 use incan_ir::types::{
     IR_UNION_TYPE_NAME, IrType, SetConstructorIteration, isinstance_type_matches, isinstance_union_variant_indices,
 };
+use incan_lang::lang::builtins::{self, BuiltinFnId};
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 /// Get the element type of a list.
 fn list_elem_type(ty: &IrType) -> &IrType {

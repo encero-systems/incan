@@ -15,13 +15,13 @@
 
 use super::decl::IrInteropAdapterKind;
 use super::{FunctionSignature, IrSpan, IrType, Ownership};
-use incan_core::interop::CoercionPolicy;
-use incan_core::lang::builtins::{self as core_builtins, BuiltinFnId};
-use incan_core::lang::surface::{
+use incan_lang::interop::CoercionPolicy;
+use incan_lang::lang::builtins::{self as core_builtins, BuiltinFnId};
+use incan_lang::lang::surface::{
     dict_methods, iterator_methods, list_methods, result_methods, set_methods, string_methods,
 };
-use incan_core::lang::traits::{self as core_traits, TraitId};
-use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
+use incan_lang::lang::traits::{self as core_traits, TraitId};
+use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
 
 /// Whether a module-static reference names source storage or a compiler-generated helper.
 ///
@@ -929,8 +929,8 @@ impl MethodKind {
         }
 
         // Internal
-        if incan_core::lang::magic_methods::from_str(name)
-            == Some(incan_core::lang::magic_methods::MagicMethodId::Slice)
+        if incan_lang::lang::magic_methods::from_str(name)
+            == Some(incan_lang::lang::magic_methods::MagicMethodId::Slice)
         {
             return Some(Self::Internal(InternalMethodKind::Slice));
         }

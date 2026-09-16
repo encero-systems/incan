@@ -11,7 +11,7 @@
 
 use crate::ast::{Expr, Program};
 use crate::ast_walk::any_expr_in_program;
-use incan_core::lang::builtins::{self, BuiltinFnId};
+use incan_lang::lang::builtins::{self, BuiltinFnId};
 
 use crate::ast_walk::has_stdlib_import;
 

@@ -7,9 +7,9 @@ use quote::quote;
 
 use super::super::{EmitError, IrEmitter};
 use crate::ownership::ValueUseSite;
-use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_ir::expr::TypedExpr;
 use incan_ir::types::IrType;
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
 
 impl<'a> IrEmitter<'a> {
     /// Emit a struct constructor expression.

@@ -165,7 +165,7 @@ Runtime crates (used by generated Rust programs, not the compiler)
 
 Workspace crates are not interchangeable buckets for compiler code. Treat each crate as one of these ownership categories:
 
-- **Stable contract crates**: `incan_core`, `incan_syntax`, `incan_semantics_core`, and `incan_vocab`. These crates hold shared language contracts used across compiler, tooling, library manifests, and generated-package boundaries. Keep them deterministic, dependency-light, and explicit about what is stable.
+- **Stable contract crates**: `incan_lang`, `incan_syntax`, `incan_semantics_core`, and `incan_vocab`. These crates hold shared language contracts used across compiler, tooling, library manifests, and generated-package boundaries. Keep them deterministic, dependency-light, and explicit about what is stable.
 - **Compiler/toolchain implementation crates**: the root `incan` adapters, `incan_frontend`, `incan_ir`, `incan_emit`, `incan_format`, `incan_provider`, `incan_driver`, `incan_semantics_stdlib`, and `rust_inspect`. These crates own compiler stages, orchestration, stdlib semantics packs, and Rust metadata preparation. They may evolve with the toolchain and should not be treated as general runtime APIs.
 - **Runtime-only crates**: the standard library facets (`incan_std_core`, `incan_std_data`, `incan_std_async`, `incan_std_web`, `incan_std_testing`), `incan_derive`, and `incan_web_macros`. These crates back generated Rust programs and runtime behavior. The compiler must not depend on them in normal builds.
 - **Transitional runtime surfaces**: the current `incan_std_web` facet plus related macro glue. Keep transitional runtime code quarantined behind runtime-only crates until it is either stabilized or replaced by Incan-authored library code.
@@ -174,7 +174,7 @@ The useful distinction is stable contract versus implementation detail, not "mor
 
 When moving code, preserve these rules:
 
-- Language policy that both compiler and runtime must share belongs in `incan_core` or another stable contract crate.
+- Language policy that both compiler and runtime must share belongs in `incan_lang` or another stable contract crate.
 - Syntax shapes, parser diagnostics, and AST vocabulary belong in `incan_syntax`; compiler-only name resolution and typechecking stay out of that crate.
 - Surface semantics packs return descriptors through `incan_semantics_core`; they do not call compiler frontend/backend code directly.
 - Runtime facades, proc macros, web glue, panics, allocation-heavy wrappers, and generated-program helpers stay in runtime-only crates.
@@ -183,17 +183,17 @@ When moving code, preserve these rules:
 
 ## Semantic Core
 
-Incan has a **semantic core** crate (`incan_core`) that holds pure, deterministic helpers shared by the compiler and runtime, without creating dependency cycles.
+Incan has a **semantic core** crate (`incan_lang`) that holds pure, deterministic helpers shared by the compiler and runtime, without creating dependency cycles.
 
-- **Location**: `loaves/kernel/incan_core`
+- **Location**: `loaves/kernel/incan_lang`
 - **Purpose**: centralize semantic policy and pure helpers so compile-time behavior and runtime behavior cannot drift.
 - **Used by**: compiler (typechecker, const-eval, lowering/codegen decisions) and stdlib/runtime helpers.
 - **Constraints**: pure/deterministic (no IO, no global state) and no dependencies on compiler crates.
-- **Stdlib registry**: `incan_core::lang::stdlib::STDLIB_NAMESPACES` drives stdlib import validation, stub path resolution, unknown-module hints, and import-activated language features (soft keywords like `async`/`await`).
+- **Stdlib registry**: `incan_lang::lang::stdlib::STDLIB_NAMESPACES` drives stdlib import validation, stub path resolution, unknown-module hints, and import-activated language features (soft keywords like `async`/`await`).
 
-`incan_core` should own language-wide policy, not runtime implementations. Existing stdlib-facing surface type metadata is a compatibility boundary; new work should either justify why the metadata is truly language-core policy or push ownership toward library-defined declarations/semantics packs.
+`incan_lang` should own language-wide policy, not runtime implementations. Existing stdlib-facing surface type metadata is a compatibility boundary; new work should either justify why the metadata is truly language-core policy or push ownership toward library-defined declarations/semantics packs.
 
-See crate-level documentation in `loaves/kernel/incan_core` for the contract, extension checklist, and drift-prevention expectations; tests in `loaves/compiler/incan_frontend/tests/semantic_core_*` serve as the source of truth for covered domains.
+See crate-level documentation in `loaves/kernel/incan_lang` for the contract, extension checklist, and drift-prevention expectations; tests in `loaves/compiler/incan_frontend/tests/semantic_core_*` serve as the source of truth for covered domains.
 
 ## Syntax Frontend
 
@@ -201,7 +201,7 @@ Incan has a shared **syntax frontend** crate (`incan_syntax`) that centralizes l
 
 - **Location**: `loaves/kernel/incan_syntax`
 - **Purpose**: provide a single, shared syntax layer (lexing, parsing, AST, diagnostics) to prevent drift between compiler, formatter, LSP, and future interactive tooling.
-- **Used by**: compiler frontend and tooling (formatter/LSP); depends on `incan_core::lang` registries for vocabulary ids.
+- **Used by**: compiler frontend and tooling (formatter/LSP); depends on `incan_lang::lang` registries for vocabulary ids.
 - **Constraints**: syntax-only (no name resolution/type checking/IR); no dependencies on compiler crates.
 
 ## Repository layout
@@ -210,13 +210,13 @@ The extracted compiler, syntax and Oven crates live under `loaves/`. [The layout
 
 | Ring directory | Current contents and boundary |
 | --- | --- |
-| `loaves/kernel/` | The language tables and shared semantic helpers in `incan_core`, the vocabulary contract in `incan_vocab`, and shared syntax, semantics contracts and codegraph records in `incan_syntax`, `incan_semantics_core` and `incan_codegraph`. |
+| `loaves/kernel/` | The language tables and shared semantic helpers in `incan_lang`, the vocabulary contract in `incan_vocab`, and shared syntax, semantics contracts and codegraph records in `incan_syntax`, `incan_semantics_core` and `incan_codegraph`. |
 | `loaves/compiler/` | Typechecking (`incan_frontend`), typed IR/lowering (`incan_ir`), Rust emission (`incan_emit`), formatting (`incan_format`), provider operations (`incan_provider`), driver orchestration (`incan_driver`), stdlib semantics packs and Rust inspection. |
 | `loaves/oven/` | Project and lock models (`oven_model`), receipts/stores/process containment (`oven_store`), and native planning, execution and Cargo compatibility (`oven_rustc`). |
 | `loaves/stdlib/` | One directory per standard library component (`sdk-components.toml` is the catalog), each holding its Incan sources under `src/` and, where the component has Rust, its `incan_std_<component>` facet under `rust/`; the derive crates under `derive/`. |
 | `loaves/toolchain/` | The binaries: `incan-cli` (the `incan` command, its test runner and the command-line roots) and `incan-lsp` (the language server); `oven-cli` is a layout skeleton until RFC 118 authors `oven` against the Oven API. The workspace root is virtual — there is no root crate. |
 
-`incan_core` and `incan_vocab` sit under `loaves/kernel/`, the derive crates under `loaves/stdlib/derive/`, and each standard library component's Rust facet beside its Incan sources as `loaves/stdlib/<component>/rust/`; the extraction has not yet moved the root integration tests. Use their current paths until their own migration lands.
+`incan_lang` and `incan_vocab` sit under `loaves/kernel/`, the derive crates under `loaves/stdlib/derive/`, and each standard library component's Rust facet beside its Incan sources as `loaves/stdlib/<component>/rust/`; the extraction has not yet moved the root integration tests. Use their current paths until their own migration lands.
 
 `incan_frontend` reexports syntax from `incan_syntax` and owns module resolution, symbol tables, typechecking, checked library-manifest records and provider-plan contracts. `incan_provider` consumes those contracts for SDK discovery, building and dependency resolution. `incan_driver` composes the compilation session and build workflow; the CLI and LSP consume its services. These are separate crates rather than subdirectories of a monolithic frontend/backend module.
 
@@ -288,7 +288,7 @@ Feature gating is compile-time and crate-level:
 
 If the new keyword fits an existing action pattern, only steps 1–3 require code changes:
 
-1. Add activation metadata in `incan_core::lang` registry tables (`KeywordId` + `info_soft()`).
+1. Add activation metadata in `incan_lang::lang` registry tables (`KeywordId` + `info_soft()`).
 2. Implement the relevant `SurfaceSemanticsPack` methods in `incan_semantics_stdlib` (or another pack crate): parser routing, typecheck action, lowering action, runtime requirements, and call targets as needed.
 3. Ensure parser emits generic surface payload with `SurfaceFeatureKey` handoff (usually automatic via existing parser helpers).
 4. **Typechecker / Lowering / Scanning**: no changes needed — the registry returns the action descriptor and the existing dispatch handles it.

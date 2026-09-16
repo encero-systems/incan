@@ -14,16 +14,16 @@ use crate::typechecker::type_info::{
     CBindingType, COutputMode, CResourceAccess,
 };
 use crate::typechecker::{CAbiRawCallResult, IdentKind, PendingCAbiOutputSlot, canonical_public_library_type_name};
-use incan_core::interop::{
+use incan_lang::interop::{
     RustFieldInfo, RustFunctionSig, RustItemKind, RustTypeInfo, compiler_owned_function_signature,
     metadata_free_function_signature,
 };
-use incan_core::lang::c_abi;
-use incan_core::lang::derives::{self, DeriveId};
-use incan_core::lang::keywords::{self, KeywordId};
-use incan_core::lang::stdlib;
-use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
-use incan_core::lang::traits::{self, TraitId};
+use incan_lang::lang::c_abi;
+use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::keywords::{self, KeywordId};
+use incan_lang::lang::stdlib;
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
+use incan_lang::lang::traits::{self, TraitId};
 use incan_semantics_core::SemanticSourceTargetKind;
 use std::collections::HashSet;
 
@@ -1346,7 +1346,7 @@ impl TypeChecker {
             (true, false, _) if method == length_method => (
                 length_method,
                 CAbiSpanAccessKind::ElementCount,
-                ResolvedType::Numeric(incan_core::lang::types::numerics::NumericTypeId::USize),
+                ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::USize),
             ),
             (false, true, "as_mut_ptr") => {
                 if let Some(local) = Self::c_checked_span_local_name(base)
@@ -1368,7 +1368,7 @@ impl TypeChecker {
             (false, true, _) if method == capacity_method => (
                 capacity_method,
                 CAbiSpanAccessKind::ElementCapacity,
-                ResolvedType::Numeric(incan_core::lang::types::numerics::NumericTypeId::USize),
+                ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::USize),
             ),
             (false, true, _) if method == finish_method => {
                 if !type_args.is_empty() || args.len() != 1 || !matches!(args.first(), Some(CallArg::Positional(_))) {
@@ -1384,7 +1384,7 @@ impl TypeChecker {
                     .into_iter()
                     .next()
                     .unwrap_or(ResolvedType::Unknown);
-                let count_type = ResolvedType::Numeric(incan_core::lang::types::numerics::NumericTypeId::USize);
+                let count_type = ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::USize);
                 if !self.types_compatible(&actual, &count_type)
                     && !Self::checked_c_integer_bridge_compatible(&actual, &count_type)
                 {
@@ -1442,7 +1442,7 @@ impl TypeChecker {
             c_abi::ScalarTypeId::F32 => ResolvedType::Generic(
                 "List".to_string(),
                 vec![ResolvedType::Numeric(
-                    incan_core::lang::types::numerics::NumericTypeId::F32,
+                    incan_lang::lang::types::numerics::NumericTypeId::F32,
                 )],
             ),
             _ => ResolvedType::Unknown,
