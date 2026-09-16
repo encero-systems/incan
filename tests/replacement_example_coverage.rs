@@ -16,6 +16,8 @@
 //! assertion at all. An exact baseline makes movement in *either* direction a deliberate, reviewed event: improve
 //! the backend and the suite tells you to record the new number in the same change.
 
+mod support;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -107,10 +109,7 @@ fn example_sources() -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
     }
 
     let mut found = Vec::new();
-    walk(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("examples").as_path(),
-        &mut found,
-    )?;
+    walk(support::repo_root().join("examples").as_path(), &mut found)?;
     found.sort();
     Ok(found)
 }

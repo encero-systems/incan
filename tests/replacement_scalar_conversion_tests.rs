@@ -1,7 +1,8 @@
 //! RED-first coverage for compiler-selected scalar conversion builtins (#1249).
 
+mod support;
+
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 
 use incan::backend::replacement::{
@@ -29,16 +30,9 @@ fn lower_typed_body_ir(source: &str) -> Result<BodyIrModule, Box<dyn std::error:
     Ok(build_body_ir_module_v0(&program, &module_path, checker.type_info()))
 }
 
-/// Locate the compiler binary Cargo built for this integration-test invocation.
-fn incan_binary() -> PathBuf {
-    std::env::var_os("CARGO_BIN_EXE_incan")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_incan")))
-}
-
 /// Execute a direct replacement CLI build in an isolated project and runtime home.
 fn replacement_command(directory: &std::path::Path) -> Command {
-    let mut command = Command::new(incan_binary());
+    let mut command = support::repo_command();
     command
         .current_dir(directory)
         .env("INCAN_HOME", directory.join("incan-home"))
@@ -732,7 +726,7 @@ def ordinary_literal() -> str:
 #[test]
 fn replacement_cli_executes_unchanged_type_conversions_with_receipt() -> Result<(), Box<dyn std::error::Error>> {
     let temporary = tempfile::tempdir()?;
-    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/advanced/type_conversions.incn");
+    let example = support::repo_root().join("examples/advanced/type_conversions.incn");
     fs::copy(example, temporary.path().join("main.incn"))?;
 
     let output = replacement_command(temporary.path())

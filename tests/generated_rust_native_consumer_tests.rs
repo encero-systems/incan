@@ -6,24 +6,11 @@ use std::process::{Command, Output};
 use oven_model::compiler_suite_env;
 mod support;
 
-fn incan_binary() -> PathBuf {
-    if let Ok(path) = std::env::var("CARGO_BIN_EXE_incan") {
-        return PathBuf::from(path);
-    }
-    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
-        let path = PathBuf::from(target_dir).join("debug").join("incan");
-        if path.exists() {
-            return path;
-        }
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/incan")
-}
-
 fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
-    let source_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source_root = support::repo_root();
     let stdlib_root = source_root.join("loaves/stdlib");
     let stored_suite = std::env::var_os(compiler_suite_env::OVEN_COMPILER_SUITE_CAPABILITY_ENV).is_some();
-    let mut command = Command::new(incan_binary());
+    let mut command = support::repo_command();
     command
         .args(args)
         .current_dir(current_dir)
@@ -33,7 +20,7 @@ fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::e
             "INCAN_GENERATED_CARGO_TARGET_DIR",
             support::generated_cargo_target_dir(),
         )
-        .env("INCAN_SOURCE_ROOT", source_root)
+        .env("INCAN_SOURCE_ROOT", &source_root)
         .env("INCAN_STDLIB", &stdlib_root)
         .env("INCAN_STDLIB_DIR", &stdlib_root)
         .env("INCAN_TOOLCHAIN_CRATES_DIR", source_root.join("crates"));

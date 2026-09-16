@@ -572,21 +572,21 @@ def test_workspace_rust_dependency_is_available() -> None:
 "#,
     )?;
 
-    let source_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source_root = support::repo_root();
     let stdlib = source_root.join("loaves/stdlib");
     let toolchain_crates = source_root.join("crates");
     let incan_home = root.path().join(".incan-home");
     let provider_store = support::cold_sdk_provider_store_or(&incan_home.join("cache/providers/sdk-v2"));
     let generated_target = support::generated_cargo_target_dir_or(&incan_home.join("generated-target"));
     let configure = |cwd: &Path, args: &[&str]| -> Result<Command, Box<dyn std::error::Error>> {
-        let mut command = Command::new(incan_binary());
+        let mut command = support::repo_command();
         command
             .args(args)
             .current_dir(cwd)
             .env("CARGO_NET_OFFLINE", "true")
             .env("INCAN_NO_BANNER", "1")
             .env("INCAN_LOCK_PREHEAT", "1")
-            .env("INCAN_SOURCE_ROOT", source_root)
+            .env("INCAN_SOURCE_ROOT", &source_root)
             .env("INCAN_STDLIB", &stdlib)
             .env("INCAN_STDLIB_DIR", &stdlib)
             .env("INCAN_TOOLCHAIN_CRATES_DIR", &toolchain_crates)
@@ -1047,10 +1047,10 @@ fn workspace_lock_concurrent_publishers_leave_one_parseable_root_lock() -> Resul
         fs::write(member_root.join("src/main.incn"), "def main() -> None:\n  pass\n")?;
     }
 
-    let stdlib = Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib");
+    let stdlib = support::repo_root().join("loaves/stdlib");
     let generated_target = support::generated_cargo_target_dir();
     let spawn_lock = |member: &str| -> Result<std::process::Child, Box<dyn std::error::Error>> {
-        Ok(Command::new(incan_binary())
+        Ok(support::repo_command()
             .arg("lock")
             .current_dir(root.path().join("packages").join(member))
             .env("CARGO_NET_OFFLINE", "true")

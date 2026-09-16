@@ -3,6 +3,27 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
+/// Locate the checkout from the test package, including after it moves into a Loaves ring.
+///
+/// The checkout has a lockfile and the Loaves directory; no caller working directory or mutable environment override
+/// participates in source discovery. A missing checkout is a test setup error rather than a relative-path fallback.
+#[allow(dead_code)]
+pub(crate) fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .find(|candidate| candidate.join("Cargo.lock").is_file() && candidate.join("loaves").is_dir())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| panic!("integration test package has no ancestor Incan checkout"))
+}
+
+/// Start the compiler in its checkout unless a test explicitly selects a temporary project directory.
+#[allow(dead_code)]
+pub(crate) fn repo_command() -> Command {
+    let mut command = Command::new(incan_debug_binary());
+    command.current_dir(repo_root());
+    command
+}
+
 /// Start one opt-in nested Incan-command measurement for an integration-test diagnostic run.
 ///
 /// Normal test execution neither reads a clock nor emits timing output. The caller supplies a stable command label,
@@ -84,16 +105,16 @@ pub(crate) fn incan_debug_binary() -> PathBuf {
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_incan") {
         let path = PathBuf::from(path);
         if path.exists() {
-            return path;
+            return anchor_harness_path(path);
         }
     }
     if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
         let p = PathBuf::from(&target_dir).join("debug/incan");
         if p.exists() {
-            return p;
+            return anchor_harness_path(p);
         }
     }
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/incan")
+    repo_root().join("target/debug/incan")
 }
 
 /// Report whether the compiler suite handed this root a direct-Rustc consumer.
@@ -112,7 +133,7 @@ fn suite_selected_consumer_rustc() -> bool {
 /// default `target/`, and must inherit the prepared provider store unless the compiler suite already sealed one.
 #[allow(dead_code)]
 pub(crate) fn incan_command() -> Command {
-    let mut command = Command::new(incan_debug_binary());
+    let mut command = repo_command();
     command
         .env("INCAN_GENERATED_CARGO_TARGET_DIR", generated_cargo_target_dir())
         .env("CARGO_NET_OFFLINE", "true");
@@ -245,7 +266,7 @@ fn selected_harness_path(variable: &str, fallback: &str) -> PathBuf {
     let selected = std::env::var_os(variable)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join(fallback));
+        .unwrap_or_else(|| repo_root().join(fallback));
     anchor_harness_path(selected)
 }
 
@@ -253,8 +274,6 @@ fn anchor_harness_path(selected: PathBuf) -> PathBuf {
     if selected.is_absolute() {
         selected
     } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
-            .join(selected)
+        std::env::current_dir().unwrap_or_else(|_| repo_root()).join(selected)
     }
 }

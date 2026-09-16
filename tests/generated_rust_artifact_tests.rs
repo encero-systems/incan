@@ -11,24 +11,8 @@ mod canonical_projection;
 
 const FIXTURE_ROOT: &str = "tests/fixtures/generated_rust_artifacts";
 
-fn incan_binary() -> PathBuf {
-    if let Ok(path) = std::env::var("CARGO_BIN_EXE_incan") {
-        return PathBuf::from(path);
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
-        let path = PathBuf::from(target_dir).join("debug").join("incan");
-        if path.exists() {
-            return path;
-        }
-    }
-
-    manifest_dir.join("target").join("debug").join("incan")
-}
-
 fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Command {
-    let mut command = Command::new(incan_binary());
+    let mut command = support::repo_command();
     command
         .args(args)
         .current_dir(current_dir)
@@ -69,7 +53,7 @@ fn assert_success(output: &Output, context: &str) {
 }
 
 fn fixture_path(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURE_ROOT).join(name)
+    support::repo_root().join(FIXTURE_ROOT).join(name)
 }
 
 fn read_fixture(name: &str) -> Result<String, Box<dyn std::error::Error>> {

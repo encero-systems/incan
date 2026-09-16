@@ -1,9 +1,9 @@
 //! End-to-end proof for the bounded #988 Body-IR replacement executor.
 
+mod support;
+
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
-use std::process::Command;
 
 use incan::backend::replacement::{ReplacementExecutionGraph, ReplacementValue, execute_free_function};
 use incan::backend::selection::{
@@ -310,13 +310,6 @@ fn canonical_named_target_mut<'module>(
             }
             _ => None,
         })
-}
-
-/// Locate the compiler binary built for this integration-test invocation.
-fn incan_binary() -> PathBuf {
-    std::env::var_os("CARGO_BIN_EXE_incan")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/incan"))
 }
 
 /// Execute typed source through Body IR and bind the observed result to an explicit replacement receipt.
@@ -2704,7 +2697,7 @@ fn replacement_cli_executes_typed_body_ir_and_persists_a_replacement_receipt() -
 "#,
     )?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -2779,7 +2772,7 @@ fn replacement_cli_executes_a_call_into_a_sibling_module_with_a_replacement_rece
         "from helper import bump\n\ndef main() -> int:\n  return bump(41)\n",
     )?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -2857,7 +2850,7 @@ fn replacement_cli_executes_a_module_qualified_call() -> Result<(), Box<dyn std:
         fs::write(&entrypoint, entry_source)?;
 
         let report_path = temporary.path().join("module-qualified-report.json");
-        let output = Command::new(incan_binary())
+        let output = support::repo_command()
             .args([
                 "build",
                 entrypoint.to_string_lossy().as_ref(),
@@ -2914,7 +2907,7 @@ fn a_local_sharing_a_module_name_is_not_treated_as_a_module_qualifier() -> Resul
         "import helper\n\ndef main() -> int:\n  helper = 41\n  return helper.bump()\n",
     )?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -2961,7 +2954,7 @@ fn replacement_cli_follows_a_typed_numeric_call_into_the_module_that_declares_it
         "from helper import widen\n\ndef main() -> u8:\n  start: u8 = 41\n  return widen(start)\n",
     )?;
     let report_path = admitted.path().join("typed-numeric-report.json");
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -2998,7 +2991,7 @@ fn replacement_cli_follows_a_typed_numeric_call_into_the_module_that_declares_it
         &refused_entrypoint,
         "from helper import widen\n\ndef main() -> u8:\n  start: u8 = 41\n  return widen(start)\n",
     )?;
-    let refusal = Command::new(incan_binary())
+    let refusal = support::repo_command()
         .args([
             "build",
             refused_entrypoint.to_string_lossy().as_ref(),
@@ -3064,7 +3057,7 @@ fn replacement_cli_executes_a_facade_chain_whose_bindings_share_one_declaration(
     )?;
 
     let report_path = temporary.path().join("facade-report.json");
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -3098,7 +3091,7 @@ fn replacement_cli_executes_a_facade_chain_whose_bindings_share_one_declaration(
     assert_eq!(receipt["fallback_outcome"], serde_json::json!("not_needed"));
 
     // The same chain, inspected: every call must name the one declaration in `provider`.
-    let codegraph = Command::new(incan_binary())
+    let codegraph = support::repo_command()
         .args(["inspect", "codegraph", "src", "--format", "jsonl"])
         .current_dir(temporary.path())
         .env("CARGO_NET_OFFLINE", "true")
@@ -3162,7 +3155,7 @@ fn replacement_cli_refuses_an_unsupported_declaration_in_a_sibling_module() -> R
         "from helper import bump\n\ndef main() -> int:\n  return bump(41)\n",
     )?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -3214,7 +3207,7 @@ fn replacement_cli_executes_typed_empty_scalar_tuple_list_with_a_replacement_rec
 "#,
     )?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -3269,7 +3262,7 @@ fn replacement_cli_json_report_projects_canonical_execution_evidence() -> Result
         "def main() -> int:\n  println(\"answer follows\")\n  return 42\n",
     )?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -3356,7 +3349,7 @@ fn replacement_cli_uses_session_feature_projection_and_persists_semantic_module_
         "when feature(\"beta\"):\n  def main() -> int:\n    return 42\n",
     )?;
 
-    let inactive = Command::new(incan_binary())
+    let inactive = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -3375,7 +3368,7 @@ fn replacement_cli_uses_session_feature_projection_and_persists_semantic_module_
         "a refused inactive entrypoint must not publish a replacement receipt"
     );
 
-    let enabled = Command::new(incan_binary())
+    let enabled = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -3455,7 +3448,7 @@ async def main() -> int:
 "#,
     )?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -3519,7 +3512,7 @@ async def main() -> int:
   return await child()
 "#;
     fs::write(&entrypoint, source)?;
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -3583,7 +3576,7 @@ async def main() -> int:
   return winner
 "#;
     fs::write(&entrypoint, source)?;
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -3632,7 +3625,7 @@ fn replacement_cli_rejects_legacy_fallback_without_artifacts_or_receipts() -> Re
     let entrypoint = temporary.path().join("main.incn");
     fs::write(&entrypoint, "def main() -> int:\n  return 42\n")?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -3676,7 +3669,7 @@ fn replacement_cli_refuses_unsupported_source_without_legacy_generation() -> Res
 "#,
     )?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -3754,7 +3747,7 @@ fn replacement_cli_refuses_new_operator_forms_without_artifacts_or_receipts() ->
         let entrypoint = temporary.path().join(format!("{name}.incn"));
         fs::write(&entrypoint, source)?;
 
-        let output = Command::new(incan_binary())
+        let output = support::repo_command()
             .args([
                 "build",
                 entrypoint.to_string_lossy().as_ref(),
@@ -3813,7 +3806,7 @@ def main() -> int:
 "#,
     )?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -3857,7 +3850,7 @@ def main() -> int:
 "#;
     fs::write(&entrypoint, source)?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -3914,7 +3907,7 @@ def main() -> int:
 "#;
     fs::write(&entrypoint, source)?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -3969,7 +3962,7 @@ def main() -> int:
 "#;
     fs::write(&entrypoint, source)?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -4072,7 +4065,7 @@ def main() -> int:
 "#;
     fs::write(&entrypoint, source)?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -4125,7 +4118,7 @@ fn replacement_cli_shadow_receipt_is_explicitly_non_green() -> Result<(), Box<dy
     let entrypoint = temporary.path().join("main.incn");
     fs::write(&entrypoint, "def main() -> int:\n  return 42\n")?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -4174,7 +4167,7 @@ fn a_shadow_request_does_not_alter_replacement_execution() -> Result<(), Box<dyn
     let entrypoint = temporary.path().join("main.incn");
     fs::write(&entrypoint, "def main() -> int:\n  return 42\n")?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -4273,7 +4266,7 @@ fn replacement_cli_refuses_module_boundaries_with_primary_spans() -> Result<(), 
         let temporary = tempfile::tempdir()?;
         let entrypoint = temporary.path().join(format!("{name}.incn"));
         fs::write(&entrypoint, source)?;
-        let output = Command::new(incan_binary())
+        let output = support::repo_command()
             .args([
                 "build",
                 entrypoint.to_string_lossy().as_ref(),
@@ -4350,7 +4343,7 @@ fn a_rust_interop_boundary_refuses_as_a_missing_host() -> Result<(), Box<dyn std
         let temporary = tempfile::tempdir()?;
         let entrypoint = temporary.path().join(format!("{name}.incn"));
         fs::write(&entrypoint, source)?;
-        let output = Command::new(incan_binary())
+        let output = support::repo_command()
             .args([
                 "build",
                 entrypoint.to_string_lossy().as_ref(),
@@ -4388,7 +4381,7 @@ fn a_rust_interop_boundary_refuses_as_a_missing_host() -> Result<(), Box<dyn std
     let temporary = tempfile::tempdir()?;
     let ordinary = temporary.path().join("ordinary.incn");
     fs::write(&ordinary, "import std.io\n\ndef main() -> int:\n  return 42\n")?;
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             ordinary.to_string_lossy().as_ref(),
@@ -4433,7 +4426,7 @@ fn a_rust_interop_refusal_names_the_module_that_crosses_the_boundary() -> Result
         "from helpers import helper\n\ndef main() -> int:\n  return helper()\n",
     )?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -4475,7 +4468,7 @@ fn duplicate_async_activation_fails_during_typechecking() -> Result<(), Box<dyn 
     let temporary = tempfile::tempdir()?;
     let entrypoint = temporary.path().join("duplicate-async-activation.incn");
     fs::write(&entrypoint, source)?;
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -4528,7 +4521,7 @@ def main() -> int:
 "#,
     )?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -4601,7 +4594,7 @@ def main() -> int:
 "#,
     )?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -4683,7 +4676,7 @@ def main() -> int:
 "#,
     )?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -4765,7 +4758,7 @@ def main() -> int:
 "#,
     )?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -4846,7 +4839,7 @@ def classify(signal: Signal) -> int:
 "#;
     fs::write(&entrypoint, source)?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -4930,7 +4923,7 @@ def main() -> int:
 "#,
     )?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -5004,7 +4997,7 @@ def main() -> int:
 "#;
     fs::write(&entrypoint, source)?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -5103,7 +5096,7 @@ def main() -> list[int]:
         let temporary = tempfile::tempdir()?;
         let entrypoint = temporary.path().join(format!("{name}.incn"));
         fs::write(&entrypoint, source)?;
-        let output = Command::new(incan_binary())
+        let output = support::repo_command()
             .args([
                 "build",
                 entrypoint.to_string_lossy().as_ref(),
@@ -5163,7 +5156,7 @@ def main() -> int:
 "#;
     fs::write(&entrypoint, source)?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),
@@ -5486,7 +5479,7 @@ fn replacement_cli_reports_scalar_json_without_legacy_artifacts() -> Result<(), 
 "#,
     )?;
 
-    let output = Command::new(incan_binary())
+    let output = support::repo_command()
         .args([
             "build",
             entrypoint.to_string_lossy().as_ref(),

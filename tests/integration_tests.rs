@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 mod support;
 
-use support::{incan_command, incan_debug_binary, strip_ansi_escapes, unique_test_project_name};
+use support::{incan_command, incan_debug_binary, repo_root, strip_ansi_escapes, unique_test_project_name};
 
 #[path = "support/canonical_projection.rs"]
 mod canonical_projection;
@@ -1265,9 +1265,7 @@ def test_typed_binary_read_results() -> None:
         .current_dir(tmp.path())
         .env(
             "INCAN_TEST_SHARED_TARGET_DIR",
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("target")
-                .join("incan_e2e_shared_target"),
+            repo_root().join("target").join("incan_e2e_shared_target"),
         )
         .output()?;
     assert!(
@@ -1711,13 +1709,13 @@ def main() -> None:
 /// Test that all valid fixtures compile successfully
 #[test]
 fn test_valid_fixtures() {
-    let fixtures_dir = Path::new("tests/fixtures/valid");
+    let fixtures_dir = repo_root().join("tests/fixtures/valid");
     if !fixtures_dir.exists() {
         return; // Skip if fixtures not present
     }
 
     let mut matched = 0usize;
-    let Ok(entries) = fs::read_dir(fixtures_dir) else {
+    let Ok(entries) = fs::read_dir(&fixtures_dir) else {
         panic!("failed to read directory {}", fixtures_dir.display());
     };
     for entry in entries {
@@ -1741,13 +1739,13 @@ fn test_valid_fixtures() {
 /// Test that invalid fixtures produce errors
 #[test]
 fn test_invalid_fixtures() {
-    let fixtures_dir = Path::new("tests/fixtures/invalid");
+    let fixtures_dir = repo_root().join("tests/fixtures/invalid");
     if !fixtures_dir.exists() {
         return; // Skip if fixtures not present
     }
 
     let mut matched = 0usize;
-    let Ok(entries) = fs::read_dir(fixtures_dir) else {
+    let Ok(entries) = fs::read_dir(&fixtures_dir) else {
         panic!("failed to read directory {}", fixtures_dir.display());
     };
     for entry in entries {
@@ -3445,6 +3443,8 @@ def main() -> None:
 
 /// End-to-end codegen tests
 mod codegen_tests {
+    use crate::support::repo_root;
+
     use super::{
         compiled_sdk_provider_artifact_root, incan_command, strip_ansi_escapes, support, unique_test_project_name,
     };
@@ -3538,12 +3538,12 @@ mod codegen_tests {
 
     #[test]
     fn test_hello_world_codegen() {
-        let path = Path::new("examples/hello.incn");
+        let path = repo_root().join("examples/hello.incn");
         if !path.exists() {
             return; // Skip if example not present
         }
 
-        let Ok(source) = fs::read_to_string(path) else {
+        let Ok(source) = fs::read_to_string(&path) else {
             panic!("failed to read {}", path.display());
         };
         let Ok(tokens) = lexer::lex(&source) else {
@@ -5074,7 +5074,7 @@ def main() -> None:
             .env("CARGO_NET_OFFLINE", "true")
             .env(
                 "INCAN_STDLIB",
-                format!("{}/loaves/stdlib", env!("CARGO_MANIFEST_DIR")),
+                repo_root().join("crates/incan_stdlib/stdlib"),
             )
             .output()?;
         assert!(
@@ -5154,7 +5154,8 @@ def main() -> None:
     #[test]
     fn test_std_encoding_hex_compile_and_run_strict_surface() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
-            .args(["run", "tests/fixtures/valid/std_encoding_hex_surface.incn"])
+            .arg("run")
+            .arg(repo_root().join("tests/fixtures/valid/std_encoding_hex_surface.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
         assert!(
@@ -7605,11 +7606,8 @@ pub def selected_value() -> str:
 
         let run_output = incan_command()
             .args(["run", main_path.to_string_lossy().as_ref()])
-            .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
-            .env(
-                "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
-            )
+            .env("INCAN_SOURCE_ROOT", repo_root())
+            .env("INCAN_STDLIB", repo_root().join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -7667,11 +7665,8 @@ pub def registered_columns() -> str:
 
         let output = incan_command()
             .args(["build", main_path.to_string_lossy().as_ref()])
-            .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
-            .env(
-                "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
-            )
+            .env("INCAN_SOURCE_ROOT", repo_root())
+            .env("INCAN_STDLIB", repo_root().join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -7929,7 +7924,8 @@ async def main() -> None:
     #[test]
     fn test_run_repro_model_traits() {
         let Ok(output) = incan_command()
-            .args(["run", "tests/fixtures/repro_model_traits.incn"])
+            .arg("run")
+            .arg(repo_root().join("tests/fixtures/repro_model_traits.incn"))
             // This should not require network access (workspace deps should already be available).
             .env("CARGO_NET_OFFLINE", "true")
             .output()
@@ -7956,7 +7952,8 @@ async def main() -> None:
     #[test]
     fn test_run_field_info_reflection() {
         let Ok(output) = incan_command()
-            .args(["run", "tests/fixtures/field_info_reflection.incn"])
+            .arg("run")
+            .arg(repo_root().join("tests/fixtures/field_info_reflection.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()
         else {
@@ -8038,7 +8035,8 @@ async def main() -> None:
     #[test]
     fn test_run_rfc023_stdlib_behavior_parity() {
         let Ok(output) = incan_command()
-            .args(["run", "tests/fixtures/rfc023_stdlib_behavior_parity.incn"])
+            .arg("run")
+            .arg(repo_root().join("tests/fixtures/rfc023_stdlib_behavior_parity.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()
         else {
@@ -8088,7 +8086,8 @@ async def main() -> None:
     #[test]
     fn test_run_rfc030_std_collections_behavior() {
         let Ok(output) = incan_command()
-            .args(["run", "tests/fixtures/rfc030_std_collections_behavior.incn"])
+            .arg("run")
+            .arg(repo_root().join("tests/fixtures/rfc030_std_collections_behavior.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()
         else {
@@ -8106,7 +8105,8 @@ async def main() -> None:
     #[test]
     fn test_run_rfc088_source_owned_iterator_sum() {
         let Ok(output) = incan_command()
-            .args(["run", "tests/codegen_snapshots/rfc088_iterator_adapters.incn"])
+            .arg("run")
+            .arg(repo_root().join("tests/codegen_snapshots/rfc088_iterator_adapters.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()
         else {
@@ -8130,10 +8130,8 @@ async def main() -> None:
     fn test_run_iterator_adapters_as_loop_and_comprehension_sources_issue950_953()
     -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
-            .args([
-                "run",
-                "tests/codegen_snapshots/issue950_953_iterator_adapter_sources.incn",
-            ])
+            .arg("run")
+            .arg(repo_root().join("tests/codegen_snapshots/issue950_953_iterator_adapter_sources.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
 
@@ -8154,7 +8152,8 @@ async def main() -> None:
     #[test]
     fn test_run_builtin_zip_only_keeps_generated_iterator_support_issue950() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
-            .args(["run", "tests/codegen_snapshots/issue950_builtin_zip_only.incn"])
+            .arg("run")
+            .arg(repo_root().join("tests/codegen_snapshots/issue950_builtin_zip_only.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
 
@@ -8171,12 +8170,10 @@ async def main() -> None:
     #[test]
     fn test_run_set_constructor_from_values_issue951() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
-            .args(["run", "tests/codegen_snapshots/issue951_set_constructor.incn"])
-            .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
-            .env(
-                "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
-            )
+            .arg("run")
+            .arg(repo_root().join("tests/codegen_snapshots/issue951_set_constructor.incn"))
+            .env("INCAN_SOURCE_ROOT", repo_root())
+            .env("INCAN_STDLIB", repo_root().join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -8198,12 +8195,10 @@ async def main() -> None:
     #[test]
     fn test_run_set_add_issue963() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
-            .args(["run", "tests/codegen_snapshots/issue963_set_add.incn"])
-            .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
-            .env(
-                "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
-            )
+            .arg("run")
+            .arg(repo_root().join("tests/codegen_snapshots/issue963_set_add.incn"))
+            .env("INCAN_SOURCE_ROOT", repo_root())
+            .env("INCAN_STDLIB", repo_root().join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -8225,12 +8220,10 @@ async def main() -> None:
     #[test]
     fn test_run_user_defined_set_shadowing_issue951() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
-            .args(["run", "tests/codegen_snapshots/issue951_set_shadowing.incn"])
-            .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
-            .env(
-                "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
-            )
+            .arg("run")
+            .arg(repo_root().join("tests/codegen_snapshots/issue951_set_shadowing.incn"))
+            .env("INCAN_SOURCE_ROOT", repo_root())
+            .env("INCAN_STDLIB", repo_root().join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -8252,7 +8245,8 @@ async def main() -> None:
     #[test]
     fn test_run_rfc088_iterator_sum_float_and_newtype_matrix() {
         let Ok(output) = incan_command()
-            .args(["run", "tests/fixtures/rfc088_iterator_sum_runtime.incn"])
+            .arg("run")
+            .arg(repo_root().join("tests/fixtures/rfc088_iterator_sum_runtime.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()
         else {
@@ -8275,7 +8269,8 @@ async def main() -> None:
     #[test]
     fn test_run_rfc064_std_encoding_behavior() {
         let Ok(output) = incan_command()
-            .args(["run", "tests/fixtures/rfc064_std_encoding_behavior.incn"])
+            .arg("run")
+            .arg(repo_root().join("tests/fixtures/rfc064_std_encoding_behavior.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()
         else {
@@ -8306,7 +8301,8 @@ async def main() -> None:
         let _ = rand::Rng::gen_range(&mut rng, 0..1);
 
         let output = incan_command()
-            .args(["test", "tests/fixtures/valid/test_std_uuid_surface.incn"])
+            .arg("test")
+            .arg(repo_root().join("tests/fixtures/valid/test_std_uuid_surface.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
 
@@ -8327,7 +8323,8 @@ async def main() -> None:
     #[test]
     fn test_run_std_ordinal_map_surface() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
-            .args(["run", "tests/fixtures/valid/std_ordinal_map_surface.incn"])
+            .arg("run")
+            .arg(repo_root().join("tests/fixtures/valid/std_ordinal_map_surface.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()
             .map_err(|error| format!("failed to run std.ordinal_map fixture: {error}"))?;
@@ -8343,7 +8340,7 @@ async def main() -> None:
 
         // Normal Oven output is project-local. This fixture is its own project root, so do not accidentally assert
         // the old Cargo-era process-working-directory target path when the direct-rustc consumer is correct.
-        let generated_project = Path::new("tests/fixtures/valid/target/incan/std_ordinal_map_surface");
+        let generated_project = repo_root().join("tests/fixtures/valid/target/incan/std_ordinal_map_surface");
         let generated_main = fs::read_to_string(generated_project.join("src/main.rs"))
             .map_err(|error| format!("failed to read generated std.ordinal_map consumer: {error}"))?;
         assert!(
@@ -8358,7 +8355,7 @@ async def main() -> None:
             !generated_project.join("src/__incan_std/collections.rs").exists(),
             "a compiled std.collections module must not be materialized in the consumer"
         );
-        let artifact_root = compiled_sdk_provider_artifact_root(generated_project, "incan_stdlib_data")?;
+        let artifact_root = compiled_sdk_provider_artifact_root(&generated_project, "incan_stdlib_data")?;
         let generated_collections = fs::read_to_string(artifact_root.join("src/collections.rs"))
             .map_err(|error| format!("failed to read compiled std.collections artifact: {error}"))?;
         // The splice now passes the two support functions it needs, and RFC 120 projects their names, so the
@@ -8389,10 +8386,7 @@ async def main() -> None:
     fn assert_std_regex_surface_from_sealed_sdk_inventory() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let source = tmp.path().join("std_regex_surface.incn");
-        fs::copy(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/valid/std_regex_surface.incn"),
-            &source,
-        )?;
+        fs::copy(repo_root().join("tests/fixtures/valid/std_regex_surface.incn"), &source)?;
         let generated_project = tmp.path().join("target/incan/std_regex_surface");
         let oven_home = tmp.path().join("oven-home");
         let inventory = std::env::var_os("INCAN_SDK_INVENTORY")
@@ -8403,11 +8397,8 @@ async def main() -> None:
         let mut command = incan_command();
         command
             .current_dir(tmp.path())
-            .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
-            .env(
-                "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
-            )
+            .env("INCAN_SOURCE_ROOT", repo_root())
+            .env("INCAN_STDLIB", repo_root().join("loaves/stdlib"))
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_HOME", &oven_home)
             .env("INCAN_SDK_INVENTORY", &inventory)
@@ -8557,10 +8548,7 @@ async def main() -> None:
     fn explicit_stale_sdk_inventory_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let source = tmp.path().join("std_regex_surface.incn");
-        fs::copy(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/valid/std_regex_surface.incn"),
-            &source,
-        )?;
+        fs::copy(repo_root().join("tests/fixtures/valid/std_regex_surface.incn"), &source)?;
         let stale_inventory = tmp.path().join("stale-sdk-inventory.json");
         fs::write(
             &stale_inventory,
@@ -8712,7 +8700,8 @@ def main() -> None:
     #[test]
     fn test_run_u128_modulo_floor_div() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
-            .args(["run", "tests/fixtures/valid/u128_modulo_floor_div.incn"])
+            .arg("run")
+            .arg(repo_root().join("tests/fixtures/valid/u128_modulo_floor_div.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
 
@@ -8729,7 +8718,8 @@ def main() -> None:
     #[test]
     fn test_run_rfc030_field_overlay_reflection() {
         let Ok(output) = incan_command()
-            .args(["run", "tests/fixtures/rfc030_field_overlay_reflection.incn"])
+            .arg("run")
+            .arg(repo_root().join("tests/fixtures/rfc030_field_overlay_reflection.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()
         else {
@@ -8793,12 +8783,12 @@ def main() -> None:
 
     #[test]
     fn test_benchmark_quicksort_codegen_compiles() {
-        let path = Path::new("workspaces/benchmarks/sorting/quicksort/quicksort.incn");
+        let path = repo_root().join("workspaces/benchmarks/sorting/quicksort/quicksort.incn");
         if !path.exists() {
             return;
         }
 
-        let Ok(source) = fs::read_to_string(path) else {
+        let Ok(source) = fs::read_to_string(&path) else {
             panic!("failed to read {}", path.display());
         };
         let Ok(tokens) = lexer::lex(&source) else {
@@ -9331,10 +9321,12 @@ def main() -> None:
 
     #[test]
     fn test_std_datetime_surface_runs_with_std_time_runtime_boundary() -> Result<(), Box<dyn std::error::Error>> {
-        let runtime_source = std::fs::read_to_string("loaves/stdlib/data/src/datetime/runtime.incn")?;
+        let runtime_source = std::fs::read_to_string(repo_root().join("loaves/stdlib/data/src/datetime/runtime.incn"))?;
         let mut civil_sources = Vec::new();
-        civil_sources.push(std::fs::read_to_string("loaves/stdlib/data/src/datetime/civil.incn")?);
-        for entry in std::fs::read_dir("loaves/stdlib/data/src/datetime/civil")? {
+        civil_sources.push(std::fs::read_to_string(
+            repo_root().join("loaves/stdlib/data/src/datetime/civil.incn"),
+        )?);
+        for entry in std::fs::read_dir(repo_root().join("loaves/stdlib/data/src/datetime/civil"))? {
             let entry = entry?;
             if entry.path().extension().is_some_and(|extension| extension == "incn") {
                 civil_sources.push(std::fs::read_to_string(entry.path())?);
@@ -9351,7 +9343,8 @@ def main() -> None:
         );
 
         let output = incan_command()
-            .args(["run", "tests/fixtures/valid/std_datetime_surface.incn"])
+            .arg("run")
+            .arg(repo_root().join("tests/fixtures/valid/std_datetime_surface.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
 
@@ -9435,7 +9428,8 @@ def main() -> None:
         assert!(!snappy.compress_vec(sample)?.is_empty());
 
         let output = incan_command()
-            .args(["run", "tests/fixtures/valid/std_compression_surface.incn"])
+            .arg("run")
+            .arg(repo_root().join("tests/fixtures/valid/std_compression_surface.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
 
