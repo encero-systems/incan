@@ -542,6 +542,10 @@ test-oven-pr-regressions: test-oven-report-retention
 	@CARGO_PROFILE_TEST_DEBUG=0 CARGO_BUILD_JOBS=2 cargo test --locked -p incan_oven_facet --test oven_pr_regressions
 
 .PHONY: test-oven-release-smoke
+# The release toolchain staged above is a bare binary plus its Loaf envelope; an installed toolchain would find its
+# SDK inventory beside the binary. Hand the smoke the inventory its Loafs were baked from, the way CI's job
+# environment does, or the compiler reads the stdlib from source, meets `std.io`'s `rust::byteorder` import, and
+# reaches for Cargo inside the guard.
 test-oven-release-smoke: test-prewarm-oven-release-loafs
 	@echo "\033[1mRunning Cargo-guarded Oven release-envelope smoke...\033[0m"
 	@set -e; \
@@ -555,6 +559,7 @@ test-oven-release-smoke: test-prewarm-oven-release-loafs
 			PATH="$$smoke_root/cargo-guard:$$PATH" \
 			INCAN_OVEN_CARGO_GUARD_LOG="$$smoke_root/cargo-guard/invocations.log" \
 			INCAN_HOME="$$smoke_root/incan-home" INCAN_NO_BANNER=1 \
+			INCAN_SDK_INVENTORY="$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json" \
 			RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" \
 			"$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" "$$@"; \
 		}; \
