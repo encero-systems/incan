@@ -291,10 +291,12 @@ pub struct OvenGeneratedProjectSourceEvidence {
 ///
 /// This is deliberately distinct from an arbitrary frozen Cargo package: it records the compiler source closure and
 /// Cargo declarations as evidence for a bounded repository-suite publisher, then lets the normal consumer select and
-/// compile through direct rustc. It does not make Cargo a normal test executor.
+/// compile through direct rustc. It does not make Cargo a normal test executor. The compiler workspace has no Cargo
+/// package of its own, so the caller names it; its version is the workspace's.
 #[derive(Debug, Clone)]
 pub struct OvenCompilerSuiteRequest {
     project_root: PathBuf,
+    workspace_name: String,
     target: String,
     toolchain: String,
     profile: String,
@@ -364,10 +366,14 @@ impl OvenGeneratedProjectRequest {
 }
 
 impl OvenCompilerSuiteRequest {
-    /// Construct a request for the root compiler library's direct-rustc libtest compatibility unit.
+    /// Construct a request for the compiler workspace's direct-rustc test-suite compatibility unit.
+    ///
+    /// `workspace_name` is the identity the receipt records for the workspace: Cargo gives a virtual workspace no
+    /// name, and a checkout's directory name is not portable across machines.
     #[must_use]
     pub fn new(
         project_root: impl AsRef<Path>,
+        workspace_name: impl Into<String>,
         target: impl Into<String>,
         toolchain: impl Into<String>,
         profile: impl Into<String>,
@@ -375,6 +381,7 @@ impl OvenCompilerSuiteRequest {
     ) -> Self {
         Self {
             project_root: project_root.as_ref().to_path_buf(),
+            workspace_name: workspace_name.into(),
             target: target.into(),
             toolchain: toolchain.into(),
             profile: profile.into(),
@@ -810,9 +817,8 @@ pub fn receipt_native_compiler_suite(request: &OvenCompilerSuiteRequest) -> Resu
     let cargo_lock_path = request.project_root.join("Cargo.lock");
     let cargo_manifest = read_required_input(&cargo_manifest_path, "Cargo.toml")?;
     let cargo_lock = read_required_input(&cargo_lock_path, "Cargo.lock")?;
-    let project = parse_cargo_package(&cargo_manifest_path, &cargo_manifest)?;
+    let project = parse_compiler_workspace_identity(&cargo_manifest_path, &cargo_manifest, &request.workspace_name)?;
     validate_cargo_lock(&cargo_lock_path, &cargo_lock)?;
-    let lib_root = request.project_root.join("src/lib.rs");
     let cargo_manifest_digest = digest_content(&cargo_manifest);
     let cargo_lock_digest = digest_content(&cargo_lock);
     let compiler_source_records = compiler_suite_source_records(&request.project_root)?;
@@ -827,14 +833,14 @@ pub fn receipt_native_compiler_suite(request: &OvenCompilerSuiteRequest) -> Resu
     }
     let mut supplemental_digests = BTreeMap::from([
         (
-            "compiler-libtest-root".to_string(),
-            digest_generated_source_file(&lib_root)?,
+            COMPILER_WORKSPACE_MANIFEST_EVIDENCE_KEY.to_string(),
+            cargo_manifest_digest.clone(),
         ),
         ("compiler-suite-source-tree".to_string(), compiler_source_tree_digest),
     ]);
-    // A full native-suite plan must authorize each root passed to direct rustc, not just `src/lib.rs`; the command
-    // line's own `main.rs` is one of these tree records, not a root the receipt names. Source bytes belong to the
-    // exact command receipt, while the reusable build unit above records only inputs that can change Cargo's
+    // A full native-suite plan must authorize each root passed to direct rustc; the workspace manifest is the one
+    // source the publisher binds to by name, every Rust file is a tree record. Source bytes belong to the exact
+    // command receipt, while the reusable build unit above records only inputs that can change Cargo's
     // target/dependency plan. Editing an existing Rust module therefore reuses the immutable foundation; adding a
     // new source path or changing a manifest still requires an explicit rebake.
     for (relative_path, digest) in &compiler_source_records {
@@ -914,6 +920,49 @@ fn read_required_input(path: &Path, file_name: &'static str) -> Result<String, O
 }
 
 /// Extract a root package identity without resolving a Cargo dependency graph.
+/// Supplemental-digest key under which a native compiler-suite receipt records its workspace manifest.
+///
+/// The explicit library-tests publisher binds its publication to this key: the workspace `Cargo.toml` is the one
+/// source the suite names, where a generated project names its `src/main.rs` or `src/lib.rs`.
+pub const COMPILER_WORKSPACE_MANIFEST_EVIDENCE_KEY: &str = "compiler-workspace-manifest";
+
+/// Resolve the identity a compiler-suite receipt records for the workspace at `path`.
+///
+/// A Cargo workspace has no name of its own, so the caller supplies one; the version is `[workspace.package]`'s,
+/// or `[package]`'s when the suite root is a rooted fixture package rather than a virtual manifest.
+fn parse_compiler_workspace_identity(
+    path: &Path,
+    content: &str,
+    workspace_name: &str,
+) -> Result<OvenProjectIdentity, OvenError> {
+    let document = toml::from_str::<toml::Value>(content).map_err(|error| OvenError::InvalidCargoManifest {
+        path: path.to_path_buf(),
+        message: error.to_string(),
+    })?;
+    let workspace_package = document
+        .get("workspace")
+        .and_then(toml::Value::as_table)
+        .and_then(|workspace| workspace.get("package"))
+        .and_then(toml::Value::as_table);
+    let version = match document.get("package").and_then(toml::Value::as_table) {
+        Some(package) => package_string_field(path, package, workspace_package, "version")?,
+        None => {
+            let value = workspace_package
+                .and_then(|workspace| workspace.get("version"))
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| OvenError::UnsupportedCargoPackage {
+                    path: path.to_path_buf(),
+                    message: "a compiler workspace must declare [workspace.package].version".to_string(),
+                })?;
+            normalized_value(value, "version")?
+        }
+    };
+    Ok(OvenProjectIdentity {
+        name: workspace_name.to_string(),
+        version,
+    })
+}
+
 fn parse_cargo_package(path: &Path, content: &str) -> Result<OvenProjectIdentity, OvenError> {
     let document = toml::from_str::<toml::Value>(content).map_err(|error| OvenError::InvalidCargoManifest {
         path: path.to_path_buf(),
@@ -2018,6 +2067,7 @@ mod tests {
         let request = || {
             OvenCompilerSuiteRequest::new(
                 project.path(),
+                "frozen-suite",
                 "aarch64-apple-darwin",
                 "rustc 1.96.0",
                 "debug",

@@ -214,7 +214,7 @@ The extracted compiler, syntax and Oven crates live under `loaves/`. [The layout
 | `loaves/compiler/` | Typechecking (`incan_frontend`), typed IR/lowering (`incan_ir`), Rust emission (`incan_emit`), formatting (`incan_format`), provider operations (`incan_provider`), driver orchestration (`incan_driver`), stdlib semantics packs and Rust inspection. |
 | `loaves/oven/` | Project and lock models (`oven_model`), receipts/stores/process containment (`oven_store`), and native planning, execution and Cargo compatibility (`oven_rustc`). |
 | `loaves/stdlib/` | One directory per standard library component (`sdk-components.toml` is the catalog), each holding its Incan sources under `src/` and, where the component has Rust, its `incan_std_<component>` facet under `rust/`; the derive crates under `derive/`. |
-| `loaves/toolchain/` | Layout documentation for future binary crates; the CLI, LSP and binary entry points remain under `src/`. |
+| `loaves/toolchain/` | The binaries: `incan-cli` (the `incan` command, its test runner and the command-line roots) and `incan-lsp` (the language server); `oven-cli` is a layout skeleton until RFC 118 authors `oven` against the Oven API. The workspace root is virtual — there is no root crate. |
 
 `incan_core` and `incan_vocab` sit under `loaves/kernel/`, the derive crates under `loaves/stdlib/derive/`, and each standard library component's Rust facet beside its Incan sources as `loaves/stdlib/<component>/rust/`; the extraction has not yet moved the root integration tests. Use their current paths until their own migration lands.
 
@@ -348,8 +348,7 @@ The expression emitter is split into focused submodules for maintainability:
 | Module    | Purpose                               |
 | --------- | ------------------------------------- |
 | `loaves/compiler/incan_format/src/` | Source formatter                      |
-| `loaves/toolchain/incan-lsp/src/` | LSP backend logic (diagnostics/hover) |
-| `src/bin/` | Extra binaries (e.g. `lsp`)           |
+| `loaves/toolchain/incan-lsp/src/` | LSP backend logic (diagnostics/hover) and the `incan-lsp` binary (`main.rs`) |
 
 ## Key Data Types
 

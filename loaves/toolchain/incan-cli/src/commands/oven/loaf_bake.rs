@@ -572,7 +572,7 @@ pub(crate) fn finish_loaf_bake(
         compiler_loaf_root: Some(options.output.clone()),
         domain: "compiler-suite".to_string(),
         publication_kind: OvenLegacyCargoPublicationKind::LibraryTests,
-        source_evidence_key: "compiler-libtest-root".to_string(),
+        source_evidence_key: oven_store::COMPILER_WORKSPACE_MANIFEST_EVIDENCE_KEY.to_string(),
         compile_environment: BTreeMap::new(),
         inspection_packages: Some(Vec::new()),
         direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::CheckedDeclared,

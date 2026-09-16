@@ -13,7 +13,7 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use incan::backend::IrCodegen;
+//! use incan_driver::backend::IrCodegen;
 //!
 //! let mut codegen = IrCodegen::new();
 //! let rust_code = codegen.generate(&ast);

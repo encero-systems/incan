@@ -16,7 +16,7 @@ import sys
 from typing import Iterator
 
 
-DOCUMENTS = ("AGENTS.md", "CONTRIBUTING.md", "README.md", "src/README.md")
+DOCUMENTS = ("AGENTS.md", "CONTRIBUTING.md", "README.md")
 DOCUMENT_TREES = ("workspaces/docs-site/docs/contributing", ".agents")
 PATH = re.compile(r"(?<![\w/.-])((?:src|crates|loaves|workspaces|tests|scripts|\.agents|\.github)/[A-Za-z0-9_./*{},?-]*)")
 

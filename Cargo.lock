@@ -1420,52 +1420,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "incan"
-version = "0.6.0-dev.4"
-dependencies = [
- "globset",
- "hex",
- "hmac",
- "incan_codegraph",
- "incan_core",
- "incan_driver",
- "incan_emit",
- "incan_format",
- "incan_frontend",
- "incan_ir",
- "incan_oven_facet",
- "incan_provider",
- "incan_semantics_core",
- "incan_semantics_stdlib",
- "incan_std_core",
- "incan_syntax",
- "incan_test_support",
- "incan_vocab",
- "oven_model",
- "oven_rustc",
- "oven_store",
- "prettyplease",
- "proc-macro2",
- "quote",
- "rust_inspect",
- "rustc-demangle",
- "rustix 1.1.4",
- "semver",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "syn 2.0.117",
- "tempfile",
- "thiserror 2.0.18",
- "toml",
- "toml_edit",
- "tracing",
- "wasmtime",
- "wasmtime-wasi",
-]
-
-[[package]]
 name = "incan-cli"
 version = "0.6.0-dev.4"
 dependencies = [

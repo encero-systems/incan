@@ -1580,15 +1580,6 @@ pub fn prepare_direct_rustc_plan(
         }
         direct_dependencies.insert(dependency.alias.clone(), dependency.package.clone());
     }
-    if request.publication_kind == OvenLegacyCargoPublicationKind::LibraryTests {
-        // The direct-rustc compiler CLI is a binary target in this same package. Cargo emits its library as
-        // `libincan-*` during the explicit publisher build; recording that self-library lets normal test setup bake
-        // `src/main.rs` without consulting a Cargo target directory.
-        direct_dependencies.insert(
-            request.receipt.project.name.replace('-', "_"),
-            request.receipt.project.name.clone(),
-        );
-    }
     let staging_parent = request.store.root().join("legacy-cargo-staging");
     let publisher_lock = acquire_publisher_lock(&staging_parent)?;
     // The fast lookup above deliberately precedes manifest inspection. Recheck after taking the cross-process
@@ -2764,7 +2755,10 @@ fn run_legacy_cargo(
         },
         &match publication_kind {
             // The interop bootstrap alone emits the companion target. Publishing the library validates the exact
-            // Rust closure without prematurely linking the package-owned native artifact.
+            // Rust closure without prematurely linking the package-owned native artifact. On the compiler workspace,
+            // whose root is virtual, the same selection builds every member's library tests: their normal and dev
+            // dependencies are the closure the direct-rustc roots consume, at the feature sets the workspace test
+            // build resolves.
             OvenLegacyCargoPublicationKind::InteropBootstrap | OvenLegacyCargoPublicationKind::LibraryTests => {
                 OvenLegacyCargoInvocationTarget::PackageLibrary
             }
@@ -2776,8 +2770,8 @@ fn run_legacy_cargo(
     )?;
     let mut outputs = vec![first];
     if publication_kind == OvenLegacyCargoPublicationKind::LibraryTests {
-        // The same explicit publisher also materializes the package library needed to bake the compiler CLI through
-        // direct rustc. No normal test command receives this Cargo authority or target path.
+        // The same explicit publisher also materializes the compiler CLI and its own library so normal test setup can
+        // bake it through direct rustc. No normal test command receives this Cargo authority or target path.
         outputs.push(run_legacy_cargo_invocation(
             cargo,
             rustc,
@@ -4175,6 +4169,18 @@ fn receipt_authorized_generated_root_bytes(
         .ok_or_else(|| OvenLegacyCargoError::ReceiptMismatch {
             message: format!("receipt does not declare {source_evidence_key} source evidence"),
         })?;
+    // The compiler workspace has no generated root: its receipt names the workspace manifest, and that is the one
+    // file the library-tests publication is bound to.
+    if receipt.compatibility.kind == OvenCompatibilityKind::NativeCompilerTestSuite {
+        let manifest = generated_project.join("Cargo.toml");
+        let bytes = regular_file_bytes(&manifest)?;
+        if &digest_bytes(&bytes) != expected {
+            return Err(OvenLegacyCargoError::ReceiptMismatch {
+                message: format!("Cargo.toml does not match {source_evidence_key} receipt digest {expected}"),
+            });
+        }
+        return Ok(bytes);
+    }
     let mut matching = Vec::new();
     for relative in ["src/main.rs", "src/lib.rs"] {
         let candidate = generated_project.join(relative);
@@ -4730,14 +4736,14 @@ mod tests {
         OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind, OvenProjectExtensionPayload,
         ResolvedDirectDependency, artifact_closure, artifact_closure_from_reported_paths,
         canonicalize_supporting_artifacts, compiler_suite_artifact_catalog, compiler_suite_artifact_index,
-        compiler_suite_bootstrap_selection, compiler_suite_cargo_build_output,
-        compiler_suite_cli_target_from_artifact_index, compiler_suite_dependency_artifact,
-        compiler_suite_dependency_directories, compiler_suite_direct_cli_plan, compiler_suite_direct_target_plan,
-        compiler_suite_direct_target_shard_from_catalog, compiler_suite_direct_target_shard_plan,
-        compiler_suite_foundation_dependencies, compiler_suite_foundation_lock, compiler_suite_foundation_manifest,
-        compiler_suite_foundation_plans, compiler_suite_output_artifact_paths, compiler_suite_target_externs,
-        compiler_suite_target_from_unit, compiler_suite_target_runner, compiler_suite_target_selection_features,
-        compiler_suite_target_selection_groups, compiler_suite_target_selections, compiler_suite_toolchain_data_plans,
+        compiler_suite_cargo_build_output, compiler_suite_cli_target_from_artifact_index,
+        compiler_suite_dependency_artifact, compiler_suite_dependency_directories, compiler_suite_direct_cli_plan,
+        compiler_suite_direct_target_plan, compiler_suite_direct_target_shard_from_catalog,
+        compiler_suite_direct_target_shard_plan, compiler_suite_foundation_dependencies,
+        compiler_suite_foundation_lock, compiler_suite_foundation_manifest, compiler_suite_foundation_plans,
+        compiler_suite_output_artifact_paths, compiler_suite_target_externs, compiler_suite_target_from_unit,
+        compiler_suite_target_runner, compiler_suite_target_selection_features, compiler_suite_target_selection_groups,
+        compiler_suite_target_selections, compiler_suite_toolchain_data_plans,
         compiler_suite_toolchain_loaf_generation_reference, compiler_suite_verified_target_source_bytes,
         compiler_suite_workspace_libraries_for_roots, conservative_directory_reservation, create_publisher_staging,
         digest_local_cargo_workspace_authority, direct_rustc_compile_environment,
@@ -6902,6 +6908,7 @@ version = "1.0.0"
         fs::write(compiler_root.path().join("src/main.rs"), "fn main() {}\n")?;
         let receipt = receipt_native_compiler_suite(&OvenCompilerSuiteRequest::new(
             compiler_root.path(),
+            "compiler-suite-fixture",
             "aarch64-apple-darwin",
             "rustc fixture",
             "debug",
@@ -6957,6 +6964,7 @@ version = "1.0.0"
         fs::write(helper_root.join("src/lib.rs"), "pub fn helper() {}\n")?;
         let receipt = receipt_native_compiler_suite(&OvenCompilerSuiteRequest::new(
             compiler_root.path(),
+            "compiler-suite-fixture",
             "aarch64-apple-darwin",
             "rustc fixture",
             "debug",
@@ -7369,6 +7377,7 @@ version = "1.0.0"
         fs::write(compiler_root.path().join("src/main.rs"), "fn main() {}\n")?;
         let receipt = receipt_native_compiler_suite(&OvenCompilerSuiteRequest::new(
             compiler_root.path(),
+            "compiler-suite-fixture",
             "aarch64-apple-darwin",
             "rustc fixture",
             "debug",
@@ -7529,6 +7538,7 @@ version = "1.0.0"
         let rustc = PathBuf::from(String::from_utf8(rustc_output.stdout)?.trim());
         let receipt = receipt_native_compiler_suite(&OvenCompilerSuiteRequest::new(
             compiler_root.path(),
+            "compiler-suite-fixture",
             "aarch64-apple-darwin",
             rustc_identity(&rustc)?,
             "debug",
@@ -7609,6 +7619,7 @@ version = "1.0.0"
         )?;
         let current_receipt = receipt_native_compiler_suite(&OvenCompilerSuiteRequest::new(
             compiler_root.path(),
+            "compiler-suite-fixture",
             "aarch64-apple-darwin",
             rustc_identity(&rustc)?,
             "debug",
@@ -7640,7 +7651,7 @@ version = "1.0.0"
             compiler_loaf_root: None,
             domain: "compiler-suite".to_string(),
             publication_kind: OvenLegacyCargoPublicationKind::LibraryTests,
-            source_evidence_key: "compiler-libtest-root".to_string(),
+            source_evidence_key: oven_store::COMPILER_WORKSPACE_MANIFEST_EVIDENCE_KEY.to_string(),
             compile_environment: Default::default(),
             inspection_packages: Some(Vec::new()),
             direct_dependency_closure: OvenLegacyCargoDirectDependencyClosure::CheckedDeclared,
@@ -8613,6 +8624,7 @@ version = "1.0.0"
         fs::write(&binary_source, "fn main() {}\n")?;
         let receipt = receipt_native_compiler_suite(&OvenCompilerSuiteRequest::new(
             compiler_root.path(),
+            "compiler-suite-fixture",
             "aarch64-apple-darwin",
             "rustc fixture",
             "debug",
@@ -9127,13 +9139,6 @@ version = "1.0.0"
             ]
         );
         let groups = compiler_suite_target_selection_groups(compiler_root.path(), &graph)?;
-        assert_eq!(
-            compiler_suite_bootstrap_selection(compiler_root.path(), &graph, &groups)?,
-            (
-                OvenLegacyCargoInvocationTarget::WorkspacePackageLibrary("root-package".to_string()),
-                vec![0],
-            )
-        );
         assert_eq!(
             groups
                 .iter()

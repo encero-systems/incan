@@ -18,8 +18,9 @@ incan/
   examples/
   workspaces/    benchmarks · docs-site · ide · release   (not Loaves: a TypeScript extension and shell packaging stay workspaces)
   scripts/
-  assets/
 ```
+
+(The compiler's `assets/` — the banner logo — moved with the command that embeds it, to `toolchain/incan-cli/assets/`.)
 
 `loaves/` is the one container the way `crates/` is today. Rings live inside it so the repository root stays stable when a ring is added, split, or retired, and so the root reads as a project, not as a dependency graph.
 
@@ -75,7 +76,7 @@ Nothing remains under `src/`, `crates/`, or `tests/`. The root `incan` crate cea
 | `rust_inspect/` | `compiler/incan_inspect` |
 | `cli/commands/build.rs` logic, `cli/commands/common.rs` session and discovery, `generated_cache.rs`, `replacement_compatibility*`, `compiler_stack.rs` | `compiler/incan_driver` |
 | `cli/` command surface, `main.rs` | `toolchain/incan-cli` |
-| `cli/commands/{oven,lock,tools}.rs` | `toolchain/oven-cli` |
+| `cli/commands/{oven,lock,tools}.rs` | `toolchain/incan-cli`, with the rest of the command surface: `tools.rs` is `incan tools`, a semantic-product command RFC 118 gives to `incan`; `lock.rs` is a shallow wrapper over the driver's lock resolution; `oven.rs` is this repository's compiler-suite tooling plus Incan-project bakes through the driver. `toolchain/oven-cli` stays a skeleton until RFC 118 (v0.7) authors `oven` against the Oven API |
 | `lsp/`, `bin/lsp.rs` | `toolchain/incan-lsp` |
 | `bin/generate_*` | `workspaces/release` (inventory generators) and `workspaces/ide` (grammar keywords); they are tools of those workspaces, not crates of a ring |
 | `manifest.rs`, `workspace.rs`, `project_lifecycle/`, `toolchain_layout.rs` | `oven/oven_model` (no outward imports today) |
@@ -96,7 +97,7 @@ Nothing remains under `src/`, `crates/`, or `tests/`. The root `incan` crate cea
 | CLI integration, layering guardrails, example capability coverage | `toolchain/incan-cli/tests` |
 | Oven PR regressions, generated cache integration | `oven/oven_rustc/tests` |
 | property tests | split by subject: formatting to `incan_format`, conversions to `incan_emit` |
-| `fixtures/` | beside the tests that use them |
+| `fixtures/` | beside the tests that use them; the fixtures several rings share move to `compiler/incan_test_support`, the harness every root already links |
 
 `cargo test` at the root then runs the workspace rather than one crate; `make test` should call it that way.
 

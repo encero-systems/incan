@@ -173,7 +173,7 @@ Snapshot files are in `loaves/compiler/incan_emit/tests/snapshots/`.
 
 ### Panic Policy
 
-From `src/lib.rs`:
+The rule every crate in the workspace follows (`AGENTS.md` states it as the first rule of the codebase):
 
 > The compiler should not panic under normal operation. All user-facing errors should be returned
 > as `Result` types and handled gracefully.
@@ -284,6 +284,6 @@ By contributing, you agree that your contributions will be licensed under the Ap
 
 ## Checking documentation paths
 
-Run `make doc-paths` to check concrete repository paths in contributor documentation: the root contributor documents, `src/README.md`, non-state Markdown under `.agents/`, contributor pages under `workspaces/docs-site/docs/contributing/`, and crate READMEs under `loaves/`. Keep these references aligned with the files and directories that own the behavior.
+Run `make doc-paths` to check concrete repository paths in contributor documentation: the root contributor documents, non-state Markdown under `.agents/`, contributor pages under `workspaces/docs-site/docs/contributing/`, and crate READMEs under `loaves/`. Keep these references aligned with the files and directories that own the behavior.
 
 The checker checks concrete paths in every fenced block, including diagrams and shell examples. Commands and diagrams should name real repository inputs or clearly identified example-project files. Record intentional exceptions in `scripts/check_doc_paths.allow`, one tab-separated document, exact path token, and reason per line. The document field may be `*`; a path exception may use a trailing `/**` for a subtree. Other wildcard exception patterns are unsupported. Prefer a document-specific exact token for an illustrative filename; do not exempt a stale implementation path that should be corrected.

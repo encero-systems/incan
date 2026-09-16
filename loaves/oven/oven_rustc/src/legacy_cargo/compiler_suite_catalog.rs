@@ -120,53 +120,11 @@ pub fn compiler_suite_target_selection_groups(
     Ok(selections.into_iter().collect())
 }
 
-/// Choose the single compiler-library test root used as the bounded direct-Rustc bootstrap closure.
-///
-/// This is deliberately source-based rather than package-ID-based: Cargo's package identifiers are opaque, while
-/// `src/lib.rs` is already receipt-authorized compiler source. A missing or ambiguous bootstrap is a planning
-/// refusal; it must not trigger a scan through every package selection.
-#[cfg(test)]
-pub fn compiler_suite_bootstrap_selection(
-    compiler_root: &Path,
-    graph: &CargoUnitGraph,
-    selections: &[(OvenLegacyCargoInvocationTarget, Vec<usize>)],
-) -> Result<(OvenLegacyCargoInvocationTarget, Vec<usize>), OvenLegacyCargoError> {
-    let compiler_root = canonical_directory(compiler_root, "compiler root")?;
-    let root_source =
-        fs::canonicalize(compiler_root.join("src/lib.rs")).map_err(|source| OvenLegacyCargoError::Io {
-            path: compiler_root.join("src/lib.rs"),
-            source,
-        })?;
-    let mut candidates = Vec::new();
-    for (selection, root_indices) in selections {
-        let contains_bootstrap = root_indices.iter().any(|index| {
-            graph.units.get(*index).is_some_and(|unit| {
-                unit.mode == "test"
-                    && unit.target.kind.iter().any(|kind| kind == "lib")
-                    && fs::canonicalize(&unit.target.src_path).ok().as_ref() == Some(&root_source)
-            })
-        });
-        if contains_bootstrap {
-            candidates.push((selection.clone(), root_indices.clone()));
-        }
-    }
-    match candidates.as_slice() {
-        [selection] => Ok(selection.clone()),
-        [] => Err(OvenLegacyCargoError::Plan(
-            "compiler-suite graph has no receipt-authorized src/lib.rs test bootstrap".to_string(),
-        )),
-        _ => Err(OvenLegacyCargoError::Plan(
-            "compiler-suite graph has multiple src/lib.rs test bootstrap selections".to_string(),
-        )),
-    }
-}
-
 /// Return the resolved package features for one exact publisher selection.
 ///
-/// The suite receipt's feature list belongs to the root `incan` package. Reusing it for a selected workspace
-/// package makes Cargo reject legitimate roots whose package does not define root-only features such as `cli`.
-/// Cargo's unit graph already records the resolved features for every root, so preserve that package-local evidence
-/// for the one narrow invocation instead of treating the root receipt features as workspace-global.
+/// The suite receipt carries no package features of its own: the workspace root is virtual, and each member's
+/// manifest declares its defaults. Cargo's unit graph records the resolved features for every root, so preserve that
+/// package-local evidence for the one narrow invocation instead of inventing a workspace-global feature list.
 #[cfg(test)]
 pub fn compiler_suite_target_selection_features(
     graph: &CargoUnitGraph,

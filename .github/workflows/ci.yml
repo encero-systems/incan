@@ -140,8 +140,8 @@ jobs:
       # the driver, never the CLI, and the bare library is what every other consumer of the compiler sees. Both are
       # `cargo check`, not clippy — without the CLI most driver and Oven items are unreachable and warn as dead, which
       # is the shape the crate split removes rather than a defect to gate on here.
-      - name: Check the compiler library without the CLI
-        run: cargo check --no-default-features --lib
+      - name: Check the compiler ring without the toolchain ring
+        run: cargo check -p incan_driver --no-default-features
       - name: Check the language server without the CLI
         run: cargo check -p incan-lsp --no-default-features --lib --bin incan-lsp
       # The Oven ring depends on no Incan ring (`loaves/LAYOUT.md`): the `oven_*` crates must check in a workspace
@@ -997,7 +997,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/setup-rust-sccache
       - name: Build docs
-        run: cargo doc --no-deps
+        run: cargo doc --workspace --no-deps
       - name: Show sccache stats
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
