@@ -338,7 +338,7 @@ fn load_testing_marker_semantics_from_stdlib() -> Result<TestingMarkerSemantics,
 ///
 /// Uses the same source-root selection as prelude loading, typechecking, and compiled-provider publication.
 fn find_stdlib_file(relative: &str) -> Option<PathBuf> {
-    let path = oven_model::toolchain_layout::find_stdlib_source_file(relative);
+    let path = crate::provider::find_stdlib_source_file(relative);
     if path.is_none() {
         tracing::debug!(relative_path = %relative, "stdlib file not found in any search path");
     }

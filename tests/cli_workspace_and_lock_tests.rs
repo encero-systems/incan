@@ -573,7 +573,7 @@ def test_workspace_rust_dependency_is_available() -> None:
     )?;
 
     let source_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let stdlib = source_root.join("crates/incan_stdlib/stdlib");
+    let stdlib = source_root.join("loaves/stdlib");
     let toolchain_crates = source_root.join("crates");
     let incan_home = root.path().join(".incan-home");
     let provider_store = support::cold_sdk_provider_store_or(&incan_home.join("cache/providers/sdk-v2"));
@@ -1047,7 +1047,7 @@ fn workspace_lock_concurrent_publishers_leave_one_parseable_root_lock() -> Resul
         fs::write(member_root.join("src/main.incn"), "def main() -> None:\n  pass\n")?;
     }
 
-    let stdlib = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib");
+    let stdlib = Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib");
     let generated_target = support::generated_cargo_target_dir();
     let spawn_lock = |member: &str| -> Result<std::process::Child, Box<dyn std::error::Error>> {
         Ok(Command::new(incan_binary())

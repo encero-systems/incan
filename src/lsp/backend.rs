@@ -1818,7 +1818,7 @@ from std.interop import BindingDeclaration, c
 class Fixture extends BindingDeclaration:
     marker: str
 "#;
-        let interop_source = include_str!("../../crates/incan_stdlib/stdlib/interop.incn");
+        let interop_source = include_str!("../../loaves/stdlib/interop/src/interop.incn");
         let declaration_start = source
             .find("@c.binding")
             .ok_or_else(|| "expected binding declaration".to_string())?;
@@ -5287,9 +5287,10 @@ fn stdlib_navigation_path(path: &[String], provider_plan: Option<&ProviderPlan>)
         return Some(provider.artifact.as_ref()?.manifest_path.clone());
     }
 
+    // The registry spelling resolves through the active toolchain's catalog to the component that holds the file;
+    // joining it onto the compiler's own manifest directory never pointed at a source tree.
     let stub_rel = stdlib::stdlib_stub_path(path)?;
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    Some(root.join(stub_rel))
+    incan_frontend::provider::find_stdlib_source_file(&stub_rel)
 }
 
 /// Return the LSP navigation location for a stdlib import path.
@@ -8819,7 +8820,7 @@ mod completion_tests {
             "provider hover lost checked docs: {markdown}"
         );
         assert!(
-            !markdown.contains("crates/incan_stdlib/stdlib") && !markdown.contains(env!("CARGO_MANIFEST_DIR")),
+            !markdown.contains("loaves/stdlib") && !markdown.contains(env!("CARGO_MANIFEST_DIR")),
             "component-aware hover must not expose a producer-checkout path: {markdown}"
         );
         Ok(())

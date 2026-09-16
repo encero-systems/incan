@@ -180,7 +180,7 @@ fn module_meaning(path: &Path, source: &str) -> Result<BTreeMap<String, String>,
 }
 
 /// The standard-library Incan sources inside a compiler checkout.
-pub const COMPILER_STDLIB_ROOT: &str = "crates/incan_stdlib/stdlib";
+pub const COMPILER_STDLIB_ROOT: &str = "loaves/stdlib";
 
 /// The Rust roots inside a compiler checkout whose content can change a compiled standard-library component.
 ///

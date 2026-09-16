@@ -168,12 +168,13 @@ fi
 
 incan_bin="${INCAN_BIN:-target/release/incan}"
 incan_lsp_bin="${INCAN_LSP_BIN:-target/release/incan-lsp}"
-stdlib_dir="${INCAN_STDLIB_SOURCE_DIR:-crates/incan_stdlib/stdlib}"
+stdlib_dir="${INCAN_STDLIB_SOURCE_DIR:-loaves/stdlib}"
 distribution_profile="${INCAN_SDK_DISTRIBUTION_PROFILE:-full}"
 [ -x "$incan_bin" ] || fail "incan binary is not executable: $incan_bin"
 [ -x "$incan_lsp_bin" ] || fail "incan-lsp binary is not executable: $incan_lsp_bin"
-[ -d "$stdlib_dir" ] || fail "stdlib source directory does not exist: $stdlib_dir"
-[ -f "$stdlib_dir/testing.incn" ] || fail "stdlib source directory is missing testing.incn: $stdlib_dir"
+[ -d "$stdlib_dir" ] || fail "stdlib root does not exist: $stdlib_dir"
+[ -f "$stdlib_dir/sdk-components.toml" ] || fail "stdlib root is missing its component catalog: $stdlib_dir"
+[ -f "$stdlib_dir/testing/src/testing.incn" ] || fail "stdlib root is missing the testing component's source: $stdlib_dir"
 # The checkout keeps each support crate in its ring; the archive keeps them side by side under `crates/`, the layout
 # every installed toolchain and staged runtime has. This table mirrors `development_support_crate_dir` in
 # `oven_model::toolchain_layout`.
@@ -303,6 +304,25 @@ for support_crate in incan_core incan_derive incan_stdlib incan_vocab incan_web_
   support_destination="$package_dir/crates/${support_crate}"
   stage_tracked_tree "$(support_crate_source "$support_crate")" "$support_destination"
 done
+# The standard library's sources live in the ring, one component directory each; the installed toolchain keeps them
+# below the runtime crate as `crates/incan_stdlib/stdlib` with the same component layout, which is what the
+# compiler's stdlib-root policy looks for. Only what a compiler reads ships: the catalog, each component's manifest,
+# Incan sources and vocab companion. The derive crates ship as support crates, Rust facets are runtime crates, and
+# tests and READMEs stay in the repository.
+staged_stdlib_root="$package_dir/crates/incan_stdlib/stdlib"
+stage_tracked_tree "loaves/stdlib" "$staged_stdlib_root"
+rm -rf "$staged_stdlib_root/derive" "$staged_stdlib_root/README.md"
+for component_dir in "$staged_stdlib_root"/*/; do
+  rm -rf "${component_dir}rust" "${component_dir}tests" "${component_dir}README.md"
+done
+# The interop component's vocab companion names `incan_vocab` by path. In the checkout that is the kernel ring; in
+# the archive the crate sits beside the runtime crate under `crates/`, four levels up from the companion.
+staged_companion="$staged_stdlib_root/interop/vocab_companion/Cargo.toml"
+[ -f "$staged_companion" ] || fail "release package is missing the interop vocab companion manifest"
+sed -i.bak 's|incan_vocab = { path = "../../../kernel/incan_vocab" }|incan_vocab = { path = "../../../../incan_vocab" }|' "$staged_companion" \
+  && rm -f "$staged_companion.bak"
+grep -q 'path = "../../../../incan_vocab"' "$staged_companion" \
+  || fail "release package's interop vocab companion does not name the archived incan_vocab crate"
 if [ -z "${INCAN_SDK_PROVIDER_SEED_DIR:-}" ]; then
   release_provider_store="$package_dir/share/incan"
 fi
@@ -515,9 +535,11 @@ rm -f "$package_dir/share/incan/.incan.lock"
 # Oven Loafs contain generated Rust/runtime artifacts, but source imports, test discovery, and metadata inspection
 # still require these checked `.incn` declarations. Keep the versioned bundle beside its support crate rather than
 # restoring the obsolete top-level `stdlib/` layout.
-[ -f "$package_dir/crates/incan_stdlib/stdlib/prelude.incn" ] \
+[ -f "$package_dir/crates/incan_stdlib/stdlib/sdk-components.toml" ] \
+  || fail "release package is missing the built-in stdlib component catalog"
+[ -f "$package_dir/crates/incan_stdlib/stdlib/core/src/prelude.incn" ] \
   || fail "release package is missing the built-in stdlib prelude source"
-[ -f "$package_dir/crates/incan_stdlib/stdlib/testing.incn" ] \
+[ -f "$package_dir/crates/incan_stdlib/stdlib/testing/src/testing.incn" ] \
   || fail "release package is missing the built-in stdlib testing source"
 [ ! -d "$package_dir/stdlib" ] || fail "legacy top-level stdlib source unexpectedly entered the package"
 

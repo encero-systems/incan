@@ -18,6 +18,6 @@ The Incan standard library as SDK components, one directory per component, each 
 | `testing/` | `std.testing` | no runtime crates |
 | `derive/` | — | host proc-macro crates `incan_derive` and `incan_web_macros` |
 
-Today: `crates/incan_stdlib/stdlib/components/` holds the Incan source per component, and `crates/incan_stdlib/src/` holds all runtime bridges in one feature-gated crate. Here the bridge moves next to the source it serves, so runtime-dependency attribution can follow the component (or the symbol) instead of the whole `std.<module>`.
+Each component directory holds its Incan sources under `src/` — the `.incn` modules for the namespace roots `sdk-components.toml` assigns it, resolved by the compiler through that catalog — and `crates/incan_stdlib/src/` still holds every runtime bridge in one feature-gated crate until each component's `rust/` facet takes its share. Then the bridge sits next to the source it serves, so runtime-dependency attribution can follow the component (or the symbol) instead of the whole `std.<module>`.
 
 See [`LAYOUT.md`](../LAYOUT.md).

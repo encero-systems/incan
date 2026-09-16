@@ -1,11 +1,11 @@
 # Generated Rust stdlib coverage inventory
 
-This inventory tracks generated Rust coverage for every `crates/incan_stdlib/stdlib/**/*.incn` source module. It is a maintenance aid for deciding where generated stdlib Rust needs stronger tests; it is not a claim that the runtime behavior of every exported API is exhaustively covered.
+This inventory tracks generated Rust coverage for every `loaves/stdlib/**/*.incn` source module. It is a maintenance aid for deciding where generated stdlib Rust needs stronger tests; it is not a claim that the runtime behavior of every exported API is exhaustively covered.
 
 Generated from repo inspection on 2026-05-20 with:
 
 ```sh
-rg --files crates/incan_stdlib/stdlib | rg '\.incn$'
+rg --files loaves/stdlib | rg '\.incn$'
 rg -n 'std_|from std\.|import std' tests tests/codegen_snapshots crates/incan_stdlib/tests
 ```
 

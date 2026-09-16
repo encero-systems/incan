@@ -94,7 +94,7 @@ fn std_collections_namespace_declares_its_runtime_feature_without_extra_crates()
 
 #[test]
 fn std_collections_source_has_no_rust_backed_dispatch_markers_when_present() {
-    let source_path = std::path::Path::new("crates/incan_stdlib/stdlib/collections.incn");
+    let source_path = std::path::Path::new("loaves/stdlib/data/src/collections.incn");
     let Ok(source) = std::fs::read_to_string(source_path) else {
         // The stdlib-source worker owns this file. This guard starts checking it once their slice is integrated.
         return;
@@ -110,7 +110,7 @@ fn std_collections_source_has_no_rust_backed_dispatch_markers_when_present() {
 
 #[test]
 fn std_encoding_source_stays_incan_authored_without_rust_externs() {
-    let source_root = std::path::Path::new("crates/incan_stdlib/stdlib/encoding");
+    let source_root = std::path::Path::new("loaves/stdlib/codecs/src/encoding");
     let Ok(entries) = std::fs::read_dir(source_root) else {
         return;
     };
@@ -145,7 +145,7 @@ fn std_uuid_namespace_stays_source_stdlib_only() {
         "std.uuid crate dependencies should stay limited to source-visible Rust imports"
     );
 
-    let source_path = std::path::Path::new("crates/incan_stdlib/stdlib/uuid.incn");
+    let source_path = std::path::Path::new("loaves/stdlib/data/src/uuid.incn");
     let source = std::fs::read_to_string(source_path).expect("std.uuid source should exist");
     for dep in ns.extra_crate_deps {
         let import_prefix = format!("from rust::{}", dep.crate_name);
@@ -172,7 +172,7 @@ fn std_uuid_namespace_stays_source_stdlib_only() {
 
 #[test]
 fn std_uuid_source_has_no_rust_backed_type_markers() {
-    let source_path = std::path::Path::new("crates/incan_stdlib/stdlib/uuid.incn");
+    let source_path = std::path::Path::new("loaves/stdlib/data/src/uuid.incn");
     let Ok(source) = std::fs::read_to_string(source_path) else {
         panic!("std.uuid source should exist");
     };
@@ -188,10 +188,10 @@ fn std_uuid_source_has_no_rust_backed_type_markers() {
 #[test]
 fn std_regex_keeps_behavior_in_incan_source() {
     let source_paths = [
-        "crates/incan_stdlib/stdlib/regex/prelude.incn",
-        "crates/incan_stdlib/stdlib/regex/_core.incn",
-        "crates/incan_stdlib/stdlib/regex/types.incn",
-        "crates/incan_stdlib/stdlib/regex/_replacement.incn",
+        "loaves/stdlib/data/src/regex/prelude.incn",
+        "loaves/stdlib/data/src/regex/_core.incn",
+        "loaves/stdlib/data/src/regex/types.incn",
+        "loaves/stdlib/data/src/regex/_replacement.incn",
     ];
     let mut source = String::new();
     for source_path in source_paths {

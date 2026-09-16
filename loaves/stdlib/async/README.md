@@ -1,6 +1,6 @@
 # `stdlib/async`
 
-SDK component `stdlib-async` (today `crates/incan_stdlib/stdlib/components/stdlib-async`).
+SDK component `stdlib-async`; its Incan sources live in `src/` beside this file.
 
 Namespace roots: `std.async`
 

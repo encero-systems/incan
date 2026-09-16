@@ -5074,7 +5074,7 @@ def main() -> None:
             .env("CARGO_NET_OFFLINE", "true")
             .env(
                 "INCAN_STDLIB",
-                format!("{}/crates/incan_stdlib/stdlib", env!("CARGO_MANIFEST_DIR")),
+                format!("{}/loaves/stdlib", env!("CARGO_MANIFEST_DIR")),
             )
             .output()?;
         assert!(
@@ -7608,7 +7608,7 @@ pub def selected_value() -> str:
             .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
             .env(
                 "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
             )
             .env_remove("INCAN_STDLIB_DIR")
             .env("CARGO_NET_OFFLINE", "true")
@@ -7670,7 +7670,7 @@ pub def registered_columns() -> str:
             .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
             .env(
                 "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
             )
             .env_remove("INCAN_STDLIB_DIR")
             .env("CARGO_NET_OFFLINE", "true")
@@ -8175,7 +8175,7 @@ async def main() -> None:
             .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
             .env(
                 "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
             )
             .env_remove("INCAN_STDLIB_DIR")
             .env("CARGO_NET_OFFLINE", "true")
@@ -8202,7 +8202,7 @@ async def main() -> None:
             .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
             .env(
                 "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
             )
             .env_remove("INCAN_STDLIB_DIR")
             .env("CARGO_NET_OFFLINE", "true")
@@ -8229,7 +8229,7 @@ async def main() -> None:
             .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
             .env(
                 "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
             )
             .env_remove("INCAN_STDLIB_DIR")
             .env("CARGO_NET_OFFLINE", "true")
@@ -8406,7 +8406,7 @@ async def main() -> None:
             .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
             .env(
                 "INCAN_STDLIB",
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
             )
             .env_remove("INCAN_STDLIB_DIR")
             .env("INCAN_HOME", &oven_home)
@@ -9331,12 +9331,10 @@ def main() -> None:
 
     #[test]
     fn test_std_datetime_surface_runs_with_std_time_runtime_boundary() -> Result<(), Box<dyn std::error::Error>> {
-        let runtime_source = std::fs::read_to_string("crates/incan_stdlib/stdlib/datetime/runtime.incn")?;
+        let runtime_source = std::fs::read_to_string("loaves/stdlib/data/src/datetime/runtime.incn")?;
         let mut civil_sources = Vec::new();
-        civil_sources.push(std::fs::read_to_string(
-            "crates/incan_stdlib/stdlib/datetime/civil.incn",
-        )?);
-        for entry in std::fs::read_dir("crates/incan_stdlib/stdlib/datetime/civil")? {
+        civil_sources.push(std::fs::read_to_string("loaves/stdlib/data/src/datetime/civil.incn")?);
+        for entry in std::fs::read_dir("loaves/stdlib/data/src/datetime/civil")? {
             let entry = entry?;
             if entry.path().extension().is_some_and(|extension| extension == "incn") {
                 civil_sources.push(std::fs::read_to_string(entry.path())?);

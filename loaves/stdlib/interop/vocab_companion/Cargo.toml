@@ -8,6 +8,6 @@ path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-incan_vocab = { path = "../../../../../../loaves/kernel/incan_vocab" }
+incan_vocab = { path = "../../../kernel/incan_vocab" }
 
 [workspace]

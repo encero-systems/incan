@@ -32,7 +32,7 @@ use incan_ir::decl::{IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier, Visi
 use incan_ir::expr::{IrDictEntry, IrExprKind, IrListEntry};
 use incan_ir::types::IrType;
 
-const ZEN_TEXT: &str = include_str!("../../../../../../crates/incan_stdlib/stdlib/zen.txt");
+const ZEN_TEXT: &str = include_str!("../../../../../../loaves/stdlib/zen.txt");
 
 /// Join a slice of `TokenStream` path segments with `::` separators.
 pub(in crate::emit) fn join_path_tokens(segments: &[TokenStream]) -> TokenStream {

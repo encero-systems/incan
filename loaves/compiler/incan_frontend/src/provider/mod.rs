@@ -6,10 +6,12 @@ pub mod error;
 mod features;
 mod plan;
 mod sdk;
+pub mod stdlib_sources;
 
 pub use features::*;
 pub use plan::*;
 pub use sdk::*;
+pub use stdlib_sources::{StdlibSources, find_stdlib_root, find_stdlib_source_file};
 
 /// Internal marker set only while the toolchain bootstraps one official SDK provider from Incan source.
 pub const SDK_PROVIDER_BUILD_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_BUILD";

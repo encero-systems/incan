@@ -188,7 +188,7 @@ The CLI uses clap with derive macros. Commands return `CliResult<ExitCode>` inst
 
 ### Prelude Status
 
-The stdlib surface now compiles through the normal pipeline under `crates/incan_stdlib/stdlib/`. Source declarations are the primary contract for `std.*` modules, including the prelude-facing trait definitions. Some behavior is still realized by backend lowering or runtime bridges (for example derive-backed Rust traits and host-backed stdlib leaves), but the compiler no longer treats the stdlib as documentation-only stubs.
+The stdlib surface now compiles through the normal pipeline under `loaves/stdlib/`. Source declarations are the primary contract for `std.*` modules, including the prelude-facing trait definitions. Some behavior is still realized by backend lowering or runtime bridges (for example derive-backed Rust traits and host-backed stdlib leaves), but the compiler no longer treats the stdlib as documentation-only stubs.
 
 ### Property-Based Testing
 

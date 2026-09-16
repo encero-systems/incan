@@ -1252,7 +1252,7 @@ exclude-components = ["stdlib-data"]
     #[test]
     fn source_catalog_assigns_hashing_to_data_without_a_private_codecs_edge() -> TestResult {
         let path = oven_model::toolchain_layout::development_root()
-            .join("crates/incan_stdlib/stdlib")
+            .join("loaves/stdlib")
             .join(SDK_SOURCE_CATALOG_FILE);
         let catalog = SdkSourceCatalog::read_from_path(&path)?;
         let data = catalog
@@ -1280,7 +1280,7 @@ exclude-components = ["stdlib-data"]
     #[test]
     fn source_catalog_rejects_an_incompatible_compiler_before_provider_builds() -> TestResult {
         let path = oven_model::toolchain_layout::development_root()
-            .join("crates/incan_stdlib/stdlib")
+            .join("loaves/stdlib")
             .join(SDK_SOURCE_CATALOG_FILE);
         let mut catalog = SdkSourceCatalog::read_from_path(&path)?;
         catalog.compiler_requirement = ">=0.6.0".to_string();

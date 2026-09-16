@@ -2144,7 +2144,7 @@ fn test_web_route_extractors_codegen() {
 
 #[test]
 fn test_std_web_routing_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/web/routing.incn";
+    let path = "loaves/stdlib/web/src/web/routing.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5157,7 +5157,7 @@ pub class App:
 /// RFC 023 Phase 5: compile the real `std.testing` module source.
 #[test]
 fn test_std_testing_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/testing.incn";
+    let path = "loaves/stdlib/testing/src/testing.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5168,7 +5168,7 @@ fn test_std_testing_compiled_codegen() {
 /// RFC 041 / Phase E: compile `std.async.task` from `.incn` source.
 #[test]
 fn test_std_async_task_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/async/task.incn";
+    let path = "loaves/stdlib/async/src/async/task.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5179,7 +5179,7 @@ fn test_std_async_task_compiled_codegen() {
 /// RFC 041 / Phase E: compile `std.async.time` from `.incn` source.
 #[test]
 fn test_std_async_time_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/async/time.incn";
+    let path = "loaves/stdlib/async/src/async/time.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5190,7 +5190,7 @@ fn test_std_async_time_compiled_codegen() {
 /// Compile `std.async.channel` from `.incn` source.
 #[test]
 fn test_std_async_channel_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/async/channel.incn";
+    let path = "loaves/stdlib/async/src/async/channel.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5201,7 +5201,7 @@ fn test_std_async_channel_compiled_codegen() {
 /// Compile `std.async.sync` from `.incn` source.
 #[test]
 fn test_std_async_sync_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/async/sync.incn";
+    let path = "loaves/stdlib/async/src/async/sync.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5212,7 +5212,7 @@ fn test_std_async_sync_compiled_codegen() {
 /// Compile `std.async.race` from `.incn` source.
 #[test]
 fn test_std_async_race_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/async/race.incn";
+    let path = "loaves/stdlib/async/src/async/race.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5271,7 +5271,7 @@ pub async def wait_for(box: TaskBox[int]) -> Result[int, TaskJoinError]:
 /// `__ge__`) compile through the full pipeline without a fake `rust.module()` boundary.
 #[test]
 fn test_std_derives_comparison_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/derives/comparison.incn";
+    let path = "loaves/stdlib/core/src/derives/comparison.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5282,7 +5282,7 @@ fn test_std_derives_comparison_compiled_codegen() {
 /// compile `std.derives.copying` (Clone, Copy, Default) from `.incn` source.
 #[test]
 fn test_std_derives_copying_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/derives/copying.incn";
+    let path = "loaves/stdlib/core/src/derives/copying.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5293,7 +5293,7 @@ fn test_std_derives_copying_compiled_codegen() {
 /// compile `std.derives.string` (Debug, Display) from `.incn` source.
 #[test]
 fn test_std_derives_string_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/derives/string.incn";
+    let path = "loaves/stdlib/core/src/derives/string.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5304,7 +5304,7 @@ fn test_std_derives_string_compiled_codegen() {
 /// compile `std.derives.collection` (collection/iterator protocols and adapters) from `.incn` source.
 #[test]
 fn test_std_derives_collection_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/derives/collection.incn";
+    let path = "loaves/stdlib/core/src/derives/collection.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5330,7 +5330,7 @@ fn test_std_derives_collection_compiled_codegen() {
 /// is in IncanSource mode.
 #[test]
 fn test_std_serde_json_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/serde/json.incn";
+    let path = "loaves/stdlib/data/src/serde/json.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5400,7 +5400,7 @@ fn test_std_registry_type_token_codegen() {
 /// RFC 047: compile `std.graph` declarations from `.incn` source.
 #[test]
 fn test_std_graph_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/graph.incn";
+    let path = "loaves/stdlib/data/src/graph.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5412,17 +5412,17 @@ fn test_std_graph_compiled_codegen() {
 #[test]
 fn test_std_compression_modules_compile_codegen() -> Result<(), Box<dyn std::error::Error>> {
     let paths = [
-        "crates/incan_stdlib/stdlib/compression/prelude.incn",
-        "crates/incan_stdlib/stdlib/compression/_core.incn",
-        "crates/incan_stdlib/stdlib/compression/_auto.incn",
-        "crates/incan_stdlib/stdlib/compression/gzip.incn",
-        "crates/incan_stdlib/stdlib/compression/zlib.incn",
-        "crates/incan_stdlib/stdlib/compression/deflate.incn",
-        "crates/incan_stdlib/stdlib/compression/zstd.incn",
-        "crates/incan_stdlib/stdlib/compression/bz2.incn",
-        "crates/incan_stdlib/stdlib/compression/lzma.incn",
-        "crates/incan_stdlib/stdlib/compression/snappy.incn",
-        "crates/incan_stdlib/stdlib/compression/snappy/raw.incn",
+        "loaves/stdlib/compression/src/compression/prelude.incn",
+        "loaves/stdlib/compression/src/compression/_core.incn",
+        "loaves/stdlib/compression/src/compression/_auto.incn",
+        "loaves/stdlib/compression/src/compression/gzip.incn",
+        "loaves/stdlib/compression/src/compression/zlib.incn",
+        "loaves/stdlib/compression/src/compression/deflate.incn",
+        "loaves/stdlib/compression/src/compression/zstd.incn",
+        "loaves/stdlib/compression/src/compression/bz2.incn",
+        "loaves/stdlib/compression/src/compression/lzma.incn",
+        "loaves/stdlib/compression/src/compression/snappy.incn",
+        "loaves/stdlib/compression/src/compression/snappy/raw.incn",
     ];
 
     for path in paths {
@@ -5464,7 +5464,7 @@ fn test_std_graph_import_codegen() {
 /// RFC 060: compile `std.uuid` declarations from `.incn` source.
 #[test]
 fn test_std_uuid_compiled_codegen() -> Result<(), Box<dyn std::error::Error>> {
-    let path = "crates/incan_stdlib/stdlib/uuid.incn";
+    let path = "loaves/stdlib/data/src/uuid.incn";
     let source = fs::read_to_string(path)?;
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
@@ -5947,7 +5947,7 @@ def main() -> None:
 
 #[test]
 fn test_std_traits_ops_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/traits/ops.incn";
+    let path = "loaves/stdlib/core/src/traits/ops.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5957,7 +5957,7 @@ fn test_std_traits_ops_compiled_codegen() {
 
 #[test]
 fn test_std_traits_error_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/traits/error.incn";
+    let path = "loaves/stdlib/core/src/traits/error.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5967,7 +5967,7 @@ fn test_std_traits_error_compiled_codegen() {
 
 #[test]
 fn test_std_traits_indexing_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/traits/indexing.incn";
+    let path = "loaves/stdlib/core/src/traits/indexing.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5977,7 +5977,7 @@ fn test_std_traits_indexing_compiled_codegen() {
 
 #[test]
 fn test_std_traits_callable_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/traits/callable.incn";
+    let path = "loaves/stdlib/core/src/traits/callable.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5987,7 +5987,7 @@ fn test_std_traits_callable_compiled_codegen() {
 
 #[test]
 fn test_std_traits_prelude_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/traits/prelude.incn";
+    let path = "loaves/stdlib/core/src/traits/prelude.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -5997,7 +5997,7 @@ fn test_std_traits_prelude_compiled_codegen() {
 
 #[test]
 fn test_std_traits_convert_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/traits/convert.incn";
+    let path = "loaves/stdlib/core/src/traits/convert.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
@@ -6096,7 +6096,7 @@ fn test_trait_bound_explicit_codegen() {
 #[test]
 fn test_ordinal_key_builtin_impls_codegen() -> TestResult {
     let source = load_test_file("ordinal_key_builtin_impls");
-    let collections_source = fs::read_to_string("crates/incan_stdlib/stdlib/collections.incn")?;
+    let collections_source = fs::read_to_string("loaves/stdlib/data/src/collections.incn")?;
     let collections_ast = parse_incan_program(&collections_source, "std.collections metadata");
     let main_ast = parse_incan_program(&source, "ordinal key bridge fixture");
     let mut codegen = codegen_with_builtin_stdlib_inventory();

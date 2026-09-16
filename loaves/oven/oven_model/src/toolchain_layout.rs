@@ -373,13 +373,18 @@ pub fn executable_search_bases_for(exe_path: &Path) -> Vec<PathBuf> {
     bases
 }
 
-/// Return the built-in stdlib source directory selected for the active toolchain.
+/// The name of the component catalog that marks a standard-library root.
+pub const STDLIB_CATALOG_FILE: &str = "sdk-components.toml";
+
+/// Return the standard-library root selected for the active toolchain: the directory holding the component
+/// catalog and the component directories (`loaves/stdlib` in a checkout, the shipped copy in an installation).
 ///
 /// `INCAN_STDLIB` and `INCAN_STDLIB_DIR` are explicit overrides and therefore take precedence over every
 /// auto-detected development or installed layout. Keeping this policy here ensures parsing, typechecking, testing
-/// metadata, and compiled-provider publication cannot silently select different stdlib source trees.
-pub fn find_stdlib_source_dir() -> Option<PathBuf> {
-    find_stdlib_source_dir_in(StdlibSearchPaths {
+/// metadata, and compiled-provider publication cannot silently select different stdlib source trees. Which component
+/// holds which module is the catalog's business, read by the compiler ring; this policy only finds the root.
+pub fn find_stdlib_root() -> Option<PathBuf> {
+    find_stdlib_root_in(StdlibSearchPaths {
         override_roots: [env::var_os("INCAN_STDLIB"), env::var_os("INCAN_STDLIB_DIR")]
             .into_iter()
             .flatten()
@@ -398,54 +403,40 @@ pub fn find_stdlib_source_dir() -> Option<PathBuf> {
     })
 }
 
-/// Resolve one `stdlib/...` source path through the active toolchain's canonical stdlib root.
-pub fn find_stdlib_source_file(relative_path: &str) -> Option<PathBuf> {
-    stdlib_source_file_from_dir(&find_stdlib_source_dir()?, relative_path)
-}
-
-/// Resolve a source path relative to an already selected stdlib directory.
-fn stdlib_source_file_from_dir(stdlib_dir: &Path, relative_path: &str) -> Option<PathBuf> {
-    let relative_path = Path::new(relative_path)
-        .strip_prefix("stdlib")
-        .unwrap_or_else(|_| Path::new(relative_path));
-    let path = stdlib_dir.join(relative_path);
-    path.is_file().then_some(path)
-}
-
-/// Apply the canonical stdlib source search order to injected, testable path inputs.
-fn find_stdlib_source_dir_in(paths: StdlibSearchPaths) -> Option<PathBuf> {
+/// Apply the canonical stdlib root search order to injected, testable path inputs.
+fn find_stdlib_root_in(paths: StdlibSearchPaths) -> Option<PathBuf> {
     for root in paths.override_roots {
-        if let Some(stdlib) = stdlib_source_dir_from_root(&root) {
+        if let Some(stdlib) = stdlib_root_from_override(&root) {
             return Some(stdlib);
         }
     }
 
-    // `incan build --lib` is valid from the built-in stdlib root itself. Recognize that layout before the compiler's
-    // build workspace so source imports resolve inside the stdlib being built.
+    // `incan build --lib` is valid from a built-in stdlib component itself. Recognize that layout before the
+    // compiler's build workspace so source imports resolve inside the stdlib being built.
     if let Some(current_dir) = paths.current_dir.as_deref()
-        && is_builtin_stdlib_source_dir(current_dir)
+        && let Some(stdlib) = stdlib_root_of_component_dir(current_dir)
     {
-        return Some(current_dir.to_path_buf());
+        return Some(stdlib);
     }
 
-    if let Some(stdlib) = stdlib_source_dir_from_development_root(&paths.development_root) {
+    if let Some(stdlib) = stdlib_root_from_development_root(&paths.development_root) {
         return Some(stdlib);
     }
 
     if let Some(current_dir) = paths.current_dir.as_deref()
-        && let Some(stdlib) = stdlib_source_dir_from_development_root(current_dir)
+        && let Some(stdlib) = stdlib_root_from_development_root(current_dir)
     {
         return Some(stdlib);
     }
 
     for base in paths.executable_bases {
-        if let Some(stdlib) = stdlib_source_dir_from_development_root(&base) {
+        if let Some(stdlib) = stdlib_root_from_development_root(&base) {
             return Some(stdlib);
         }
     }
 
     for root in paths.installed_roots {
-        if let Some(stdlib) = stdlib_source_dir_from_root(&root) {
+        if let Some(stdlib) = stdlib_root_from_override(&root) {
             return Some(stdlib);
         }
     }
@@ -454,27 +445,44 @@ fn find_stdlib_source_dir_in(paths: StdlibSearchPaths) -> Option<PathBuf> {
 }
 
 /// Resolve the stdlib beneath a repository, crate, or installed toolchain root.
-fn stdlib_source_dir_from_development_root(root: &Path) -> Option<PathBuf> {
-    [root.join("crates/incan_stdlib/stdlib"), root.join("stdlib")]
-        .into_iter()
-        .find(|candidate| candidate.is_dir())
+/// A stdlib root is the directory that holds the component catalog.
+fn is_stdlib_root(path: &Path) -> bool {
+    path.join(STDLIB_CATALOG_FILE).is_file()
+}
+
+/// The stdlib root below a checkout, an installed toolchain, or an executable base: the ring directory in a
+/// checkout, `crates/incan_stdlib/stdlib` or `stdlib` in an installation.
+fn stdlib_root_from_development_root(root: &Path) -> Option<PathBuf> {
+    [
+        root.join("loaves/stdlib"),
+        root.join("crates/incan_stdlib/stdlib"),
+        root.join("stdlib"),
+    ]
+    .into_iter()
+    .find(|candidate| is_stdlib_root(candidate))
 }
 
 /// Resolve either a direct stdlib directory or a toolchain/crate root containing `stdlib/`.
-fn stdlib_source_dir_from_root(root: &Path) -> Option<PathBuf> {
+/// An override or installed root names the stdlib root itself or the directory holding a `stdlib/` root.
+fn stdlib_root_from_override(root: &Path) -> Option<PathBuf> {
     if !root.is_dir() {
         return None;
     }
-    let nested = root.join("stdlib");
-    if nested.is_dir() {
-        return Some(nested);
+    if is_stdlib_root(root) {
+        return Some(root.to_path_buf());
     }
-    Some(root.to_path_buf())
+    let nested = root.join("stdlib");
+    is_stdlib_root(&nested).then_some(nested)
 }
 
 /// Return whether `path` is the Incan built-in stdlib source root itself.
-fn is_builtin_stdlib_source_dir(path: &Path) -> bool {
-    path.is_dir() && path.join("loaf.toml").is_file() && path.join("prelude.incn").is_file()
+/// The stdlib root above a built-in component directory: a project (`loaf.toml`) whose parent holds the catalog.
+fn stdlib_root_of_component_dir(path: &Path) -> Option<PathBuf> {
+    if !path.join("loaf.toml").is_file() {
+        return None;
+    }
+    let parent = path.parent()?;
+    is_stdlib_root(parent).then(|| parent.to_path_buf())
 }
 
 /// Append `exe_path`'s directory, parent, and grandparent to `bases`.
@@ -513,9 +521,9 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        StdlibSearchPaths, ToolchainPathSearchPaths, compiler_owned_oven_data_root_in, executable_search_bases_for,
-        external_toolchain_crates_override, find_stdlib_source_dir_in, resolve_toolchain_data_path_in,
-        resolve_toolchain_relative_path_in, scheduler_toolchain_data_root, stdlib_source_file_from_dir,
+        STDLIB_CATALOG_FILE, StdlibSearchPaths, ToolchainPathSearchPaths, compiler_owned_oven_data_root_in,
+        executable_search_bases_for, external_toolchain_crates_override, find_stdlib_root_in,
+        resolve_toolchain_data_path_in, resolve_toolchain_relative_path_in, scheduler_toolchain_data_root,
         validated_sdk_runtime_root,
     };
 
@@ -551,13 +559,14 @@ mod tests {
         let executable_root = tmp.path().join("old-toolchain");
         for path in [
             explicit.clone(),
-            development_root.join("crates/incan_stdlib/stdlib"),
+            development_root.join("loaves/stdlib"),
             executable_root.join("stdlib"),
         ] {
-            fs::create_dir_all(path)?;
+            fs::create_dir_all(&path)?;
+            fs::write(path.join(STDLIB_CATALOG_FILE), "[sdk]\n")?;
         }
 
-        let found = find_stdlib_source_dir_in(StdlibSearchPaths {
+        let found = find_stdlib_root_in(StdlibSearchPaths {
             override_roots: vec![explicit.clone()],
             development_root,
             current_dir: None,
@@ -571,26 +580,54 @@ mod tests {
     }
 
     #[test]
-    fn stdlib_source_build_uses_the_current_stdlib_root() -> Result<(), Box<dyn std::error::Error>> {
+    fn a_checkout_keeps_its_stdlib_root_in_the_ring_directory() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let current_stdlib = tmp.path().join("checked-out-stdlib");
-        fs::create_dir_all(&current_stdlib)?;
-        fs::write(
-            current_stdlib.join("loaf.toml"),
-            "[project]\nname = \"incan_builtin_stdlib\"\n",
-        )?;
-        fs::write(current_stdlib.join("prelude.incn"), "")?;
-        let development_root = tmp.path().join("compiler-source");
-        fs::create_dir_all(development_root.join("crates/incan_stdlib/stdlib"))?;
+        let development_root = tmp.path().join("development");
+        for relative in ["loaves/stdlib", "crates/incan_stdlib/stdlib"] {
+            let path = development_root.join(relative);
+            fs::create_dir_all(&path)?;
+            fs::write(path.join(STDLIB_CATALOG_FILE), "[sdk]\n")?;
+        }
+        // A directory without the catalog is not a root, whatever it is called.
+        fs::create_dir_all(development_root.join("stdlib"))?;
 
-        let found = find_stdlib_source_dir_in(StdlibSearchPaths {
+        let found = find_stdlib_root_in(StdlibSearchPaths {
             override_roots: Vec::new(),
-            development_root,
-            current_dir: Some(current_stdlib.clone()),
+            development_root: development_root.clone(),
+            current_dir: None,
             executable_bases: Vec::new(),
             installed_roots: Vec::new(),
         })
-        .ok_or("expected the current built-in stdlib source root")?;
+        .ok_or("expected the checkout's stdlib root")?;
+
+        assert_eq!(found, development_root.join("loaves/stdlib"));
+        Ok(())
+    }
+
+    #[test]
+    fn stdlib_component_build_uses_the_root_above_the_component() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let current_stdlib = tmp.path().join("checked-out-stdlib");
+        let component = current_stdlib.join("core");
+        fs::create_dir_all(component.join("src"))?;
+        fs::write(current_stdlib.join(STDLIB_CATALOG_FILE), "[sdk]\n")?;
+        fs::write(component.join("loaf.toml"), "[project]\nname = \"incan_stdlib_core\"\n")?;
+        fs::write(component.join("src/prelude.incn"), "")?;
+        let development_root = tmp.path().join("compiler-source");
+        fs::create_dir_all(development_root.join("loaves/stdlib"))?;
+        fs::write(
+            development_root.join("loaves/stdlib").join(STDLIB_CATALOG_FILE),
+            "[sdk]\n",
+        )?;
+
+        let found = find_stdlib_root_in(StdlibSearchPaths {
+            override_roots: Vec::new(),
+            development_root,
+            current_dir: Some(component),
+            executable_bases: Vec::new(),
+            installed_roots: Vec::new(),
+        })
+        .ok_or("expected the current built-in stdlib root")?;
 
         assert_eq!(found, current_stdlib);
         Ok(())
@@ -729,14 +766,14 @@ mod tests {
     }
 
     #[test]
-    fn installed_root_and_stdlib_relative_file_resolve_to_one_source_tree() -> Result<(), Box<dyn std::error::Error>> {
+    fn an_installed_root_holds_its_stdlib_root_below_it() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let installed_root = tmp.path().join("installed-toolchain");
         let installed_stdlib = installed_root.join("stdlib");
         fs::create_dir_all(&installed_stdlib)?;
-        fs::write(installed_stdlib.join("testing.incn"), "")?;
+        fs::write(installed_stdlib.join(STDLIB_CATALOG_FILE), "[sdk]\n")?;
 
-        let found = find_stdlib_source_dir_in(StdlibSearchPaths {
+        let found = find_stdlib_root_in(StdlibSearchPaths {
             override_roots: Vec::new(),
             development_root: tmp.path().join("absent-development-root"),
             current_dir: None,
@@ -744,11 +781,8 @@ mod tests {
             installed_roots: vec![installed_root],
         })
         .ok_or("expected an installed stdlib source root")?;
-        let source = stdlib_source_file_from_dir(&found, "stdlib/testing.incn")
-            .ok_or("expected stdlib-relative source lookup")?;
 
         assert_eq!(found, installed_stdlib);
-        assert_eq!(source, installed_stdlib.join("testing.incn"));
         Ok(())
     }
 

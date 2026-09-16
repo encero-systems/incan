@@ -3450,7 +3450,7 @@ fn a_tuple_for_pattern_over_an_unconstrained_type_variable_is_a_type_error() -> 
 
 #[test]
 fn a_tuple_for_pattern_over_type_variable_elements_still_binds() -> Result<(), Box<dyn std::error::Error>> {
-    // The shape `crates/incan_stdlib/stdlib/collections.incn` actually uses: the *item* is a tuple, and only
+    // The shape `loaves/stdlib/data/src/collections.incn` actually uses: the *item* is a tuple, and only
     // its elements are type variables. Rejecting bare type variables must not catch this too.
     let source = "def keys[K, V](items: list[Tuple[K, V]]) -> int:\n  mut n = 0\n  for key, value in items:\n    n = n + 1\n  return n\n";
     let module = build(source, &["m", "typevar_elements_for"])?;

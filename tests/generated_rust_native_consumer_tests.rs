@@ -21,7 +21,7 @@ fn incan_binary() -> PathBuf {
 
 fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
     let source_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let stdlib_root = source_root.join("crates/incan_stdlib/stdlib");
+    let stdlib_root = source_root.join("loaves/stdlib");
     let stored_suite = std::env::var_os(compiler_suite_env::OVEN_COMPILER_SUITE_CAPABILITY_ENV).is_some();
     let mut command = Command::new(incan_binary());
     command

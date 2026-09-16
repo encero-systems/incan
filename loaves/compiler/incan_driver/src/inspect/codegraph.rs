@@ -3925,7 +3925,7 @@ class Accelerate extends BindingDeclaration:
 "#;
         let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
         let ast = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
-        let interop_source = include_str!("../../../../../crates/incan_stdlib/stdlib/interop.incn");
+        let interop_source = include_str!("../../../../../loaves/stdlib/interop/src/interop.incn");
         let interop_tokens =
             lexer::lex(interop_source).map_err(|errors| format!("interop lexer failed: {errors:?}"))?;
         let interop = parser::parse(&interop_tokens).map_err(|errors| format!("interop parser failed: {errors:?}"))?;

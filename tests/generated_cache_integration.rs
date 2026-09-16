@@ -25,11 +25,11 @@ fn configured_incan_command_with_binary(binary: PathBuf, project_root: &Path, in
         .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
         .env(
             "INCAN_STDLIB",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
         )
         .env(
             "INCAN_STDLIB_DIR",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
         )
         .env("CARGO_NET_OFFLINE", "true");
     if !support::oven_compiler_suite_is_active() {

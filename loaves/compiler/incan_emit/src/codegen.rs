@@ -5074,10 +5074,10 @@ def main() -> None:
   return
 "#,
         )?;
-        let testing_module = read_stdlib_program("crates/incan_stdlib/stdlib/testing.incn")?;
-        let async_task_module = read_stdlib_program("crates/incan_stdlib/stdlib/async/task.incn")?;
-        let async_time_module = read_stdlib_program("crates/incan_stdlib/stdlib/async/time.incn")?;
-        let traits_error_module = read_stdlib_program("crates/incan_stdlib/stdlib/traits/error.incn")?;
+        let testing_module = read_stdlib_program("loaves/stdlib/testing/src/testing.incn")?;
+        let async_task_module = read_stdlib_program("loaves/stdlib/async/src/async/task.incn")?;
+        let async_time_module = read_stdlib_program("loaves/stdlib/async/src/async/time.incn")?;
+        let traits_error_module = read_stdlib_program("loaves/stdlib/core/src/traits/error.incn")?;
 
         let testing_path = vec!["__incan_std".to_string(), "testing".to_string()];
         let async_task_path = vec!["__incan_std".to_string(), "async".to_string(), "task".to_string()];
@@ -5129,8 +5129,8 @@ def main() -> None:
   return
 "#,
         )?;
-        let io_module = read_stdlib_program("crates/incan_stdlib/stdlib/io.incn")?;
-        let traits_error_module = read_stdlib_program("crates/incan_stdlib/stdlib/traits/error.incn")?;
+        let io_module = read_stdlib_program("loaves/stdlib/system/src/io.incn")?;
+        let traits_error_module = read_stdlib_program("loaves/stdlib/core/src/traits/error.incn")?;
 
         let io_path = vec!["__incan_std".to_string(), "io".to_string()];
         let traits_error_path = vec!["__incan_std".to_string(), "traits".to_string(), "error".to_string()];
@@ -5180,8 +5180,8 @@ pub def oven_bytes() -> bytes:
   return BytesIO(b"oven").getvalue()
 "#,
         )?;
-        let io_module = read_stdlib_program("crates/incan_stdlib/stdlib/io.incn")?;
-        let traits_error_module = read_stdlib_program("crates/incan_stdlib/stdlib/traits/error.incn")?;
+        let io_module = read_stdlib_program("loaves/stdlib/system/src/io.incn")?;
+        let traits_error_module = read_stdlib_program("loaves/stdlib/core/src/traits/error.incn")?;
 
         let io_path = vec!["__incan_std".to_string(), "io".to_string()];
         let traits_error_path = vec!["__incan_std".to_string(), "traits".to_string(), "error".to_string()];
@@ -5223,7 +5223,7 @@ pub def oven_bytes() -> bytes:
 
     #[test]
     fn streaming_hash_helpers_import_io_error_for_reader_chunk_failures() -> Result<(), Box<dyn std::error::Error>> {
-        let streaming_module = read_stdlib_program("crates/incan_stdlib/stdlib/hash/_streaming.incn")?;
+        let streaming_module = read_stdlib_program("loaves/stdlib/data/src/hash/_streaming.incn")?;
         let streaming_code = IrCodegen::new().try_generate(&streaming_module)?;
         let compact_streaming_code = compact_rust(&streaming_code);
 
@@ -5259,7 +5259,7 @@ pub def oven_bytes() -> bytes:
 
     #[test]
     fn compression_auto_moves_non_clone_decoder_match_bindings() -> Result<(), Box<dyn std::error::Error>> {
-        let auto_module = read_stdlib_program("crates/incan_stdlib/stdlib/compression/_auto.incn")?;
+        let auto_module = read_stdlib_program("loaves/stdlib/compression/src/compression/_auto.incn")?;
         let auto_code = IrCodegen::new().try_generate(&auto_module)?;
 
         assert!(

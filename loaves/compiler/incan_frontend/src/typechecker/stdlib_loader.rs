@@ -682,11 +682,12 @@ fn stdlib_module_is_import_facade(program: &ast::Program) -> bool {
         .all(|decl| matches!(decl.node, ast::Declaration::Docstring(_) | ast::Declaration::Import(_)))
 }
 
-/// Find the absolute path for a stdlib file given its relative path (e.g. `"stdlib/testing.incn"`).
+/// Find the absolute path for a stdlib file given its registry spelling (e.g. `"stdlib/testing.incn"`).
 ///
-/// Uses the same source-root selection as prelude loading, test metadata, and compiled-provider publication.
+/// Uses the same root and catalog as prelude loading, test metadata, and compiled-provider publication: the file
+/// lives in the component that owns the module's namespace root.
 fn find_stdlib_file(relative: &str) -> Option<PathBuf> {
-    let path = oven_model::toolchain_layout::find_stdlib_source_file(relative);
+    let path = crate::provider::find_stdlib_source_file(relative);
     if path.is_none() {
         tracing::debug!(relative_path = %relative, "stdlib file not found in any search path");
     }

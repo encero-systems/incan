@@ -255,8 +255,8 @@ fn prepare_toolchain_assets(
         .env("INCAN_NO_BANNER", "1")
         .env("INCAN_HOME", dist.join(".incan-home"))
         .env("INCAN_SOURCE_ROOT", repo_root())
-        .env("INCAN_STDLIB", repo_root().join("crates/incan_stdlib/stdlib"))
-        .env("INCAN_STDLIB_DIR", repo_root().join("crates/incan_stdlib/stdlib"))
+        .env("INCAN_STDLIB", repo_root().join("loaves/stdlib"))
+        .env("INCAN_STDLIB_DIR", repo_root().join("loaves/stdlib"))
         .env("INCAN_REPO_ROOT", repo_root())
         .env("INCAN_TOOLCHAIN_DIST_DIR", dist)
         .env("INCAN_TOOLCHAIN_GENERATED_AT", generated_at)
@@ -825,9 +825,10 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
         "toolchain archive must not publish legacy top-level stdlib source:\n{listing}"
     );
     for source in [
-        "crates/incan_stdlib/stdlib/prelude.incn",
-        "crates/incan_stdlib/stdlib/testing.incn",
-        "crates/incan_stdlib/stdlib/encoding/base64.incn",
+        "crates/incan_stdlib/stdlib/sdk-components.toml",
+        "crates/incan_stdlib/stdlib/core/src/prelude.incn",
+        "crates/incan_stdlib/stdlib/testing/src/testing.incn",
+        "crates/incan_stdlib/stdlib/codecs/src/encoding/base64.incn",
     ] {
         assert!(
             listing.contains(source),

@@ -31,52 +31,52 @@ full = [
 ]
 
 [components.stdlib-core]
-project = "components/stdlib-core"
+project = "core"
 mandatory = true
 dependencies = []
 namespace-roots = ["features", "prelude", "registry", "result", "reflection", "this", "derives", "traits", "runtime"]
 
 [components.stdlib-interop]
-project = "components/stdlib-interop"
+project = "interop"
 dependencies = ["stdlib-core"]
 namespace-roots = ["interop"]
 
 [components.stdlib-system]
-project = "components/stdlib-system"
+project = "system"
 dependencies = ["stdlib-core"]
 namespace-roots = ["environ", "io", "tempfile", "fs"]
 
 [components.stdlib-codecs]
-project = "components/stdlib-codecs"
+project = "codecs"
 dependencies = ["stdlib-core", "stdlib-system"]
 namespace-roots = ["checksum", "encoding"]
 
 [components.stdlib-compression]
-project = "components/stdlib-compression"
+project = "compression"
 dependencies = ["stdlib-core", "stdlib-system"]
 namespace-roots = ["compression"]
 
 [components.stdlib-data]
-project = "components/stdlib-data"
+project = "data"
 dependencies = ["stdlib-core", "stdlib-system"]
 namespace-roots = ["collections", "graph", "hash", "json", "toml", "math", "uuid", "datetime", "regex", "serde"]
 
 [components.stdlib-async]
-project = "components/stdlib-async"
+project = "async"
 dependencies = ["stdlib-core"]
 namespace-roots = ["async"]
 
 [components.stdlib-observability]
-project = "components/stdlib-observability"
+project = "observability"
 dependencies = ["stdlib-core", "stdlib-data"]
 namespace-roots = ["logging", "telemetry"]
 
 [components.stdlib-web]
-project = "components/stdlib-web"
+project = "web"
 dependencies = ["stdlib-core", "stdlib-data", "stdlib-async"]
 namespace-roots = ["web"]
 
 [components.stdlib-testing]
-project = "components/stdlib-testing"
+project = "testing"
 dependencies = ["stdlib-core"]
 namespace-roots = ["testing"]

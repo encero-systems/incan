@@ -1,6 +1,6 @@
 //! Testing helpers for Incan-generated Rust code.
 //!
-//! `crates/incan_stdlib/stdlib/testing.incn` is the source-of-truth surface API for `std.testing`.
+//! `loaves/stdlib/testing/src/testing.incn` is the source-of-truth surface API for `std.testing`.
 //! This Rust module implements only host-boundary functions referenced by `@rust.extern` declarations in `std.testing`.
 
 pub use incan_core::lang::testing::{

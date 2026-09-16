@@ -3706,7 +3706,7 @@ mod tests {
         )?;
         let nested_output = compiler_root
             .path()
-            .join("crates/incan_stdlib/stdlib/components/stdlib-data/target/incan_lock/rust_inspect");
+            .join("loaves/stdlib/data/target/incan_lock/rust_inspect");
         fs::create_dir_all(&nested_output)?;
         fs::write(
             nested_output.join(".incan_rust_inspect_cache.json"),
@@ -5765,7 +5765,7 @@ mod tests {
     fn compiler_suite_environment_transports_the_complete_direct_rustc_closure()
     -> Result<(), Box<dyn std::error::Error>> {
         let compiler_root = tempfile::tempdir()?;
-        let stdlib_root = compiler_root.path().join("crates/incan_stdlib/stdlib");
+        let stdlib_root = compiler_root.path().join("loaves/stdlib");
         fs::create_dir_all(&stdlib_root)?;
         let inventory = compiler_root.path().join("providers/sdk-inventory.json");
         fs::create_dir_all(inventory.parent().ok_or("SDK inventory parent missing")?)?;
@@ -5874,7 +5874,7 @@ mod tests {
         fs::write(&inventory, "sealed SDK inventory")?;
         fs::create_dir_all(provider_root.join("runtime"))?;
         fs::write(provider_root.join("runtime/Cargo.lock"), "version = 4\n")?;
-        let stdlib_root = compiler_root.path().join("crates/incan_stdlib/stdlib");
+        let stdlib_root = compiler_root.path().join("loaves/stdlib");
         fs::create_dir_all(&stdlib_root)?;
         let toolchain_data_root = artifact_root.path().join("toolchain-data");
         fs::create_dir_all(toolchain_data_root.join("share/incan/oven/loafs"))?;

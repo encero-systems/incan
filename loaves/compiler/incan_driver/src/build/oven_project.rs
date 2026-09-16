@@ -757,7 +757,7 @@ fn loaf_rust_inspect_query_paths(
         return Ok(query_paths.into_iter().collect());
     }
 
-    let stdlib_root = oven_model::toolchain_layout::find_stdlib_source_dir()
+    let stdlib_root = oven_model::toolchain_layout::find_stdlib_root()
         .ok_or_else(|| CliError::failure("cannot locate compiler-owned stdlib sources while preparing an Oven Loaf"))?;
     let mut source_files = Vec::new();
     collect_incan_source_files(&stdlib_root, &mut source_files).map_err(|error| {

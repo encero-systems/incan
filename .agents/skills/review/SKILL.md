@@ -178,7 +178,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
   - Lowered in `loaves/compiler/incan_ir/src/lower/`?
   - Emitted in `loaves/compiler/incan_emit/src/emit/`?
 - [ ] **Out-of-scope features are rejected at the typechecker**, not silently passed to lowering to fail later. Rejection should emit a typed diagnostic from `loaves/kernel/incan_syntax/src/diagnostics/catalog/errors/`.
-- [ ] **Stdlib changes** (`crates/incan_stdlib/stdlib/`) have matching Rust-side backing in `crates/incan_stdlib/src/` and are registered in `STDLIB_NAMESPACES` (`loaves/kernel/incan_core/src/lang/stdlib.rs`).
+- [ ] **Stdlib changes** (`loaves/stdlib/`) have matching Rust-side backing in `crates/incan_stdlib/src/` and are registered in `STDLIB_NAMESPACES` (`loaves/kernel/incan_core/src/lang/stdlib.rs`).
 
 ---
 

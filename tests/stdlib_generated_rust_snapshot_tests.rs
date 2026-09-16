@@ -262,19 +262,19 @@ def render_html(value: str) -> Html:
 
 #[test]
 fn std_result_source_snapshot() -> TestResult {
-    assert_stdlib_source_snapshot("std_result_source", "crates/incan_stdlib/stdlib/result.incn")
+    assert_stdlib_source_snapshot("std_result_source", "loaves/stdlib/core/src/result.incn")
 }
 
 #[test]
 fn std_io_source_snapshot() -> TestResult {
-    assert_stdlib_source_snapshot("std_io_source", "crates/incan_stdlib/stdlib/io.incn")
+    assert_stdlib_source_snapshot("std_io_source", "loaves/stdlib/system/src/io.incn")
 }
 
 #[test]
 fn std_telemetry_core_source_snapshot() -> TestResult {
     assert_stdlib_source_snapshot(
         "std_telemetry_core_source",
-        "crates/incan_stdlib/stdlib/telemetry/core.incn",
+        "loaves/stdlib/observability/src/telemetry/core.incn",
     )
 }
 
@@ -282,7 +282,7 @@ fn std_telemetry_core_source_snapshot() -> TestResult {
 fn std_compression_prelude_source_snapshot() -> TestResult {
     assert_stdlib_source_snapshot(
         "std_compression_prelude_source",
-        "crates/incan_stdlib/stdlib/compression/prelude.incn",
+        "loaves/stdlib/compression/src/compression/prelude.incn",
     )
 }
 
@@ -290,6 +290,6 @@ fn std_compression_prelude_source_snapshot() -> TestResult {
 fn std_compression_core_source_snapshot() -> TestResult {
     assert_stdlib_source_snapshot(
         "std_compression_core_source",
-        "crates/incan_stdlib/stdlib/compression/_core.incn",
+        "loaves/stdlib/compression/src/compression/_core.incn",
     )
 }

@@ -163,7 +163,7 @@ pub fn compiled_provider_metadata(inputs: CompiledProviderMetadataInputs<'_>) ->
             (label, module.file_path.clone())
         })
         .collect::<Vec<_>>();
-    let trusted_source_roots = oven_model::toolchain_layout::find_stdlib_source_dir()
+    let trusted_source_roots = oven_model::toolchain_layout::find_stdlib_root()
         .into_iter()
         .collect::<Vec<_>>();
     let semantic_source_digest = digest_provider_source_inputs(

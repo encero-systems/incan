@@ -1,6 +1,6 @@
 # `stdlib/data`
 
-SDK component `stdlib-data` (today `crates/incan_stdlib/stdlib/components/stdlib-data`).
+SDK component `stdlib-data`; its Incan sources live in `src/` beside this file.
 
 Namespace roots: `std.collections`, `std.graph`, `std.hash`, `std.json`, `std.math`, `std.uuid`, `std.datetime`, `std.regex`, `std.serde`
 
