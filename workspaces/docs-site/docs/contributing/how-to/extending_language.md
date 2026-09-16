@@ -38,7 +38,7 @@ Incan’s “language surface” spans a small number of key crates and modules:
 | `loaves/compiler/incan_ir` | Typed IR and lowering from the checked program. |
 | `loaves/compiler/incan_emit` | Rust emission, ownership conversions and codegen orchestration. |
 | `loaves/compiler/incan_format/src/`         | Source formatter (`incan fmt`)                                                         |
-| `src/lsp/`            | Language server (reuses frontend to provide IDE diagnostics)                           |
+| `loaves/toolchain/incan-lsp/src/` | Language server (reuses frontend to provide IDE diagnostics)               |
 
 When you’re unsure where to implement something, start by deciding which crate owns the responsibility.
 

@@ -17,77 +17,12 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-#[cfg(feature = "rust_inspect")]
-use crate::dependency_resolver::{ResolvedDependencies, resolve_dependencies};
-#[cfg(feature = "rust_inspect")]
-use crate::driver::cargo_policy::{CargoPolicy, cargo_command_flags};
-#[cfg(feature = "rust_inspect")]
-use crate::driver::lock::LockResolutionRequest;
-#[cfg(feature = "rust_inspect")]
-use crate::driver::lock::resolution::resolve_lock_context;
-#[cfg(feature = "rust_inspect")]
-use crate::driver::modules::{build_source_map, collect_inline_rust_imports, format_dependency_error};
-use crate::driver::project::discover_effective_project_manifest;
-#[cfg(feature = "rust_inspect")]
-use crate::driver::rust_inspect_workspace::{
-    collect_rust_inspect_derive_probe_paths, collect_rust_inspect_query_paths, configure_rust_inspect_cargo_target,
-    ensure_rust_inspect_workspace_with_cargo_package_name, prewarm_rust_inspect_workspace,
-};
-use crate::driver::session::CompilationSession;
-use crate::frontend::api_metadata::{
-    ApiClass, ApiConst, ApiDeclaration, ApiEnum, ApiFunction, ApiMethod, ApiModel, ApiNewtype, ApiPartial, ApiStatic,
-    ApiTrait, ApiTypeAlias, CheckedApiMetadata, SourceAnchor, checked_api_declaration_is_public_namespace_member,
-    checked_api_modules_for_public_namespace, checked_api_public_module_paths, collect_checked_api_metadata,
-    validate_checked_api_docstrings,
-};
-use crate::frontend::ast::{
-    CallArg, Condition, Declaration, DictEntry, EmbeddedOwnership, Expr, ListEntry, MatchBody, MethodDecl, Param,
-    ParamKind, Program, RaceForBody, Span, Spanned, Statement, SurfaceExprPayload, Type, TypeParam,
-};
-use crate::frontend::contract_metadata::{
-    CanonicalModelBundle, materialize_contract_models, read_model_bundles_from_json, read_project_model_bundles,
-};
-use crate::frontend::diagnostics::{CompileError, DiagnosticPhase, phase_for_typecheck_span};
-use crate::frontend::library_manifest_index::{
-    LibraryManifestIndex, LibraryManifestIndexEntry, dependency_project_root,
-};
-use crate::frontend::module::{
-    SourceModuleImportResolution, logical_module_name_from_source_path, resolve_program_source_imports,
-    self_import_diagnostic_message,
-};
-use crate::frontend::parsed_module::ParsedModule;
-use crate::frontend::symbols::{FunctionInfo, ResolvedType, SymbolKind as FrontendSymbolKind, TypeInfo};
-use crate::frontend::typechecker::stdlib_loader::{StdlibAstCache, StdlibFunctionLspMetadata};
-use crate::frontend::typechecker::{
-    CAbiInteropArtifacts, CBindingType, COutputMode, CResourceAccess, TypeCheckInfo, c_binding_descriptor_identity,
-};
-use crate::frontend::{ast_walk, lexer, parser, typechecker};
-#[cfg(all(test, feature = "rust_inspect"))]
-use crate::generated_cache::resolve_generated_cargo_target_in_cache_root;
-#[cfg(feature = "rust_inspect")]
-use crate::generated_cache::{GeneratedCacheLease, GeneratedCargoTarget, resolve_generated_cargo_target};
-use crate::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
-use crate::library_manifest::{
-    EnumValueExport, EnumValueTypeExport, FieldExport, FieldVisibilityExport, ParamExport, ParamKindExport,
-    ReceiverExport, TypeBoundExport, TypeParamExport, TypeRef,
-};
-#[cfg(feature = "rust_inspect")]
-use crate::lockfile::CargoFeatureSelection;
-use crate::lsp::call_site_type_args;
-use crate::lsp::diagnostics::{
+use crate::call_site_type_args;
+use crate::diagnostics::{
     RelatedDeclarationSource, RelatedDeclarationSources, compile_error_to_diagnostic_with_phase,
     compile_error_to_diagnostic_with_phase_and_sources, position_to_offset, span_to_range,
 };
-use crate::lsp::semantic_tokens;
-#[cfg(feature = "rust_inspect")]
-use crate::manifest::ProjectManifest;
-#[cfg(feature = "rust_inspect")]
-use crate::provider::inventory::extend_requirements_with_provider_plan;
-#[cfg(feature = "rust_inspect")]
-use crate::provider::requirements::collect_project_requirements;
-#[cfg(feature = "rust_inspect")]
-use crate::provider::requirements::merge_project_requirement_dependencies;
-use crate::provider::{ProviderModuleResolution, ProviderPlan, ProviderProvenance};
+use crate::semantic_tokens;
 use incan_core::interop::{RustItemKind, RustModuleChildKind, RustTraitAssoc};
 use incan_core::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
 use incan_core::lang::decorators;
@@ -96,7 +31,72 @@ use incan_core::lang::stdlib;
 use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_core::lang::surface::constructors;
 use incan_core::lang::types::collections;
+#[cfg(feature = "rust_inspect")]
+use incan_driver::cargo_policy::{CargoPolicy, cargo_command_flags};
+#[cfg(all(test, feature = "rust_inspect"))]
+use incan_driver::generated_cache::resolve_generated_cargo_target_in_cache_root;
+#[cfg(feature = "rust_inspect")]
+use incan_driver::generated_cache::{GeneratedCacheLease, GeneratedCargoTarget, resolve_generated_cargo_target};
+#[cfg(feature = "rust_inspect")]
+use incan_driver::lock::LockResolutionRequest;
+#[cfg(feature = "rust_inspect")]
+use incan_driver::lock::resolution::resolve_lock_context;
+#[cfg(feature = "rust_inspect")]
+use incan_driver::modules::{build_source_map, collect_inline_rust_imports, format_dependency_error};
+use incan_driver::project::discover_effective_project_manifest;
+#[cfg(feature = "rust_inspect")]
+use incan_driver::rust_inspect_workspace::{
+    collect_rust_inspect_derive_probe_paths, collect_rust_inspect_query_paths, configure_rust_inspect_cargo_target,
+    ensure_rust_inspect_workspace_with_cargo_package_name, prewarm_rust_inspect_workspace,
+};
+use incan_driver::session::CompilationSession;
+use incan_frontend::api_metadata::{
+    ApiClass, ApiConst, ApiDeclaration, ApiEnum, ApiFunction, ApiMethod, ApiModel, ApiNewtype, ApiPartial, ApiStatic,
+    ApiTrait, ApiTypeAlias, CheckedApiMetadata, SourceAnchor, checked_api_declaration_is_public_namespace_member,
+    checked_api_modules_for_public_namespace, checked_api_public_module_paths, collect_checked_api_metadata,
+    validate_checked_api_docstrings,
+};
+use incan_frontend::ast::{
+    CallArg, Condition, Declaration, DictEntry, EmbeddedOwnership, Expr, ListEntry, MatchBody, MethodDecl, Param,
+    ParamKind, Program, RaceForBody, Span, Spanned, Statement, SurfaceExprPayload, Type, TypeParam,
+};
+use incan_frontend::contract_metadata::{
+    CanonicalModelBundle, materialize_contract_models, read_model_bundles_from_json, read_project_model_bundles,
+};
+use incan_frontend::diagnostics::{CompileError, DiagnosticPhase, phase_for_typecheck_span};
+use incan_frontend::library_manifest::published_layout::LIBRARY_MANIFEST_EXTENSION;
+use incan_frontend::library_manifest::{
+    EnumValueExport, EnumValueTypeExport, FieldExport, FieldVisibilityExport, ParamExport, ParamKindExport,
+    ReceiverExport, TypeBoundExport, TypeParamExport, TypeRef,
+};
+use incan_frontend::library_manifest_index::{
+    LibraryManifestIndex, LibraryManifestIndexEntry, dependency_project_root,
+};
+use incan_frontend::module::{
+    SourceModuleImportResolution, logical_module_name_from_source_path, resolve_program_source_imports,
+    self_import_diagnostic_message,
+};
+use incan_frontend::parsed_module::ParsedModule;
+use incan_frontend::symbols::{FunctionInfo, ResolvedType, SymbolKind as FrontendSymbolKind, TypeInfo};
+use incan_frontend::typechecker::stdlib_loader::{StdlibAstCache, StdlibFunctionLspMetadata};
+use incan_frontend::typechecker::{
+    CAbiInteropArtifacts, CBindingType, COutputMode, CResourceAccess, TypeCheckInfo, c_binding_descriptor_identity,
+};
+use incan_frontend::{ast_walk, lexer, parser, typechecker};
+#[cfg(feature = "rust_inspect")]
+use incan_provider::dependency_resolver::{ResolvedDependencies, resolve_dependencies};
+#[cfg(feature = "rust_inspect")]
+use incan_provider::inventory::extend_requirements_with_provider_plan;
+#[cfg(feature = "rust_inspect")]
+use incan_provider::requirements::collect_project_requirements;
+#[cfg(feature = "rust_inspect")]
+use incan_provider::requirements::merge_project_requirement_dependencies;
+use incan_provider::{ProviderModuleResolution, ProviderPlan, ProviderProvenance};
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SymbolOrigin};
+#[cfg(feature = "rust_inspect")]
+use oven_model::lock::CargoFeatureSelection;
+#[cfg(feature = "rust_inspect")]
+use oven_model::manifest::ProjectManifest;
 
 const EMIT_CONTRACT_MODEL_COMMAND: &str = "incan.metadata.model.emit";
 
@@ -150,7 +150,7 @@ struct CheckedIdentitySnapshot {
 struct RustOriginSymbol {
     local_name: String,
     span: Span,
-    info: crate::frontend::symbols::RustItemInfo,
+    info: incan_frontend::symbols::RustItemInfo,
 }
 
 #[derive(Debug, Clone)]
@@ -519,9 +519,9 @@ impl IncanLanguageServer {
                 && nt.is_rusttype
                 && let Some(id) = checker.symbols.lookup(&nt.name)
                 && let Some(sym) = checker.symbols.get(id)
-                && let crate::frontend::symbols::SymbolKind::Type(crate::frontend::symbols::TypeInfo::Newtype(info)) =
+                && let incan_frontend::symbols::SymbolKind::Type(incan_frontend::symbols::TypeInfo::Newtype(info)) =
                     &sym.kind
-                && let crate::frontend::symbols::ResolvedType::RustPath(path) = &info.underlying
+                && let incan_frontend::symbols::ResolvedType::RustPath(path) = &info.underlying
             {
                 rusttype_info.insert(nt.name.clone(), path.clone());
             }
@@ -1187,11 +1187,11 @@ mod tests {
         PrewarmQueueEntry, enqueue_prewarm_paths, prepare_lsp_rust_inspect_workspace_in_cache_root,
         take_next_prewarm_batch,
     };
-    use crate::driver::session::CompilationSession;
-    use crate::frontend::library_manifest_index::LibraryManifestIndex;
-    use crate::frontend::parsed_module::ParsedModule;
-    use crate::frontend::{lexer, parser};
-    use crate::manifest::ProjectManifest;
+    use incan_driver::session::CompilationSession;
+    use incan_frontend::library_manifest_index::LibraryManifestIndex;
+    use incan_frontend::parsed_module::ParsedModule;
+    use incan_frontend::{lexer, parser};
+    use oven_model::manifest::ProjectManifest;
 
     #[test]
     fn prewarm_queue_coalesces_followup_requests_for_same_workspace() {
@@ -1298,7 +1298,7 @@ def use_it(x: Serialize) -> None:
 
 #[cfg(test)]
 mod lsp_parse_tests {
-    use crate::frontend::{lexer, parser};
+    use incan_frontend::{lexer, parser};
 
     #[test]
     fn lsp_parse_context_accepts_for_tuple_unpack_binding() {
@@ -1332,9 +1332,9 @@ mod lsp_classmethod_tests {
     use std::collections::HashMap;
 
     use super::{classmethod_cls_detail, classmethod_context_at_offset, identifier_at_offset};
-    use crate::frontend::{lexer, parser};
+    use incan_frontend::{lexer, parser};
 
-    fn parse_source(source: &str) -> Result<crate::frontend::ast::Program, String> {
+    fn parse_source(source: &str) -> Result<incan_frontend::ast::Program, String> {
         let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
         parser::parse_with_context(&tokens, Some("src/main.incn"), Some(&HashMap::new()))
             .map_err(|errors| format!("parser failed: {errors:?}"))
@@ -1403,16 +1403,16 @@ mod lsp_identity_tests {
         checked_identity_at_offset, checked_identity_hover, checked_reference_locations,
         definition_location_for_identity, extend_lsp_package_declaration_sources,
     };
-    use crate::frontend::api_metadata::{
+    use incan_frontend::api_metadata::{
         CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadata, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
     };
-    use crate::frontend::ast::{Program, Span};
-    use crate::frontend::library_manifest_index::{
+    use incan_frontend::ast::{Program, Span};
+    use incan_frontend::library_manifest::LibraryManifest;
+    use incan_frontend::library_manifest_index::{
         LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
     };
-    use crate::frontend::typechecker::{TypeCheckInfo, TypeChecker};
-    use crate::frontend::{lexer, parser};
-    use crate::library_manifest::LibraryManifest;
+    use incan_frontend::typechecker::{TypeCheckInfo, TypeChecker};
+    use incan_frontend::{lexer, parser};
 
     fn parse_module(source: &str, name: &str) -> Result<Program, String> {
         let tokens = lexer::lex(source).map_err(|errors| format!("{name} lex failed: {errors:?}"))?;
@@ -1763,7 +1763,7 @@ mod lsp_identity_tests {
 #[cfg(test)]
 mod registry_lsp_tests {
     use super::{registry_preview_at_offset, registry_previews};
-    use crate::frontend::{lexer, parser, typechecker};
+    use incan_frontend::{lexer, parser, typechecker};
 
     #[test]
     fn registry_hover_preview_consumes_checked_type_info() -> Result<(), String> {
@@ -1808,8 +1808,8 @@ def normalize(value: str) -> str:
 #[cfg(test)]
 mod c_binding_lsp_tests {
     use super::{c_binding_preview_at_offset, c_binding_previews, c_binding_type_spelling};
-    use crate::frontend::typechecker::{CBindingType, COutputMode, CResourceAccess};
-    use crate::frontend::{lexer, parser, typechecker};
+    use incan_frontend::typechecker::{CBindingType, COutputMode, CResourceAccess};
+    use incan_frontend::{lexer, parser, typechecker};
 
     #[test]
     fn checked_c_lsp_preview_consumes_a_source_derived_binding_descriptor() -> Result<(), String> {
@@ -1820,14 +1820,19 @@ from std.interop import BindingDeclaration, c
 class Fixture extends BindingDeclaration:
     marker: str
 "#;
-        let interop_source = include_str!("../../loaves/stdlib/interop/src/interop.incn");
+        // The interop component's source is read from the checkout, not embedded: the stdlib is a directory
+        // convention this package does not own a path into.
+        let interop_path =
+            oven_model::toolchain_layout::development_root().join("loaves/stdlib/interop/src/interop.incn");
+        let interop_source = std::fs::read_to_string(&interop_path)
+            .map_err(|error| format!("failed to read {}: {error}", interop_path.display()))?;
         let declaration_start = source
             .find("@c.binding")
             .ok_or_else(|| "expected binding declaration".to_string())?;
         let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
         let ast = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
         let interop_tokens =
-            lexer::lex(interop_source).map_err(|errors| format!("interop lexer failed: {errors:?}"))?;
+            lexer::lex(&interop_source).map_err(|errors| format!("interop lexer failed: {errors:?}"))?;
         let interop = parser::parse(&interop_tokens).map_err(|errors| format!("interop parser failed: {errors:?}"))?;
         let mut checker = typechecker::TypeChecker::new();
         checker
@@ -1870,12 +1875,12 @@ mod lsp_api_metadata_preview_tests {
         enum_variant_completion_label, format_partial_decl_signature, lsp_document_symbol_name_and_detail,
         lsp_symbol_kind_for_decl,
     };
-    use crate::frontend::api_metadata::{CheckedApiMetadata, collect_checked_api_metadata};
-    use crate::frontend::ast::{Declaration, ParamKind, Span};
-    use crate::frontend::symbols::{CallableParam, ResolvedType, Symbol, SymbolKind, VariableInfo};
-    use crate::frontend::{lexer, parser, typechecker};
+    use incan_frontend::api_metadata::{CheckedApiMetadata, collect_checked_api_metadata};
+    use incan_frontend::ast::{Declaration, ParamKind, Span};
+    use incan_frontend::symbols::{CallableParam, ResolvedType, Symbol, SymbolKind, VariableInfo};
+    use incan_frontend::{lexer, parser, typechecker};
 
-    fn checked_metadata_for(source: &str) -> Result<(crate::frontend::ast::Program, CheckedApiMetadata), String> {
+    fn checked_metadata_for(source: &str) -> Result<(incan_frontend::ast::Program, CheckedApiMetadata), String> {
         let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
         let ast = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
         let mut checker = typechecker::TypeChecker::new();
@@ -2224,8 +2229,8 @@ enum HttpStatus(int):
 #[cfg(test)]
 mod lsp_computed_property_tests {
     use super::{find_property_symbol_info, format_property_signature};
-    use crate::frontend::ast::Declaration;
-    use crate::frontend::{lexer, parser};
+    use incan_frontend::ast::Declaration;
+    use incan_frontend::{lexer, parser};
 
     #[test]
     fn computed_property_hover_surfaces_owner_and_type() -> Result<(), String> {
@@ -2269,11 +2274,11 @@ model Account:
 #[cfg(test)]
 mod lsp_default_signature_tests {
     use super::{format_function_signature, local_signature_help_at_offset};
-    use crate::frontend::ast::Declaration;
-    use crate::frontend::{lexer, parser};
+    use incan_frontend::ast::Declaration;
+    use incan_frontend::{lexer, parser};
     use tower_lsp::lsp_types::ParameterLabel;
 
-    fn parse_source(source: &str) -> Result<crate::frontend::ast::Program, String> {
+    fn parse_source(source: &str) -> Result<incan_frontend::ast::Program, String> {
         let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
         parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))
     }
@@ -2373,8 +2378,8 @@ def main() -> str:
 #[cfg(test)]
 mod lsp_dotted_type_display_tests {
     use super::format_type;
-    use crate::frontend::ast::Declaration;
-    use crate::frontend::{lexer, parser};
+    use incan_frontend::ast::Declaration;
+    use incan_frontend::{lexer, parser};
 
     #[test]
     fn type_display_preserves_dotted_c_type_spelling() -> Result<(), String> {
@@ -2489,7 +2494,7 @@ pub struct SymbolInfo {
 }
 
 /// Format a function signature for display using source-backed default expressions.
-fn format_function_signature(func: &crate::frontend::ast::FunctionDecl, source: &str) -> String {
+fn format_function_signature(func: &incan_frontend::ast::FunctionDecl, source: &str) -> String {
     let mut sig = String::new();
 
     if func.is_async() {
@@ -2516,7 +2521,7 @@ fn format_function_signature(func: &crate::frontend::ast::FunctionDecl, source: 
 }
 
 /// Format a module-level partial declaration for hover, completion detail, and document symbols.
-fn format_partial_decl_signature(partial: &crate::frontend::ast::PartialDecl, source: &str) -> String {
+fn format_partial_decl_signature(partial: &incan_frontend::ast::PartialDecl, source: &str) -> String {
     let args = partial
         .args
         .iter()
@@ -2689,7 +2694,7 @@ fn local_signature_in_statement(
             })
         }
         Statement::Surface(surface) => match &surface.payload {
-            crate::frontend::ast::SurfaceStmtPayload::KeywordArgs(args) => args
+            incan_frontend::ast::SurfaceStmtPayload::KeywordArgs(args) => args
                 .iter()
                 .find_map(|arg| local_signature_in_expr(arg, ast, source, offset)),
         },
@@ -2716,19 +2721,17 @@ fn local_signature_in_condition(
 
 /// Search an assertion payload for local function calls that can provide signature help.
 fn local_signature_in_assert(
-    assert_stmt: &crate::frontend::ast::AssertStmt,
+    assert_stmt: &incan_frontend::ast::AssertStmt,
     ast: &Program,
     source: &str,
     offset: usize,
 ) -> Option<LocalCallSignature> {
     let payload = match &assert_stmt.kind {
-        crate::frontend::ast::AssertKind::Condition(condition) => {
+        incan_frontend::ast::AssertKind::Condition(condition) => {
             local_signature_in_expr(condition, ast, source, offset)
         }
-        crate::frontend::ast::AssertKind::IsPattern { value, .. } => {
-            local_signature_in_expr(value, ast, source, offset)
-        }
-        crate::frontend::ast::AssertKind::Raises { call, .. } => local_signature_in_expr(call, ast, source, offset),
+        incan_frontend::ast::AssertKind::IsPattern { value, .. } => local_signature_in_expr(value, ast, source, offset),
+        incan_frontend::ast::AssertKind::Raises { call, .. } => local_signature_in_expr(call, ast, source, offset),
     };
     payload.or_else(|| {
         assert_stmt
@@ -2788,10 +2791,10 @@ fn local_signature_in_expr(
                     .as_ref()
                     .and_then(|guard| local_signature_in_expr(guard, ast, source, offset))
                     .or_else(|| match &arm.node.body {
-                        crate::frontend::ast::MatchBody::Expr(expr) => {
+                        incan_frontend::ast::MatchBody::Expr(expr) => {
                             local_signature_in_expr(expr, ast, source, offset)
                         }
-                        crate::frontend::ast::MatchBody::Block(statements) => {
+                        incan_frontend::ast::MatchBody::Block(statements) => {
                             local_signature_in_statements(statements, ast, source, offset)
                         }
                     })
@@ -2825,10 +2828,10 @@ fn local_signature_in_expr(
             }),
         Expr::Generator(generator) => local_signature_in_expr(&generator.expr, ast, source, offset).or_else(|| {
             generator.clauses.iter().find_map(|clause| match clause {
-                crate::frontend::ast::ComprehensionClause::For { iter, .. } => {
+                incan_frontend::ast::ComprehensionClause::For { iter, .. } => {
                     local_signature_in_expr(iter, ast, source, offset)
                 }
-                crate::frontend::ast::ComprehensionClause::If(condition) => {
+                incan_frontend::ast::ComprehensionClause::If(condition) => {
                     local_signature_in_expr(condition, ast, source, offset)
                 }
             })
@@ -2842,7 +2845,7 @@ fn local_signature_in_expr(
             .iter()
             .find_map(|item| local_signature_in_expr(item, ast, source, offset)),
         Expr::List(items) => items.iter().find_map(|item| match item {
-            crate::frontend::ast::ListEntry::Element(value) | crate::frontend::ast::ListEntry::Spread(value) => {
+            incan_frontend::ast::ListEntry::Element(value) | incan_frontend::ast::ListEntry::Spread(value) => {
                 local_signature_in_expr(value, ast, source, offset)
             }
         }),
@@ -2859,29 +2862,29 @@ fn local_signature_in_expr(
         }),
         Expr::Constructor(_, args) => local_signature_in_call_args(args, ast, source, offset),
         Expr::FString(parts) => parts.iter().find_map(|part| match part {
-            crate::frontend::ast::FStringPart::Expr { expr, .. } => local_signature_in_expr(expr, ast, source, offset),
-            crate::frontend::ast::FStringPart::Literal(_) => None,
+            incan_frontend::ast::FStringPart::Expr { expr, .. } => local_signature_in_expr(expr, ast, source, offset),
+            incan_frontend::ast::FStringPart::Literal(_) => None,
         }),
         Expr::Yield(Some(value)) => local_signature_in_expr(value, ast, source, offset),
         Expr::Yield(None) => None,
         Expr::Range { start, end, .. } => local_signature_in_expr(start, ast, source, offset)
             .or_else(|| local_signature_in_expr(end, ast, source, offset)),
         Expr::Surface(surface) => match &surface.payload {
-            crate::frontend::ast::SurfaceExprPayload::PrefixUnary(inner) => {
+            incan_frontend::ast::SurfaceExprPayload::PrefixUnary(inner) => {
                 local_signature_in_expr(inner, ast, source, offset)
             }
-            crate::frontend::ast::SurfaceExprPayload::RaceFor(race) => race.arms.iter().find_map(|arm| {
+            incan_frontend::ast::SurfaceExprPayload::RaceFor(race) => race.arms.iter().find_map(|arm| {
                 local_signature_in_expr(&arm.awaitable, ast, source, offset).or_else(|| match &arm.body {
                     RaceForBody::Expr(expr) => local_signature_in_expr(expr, ast, source, offset),
                     RaceForBody::Block(statements) => local_signature_in_statements(statements, ast, source, offset),
                 })
             }),
-            crate::frontend::ast::SurfaceExprPayload::LeadingDotPath { .. } => None,
-            crate::frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+            incan_frontend::ast::SurfaceExprPayload::LeadingDotPath { .. } => None,
+            incan_frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
                 local_signature_in_expr(left, ast, source, offset)
                     .or_else(|| local_signature_in_expr(right, ast, source, offset))
             }
-            crate::frontend::ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+            incan_frontend::ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
                 local_signature_in_call_args(args, ast, source, offset)
             }
         },
@@ -2946,7 +2949,7 @@ fn local_function_call_signature(
 }
 
 /// Return one top-level function declaration by source name.
-fn local_function_decl<'a>(ast: &'a Program, name: &str) -> Option<&'a crate::frontend::ast::FunctionDecl> {
+fn local_function_decl<'a>(ast: &'a Program, name: &str) -> Option<&'a incan_frontend::ast::FunctionDecl> {
     ast.declarations.iter().find_map(|declaration| match &declaration.node {
         Declaration::Function(function) if function.name == name => Some(function),
         _ => None,
@@ -2995,7 +2998,7 @@ fn active_parameter_index(source: &str, open_paren: usize, offset: usize, parame
 }
 
 /// Format a computed property declaration for hover and completion details.
-fn format_property_signature(owner: &str, property: &crate::frontend::ast::PropertyDecl) -> String {
+fn format_property_signature(owner: &str, property: &incan_frontend::ast::PropertyDecl) -> String {
     format!(
         "property {}.{} -> {}",
         owner,
@@ -3007,7 +3010,7 @@ fn format_property_signature(owner: &str, property: &crate::frontend::ast::Prope
 /// Return symbol information when an offset falls inside a computed property declaration.
 fn find_property_symbol_info(
     owner: &str,
-    properties: &[crate::frontend::ast::Spanned<crate::frontend::ast::PropertyDecl>],
+    properties: &[incan_frontend::ast::Spanned<incan_frontend::ast::PropertyDecl>],
     offset: usize,
 ) -> Option<SymbolInfo> {
     for property in properties {
@@ -3343,7 +3346,7 @@ fn c_binding_previews(artifacts: &CAbiInteropArtifacts, module_path: &[String]) 
                 raw_call
                     .owner
                     .as_ref()
-                    .map(|owner| format!("`{}` ({})", owner.name, if owner.visibility == crate::frontend::ast::Visibility::Public { "public" } else { "private" }))
+                    .map(|owner| format!("`{}` ({})", owner.name, if owner.visibility == incan_frontend::ast::Visibility::Public { "public" } else { "private" }))
                     .unwrap_or_else(|| "not a named callable".to_string()),
             ),
         });
@@ -3354,7 +3357,7 @@ fn c_binding_previews(artifacts: &CAbiInteropArtifacts, module_path: &[String]) 
 
 /// Render one checked C declaration as source-level contract facts suitable for hover.
 fn c_binding_declaration_markdown(
-    descriptor: &crate::frontend::typechecker::CBindingDescriptor,
+    descriptor: &incan_frontend::typechecker::CBindingDescriptor,
     module_path: &[String],
 ) -> String {
     let resources = if descriptor.resources.is_empty() {
@@ -3413,7 +3416,7 @@ fn c_binding_declaration_markdown(
 }
 
 /// Render one checked symbol signature without exposing generated-Rust carrier types.
-fn c_binding_symbol_signature(symbol: &crate::frontend::typechecker::CBindingSymbol) -> String {
+fn c_binding_symbol_signature(symbol: &incan_frontend::typechecker::CBindingSymbol) -> String {
     let parameters = symbol
         .parameters
         .iter()
@@ -3501,8 +3504,8 @@ fn push_enum_variant_previews(
     previews: &mut Vec<ApiMetadataPreview>,
     owner: &str,
     value_type: Option<EnumValueTypeExport>,
-    checked_variants: &[crate::frontend::api_metadata::ApiEnumVariant],
-    ast_variants: &[crate::frontend::ast::Spanned<crate::frontend::ast::VariantDecl>],
+    checked_variants: &[incan_frontend::api_metadata::ApiEnumVariant],
+    ast_variants: &[incan_frontend::ast::Spanned<incan_frontend::ast::VariantDecl>],
 ) {
     for variant in ast_variants {
         let Some(checked) = checked_variants
@@ -3523,7 +3526,7 @@ fn push_field_previews(
     previews: &mut Vec<ApiMetadataPreview>,
     owner: &str,
     checked_fields: &[FieldExport],
-    ast_fields: &[crate::frontend::ast::Spanned<crate::frontend::ast::FieldDecl>],
+    ast_fields: &[incan_frontend::ast::Spanned<incan_frontend::ast::FieldDecl>],
 ) {
     for field in ast_fields {
         let Some(checked) = checked_fields.iter().find(|checked| checked.name == field.node.name) else {
@@ -3671,7 +3674,7 @@ fn api_enum_markdown(enum_decl: &ApiEnum) -> String {
 fn api_enum_variant_markdown(
     owner: &str,
     value_type: Option<EnumValueTypeExport>,
-    variant: &crate::frontend::api_metadata::ApiEnumVariant,
+    variant: &incan_frontend::api_metadata::ApiEnumVariant,
 ) -> String {
     let mut facts = Vec::new();
     if !variant.fields.is_empty() {
@@ -3971,23 +3974,23 @@ fn enum_value_display(value: &EnumValueExport) -> String {
 }
 
 /// Format parsed value-enum backing metadata using Incan surface spellings.
-fn ast_value_enum_type_display(value_type: crate::frontend::ast::ValueEnumType) -> &'static str {
+fn ast_value_enum_type_display(value_type: incan_frontend::ast::ValueEnumType) -> &'static str {
     match value_type {
-        crate::frontend::ast::ValueEnumType::Str => "str",
-        crate::frontend::ast::ValueEnumType::Int => "int",
+        incan_frontend::ast::ValueEnumType::Str => "str",
+        incan_frontend::ast::ValueEnumType::Int => "int",
     }
 }
 
 /// Format a parsed value-enum literal as source-like LSP metadata.
-fn ast_value_enum_literal_display(value: &crate::frontend::ast::ValueEnumLiteral) -> String {
+fn ast_value_enum_literal_display(value: &incan_frontend::ast::ValueEnumLiteral) -> String {
     match value {
-        crate::frontend::ast::ValueEnumLiteral::Str(value) => format!("{value:?}"),
-        crate::frontend::ast::ValueEnumLiteral::Int(value) => value.value.to_string(),
+        incan_frontend::ast::ValueEnumLiteral::Str(value) => format!("{value:?}"),
+        incan_frontend::ast::ValueEnumLiteral::Int(value) => value.value.to_string(),
     }
 }
 
 /// Format local enum completion detail, including RFC 032 backing metadata when present.
-fn enum_completion_detail(en: &crate::frontend::ast::EnumDecl) -> String {
+fn enum_completion_detail(en: &incan_frontend::ast::EnumDecl) -> String {
     match en.value_type.as_ref() {
         Some(value_type) => format!("enum {}({})", en.name, ast_value_enum_type_display(value_type.node)),
         None => format!("enum {}", en.name),
@@ -3996,16 +3999,16 @@ fn enum_completion_detail(en: &crate::frontend::ast::EnumDecl) -> String {
 
 /// Format local enum variant completion labels as qualified enum constructors.
 fn enum_variant_completion_label(
-    en: &crate::frontend::ast::EnumDecl,
-    variant: &crate::frontend::ast::VariantDecl,
+    en: &incan_frontend::ast::EnumDecl,
+    variant: &incan_frontend::ast::VariantDecl,
 ) -> String {
     format!("{}.{}", en.name, variant.name)
 }
 
 /// Format local enum variant completion detail, including RFC 032 raw value metadata when present.
 fn enum_variant_completion_detail(
-    en: &crate::frontend::ast::EnumDecl,
-    variant: &crate::frontend::ast::VariantDecl,
+    en: &incan_frontend::ast::EnumDecl,
+    variant: &incan_frontend::ast::VariantDecl,
 ) -> String {
     let mut detail = format!("variant {}.{}", en.name, variant.name);
     if let Some(value_type) = &en.value_type {
@@ -4038,15 +4041,12 @@ fn inline_code(value: &str) -> String {
 
 /// Collect import aliases visible to LSP decorator resolution.
 fn collect_import_aliases(ast: &Program) -> HashMap<String, Vec<String>> {
-    crate::frontend::decorator_resolution::collect_import_aliases(ast)
+    incan_frontend::decorator_resolution::collect_import_aliases(ast)
 }
 
 /// Resolve a decorator path through visible import aliases.
-fn resolve_decorator_path(
-    dec: &crate::frontend::ast::Decorator,
-    aliases: &HashMap<String, Vec<String>>,
-) -> Vec<String> {
-    crate::frontend::decorator_resolution::resolve_decorator_path(dec, aliases)
+fn resolve_decorator_path(dec: &incan_frontend::ast::Decorator, aliases: &HashMap<String, Vec<String>>) -> Vec<String> {
+    incan_frontend::decorator_resolution::resolve_decorator_path(dec, aliases)
 }
 
 /// Return whether a method has the requested decorator after resolving import aliases.
@@ -4086,7 +4086,7 @@ fn method_body_contains_offset(method: &MethodDecl, method_span: Span, offset: u
 fn classmethod_context_for_method(
     owner_name: &str,
     owner_type_params: &[TypeParam],
-    method: &crate::frontend::ast::Spanned<MethodDecl>,
+    method: &incan_frontend::ast::Spanned<MethodDecl>,
     offset: usize,
     aliases: &HashMap<String, Vec<String>>,
 ) -> Option<ClassmethodContext> {
@@ -4978,12 +4978,12 @@ fn stdlib_function_docs(name: &str, overloads: &[StdlibFunctionLspMetadata]) -> 
 }
 
 /// Extract a source function's leading string-literal docstring for stdlib tooling.
-fn stdlib_function_docstring(function: &crate::frontend::ast::FunctionDecl) -> Option<String> {
+fn stdlib_function_docstring(function: &incan_frontend::ast::FunctionDecl) -> Option<String> {
     let first = function.body.first()?;
     let Statement::Expr(expr) = &first.node else {
         return None;
     };
-    let Expr::Literal(crate::frontend::ast::Literal::String(docstring)) = &expr.node else {
+    let Expr::Literal(incan_frontend::ast::Literal::String(docstring)) = &expr.node else {
         return None;
     };
     Some(docstring.clone())
@@ -5189,7 +5189,7 @@ fn stdlib_import_item_hover(
         if !(decl.span.start <= ident_span.start && ident_span.end <= decl.span.end) {
             continue;
         }
-        let crate::frontend::ast::ImportKind::From { module, items } = &import.kind else {
+        let incan_frontend::ast::ImportKind::From { module, items } = &import.kind else {
             continue;
         };
         if module.segments.first().map(|segment| segment.as_str()) != Some(stdlib::STDLIB_ROOT) {
@@ -5318,8 +5318,8 @@ fn find_stdlib_import_path(ast: &Program, offset: usize) -> Option<Vec<String>> 
             continue;
         }
         let segments = match &import.kind {
-            crate::frontend::ast::ImportKind::Module(path) => &path.segments,
-            crate::frontend::ast::ImportKind::From { module, .. } => &module.segments,
+            incan_frontend::ast::ImportKind::Module(path) => &path.segments,
+            incan_frontend::ast::ImportKind::From { module, .. } => &module.segments,
             _ => continue,
         };
         if segments.first().map(|s| s.as_str()) != Some(stdlib::STDLIB_ROOT) {
@@ -5406,8 +5406,8 @@ struct EmbeddedDslOwnership {
 /// descends through holes, a fragment nested inside another fragment's hole wins over its container, which is the
 /// innermost-descriptor rule RFC 081 states for overlapping claims.
 ///
-/// [`EmbeddedFragmentExpr::holes`]: crate::frontend::ast::EmbeddedFragmentExpr::holes
-/// [`EmbeddedFragmentExpr::ownership_at`]: crate::frontend::ast::EmbeddedFragmentExpr::ownership_at
+/// [`EmbeddedFragmentExpr::holes`]: incan_frontend::ast::EmbeddedFragmentExpr::holes
+/// [`EmbeddedFragmentExpr::ownership_at`]: incan_frontend::ast::EmbeddedFragmentExpr::ownership_at
 fn embedded_dsl_ownership_at_offset(ast: &Program, offset: usize) -> Option<EmbeddedDslOwnership> {
     let mut found: Option<EmbeddedDslOwnership> = None;
     ast_walk::any_expr_in_program(ast, |expr| {
@@ -5650,13 +5650,13 @@ fn scoped_symbol_in_statement<'a>(
         Statement::Expr(expr) => scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found),
         Statement::Assert(assert_stmt) => {
             match &assert_stmt.kind {
-                crate::frontend::ast::AssertKind::Condition(expr) => {
+                incan_frontend::ast::AssertKind::Condition(expr) => {
                     scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found);
                 }
-                crate::frontend::ast::AssertKind::IsPattern { value, .. } => {
+                incan_frontend::ast::AssertKind::IsPattern { value, .. } => {
                     scoped_symbol_in_expr(value, ident, symbol_span, surfaces, found);
                 }
-                crate::frontend::ast::AssertKind::Raises { call, .. } => {
+                incan_frontend::ast::AssertKind::Raises { call, .. } => {
                     scoped_symbol_in_expr(call, ident, symbol_span, surfaces, found);
                 }
             }
@@ -5811,11 +5811,11 @@ fn scoped_symbol_in_expr<'a>(
         Expr::Dict(entries) => {
             for entry in entries {
                 match entry {
-                    crate::frontend::ast::DictEntry::Pair(key, value) => {
+                    incan_frontend::ast::DictEntry::Pair(key, value) => {
                         scoped_symbol_in_expr(key, ident, symbol_span, surfaces, found);
                         scoped_symbol_in_expr(value, ident, symbol_span, surfaces, found);
                     }
-                    crate::frontend::ast::DictEntry::Spread(expr) => {
+                    incan_frontend::ast::DictEntry::Spread(expr) => {
                         scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found);
                     }
                 }
@@ -5830,7 +5830,7 @@ fn scoped_symbol_in_expr<'a>(
         Expr::Constructor(_, args) => scoped_symbol_in_call_args(args, ident, symbol_span, surfaces, found),
         Expr::FString(parts) => {
             for part in parts {
-                if let crate::frontend::ast::FStringPart::Expr { expr, .. } = part {
+                if let incan_frontend::ast::FStringPart::Expr { expr, .. } = part {
                     scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found);
                 }
             }
@@ -5881,7 +5881,7 @@ fn scoped_symbol_in_expr<'a>(
 
 /// Search comprehension clauses for parsed scoped symbol occurrences.
 fn scoped_symbol_in_comprehension_clauses<'a>(
-    clauses: &'a [crate::frontend::ast::ComprehensionClause],
+    clauses: &'a [incan_frontend::ast::ComprehensionClause],
     ident: &str,
     symbol_span: Span,
     surfaces: &'a parser::ImportedLibraryDslSurfaces,
@@ -5889,10 +5889,10 @@ fn scoped_symbol_in_comprehension_clauses<'a>(
 ) {
     for clause in clauses {
         match clause {
-            crate::frontend::ast::ComprehensionClause::For { iter, .. } => {
+            incan_frontend::ast::ComprehensionClause::For { iter, .. } => {
                 scoped_symbol_in_expr(iter, ident, symbol_span, surfaces, found);
             }
-            crate::frontend::ast::ComprehensionClause::If(condition) => {
+            incan_frontend::ast::ComprehensionClause::If(condition) => {
                 scoped_symbol_in_expr(condition, ident, symbol_span, surfaces, found);
             }
         }
@@ -5940,8 +5940,8 @@ fn find_pub_library_import_span(ast: &Program, dependency_key: &str, before_offs
             return None;
         };
         match &import.kind {
-            crate::frontend::ast::ImportKind::PubLibrary { library, .. }
-            | crate::frontend::ast::ImportKind::PubFrom { library, .. }
+            incan_frontend::ast::ImportKind::PubLibrary { library, .. }
+            | incan_frontend::ast::ImportKind::PubFrom { library, .. }
                 if library == dependency_key =>
             {
                 Some(decl.span)
@@ -6006,8 +6006,8 @@ fn active_imported_dsl_surfaces<'a>(
             continue;
         };
         let library = match &import.kind {
-            crate::frontend::ast::ImportKind::PubLibrary { library, .. }
-            | crate::frontend::ast::ImportKind::PubFrom { library, .. } => library.as_str(),
+            incan_frontend::ast::ImportKind::PubLibrary { library, .. }
+            | incan_frontend::ast::ImportKind::PubFrom { library, .. } => library.as_str(),
             _ => continue,
         };
         let Some(library_surfaces) = surfaces.get(library) else {
@@ -6208,13 +6208,13 @@ fn scoped_symbol_context_in_statement(stmt: &Spanned<Statement>, offset: usize, 
         Statement::Expr(expr) => scoped_symbol_context_in_expr(expr, offset, context),
         Statement::Assert(assert_stmt) => {
             match &assert_stmt.kind {
-                crate::frontend::ast::AssertKind::Condition(expr) => {
+                incan_frontend::ast::AssertKind::Condition(expr) => {
                     scoped_symbol_context_in_expr(expr, offset, context);
                 }
-                crate::frontend::ast::AssertKind::IsPattern { value, .. } => {
+                incan_frontend::ast::AssertKind::IsPattern { value, .. } => {
                     scoped_symbol_context_in_expr(value, offset, context);
                 }
-                crate::frontend::ast::AssertKind::Raises { call, .. } => {
+                incan_frontend::ast::AssertKind::Raises { call, .. } => {
                     scoped_symbol_context_in_expr(call, offset, context);
                 }
             }
@@ -6350,11 +6350,11 @@ fn scoped_symbol_context_in_expr(expr: &Spanned<Expr>, offset: usize, context: &
         Expr::Dict(entries) => {
             for entry in entries {
                 match entry {
-                    crate::frontend::ast::DictEntry::Pair(key, value) => {
+                    incan_frontend::ast::DictEntry::Pair(key, value) => {
                         scoped_symbol_context_in_expr(key, offset, context);
                         scoped_symbol_context_in_expr(value, offset, context);
                     }
-                    crate::frontend::ast::DictEntry::Spread(expr) => {
+                    incan_frontend::ast::DictEntry::Spread(expr) => {
                         scoped_symbol_context_in_expr(expr, offset, context);
                     }
                 }
@@ -6369,7 +6369,7 @@ fn scoped_symbol_context_in_expr(expr: &Spanned<Expr>, offset: usize, context: &
         Expr::Constructor(_, args) => scoped_symbol_context_in_call_args(args, offset, context),
         Expr::FString(parts) => {
             for part in parts {
-                if let crate::frontend::ast::FStringPart::Expr { expr, .. } = part {
+                if let incan_frontend::ast::FStringPart::Expr { expr, .. } = part {
                     scoped_symbol_context_in_expr(expr, offset, context);
                 }
             }
@@ -6429,16 +6429,16 @@ fn scoped_symbol_context_in_expr(expr: &Spanned<Expr>, offset: usize, context: &
 
 /// Update scoped symbol completion context from comprehension clauses containing the offset.
 fn scoped_symbol_context_in_comprehension_clauses(
-    clauses: &[crate::frontend::ast::ComprehensionClause],
+    clauses: &[incan_frontend::ast::ComprehensionClause],
     offset: usize,
     context: &mut ScopedSymbolLspContext,
 ) {
     for clause in clauses {
         match clause {
-            crate::frontend::ast::ComprehensionClause::For { iter, .. } => {
+            incan_frontend::ast::ComprehensionClause::For { iter, .. } => {
                 scoped_symbol_context_in_expr(iter, offset, context);
             }
-            crate::frontend::ast::ComprehensionClause::If(condition) => {
+            incan_frontend::ast::ComprehensionClause::If(condition) => {
                 scoped_symbol_context_in_expr(condition, offset, context);
             }
         }
@@ -6473,7 +6473,7 @@ fn find_decorator_at_position(
     offset: usize,
     aliases: &HashMap<String, Vec<String>>,
 ) -> Option<(decorators::DecoratorId, Vec<String>)> {
-    let check_decorators = |decs: &[crate::frontend::ast::Spanned<crate::frontend::ast::Decorator>]| {
+    let check_decorators = |decs: &[incan_frontend::ast::Spanned<incan_frontend::ast::Decorator>]| {
         for dec in decs {
             if !(dec.span.start <= offset && offset < dec.span.end) {
                 continue;
@@ -6552,13 +6552,15 @@ fn push_completion(
     }
 }
 
+/// Every checked symbol that a Rust import bound, with the origin the binding recorded, for the completion and hover
+/// surfaces that present Rust-backed names.
 fn collect_rust_origin_symbols(checker: &typechecker::TypeChecker) -> Vec<RustOriginSymbol> {
     checker
         .symbols
         .all_symbols()
         .iter()
         .filter_map(|sym| match &sym.kind {
-            crate::frontend::symbols::SymbolKind::RustItem(info) => Some(RustOriginSymbol {
+            incan_frontend::symbols::SymbolKind::RustItem(info) => Some(RustOriginSymbol {
                 local_name: sym.name.clone(),
                 span: sym.span,
                 info: info.clone(),
@@ -6618,11 +6620,12 @@ fn rust_item_kind_label(kind: &RustItemKind) -> &'static str {
     }
 }
 
-fn rust_binding_kind_label(binding: crate::frontend::symbols::RustImportBindingKind) -> &'static str {
+/// The hover wording for how a Rust name entered scope: a crate root, a rooted path or a `from` import.
+fn rust_binding_kind_label(binding: incan_frontend::symbols::RustImportBindingKind) -> &'static str {
     match binding {
-        crate::frontend::symbols::RustImportBindingKind::CrateRoot => "crate root import",
-        crate::frontend::symbols::RustImportBindingKind::RootedPath => "path import",
-        crate::frontend::symbols::RustImportBindingKind::FromImport => "from-import binding",
+        incan_frontend::symbols::RustImportBindingKind::CrateRoot => "crate root import",
+        incan_frontend::symbols::RustImportBindingKind::RootedPath => "path import",
+        incan_frontend::symbols::RustImportBindingKind::FromImport => "from-import binding",
     }
 }
 
@@ -6944,8 +6947,8 @@ fn collect_lsp_contract_model_bundles(path: &Path) -> std::result::Result<Vec<Ca
             .and_then(|extension| extension.to_str())
             .is_some_and(|extension| extension == LIBRARY_MANIFEST_EXTENSION)
     {
-        let manifest =
-            crate::library_manifest::LibraryManifest::read_from_path(&absolute).map_err(|error| error.to_string())?;
+        let manifest = incan_frontend::library_manifest::LibraryManifest::read_from_path(&absolute)
+            .map_err(|error| error.to_string())?;
         let bundles = manifest.contract_metadata.models.model_bundles;
         if bundles.is_empty() {
             return Err(format!(
@@ -8212,7 +8215,7 @@ fn pub_library_module_completions(
 /// Add the existing flat package facade to root `pub::` import completions.
 fn insert_flat_manifest_export_completions(
     completions: &mut BTreeMap<String, CompletionItem>,
-    manifest: &crate::library_manifest::LibraryManifest,
+    manifest: &incan_frontend::library_manifest::LibraryManifest,
 ) {
     let mut insert = |name: &str, kind: CompletionItemKind| {
         completions
@@ -8519,27 +8522,27 @@ mod completion_tests {
         pub_library_module_completions, stdlib_import_item_completions, stdlib_import_item_hover,
         stdlib_location_for_path, stdlib_module_completions, unchecked_lookup_hover, value_type_kind,
     };
-    use crate::frontend::api_metadata::{
+    use incan_frontend::api_metadata::{
         CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
     };
-    use crate::frontend::ast::Span;
-    use crate::frontend::library_manifest_index::{
+    use incan_frontend::ast::Span;
+    use incan_frontend::library_manifest::LibraryManifest;
+    use incan_frontend::library_manifest_index::{
         LibraryArtifactKind, LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
     };
-    use crate::frontend::symbols::SymbolKind as FrontendSymbolKind;
-    use crate::frontend::{lexer, parser};
-    use crate::library_manifest::LibraryManifest;
-    use crate::provider::{NamespaceAuthority, ProviderIdentity, ProviderPlan, ProviderProvenance, ProviderRecord};
+    use incan_frontend::symbols::SymbolKind as FrontendSymbolKind;
+    use incan_frontend::{lexer, parser};
+    use incan_provider::{NamespaceAuthority, ProviderIdentity, ProviderPlan, ProviderProvenance, ProviderRecord};
     use tower_lsp::lsp_types::{CompletionItemKind, Url};
 
-    fn parse_source(source: &str) -> Result<crate::frontend::ast::Program, String> {
+    fn parse_source(source: &str) -> Result<incan_frontend::ast::Program, String> {
         let tokens = lexer::lex(source).map_err(|err| format!("lexer failed: {err:?}"))?;
         parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))
     }
 
     fn value_type_facts_from_source(source: &str) -> Result<Vec<ValueTypeFact>, String> {
         let ast = parse_source(source)?;
-        let mut checker = crate::frontend::typechecker::TypeChecker::new();
+        let mut checker = incan_frontend::typechecker::TypeChecker::new();
         checker
             .check_program(&ast)
             .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
@@ -8577,7 +8580,7 @@ mod completion_tests {
             ),
         ] {
             let ast = parse_source(source)?;
-            let mut checker = crate::frontend::typechecker::TypeChecker::new();
+            let mut checker = incan_frontend::typechecker::TypeChecker::new();
             checker.set_current_module_path(Some(module_path.clone()));
             checker
                 .check_program(&ast)
@@ -8768,7 +8771,7 @@ mod completion_tests {
         let provider_ast = parse_source(
             "pub def greet(name: str) -> str:\n    \"\"\"Return a provider-owned greeting.\"\"\"\n    return name\n",
         )?;
-        let mut checker = crate::frontend::typechecker::TypeChecker::new();
+        let mut checker = incan_frontend::typechecker::TypeChecker::new();
         checker
             .check_program(&provider_ast)
             .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
@@ -8776,7 +8779,7 @@ mod completion_tests {
         manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
             schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
             package: None,
-            modules: vec![crate::frontend::api_metadata::collect_checked_api_metadata(
+            modules: vec![incan_frontend::api_metadata::collect_checked_api_metadata(
                 &provider_ast,
                 &checker,
                 vec!["future".to_string()],
@@ -9164,8 +9167,8 @@ mod lsp_scoped_symbol_tests {
         active_scoped_symbol_completions, find_pub_library_import_span, scoped_symbol_at_offset,
         scoped_symbol_hover_markdown,
     };
-    use crate::frontend::ast::Program;
-    use crate::frontend::{lexer, parser};
+    use incan_frontend::ast::Program;
+    use incan_frontend::{lexer, parser};
 
     fn scoped_symbol_fixture() -> (
         String,
@@ -9275,8 +9278,8 @@ mod lsp_embedded_fragment_tests {
     use std::collections::HashMap;
 
     use super::{embedded_dsl_ownership_at_offset, embedded_dsl_ownership_hover_markdown};
-    use crate::frontend::ast::Program;
-    use crate::frontend::{lexer, parser};
+    use incan_frontend::ast::Program;
+    use incan_frontend::{lexer, parser};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 

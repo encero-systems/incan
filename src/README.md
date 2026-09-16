@@ -65,7 +65,6 @@ src/
 │   ├── config.rs                     #   FormatConfig (line length, trailing commas, etc.)
 │   └── writer.rs                     #   Output writer
 │
-├── lsp/                              # Language server (feature-gated behind `--features lsp`)
 │   ├── backend.rs                    #   LSP request handlers
 │   └── diagnostics.rs                #   Diagnostic conversion
 │
@@ -78,4 +77,4 @@ src/
 - **Codegen**: `backend::ir::codegen::IrCodegen` — the single public entry point for all code generation.
 - **Type conversions**: `backend::ir::conversions` — centralized `&str`/`String`, borrow, and ownership conversions. Use `determine_conversion()`, never ad-hoc `.to_string()` insertions.
 - **CLI commands**: all go through the driver — `driver::modules::collect_modules()` for module loading, `driver::session::CompilationSession` for analysis — and render what it returns.
-- **LSP**: feature-gated — build with `cargo build --features lsp` or `make lsp`.
+- **LSP**: its own package, `loaves/toolchain/incan-lsp` — build with `cargo build -p incan-lsp` or `make lsp`.

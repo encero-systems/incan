@@ -147,7 +147,7 @@ To enable language server features (diagnostics, hover, go-to-definition):
 
 ```bash
 cd /path/to/incan
-cargo build --release --bin incan-lsp
+cargo build --release -p incan-lsp --bin incan-lsp
 ```
 
 ### 2. Add to PATH

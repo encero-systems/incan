@@ -3830,8 +3830,7 @@ mod tests {
                 loafs: Vec::new(),
             })?,
         )?;
-        let (receipt, _) =
-            super::compiler_libtests_receipt(compiler_root.path(), &rustc, &["lsp".to_string()], Some(output.path()))?;
+        let (receipt, _) = super::compiler_libtests_receipt(compiler_root.path(), &rustc, &[], Some(output.path()))?;
         let target = OvenCompilerTestSuiteTarget {
             package_name: "fixture".to_string(),
             target_name: "fixture".to_string(),
@@ -3900,14 +3899,14 @@ mod tests {
         superseded_suite.schema_version = OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION - 1;
         store.publish(&OvenArtifactPublishRequest {
             receipt: receipt.clone(),
-            domain: "compiler-suite-lsp".to_string(),
+            domain: "compiler-suite".to_string(),
             kind: OvenArtifactKind::CompilerTestSuite,
             payload: serde_json::to_vec(&superseded_suite)?,
             materialized_files: Vec::new(),
         })?;
         let current_manifest = store.publish(&OvenArtifactPublishRequest {
             receipt: receipt.clone(),
-            domain: "compiler-suite-lsp".to_string(),
+            domain: "compiler-suite".to_string(),
             kind: OvenArtifactKind::CompilerTestSuite,
             payload: serde_json::to_vec(&suite)?,
             materialized_files: Vec::new(),
@@ -4041,24 +4040,10 @@ mod tests {
         changed_member.plan_identity = digest_bytes(b"changed-plan");
         write_envelope(third_loafs.path(), "generation-three", "compiler-three", changed_member)?;
 
-        let (first, _) = super::compiler_libtests_receipt(
-            compiler_root.path(),
-            &rustc,
-            &["lsp".to_string()],
-            Some(first_loafs.path()),
-        )?;
-        let (second, _) = super::compiler_libtests_receipt(
-            compiler_root.path(),
-            &rustc,
-            &["lsp".to_string()],
-            Some(second_loafs.path()),
-        )?;
-        let (third, _) = super::compiler_libtests_receipt(
-            compiler_root.path(),
-            &rustc,
-            &["lsp".to_string()],
-            Some(third_loafs.path()),
-        )?;
+        let (first, _) = super::compiler_libtests_receipt(compiler_root.path(), &rustc, &[], Some(first_loafs.path()))?;
+        let (second, _) =
+            super::compiler_libtests_receipt(compiler_root.path(), &rustc, &[], Some(second_loafs.path()))?;
+        let (third, _) = super::compiler_libtests_receipt(compiler_root.path(), &rustc, &[], Some(third_loafs.path()))?;
         assert_eq!(
             first.build_unit_identity, second.build_unit_identity,
             "changed envelope evidence must not rebuild an unchanged suite foundation"

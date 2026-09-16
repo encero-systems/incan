@@ -16,6 +16,7 @@ members = [
     "loaves/compiler/incan_semantics_stdlib",
     "loaves/compiler/incan_test_support",
     "loaves/toolchain/incan-cli",
+    "loaves/toolchain/incan-lsp",
     "loaves/compiler/rust_inspect",
     "loaves/kernel/incan_codegraph",
     "loaves/kernel/incan_core",
@@ -57,6 +58,7 @@ categories = ["compilers", "development-tools"]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = "1"
+tower-lsp = "0.20"
 syn = { version = "2.0", features = ["full", "parsing"] }
 quote = "1.0"
 proc-macro2 = "1.0"
@@ -79,6 +81,7 @@ incan_emit = { path = "loaves/compiler/incan_emit", default-features = false }
 incan_format = { path = "loaves/compiler/incan_format" }
 incan_test_support = { path = "loaves/compiler/incan_test_support" }
 incan-cli = { path = "loaves/toolchain/incan-cli" }
+incan-lsp = { path = "loaves/toolchain/incan-lsp" }
 incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = false }
 incan_ir = { path = "loaves/compiler/incan_ir", default-features = false }
 incan_oven_facet = { path = "loaves/compiler/incan_oven_facet" }
@@ -108,7 +111,6 @@ readme.workspace = true
 
 [features]
 default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
-lsp = ["dep:tower-lsp", "dep:tokio", "incan_frontend/lsp", "incan_driver/lsp"]
 std_testing = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_testing", "incan_frontend/std_testing", "incan_ir/std_testing", "incan_emit/std_testing", "incan_provider/std_testing", "incan_driver/std_testing"]
 std_async = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_async", "incan_frontend/std_async", "incan_ir/std_async", "incan_emit/std_async", "incan_provider/std_async", "incan_driver/std_async"]
 std_decorators = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_decorators", "incan_frontend/std_decorators", "incan_ir/std_decorators", "incan_emit/std_decorators", "incan_provider/std_decorators", "incan_driver/std_decorators"]
@@ -135,12 +137,6 @@ incan_syntax = { workspace = true }
 incan_semantics_core = { workspace = true }
 incan_semantics_stdlib = { workspace = true, optional = true }
 
-# LSP server implementation
-tower-lsp = { version = "0.20", optional = true }
-# Async runtime for the LSP server: a multi-thread runtime, stdio transport, `spawn_blocking`, and the
-# `RwLock`/`spawn` surface `lsp/backend.rs` uses. Nothing else in `full` is reached, and the full set made
-# `wasmtime`, `wasmtime-wasi` and `rustix` recompile whenever a build altered tokio's feature set.
-tokio = { workspace = true, features = ["rt-multi-thread", "io-std", "io-util", "sync", "macros"], optional = true }
 # JSON serialization (for LSP protocol)
 serde_json = { workspace = true }
 
@@ -222,11 +218,6 @@ incremental = false
 # complete; optimize only this pure dependency while retaining debuggable compiler code.
 [profile.dev.package.sha2]
 opt-level = 3
-
-[[bin]]
-name = "incan-lsp"
-path = "src/bin/lsp.rs"
-required-features = ["lsp"]
 
 [lib]
 name = "incan"

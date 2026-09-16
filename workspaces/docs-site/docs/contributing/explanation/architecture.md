@@ -348,7 +348,7 @@ The expression emitter is split into focused submodules for maintainability:
 | Module    | Purpose                               |
 | --------- | ------------------------------------- |
 | `loaves/compiler/incan_format/src/` | Source formatter                      |
-| `src/lsp/` | LSP backend logic (diagnostics/hover) |
+| `loaves/toolchain/incan-lsp/src/` | LSP backend logic (diagnostics/hover) |
 | `src/bin/` | Extra binaries (e.g. `lsp`)           |
 
 ## Key Data Types
@@ -376,7 +376,7 @@ ast::Type          ──►  IrType               ──►  (syn Type)
 
 - **CLI**: `loaves/toolchain/incan-cli/src/main.rs` → `incan_cli::run()`
 - **Codegen**: `IrCodegen::new()` → `.generate(&ast)`
-- **LSP**: `src/bin/lsp.rs`
+- **LSP**: `loaves/toolchain/incan-lsp/src/main.rs`
 
 ## Extending the Language
 

@@ -51,7 +51,7 @@ You can orient yourself with these anchors:
     - generated-project planning and generation
 - `loaves/toolchain/incan-cli/src/`:
     - CLI entrypoints and commands (`build`, `run`, `fmt`, `test`)
-- `src/lsp/`:
+- `loaves/toolchain/incan-lsp/src/`:
     - language server implementation that reuses frontend stages
 
 If you want the deep version (module layout, key types, entry points), read:

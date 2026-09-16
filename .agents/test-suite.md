@@ -33,8 +33,7 @@ You are a test orchestrator for the Incan compiler. When invoked, you analyze th
 | `loaves/stdlib/derive/incan_derive/` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
 | `loaves/compiler/incan_emit/tests/codegen_snapshots/*.incn` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
 | `tests/fixtures/` | `cargo test -p incan-cli --test integration_tests` |
-| `tests/*.rs` | `cargo test --test <filename_without_ext>` |
-| `src/lsp/` | No automated tests — inform the user |
+| `loaves/toolchain/incan-lsp/src/` | `cargo test -p incan-lsp` (unit tests in the backend and semantic-token modules) and `cargo test -p incan-lsp --test rfc081_embedded_conformance` |
 
 ## Snapshot handling
 

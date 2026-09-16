@@ -40,7 +40,7 @@ jobs:
       - name: Build host stdlib artifact builder
         run: cargo build --locked --release -p incan-cli --bin incan
       - name: Build toolchain commands
-        run: cargo build --locked --release --target "${{ matrix.target }}" -p incan-cli --bin incan && cargo build --locked --release --features lsp --target "${{ matrix.target }}" --bin incan-lsp
+        run: cargo build --locked --release --target "${{ matrix.target }}" -p incan-cli --bin incan && cargo build --locked --release --target "${{ matrix.target }}" -p incan-lsp --bin incan-lsp
       # package_archive.sh derives the release support workspace lock with `cargo metadata --offline`,
       # which requires every crate named by the support workspace and release_stdlib fixture to already
       # be in the registry cache. Ordinary workspace builds do not guarantee that, and runner caches

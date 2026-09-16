@@ -7,7 +7,6 @@
 
 #[cfg(test)]
 use std::cell::Cell;
-#[cfg(feature = "lsp")]
 use std::collections::HashSet;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -593,7 +592,6 @@ impl CompilationSession {
     }
 
     /// Return the Rust crate names declared by the project manifest, or an empty set outside a project.
-    #[cfg(feature = "lsp")]
     pub fn declared_crate_names(&self) -> HashSet<String> {
         self.manifest
             .as_ref()

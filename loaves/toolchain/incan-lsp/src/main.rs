@@ -7,8 +7,8 @@
 //!
 //! The LSP communicates via stdin/stdout using the Language Server Protocol.
 
-use incan::lsp::IncanLanguageServer;
-use incan::version::INCAN_VERSION;
+use incan_core::version::INCAN_VERSION;
+use incan_lsp::IncanLanguageServer;
 use std::ffi::OsString;
 use std::process::ExitCode;
 use tower_lsp::{LspService, Server};
@@ -23,7 +23,7 @@ fn main() -> ExitCode {
     // need the same deep stack the CLI runs compilation on. A default worker stack turns a deeply nested
     // expression in an open file into a hard abort of the language server rather than a diagnostic.
     let runtime = match tokio::runtime::Builder::new_multi_thread()
-        .thread_stack_size(incan::compiler_stack::compiler_stack_bytes())
+        .thread_stack_size(incan_frontend::compiler_stack::compiler_stack_bytes())
         .enable_all()
         .build()
     {

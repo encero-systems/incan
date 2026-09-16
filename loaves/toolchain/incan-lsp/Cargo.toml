@@ -1,0 +1,48 @@
+[package]
+name = "incan-lsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The Incan language server: diagnostics, hover, definitions and semantic tokens over stdio"
+publish = false
+
+[lib]
+name = "incan_lsp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "incan-lsp"
+path = "src/main.rs"
+
+[features]
+# The server ships the stdlib semantics packs and Rust inspection the way the toolchain does; a ring crate built on
+# its own selects them explicitly.
+default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
+rust_inspect = ["incan_frontend/rust_inspect", "incan_provider/rust_inspect", "incan_driver/rust_inspect"]
+std_testing = ["incan_frontend/std_testing", "incan_provider/std_testing", "incan_driver/std_testing"]
+std_async = ["incan_frontend/std_async", "incan_provider/std_async", "incan_driver/std_async"]
+std_decorators = ["incan_frontend/std_decorators", "incan_provider/std_decorators", "incan_driver/std_decorators"]
+
+[dependencies]
+incan_core = { workspace = true }
+incan_driver = { workspace = true }
+incan_frontend = { workspace = true }
+incan_provider = { workspace = true }
+incan_semantics_core = { workspace = true }
+incan_syntax = { workspace = true }
+incan_vocab = { workspace = true }
+oven_model = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# A multi-thread runtime, stdio transport, `spawn_blocking`, and the `RwLock`/`spawn` surface `backend.rs` uses.
+# Nothing else in `full` is reached, and the full set made `wasmtime`, `wasmtime-wasi` and `rustix` recompile
+# whenever a build altered tokio's feature set.
+tracing = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "io-std", "io-util", "sync", "macros"] }
+tower-lsp = { workspace = true }
+
+[dev-dependencies]
+incan_driver = { workspace = true, features = ["test_support"] }
+incan_format = { workspace = true }
+tempfile = "3"
