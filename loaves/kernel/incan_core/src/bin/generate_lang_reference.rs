@@ -8,7 +8,7 @@
 //! ## Notes
 //! - The generated files are meant to be checked into the repo and treated as derived artifacts.
 //! - **Do not edit generated files by hand** (`language.md`).
-//! - Change source registries under `crates/incan_core/src/lang/` for core language tables.
+//! - Change source registries under `loaves/kernel/incan_core/src/lang/` for core language tables.
 //! - Re-run this binary so docs remain in sync.
 //!
 //! ## Examples
@@ -1121,7 +1121,7 @@ fn render_surface_methods_section(out: &mut String) {
 /// Resolve the workspace root directory.
 ///
 /// ## Returns
-/// - The workspace root path (two levels above `crates/incan_core`).
+/// - The workspace root path (three levels above `loaves/kernel/incan_core`).
 ///
 /// ## Panics
 /// - If the path cannot be resolved (this indicates a broken workspace layout).
@@ -1131,15 +1131,20 @@ fn workspace_root() -> PathBuf {
     }
     if let Ok(current_dir) = std::env::current_dir()
         && current_dir.join("Cargo.toml").is_file()
-        && current_dir.join("crates/incan_core").is_dir()
+        && current_dir.join("loaves/kernel/incan_core").is_dir()
     {
         return current_dir;
     }
 
-    // crates/incan_core -> crates -> workspace root
+    // loaves/kernel/incan_core -> kernel -> loaves -> workspace root
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    match manifest_dir.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()) {
+    match manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+    {
         Some(path) => path,
-        None => panic!("workspace root (two levels above crates/incan_core)"),
+        None => panic!("workspace root (three levels above loaves/kernel/incan_core)"),
     }
 }

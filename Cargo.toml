@@ -1,26 +1,26 @@
 [workspace]
 members = [
     ".",
-    "crates/incan_derive",
-    "crates/incan_vocab",
     "crates/incan_stdlib",
-    "crates/incan_core",
-    "crates/incan_web_macros",
     "loaves/compiler/incan_driver",
     "loaves/compiler/incan_emit",
     "loaves/compiler/incan_format",
     "loaves/compiler/incan_frontend",
     "loaves/compiler/incan_ir",
+    "loaves/compiler/incan_oven_facet",
+    "loaves/compiler/incan_provider",
     "loaves/compiler/incan_semantics_stdlib",
     "loaves/compiler/rust_inspect",
     "loaves/kernel/incan_codegraph",
+    "loaves/kernel/incan_core",
     "loaves/kernel/incan_semantics_core",
     "loaves/kernel/incan_syntax",
-    "loaves/compiler/incan_oven_facet",
-    "loaves/compiler/incan_provider",
+    "loaves/kernel/incan_vocab",
     "loaves/oven/oven_model",
     "loaves/oven/oven_rustc",
     "loaves/oven/oven_store",
+    "loaves/stdlib/derive/incan_derive",
+    "loaves/stdlib/derive/incan_web_macros",
 ]
 exclude = ["target/incan"]
 resolver = "2"
@@ -59,11 +59,11 @@ tracing = "0.1"
 # Every workspace crate is named here once — its directory, its ring's version requirement where that ring has
 # its own line, and `default-features = false` where any member consumes it without defaults — and members
 # inherit the entry. The release archive and the staged SDK runtime write their own tables against `crates/<name>`.
-incan_core = { path = "crates/incan_core" }
-incan_derive = { path = "crates/incan_derive", version = "0.6.0-dev.4" }
+incan_core = { path = "loaves/kernel/incan_core" }
+incan_derive = { path = "loaves/stdlib/derive/incan_derive", version = "0.6.0-dev.4" }
 incan_stdlib = { path = "crates/incan_stdlib", version = "0.6.0-dev.4" }
-incan_vocab = { path = "crates/incan_vocab", version = "0.3.0" }
-incan_web_macros = { path = "crates/incan_web_macros", version = "0.6.0-dev.4" }
+incan_vocab = { path = "loaves/kernel/incan_vocab", version = "0.3.0" }
+incan_web_macros = { path = "loaves/stdlib/derive/incan_web_macros", version = "0.6.0-dev.4" }
 incan_driver = { path = "loaves/compiler/incan_driver", default-features = false }
 incan_emit = { path = "loaves/compiler/incan_emit", default-features = false }
 incan_format = { path = "loaves/compiler/incan_format" }

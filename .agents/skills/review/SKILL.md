@@ -178,7 +178,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
   - Lowered in `loaves/compiler/incan_ir/src/lower/`?
   - Emitted in `loaves/compiler/incan_emit/src/emit/`?
 - [ ] **Out-of-scope features are rejected at the typechecker**, not silently passed to lowering to fail later. Rejection should emit a typed diagnostic from `loaves/kernel/incan_syntax/src/diagnostics/catalog/errors/`.
-- [ ] **Stdlib changes** (`crates/incan_stdlib/stdlib/`) have matching Rust-side backing in `crates/incan_stdlib/src/` and are registered in `STDLIB_NAMESPACES` (`crates/incan_core/src/lang/stdlib.rs`).
+- [ ] **Stdlib changes** (`crates/incan_stdlib/stdlib/`) have matching Rust-side backing in `crates/incan_stdlib/src/` and are registered in `STDLIB_NAMESPACES` (`loaves/kernel/incan_core/src/lang/stdlib.rs`).
 
 ---
 
@@ -280,7 +280,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 
 - [ ] **User-facing changes update the right docs** — rustdoc, docs-site pages, examples, and release notes stay aligned when behavior changes.
 - [ ] **Release-note inventories stay complete** — when the branch implements or materially completes an RFC/user-facing feature, verify the current release notes mention it in the implemented/features inventory where this repo expects that summary to live.
-- [ ] **Generated language reference is current** — if the change touches `crates/incan_core/src/lang/`, `crates/incan_core/src/bin/generate_lang_reference.rs`, or `workspaces/docs-site/docs/language/reference/language.md`, run `cargo run -p incan_core --bin generate_lang_reference`, inspect the resulting `language.md` diff, and require that generated diff to be committed or explicitly reported as blocked.
+- [ ] **Generated language reference is current** — if the change touches `loaves/kernel/incan_core/src/lang/`, `loaves/kernel/incan_core/src/bin/generate_lang_reference.rs`, or `workspaces/docs-site/docs/language/reference/language.md`, run `cargo run -p incan_core --bin generate_lang_reference`, inspect the resulting `language.md` diff, and require that generated diff to be committed or explicitly reported as blocked.
 - [ ] **Compiler bugs discovered during review are surfaced explicitly** — if you find a likely compiler defect that should not be fixed inside the current change, invoke `flag-compiler-bug` instead of burying it in review notes.
 - [ ] **Repo learnings are captured when warranted** — if the change taught a durable lesson about architecture, testing, or pitfalls, consider whether `AGENTS.md` should be updated.
 

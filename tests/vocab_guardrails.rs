@@ -70,7 +70,8 @@ fn semantic_compiler_paths_do_not_reverse_emitted_names_into_source_bindings() -
 /// `incan_core::lang` registries instead.
 ///
 /// Notes:
-/// - We allow occurrences in `crates/incan_core/src/lang/**` (registries themselves), in docgen, and in tests/fixtures.
+/// - We allow occurrences in `loaves/kernel/incan_core/src/lang/**` (registries themselves), in docgen, and in
+///   tests/fixtures.
 /// - This is not meant to be perfect; it’s meant to catch “oops I added a string match”.
 #[test]
 fn no_new_stringly_vocab_checks_in_rust_sources() {
@@ -306,11 +307,12 @@ fn is_allowed_file(root: &Path, path: &Path) -> bool {
         return true;
     }
     // Registries and interop policy define canonical spellings; allow them.
-    if rel.starts_with("crates/incan_core/src/lang/") || rel.starts_with("crates/incan_core/src/interop/") {
+    if rel.starts_with("loaves/kernel/incan_core/src/lang/") || rel.starts_with("loaves/kernel/incan_core/src/interop/")
+    {
         return true;
     }
     // Docgen inevitably contains spellings for headings, etc.
-    if rel == "crates/incan_core/src/bin/generate_lang_reference.rs" {
+    if rel == "loaves/kernel/incan_core/src/bin/generate_lang_reference.rs" {
         return true;
     }
     // Tests can mention spellings directly.
@@ -366,7 +368,7 @@ fn is_suspicious_line(line: &str, spellings: &[&'static str]) -> bool {
 
 fn semantic_string_scan_files(root: &Path) -> Vec<PathBuf> {
     const ROOTS: &[&str] = &[
-        "crates/incan_core/src/interop",
+        "loaves/kernel/incan_core/src/interop",
         "loaves/compiler/rust_inspect/src",
         "loaves/compiler/incan_emit/src",
         "loaves/compiler/incan_ir/src",

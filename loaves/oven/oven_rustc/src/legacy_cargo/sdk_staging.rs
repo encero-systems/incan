@@ -135,7 +135,7 @@ pub fn stage_sdk_runtime_crates(provider_root: &Path) -> Result<(), OvenLegacyCa
     }
 
     for crate_name in RUNTIME_CRATES {
-        let source_crate = source_root.join("crates").join(crate_name);
+        let source_crate = oven_model::toolchain_layout::support_crate_dir_in(&source_root, crate_name);
         let destination_crate = runtime_root.join("crates").join(crate_name);
         let source_manifest = source_crate.join("Cargo.toml");
         if !source_manifest.is_file() {

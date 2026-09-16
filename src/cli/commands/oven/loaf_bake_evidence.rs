@@ -279,12 +279,8 @@ pub(crate) fn loaf_runtime_source_digest(compiler_root: &Path) -> CliResult<Stri
         ))
     })?;
     records.insert("Cargo.toml".to_string(), digest_bytes(&manifest_bytes));
-    for (label, relative) in [
-        ("incan_core", "crates/incan_core"),
-        ("incan_derive", "crates/incan_derive"),
-        ("incan_stdlib", "crates/incan_stdlib"),
-    ] {
-        let root = compiler_root.join(relative);
+    for label in ["incan_core", "incan_derive", "incan_stdlib"] {
+        let root = oven_model::toolchain_layout::support_crate_dir_in(compiler_root, label);
         let digest = digest_runtime_crate_source(&root).map_err(CliError::failure)?;
         records.insert(label.to_string(), digest);
     }

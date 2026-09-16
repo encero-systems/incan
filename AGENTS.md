@@ -237,7 +237,7 @@ The parser column is relative to `loaves/kernel/incan_syntax/src/`; typechecker 
 | Field metadata   | `parser/decl/`                                       | `check_decl.rs`                                                     | `lower/decl/` | `emit/decls/` |
 | Alias resolution | -                                                      | `check_expr/access.rs`, `check_expr/calls.rs`, `check_expr/match_.rs`                     | `lower/expr/` | -               |
 | Soft keywords    | `parser/core.rs`, `parser/helpers.rs`, `parser/decl/*` | `collect/stdlib_imports.rs`                                         | -               | -               |
-| Stdlib registry  | -                                                      | `incan_core::lang::stdlib` (`crates/incan_core/src/lang/stdlib.rs`) | -               | -               |
+| Stdlib registry  | -                                                      | `incan_core::lang::stdlib` (`loaves/kernel/incan_core/src/lang/stdlib.rs`) | -               | -               |
 | Diagnostics      | -                                                      | `diagnostics/catalog/errors/*` in `loaves/kernel/incan_syntax/src/`        | -               | -               |
 
 ## Available Skills and Agents

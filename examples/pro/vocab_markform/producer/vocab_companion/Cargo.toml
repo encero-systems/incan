@@ -9,6 +9,6 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 # TODO(RFC 034): switch this example to the published `incan_vocab` crate once incan.pub is live.
-incan_vocab = { path = "../../../../../crates/incan_vocab" }
+incan_vocab = { path = "../../../../../loaves/kernel/incan_vocab" }
 
 [workspace]

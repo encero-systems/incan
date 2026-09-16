@@ -1706,7 +1706,7 @@ pub fn bake_source_compiler_vocab_support(
             ),
         });
     }
-    let crate_root = compiler_root.join("crates/incan_vocab");
+    let crate_root = oven_model::toolchain_layout::support_crate_dir_in(compiler_root, "incan_vocab");
     let manifest = crate_root.join("Cargo.toml");
     if !manifest.is_file() {
         return Err(OvenLoafError::Preparation {

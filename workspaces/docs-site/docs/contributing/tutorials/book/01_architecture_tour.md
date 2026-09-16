@@ -29,15 +29,15 @@ You can orient yourself with these anchors:
 - `loaves/kernel/incan_syntax/`:
     - shared lexer/parser/AST/diagnostics
     - used by compiler, formatter, and LSP to avoid drift
-- `crates/incan_core/`:
+- `loaves/kernel/incan_core/`:
     - pure language policy and registries shared across compiler/runtime boundaries
 - `loaves/kernel/incan_semantics_core/` and `loaves/compiler/incan_semantics_stdlib/`:
     - descriptor contracts plus current stdlib semantics-pack implementation
-- `crates/incan_vocab/`:
+- `loaves/kernel/incan_vocab/`:
     - stable library manifest/desugarer contract for import-activated library DSLs
 - `loaves/compiler/rust_inspect/`:
     - staged Rust metadata preparation/cache subsystem for Rust interop
-- `crates/incan_stdlib/`, `crates/incan_derive/`, and `crates/incan_web_macros/`:
+- `crates/incan_stdlib/`, `loaves/stdlib/derive/incan_derive/`, and `loaves/stdlib/derive/incan_web_macros/`:
     - runtime-only support used by generated Rust programs
 - `loaves/compiler/incan_frontend/src/`:
     - module resolution (`module.rs`)
