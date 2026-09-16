@@ -12,4 +12,4 @@ Stable contracts only: deterministic, dependency-light, no runtime side effects.
 | `incan_vocab/` | Vocabulary registration contract for companion crates, including the WASM desugar ABI constants. |
 | `incan_codegraph/` | Stable codegraph fact schema for tooling and agent context. |
 
-See [`LAYOUT.md`](../LAYOUT.md) for the ring rules and the migration order.
+The ring rules live in *Repository layout* in `workspaces/docs-site/docs/contributing/explanation/architecture.md`; the migration is #1478's history.

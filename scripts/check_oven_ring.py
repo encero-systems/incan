@@ -4,7 +4,7 @@
 Copies every crate under `loaves/oven/` into a scratch workspace whose manifest carries only the root's
 `[workspace.package]` and `[workspace.dependencies]` tables and the root `Cargo.lock`, then runs `cargo check` there.
 A crate that names `incan_*` (or the root crate) fails to resolve because nothing under that name exists in the scratch
-workspace. This is the property test `loaves/LAYOUT.md` asks for from step 3 of the layout rewrite on.
+workspace. This is the property test the ring rule in `architecture.md` (*Repository layout*) asks for.
 """
 
 from __future__ import annotations

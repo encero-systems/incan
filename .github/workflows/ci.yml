@@ -144,7 +144,7 @@ jobs:
         run: cargo check -p incan_driver --no-default-features
       - name: Check the language server without the CLI
         run: cargo check -p incan-lsp --no-default-features --lib --bin incan-lsp
-      # The Oven ring depends on no Incan ring (`loaves/LAYOUT.md`): the `oven_*` crates must check in a workspace
+      # The Oven ring depends on no Incan ring (architecture.md, *Repository layout*): the `oven_*` crates must check in a workspace
       # that holds nothing else. `scripts/check_oven_ring.py` builds that workspace from the root manifest's tables.
       - name: Check the Oven ring without the compiler crates
         run: python3 scripts/check_oven_ring.py

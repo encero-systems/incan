@@ -10,4 +10,4 @@ Thin binaries only. May depend on every ring. Nothing depends on it. This is the
 | `incan-lsp/` | Language server over the driver. |
 | `oven-cli/` | The `oven` command surface from RFC 118. |
 
-See [`LAYOUT.md`](../LAYOUT.md) for the ring rules and the migration order.
+The ring rules live in *Repository layout* in `workspaces/docs-site/docs/contributing/explanation/architecture.md`; the migration is #1478's history.

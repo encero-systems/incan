@@ -15,7 +15,7 @@ The pipeline from checked AST to emitted Rust, plus the session and provider mac
 | `incan_oven_facet/` | Implements Oven's provider interface for Incan: stdlib extra crate sources, SDK-provider and library-manifest lock sections, diagnostics mapping, rust_inspect hooks. The one place Oven learns about Incan. |
 | `incan_driver/` | The compile session: module graph, parsed modules, build orchestration, generated cache, replacement compatibility. No clap, no terminal I/O. |
 
-See [`LAYOUT.md`](../LAYOUT.md) for the ring rules and the migration order.
+The ring rules live in *Repository layout* in `workspaces/docs-site/docs/contributing/explanation/architecture.md`; the migration is #1478's history.
 
 `incan_semantics_stdlib/` sits here too: the stdlib semantics packs are compiler implementation, not a kernel contract.
 

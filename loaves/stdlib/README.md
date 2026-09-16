@@ -26,4 +26,4 @@ Rust requires procedural macros to live in a crate with `proc-macro = true`, and
 
 To add a derive-backed feature: define the trait in the owning facet, implement the macro in `derive/incan_derive/src/lib.rs`, teach lowering to recognise the decorator, and add a codegen snapshot test.
 
-See [`LAYOUT.md`](../LAYOUT.md).
+The ring rules live in *Repository layout* in `workspaces/docs-site/docs/contributing/explanation/architecture.md`.
