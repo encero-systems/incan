@@ -86,7 +86,7 @@ src/
 │
 └── bin/
     ├── lsp.rs                        # LSP binary entrypoint
-    └── generate_vscode_grammar_keywords.rs  # VS Code grammar helper
+    └── generate_feature_inventory.rs # feature-inventory reference generator (CLI-backed)
 ```
 
 ## Key entry points

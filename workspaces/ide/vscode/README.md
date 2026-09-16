@@ -230,7 +230,7 @@ async def fetch_users(limit: int = 10) -> List[User]:
 To modify keyword highlighting:
 
 1. Update the registry-backed helpers in `incan_core::lang`
-2. Run `cargo run --bin generate_vscode_grammar_keywords`
+2. Run `cargo run -p incan_core --bin generate_vscode_grammar_keywords`
 3. Reload VS Code/Cursor and test with files in `examples/`
 
 For non-keyword grammar structure, update `incan.tmLanguage.json` directly and keep the generated keyword regexes in sync via the command above.
