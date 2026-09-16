@@ -6,9 +6,9 @@ The `oven`, plus `compiler/incan_oven_facet` for the Incan provider wiring binar
 
 ## Moves here from
 
-- `src/cli/commands/oven.rs`
-- `src/cli/commands/lock.rs`
-- `src/cli/commands/tools.rs`
+- `loaves/toolchain/incan-cli/src/commands/oven.rs`
+- `loaves/toolchain/incan-cli/src/commands/lock.rs`
+- `loaves/toolchain/incan-cli/src/commands/tools.rs`
 
 ## May depend on
 

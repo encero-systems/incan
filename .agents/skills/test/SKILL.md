@@ -42,7 +42,7 @@ Did you change lowering or emission (codegen output)?
   → Run: INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests
 
 Did you change end-to-end behavior (CLI, build, multi-file)?
-  → Add a test in tests/integration_tests.rs
+  → Add a test in loaves/toolchain/incan-cli/tests/integration_tests.rs
 
 Did you change the formatter?
   → Property tests in loaves/compiler/incan_format/tests/property_tests.rs verify idempotency
@@ -142,7 +142,7 @@ Helpers available: `load_test_file(name)` (loads from `loaves/compiler/incan_emi
 
 ### Integration test pattern
 
-File: `tests/integration_tests.rs`
+File: `loaves/toolchain/incan-cli/tests/integration_tests.rs`
 
 ```rust
 #[test]
@@ -177,7 +177,7 @@ cargo test -p incan --lib typechecker::tests
 cargo test -p incan_syntax --lib parser::tests
 
 # Run integration tests
-cargo test --test integration_tests
+cargo test -p incan-cli --test integration_tests
 ```
 
 ### Before finishing (full suite)

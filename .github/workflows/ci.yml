@@ -135,7 +135,7 @@ jobs:
           save-if: false
       - uses: ./.github/actions/setup-rust-sccache
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       # The compiler library and the language server must compile without the `cli` feature (#1479): the LSP links
       # the driver, never the CLI, and the bare library is what every other consumer of the compiler sees. Both are
       # `cargo check`, not clippy — without the CLI most driver and Oven items are unreachable and warn as dead, which
@@ -152,7 +152,7 @@ jobs:
       - name: Compile and run SDK transport and CI contract regressions
         run: |
           CARGO_BUILD_JOBS=2 cargo test --locked --all-features -p incan_provider --lib sdk_build_reports_
-          CARGO_BUILD_JOBS=2 cargo test --locked --all-features --test toolchain_installer_tests compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence -- --exact
+          CARGO_BUILD_JOBS=2 cargo test --locked --all-features -p incan-cli --test toolchain_installer_tests compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence -- --exact
       - name: Show sccache stats
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
@@ -217,7 +217,7 @@ jobs:
           make fetch-oven-loaf-sources
           make fetch-release-support-workspace-sources
       - name: Build the compiler
-        run: CARGO_BUILD_JOBS=2 cargo build --locked --features lsp --bins
+        run: CARGO_BUILD_JOBS=2 cargo build --locked -p incan-cli -p incan --features incan/lsp --bins
       - uses: ./.github/actions/restore-sdk-provider-store
       # macOS retains its own compiler and SDK because the Linux handoff cannot supply a macOS toolchain.
       - name: Prewarm platform SDK providers
@@ -229,7 +229,7 @@ jobs:
       - name: Run platform C ABI verification
         run: >-
           CARGO_NET_OFFLINE=true
-          cargo test --locked --test cli_interop_target_tests ${{ matrix.c_abi_test }} -- --exact
+          cargo test --locked -p incan-cli --test cli_interop_target_tests ${{ matrix.c_abi_test }} -- --exact
 
   linux-tool-handoff:
     name: Linux compiler and SDK handoff
@@ -282,7 +282,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p target/ci-tool-evidence
-          CARGO_BUILD_JOBS=2 cargo build --locked --release --features lsp --bin incan --bin generate_feature_inventory --message-format=json-render-diagnostics | python3 scripts/ci_tool_outputs.py record target/ci-tool-private/compiler.jsonl
+          CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan-cli --bin incan --bin generate_feature_inventory --message-format=json-render-diagnostics | python3 scripts/ci_tool_outputs.py record target/ci-tool-private/compiler.jsonl
           CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan_core --bin generate_lang_reference --message-format=json-render-diagnostics | python3 scripts/ci_tool_outputs.py record target/ci-tool-private/reference.jsonl
       - name: Audit cold Linux tool input coverage
         id: tool-admission
@@ -441,7 +441,7 @@ jobs:
           CARGO_BIN_EXE_incan: ${{ github.workspace }}/target/debug/incan
         run: |
           sha256sum target/debug/incan > "$RUNNER_TEMP/compiler-handoff.sha256"
-          cargo test --locked --test cli_interop_target_tests \
+          cargo test --locked -p incan-cli --test cli_interop_target_tests \
             check_verifies_c_bindings_against_a_declared_android_interop_target -- --exact
           sha256sum --check "$RUNNER_TEMP/compiler-handoff.sha256"
 

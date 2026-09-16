@@ -556,14 +556,26 @@ regex = "1"
             },
             "one explicit publication must read one session authority and project one aggregate provider plan across every manifest entry",
         );
-        assert!(normal_dependencies.is_superset(&BTreeSet::from(["semver", "serde_json"])));
-        assert!(normal_dependencies.is_subset(&BTreeSet::from([
-            "incan_stdlib_core",
-            "incan_stdlib_testing",
-            "semver",
-            "serde_json",
-        ])));
-        assert_eq!(dev_dependencies, BTreeSet::from(["regex"]));
+        assert!(
+            normal_dependencies.is_superset(&BTreeSet::from(["semver", "serde_json"])),
+            "normal dependencies: {normal_dependencies:?}"
+        );
+        // `std.testing` brings its component and, since facets became demand-driven, the Rust facet it names.
+        assert!(
+            normal_dependencies.is_subset(&BTreeSet::from([
+                "incan_std_testing",
+                "incan_stdlib_core",
+                "incan_stdlib_testing",
+                "semver",
+                "serde_json",
+            ])),
+            "normal dependencies: {normal_dependencies:?}"
+        );
+        assert_eq!(
+            dev_dependencies,
+            BTreeSet::from(["regex"]),
+            "dev dependencies: {dev_dependencies:?}"
+        );
         let lock = IncanLock::load(&project_root.join("oven.lock"))?;
         assert!(!lock.deps_fingerprint.is_empty());
         assert_eq!(lock.cargo_lock_payload, INERT_CARGO_LOCK_PAYLOAD);

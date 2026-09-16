@@ -130,7 +130,7 @@ We want one “source of truth” for language behavior so the compiler and runt
 
 ## Guardrails (how it is enforced)
 
-- **Dependency gate**: `tests/layering_guard.rs` fails if a facet appears in the `[dependencies]` section of the root, compiler-ring or kernel-ring manifests (keeping one in `[dev-dependencies]` for parity tests is allowed), if the registry's facet facts disagree with `sdk-components.toml` and the crates on disk, or if the compiler ring spells a runtime crate the catalog does not know.
+- **Dependency gate**: `loaves/toolchain/incan-cli/tests/layering_guard.rs` fails if a facet appears in the `[dependencies]` section of the root, compiler-ring or kernel-ring manifests (keeping one in `[dev-dependencies]` for parity tests is allowed), if the registry's facet facts disagree with `sdk-components.toml` and the crates on disk, or if the compiler ring spells a runtime crate the catalog does not know.
 
 ## How to add shared behavior safely
 

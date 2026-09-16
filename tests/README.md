@@ -1,6 +1,6 @@
 # Tests
 
-Integration roots live in the package they exercise, under that package's `tests/` directory; unit tests live inline in the source files they test (`#[cfg(test)]` modules). The roots still in this directory are the ones that exercise the `incan` command line as a whole; they move with the CLI when it becomes `loaves/toolchain/incan-cli`.
+Integration roots live in the package they exercise, under that package's `tests/` directory; unit tests live inline in the source files they test (`#[cfg(test)]` modules). One root is still in this directory; the rest live in their rings, the command-line roots with the `incan` binary in `loaves/toolchain/incan-cli`.
 
 ## Where the roots live
 
@@ -12,13 +12,16 @@ Integration roots live in the package they exercise, under that package's `tests
 | `loaves/compiler/incan_provider/tests/` | The stdlib effect digest | `cargo test -p incan_provider --test stdlib_effect_digest` |
 | `loaves/compiler/incan_format/tests/` | Formatter properties (`property_tests.rs`, with its proptest regressions file) | `cargo test -p incan_format --test property_tests` |
 | `loaves/compiler/incan_oven_facet/tests/` | Bounded Oven process-containment regressions | `make test-oven-pr-regressions` |
+| `loaves/toolchain/incan-cli/tests/` | The command line as a whole: the `cli_*` surfaces, `integration_tests`, the RFC 031 package roots, the installer tests, the layering and vocabulary guardrails | `cargo test -p incan-cli --test <root>` |
 | `loaves/compiler/incan_test_support/` | The harness every root shares: checkout anchors, the compiler subprocess, fixture builders, artifact readers | a dev-dependency, not a root |
 
 Every root also runs through the Oven compiler suite (`make test`, or one root with `make test-one TEST_ROOT=<path>`), which is the authority for anything that bakes or launches the compiler.
 
 ## Still here
 
-`cli_*.rs`, `integration_tests.rs`, `rfc031_pub_import_integration_tests.rs`, `rfc081_embedded_conformance.rs`, `canonical_item_imports.rs`, `package_boundary_facade_tests.rs`, `package_executable_representation.rs`, `script_target_diagnostics.rs`, `std_encoding_algorithm_modules.rs`, `example_capability_coverage.rs`, `repository_path_tests.rs`, `toolchain_installer_tests.rs`, and the guardrails `layering_guard.rs`, `cli_layering_guardrails.rs`, `vocab_guardrails.rs`. Run one with `cargo test --test <root>`.
+`rfc081_embedded_conformance.rs` alone: it reaches the language server (`incan::lsp`), which is still the root package's feature until the LSP has a package of its own. Run it with `cargo test --test rfc081_embedded_conformance --features lsp`.
+
+The command-line roots — the `cli_*` surfaces, `integration_tests`, the RFC 031 package roots, the installer tests, the layering and vocabulary guardrails — live with the `incan` binary in `loaves/toolchain/incan-cli/tests/`; run one with `cargo test -p incan-cli --test <root>`.
 
 ### `fixtures/`
 

@@ -62,12 +62,12 @@ The repository suite has one explicit preparation boundary and one Cargo-guarded
 1. `make test-prewarm-oven-loafs` invokes the internal compiler-suite publisher once to create or exactly reuse the typed Loaf envelope and receipt-bound compiler-suite store.
 2. `incan oven compiler-libtests` compiles and executes every discovered root from the prepared store with Cargo guarded out.
 
-The Makefile owns only this command composition. Oven owns Loaf identity, contents, admission, storage policy, selection, root inventory, and reporting. `make test-one TEST_ROOT=tests/cli_surface_tests.rs` is the fast failure-isolation path; `make test-oven` is the complete local gate. Both pin the explicit publisher to `nightly-2026-03-24`, while the consumer remains direct `rustc`.
+The Makefile owns only this command composition. Oven owns Loaf identity, contents, admission, storage policy, selection, root inventory, and reporting. `make test-one TEST_ROOT=loaves/toolchain/incan-cli/tests/cli_surface_tests.rs` is the fast failure-isolation path; `make test-oven` is the complete local gate. Both pin the explicit publisher to `nightly-2026-03-24`, while the consumer remains direct `rustc`.
 
 ```bash
-cargo build --features lsp
+cargo build -p incan-cli -p incan --features incan/lsp
 INCAN_TEST_COMPILER_ALREADY_BUILT=1 make test-prewarm-oven-loafs
-make test-one TEST_ROOT=tests/cli_surface_tests.rs
+make test-one TEST_ROOT=loaves/toolchain/incan-cli/tests/cli_surface_tests.rs
 make test-oven
 ```
 

@@ -61,10 +61,10 @@ runs:
 
         case "${PROFILE}" in
           release)
-            cargo build --locked --bin incan --release
+            cargo build --locked -p incan-cli --bin incan --release
             ;;
           debug)
-            cargo build --locked --bin incan
+            cargo build --locked -p incan-cli --bin incan
             ;;
           *)
             echo "Unsupported Incan build profile: ${PROFILE}" >&2

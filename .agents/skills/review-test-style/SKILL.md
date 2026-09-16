@@ -55,16 +55,16 @@ Keep slice reports findings-first. Only list clean surfaces when they are materi
 
 ## Scope
 - assigned files:
-  - tests/integration_tests.rs
+  - loaves/toolchain/incan-cli/tests/integration_tests.rs
 
 ## Findings
 
-- [ ] warning | test-gap | panic helper | src/cli/mod.rs:84
+- [ ] warning | test-gap | panic helper | loaves/toolchain/incan-cli/src/lib.rs:84
   Test helper uses panic-oriented control flow instead of `Result` + assertions.
 
 ## Reviewed Clean Surfaces
 
-- tests/integration_tests.rs — touched lifecycle coverage reviewed; no additional findings
+- loaves/toolchain/incan-cli/tests/integration_tests.rs — touched lifecycle coverage reviewed; no additional findings
 ```
 
 If there are no findings, say so explicitly.

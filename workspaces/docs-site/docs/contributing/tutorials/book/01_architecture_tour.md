@@ -49,7 +49,7 @@ You can orient yourself with these anchors:
     - emission (`emit/`) producing Rust code
 - `loaves/compiler/incan_driver/src/backend/project/`:
     - generated-project planning and generation
-- `src/cli/`:
+- `loaves/toolchain/incan-cli/src/`:
     - CLI entrypoints and commands (`build`, `run`, `fmt`, `test`)
 - `src/lsp/`:
     - language server implementation that reuses frontend stages

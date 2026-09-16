@@ -94,11 +94,11 @@ rg -n 'std_|from std\.|import std' tests loaves/compiler/incan_emit/tests/codege
 | `stdlib/encoding/prelude.incn` | `std.encoding` | `snapshot-covered` | `stdlib_generated_rust_snapshot_tests::std_encoding_prelude_import_snapshot` snapshots representative public prelude imports for family modules and `EncodingError`; `rfc064_std_encoding_behavior` imports the public prelude; algorithm modules are covered individually. | Add more family imports only when the public encoding prelude expands. |
 | `stdlib/encoding/_shared.incn` | `std.encoding._shared` | `indirect-only` | Imported by all algorithm modules and covered through their tests; no direct source/import target found. | Add a compact compile test for `EncodingError` and shared helpers. |
 | `stdlib/encoding/hex.incn` | `std.encoding.hex` | `import/user-facing-covered` | `std_encoding_hex_surface` fixture and RFC 064 encoding behavior fixture. | Add direct module-source runtime coverage like the other algorithms, or a generated-Rust snapshot. |
-| `stdlib/encoding/base32.incn` | `std.encoding.base32` | `import/user-facing-covered` | `tests/std_encoding_algorithm_modules.rs` runs module source with vector and lenient decode assertions; RFC 064 fixture also imports it. | Add snapshot only if generated helper shape needs review. |
-| `stdlib/encoding/base58.incn` | `std.encoding.base58` | `import/user-facing-covered` | `tests/std_encoding_algorithm_modules.rs` and RFC 064 fixture. | Same as base32. |
-| `stdlib/encoding/base64.incn` | `std.encoding.base64` | `import/user-facing-covered` | `tests/std_encoding_algorithm_modules.rs` and RFC 064 fixture. | Same as base32. |
-| `stdlib/encoding/base85.incn` | `std.encoding.base85` | `import/user-facing-covered` | `tests/std_encoding_algorithm_modules.rs` and RFC 064 fixture. | Same as base32. |
-| `stdlib/encoding/bech32.incn` | `std.encoding.bech32` | `import/user-facing-covered` | `tests/std_encoding_algorithm_modules.rs` and RFC 064 fixture. | Same as base32. |
+| `stdlib/encoding/base32.incn` | `std.encoding.base32` | `import/user-facing-covered` | `loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs` runs module source with vector and lenient decode assertions; RFC 064 fixture also imports it. | Add snapshot only if generated helper shape needs review. |
+| `stdlib/encoding/base58.incn` | `std.encoding.base58` | `import/user-facing-covered` | `loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs` and RFC 064 fixture. | Same as base32. |
+| `stdlib/encoding/base64.incn` | `std.encoding.base64` | `import/user-facing-covered` | `loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs` and RFC 064 fixture. | Same as base32. |
+| `stdlib/encoding/base85.incn` | `std.encoding.base85` | `import/user-facing-covered` | `loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs` and RFC 064 fixture. | Same as base32. |
+| `stdlib/encoding/bech32.incn` | `std.encoding.bech32` | `import/user-facing-covered` | `loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs` and RFC 064 fixture. | Same as base32. |
 
 ### `std.fs`
 

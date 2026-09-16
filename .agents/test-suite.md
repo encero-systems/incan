@@ -23,16 +23,16 @@ You are a test orchestrator for the Incan compiler. When invoked, you analyze th
 | `loaves/compiler/incan_frontend/src/typechecker/` | `cargo test -p incan_frontend --lib typechecker::tests` |
 | `loaves/compiler/incan_ir/src/lower/` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
 | `loaves/compiler/incan_emit/src/emit/` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
-| `loaves/compiler/incan_emit/src/codegen.rs` | `cargo test -p incan_emit --test codegen_snapshot_tests` and `cargo test --test integration_tests` |
+| `loaves/compiler/incan_emit/src/codegen.rs` | `cargo test -p incan_emit --test codegen_snapshot_tests` and `cargo test -p incan-cli --test integration_tests` |
 | `loaves/compiler/incan_emit/src/conversions.rs` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
-| `loaves/compiler/incan_driver/src/backend/project/` | `cargo test --test integration_tests` |
-| `src/cli/` | `cargo test --test integration_tests` |
-| `loaves/compiler/incan_format/src/` | `cargo test -p incan_format --test property_tests` and `cargo test --test integration_tests` |
+| `loaves/compiler/incan_driver/src/backend/project/` | `cargo test -p incan-cli --test integration_tests` |
+| `loaves/toolchain/incan-cli/src/` | `cargo test -p incan-cli --test integration_tests` |
+| `loaves/compiler/incan_format/src/` | `cargo test -p incan_format --test property_tests` and `cargo test -p incan-cli --test integration_tests` |
 | `loaves/kernel/incan_core/` | `cargo test -p incan_frontend --test semantic_core_parity --test semantic_core_parity_strings` |
-| `loaves/stdlib/*/rust/` | `cargo test -p incan_emit --test codegen_snapshot_tests` and `cargo test --test integration_tests` |
+| `loaves/stdlib/*/rust/` | `cargo test -p incan_emit --test codegen_snapshot_tests` and `cargo test -p incan-cli --test integration_tests` |
 | `loaves/stdlib/derive/incan_derive/` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
 | `loaves/compiler/incan_emit/tests/codegen_snapshots/*.incn` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
-| `tests/fixtures/` | `cargo test --test integration_tests` |
+| `tests/fixtures/` | `cargo test -p incan-cli --test integration_tests` |
 | `tests/*.rs` | `cargo test --test <filename_without_ext>` |
 | `src/lsp/` | No automated tests — inform the user |
 

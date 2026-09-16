@@ -60,21 +60,6 @@ src/
 │       ├── runner.rs                 #   Shells out to cargo build/run
 │       └── cargo_toml.rs             #   Cargo.toml construction
 │
-├── cli/
-│   ├── commands/                     # CLI subcommands
-│   │   ├── build.rs                  #   `incan build`
-│   │   ├── debug.rs                  #   `incan debug`
-│   │   ├── format.rs                 #   `incan fmt`
-│   │   ├── init.rs                   #   `incan init`
-│   │   ├── lock.rs                   #   `incan lock`
-│   │   ├── common.rs                 #   Shared CLI helpers (module collection, error display)
-│   │   └── stdlib_loader.rs          #   Stdlib loading for CLI
-│   └── test_runner/                  # pytest-style test runner (`incan test`)
-│       ├── discovery.rs              #   Test function discovery
-│       ├── execution.rs              #   Test execution and harness generation
-│       ├── reporter.rs               #   Result formatting
-│       └── module_graph.rs           #   Multi-module test graph
-│
 ├── format/                           # Code formatter (`incan fmt`)
 │   ├── formatter/                    #   Formatting logic per AST node
 │   ├── config.rs                     #   FormatConfig (line length, trailing commas, etc.)
@@ -85,8 +70,7 @@ src/
 │   └── diagnostics.rs                #   Diagnostic conversion
 │
 └── bin/
-    ├── lsp.rs                        # LSP binary entrypoint
-    └── generate_feature_inventory.rs # feature-inventory reference generator (CLI-backed)
+    └── lsp.rs                        # LSP binary entrypoint
 ```
 
 ## Key entry points
