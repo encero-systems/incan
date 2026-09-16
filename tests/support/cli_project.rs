@@ -172,20 +172,14 @@ pub(crate) fn run_incan_with_env_and_removed(
 
 #[allow(dead_code)]
 pub(crate) fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Command {
-    let mut command = Command::new(incan_binary());
+    let mut command = support::repo_command();
     command
         .args(args)
         .current_dir(current_dir)
         .env("CARGO_NET_OFFLINE", "true")
         .env("INCAN_NO_BANNER", "1")
-        .env(
-            "INCAN_STDLIB",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
-        )
-        .env(
-            "INCAN_STDLIB_DIR",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib"),
-        );
+        .env("INCAN_STDLIB", support::repo_root().join("loaves/stdlib"))
+        .env("INCAN_STDLIB_DIR", support::repo_root().join("loaves/stdlib"));
     if !support::oven_compiler_suite_is_active() {
         command
             .env(

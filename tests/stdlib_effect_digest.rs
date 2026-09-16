@@ -5,19 +5,18 @@
 //! replacement has to get right — it must move for a change the compiler would emit differently, and hold still
 //! for one it would not — and record what it costs against the real standard library.
 
+mod support;
+use support::repo_root;
+
 use incan::provider::effect_digest::{
     ComponentSources, compiler_effect_digest, component_effect_digests, module_effect_digest, stdlib_effect_digest,
 };
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Instant;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
-
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
-}
 
 /// Write one throwaway `.incn` module and digest it.
 fn digest_module(directory: &Path, name: &str, source: &str) -> Result<String, Box<dyn std::error::Error>> {

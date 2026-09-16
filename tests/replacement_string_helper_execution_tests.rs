@@ -1,5 +1,7 @@
 //! Direct execution and source-span boundaries for compiler-selected runtime string helpers.
 
+mod support;
+
 use incan::backend::replacement::{ProgramIo, ReplacementValue, execute_free_function_with_io};
 use incan::frontend::body_ir::{apply_body_ir_input_contract, build_body_ir_module_v0};
 use incan::frontend::{lexer, parser, typechecker::TypeChecker};
@@ -112,7 +114,7 @@ fn string_membership_cli_records_the_shared_helper_result() -> Result<(), Box<dy
         temporary.path().join("main.incn"),
         "def main() -> bool:\n    return \"a\" in \"abc\"\n",
     )?;
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_incan"))
+    let output = support::repo_command()
         .current_dir(temporary.path())
         .args([
             "build",
@@ -180,7 +182,7 @@ fn canonical_string_comparisons_use_shared_unicode_order() -> Result<(), Box<dyn
 /// The unchanged committed example must run to completion, not merely lower the first selected helper.
 #[test]
 fn committed_strings_example_executes_with_ordinary_output() -> Result<(), Box<dyn std::error::Error>> {
-    let source_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/simple/strings.incn");
+    let source_path = support::repo_root().join("examples/simple/strings.incn");
     let source = std::fs::read_to_string(&source_path)?;
     let tokens = lexer::lex(&source).map_err(|errors| format!("{errors:?}"))?;
     let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;

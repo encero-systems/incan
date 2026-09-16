@@ -9,9 +9,12 @@
 //! This suite does not refactor anything and does not judge the existing reach-ins. It records them, so the set can
 //! only shrink. Removing an entry is the work tracked by #1298; adding one fails here first.
 
+mod support;
+use support::repo_root;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::Deserialize;
 
@@ -31,11 +34,6 @@ struct BaselineFile {
 #[derive(Debug, Deserialize)]
 struct Baseline {
     files: Vec<BaselineFile>,
-}
-
-/// Resolve the repository root from this test's manifest directory.
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
 /// Collect the distinct `crate::frontend::*` and `crate::backend::*` modules one source file names.

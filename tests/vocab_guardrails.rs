@@ -1,3 +1,6 @@
+mod support;
+use support::repo_root;
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -217,10 +220,6 @@ fn semantic_string_checks_are_classified() {
         }
         panic!("{msg}");
     }
-}
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
 fn rel_path(root: &Path, path: &Path) -> String {

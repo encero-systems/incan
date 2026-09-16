@@ -16,6 +16,10 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fs;
 
+mod support;
+
+use support::repo_root;
+
 type TestResult = Result<(), Box<dyn Error>>;
 
 #[path = "support/builtin_stdlib.rs"]
@@ -875,7 +879,7 @@ fn compact_rust(code: &str) -> String {
 /// Load a test file from the codegen_snapshots directory
 fn load_test_file(name: &str) -> String {
     let path = format!("tests/codegen_snapshots/{}.incn", name);
-    let Ok(content) = fs::read_to_string(&path) else {
+    let Ok(content) = fs::read_to_string(repo_root().join(&path)) else {
         panic!("Failed to read test file: {}", path);
     };
     content
@@ -2145,7 +2149,7 @@ fn test_web_route_extractors_codegen() {
 #[test]
 fn test_std_web_routing_compiled_codegen() {
     let path = "loaves/stdlib/web/src/web/routing.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5159,7 +5163,7 @@ pub class App:
 #[test]
 fn test_std_testing_compiled_codegen() {
     let path = "loaves/stdlib/testing/src/testing.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5170,7 +5174,7 @@ fn test_std_testing_compiled_codegen() {
 #[test]
 fn test_std_async_task_compiled_codegen() {
     let path = "loaves/stdlib/async/src/async/task.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5181,7 +5185,7 @@ fn test_std_async_task_compiled_codegen() {
 #[test]
 fn test_std_async_time_compiled_codegen() {
     let path = "loaves/stdlib/async/src/async/time.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5192,7 +5196,7 @@ fn test_std_async_time_compiled_codegen() {
 #[test]
 fn test_std_async_channel_compiled_codegen() {
     let path = "loaves/stdlib/async/src/async/channel.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5203,7 +5207,7 @@ fn test_std_async_channel_compiled_codegen() {
 #[test]
 fn test_std_async_sync_compiled_codegen() {
     let path = "loaves/stdlib/async/src/async/sync.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5214,7 +5218,7 @@ fn test_std_async_sync_compiled_codegen() {
 #[test]
 fn test_std_async_race_compiled_codegen() {
     let path = "loaves/stdlib/async/src/async/race.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5273,7 +5277,7 @@ pub async def wait_for(box: TaskBox[int]) -> Result[int, TaskJoinError]:
 #[test]
 fn test_std_derives_comparison_compiled_codegen() {
     let path = "loaves/stdlib/core/src/derives/comparison.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5284,7 +5288,7 @@ fn test_std_derives_comparison_compiled_codegen() {
 #[test]
 fn test_std_derives_copying_compiled_codegen() {
     let path = "loaves/stdlib/core/src/derives/copying.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5295,7 +5299,7 @@ fn test_std_derives_copying_compiled_codegen() {
 #[test]
 fn test_std_derives_string_compiled_codegen() {
     let path = "loaves/stdlib/core/src/derives/string.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5306,7 +5310,7 @@ fn test_std_derives_string_compiled_codegen() {
 #[test]
 fn test_std_derives_collection_compiled_codegen() {
     let path = "loaves/stdlib/core/src/derives/collection.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5332,7 +5336,7 @@ fn test_std_derives_collection_compiled_codegen() {
 #[test]
 fn test_std_serde_json_compiled_codegen() {
     let path = "loaves/stdlib/data/src/serde/json.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5402,7 +5406,7 @@ fn test_std_registry_type_token_codegen() {
 #[test]
 fn test_std_graph_compiled_codegen() {
     let path = "loaves/stdlib/data/src/graph.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5427,7 +5431,7 @@ fn test_std_compression_modules_compile_codegen() -> Result<(), Box<dyn std::err
     ];
 
     for path in paths {
-        let source = fs::read_to_string(path)?;
+        let source = fs::read_to_string(repo_root().join(path))?;
         let rust_code = generate_rust(&source);
         assert!(
             rust_code.contains("__incan"),
@@ -5466,7 +5470,7 @@ fn test_std_graph_import_codegen() {
 #[test]
 fn test_std_uuid_compiled_codegen() -> Result<(), Box<dyn std::error::Error>> {
     let path = "loaves/stdlib/data/src/uuid.incn";
-    let source = fs::read_to_string(path)?;
+    let source = fs::read_to_string(repo_root().join(path))?;
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
@@ -5949,7 +5953,7 @@ def main() -> None:
 #[test]
 fn test_std_traits_ops_compiled_codegen() {
     let path = "loaves/stdlib/core/src/traits/ops.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5959,7 +5963,7 @@ fn test_std_traits_ops_compiled_codegen() {
 #[test]
 fn test_std_traits_error_compiled_codegen() {
     let path = "loaves/stdlib/core/src/traits/error.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5969,7 +5973,7 @@ fn test_std_traits_error_compiled_codegen() {
 #[test]
 fn test_std_traits_indexing_compiled_codegen() {
     let path = "loaves/stdlib/core/src/traits/indexing.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5979,7 +5983,7 @@ fn test_std_traits_indexing_compiled_codegen() {
 #[test]
 fn test_std_traits_callable_compiled_codegen() {
     let path = "loaves/stdlib/core/src/traits/callable.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5989,7 +5993,7 @@ fn test_std_traits_callable_compiled_codegen() {
 #[test]
 fn test_std_traits_prelude_compiled_codegen() {
     let path = "loaves/stdlib/core/src/traits/prelude.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -5999,7 +6003,7 @@ fn test_std_traits_prelude_compiled_codegen() {
 #[test]
 fn test_std_traits_convert_compiled_codegen() {
     let path = "loaves/stdlib/core/src/traits/convert.incn";
-    let Ok(source) = fs::read_to_string(path) else {
+    let Ok(source) = fs::read_to_string(repo_root().join(path)) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
@@ -6097,7 +6101,7 @@ fn test_trait_bound_explicit_codegen() {
 #[test]
 fn test_ordinal_key_builtin_impls_codegen() -> TestResult {
     let source = load_test_file("ordinal_key_builtin_impls");
-    let collections_source = fs::read_to_string("loaves/stdlib/data/src/collections.incn")?;
+    let collections_source = fs::read_to_string(repo_root().join("loaves/stdlib/data/src/collections.incn"))?;
     let collections_ast = parse_incan_program(&collections_source, "std.collections metadata");
     let main_ast = parse_incan_program(&source, "ordinal key bridge fixture");
     let mut codegen = codegen_with_builtin_stdlib_inventory();
@@ -6211,7 +6215,7 @@ fn test_generic_bounds_return_type_codegen() {
 // #[test]
 // fn test_all_codegen_snapshots() {
 //     insta::glob!("codegen_snapshots/*.incn", |path| {
-//         let source = fs::read_to_string(path).expect("failed to read file");
+//         let source = fs::read_to_string(repo_root().join(path)).expect("failed to read file");
 //         let rust_code = generate_rust(&source);
 //         let name = path.file_stem().unwrap().to_string_lossy();
 //         assert_codegen_snapshot!(name.to_string(), rust_code);

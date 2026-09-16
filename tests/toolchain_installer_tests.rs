@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use sha2::{Digest, Sha256};
 
 mod support;
+use support::{incan_binary, repo_root};
 
 static PREPARE_ASSETS_LOCK: Mutex<()> = Mutex::new(());
 static ACTIVE_TOOLCHAIN_TEST_STAGING: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
@@ -144,10 +145,6 @@ fn active_toolchain_test_staging() -> io::Result<std::sync::MutexGuard<'static, 
         .map_err(|_| io::Error::other("active toolchain test staging registry is poisoned"))
 }
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn installer_script() -> PathBuf {
     repo_root().join("workspaces/release/install-incan.sh")
 }
@@ -186,19 +183,6 @@ fn sha256_hex(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
     Ok(format!("{digest:x}"))
 }
 
-fn incan_binary() -> PathBuf {
-    if let Ok(path) = std::env::var("CARGO_BIN_EXE_incan") {
-        return PathBuf::from(path);
-    }
-    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
-        let path = PathBuf::from(target_dir).join("debug").join("incan");
-        if path.exists() {
-            return path;
-        }
-    }
-    repo_root().join("target").join("debug").join("incan")
-}
-
 /// Copy a test compiler while making its compile-time development source root unavailable.
 ///
 /// A binary built by this integration test otherwise embeds this checkout through `CARGO_MANIFEST_DIR`, which masks
@@ -207,7 +191,8 @@ fn incan_binary() -> PathBuf {
 /// discovery without mutating the checkout that concurrent tests use.
 fn incan_binary_without_development_source(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let compiler = incan_binary();
-    let source_root = env!("CARGO_MANIFEST_DIR").as_bytes();
+    let source_root = repo_root();
+    let source_root = source_root.as_os_str().as_encoded_bytes();
     let mut bytes = fs::read(&compiler)?;
     let mut replacements = 0_usize;
     for start in 0..=bytes.len().saturating_sub(source_root.len()) {
@@ -246,7 +231,7 @@ fn prepare_toolchain_assets(
     skip_homebrew: bool,
 ) -> Result<std::process::Output, Box<dyn std::error::Error>> {
     let _guard = PREPARE_ASSETS_LOCK.lock().map_err(|_| "prepare assets lock poisoned")?;
-    let mut command = Command::new(incan_binary());
+    let mut command = support::repo_command();
     command
         .args(["run"])
         .arg(toolchain_prepare_assets_script())

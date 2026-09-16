@@ -1,9 +1,8 @@
+mod support;
+use support::repo_root;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
 
 fn audit_script() -> PathBuf {
     repo_root().join("scripts/generated_rust_audit.py")

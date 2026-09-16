@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::sync::OnceLock;
 
 /// Parse one component-entrypoint module import into the provider path it exposes.
@@ -22,7 +21,7 @@ pub(crate) fn artifact_module_paths() -> Vec<Vec<String>> {
     static MODULE_PATHS: OnceLock<Vec<Vec<String>>> = OnceLock::new();
     MODULE_PATHS
         .get_or_init(|| {
-            let stdlib_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("loaves/stdlib");
+            let stdlib_root = crate::support::repo_root().join("loaves/stdlib");
             let catalog_path = stdlib_root.join("sdk-components.toml");
             let Ok(catalog_source) = std::fs::read_to_string(&catalog_path) else {
                 panic!("failed to read SDK component catalog at {}", catalog_path.display());

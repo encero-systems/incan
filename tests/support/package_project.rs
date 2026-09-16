@@ -9,7 +9,7 @@ use crate::support;
 
 /// Run the repository-built compiler with the test harness's coherent SDK/provider selection.
 pub(crate) fn command(project: &Path) -> Command {
-    let mut command = Command::new(support::incan_binary());
+    let mut command = support::repo_command();
     command
         .current_dir(project)
         .env("INCAN_NO_BANNER", "1")

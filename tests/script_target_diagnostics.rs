@@ -2,7 +2,6 @@
 
 use std::error::Error;
 use std::fs;
-use std::process::Command;
 
 mod support;
 
@@ -25,7 +24,7 @@ fn script_library_collision_fails_before_building() -> Result<(), Box<dyn Error>
         vec!["run"],
         vec!["build", "--lib"],
     ] {
-        let output = Command::new(support::incan_binary())
+        let output = support::repo_command()
             .current_dir(project.path())
             .args(&args)
             .env("INCAN_HOME", project.path().join("home"))
