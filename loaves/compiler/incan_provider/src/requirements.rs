@@ -364,34 +364,41 @@ pub fn collect_project_requirements(
     modules: &[ParsedModule],
     library_manifest_index: &LibraryManifestIndex,
 ) -> ProviderResult<ProjectRequirements> {
-    let mut stdlib_namespaces = HashSet::new();
-    if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
-        for module in modules {
-            for decl in &module.ast.declarations {
-                let incan_frontend::ast::Declaration::Import(import) = &decl.node else {
-                    continue;
-                };
-                let path = match &import.kind {
-                    ImportKind::From { module, .. } => {
-                        if module.parent_levels > 0 || module.is_absolute {
-                            continue;
-                        }
-                        &module.segments
+    // ---- Every `std.<namespace>` the collected modules import, the program's own and any stdlib source compiled in
+    // ----
+    let mut imported_stdlib_namespaces = HashSet::new();
+    for module in modules {
+        for decl in &module.ast.declarations {
+            let incan_frontend::ast::Declaration::Import(import) = &decl.node else {
+                continue;
+            };
+            let path = match &import.kind {
+                ImportKind::From { module, .. } => {
+                    if module.parent_levels > 0 || module.is_absolute {
+                        continue;
                     }
-                    ImportKind::Module(path) => {
-                        if path.parent_levels > 0 || path.is_absolute {
-                            continue;
-                        }
-                        &path.segments
-                    }
-                    _ => continue,
-                };
-                if path.len() >= 2 && path[0] == stdlib::STDLIB_ROOT {
-                    stdlib_namespaces.insert(path[1].clone());
+                    &module.segments
                 }
+                ImportKind::Module(path) => {
+                    if path.parent_levels > 0 || path.is_absolute {
+                        continue;
+                    }
+                    &path.segments
+                }
+                _ => continue,
+            };
+            if path.len() >= 2 && path[0] == stdlib::STDLIB_ROOT {
+                imported_stdlib_namespaces.insert(path[1].clone());
             }
         }
     }
+    // A namespace's extra crates are a provider fact: a consumer of a compiled provider inherits them through its
+    // metadata, so only a provider build derives them from its own imports here.
+    let mut stdlib_namespaces = if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
+        imported_stdlib_namespaces.clone()
+    } else {
+        HashSet::new()
+    };
 
     // The compiler-owned legacy bare `json_stringify` builtin can still be used without a provider import. Keep its
     // runtime requirement explicit until that compatibility surface is removed.
@@ -400,8 +407,16 @@ pub fn collect_project_requirements(
         stdlib_namespaces.insert("serde".to_string());
     }
 
+    // ---- The facets: one per imported namespace by the registry's fact, then whatever a module's own Rust names ----
+    // A namespace's facet is not a provider fact the consumer can defer: the emitter reaches the facet from the
+    // namespace's compiled source (`std.collections` is Incan-authored and names no Rust, yet its ordinal-key bridges
+    // are spelled through `incan_std_data`), so the program that imports the namespace links the facet. A compiled
+    // provider records the same facet in its metadata, and the generator keeps one copy.
+    if needs_legacy_serde_runtime {
+        imported_stdlib_namespaces.insert("serde".to_string());
+    }
     let mut stdlib_facets: BTreeSet<String> = BTreeSet::new();
-    for namespace_name in &stdlib_namespaces {
+    for namespace_name in &imported_stdlib_namespaces {
         let Some(namespace) = stdlib::find_namespace(namespace_name) else {
             continue;
         };
@@ -678,7 +693,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
-    fn collect_project_requirements_defers_sdk_namespace_features_to_provider_facts()
+    fn an_imported_namespace_links_its_facet_while_its_crates_stay_provider_facts()
     -> Result<(), Box<dyn std::error::Error>> {
         let module = parsed_module_for_test(
             r#"
@@ -688,13 +703,13 @@ from std.math import sqrt
         )?;
 
         let requirements = collect_project_requirements(&[module], &LibraryManifestIndex::default())?;
-        assert!(requirements.stdlib_facets.is_empty());
+        assert_eq!(requirements.stdlib_facets, ["incan_std_async"]);
         assert!(requirements.dependencies.is_empty());
         Ok(())
     }
 
     #[test]
-    fn collect_project_requirements_defers_imported_serde_runtime_to_provider_facts()
+    fn an_imported_serde_namespace_links_the_data_facet_and_defers_its_runtime_to_provider_facts()
     -> Result<(), Box<dyn std::error::Error>> {
         let module = parsed_module_for_test(
             r#"
@@ -707,8 +722,41 @@ model User:
         )?;
 
         let requirements = collect_project_requirements(&[module], &LibraryManifestIndex::default())?;
-        assert!(requirements.stdlib_facets.is_empty());
+        assert_eq!(requirements.stdlib_facets, ["incan_std_data"]);
         assert!(requirements.dependencies.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn an_incan_authored_namespace_links_the_facet_the_emitter_reaches_for_it() -> Result<(), Box<dyn std::error::Error>>
+    {
+        // `std.collections` names no Rust of its own; the emitter spells its ordinal-key bridges through the data
+        // facet, so importing the namespace is what links the crate.
+        let module = parsed_module_for_test(
+            r#"
+from std.collections import OrdinalMap
+
+def main() -> None:
+    pass
+"#,
+        )?;
+
+        let requirements = collect_project_requirements(&[module], &LibraryManifestIndex::default())?;
+        assert_eq!(requirements.stdlib_facets, ["incan_std_data"]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_program_importing_no_namespace_links_no_facet() -> Result<(), Box<dyn std::error::Error>> {
+        let module = parsed_module_for_test(
+            r#"
+def main() -> None:
+    println("hi")
+"#,
+        )?;
+
+        let requirements = collect_project_requirements(&[module], &LibraryManifestIndex::default())?;
+        assert!(requirements.stdlib_facets.is_empty());
         Ok(())
     }
 

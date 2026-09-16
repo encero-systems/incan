@@ -8,18 +8,13 @@ pub const DERIVE_CRATE: &str = "incan_derive";
 
 /// The toolchain-owned crates every generated Cargo project links, whatever the program imports.
 ///
-/// The mandatory runtime facet and the derive macros are here by design. The async and data facets are here because
-/// the compiler writes the checked `std.async` and `std.json` facades into every generated crate, and their Rust
-/// reaches `incan_std_async` and `incan_std_data` even when the program names neither namespace; once those facades
-/// are written on demand, the two leave this list and nothing else changes. Facets a program links on demand come
-/// from the registry through [`super::stdlib::StdlibNamespace::facet`]. The project generator and the semantic
-/// artifact identity both read this list, so the manifest a build renders and the identity it records cannot drift.
-pub const SUPPORT_CRATES_EVERY_PROGRAM_LINKS: [&str; 4] = [
-    super::stdlib::facets::CORE,
-    DERIVE_CRATE,
-    super::stdlib::facets::ASYNC,
-    super::stdlib::facets::DATA,
-];
+/// The mandatory runtime facet carries the version check and the builtins' runtime, and the derive macros expand
+/// into every model; nothing else is unconditional. Every other facet is linked on demand: the registry names the
+/// facet a namespace lives in ([`super::stdlib::StdlibNamespace::facet`]), the requirements collector records the
+/// facets a module's own Rust spells and the ones a vocab manifest requires, and a compiled provider's metadata
+/// carries the facet its component reaches. The project generator and the semantic artifact identity both read this
+/// list, so the manifest a build renders and the identity it records cannot drift.
+pub const SUPPORT_CRATES_EVERY_PROGRAM_LINKS: [&str; 2] = [super::stdlib::facets::CORE, DERIVE_CRATE];
 
 /// A Rust macro that should be expanded inside one generated Incan module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
