@@ -140,9 +140,10 @@ impl OvenRustcArtifactManifest {
     /// be selected implicitly.
     ///
     /// This is exactly the arrangement a project extension produces in the conservative regime. The extension keeps
-    /// its own `incan_stdlib` while still drawing registry leaves from the base Loaf, whose directory carries the
-    /// base's runtime -- the one artifact `with_release_cohort_from_base` deliberately declines. One mechanism drops
-    /// that claim and the other demanded it back, so a bake that was correctly composed could not be materialized.
+    /// its own standard library facets while still drawing registry leaves from the base Loaf, whose directory carries
+    /// the base's runtime -- the one artifact `with_release_cohort_from_base` deliberately declines. One mechanism
+    /// drops that claim and the other demanded it back, so a bake that was correctly composed could not be
+    /// materialized.
     ///
     /// Deliberately narrow: it admits only a crate this role explicitly externs, and only from a different path.
     /// An unrelated co-resident, or a second copy of a crate the role does not extern, still refuses.

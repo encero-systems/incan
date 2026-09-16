@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn greet() -> String {
     return "Hello, World!".to_string();
 }
@@ -33,18 +33,18 @@ fn quadruple(x: i64) -> i64 {
 }
 fn double_values(numbers: &mut Vec<i64>) {
     let mut idx: i64 = 0;
-    *incan_stdlib::collections::list_get_mut(numbers, (idx) as i64) = *incan_stdlib::collections::list_get(
+    *incan_std_core::collections::list_get_mut(numbers, (idx) as i64) = *incan_std_core::collections::list_get(
         &numbers,
         (idx) as i64,
     ) * 2;
     idx = 1;
-    *incan_stdlib::collections::list_get_mut(numbers, (idx) as i64) = *incan_stdlib::collections::list_get(
+    *incan_std_core::collections::list_get_mut(numbers, (idx) as i64) = *incan_std_core::collections::list_get(
         &numbers,
         (idx) as i64,
     ) * 2;
 }
 fn find_max(numbers: Vec<i64>) -> i64 {
-    let mut max_val: i64 = *incan_stdlib::collections::list_get(&numbers, (0) as i64);
+    let mut max_val: i64 = *incan_std_core::collections::list_get(&numbers, (0) as i64);
     for num in numbers.iter().copied() {
         if num > max_val {
             max_val = num;
@@ -67,8 +67,8 @@ fn classify_number(x: i64) -> String {
 fn print_greeting(name: String) {
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Hello, ", "!"]; let __args : Vec <
-        String > = vec![format!("{}", name)]; incan_stdlib::strings::fstring(& __parts, &
-        __args) }
+        String > = vec![format!("{}", name)]; incan_std_core::strings::fstring(& __parts,
+        & __args) }
     );
 }
 fn get_coordinates() -> (i64, i64) {
@@ -91,32 +91,32 @@ fn main() {
     let sum: i64 = add(5, 3);
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["5 + 3 = ", ""]; let __args : Vec <
-        String > = vec![format!("{}", sum)]; incan_stdlib::strings::fstring(& __parts, &
-        __args) }
+        String > = vec![format!("{}", sum)]; incan_std_core::strings::fstring(& __parts,
+        & __args) }
     );
     let result: i64 = quadruple(5);
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["quadruple(5) = ", ""]; let __args : Vec
-        < String > = vec![format!("{}", result)]; incan_stdlib::strings::fstring(&
+        < String > = vec![format!("{}", result)]; incan_std_core::strings::fstring(&
         __parts, & __args) }
     );
     let fact: i64 = factorial(5);
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["factorial(5) = ", ""]; let __args : Vec
-        < String > = vec![format!("{}", fact)]; incan_stdlib::strings::fstring(& __parts,
-        & __args) }
+        < String > = vec![format!("{}", fact)]; incan_std_core::strings::fstring(&
+        __parts, & __args) }
     );
     let fib: i64 = fibonacci(7);
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["fibonacci(7) = ", ""]; let __args : Vec
-        < String > = vec![format!("{}", fib)]; incan_stdlib::strings::fstring(& __parts,
-        & __args) }
+        < String > = vec![format!("{}", fib)]; incan_std_core::strings::fstring(&
+        __parts, & __args) }
     );
     let test_nums: Vec<i64> = vec![1, 5, 3, 9, 2];
     let max_num: i64 = find_max(test_nums);
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["max = ", ""]; let __args : Vec < String
-        > = vec![format!("{}", max_num)]; incan_stdlib::strings::fstring(& __parts, &
+        > = vec![format!("{}", max_num)]; incan_std_core::strings::fstring(& __parts, &
         __args) }
     );
     let mut nums: Vec<i64> = vec![5, 10, 15];

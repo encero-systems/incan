@@ -278,8 +278,9 @@ pub struct ProjectGenerator {
     pub(crate) is_binary: bool,
     /// Whether this binary's generated Cargo manifest also needs a publisher-only library target at `src/main.rs`.
     pub(crate) companion_library_target: bool,
-    /// Enabled stdlib feature flags for the generated project, including compiler-required runtime support.
-    pub(crate) stdlib_features: Vec<String>,
+    /// The standard library facets this program reaches beyond the ones every generated project links (see
+    /// `incan_core::lang::generated_support::SUPPORT_CRATES_EVERY_PROGRAM_LINKS`), sorted.
+    pub(crate) stdlib_facets: Vec<String>,
     /// Resolved Rust crate dependencies.
     pub(crate) dependencies: Vec<DependencySpec>,
     /// Resolved dev-only Rust dependencies.
@@ -322,16 +323,6 @@ pub struct ProjectGenerator {
     pub(crate) public_namespace_facades: Option<BTreeMap<Vec<String>, BTreeSet<String>>>,
 }
 
-/// Runtime features required by compiler-emitted Rust independently of user-selected namespace features.
-///
-/// The compiler writes the checked `std.async` and `std.json` facades into every generated crate. Their Rust
-/// imports require the matching runtime modules even when the project's authored imports do not name those
-/// namespaces. It can also synthesize `OrdinalKey` bridges whose helpers are cfg-gated behind `ordinal`.
-///
-/// Keep this baseline narrower than the full-stdlib Loaf envelope: project output does not emit the `std.web`
-/// facade unless the project explicitly requires it.
-const GENERATED_PROJECT_RUNTIME_FEATURES: &[&str] = &["async", "json", "ordinal"];
-
 /// Cargo profile used for `incan run`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunProfile {
@@ -352,10 +343,7 @@ impl ProjectGenerator {
             package_license: None,
             is_binary,
             companion_library_target: false,
-            stdlib_features: GENERATED_PROJECT_RUNTIME_FEATURES
-                .iter()
-                .map(|feature| (*feature).to_string())
-                .collect(),
+            stdlib_facets: Vec::new(),
             dependencies: Vec::new(),
             dev_dependencies: Vec::new(),
             include_dev_dependencies: false,
@@ -419,21 +407,16 @@ impl ProjectGenerator {
         );
     }
 
-    /// Set the stdlib feature flags required by this generated project.
-    pub fn set_stdlib_features(&mut self, features: Vec<String>) {
-        let mut normalized: Vec<String> = features
+    /// Set the standard library facets this program reaches beyond the ones every generated project links.
+    pub fn set_stdlib_facets(&mut self, facets: Vec<String>) {
+        let mut normalized: Vec<String> = facets
             .into_iter()
-            .map(|feature| feature.trim().to_string())
-            .filter(|feature| !feature.is_empty())
+            .map(|facet| facet.trim().to_string())
+            .filter(|facet| !facet.is_empty())
             .collect();
-        normalized.extend(
-            GENERATED_PROJECT_RUNTIME_FEATURES
-                .iter()
-                .map(|feature| (*feature).to_string()),
-        );
         normalized.sort();
         normalized.dedup();
-        self.stdlib_features = normalized;
+        self.stdlib_facets = normalized;
     }
 
     /// Override the Cargo package name while preserving the generated Rust target name.
@@ -1246,7 +1229,7 @@ impl ProjectGenerator {
             self.dev_dependencies.iter().map(dependency_spec_identity).collect(),
         );
         hasher.update(b"\0stdlib-features\0");
-        hasher.update(format!("{:?}", self.stdlib_features).as_bytes());
+        hasher.update(format!("{:?}", self.stdlib_facets).as_bytes());
         hasher.update(b"\0compiled-providers\0");
         hasher.update(format!("{:?}", self.compiled_provider_modules).as_bytes());
         hash_logical_records(

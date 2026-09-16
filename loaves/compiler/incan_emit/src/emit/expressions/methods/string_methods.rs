@@ -15,10 +15,10 @@ pub fn emit_string_method(
     let r_borrow = &info.r_borrow;
 
     match kind {
-        StringMethodKind::Upper => Ok(quote! { incan_stdlib::strings::str_upper(#r_borrow) }),
-        StringMethodKind::Lower => Ok(quote! { incan_stdlib::strings::str_lower(#r_borrow) }),
-        StringMethodKind::Strip => Ok(quote! { incan_stdlib::strings::str_strip(#r_borrow) }),
-        StringMethodKind::Len => Ok(quote! { incan_stdlib::strings::str_len(#r_borrow) }),
+        StringMethodKind::Upper => Ok(quote! { incan_std_core::strings::str_upper(#r_borrow) }),
+        StringMethodKind::Lower => Ok(quote! { incan_std_core::strings::str_lower(#r_borrow) }),
+        StringMethodKind::Strip => Ok(quote! { incan_std_core::strings::str_strip(#r_borrow) }),
+        StringMethodKind::Len => Ok(quote! { incan_std_core::strings::str_len(#r_borrow) }),
         StringMethodKind::Split => {
             let sep = if let Some(arg) = args.first() {
                 let a = emitter.emit_expr(arg)?;
@@ -26,13 +26,13 @@ pub fn emit_string_method(
             } else {
                 quote! { None::<&str> }
             };
-            Ok(quote! { incan_stdlib::strings::str_split(#r_borrow, #sep) })
+            Ok(quote! { incan_std_core::strings::str_split(#r_borrow, #sep) })
         }
         StringMethodKind::Replace => {
             if args.len() >= 2 {
                 let pattern = emitter.emit_expr(&args[0])?;
                 let replacement = emitter.emit_expr(&args[1])?;
-                Ok(quote! { incan_stdlib::strings::str_replace(#r_borrow, &#pattern, &#replacement) })
+                Ok(quote! { incan_std_core::strings::str_replace(#r_borrow, &#pattern, &#replacement) })
             } else {
                 Ok(quote! { (*#r_borrow).to_string() })
             }
@@ -40,7 +40,7 @@ pub fn emit_string_method(
         StringMethodKind::Join => {
             if let Some(arg) = args.first() {
                 let items = emitter.emit_expr(arg)?;
-                Ok(quote! { incan_stdlib::strings::str_join(#r_borrow, &#items) })
+                Ok(quote! { incan_std_core::strings::str_join(#r_borrow, &#items) })
             } else {
                 Ok(quote! { String::new() })
             }
@@ -48,7 +48,7 @@ pub fn emit_string_method(
         StringMethodKind::StartsWith => {
             if let Some(arg) = args.first() {
                 let a = emitter.emit_expr(arg)?;
-                Ok(quote! { incan_stdlib::strings::str_starts_with(#r_borrow, &#a) })
+                Ok(quote! { incan_std_core::strings::str_starts_with(#r_borrow, &#a) })
             } else {
                 Ok(quote! { true })
             }
@@ -56,7 +56,7 @@ pub fn emit_string_method(
         StringMethodKind::EndsWith => {
             if let Some(arg) = args.first() {
                 let a = emitter.emit_expr(arg)?;
-                Ok(quote! { incan_stdlib::strings::str_ends_with(#r_borrow, &#a) })
+                Ok(quote! { incan_std_core::strings::str_ends_with(#r_borrow, &#a) })
             } else {
                 Ok(quote! { true })
             }
@@ -64,7 +64,7 @@ pub fn emit_string_method(
         StringMethodKind::Contains => {
             if let Some(arg) = args.first() {
                 let a = emitter.emit_expr(arg)?;
-                Ok(quote! { incan_stdlib::strings::str_contains(#r_borrow, &#a) })
+                Ok(quote! { incan_std_core::strings::str_contains(#r_borrow, &#a) })
             } else {
                 Ok(quote! { false })
             }

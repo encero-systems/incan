@@ -418,7 +418,7 @@ mod rust_tuple_arity_tests {
     fn multi_element_and_nested_generic_spellings_keep_their_arity() {
         assert_eq!(rust_tuple_arity("(A, B)"), Some(2));
         assert_eq!(rust_tuple_arity("(A, B,)"), Some(2));
-        assert_eq!(rust_tuple_arity("(String,incan_stdlib::json::JsonValue)"), Some(2));
+        assert_eq!(rust_tuple_arity("(String,incan_std_data::json::JsonValue)"), Some(2));
         // A generic's own commas sit at depth one and must not inflate the count.
         assert_eq!(rust_tuple_arity("(String, HashMap<K, V>)"), Some(2));
         assert_eq!(rust_tuple_arity("(HashMap<K, V>, Vec<(A, B)>)"), Some(2));

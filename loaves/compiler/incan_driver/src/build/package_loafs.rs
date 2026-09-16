@@ -729,7 +729,7 @@ mod tests {
                 .iter()
                 .map(|(crate_name, _)| crate_name.as_str())
                 .collect::<BTreeSet<_>>(),
-            BTreeSet::from(["incan_stdlib", "provider"])
+            BTreeSet::from(["incan_std_core", "provider"])
         );
         assert!(packages.report_identity().contains(&stored.identity));
         Ok(())

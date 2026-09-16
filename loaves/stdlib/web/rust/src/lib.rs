@@ -1,14 +1,16 @@
-//! Minimal web runtime for Incan-generated web programs.
+//! Route registration and HTTP serving runtime: the Rust facet of the `web` standard library component.
 //!
 //! Web route registration is inventory-driven. The compiler/proc-macro layer emits `inventory::submit!` calls
 //! containing `RouteEntry` records, and `App::run` builds the router from those records at runtime.
 //!
-//! This module is a transitional host-runtime boundary, not a stable general-purpose web framework API. It exists so
+//! This crate is a transitional host-runtime boundary, not a stable general-purpose web framework API. It exists so
 //! generated Incan web programs have a concrete Rust target while the `std.web` surface and runtime ownership model
 //! are still settling. Public items here should be treated as generated-code support unless the Incan stdlib stubs and
 //! language docs explicitly expose them.
 
 // FIXME: this module needs to be rewritten in Incan once the appropriate RFCs are implemented.
+
+#![deny(clippy::unwrap_used)]
 
 use std::net::SocketAddr;
 
@@ -17,8 +19,8 @@ use axum::http::{StatusCode, header};
 use axum::response::{Html as AxumHtmlInner, IntoResponse, Response as AxumRawResponse};
 use tokio::runtime::Runtime;
 
-// Re-export axum types so stdlib Incan modules can import them via `incan_stdlib::web::Json`,
-// `incan_stdlib::web::Html`, etc. These are transitional generated-code targets for the current host runtime.
+// Re-export axum types so stdlib Incan modules can import them via `incan_std_web::Json`,
+// `incan_std_web::Html`, etc. These are transitional generated-code targets for the current host runtime.
 pub use axum::Json;
 pub use axum::response::Html;
 

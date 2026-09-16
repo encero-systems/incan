@@ -8,7 +8,7 @@
 //!
 //! Entries live in [`HashSet`]/[`HashMap`] keyed by [`HashedKey`], so a membership probe is a hashed lookup. That
 //! is a contract, not an implementation detail: the source says hashed container, and
-//! `incan_stdlib::collections::set_contains` takes `&HashSet` precisely so `value in set` never quietly becomes a
+//! `incan_std_core::collections::set_contains` takes `&HashSet` precisely so `value in set` never quietly becomes a
 //! linear scan. #1247 rejected representing these containers as pair lists for the same reason — the executor's
 //! answers would have agreed with the Rust-emission backend while its cost model quietly did not.
 //!

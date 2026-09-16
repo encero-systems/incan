@@ -14,7 +14,7 @@ use incan_ir::expr::{FormatPart, TypedExpr};
 impl<'a> IrEmitter<'a> {
     /// Emit a format string expression.
     ///
-    /// Converts an f-string into a call to `incan_stdlib::strings::fstring(...)`.
+    /// Converts an f-string into a call to `incan_std_core::strings::fstring(...)`.
     ///
     /// ## Parameters
     ///
@@ -27,8 +27,8 @@ impl<'a> IrEmitter<'a> {
     /// ## Notes
     ///
     /// - Literal segments are passed through verbatim: the lexer already collapsed `{{` and `}}` to one brace, and
-    ///   `incan_stdlib::strings::fstring` concatenates rather than interpreting a format string, so escaping them again
-    ///   would print both characters.
+    ///   `incan_std_core::strings::fstring` concatenates rather than interpreting a format string, so escaping them
+    ///   again would print both characters.
     /// - Display expression segments are formatted via `format!("{}", expr)`.
     /// - Debug expression segments are formatted via `format!("{:?}", expr)`.
     pub(in super::super) fn emit_format_expr(&self, parts: &[FormatPart]) -> Result<TokenStream, EmitError> {
@@ -68,7 +68,7 @@ impl<'a> IrEmitter<'a> {
         Ok(quote! {{
             let __parts: [&str; #parts_len ] = [#(#parts_tokens),*];
             let __args: Vec<String> = vec![#(#args),*];
-            incan_stdlib::strings::fstring(&__parts, &__args)
+            incan_std_core::strings::fstring(&__parts, &__args)
         }})
     }
 

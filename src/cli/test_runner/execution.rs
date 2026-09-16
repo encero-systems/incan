@@ -1297,7 +1297,7 @@ fn builtin_fixture_arg(
             let owned_ident = format!("{ident}_{consumer}");
             *consumer += 1;
             setup.push_str(&format!(
-                "        let mut {owned_ident} = incan_stdlib::testing::TestEnv::new();\n"
+                "        let mut {owned_ident} = incan_std_testing::TestEnv::new();\n"
             ));
             Some(owned_ident)
         }
@@ -1437,7 +1437,7 @@ fn harness_needs_async_runtime(tests: &[TestInfo], fixtures: &HashMap<String, Fi
 }
 
 /// Add the stdlib async feature when the generated harness itself needs the runtime.
-fn test_runner_stdlib_features(
+fn test_runner_stdlib_facets(
     base: &[String],
     tests: &[TestInfo],
     fixtures: &HashMap<String, FixtureExecutionInfo>,
@@ -1450,14 +1450,14 @@ fn test_runner_stdlib_features(
 }
 
 /// Collect stdlib feature flags needed by a test batch.
-fn test_runner_stdlib_features_for_batch(
+fn test_runner_stdlib_facets_for_batch(
     base: &[String],
     tests: &[TestInfo],
     fixtures: &HashMap<String, FixtureExecutionInfo>,
     module_harnesses: &[PreparedModuleHarness],
 ) -> Vec<String> {
     if module_harnesses.is_empty() {
-        return test_runner_stdlib_features(base, tests, fixtures);
+        return test_runner_stdlib_facets(base, tests, fixtures);
     }
 
     let mut features = base.iter().cloned().collect::<BTreeSet<_>>();
@@ -1871,14 +1871,14 @@ fn inject_file_test_harness_with_indices(
     }
     if harness_needs_async_runtime(tests, fixtures) {
         out.push_str(
-            "static __INCAN_ASYNC_RUNTIME: std::sync::OnceLock<incan_stdlib::__private::tokio::runtime::Runtime> = std::sync::OnceLock::new();\n\
+            "static __INCAN_ASYNC_RUNTIME: std::sync::OnceLock<incan_std_async::__private::tokio::runtime::Runtime> = std::sync::OnceLock::new();\n\
              /// Drive one async generated test or fixture on the shared runner runtime.\n\
              fn __incan_async_block_on<F>(future: F) -> F::Output\n\
              where\n\
                  F: std::future::Future,\n\
              {\n\
                  let __incan_runtime = __INCAN_ASYNC_RUNTIME.get_or_init(|| {\n\
-                     let mut builder = incan_stdlib::__private::tokio::runtime::Builder::new_multi_thread();\n\
+                     let mut builder = incan_std_async::__private::tokio::runtime::Builder::new_multi_thread();\n\
                      builder.enable_all();\n\
                      match builder.build() {\n\
                          Ok(runtime) => runtime,\n\
@@ -2291,13 +2291,14 @@ fn run_file_tests_batch_oven(
             ast: module.ast.clone(),
         })
         .collect::<Vec<_>>();
-    // `std.*` source modules lower through the compiler-owned `incan_stdlib` crate. ProjectGenerator always supplies
-    // that runtime directly, so treating its internal `rust.module("incan_stdlib::...")` markers as user Cargo
-    // imports would create a duplicate, path-unstable dependency. Every other inline Rust import remains part of the
+    // `std.*` source modules lower through the compiler-owned standard library facets. ProjectGenerator always
+    // supplies those crates directly, so treating their internal `rust.module("incan_std_<facet>::...")` markers as
+    // user Cargo imports would create a duplicate, path-unstable dependency. Every other inline Rust import remains
+    // part of the
     // explicit publisher's generated manifest and therefore its Oven build-unit identity.
     let inline_imports = collect_test_dependency_inline_imports(&module_for_imports, &source_dependency_modules)
         .into_iter()
-        .filter(|import| import.crate_name != "incan_stdlib")
+        .filter(|import| !incan_core::lang::stdlib::facets::is_facet(&import.crate_name))
         .collect::<Vec<_>>();
     let mut dependency_modules = Vec::with_capacity(1 + source_dependency_modules.len());
     dependency_modules.push(module_for_imports.clone());
@@ -2523,8 +2524,8 @@ fn run_file_tests_batch_oven(
     generator.set_provider_plan(&provider_plan);
     generator.set_sdk_path_dependencies(requirements.sdk_path_dependencies.clone());
     generator.set_package_name(Some(project_name));
-    generator.set_stdlib_features(test_runner_stdlib_features_for_batch(
-        &requirements.stdlib_features,
+    generator.set_stdlib_facets(test_runner_stdlib_facets_for_batch(
+        &requirements.stdlib_facets,
         tests,
         &fixtures,
         &module_harnesses,
@@ -2829,7 +2830,7 @@ fn oven_test_inline_dependency_specs(
 ) -> Vec<DependencySpec> {
     let requested = inline_imports
         .iter()
-        .filter(|import| import.crate_name != "incan_stdlib" && import.crate_name != "std")
+        .filter(|import| !incan_core::lang::stdlib::facets::is_facet(&import.crate_name) && import.crate_name != "std")
         .map(|import| import.crate_name.replace('-', "_"))
         .collect::<BTreeSet<_>>();
     let mut dependencies = resolved

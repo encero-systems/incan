@@ -5662,7 +5662,7 @@ def f() -> None:
 #[test]
 fn compiler_owned_function_contract_overrides_stale_warm_metadata() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
-from rust::incan_stdlib::strings import str_slice_byte_range
+from rust::incan_std_core::strings import str_slice_byte_range
 
 def slice(text: str) -> str:
   return str_slice_byte_range(text, 0, 1)
@@ -5678,8 +5678,8 @@ def slice(text: str) -> str:
         .insert_test_item(
             &manifest_dir,
             RustItemMetadata {
-                canonical_path: "incan_stdlib::strings::str_slice_byte_range".to_string(),
-                definition_path: Some("incan_stdlib::strings::str_slice_byte_range".to_string()),
+                canonical_path: "incan_std_core::strings::str_slice_byte_range".to_string(),
+                definition_path: Some("incan_std_core::strings::str_slice_byte_range".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Function(RustFunctionSig {
                     receiver_contract: None,
@@ -5708,7 +5708,7 @@ def slice(text: str) -> str:
     let Some(RustItemMetadata {
         kind: RustItemKind::Function(stale_signature),
         ..
-    }) = checker.rust_item_metadata_for_path("incan_stdlib::strings::str_slice_byte_range")
+    }) = checker.rust_item_metadata_for_path("incan_std_core::strings::str_slice_byte_range")
     else {
         return Err(std::io::Error::other("expected stale warm helper metadata to be visible").into());
     };
@@ -5776,11 +5776,11 @@ fn test_rust_inspect_function_signature_preserves_borrowed_rust_path_param() -> 
 #[test]
 fn test_rust_metadata_lookup_path_strips_outer_generic_instantiation() {
     assert_eq!(
-        TypeChecker::rust_metadata_lookup_path("incan_stdlib::r#async::channel::SendError<T>"),
-        Some("incan_stdlib::r#async::channel::SendError")
+        TypeChecker::rust_metadata_lookup_path("incan_std_async::channel::SendError<T>"),
+        Some("incan_std_async::channel::SendError")
     );
     assert_eq!(
-        TypeChecker::rust_metadata_lookup_path("Result<(),incan_stdlib::r#async::channel::SendError<T>>"),
+        TypeChecker::rust_metadata_lookup_path("Result<(),incan_std_async::channel::SendError<T>>"),
         None
     );
 }
@@ -5907,12 +5907,12 @@ fn test_types_compatible_accepts_rust_alias_definition_without_metadata_lookup()
     checker.symbols.define(Symbol {
         name: "RawSender".to_string(),
         kind: SymbolKind::RustItem(RustItemInfo {
-            crate_name: "incan_stdlib".to_string(),
-            path: "incan_stdlib::r#async::channel::RawSender".to_string(),
+            crate_name: "incan_std_core".to_string(),
+            path: "incan_std_async::channel::RawSender".to_string(),
             binding: RustImportBindingKind::FromImport,
             metadata: Some(RustItemMetadata {
-                canonical_path: "incan_stdlib::r#async::channel::RawSender".to_string(),
-                definition_path: Some("incan_stdlib::r#async::channel::Sender".to_string()),
+                canonical_path: "incan_std_async::channel::RawSender".to_string(),
+                definition_path: Some("incan_std_async::channel::Sender".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     type_params: Vec::new(),
@@ -5935,7 +5935,7 @@ fn test_types_compatible_accepts_rust_alias_definition_without_metadata_lookup()
 
     let actual = ResolvedType::Generic("RawSender".to_string(), vec![ResolvedType::Numeric(NumericTypeId::I32)]);
     let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath(
-        "incan_stdlib::r#async::channel::Sender<i32>".to_string(),
+        "incan_std_async::channel::Sender<i32>".to_string(),
     )));
 
     assert!(
@@ -5951,12 +5951,12 @@ fn test_types_compatible_accepts_rust_path_alias_with_attached_definition_metada
     checker.symbols.define(Symbol {
         name: "RawSemaphore".to_string(),
         kind: SymbolKind::RustItem(RustItemInfo {
-            crate_name: "incan_stdlib".to_string(),
-            path: "incan_stdlib::r#async::sync::RawSemaphore".to_string(),
+            crate_name: "incan_std_core".to_string(),
+            path: "incan_std_async::sync::RawSemaphore".to_string(),
             binding: RustImportBindingKind::FromImport,
             metadata: Some(RustItemMetadata {
-                canonical_path: "incan_stdlib::r#async::sync::RawSemaphore".to_string(),
-                definition_path: Some("incan_stdlib::r#async::sync::Semaphore".to_string()),
+                canonical_path: "incan_std_async::sync::RawSemaphore".to_string(),
+                definition_path: Some("incan_std_async::sync::Semaphore".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     type_params: Vec::new(),
@@ -5977,9 +5977,9 @@ fn test_types_compatible_accepts_rust_path_alias_with_attached_definition_metada
         scope: 0,
     });
 
-    let actual = ResolvedType::RustPath("incan_stdlib::r#async::sync::RawSemaphore".to_string());
+    let actual = ResolvedType::RustPath("incan_std_async::sync::RawSemaphore".to_string());
     let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath(
-        "incan_stdlib::r#async::sync::Semaphore".to_string(),
+        "incan_std_async::sync::Semaphore".to_string(),
     )));
 
     assert!(
@@ -14453,7 +14453,7 @@ def bad_query() -> None:
 #[test]
 fn test_rust_module_with_rust_extern_ok() {
     let source = r#"
-rust.module("incan_stdlib::testing")
+rust.module("incan_std_testing")
 
 @rust.extern
 def fail(msg: str) -> None:
@@ -14482,7 +14482,7 @@ def fail(msg: str) -> None:
 #[test]
 fn test_rust_extern_non_trivial_body() {
     let source = r#"
-rust.module("incan_stdlib::testing")
+rust.module("incan_std_testing")
 
 @rust.extern
 def fail(msg: str) -> None:
@@ -14501,7 +14501,7 @@ def fail(msg: str) -> None:
 #[test]
 fn test_rust_extern_docstring_plus_ellipsis_is_trivial() {
     let source = r#"
-rust.module("incan_stdlib::testing")
+rust.module("incan_std_testing")
 
 @rust.extern
 def fail(msg: str) -> None:
@@ -14514,7 +14514,7 @@ def fail(msg: str) -> None:
 #[test]
 fn test_rust_extern_on_instance_method() {
     let source = r#"
-rust.module("incan_stdlib::web")
+rust.module("incan_std_web")
 
 class App:
     @rust.extern
@@ -14535,7 +14535,7 @@ class App:
 #[test]
 fn test_unused_rust_module_warning() {
     let source = r#"
-rust.module("incan_stdlib::utils")
+rust.module("incan_std_core::utils")
 
 def pure_incan() -> int:
     return 42
@@ -14597,9 +14597,9 @@ def foo() -> None:
 
 #[test]
 fn test_rust_module_incan_stdlib_always_allowed() -> Result<(), Vec<CompileError>> {
-    // incan_stdlib is always allowed even without a manifest.
+    // incan_std_core is always allowed even without a manifest.
     let source = r#"
-rust.module("incan_stdlib::testing")
+rust.module("incan_std_testing")
 
 @rust.extern
 def fail(msg: str) -> None:
@@ -14610,7 +14610,7 @@ def fail(msg: str) -> None:
     let mut tc = TypeChecker::new();
     tc.set_declared_crate_names(std::collections::HashSet::new());
     let result = tc.check_program(&ast);
-    assert!(result.is_ok(), "incan_stdlib should always be allowed");
+    assert!(result.is_ok(), "incan_std_core should always be allowed");
     Ok(())
 }
 
@@ -23678,7 +23678,7 @@ fn test_tuple_shape_classifier_covers_both_spellings_and_recovery_types() {
     // `rust::HashMap` item, whose type is a Rust tuple path rather than either Incan spelling. Rejecting it broke
     // the stdlib's own SDK component build.
     match classify_tuple_shape(&ResolvedType::RustPath(
-        "(String,incan_stdlib::json::JsonValue)".to_string(),
+        "(String,incan_std_data::json::JsonValue)".to_string(),
     )) {
         TupleShape::RustTuple(2) => {}
         other => panic!("a Rust tuple path must be destructurable with arity 2, got {other:?}"),
@@ -23748,7 +23748,7 @@ fn test_statement_tuple_unpack_of_an_opaque_rust_value_is_refused() {
 
     // And the readable tuple spelling the stdlib depends on must keep working, so the refusal is narrow.
     match classify_tuple_shape(&ResolvedType::RustPath(
-        "(String,incan_stdlib::json::JsonValue)".to_string(),
+        "(String,incan_std_data::json::JsonValue)".to_string(),
     )) {
         TupleShape::RustTuple(2) => {}
         other => panic!("a readable Rust tuple must still destructure, got {other:?}"),

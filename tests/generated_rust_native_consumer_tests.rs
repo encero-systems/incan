@@ -54,6 +54,8 @@ fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::e
 /// target directory.
 struct CompilerSuiteRustcInputs {
     rustc: PathBuf,
+    /// The mandatory facet's artifact; every facet reaches rustc through `externs`, this proves the closure is one.
+    #[allow(dead_code)]
     stdlib: PathBuf,
     sdk_inventory: PathBuf,
     dependency_paths: Vec<PathBuf>,
@@ -67,11 +69,12 @@ fn compiler_suite_rustc_inputs() -> Result<Option<CompilerSuiteRustcInputs>, Box
     else {
         return Ok(None);
     };
+    // Every facet the closure carries arrives as its own extern; the mandatory one must be present.
     let stdlib = capability
         .externs
-        .get("incan_stdlib")
+        .get("incan_std_core")
         .cloned()
-        .ok_or("stored compiler-suite capability omitted incan_stdlib")?;
+        .ok_or("stored compiler-suite capability omitted incan_std_core")?;
     let sdk_inventory = std::env::var_os("INCAN_SDK_INVENTORY")
         .map(PathBuf::from)
         .ok_or("stored compiler-suite capability omitted the SDK inventory")?;
@@ -123,9 +126,7 @@ fn direct_oven_native_consumer_test(
             "incan_stdlib_core",
             "--crate-type",
             "lib",
-            "--extern",
         ])
-        .arg(format!("incan_stdlib={}", inputs.stdlib.display()))
         .arg(&stdlib_core_source)
         .arg("-o")
         .arg(&stdlib_core_library)
@@ -152,8 +153,6 @@ fn direct_oven_native_consumer_test(
             "lib",
             "--extern",
         ])
-        .arg(format!("incan_stdlib={}", inputs.stdlib.display()))
-        .arg("--extern")
         .arg(format!("incan_stdlib_core={}", stdlib_core_library.display()))
         .arg(producer.join("target/lib/src/lib.rs"))
         .arg("-o")

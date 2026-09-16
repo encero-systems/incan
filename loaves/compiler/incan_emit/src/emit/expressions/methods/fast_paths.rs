@@ -160,7 +160,7 @@ fn emit_borrowed_str_arg(emitter: &IrEmitter, arg: &TypedExpr) -> Result<TokenSt
         let object_tokens = emitter.emit_expr(object)?;
         let index_tokens = emitter.emit_expr(index)?;
         let list_tokens = borrow_expr_for_call(&object.ty, object_tokens);
-        return Ok(quote! { incan_stdlib::collections::list_get(#list_tokens, (#index_tokens) as i64).as_str() });
+        return Ok(quote! { incan_std_core::collections::list_get(#list_tokens, (#index_tokens) as i64).as_str() });
     }
 
     let emitted = emitter.emit_expr(arg)?;

@@ -7,7 +7,7 @@ Incan callers: matches, capture sets, and iterators over collected results.
 
 from std.derives.collection import Iterator
 from std.derives.copying import Clone
-from rust::incan_stdlib::strings import str_slice_byte_range, str_slice_from_byte_offset
+from rust::incan_std_core::strings import str_slice_byte_range, str_slice_from_byte_offset
 
 
 @derive(Clone)

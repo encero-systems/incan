@@ -907,6 +907,6 @@ Traits under `std.derives.*` are source-defined capability contracts.
 
 - `Clone`, `Default`, `Debug`, `Eq`, `Ord`, and `Hash` are declared in `.incn` source.
 - Implementations for adopting types come from ordinary Rust `#[derive(...)]` expansion during codegen.
-- These traits are not modeled as runtime helper calls through `incan_stdlib::derives::*`.
+- These traits are not modeled as runtime helper calls through `incan_std_core::derives::*`.
 
 For the curated stdlib-family view, see [Standard library reference: `std.derives.*`](stdlib/derives.md).

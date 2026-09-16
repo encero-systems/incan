@@ -44,8 +44,8 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 incan_frontend = { workspace = true, features = ["test_support"] }
-# The runtime crate the emitted code links; the emitter only names it in generated tokens, and links it for the
-# parity tests alone, so the compiler ring never depends on the runtime it generates for.
-incan_stdlib = { workspace = true }
+# The mandatory runtime facet the emitted code links; the emitter only names it in generated tokens, and links it
+# for the parity tests alone, so the compiler ring never depends on the runtime it generates for.
+incan_std_core = { workspace = true }
 rust_inspect = { workspace = true, features = ["test_fixtures"] }
 tempfile = "3"

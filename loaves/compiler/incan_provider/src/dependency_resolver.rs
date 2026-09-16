@@ -320,10 +320,10 @@ fn merge_inline_imports(
             continue;
         }
 
-        // `incan_stdlib` is always injected as a workspace path dependency for generated projects.
-        // Version-less stdlib-internal `from rust::incan_stdlib::... import ...` leaves should not be forced to add
-        // inline annotations or duplicate manifest entries.
-        if import.crate_name == "incan_stdlib" {
+        // Every facet is injected as a toolchain path dependency for generated projects.
+        // Version-less stdlib-internal `from rust::incan_std_<facet>::... import ...` leaves should not be forced to
+        // add inline annotations or duplicate manifest entries.
+        if stdlib::facets::is_facet(&import.crate_name) {
             continue;
         }
 
@@ -992,17 +992,20 @@ test_lib = "0.5"
     }
 
     #[test]
-    fn incan_stdlib_import_does_not_require_inline_version() -> TestResult {
-        let imports = vec![inline("incan_stdlib", None, &[], false)];
+    fn a_facet_import_does_not_require_inline_version() -> TestResult {
+        let imports = vec![inline("incan_std_core", None, &[], false)];
 
         let resolved = resolve_ok(None, &imports, false, &default_cargo_features())?;
         assert!(
-            !resolved.dependencies.iter().any(|d| d.crate_name == "incan_stdlib"),
-            "incan_stdlib should already be provided by generated projects"
+            !resolved.dependencies.iter().any(|d| d.crate_name == "incan_std_core"),
+            "a facet should already be provided by generated projects"
         );
         assert!(
-            !resolved.dev_dependencies.iter().any(|d| d.crate_name == "incan_stdlib"),
-            "incan_stdlib should not be duplicated in dev-dependencies"
+            !resolved
+                .dev_dependencies
+                .iter()
+                .any(|d| d.crate_name == "incan_std_core"),
+            "a facet should not be duplicated in dev-dependencies"
         );
         Ok(())
     }

@@ -994,7 +994,7 @@ impl TypeChecker {
             return None;
         }
         // stdlib interop paths are conventionally stable and intentionally stay cache-only.
-        if lookup_path.starts_with("incan_stdlib::") {
+        if incan_core::lang::stdlib::facets::path_names_a_facet(lookup_path) {
             return self.rust_item_metadata_for_path(lookup_path);
         }
         match self.rust_inspect_cache.get_cached(dir, lookup_path) {
@@ -1048,7 +1048,7 @@ impl TypeChecker {
 
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
-        if lookup_path.starts_with("incan_stdlib::") {
+        if incan_core::lang::stdlib::facets::path_names_a_facet(lookup_path) {
             return Some(metadata);
         }
         let dir = self.rust_inspect_manifest_dir.as_ref()?;
@@ -1088,7 +1088,7 @@ impl TypeChecker {
 
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
-        if lookup_path.starts_with("incan_stdlib::") {
+        if incan_core::lang::stdlib::facets::path_names_a_facet(lookup_path) {
             return Some(metadata);
         }
         let dir = self.rust_inspect_manifest_dir.as_ref()?;
@@ -2337,7 +2337,7 @@ impl TypeChecker {
 
     /// Set the declared Rust crate names from `loaf.toml [rust-dependencies]`.
     ///
-    /// When set, `rust.module()` path validation will check that the first segment of the path is either `incan_stdlib`
+    /// When set, `rust.module()` path validation will check that the first segment of the path is either a facet
     /// or a crate declared here.
     pub fn set_declared_crate_names(&mut self, names: HashSet<String>) {
         self.declared_crate_names = Some(names);

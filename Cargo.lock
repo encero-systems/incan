@@ -1444,7 +1444,7 @@ dependencies = [
  "incan_provider",
  "incan_semantics_core",
  "incan_semantics_stdlib",
- "incan_stdlib",
+ "incan_std_core",
  "incan_syntax",
  "incan_vocab",
  "insta",
@@ -1552,7 +1552,7 @@ dependencies = [
  "incan_frontend",
  "incan_ir",
  "incan_semantics_core",
- "incan_stdlib",
+ "incan_std_core",
  "incan_syntax",
  "incan_vocab",
  "oven_model",
@@ -1683,17 +1683,46 @@ dependencies = [
 ]
 
 [[package]]
-name = "incan_stdlib"
+name = "incan_std_async"
+version = "0.6.0-dev.4"
+dependencies = [
+ "incan_std_core",
+ "tokio",
+]
+
+[[package]]
+name = "incan_std_core"
+version = "0.6.0-dev.4"
+dependencies = [
+ "incan_core",
+ "incan_derive",
+]
+
+[[package]]
+name = "incan_std_data"
+version = "0.6.0-dev.4"
+dependencies = [
+ "incan_std_core",
+ "serde",
+ "serde_json",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "incan_std_testing"
+version = "0.6.0-dev.4"
+dependencies = [
+ "incan_core",
+ "incan_std_core",
+]
+
+[[package]]
+name = "incan_std_web"
 version = "0.6.0-dev.4"
 dependencies = [
  "axum",
- "incan_core",
- "incan_derive",
  "inventory",
- "serde",
- "serde_json",
  "tokio",
- "xxhash-rust",
 ]
 
 [[package]]
@@ -1721,7 +1750,7 @@ name = "incan_web_macros"
 version = "0.6.0-dev.4"
 dependencies = [
  "axum",
- "incan_stdlib",
+ "incan_std_web",
  "inventory",
  "proc-macro2",
  "quote",

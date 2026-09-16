@@ -897,7 +897,7 @@ impl<'a> IrEmitter<'a> {
             self.emit_assignment_value(value, None)?
         } else {
             let emitted = self.emit_assignment_value(value, None)?;
-            quote! { incan_stdlib::storage::StaticBinding::from_value((#emitted).into()) }
+            quote! { incan_std_core::storage::StaticBinding::from_value((#emitted).into()) }
         };
         Ok(quote! { #n = #v; })
     }

@@ -2053,7 +2053,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit temporary RFC 101 adapter impls for deterministic builtin `OrdinalKey` families.
     ///
-    /// Native helper behavior lives in `incan_stdlib::collections::__private`; this emitter only places impls at the
+    /// Native helper behavior lives in `incan_std_core::collections::__private`; this emitter only places impls at the
     /// crate boundary where Rust coherence requires them until RFC 098/099 can model trait-owned capability families
     /// in source.
     fn emit_builtin_ordinal_key_impls(&self) -> Result<TokenStream, EmitError> {
@@ -2071,7 +2071,7 @@ impl<'a> IrEmitter<'a> {
                         }
 
                         fn ordinal_hash(&self) -> i64 {
-                            incan_stdlib::collections::__private::ordinal_key_hash_bytes(&(*self).to_le_bytes())
+                            incan_std_data::collections::__private::ordinal_key_hash_bytes(&(*self).to_le_bytes())
                         }
 
                         fn ordinal_bytes_equal(&self, data: Vec<u8>) -> bool {
@@ -2085,7 +2085,7 @@ impl<'a> IrEmitter<'a> {
                         fn from_ordinal_bytes(data: Vec<u8>) -> Result<Self, OrdinalMapError> {
                             let encoding = $encoding;
                             Ok(<$ty>::from_le_bytes(
-                                incan_stdlib::collections::__private::ordinal_key_exact_bytes::<$width>(
+                                incan_std_data::collections::__private::ordinal_key_exact_bytes::<$width>(
                                     data,
                                     encoding.as_str(),
                                 )
@@ -2102,7 +2102,7 @@ impl<'a> IrEmitter<'a> {
                 }
 
                 fn ordinal_hash(&self) -> i64 {
-                    incan_stdlib::collections::__private::ordinal_key_hash_bytes(self.as_bytes())
+                    incan_std_data::collections::__private::ordinal_key_hash_bytes(self.as_bytes())
                 }
 
                 fn ordinal_bytes_equal(&self, data: Vec<u8>) -> bool {
@@ -2110,11 +2110,11 @@ impl<'a> IrEmitter<'a> {
                 }
 
                 fn ordinal_encoding() -> String {
-                    incan_stdlib::collections::__private::ordinal_key_encoding_str()
+                    incan_std_data::collections::__private::ordinal_key_encoding_str()
                 }
 
                 fn from_ordinal_bytes(data: Vec<u8>) -> Result<Self, OrdinalMapError> {
-                    incan_stdlib::collections::__private::ordinal_key_string_from_bytes(data)
+                    incan_std_data::collections::__private::ordinal_key_string_from_bytes(data)
                         .map_err(__incan_ordinal_key_invalid_record)
                 }
             }
@@ -2125,7 +2125,7 @@ impl<'a> IrEmitter<'a> {
                 }
 
                 fn ordinal_hash(&self) -> i64 {
-                    incan_stdlib::collections::__private::ordinal_key_hash_bytes(self.as_slice())
+                    incan_std_data::collections::__private::ordinal_key_hash_bytes(self.as_slice())
                 }
 
                 fn ordinal_bytes_equal(&self, data: Vec<u8>) -> bool {
@@ -2133,7 +2133,7 @@ impl<'a> IrEmitter<'a> {
                 }
 
                 fn ordinal_encoding() -> String {
-                    incan_stdlib::collections::__private::ordinal_key_encoding_bytes()
+                    incan_std_data::collections::__private::ordinal_key_encoding_bytes()
                 }
 
                 fn from_ordinal_bytes(data: Vec<u8>) -> Result<Self, OrdinalMapError> {
@@ -2147,7 +2147,7 @@ impl<'a> IrEmitter<'a> {
                 }
 
                 fn ordinal_hash(&self) -> i64 {
-                    incan_stdlib::collections::__private::ordinal_key_hash_bytes(&[*self as u8])
+                    incan_std_data::collections::__private::ordinal_key_hash_bytes(&[*self as u8])
                 }
 
                 fn ordinal_bytes_equal(&self, data: Vec<u8>) -> bool {
@@ -2155,50 +2155,50 @@ impl<'a> IrEmitter<'a> {
                 }
 
                 fn ordinal_encoding() -> String {
-                    incan_stdlib::collections::__private::ordinal_key_encoding_bool()
+                    incan_std_data::collections::__private::ordinal_key_encoding_bool()
                 }
 
                 fn from_ordinal_bytes(data: Vec<u8>) -> Result<Self, OrdinalMapError> {
-                    incan_stdlib::collections::__private::ordinal_key_bool_from_bytes(data)
+                    incan_std_data::collections::__private::ordinal_key_bool_from_bytes(data)
                         .map_err(__incan_ordinal_key_invalid_record)
                 }
             }
 
-            impl OrdinalKey for incan_stdlib::num::Decimal128 {
+            impl OrdinalKey for incan_std_core::num::Decimal128 {
                 fn ordinal_bytes(&self) -> Vec<u8> {
-                    incan_stdlib::collections::__private::ordinal_key_decimal_bytes(self).to_vec()
+                    incan_std_data::collections::__private::ordinal_key_decimal_bytes(self).to_vec()
                 }
 
                 fn ordinal_hash(&self) -> i64 {
-                    let out = incan_stdlib::collections::__private::ordinal_key_decimal_bytes(self);
-                    incan_stdlib::collections::__private::ordinal_key_hash_bytes(&out)
+                    let out = incan_std_data::collections::__private::ordinal_key_decimal_bytes(self);
+                    incan_std_data::collections::__private::ordinal_key_hash_bytes(&out)
                 }
 
                 fn ordinal_bytes_equal(&self, data: Vec<u8>) -> bool {
                     data.as_slice()
-                        == incan_stdlib::collections::__private::ordinal_key_decimal_bytes(self).as_slice()
+                        == incan_std_data::collections::__private::ordinal_key_decimal_bytes(self).as_slice()
                 }
 
                 fn ordinal_encoding() -> String {
-                    incan_stdlib::collections::__private::ordinal_key_encoding_decimal()
+                    incan_std_data::collections::__private::ordinal_key_encoding_decimal()
                 }
 
                 fn from_ordinal_bytes(data: Vec<u8>) -> Result<Self, OrdinalMapError> {
-                    incan_stdlib::collections::__private::ordinal_key_decimal_from_bytes(data)
+                    incan_std_data::collections::__private::ordinal_key_decimal_from_bytes(data)
                         .map_err(__incan_ordinal_key_invalid_record)
                 }
             }
 
-            __incan_ordinal_key_int_impl!(i8, incan_stdlib::collections::__private::ordinal_key_encoding_int(8u16), 1usize);
-            __incan_ordinal_key_int_impl!(i16, incan_stdlib::collections::__private::ordinal_key_encoding_int(16u16), 2usize);
-            __incan_ordinal_key_int_impl!(i32, incan_stdlib::collections::__private::ordinal_key_encoding_int(32u16), 4usize);
-            __incan_ordinal_key_int_impl!(i64, incan_stdlib::collections::__private::ordinal_key_encoding_int(64u16), 8usize);
-            __incan_ordinal_key_int_impl!(i128, incan_stdlib::collections::__private::ordinal_key_encoding_int(128u16), 16usize);
-            __incan_ordinal_key_int_impl!(u8, incan_stdlib::collections::__private::ordinal_key_encoding_uint(8u16), 1usize);
-            __incan_ordinal_key_int_impl!(u16, incan_stdlib::collections::__private::ordinal_key_encoding_uint(16u16), 2usize);
-            __incan_ordinal_key_int_impl!(u32, incan_stdlib::collections::__private::ordinal_key_encoding_uint(32u16), 4usize);
-            __incan_ordinal_key_int_impl!(u64, incan_stdlib::collections::__private::ordinal_key_encoding_uint(64u16), 8usize);
-            __incan_ordinal_key_int_impl!(u128, incan_stdlib::collections::__private::ordinal_key_encoding_uint(128u16), 16usize);
+            __incan_ordinal_key_int_impl!(i8, incan_std_data::collections::__private::ordinal_key_encoding_int(8u16), 1usize);
+            __incan_ordinal_key_int_impl!(i16, incan_std_data::collections::__private::ordinal_key_encoding_int(16u16), 2usize);
+            __incan_ordinal_key_int_impl!(i32, incan_std_data::collections::__private::ordinal_key_encoding_int(32u16), 4usize);
+            __incan_ordinal_key_int_impl!(i64, incan_std_data::collections::__private::ordinal_key_encoding_int(64u16), 8usize);
+            __incan_ordinal_key_int_impl!(i128, incan_std_data::collections::__private::ordinal_key_encoding_int(128u16), 16usize);
+            __incan_ordinal_key_int_impl!(u8, incan_std_data::collections::__private::ordinal_key_encoding_uint(8u16), 1usize);
+            __incan_ordinal_key_int_impl!(u16, incan_std_data::collections::__private::ordinal_key_encoding_uint(16u16), 2usize);
+            __incan_ordinal_key_int_impl!(u32, incan_std_data::collections::__private::ordinal_key_encoding_uint(32u16), 4usize);
+            __incan_ordinal_key_int_impl!(u64, incan_std_data::collections::__private::ordinal_key_encoding_uint(64u16), 8usize);
+            __incan_ordinal_key_int_impl!(u128, incan_std_data::collections::__private::ordinal_key_encoding_uint(128u16), 16usize);
         })
     }
 
@@ -2580,7 +2580,7 @@ impl<'a> IrEmitter<'a> {
                     }
 
                     fn ordinal_hash(&self) -> i64 {
-                        incan_stdlib::collections::__private::ordinal_key_hash_bytes(self.value().as_bytes())
+                        incan_std_data::collections::__private::ordinal_key_hash_bytes(self.value().as_bytes())
                     }
 
                     fn ordinal_bytes_equal(&self, data: Vec<u8>) -> bool {
@@ -2604,7 +2604,7 @@ impl<'a> IrEmitter<'a> {
                     }
 
                     fn ordinal_hash(&self) -> i64 {
-                        incan_stdlib::collections::__private::ordinal_key_hash_bytes(&self.value().to_le_bytes())
+                        incan_std_data::collections::__private::ordinal_key_hash_bytes(&self.value().to_le_bytes())
                     }
 
                     fn ordinal_bytes_equal(&self, data: Vec<u8>) -> bool {
@@ -2716,7 +2716,7 @@ impl<'a> IrEmitter<'a> {
                 quote! { #type_path::ordinal_hash(self) }
             } else {
                 quote! {
-                    incan_stdlib::collections::__private::ordinal_key_hash_bytes(&#type_path::ordinal_bytes(self))
+                    incan_std_data::collections::__private::ordinal_key_hash_bytes(&#type_path::ordinal_bytes(self))
                 }
             };
             let bytes_equal_body = if external.has_ordinal_bytes_equal {
@@ -3529,7 +3529,7 @@ impl<'a> IrEmitter<'a> {
             }
             IrType::TypeToken(inner) => {
                 let inner = self.emit_generated_union_member_type(inner);
-                quote! { incan_stdlib::reflection::TypeToken<#inner> }
+                quote! { incan_std_core::reflection::TypeToken<#inner> }
             }
             IrType::ExternalUnion { .. } => self.emit_type(ty),
             IrType::Unit
@@ -4007,7 +4007,7 @@ impl<'a> IrEmitter<'a> {
         // The generated crate must link a stdlib compatible with the line this compiler generates for; the stdlib
         // carries its own version line, so that is the declared stdlib line, not the compiler's version.
         let generated_for_stdlib = crate::GENERATED_FOR_STDLIB_VERSION;
-        items.push(quote! { incan_stdlib::__incan_stdlib_version_check!(#generated_for_stdlib); });
+        items.push(quote! { incan_std_core::__incan_stdlib_version_check!(#generated_for_stdlib); });
         if program.uses_checked_c_strings {
             items.push(Self::emit_checked_c_string_constructor());
         }

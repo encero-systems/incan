@@ -2723,7 +2723,7 @@ pub type File = rusttype RustFile:
         assert_eq!(info.type_params, vec!["T".to_string()]);
         assert_eq!(
             info.underlying,
-            ResolvedType::RustPath("incan_stdlib::r#async::time::TimeoutJoinOutcome<T>".to_string())
+            ResolvedType::RustPath("incan_std_async::time::TimeoutJoinOutcome<T>".to_string())
         );
         Ok(())
     }

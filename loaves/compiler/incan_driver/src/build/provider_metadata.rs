@@ -433,43 +433,50 @@ fn provider_implementation_facets(namespace_claims: &[ProviderModuleClaim]) -> V
                 .filter(|claim| claim.module_path.first() == Some(&root))
                 .map(|claim| claim.module_path.clone())
                 .collect();
-            let cargo_features = namespace
-                .feature
-                .map(|feature| {
-                    BTreeMap::from([(
-                        crate::backend::project::INCAN_STDLIB_CRATE_NAME.to_string(),
-                        BTreeSet::from([feature.to_string()]),
-                    )])
-                })
-                .unwrap_or_default();
-            let cargo_dependencies = namespace
-                .extra_crate_deps
-                .iter()
-                .map(|dependency| ProviderCargoDependency {
-                    crate_name: dependency.crate_name.to_string(),
-                    package: incan_core::lang::stdlib::extra_crate_package_alias(dependency.crate_name)
-                        .map(str::to_string),
-                    version: match dependency.source {
-                        incan_core::lang::stdlib::StdlibExtraCrateSource::Version(version) => Some(version.to_string()),
-                        incan_core::lang::stdlib::StdlibExtraCrateSource::Path(_) => None,
-                    },
-                    features: dependency
-                        .features
-                        .iter()
-                        .map(|feature| (*feature).to_string())
-                        .collect(),
-                    default_features: true,
-                    source: match dependency.source {
-                        incan_core::lang::stdlib::StdlibExtraCrateSource::Version(_) => {
-                            ProviderCargoDependencySource::Registry
-                        }
-                        incan_core::lang::stdlib::StdlibExtraCrateSource::Path(relative_path) => {
-                            ProviderCargoDependencySource::Toolchain {
-                                relative_path: relative_path.to_string(),
+            // The namespace's own runtime facet is a toolchain dependency like any other support crate; the
+            // consumer links it from the toolchain it compiles with, never from a path inside this artifact.
+            let facet_dependency = namespace.facet.map(|facet| ProviderCargoDependency {
+                crate_name: facet.to_string(),
+                package: None,
+                version: None,
+                features: BTreeSet::new(),
+                default_features: true,
+                source: ProviderCargoDependencySource::Toolchain {
+                    relative_path: Path::new("crates").join(facet).to_string_lossy().into_owned(),
+                },
+            });
+            let cargo_features = BTreeMap::new();
+            let cargo_dependencies = facet_dependency
+                .into_iter()
+                .chain(namespace.extra_crate_deps.iter().map(|dependency| {
+                    ProviderCargoDependency {
+                        crate_name: dependency.crate_name.to_string(),
+                        package: incan_core::lang::stdlib::extra_crate_package_alias(dependency.crate_name)
+                            .map(str::to_string),
+                        version: match dependency.source {
+                            incan_core::lang::stdlib::StdlibExtraCrateSource::Version(version) => {
+                                Some(version.to_string())
                             }
-                        }
-                    },
-                })
+                            incan_core::lang::stdlib::StdlibExtraCrateSource::Path(_) => None,
+                        },
+                        features: dependency
+                            .features
+                            .iter()
+                            .map(|feature| (*feature).to_string())
+                            .collect(),
+                        default_features: true,
+                        source: match dependency.source {
+                            incan_core::lang::stdlib::StdlibExtraCrateSource::Version(_) => {
+                                ProviderCargoDependencySource::Registry
+                            }
+                            incan_core::lang::stdlib::StdlibExtraCrateSource::Path(relative_path) => {
+                                ProviderCargoDependencySource::Toolchain {
+                                    relative_path: relative_path.to_string(),
+                                }
+                            }
+                        },
+                    }
+                }))
                 .collect();
             Some(ProviderImplementationFacet {
                 id: format!("rust_{root}"),

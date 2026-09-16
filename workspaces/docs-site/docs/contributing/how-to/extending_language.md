@@ -32,7 +32,7 @@ Incan’s “language surface” spans a small number of key crates and modules:
 | --------------------- | -------------------------------------------------------------------------------------- |
 | `loaves/kernel/incan_syntax` | Lexer/parser/AST/diagnostics (shared by compiler, formatter, and LSP to prevent drift) |
 | `loaves/kernel/incan_core`   | Semantic registries + pure helpers shared across the ecosystem (should not drift)      |
-| `crates/incan_stdlib` | Runtime support for generated programs (preferred home for “just a function” behavior) |
+| `loaves/stdlib/<component>/rust` | Runtime support for generated programs, one facet crate per component (preferred home for “just a function” behavior; `core/rust` for the language runtime) |
 | `loaves/stdlib/derive/incan_derive` | Derives used by generated Rust programs (runtime-side)                                 |
 | `loaves/compiler/incan_frontend/src`        | Module resolution + typechecker (turns syntax into a typed program)                    |
 | `loaves/compiler/incan_ir` | Typed IR and lowering from the checked program. |
@@ -77,11 +77,11 @@ If the syntax belongs to a library and should only activate after import, do **n
 ### <small>*A.1*: </small>  Stdlib function (no new syntax)
 <!-- markdownlint-enable MD033 -->
 
-Use this when the behavior can live in runtime support crates (e.g. `incan_stdlib`), without compiler special casing.
+Use this when the behavior can live in the runtime facets (e.g. `incan_std_core`), without compiler special casing.
 
 Typical work:
 
-- Add runtime implementation in `crates/incan_stdlib/`
+- Add runtime implementation in the owning component's facet, `loaves/stdlib/<component>/rust/`
 - Expose it via the prelude if appropriate
 - Document it in the language guide
 

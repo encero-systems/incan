@@ -300,9 +300,9 @@ impl<'a> IrEmitter<'a> {
 
         let value_class_name_impl = if has_class_name {
             quote! {
-                impl #generics incan_stdlib::reflection::HasClassName for #name #generics_bare {
+                impl #generics incan_std_core::reflection::HasClassName for #name #generics_bare {
                     fn __class_name__(&self) -> &'static str {
-                        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+                        <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
                     }
                 }
             }
@@ -312,7 +312,7 @@ impl<'a> IrEmitter<'a> {
         let type_class_name_impl = if has_type_class_name {
             let class_name = s.name.as_str();
             quote! {
-                impl #generics incan_stdlib::reflection::HasTypeClassName for #name #generics_bare {
+                impl #generics incan_std_core::reflection::HasTypeClassName for #name #generics_bare {
                     fn __class_name__() -> &'static str {
                         #class_name
                     }
@@ -325,16 +325,16 @@ impl<'a> IrEmitter<'a> {
         let field_metadata_impl = if has_field_metadata {
             if let Some((field_count, field_infos)) = self.reflection_field_info_entries(&s.name)? {
                 quote! {
-                    impl #generics incan_stdlib::reflection::HasFieldMetadata for #name #generics_bare {
-                        fn __fields__(&self) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-                            <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+                    impl #generics incan_std_core::reflection::HasFieldMetadata for #name #generics_bare {
+                        fn __fields__(&self) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+                            <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
                         }
                     }
 
-                    impl #generics incan_stdlib::reflection::HasTypeFieldMetadata for #name #generics_bare {
-                        fn __fields__() -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-                            static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; #field_count] = [#(#field_infos),*];
-                            incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+                    impl #generics incan_std_core::reflection::HasTypeFieldMetadata for #name #generics_bare {
+                        fn __fields__() -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+                            static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; #field_count] = [#(#field_infos),*];
+                            incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
                         }
                     }
                 }
@@ -365,7 +365,7 @@ impl<'a> IrEmitter<'a> {
             }
 
             quote! {
-                impl #generics incan_stdlib::reflection::HasFieldValueReflection for #name #generics_bare {
+                impl #generics incan_std_core::reflection::HasFieldValueReflection for #name #generics_bare {
                     fn __field_value__(&self, name: &str) -> Option<String> {
                         match name {
                             #(#value_arms,)*
@@ -586,7 +586,7 @@ impl<'a> IrEmitter<'a> {
         let generics_bare = self.emit_type_params_bare(&e.type_params);
         let class_name = e.name.as_str();
         let type_class_name_impl = quote! {
-            impl #generics incan_stdlib::reflection::HasTypeClassName for #name #generics_bare {
+            impl #generics incan_std_core::reflection::HasTypeClassName for #name #generics_bare {
                 fn __class_name__() -> &'static str {
                     #class_name
                 }

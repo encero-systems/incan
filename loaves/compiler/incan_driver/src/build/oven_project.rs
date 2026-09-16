@@ -156,7 +156,7 @@ pub fn prepare_oven_project(
     let mut caller_owned_libraries = oven_caller_owned_libraries(&provider_plan, profile)?;
     let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
-    ensure_loaf_stdlib_features(&mut project_requirements.stdlib_features, loaf_codegen_mode());
+    ensure_loaf_stdlib_facets(&mut project_requirements.stdlib_facets, loaf_codegen_mode());
     let emitted_dep_modules: Vec<&ParsedModule> = dep_modules
         .iter()
         .filter(|module| !compiled_sdk_modules.contains_emission_path(&module.path_segments))
@@ -221,7 +221,7 @@ pub fn prepare_oven_project(
     }
     generator.set_provider_plan(&provider_plan);
     generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
-    generator.set_stdlib_features(project_requirements.stdlib_features.clone());
+    generator.set_stdlib_facets(project_requirements.stdlib_facets.clone());
     if oven_plan_mode == OvenProjectPlanMode::InteropBootstrap {
         generator.enable_companion_library_target();
     }
@@ -248,17 +248,20 @@ pub fn prepare_oven_project(
         }
         inline_imports.extend(module_imports);
     }
-    // `std.*` source modules lower through the compiler-owned `incan_stdlib` crate. ProjectGenerator supplies that
-    // runtime directly, so its internal `rust.module("incan_stdlib::...")` declarations are not user-selected Cargo
+    // `std.*` source modules lower through the compiler-owned standard library facets. ProjectGenerator supplies
+    // those crates directly, so their internal `rust.module("incan_std_<facet>::...")` declarations are not
+    // user-selected Cargo
     // inputs. Rust's own `std` crate is likewise supplied by the selected compiler. The selected stdlib provider may
     // have its own external Rust closure, which the named publisher records in `inline_imports`; caller-owned Rust
     // imports are materialized only through the narrow direct-rustc path-package seam below.
-    source_inline_imports.retain(|import| import.crate_name != "incan_stdlib" && import.crate_name != "std");
+    source_inline_imports
+        .retain(|import| !incan_core::lang::stdlib::facets::is_facet(&import.crate_name) && import.crate_name != "std");
     let source_inline_crates = source_inline_imports
         .iter()
         .map(|import| import.crate_name.clone())
         .collect::<BTreeSet<_>>();
-    inline_imports.retain(|import| import.crate_name != "incan_stdlib" && import.crate_name != "std");
+    inline_imports
+        .retain(|import| !incan_core::lang::stdlib::facets::is_facet(&import.crate_name) && import.crate_name != "std");
     let cargo_features = CargoFeatureSelection {
         cargo_features,
         cargo_no_default_features,
@@ -596,7 +599,7 @@ pub fn prepare_oven_project(
                 .as_ref()
                 .map(|manifest| incan_dependencies_report(manifest.library_dependencies().iter().collect()))
                 .unwrap_or_default(),
-            project_requirements.stdlib_features.clone(),
+            project_requirements.stdlib_facets.clone(),
         ),
         semantic: semantic_report(
             compilation_session.sdk_inventory.as_deref(),
@@ -787,18 +790,23 @@ fn loaf_rust_inspect_query_paths(
 
 /// Make a compiler-owned Loaf internally consistent with its retained provider source.
 ///
-/// The named publisher deliberately retains the complete standard-provider envelope, including modules behind all
-/// optional `incan_stdlib` runtime features. The generated crate must enable the same runtime surface; otherwise the
-/// sealed source refers to cfg-gated `incan_stdlib` modules that Cargo omitted while preparing the one explicit
-/// publisher artifact. This never changes an ordinary Oven project's feature set.
-fn ensure_loaf_stdlib_features(stdlib_features: &mut Vec<String>, loaf: bool) {
+/// The named publisher deliberately retains the complete standard-provider envelope, including the modules every
+/// optional facet serves. The generated crate must link the same runtime surface; otherwise the sealed source refers
+/// to facet items no linked crate supplies while preparing the one explicit publisher artifact. This never changes
+/// an ordinary Oven project's facet set.
+fn ensure_loaf_stdlib_facets(stdlib_facets: &mut Vec<String>, loaf: bool) {
     if !loaf {
         return;
     }
 
-    stdlib_features.extend(["async", "json", "ordinal", "web"].into_iter().map(str::to_string));
-    stdlib_features.sort();
-    stdlib_features.dedup();
+    stdlib_facets.extend(
+        incan_core::lang::stdlib::facets::ALL
+            .into_iter()
+            .filter(|facet| *facet != incan_core::lang::stdlib::facets::CORE)
+            .map(str::to_string),
+    );
+    stdlib_facets.sort();
+    stdlib_facets.dedup();
 }
 
 /// Return the receipt-compatible direct-Rustc selection for one normal command.
@@ -1013,13 +1021,21 @@ mod tests {
 
     #[test]
     fn loaf_enables_the_complete_stdlib_runtime_envelope() {
-        let mut seeded = vec!["json".to_string()];
-        ensure_loaf_stdlib_features(&mut seeded, true);
-        assert_eq!(seeded, ["async", "json", "ordinal", "web"]);
+        let mut seeded = vec!["incan_std_data".to_string()];
+        ensure_loaf_stdlib_facets(&mut seeded, true);
+        assert_eq!(
+            seeded,
+            [
+                "incan_std_async",
+                "incan_std_data",
+                "incan_std_testing",
+                "incan_std_web"
+            ]
+        );
 
-        let mut ordinary = vec!["json".to_string()];
-        ensure_loaf_stdlib_features(&mut ordinary, false);
-        assert_eq!(ordinary, ["json"]);
+        let mut ordinary = vec!["incan_std_data".to_string()];
+        ensure_loaf_stdlib_facets(&mut ordinary, false);
+        assert_eq!(ordinary, ["incan_std_data"]);
     }
 
     #[test]

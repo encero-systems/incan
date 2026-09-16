@@ -461,8 +461,8 @@ pub mod test_support {
             native_search_paths: Vec::new(),
             externs: vec![
                 OvenRustcArtifactExtern {
-                    crate_name: "incan_stdlib".to_string(),
-                    relative_path: "artifacts/deps/libincan_stdlib-shared.rlib".to_string(),
+                    crate_name: "incan_std_core".to_string(),
+                    relative_path: "artifacts/deps/libincan_std_core-shared.rlib".to_string(),
                     digest: "sha256:shared".to_string(),
                 },
                 OvenRustcArtifactExtern {
@@ -474,7 +474,7 @@ pub mod test_support {
             entrypoint_dependency_search_paths: BTreeMap::new(),
             entrypoint_externs: BTreeMap::from([(
                 "generated-root".to_string(),
-                vec!["incan_stdlib".to_string(), provider_crate.to_string()],
+                vec!["incan_std_core".to_string(), provider_crate.to_string()],
             )]),
             registry_leaves: Vec::new(),
             registry_sources: Vec::new(),

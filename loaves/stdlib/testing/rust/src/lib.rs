@@ -1,7 +1,9 @@
-//! Testing helpers for Incan-generated Rust code.
+//! Test-marker and assertion runtime: the Rust facet of the `testing` standard library component.
 //!
-//! `loaves/stdlib/testing/src/testing.incn` is the source-of-truth surface API for `std.testing`.
-//! This Rust module implements only host-boundary functions referenced by `@rust.extern` declarations in `std.testing`.
+//! `loaves/stdlib/testing/src/testing.incn` is the source-of-truth surface API for `std.testing`. This crate implements
+//! only the host-boundary functions referenced by `@rust.extern` declarations in `std.testing`.
+
+#![deny(clippy::unwrap_used)]
 
 pub use incan_core::lang::testing::{
     RUNNER_ONLY_MARKER_NAMES, TESTING_MARKER_FIXTURE, TESTING_MARKER_MARK, TESTING_MARKER_PARAMETRIZE,
@@ -15,7 +17,7 @@ pub use incan_core::lang::testing::{
 ///
 /// Always panics with the provided `msg`.
 pub fn fail_t<T>(msg: String) -> T {
-    crate::errors::__private::raise_runtime_misuse(&msg)
+    incan_std_core::errors::__private::raise_runtime_misuse(&msg)
 }
 
 /// Return the canonical runtime misuse message for a runner-only `std.testing` marker.
@@ -25,7 +27,7 @@ pub fn testing_marker_runtime_misuse_message(marker: &str) -> String {
 
 /// Report misuse of compile-time testing markers at runtime.
 fn marker_runtime_misuse(marker: &str) -> ! {
-    crate::errors::__private::raise_runtime_misuse(&testing_marker_runtime_misuse_message(marker));
+    incan_std_core::errors::__private::raise_runtime_misuse(&testing_marker_runtime_misuse_message(marker));
 }
 
 /// Marker runtime for `@std.testing.skip`.

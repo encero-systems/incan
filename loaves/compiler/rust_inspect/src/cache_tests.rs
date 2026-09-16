@@ -1082,23 +1082,23 @@ fn workspace_fingerprint_changes_when_path_dependency_source_changes() -> Result
     Ok(())
 }
 
-/// The compiler injects `incan_derive`/`incan_stdlib`/`incan_stdlib_<component>` path dependencies into every
+/// The compiler injects `incan_derive`/`incan_std_core`/`incan_stdlib_<component>` path dependencies into every
 /// generated project. Editing their source (a rare, compiler-development-only scenario) must not force every
 /// generated project's fingerprint to walk the whole stdlib tree on every cache load; excluded by package-name
 /// prefix regardless of the dependency's own directory size.
 #[test]
 fn workspace_fingerprint_ignores_compiler_owned_path_dependencies() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
-    let dep_dir = tmp.path().join("incan_stdlib");
+    let dep_dir = tmp.path().join("incan_std_core");
     fs::create_dir_all(dep_dir.join("src"))?;
     fs::write(
         dep_dir.join("Cargo.toml"),
-        "[package]\nname = \"incan_stdlib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        "[package]\nname = \"incan_std_core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
     )?;
     fs::write(dep_dir.join("src/lib.rs"), "pub fn hello() -> i32 { 1 }\n")?;
     fs::write(
         tmp.path().join("Cargo.toml"),
-        "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_stdlib = { path = \"incan_stdlib\" }\n",
+        "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_std_core = { path = \"incan_std_core\" }\n",
     )?;
 
     let before = workspace_fingerprint(tmp.path())?;
@@ -1205,8 +1205,8 @@ fn raw_identifier_alias_hits_existing_cached_item() -> Result<(), Box<dyn std::e
     cache.insert_test_item(
         tmp.path(),
         RustItemMetadata {
-            canonical_path: "incan_stdlib::async::sync::RawSemaphore".to_string(),
-            definition_path: Some("incan_stdlib::r#async::sync::Semaphore".to_string()),
+            canonical_path: "incan_std_async::sync::RawSemaphore".to_string(),
+            definition_path: Some("incan_std_async::sync::Semaphore".to_string()),
             visibility: RustVisibility::Public,
             kind: RustItemKind::Type(RustTypeInfo {
                 type_params: Vec::new(),
@@ -1224,8 +1224,8 @@ fn raw_identifier_alias_hits_existing_cached_item() -> Result<(), Box<dyn std::e
         },
     )?;
 
-    let hit = cache.get_or_extract(tmp.path(), "incan_stdlib::r#async::sync::RawSemaphore", &|_| ())?;
-    assert_eq!(hit.canonical_path, "incan_stdlib::r#async::sync::RawSemaphore");
+    let hit = cache.get_or_extract(tmp.path(), "incan_std_async::sync::RawSemaphore", &|_| ())?;
+    assert_eq!(hit.canonical_path, "incan_std_async::sync::RawSemaphore");
     Ok(())
 }
 

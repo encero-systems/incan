@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn test_basic_assignments() {
     let _x: i64 = 42;
     let _y: String = "hello".to_string();
@@ -22,16 +22,16 @@ fn test_augmented_assignments() {
     x = x + 5;
     x = x - 3;
     x = x * 2;
-    x = incan_stdlib::num::py_mod_i64(x, 4);
+    x = incan_std_core::num::py_mod_i64(x, 4);
     let mut xf: f64 = 24.0;
-    xf = incan_stdlib::num::py_div(xf, (4) as f64);
+    xf = incan_std_core::num::py_div(xf, (4) as f64);
     let mut s: String = "hello".to_string();
-    s = incan_stdlib::strings::str_concat(&s, &" world");
+    s = incan_std_core::strings::str_concat(&s, &" world");
 }
 fn test_collection_assignments() {
     let mut numbers: Vec<i64> = vec![1, 2, 3, 4];
-    *incan_stdlib::collections::list_get_mut(&mut numbers, (0) as i64) = 10;
-    *incan_stdlib::collections::list_get_mut(&mut numbers, (-1) as i64) = 40;
+    *incan_std_core::collections::list_get_mut(&mut numbers, (0) as i64) = 10;
+    *incan_std_core::collections::list_get_mut(&mut numbers, (-1) as i64) = 40;
     let mut data: std::collections::HashMap<String, i64> = [("a".to_string(), 1)]
         .into_iter()
         .collect::<std::collections::HashMap<_, _>>();

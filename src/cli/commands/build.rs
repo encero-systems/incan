@@ -754,27 +754,27 @@ mod tests {
 
     #[test]
     fn classify_signature_mismatch_for_rust_extern_context() {
-        let stderr = "error[E0308]: mismatched types in `incan_stdlib::testing::fail`\n  --> src/main.rs:10:5";
-        let kind = classify_rust_extern_build_failure(stderr, "fail", "incan_stdlib::testing");
+        let stderr = "error[E0308]: mismatched types in `incan_std_testing::fail`\n  --> src/main.rs:10:5";
+        let kind = classify_rust_extern_build_failure(stderr, "fail", "incan_std_testing");
         assert_eq!(kind, Some(RustExternBuildFailureKind::SignatureMismatch));
     }
 
     #[test]
     fn classify_unresolved_backing_item_for_rust_extern_context() {
-        let stderr = "error[E0425]: cannot find function `fail` in module `incan_stdlib::testing`";
-        let kind = classify_rust_extern_build_failure(stderr, "fail", "incan_stdlib::testing");
+        let stderr = "error[E0425]: cannot find function `fail` in module `incan_std_testing`";
+        let kind = classify_rust_extern_build_failure(stderr, "fail", "incan_std_testing");
         assert_eq!(kind, Some(RustExternBuildFailureKind::UnresolvedBackingItem));
     }
 
     #[test]
     fn wraps_rust_extern_failure_back_to_incan_declaration_span() {
-        let stderr = "error[E0425]: cannot find function `fail` in module `incan_stdlib::testing`";
+        let stderr = "error[E0425]: cannot find function `fail` in module `incan_std_testing`";
         let contexts = vec![RustExternDeclContext {
             file_path: PathBuf::from("stdlib/testing.incn"),
-            source: "rust.module(\"incan_stdlib::testing\")\n@rust.extern\ndef fail(msg: str) -> None:\n  ...\n"
+            source: "rust.module(\"incan_std_testing\")\n@rust.extern\ndef fail(msg: str) -> None:\n  ...\n"
                 .to_string(),
             item_name: "fail".to_string(),
-            rust_module_path: "incan_stdlib::testing".to_string(),
+            rust_module_path: "incan_std_testing".to_string(),
             span: Span { start: 35, end: 73 },
         }];
         let rendered = format_rust_extern_wrapped_diagnostics(stderr, &contexts);
@@ -782,7 +782,7 @@ mod tests {
             panic!("expected wrapped diagnostic");
         };
         assert!(rendered.contains("Rust backing item"));
-        assert!(rendered.contains("incan_stdlib::testing::fail"));
+        assert!(rendered.contains("incan_std_testing::fail"));
     }
 
     #[cfg(feature = "rust_inspect")]

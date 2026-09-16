@@ -8,9 +8,9 @@ Runtime crates: flate2, zstd, bzip2, xz2, snap
 
 ```text
 stdlib/compression/
-  loaf.toml        the component is one Loaf; its Rust facet is conventional (RFC 119)
+  loaf.toml        the component is one Loaf (RFC 117)
   src/             Incan source: the `.incn` modules for the roots above
-  rust/src/        Rust runtime bridge crate `incan_std_compression` (today gated code in `crates/incan_stdlib`)
+  rust/src/        reserved for an `incan_std_compression` facet; this component has no Rust of its own today
   tests/           `.incn` and `.rs` tests side by side
 ```
 

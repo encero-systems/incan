@@ -10,7 +10,7 @@ make test-prewarm-oven-release-loafs \
   INCAN_TEST_COMPILER_ALREADY_BUILT=1 \
   INCAN_TEST_OVEN_RELEASE_COMPILER_BIN="$PWD/target/debug/incan"
 export INCAN_SOURCE_ROOT="$INCAN_CHECKOUT"
-export INCAN_STDLIB="$INCAN_CHECKOUT/crates/incan_stdlib/stdlib"
+export INCAN_STDLIB="$INCAN_CHECKOUT/loaves/stdlib"
 export INCAN_STDLIB_DIR="$INCAN_STDLIB"
 export INCAN_TOOLCHAIN_CRATES_DIR="$INCAN_CHECKOUT/crates"
 export PATH="$INCAN_CHECKOUT/target/oven-alpha-release-toolchain/bin:$PATH"

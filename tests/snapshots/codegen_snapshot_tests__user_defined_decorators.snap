@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 #[inline(always)]
 pub(crate) fn __incan_init_module_statics() {
     static __INCAN_STATIC_INIT_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(
@@ -43,8 +43,8 @@ fn __incan_original_label(_: i64) -> String {
     return "value".to_string();
 }
 static __INCAN_DECORATED_LABEL: std::sync::LazyLock<
-    incan_stdlib::storage::StaticCell<fn(i64) -> i64>,
-> = std::sync::LazyLock::new(|| incan_stdlib::storage::StaticCell::new(
+    incan_std_core::storage::StaticCell<fn(i64) -> i64>,
+> = std::sync::LazyLock::new(|| incan_std_core::storage::StaticCell::new(
     as_int(__incan_original_label),
 ));
 fn label(__incan_arg_0: i64) -> i64 {

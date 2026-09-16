@@ -107,7 +107,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return true;
         }
         // A builtin collection with no collection helper is *not* refused here. `==` on two lists is the case that
-        // settles it: the Rust-emission backend routes list `+` to `incan_stdlib::collections::list_concat`, which
+        // settles it: the Rust-emission backend routes list `+` to `incan_std_core::collections::list_concat`, which
         // is why representing it as `BinOp::Add` contradicted that backend -- but it emits comparisons as an infix
         // operator, landing on Rust's `PartialEq` for `Vec`, which is also what Python's element-wise `==` means.
         // A primitive is therefore the faithful representation there, and refusing it would invent a divergence

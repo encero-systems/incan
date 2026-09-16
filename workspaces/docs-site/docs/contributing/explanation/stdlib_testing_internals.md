@@ -13,10 +13,10 @@ This page documents the internal integration model, runtime boundary design, and
 `std.testing` is compiled from Incan source instead of relying on hardcoded Rust assertion helpers.
 
 - **Source of truth**: `loaves/stdlib/testing/src/testing.incn`.
-- **Rust module mapping**: the file declares `rust.module("incan_stdlib::testing")`, routing host-boundary calls to the `incan_stdlib::testing` Rust module.
+- **Rust module mapping**: the file declares `rust.module("incan_std_testing")`, routing host-boundary calls to the `incan_std_testing` Rust module.
 - **Incan-implemented assertions**: `assert`, `assert_eq`, `assert_ne`, `assert_true`, `assert_false`, `assert_is_some`, `assert_is_none`, `assert_is_ok`, `assert_is_err`, and `fail` are all written in Incan source. They delegate to `fail_t()` for the actual panic.
 - **Host-boundary primitives** (`@rust.extern`):
-    - `fail_t[T](msg)` — generic panic primitive implemented in `incan_stdlib::testing`.
+    - `fail_t[T](msg)` — generic panic primitive implemented in `incan_std_testing`.
     - Marker entrypoints (`skip`, `xfail`, `slow`, `fixture`, `parametrize`) — their Rust implementations intentionally panic with a "runtime misuse" message; they exist only to satisfy the extern boundary.
 - **Known blocker**:
     - `assert_raises` remains unimplemented as an Incan-side placeholder (fails via `fail_t`) until parser/lowering support for `assert ... raises ...` lands.
@@ -35,7 +35,7 @@ This design keeps user-facing assertion behavior in one stdlib Incan file while 
 
 The runtime boundary is intentionally narrow:
 
-- **Incan-first assertions**: behavior lives in `testing.incn`, not duplicated Rust wrappers. Adding a new assertion helper means editing Incan source, not touching `incan_stdlib::testing`.
+- **Incan-first assertions**: behavior lives in `testing.incn`, not duplicated Rust wrappers. Adding a new assertion helper means editing Incan source, not touching `incan_std_testing`.
 - **Host orchestration for markers**: discovery and execution semantics (`skip`, `xfail`, `slow`, fixtures, parametrize) are resolved by `incan test` from stdlib metadata at discovery time — they are never invoked at runtime in normal test execution.
 - **Fail-fast on runtime misuse**: the Rust marker stubs panic immediately with a clear message if a marker function is ever called outside the test runner (e.g., used as a regular function call instead of a decorator).
 
@@ -64,6 +64,6 @@ Key files:
 |                   File                    |                           Role                            |
 | ----------------------------------------- | --------------------------------------------------------- |
 | `loaves/stdlib/testing/src/testing.incn` | Canonical stdlib source (assertions + marker decls)       |
-| `crates/incan_stdlib/src/testing.rs`      | Rust host-boundary implementations (panic stubs)          |
+| `loaves/stdlib/testing/rust/src/lib.rs`   | Rust host-boundary implementations (panic stubs), the `incan_std_testing` facet |
 | `loaves/compiler/incan_frontend/src/testing_markers.rs`         | Parses marker metadata from stdlib; cached via `OnceLock` |
 | `loaves/compiler/incan_driver/src/testing/discovery.rs`        | Consumes marker semantics for test discovery              |

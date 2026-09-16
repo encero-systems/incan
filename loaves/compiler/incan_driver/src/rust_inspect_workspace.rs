@@ -59,7 +59,7 @@ fn test_rust_inspect_workspace_generations(workspace_dir: &Path) -> u64 {
 }
 
 /// Trim, sort and dedupe the stdlib feature list so the workspace fingerprint does not change with spelling order.
-fn normalized_stdlib_features_for_rust_inspect_fingerprint(features: &[String]) -> Vec<String> {
+fn normalized_stdlib_facets_for_rust_inspect_fingerprint(features: &[String]) -> Vec<String> {
     let mut normalized: Vec<String> = features
         .iter()
         .map(|feature| feature.trim().to_string())
@@ -142,7 +142,7 @@ fn rust_inspect_workspace_fingerprint(
     cargo_package_name: &str,
     rust_edition: Option<&str>,
     resolved: &ResolvedDependencies,
-    stdlib_features: &[String],
+    stdlib_facets: &[String],
     sdk_dependency_rebindings: &[SdkDependencyRebinding],
     sdk_path_dependencies: &[DependencySpec],
     sdk_artifact_projections: &[SdkArtifactProjection],
@@ -188,7 +188,7 @@ fn rust_inspect_workspace_fingerprint(
         hasher.update(b"\0");
     }
 
-    let stdlib = normalized_stdlib_features_for_rust_inspect_fingerprint(stdlib_features);
+    let stdlib = normalized_stdlib_facets_for_rust_inspect_fingerprint(stdlib_facets);
     for f in &stdlib {
         hasher.update(f.as_bytes());
         hasher.update(b"\0");
@@ -560,7 +560,7 @@ pub fn ensure_rust_inspect_workspace_with_cargo_package_name(
         cargo_package_name,
         rust_edition.as_deref(),
         resolved,
-        &project_requirements.stdlib_features,
+        &project_requirements.stdlib_facets,
         &project_requirements.sdk_dependency_rebindings,
         &project_requirements.sdk_path_dependencies,
         &project_requirements.sdk_artifact_projections,
@@ -596,7 +596,7 @@ pub fn ensure_rust_inspect_workspace_with_cargo_package_name(
     generator.set_dependencies(resolved.dependencies.clone());
     generator.set_dev_dependencies(resolved.dev_dependencies.clone());
     generator.set_include_dev_dependencies(true);
-    generator.set_stdlib_features(project_requirements.stdlib_features.clone());
+    generator.set_stdlib_facets(project_requirements.stdlib_facets.clone());
     generator.set_sdk_dependency_rebindings(project_requirements.sdk_dependency_rebindings.clone());
     generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
     generator.set_sdk_artifact_projections(project_requirements.sdk_artifact_projections.clone());
@@ -721,7 +721,8 @@ pub fn collect_rust_inspect_query_paths_from_programs<'a>(
     // Default policy: prewarm explicit non-stdlib `from rust::... import Item` imports. These are the exact paths
     // semantic/codegen hot paths may query later, including Rust types with uppercase names.
     //
-    // We still avoid crate/module imports and `incan_stdlib::*` by default. Full eager prewarm can force broad
+    // We still avoid crate/module imports and the standard library facets by default. Full eager prewarm can force
+    // broad
     // rust-analyzer walks and persist negative module lookups that are not safe metadata items.
     // Set `INCAN_RUST_INSPECT_PREWARM_ALL=1` to restore full eager prewarm for debugging/regressions.
     let prewarm_all = env_flag_enabled("INCAN_RUST_INSPECT_PREWARM_ALL");
@@ -754,7 +755,7 @@ pub fn collect_rust_inspect_query_paths_from_programs<'a>(
                     if base.is_empty() {
                         continue;
                     }
-                    if !prewarm_all && base.starts_with("incan_stdlib::") {
+                    if !prewarm_all && incan_core::lang::stdlib::facets::path_names_a_facet(&base) {
                         continue;
                     }
                     let primitive_ns = matches!(base.as_str(), "std::primitive" | "core::primitive");
@@ -1057,7 +1058,7 @@ mod tests {
             r#"
 from rust::datafusion::execution::context import SessionContext
 from rust::datafusion::prelude import CsvReadOptions, read_csv
-from rust::incan_stdlib::async::runtime import block_on
+from rust::incan_std_async::runtime import block_on
 from rust::std::fs import metadata
 from rust::std::primitive import i64 as RustI64
 "#,
@@ -1247,7 +1248,7 @@ model RightValue:
             "probe",
             Some("2021"),
             &resolved,
-            &requirements.stdlib_features,
+            &requirements.stdlib_facets,
             &requirements.sdk_dependency_rebindings,
             &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
@@ -1262,7 +1263,7 @@ model RightValue:
             "probe",
             Some("2021"),
             &resolved,
-            &requirements.stdlib_features,
+            &requirements.stdlib_facets,
             &requirements.sdk_dependency_rebindings,
             &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
@@ -1277,7 +1278,7 @@ model RightValue:
             "incan_workspace",
             Some("2021"),
             &resolved,
-            &requirements.stdlib_features,
+            &requirements.stdlib_facets,
             &requirements.sdk_dependency_rebindings,
             &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
@@ -1292,7 +1293,7 @@ model RightValue:
             "probe",
             Some("2021"),
             &resolved,
-            &requirements.stdlib_features,
+            &requirements.stdlib_facets,
             &requirements.sdk_dependency_rebindings,
             &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
@@ -1320,7 +1321,7 @@ model RightValue:
             "p",
             None,
             &resolved,
-            &requirements.stdlib_features,
+            &requirements.stdlib_facets,
             &requirements.sdk_dependency_rebindings,
             &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
@@ -1335,7 +1336,7 @@ model RightValue:
             "p",
             None,
             &resolved,
-            &requirements.stdlib_features,
+            &requirements.stdlib_facets,
             &requirements.sdk_dependency_rebindings,
             &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
@@ -1361,7 +1362,7 @@ model RightValue:
                 "p",
                 None,
                 &resolved,
-                &requirements.stdlib_features,
+                &requirements.stdlib_facets,
                 &requirements.sdk_dependency_rebindings,
                 &requirements.sdk_path_dependencies,
                 &requirements.sdk_artifact_projections,
@@ -1435,7 +1436,7 @@ checksum = "fixture-checksum"
             "caller",
             None,
             &resolved,
-            &requirements.stdlib_features,
+            &requirements.stdlib_facets,
             &requirements.sdk_dependency_rebindings,
             &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
@@ -1496,7 +1497,7 @@ checksum = "fixture-checksum"
             "probe",
             None,
             &resolved,
-            &requirements.stdlib_features,
+            &requirements.stdlib_facets,
             &requirements.sdk_dependency_rebindings,
             &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
@@ -1512,7 +1513,7 @@ checksum = "fixture-checksum"
             "probe",
             None,
             &resolved,
-            &requirements.stdlib_features,
+            &requirements.stdlib_facets,
             &requirements.sdk_dependency_rebindings,
             &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,

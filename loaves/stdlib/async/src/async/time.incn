@@ -35,15 +35,15 @@ Examples:
 
 import std.async
 from std.traits.error import Error
-from rust::incan_stdlib::async::task import JoinHandle, RuntimeFuture
-from rust::incan_stdlib::async::time import (
+from rust::incan_std_async::task import JoinHandle, RuntimeFuture
+from rust::incan_std_async::time import (
     TimeoutJoinOutcome as RustTimeoutJoinOutcome,
     clamp_seconds,
     clamp_millis,
     timeout_join as rust_timeout_join,
     timeout_join_ms as rust_timeout_join_ms,
 )
-from rust::incan_stdlib::__private::tokio::time import (
+from rust::incan_std_async::__private::tokio::time import (
     sleep as tokio_sleep,
     timeout as tokio_timeout,
 )

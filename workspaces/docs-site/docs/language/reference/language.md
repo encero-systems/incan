@@ -97,18 +97,18 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 
 ## Standard library namespaces
 
-| Namespace | Feature gate | Submodules | Activates soft keywords |
+| Namespace | Runtime facet | Submodules | Activates soft keywords |
 |---|---|---|---|
-| `std.web` | `web` | `std.web.app`, `std.web.routing`, `std.web.request`, `std.web.response`, `std.web.macros`, `std.web.prelude` | - |
-| `std.testing` | - | - | - |
+| `std.web` | `incan_std_web` | `std.web.app`, `std.web.routing`, `std.web.request`, `std.web.response`, `std.web.macros`, `std.web.prelude` | - |
+| `std.testing` | `incan_std_testing` | - | - |
 | `std.logging` | - | - | - |
 | `std.registry` | - | - | - |
 | `std.telemetry` | - | `std.telemetry.core` | - |
 | `std.environ` | - | - | - |
-| `std.async` | `async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.race`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
+| `std.async` | `incan_std_async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.race`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
 | `std.interop` | - | - | - |
-| `std.serde` | `json` | `std.serde.json` | - |
-| `std.json` | `json` | - | - |
+| `std.serde` | `incan_std_data` | `std.serde.json` | - |
+| `std.json` | `incan_std_data` | - | - |
 | `std.toml` | - | - | - |
 | `std.reflection` | - | - | - |
 | `std.result` | - | - | - |
@@ -121,7 +121,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.graph` | - | - | - |
 | `std.uuid` | - | - | - |
 | `std.regex` | - | `std.regex._core`, `std.regex._replacement`, `std.regex.types`, `std.regex.prelude` | - |
-| `std.collections` | `ordinal` | - | - |
+| `std.collections` | `incan_std_data` | - | - |
 | `std.io` | - | - | - |
 | `std.encoding` | - | `std.encoding._shared`, `std.encoding.prelude`, `std.encoding.hex`, `std.encoding.base32`, `std.encoding.base64`, `std.encoding.base85`, `std.encoding.base58`, `std.encoding.bech32` | - |
 | `std.checksum` | - | - | - |

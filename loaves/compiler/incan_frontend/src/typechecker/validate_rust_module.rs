@@ -62,9 +62,9 @@ impl TypeChecker {
                 self.errors
                     .push(errors::invalid_rust_module_path(&directive.node, directive.span));
             } else {
-                // Crate validation: first segment must be `incan_stdlib` or a declared dependency.
+                // Crate validation: first segment must be a standard library facet or a declared dependency.
                 let first_segment = directive.node.split("::").next().unwrap_or("");
-                if first_segment != "incan_stdlib"
+                if !incan_core::lang::stdlib::facets::is_facet(first_segment)
                     && let Some(ref crate_names) = self.declared_crate_names
                     && !crate_names.contains(first_segment)
                 {
@@ -243,8 +243,8 @@ mod tests {
 
     #[test]
     fn test_valid_rust_module_paths() {
-        assert!(is_valid_rust_module_path("incan_stdlib"));
-        assert!(is_valid_rust_module_path("incan_stdlib::testing"));
+        assert!(is_valid_rust_module_path("incan_std_core"));
+        assert!(is_valid_rust_module_path("incan_std_testing"));
         assert!(is_valid_rust_module_path("my_crate::sub::module"));
         assert!(is_valid_rust_module_path("_private::_inner"));
         assert!(is_valid_rust_module_path("crate1::mod2::func3"));

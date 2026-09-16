@@ -173,7 +173,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// see [`bir::Rvalue::Format`]'s own docs for why this needed its own `Rvalue` shape.
     ///
     /// Building the formatted string always allocates and always needs the `fstring` runtime helper
-    /// (`incan_stdlib::strings::fstring`, the function the existing Rust-emission backend's `Format` node itself
+    /// (`incan_std_core::strings::fstring`, the function the existing Rust-emission backend's `Format` node itself
     /// compiles down to -- see `src/backend/ir/emit/expressions/format.rs`), so both requirements are recorded
     /// unconditionally here, the same way [`Self::lower_binary_from_operands`] records requirements for its own
     /// compiler-owned string helpers.

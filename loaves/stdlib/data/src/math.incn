@@ -61,7 +61,7 @@ Geometry:
 
 from rust::std::f64::consts import PI as RUST_PI, E as RUST_E, TAU as RUST_TAU
 from rust::std::f64 import INFINITY as RUST_INFINITY, NAN as RUST_NAN
-from rust::incan_stdlib::num import (
+from rust::incan_std_core::num import (
     gcd_i64 as rust_gcd,
     lcm_i64 as rust_lcm,
 )

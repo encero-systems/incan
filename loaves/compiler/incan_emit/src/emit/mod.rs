@@ -3871,7 +3871,11 @@ mod tests {
             .insert("JsonValue".to_string());
         emitter.rust_import_paths.borrow_mut().insert(
             "RustJsonValue".to_string(),
-            vec!["incan_stdlib".to_string(), "json".to_string(), "JsonValue".to_string()],
+            vec![
+                "incan_std_data".to_string(),
+                "json".to_string(),
+                "JsonValue".to_string(),
+            ],
         );
         emitter.method_signatures.insert(
             ("JsonValue".to_string(), "string".to_string()),
@@ -3912,7 +3916,7 @@ mod tests {
         );
         assert!(
             emitter
-                .method_signature_for_receiver(&IrType::Struct("incan_stdlib::json::JsonValue".to_string()), "string",)
+                .method_signature_for_receiver(&IrType::Struct("incan_std_data::json::JsonValue".to_string()), "string",)
                 .is_some(),
             "a source newtype may supply call ownership facts through its exact Rust import identity"
         );

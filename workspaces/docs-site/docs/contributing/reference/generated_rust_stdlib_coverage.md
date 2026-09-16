@@ -6,7 +6,7 @@ Generated from repo inspection on 2026-05-20 with:
 
 ```sh
 rg --files loaves/stdlib | rg '\.incn$'
-rg -n 'std_|from std\.|import std' tests tests/codegen_snapshots crates/incan_stdlib/tests
+rg -n 'std_|from std\.|import std' tests tests/codegen_snapshots loaves/stdlib/core/rust/tests
 ```
 
 ## Coverage labels

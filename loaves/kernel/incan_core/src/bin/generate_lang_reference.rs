@@ -254,12 +254,12 @@ fn render_soft_keywords_section(out: &mut String) {
 /// Render standard-library namespaces and the soft keywords they activate.
 fn render_stdlib_namespaces_section(out: &mut String) {
     start_section(out, "## Standard library namespaces");
-    out.push_str("| Namespace | Feature gate | Submodules | Activates soft keywords |\n");
+    out.push_str("| Namespace | Runtime facet | Submodules | Activates soft keywords |\n");
     out.push_str("|---|---|---|---|\n");
 
     for ns in stdlib::STDLIB_NAMESPACES {
         let namespace = format!("`std.{}`", ns.name);
-        let feature_gate = ns.feature.map_or_else(|| "-".to_string(), |f| format!("`{f}`"));
+        let facet = ns.facet.map_or_else(|| "-".to_string(), |facet| format!("`{facet}`"));
         let submodules = if ns.submodules.is_empty() {
             "-".to_string()
         } else {
@@ -280,9 +280,7 @@ fn render_stdlib_namespaces_section(out: &mut String) {
                 .join(", ")
         };
 
-        out.push_str(&format!(
-            "| {namespace} | {feature_gate} | {submodules} | {soft_keywords} |\n"
-        ));
+        out.push_str(&format!("| {namespace} | {facet} | {submodules} | {soft_keywords} |\n"));
     }
     out.push('\n');
 }

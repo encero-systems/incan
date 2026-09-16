@@ -37,7 +37,7 @@ You can orient yourself with these anchors:
     - stable library manifest/desugarer contract for import-activated library DSLs
 - `loaves/compiler/rust_inspect/`:
     - staged Rust metadata preparation/cache subsystem for Rust interop
-- `crates/incan_stdlib/`, `loaves/stdlib/derive/incan_derive/`, and `loaves/stdlib/derive/incan_web_macros/`:
+- `loaves/stdlib/<component>/rust/` (the `incan_std_<component>` facets), `loaves/stdlib/derive/incan_derive/`, and `loaves/stdlib/derive/incan_web_macros/`:
     - runtime-only support used by generated Rust programs
 - `loaves/compiler/incan_frontend/src/`:
     - module resolution (`module.rs`)

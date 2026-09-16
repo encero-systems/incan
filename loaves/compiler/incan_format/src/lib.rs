@@ -1947,7 +1947,7 @@ enum Marker:
     fn test_format_source_preserves_rust_module_and_enum_methods() -> Result<(), FormatError> {
         let source = r#""""Runtime module docstring."""
 
-rust.module("incan_stdlib::testing")
+rust.module("incan_std_testing")
 
 from std.traits.error import Error
 

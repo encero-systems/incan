@@ -394,7 +394,7 @@ pub enum IrExprKind {
     // List of field names for reflection
     FieldsList(Vec<String>),
 
-    // `incan_stdlib::json::__private::stringify_or_raise(self, type_name)`
+    // `incan_std_data::json::__private::stringify_or_raise(self, type_name)`
     SerdeToJson,
 
     // serde_json::from_str(s) - contains the target type name
@@ -704,11 +704,11 @@ pub enum BuiltinFn {
     ReadFile,
     /// `write_file(path, content)` → `std::fs::write(path, content).map_err(|error| error.to_string())`
     WriteFile,
-    /// `json_stringify(x)` → `incan_stdlib::json::__private::stringify_or_raise(&x, type_name)`
+    /// `json_stringify(x)` → `incan_std_data::json::__private::stringify_or_raise(&x, type_name)`
     JsonStringify,
     /// A collection constructor selected from the canonical collection-type registry.
     CollectionConstructor(CollectionTypeId),
-    /// `list.repeat(value, count)` → `incan_stdlib::collections::list_repeat(value, count)`
+    /// `list.repeat(value, count)` → `incan_std_core::collections::list_repeat(value, count)`
     ListRepeat,
 }
 
@@ -835,18 +835,18 @@ pub enum CollectionMethodKind {
     Remove,
     /// `list.append(item)` → `list.push(item)`
     Append,
-    /// `list.extend(items)` → `incan_stdlib::collections::list_extend(...)`
+    /// `list.extend(items)` → `incan_std_core::collections::list_extend(...)`
     Extend,
     /// `list.clone()` → `list.clone()`
     Clone,
-    /// `list.pop()` lowers via `incan_stdlib::collections::__private::list_pop(...)`, which preserves the `T` return
+    /// `list.pop()` lowers via `incan_std_core::collections::__private::list_pop(...)`, which preserves the `T` return
     /// type while raising `IndexError: pop from empty list` on the runtime side (#194).
     Pop,
-    /// `list.swap(i, j)` → `incan_stdlib::collections::list_swap(...)`
+    /// `list.swap(i, j)` → `incan_std_core::collections::list_swap(...)`
     Swap,
-    /// `list.count(value)` → `incan_stdlib::collections::list_count(...)`
+    /// `list.count(value)` → `incan_std_core::collections::list_count(...)`
     Count,
-    /// `list.index(value)` → `incan_stdlib::collections::list_index(...)`
+    /// `list.index(value)` → `incan_std_core::collections::list_index(...)`
     Index,
     /// `list.reserve(n)` → `list.reserve(n as usize)`
     Reserve,

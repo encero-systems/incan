@@ -27,7 +27,7 @@ impl<'a> IrEmitter<'a> {
         clauses: &[IrGeneratorClause],
     ) -> Result<TokenStream, EmitError> {
         let chain = self.emit_generator_chain(element, clauses)?;
-        Ok(quote! { incan_stdlib::iter::Generator::new(#chain) })
+        Ok(quote! { incan_std_core::iter::Generator::new(#chain) })
     }
 
     /// Recursively emit source-ordered generator `for` / `if` clauses as lazy iterator adapters.
@@ -48,7 +48,7 @@ impl<'a> IrEmitter<'a> {
                 let body = self.emit_generator_chain(element, tail)?;
                 Ok(quote! {
                     (#iter).flat_map(move |#pattern_tokens| {
-                        incan_stdlib::iter::Generator::new(#body)
+                        incan_std_core::iter::Generator::new(#body)
                     })
                 })
             }
@@ -57,9 +57,9 @@ impl<'a> IrEmitter<'a> {
                 let body = self.emit_generator_chain(element, tail)?;
                 Ok(quote! {
                     if #condition_tokens {
-                        incan_stdlib::iter::Generator::new(#body)
+                        incan_std_core::iter::Generator::new(#body)
                     } else {
-                        incan_stdlib::iter::Generator::new(std::iter::empty())
+                        incan_std_core::iter::Generator::new(std::iter::empty())
                     }
                 })
             }

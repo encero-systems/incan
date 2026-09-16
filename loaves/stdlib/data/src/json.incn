@@ -11,8 +11,8 @@ known, or mixed-shape JSON.
 """
 
 from rust::serde import Deserialize as RustDeserialize, Serialize as RustSerialize
-from rust::incan_stdlib::json import JsonError as RustJsonError
-from rust::incan_stdlib::json import JsonValue as RustJsonValue
+from rust::incan_std_data::json import JsonError as RustJsonError
+from rust::incan_std_data::json import JsonValue as RustJsonValue
 from std.traits.indexing import Index
 
 

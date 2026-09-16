@@ -8,6 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use incan_core::lang::stdlib;
+use oven_model::toolchain_layout::development_support_crate_dir;
+
 use super::{
     CliError, CliResult, CompilerSuiteFoundationExecution, CompilerSuiteShardExecution, LoafTemporaryDirectory,
     OVEN_COMPILER_SUITE_CAPABILITY_ENV, OVEN_COMPILER_SUITE_EXPLICIT_BAKE_CARGO_ENV,
@@ -103,16 +106,20 @@ pub(crate) fn compiler_suite_environment_with_vocab(
                 sdk_inventory.display()
             ))
         })?;
-    let stdlib_extern = warning_check_artifacts
+    // Generated code links the standard library as facets; the mandatory one must be present, and every facet the
+    // closure carries must reach the warning check as its own extern.
+    let facet_externs = warning_check_artifacts
         .externs
         .iter()
-        .find_map(|(crate_name, path)| (crate_name == "incan_stdlib").then_some(path))
-        .ok_or_else(|| {
-            CliError::failure(
-                "stored compiler-suite direct-rustc closure has no `incan_stdlib` extern for generated-code checks",
-            )
-        })?;
-    let stdlib_extern = compiler_suite_environment_path(stdlib_extern)?;
+        .filter(|(crate_name, _)| stdlib::facets::is_facet(crate_name))
+        .map(|(crate_name, path)| Ok((crate_name.clone(), compiler_suite_environment_path(path)?)))
+        .collect::<CliResult<BTreeMap<_, _>>>()?;
+    if !facet_externs.contains_key(stdlib::facets::CORE) {
+        return Err(CliError::failure(format!(
+            "stored compiler-suite direct-rustc closure has no `{}` extern for generated-code checks",
+            stdlib::facets::CORE
+        )));
+    }
     let rustup_home = default_rustup_home(env::var_os("RUSTUP_HOME"), user_home());
     // Store identities contain `sha256:`. On Unix, `:` is the path-list separator, so joining these verified
     // absolute paths into one environment variable would either be ambiguous or rejected. Transport each opaque
@@ -186,10 +193,12 @@ pub(crate) fn compiler_suite_environment_with_vocab(
             .map(|(crate_name, path)| Ok((crate_name.clone(), compiler_suite_environment_path(path)?)))
             .collect::<CliResult<BTreeMap<_, _>>>()?,
     );
-    if warning_capability.externs.get("incan_stdlib") != Some(&compiler_suite_environment_path(&stdlib_extern)?) {
-        return Err(CliError::failure(
-            "compiler-suite warning capability does not bind its selected incan_stdlib artifact",
-        ));
+    for (facet, path) in &facet_externs {
+        if warning_capability.externs.get(facet) != Some(path) {
+            return Err(CliError::failure(format!(
+                "compiler-suite warning capability does not bind its selected `{facet}` artifact"
+            )));
+        }
     }
     environment.insert(
         OVEN_COMPILER_SUITE_CAPABILITY_ENV.to_string(),
@@ -316,8 +325,8 @@ pub(crate) fn compiler_suite_cli_output(output_directory: &Path) -> PathBuf {
 /// Select one workspace library and only the declared workspace libraries it transitively requires.
 ///
 /// A compiler-suite shard can contain the full workspace DAG needed by its test root, while a generated-code warning
-/// check consumes only `incan_stdlib`. Rebuilding unrelated compiler, LSP, or inspection crates merely to obtain
-/// that one checked input repeats expensive work without strengthening the warning-check contract.
+/// check consumes only the standard library facets. Rebuilding unrelated compiler, LSP, or inspection crates merely
+/// to obtain those checked inputs repeats expensive work without strengthening the warning-check contract.
 pub(crate) fn compiler_suite_workspace_library_dependency_closure(
     libraries: &[OvenCompilerWorkspaceLibrary],
     root: &OvenCompilerWorkspaceLibraryKey,
@@ -351,11 +360,14 @@ pub(crate) fn compiler_suite_workspace_library_dependency_closure(
         .collect())
 }
 
-/// Rebuild the generated-code warning check's `incan_stdlib` input from a receipt-bound workspace-library shard.
+/// Rebuild the generated-code warning check's standard library facets from the receipt-bound workspace-library shards.
 ///
-/// Schema 12 replaces the former second Cargo target with this caller-owned direct-Rustc bake. The selected shard
+/// Schema 12 replaces the former second Cargo target with this caller-owned direct-Rustc bake. The selected shards
 /// and every foundation remain leased for the complete suite command, so this plan cannot fall back to a Cargo
-/// target or an ambient compiler cache after publication.
+/// target or an ambient compiler cache after publication. Each shard carries the workspace libraries of one test
+/// root, so the facets are spread across shards: every facet found is baked with the closure and artifact context of
+/// the shard that carries it, the mandatory core facet must be among them, and the plan attaches each crate once —
+/// a library two shards share bakes to one cached artifact, so the second arrival is the same file.
 pub(crate) fn bake_compiler_suite_warning_check_artifacts(
     shards: &[CompilerSuiteShardExecution],
     receipt: &OvenReceipt,
@@ -365,76 +377,92 @@ pub(crate) fn bake_compiler_suite_warning_check_artifacts(
     foundations: &BTreeMap<String, CompilerSuiteFoundationExecution>,
     workspace_library_cache: &mut BTreeMap<String, OvenCallerOwnedRustcLibrary>,
 ) -> CliResult<OvenRustcArtifactPlan> {
-    let mut selected: Option<(&CompilerSuiteShardExecution, &OvenCompilerWorkspaceLibrary)> = None;
+    let mut selected: BTreeMap<&str, (&CompilerSuiteShardExecution, &OvenCompilerWorkspaceLibrary)> = BTreeMap::new();
     for shard in shards {
         for library in &shard.payload.workspace_libraries {
-            if library.key.package_name != "incan_stdlib"
-                || library.key.crate_name != "incan_stdlib"
-                || library.key.target_kind != "lib"
-                || library.key.source_relative_path != "crates/incan_stdlib/src/lib.rs"
-            {
+            let Some(facet) = stdlib::facets::ALL
+                .into_iter()
+                .find(|facet| library.key.package_name == *facet && library.key.crate_name == *facet)
+            else {
+                continue;
+            };
+            let facet_source = development_support_crate_dir(facet).join("src/lib.rs");
+            if library.key.target_kind != "lib" || Path::new(&library.key.source_relative_path) != facet_source {
                 continue;
             }
-            match selected {
+            match selected.get(facet) {
                 Some((_, previous)) if previous.key != library.key => {
-                    return Err(CliError::failure(
-                        "schema-12 compiler-suite shards disagree on the source or feature identity of their direct-Rustc `incan_stdlib` warning-check plan",
-                    ));
+                    return Err(CliError::failure(format!(
+                        "schema-12 compiler-suite shards disagree on the source or feature identity of their direct-Rustc `{facet}` warning-check plan"
+                    )));
                 }
                 Some(_) => {}
-                None => selected = Some((shard, library)),
+                None => {
+                    selected.insert(facet, (shard, library));
+                }
             }
         }
     }
-    let (shard, library) = selected.ok_or_else(|| {
-        CliError::failure(
-            "schema-12 compiler suite has no receipt-bound `incan_stdlib` workspace library for generated-code checks",
-        )
-    })?;
-    let warning_check_libraries =
-        compiler_suite_workspace_library_dependency_closure(&shard.payload.workspace_libraries, &library.key)?;
-    let workspace_outputs = bake_planned_compiler_suite_workspace_libraries(
-        &warning_check_libraries,
-        &shard.payload.artifact_closure,
-        &shard.stored.manifest.intent,
-        receipt,
-        &shard.stored.artifact_root,
-        rustc,
-        compiler_root,
-        &output_directory.join("warning-check"),
-        &shard.payload.foundation_references,
-        Some(foundations),
-        workspace_library_cache,
-    )?;
-    let artifacts = shard
-        .payload
-        .artifact_closure
-        .manifest_for_workspace_library(library, shard.stored.manifest.intent.clone());
-    let mut artifact_plan = compiler_suite_composed_artifact_plan(
-        &artifacts,
-        &shard.payload.foundation_references,
-        foundations,
-        &shard.stored.manifest.intent,
-    )?;
-    let dependencies = library
-        .dependencies
-        .iter()
-        .map(|dependency| {
-            workspace_outputs.get(dependency).cloned().ok_or_else(|| {
+    let Some((core_shard, core)) = selected.get(stdlib::facets::CORE).copied() else {
+        return Err(CliError::failure(format!(
+            "schema-12 compiler suite has no receipt-bound `{}` workspace library for generated-code checks",
+            stdlib::facets::CORE
+        )));
+    };
+
+    // ---- Bake every facet inside the shard that carries it ----
+    let mut attached: Vec<OvenCallerOwnedRustcLibrary> = Vec::new();
+    let attach_once = |library: OvenCallerOwnedRustcLibrary, attached: &mut Vec<OvenCallerOwnedRustcLibrary>| {
+        if !attached.iter().any(|known| known.crate_name == library.crate_name) {
+            attached.push(library);
+        }
+    };
+    for (facet, (shard, library)) in &selected {
+        let warning_check_libraries =
+            compiler_suite_workspace_library_dependency_closure(&shard.payload.workspace_libraries, &library.key)?;
+        let workspace_outputs = bake_planned_compiler_suite_workspace_libraries(
+            &warning_check_libraries,
+            &shard.payload.artifact_closure,
+            &shard.stored.manifest.intent,
+            receipt,
+            &shard.stored.artifact_root,
+            rustc,
+            compiler_root,
+            &output_directory.join("warning-check").join(facet),
+            &shard.payload.foundation_references,
+            Some(foundations),
+            workspace_library_cache,
+        )?;
+        // The facet's own dependencies first, then the facet, so every `--extern` the generated code can name is
+        // attached exactly once.
+        for dependency in &library.dependencies {
+            let output = workspace_outputs.get(dependency).cloned().ok_or_else(|| {
                 CliError::failure(format!(
                     "schema-12 generated-code warning check requires missing workspace library `{}`",
                     dependency.crate_name
                 ))
-            })
-        })
-        .collect::<CliResult<Vec<_>>>()?;
-    attach_caller_owned_rustc_libraries(&mut artifact_plan, &dependencies).map_err(oven_error)?;
-    let stdlib = workspace_outputs.get(&library.key).cloned().ok_or_else(|| {
-        CliError::failure(
-            "schema-12 generated-code warning check did not materialize its `incan_stdlib` workspace library",
-        )
-    })?;
-    attach_caller_owned_rustc_libraries(&mut artifact_plan, std::slice::from_ref(&stdlib)).map_err(oven_error)?;
+            })?;
+            attach_once(output, &mut attached);
+        }
+        let output = workspace_outputs.get(&library.key).cloned().ok_or_else(|| {
+            CliError::failure(format!(
+                "schema-12 generated-code warning check did not materialize its `{facet}` workspace library"
+            ))
+        })?;
+        attach_once(output, &mut attached);
+    }
+
+    let artifacts = core_shard
+        .payload
+        .artifact_closure
+        .manifest_for_workspace_library(core, core_shard.stored.manifest.intent.clone());
+    let mut artifact_plan = compiler_suite_composed_artifact_plan(
+        &artifacts,
+        &core_shard.payload.foundation_references,
+        foundations,
+        &core_shard.stored.manifest.intent,
+    )?;
+    attach_caller_owned_rustc_libraries(&mut artifact_plan, &attached).map_err(oven_error)?;
     Ok(artifact_plan)
 }
 

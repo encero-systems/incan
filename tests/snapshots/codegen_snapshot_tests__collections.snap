@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn test_collections() {
     let _empty_list: Vec<i64> = Vec::<i64>::new();
     let _empty_dict: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
@@ -47,54 +47,54 @@ fn test_collections() {
     let pair: (i64, String) = (1, "one".to_string());
     let triple: (i64, i64, i64) = (1, 2, 3);
     let _multiple: Tuple = ("a".to_string(), pair, "b".to_string(), triple, 42);
-    let _first: i64 = *incan_stdlib::collections::list_get(&numbers, (0) as i64);
-    let _last: i64 = *incan_stdlib::collections::list_get(&numbers, (-1) as i64);
-    let _value: i64 = *incan_stdlib::collections::dict_get(
+    let _first: i64 = *incan_std_core::collections::list_get(&numbers, (0) as i64);
+    let _last: i64 = *incan_std_core::collections::list_get(&numbers, (-1) as i64);
+    let _value: i64 = *incan_std_core::collections::dict_get(
         &simple_dict,
         <_ as AsRef<str>>::as_ref(&"a"),
     );
-    let _sub_list: Vec<i64> = incan_stdlib::collections::list_slice(
+    let _sub_list: Vec<i64> = incan_std_core::collections::list_slice(
         &numbers,
         Some((1) as i64),
         Some((3) as i64),
         None,
     );
-    let _all_but_first: Vec<i64> = incan_stdlib::collections::list_slice(
+    let _all_but_first: Vec<i64> = incan_std_core::collections::list_slice(
         &numbers,
         Some((1) as i64),
         None,
         None,
     );
-    let _all_but_last: Vec<i64> = incan_stdlib::collections::list_slice(
+    let _all_but_last: Vec<i64> = incan_std_core::collections::list_slice(
         &numbers,
         None,
         Some((-1) as i64),
         None,
     );
     let more_numbers: Vec<i64> = vec![6, 7];
-    let combined: Vec<i64> = incan_stdlib::collections::list_concat(
+    let combined: Vec<i64> = incan_std_core::collections::list_concat(
         &numbers,
         &more_numbers,
     );
-    let _original_tail: i64 = *incan_stdlib::collections::list_get(
+    let _original_tail: i64 = *incan_std_core::collections::list_get(
         &numbers,
         (-1) as i64,
     );
-    let _source_tail: i64 = *incan_stdlib::collections::list_get(
+    let _source_tail: i64 = *incan_std_core::collections::list_get(
         &more_numbers,
         (-1) as i64,
     );
-    let _combined_tail: i64 = *incan_stdlib::collections::list_get(
+    let _combined_tail: i64 = *incan_std_core::collections::list_get(
         &combined,
         (-1) as i64,
     );
     let mut extended: Vec<i64> = vec![8, 9];
-    let _ = incan_stdlib::collections::list_extend(&mut extended, &more_numbers);
-    let _extended_tail: i64 = *incan_stdlib::collections::list_get(
+    let _ = incan_std_core::collections::list_extend(&mut extended, &more_numbers);
+    let _extended_tail: i64 = *incan_std_core::collections::list_get(
         &extended,
         (-1) as i64,
     );
-    let _source_tail_after_extend: i64 = *incan_stdlib::collections::list_get(
+    let _source_tail_after_extend: i64 = *incan_std_core::collections::list_get(
         &more_numbers,
         (-1) as i64,
     );

@@ -3,7 +3,7 @@
 
 use incan_core::strings::str_contains;
 use incan_core::{NumericOp, NumericTy, result_numeric_type};
-use incan_stdlib::num::{py_div, py_floor_div, py_mod};
+use incan_std_core::num::{py_div, py_floor_div, py_mod};
 
 fn approx_eq(a: f64, b: f64) -> bool {
     (a - b).abs() < 1e-10

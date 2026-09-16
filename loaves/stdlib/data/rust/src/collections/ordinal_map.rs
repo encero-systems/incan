@@ -7,7 +7,7 @@
 /// Add private-field-aware string lookup helpers to a generated `std.collections.OrdinalMap[str]`.
 ///
 /// The macro must be expanded inside the generated `std.collections` module because the map's compact storage fields
-/// are intentionally private to that module. Keeping this body in `incan_stdlib` avoids embedding the implementation
+/// are intentionally private to that module. Keeping this body in `incan_std_data` avoids embedding the implementation
 /// details in backend emission while still letting codegen route concrete `OrdinalMap[str]` calls to borrowed probes.
 #[doc(hidden)]
 #[macro_export]

@@ -506,13 +506,13 @@ edition = "2024"
         // A long-lived target directory keeps an artifact per feature set that ever built here, so the newest one
         // — the one this test executable was just linked against — is the artifact to use.
         let stdlib = newest_artifact(dependencies, |name| {
-            name.starts_with("libincan_stdlib-") && name.ends_with(".rlib")
+            name.starts_with("libincan_std_core-") && name.ends_with(".rlib")
         })?
         .ok_or("native borrowing proof requires a compiled stdlib artifact or an explicit Oven capability")?;
         command.arg("-L").arg(format!("dependency={}", dependencies.display()));
         command
             .arg("--extern")
-            .arg(format!("incan_stdlib={}", stdlib.display()));
+            .arg(format!("incan_std_core={}", stdlib.display()));
         let derive = newest_artifact(dependencies, |name| {
             name.trim_start_matches("lib").starts_with("incan_derive-")
                 && std::path::Path::new(name)

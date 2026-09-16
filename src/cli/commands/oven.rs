@@ -799,7 +799,8 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
         (None, None)
     };
     // Schema 12 derives its compiler-owned generated-code check capability from the workspace-library graph. A
-    // focused target need not itself own `incan_stdlib`, so retain the complete receipt-bound shard lease set solely
+    // focused target need not itself own the standard library facets, so retain the complete receipt-bound shard
+    // lease set solely
     // while deriving that shared capability. This does not broaden execution: the prepared-child queue below still
     // contains only `selected_shard_references`. It also avoids a fabricated ambient closure or Cargo recovery path.
     let warning_check_shards = if matches!(suite.schema_version, 12..=OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION)
@@ -3578,7 +3579,7 @@ mod tests {
             "[workspace]\nresolver = \"3\"\n",
         )?;
         fs::write(compiler_root.path().join("Cargo.lock"), "version = 4\n")?;
-        for crate_name in ["incan_core", "incan_derive", "incan_stdlib"] {
+        for crate_name in oven_model::toolchain_layout::SDK_RUNTIME_CRATES {
             let crate_root = compiler_root.path().join("crates").join(crate_name);
             fs::create_dir_all(crate_root.join("src"))?;
             fs::write(
@@ -3664,7 +3665,7 @@ mod tests {
             "[workspace]\nresolver = \"3\"\n",
         )?;
         fs::write(compiler_root.path().join("Cargo.lock"), "version = 4\n")?;
-        for crate_name in ["incan_core", "incan_derive", "incan_stdlib"] {
+        for crate_name in oven_model::toolchain_layout::SDK_RUNTIME_CRATES {
             let crate_root = compiler_root.path().join("crates").join(crate_name);
             fs::create_dir_all(crate_root.join("src"))?;
             fs::write(
@@ -3762,7 +3763,7 @@ mod tests {
             "exact reuse after nonsemantic output churn must not start the explicit publisher"
         );
         fs::write(
-            compiler_root.path().join("crates/incan_stdlib/src/lib.rs"),
+            compiler_root.path().join("crates/incan_std_core/src/lib.rs"),
             "pub fn changed_runtime() {}\n",
         )?;
         let changed_runtime_evidence = loaf_envelope_evidence(
@@ -3808,7 +3809,7 @@ mod tests {
         fs::write(compiler_root.path().join("Cargo.lock"), "version = 4\n")?;
         fs::write(compiler_root.path().join("src/lib.rs"), "pub fn fixture() {}\n")?;
         fs::write(compiler_root.path().join("src/main.rs"), "fn main() {}\n")?;
-        for crate_name in ["incan_core", "incan_derive", "incan_stdlib"] {
+        for crate_name in oven_model::toolchain_layout::SDK_RUNTIME_CRATES {
             let crate_root = compiler_root.path().join("crates").join(crate_name);
             fs::create_dir_all(crate_root.join("src"))?;
             fs::write(
@@ -5299,10 +5300,10 @@ mod tests {
             features: Vec::new(),
         };
         let stdlib = OvenCompilerWorkspaceLibraryKey {
-            package_name: "incan_stdlib".to_string(),
-            crate_name: "incan_stdlib".to_string(),
+            package_name: "incan_std_core".to_string(),
+            crate_name: "incan_std_core".to_string(),
             target_kind: "lib".to_string(),
-            source_relative_path: "crates/incan_stdlib/src/lib.rs".to_string(),
+            source_relative_path: "loaves/stdlib/core/rust/src/lib.rs".to_string(),
             features: Vec::new(),
         };
         let unrelated = OvenCompilerWorkspaceLibraryKey {
@@ -5327,7 +5328,7 @@ mod tests {
                 .iter()
                 .map(|library| library.key.crate_name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["incan_core", "incan_derive", "incan_stdlib"]
+            vec!["incan_core", "incan_derive", "incan_std_core"]
         );
         Ok(())
     }
@@ -5785,7 +5786,7 @@ mod tests {
         )?;
         let target_dependencies = compiler_root.path().join("target/deps");
         let host_dependencies = compiler_root.path().join("host/deps");
-        let stdlib = target_dependencies.join("libincan_stdlib.rlib");
+        let stdlib = target_dependencies.join("libincan_std_core.rlib");
         let stdlib_core = target_dependencies.join("libincan_stdlib_core.rlib");
         let derive = host_dependencies.join("libincan_derive.dylib");
         let toolchain_data_root = compiler_root.path().join("installed-toolchain");
@@ -5803,7 +5804,7 @@ mod tests {
                 dependency_search_paths: vec![target_dependencies.clone(), host_dependencies.clone()],
                 native_search_paths: Vec::new(),
                 externs: vec![
-                    ("incan_stdlib".to_string(), stdlib.clone()),
+                    ("incan_std_core".to_string(), stdlib.clone()),
                     ("incan_stdlib_core".to_string(), stdlib_core.clone()),
                     ("incan_derive".to_string(), derive.clone()),
                 ],
@@ -5851,7 +5852,7 @@ mod tests {
             warning_capability.dependency_search_paths,
             [target_dependencies.clone(), host_dependencies.clone()]
         );
-        assert_eq!(warning_capability.externs["incan_stdlib"], stdlib);
+        assert_eq!(warning_capability.externs["incan_std_core"], stdlib);
         assert_eq!(warning_capability.externs["incan_stdlib_core"], stdlib_core);
         assert_eq!(warning_capability.externs["incan_derive"], derive);
         let vocab_capability = crate::oven::compiler_suite_env::OvenCompilerSuiteCapability::decode(
@@ -5878,7 +5879,7 @@ mod tests {
         fs::create_dir_all(&stdlib_root)?;
         let toolchain_data_root = artifact_root.path().join("toolchain-data");
         fs::create_dir_all(toolchain_data_root.join("share/incan/oven/loafs"))?;
-        let stdlib_extern = artifact_root.path().join("libincan_stdlib.rlib");
+        let stdlib_extern = artifact_root.path().join("libincan_std_core.rlib");
         fs::create_dir_all(compiler_root.path().join("src"))?;
         fs::write(
             compiler_root.path().join("Cargo.toml"),
@@ -5994,7 +5995,7 @@ fn planned_suite_second_exact_case_keeps_cargo_guarded() -> Result<(), String> {
                 source_path_projection: None,
                 dependency_search_paths: Vec::new(),
                 native_search_paths: Vec::new(),
-                externs: vec![("incan_stdlib".to_string(), stdlib_extern)],
+                externs: vec![("incan_std_core".to_string(), stdlib_extern)],
                 compile_environment: BTreeMap::new(),
                 caller_owned_library_digests: BTreeMap::new(),
             },

@@ -1,6 +1,6 @@
 //! Async runtime entry helpers for generated programs.
 //!
-//! Generated user programs should depend on `incan_stdlib`, not directly on Tokio.
+//! Generated user programs should depend on `incan_std_async`, not directly on Tokio.
 //! This module provides the small runtime bootstrap surface needed by the compiler.
 
 use std::fmt;

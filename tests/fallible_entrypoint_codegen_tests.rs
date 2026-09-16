@@ -37,10 +37,10 @@ fn fallible_main_preserves_entrypoint_setup_before_the_body() -> Result<(), Box<
         )
         .replace(
             &format!(
-                "incan_stdlib::__incan_stdlib_version_check!(\"{}\");",
+                "incan_std_core::__incan_stdlib_version_check!(\"{}\");",
                 incan_emit::GENERATED_FOR_STDLIB_VERSION
             ),
-            "incan_stdlib::__incan_stdlib_version_check!(\"<INCAN_STDLIB_VERSION>\");",
+            "incan_std_core::__incan_stdlib_version_check!(\"<INCAN_STDLIB_VERSION>\");",
         );
     // Decode RFC 120 projections so the golden shows the entrypoint the source declared rather than an encoded
     // identifier whose payload embeds a declaration span and churns whenever a line above it moves.

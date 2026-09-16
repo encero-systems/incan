@@ -23,7 +23,7 @@ Example:
         return Response.redirect("/new-location")
     ```
 """
-rust.module("incan_stdlib::web")
+rust.module("incan_std_web")
 
 # Re-export Axum response tuple structs directly.
 # This preserves constructor ergonomics (`Json(value)`, `Html("<h1>...")`) in user code.

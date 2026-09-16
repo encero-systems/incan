@@ -8414,8 +8414,8 @@ fn stdlib_module_completions(line_prefix: &str, provider_plan: Option<&ProviderP
                 let state = lsp_provider_module_state(provider_plan, &module);
                 let base_detail = if use_legacy_registry {
                     stdlib::find_namespace(namespace)
-                        .and_then(|entry| entry.feature)
-                        .map(|feature| format!("enables {feature} feature"))
+                        .and_then(|entry| entry.facet)
+                        .map(|facet| format!("links {facet}"))
                         .unwrap_or_else(|| format!("std.{namespace} module"))
                 } else {
                     format!("std.{namespace} module")

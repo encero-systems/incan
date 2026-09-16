@@ -25,7 +25,7 @@ from rust::std::sync import Arc
 from rust::std::string import String as RustString
 from rust::serde import Serialize as RustSerialize, Deserialize as RustDeserialize
 from rust::serde::de import DeserializeOwned
-from rust::incan_stdlib::strings import str_slice_byte_range
+from rust::incan_std_core::strings import str_slice_byte_range
 
 const __derives__ = [TomlSerialize, TomlDeserialize]
 

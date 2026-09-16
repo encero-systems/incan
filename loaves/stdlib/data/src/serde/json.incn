@@ -24,7 +24,7 @@ restored = Config.from_json(json_str)?
 Python equivalents: `json.dumps()`, `json.loads()`.
 """
 
-rust.module("incan_stdlib::serde")
+rust.module("incan_std_data::serde")
 
 __derives__ = [Serialize, Deserialize]
 

@@ -4,5 +4,8 @@ version = "0.5.0"
 license = "Apache-2.0"
 private = true
 
+[rust.source]
+root = "rust"
+
 [sdk]
 profile = "minimal"

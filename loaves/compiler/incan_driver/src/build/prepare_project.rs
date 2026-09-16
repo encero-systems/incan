@@ -229,7 +229,7 @@ fn prepare_project_with_options(
     generator.set_provider_plan(&provider_plan);
     generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
     generator.set_cargo_target_dir_override(options.generated_cargo_target_dir.map(Path::to_path_buf));
-    generator.set_stdlib_features(project_requirements.stdlib_features.clone());
+    generator.set_stdlib_facets(project_requirements.stdlib_facets.clone());
     generator.set_include_dev_dependencies(false);
     generator.set_rust_edition(
         manifest
@@ -320,7 +320,7 @@ fn prepare_project_with_options(
     generator.set_cargo_target_dir_override(Some(managed_target_path.clone()));
     generator.set_generated_cache_context(managed_target_lease, managed_target_identity);
     generator.set_package_name(Some(cargo_package_name.clone()));
-    generator.set_stdlib_features(project_requirements.stdlib_features.clone());
+    generator.set_stdlib_facets(project_requirements.stdlib_facets.clone());
     generator.set_include_dev_dependencies(lock_payload.is_some());
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = {

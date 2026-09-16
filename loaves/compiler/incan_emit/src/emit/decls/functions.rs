@@ -724,7 +724,7 @@ impl<'a> IrEmitter<'a> {
                     #panic_hook_stmt
                     #zen_stmt
                     #(#exact_ingress_stmts)*
-                    if let Err(error) = incan_stdlib::r#async::runtime::block_on(async move {
+                    if let Err(error) = incan_std_async::runtime::block_on(async move {
                         #(#body_stmts)*
                     }) {
                         eprintln!("{error}");
@@ -746,7 +746,7 @@ impl<'a> IrEmitter<'a> {
                 #vis fn #name #generics (#(#params),*) -> #ret_ty {
                     #static_init_stmt
                     #(#exact_ingress_stmts)*
-                    incan_stdlib::iter::Generator::spawn(move |__incan_yield| {
+                    incan_std_core::iter::Generator::spawn(move |__incan_yield| {
                         #(#body_stmts)*
                     })
                 }
@@ -811,11 +811,11 @@ impl<'a> IrEmitter<'a> {
 
     /// RFC 023: Emit a `@rust.extern` function as a thin wrapper delegating to the Rust backing module.
     ///
-    /// Given `rust.module("incan_stdlib::testing")` and `@rust.extern def fail(msg: str) -> None`, emits:
+    /// Given `rust.module("incan_std_testing")` and `@rust.extern def fail(msg: str) -> None`, emits:
     ///
     /// ```rust,ignore
     /// pub fn fail(msg: String) {
-    ///     incan_stdlib::testing::fail(msg)
+    ///     incan_std_testing::fail(msg)
     /// }
     /// ```
     fn emit_extern_function(&self, func: &incan_ir::decl::IrFunction) -> Result<TokenStream, EmitError> {
@@ -864,7 +864,7 @@ impl<'a> IrEmitter<'a> {
             })
             .collect();
 
-        // Build the fully-qualified call path: `incan_stdlib::testing::fail`.
+        // Build the fully-qualified call path: `incan_std_testing::fail`.
         let path_segments: Vec<_> = module_path.split("::").collect();
         let mut call_path_tokens: Vec<TokenStream> = path_segments
             .iter()
@@ -910,7 +910,7 @@ impl<'a> IrEmitter<'a> {
                     #(#doc_attrs)*
                     #(#lint_allows)*
                     #vis #async_kw fn #name #generics (#(#unused_params),*) {
-                        incan_stdlib::errors::__private::raise_runtime_misuse(#panic_message)
+                        incan_std_core::errors::__private::raise_runtime_misuse(#panic_message)
                     }
                     #rust_facing_alias
                 });
@@ -921,7 +921,7 @@ impl<'a> IrEmitter<'a> {
                 #(#doc_attrs)*
                 #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#unused_params),*) -> #ret_ty {
-                    incan_stdlib::errors::__private::raise_runtime_misuse(#panic_message)
+                    incan_std_core::errors::__private::raise_runtime_misuse(#panic_message)
                 }
                 #rust_facing_alias
             });

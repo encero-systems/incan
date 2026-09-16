@@ -17,7 +17,7 @@ guessing the whole thing at once. Prefer `verify` over comparing `digest()` outp
 """
 
 from rust::hmac with ["reset"] import Hmac, Mac
-from rust::incan_stdlib::errors import raise_value_error
+from rust::incan_std_core::errors import raise_value_error
 from rust::sha2 import Sha256
 
 type _HmacSha256 = rusttype Hmac[Sha256]

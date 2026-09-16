@@ -4,7 +4,7 @@ Derive macros for the Incan programming language standard library.
 
 This crate provides procedural macros that generate boilerplate implementations for Incan language features. These macros are automatically used by the Incan compiler when you use decorators like `@derive(...)` in your Incan code.
 
-This crate is toolchain-locked to the Incan compiler and `incan_stdlib`. Its macros are exported because Rust procedural macro crates must export proc macros, not because they are intended as an independently stable public macro toolkit.
+This crate is toolchain-locked to the Incan compiler and `incan_std_core`. Its macros are exported because Rust procedural macro crates must export proc macros, not because they are intended as an independently stable public macro toolkit.
 
 ## Purpose
 
@@ -33,10 +33,10 @@ This crate provides those macros.
 
 ### `#[derive(FieldInfo)]`
 
-Implements the `incan_stdlib::HasFieldInfo` trait, enabling compile-time reflection:
+Implements the `incan_std_core::HasFieldInfo` trait, enabling compile-time reflection:
 
 ```rust
-use incan_stdlib::HasFieldInfo;
+use incan_std_core::HasFieldInfo;
 use incan_derive::FieldInfo;
 
 #[derive(FieldInfo)]
@@ -104,7 +104,7 @@ Alias for `IncanClass` - same functionality, clearer name in some contexts.
 Rust requires procedural macros to live in a crate with `proc-macro = true` in `Cargo.toml`. Such crates can **only** export proc macros, not regular code. This is why we have:
 
 - **`incan_derive`** (this crate) - The macro definitions
-- **`incan_stdlib`** - The trait definitions the macros implement
+- **`incan_std_core`** - The trait definitions the macros implement
 
 ### Code Generation Strategy
 
@@ -117,13 +117,13 @@ The compiler automatically:
 1. Detects `@derive(...)` decorators in Incan source
 2. Maps them to Rust derive attributes
 3. Adds prerequisite derives (e.g., `Eq` requires `PartialEq`)
-4. Ensures both `incan_stdlib` and `incan_derive` are in scope
+4. Ensures both `incan_std_core` and `incan_derive` are in scope
 
 You should never need to use these macros directly - the compiler handles it.
 
 ### Toolchain-locked boundary
 
-`incan_derive` is an implementation companion for generated Rust. Changes to macro names, generated helper methods, and trait wiring should follow the compiler and `incan_stdlib` together. If a behavior becomes part of the user-facing language contract, document it in the Incan language or stdlib docs first; keep this crate focused on the Rust expansion required to implement that contract.
+`incan_derive` is an implementation companion for generated Rust. Changes to macro names, generated helper methods, and trait wiring should follow the compiler and the stdlib facets together. If a behavior becomes part of the user-facing language contract, document it in the Incan language or stdlib docs first; keep this crate focused on the Rust expansion required to implement that contract.
 
 ## Development
 
@@ -135,14 +135,14 @@ Derive macros are tested indirectly through the Incan compiler test suite. See t
 
 When adding a new derive macro:
 
-1. Define the trait in `incan_stdlib`
+1. Define the trait in the owning stdlib facet (`incan_std_core` for reflection)
 2. Implement the proc macro here
 3. Update the compiler's `lower.rs` to emit the derive
 4. Add snapshot tests in `tests/codegen_snapshot_tests.rs`
 
 ## Version Compatibility
 
-This crate must stay in sync with `incan_stdlib`. They share version numbers and are released together.
+This crate must stay in sync with the stdlib facets. They share version numbers and are released together.
 
 ## License
 

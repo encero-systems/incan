@@ -1,17 +1,17 @@
 //! Compile-time version compatibility check between the Incan compiler and its stdlib.
 //!
-//! When the Incan compiler generates a Rust project from user code, that project depends on the `incan_stdlib` crate.
+//! When the Incan compiler generates a Rust project from user code, that project depends on the `incan_std_core` crate.
 //! If the stdlib the generated code links is not the one the compiler generated for — because a cached stdlib from
 //! a previous install is still in use, say — the generated code could break in subtle ways at runtime.
 //!
 //! This module prevents that by providing a macro that the compiler emits into every generated `main.rs`:
 //!
 //! ```rust,ignore
-//! incan_stdlib::__incan_stdlib_version_check!("X.Y.Z");
+//! incan_std_core::__incan_stdlib_version_check!("X.Y.Z");
 //! ```
 //!
-//! The literal is the `incan_stdlib` version line the compiler generates code for. The macro expands into a `const`
-//! assertion that compares it with the version of the `incan_stdlib` crate the generated code actually links, and a
+//! The literal is the stdlib ring version line the compiler generates code for. The macro expands into a `const`
+//! assertion that compares it with the version of the `incan_std_core` crate the generated code actually links, and a
 //! mismatch becomes a **compile-time error** in the generated Rust code, surfacing the problem before anything runs.
 //! The expansion deliberately does not require Cargo environment variables in the consumer, so Oven may invoke
 //! `rustc` directly.
@@ -131,7 +131,7 @@ pub const fn stdlib_versions_compatible(generated_for: &[u8], linked: &[u8]) -> 
 /// stdlib cannot serve that code under the rule in [`stdlib_versions_compatible`]. Example output on mismatch:
 ///
 /// ```text
-/// Incan stdlib version mismatch: the compiler generates for incan_stdlib X.Y.Z, and the linked incan_stdlib is not compatible with it
+/// Incan stdlib version mismatch: the compiler generates for the stdlib ring X.Y.Z, and the linked incan_std_core is not compatible with it
 /// ```
 #[doc(hidden)]
 #[macro_export]
@@ -143,9 +143,9 @@ macro_rules! __incan_stdlib_version_check {
                 $crate::version::INCAN_STDLIB_VERSION.as_bytes(),
             ) {
                 panic!(concat!(
-                    "Incan stdlib version mismatch: the compiler generates for incan_stdlib ",
+                    "Incan stdlib version mismatch: the compiler generates for the stdlib ring ",
                     $generated_for,
-                    ", and the linked incan_stdlib is not compatible with it"
+                    ", and the linked incan_std_core is not compatible with it"
                 ));
             }
         };

@@ -1264,8 +1264,10 @@ impl<'a> IrEmitter<'a> {
         let can_link_compiled_stdlib_symbol = compiling_sdk_provider
             || !function_name.starts_with('_')
             || stdlib::is_compiled_sdk_provider_support_function(&module_path, function_name);
-        let mut segments: Vec<TokenStream> = if module_path.first().map(String::as_str) == Some("incan_stdlib") {
-            let mut segments = vec![quote! { incan_stdlib }];
+        let mut segments: Vec<TokenStream> = if module_path.first().is_some_and(|first| stdlib::facets::is_facet(first))
+        {
+            let facet = Self::rust_ident(&module_path[0]);
+            let mut segments = vec![quote! { #facet }];
             for seg in module_path.iter().skip(1) {
                 let ident = Self::rust_ident(seg);
                 segments.push(quote! { #ident });
@@ -2048,7 +2050,7 @@ mod tests {
             .map_err(|err| std::io::Error::other(format!("canonical assert_ne should emit: {err:?}")))?;
         assert_eq!(
             render(tokens),
-            "ifincan_stdlib::strings::str_eq(&value,&target){panic!(\"AssertionError:left==right\");}"
+            "ifincan_std_core::strings::str_eq(&value,&target){panic!(\"AssertionError:left==right\");}"
         );
         Ok(())
     }

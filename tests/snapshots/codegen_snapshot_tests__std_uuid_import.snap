@@ -6,7 +6,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 // __INCAN_INSERT_MODS__
 
-incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 #[derive(Debug, Clone)]
 pub enum __IncanUniond83007a429c21b6f {
     V0(String),
@@ -46,13 +46,13 @@ fn exercise_uuid() -> Result<(), UuidError> {
     let _ = if UUID::from_int(parsed.to_int()) != parsed {
         panic!("AssertionError: left != right");
     };
-    let _ = if incan_stdlib::strings::str_ne(
+    let _ = if incan_std_core::strings::str_ne(
         &NAMESPACE_DNS.canonical()?,
         &"6ba7b810-9dad-11d1-80b4-00c04fd430c8",
     ) {
         panic!("AssertionError: left != right");
     };
-    let _ = if incan_stdlib::strings::str_ne(
+    let _ = if incan_std_core::strings::str_ne(
         &NAMESPACE_URL.canonical()?,
         &"6ba7b811-9dad-11d1-80b4-00c04fd430c8",
     ) {

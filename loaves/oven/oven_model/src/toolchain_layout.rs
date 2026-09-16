@@ -268,6 +268,11 @@ pub fn development_support_crate_dir(crate_name: &str) -> PathBuf {
         "incan_vocab" => "loaves/kernel/incan_vocab",
         "incan_derive" => "loaves/stdlib/derive/incan_derive",
         "incan_web_macros" => "loaves/stdlib/derive/incan_web_macros",
+        "incan_std_core" => "loaves/stdlib/core/rust",
+        "incan_std_data" => "loaves/stdlib/data/rust",
+        "incan_std_async" => "loaves/stdlib/async/rust",
+        "incan_std_web" => "loaves/stdlib/web/rust",
+        "incan_std_testing" => "loaves/stdlib/testing/rust",
         other => return Path::new("crates").join(other),
     };
     PathBuf::from(relative)
@@ -331,7 +336,7 @@ fn validated_sdk_runtime_root(runtime_root: PathBuf) -> Option<PathBuf> {
         return None;
     }
     let crates_root = runtime_root.join("crates");
-    for crate_name in ["incan_core", "incan_derive", "incan_stdlib", "incan_web_macros"] {
+    for crate_name in SDK_RUNTIME_CRATES {
         if !crates_root.join(crate_name).join("Cargo.toml").is_file() {
             return None;
         }
@@ -451,15 +456,11 @@ fn is_stdlib_root(path: &Path) -> bool {
 }
 
 /// The stdlib root below a checkout, an installed toolchain, or an executable base: the ring directory in a
-/// checkout, `crates/incan_stdlib/stdlib` or `stdlib` in an installation.
+/// checkout, `stdlib` in an installation.
 fn stdlib_root_from_development_root(root: &Path) -> Option<PathBuf> {
-    [
-        root.join("loaves/stdlib"),
-        root.join("crates/incan_stdlib/stdlib"),
-        root.join("stdlib"),
-    ]
-    .into_iter()
-    .find(|candidate| is_stdlib_root(candidate))
+    [root.join("loaves/stdlib"), root.join("stdlib")]
+        .into_iter()
+        .find(|candidate| is_stdlib_root(candidate))
 }
 
 /// Resolve either a direct stdlib directory or a toolchain/crate root containing `stdlib/`.
@@ -506,12 +507,19 @@ fn push_unique(paths: &mut Vec<PathBuf>, path: PathBuf) {
     }
 }
 
-/// Cargo dependency key for the toolchain-owned runtime support crate used by generated Rust projects.
-pub const INCAN_STDLIB_CRATE_NAME: &str = "incan_stdlib";
-/// Cargo dependency key for the toolchain-owned derive crate used by every generated Rust project.
-pub const INCAN_DERIVE_CRATE_NAME: &str = "incan_derive";
-/// Complete generator-owned support-crate set emitted unconditionally into generated Cargo projects.
-pub const GENERATED_TOOLCHAIN_SUPPORT_CRATES: [&str; 2] = [INCAN_STDLIB_CRATE_NAME, INCAN_DERIVE_CRATE_NAME];
+/// The compiler-owned crates every installed toolchain, release archive and staged SDK runtime carries: the crates a
+/// generated Rust project can link. Each lives at `crates/<name>` in those layouts and in its ring in the checkout
+/// (see [`development_support_crate_dir`]); a runtime root missing any of them is not a usable closure.
+pub const SDK_RUNTIME_CRATES: [&str; 8] = [
+    "incan_core",
+    "incan_derive",
+    "incan_web_macros",
+    "incan_std_core",
+    "incan_std_data",
+    "incan_std_async",
+    "incan_std_web",
+    "incan_std_testing",
+];
 /// Environment variable that redirects every generated project's Cargo target directory.
 pub const GENERATED_CARGO_TARGET_DIR_ENV: &str = "INCAN_GENERATED_CARGO_TARGET_DIR";
 
@@ -583,11 +591,9 @@ mod tests {
     fn a_checkout_keeps_its_stdlib_root_in_the_ring_directory() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let development_root = tmp.path().join("development");
-        for relative in ["loaves/stdlib", "crates/incan_stdlib/stdlib"] {
-            let path = development_root.join(relative);
-            fs::create_dir_all(&path)?;
-            fs::write(path.join(STDLIB_CATALOG_FILE), "[sdk]\n")?;
-        }
+        let ring = development_root.join("loaves/stdlib");
+        fs::create_dir_all(&ring)?;
+        fs::write(ring.join(STDLIB_CATALOG_FILE), "[sdk]\n")?;
         // A directory without the catalog is not a root, whatever it is called.
         fs::create_dir_all(development_root.join("stdlib"))?;
 
@@ -637,7 +643,7 @@ mod tests {
     fn installed_support_crates_resolve_independently_without_web_macros() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let installed_root = tmp.path().join("toolchain");
-        for crate_name in ["incan_stdlib", "incan_derive"] {
+        for crate_name in ["incan_std_core", "incan_derive"] {
             let crate_root = installed_root.join("crates").join(crate_name);
             fs::create_dir_all(&crate_root)?;
             fs::write(
@@ -654,8 +660,8 @@ mod tests {
         let installed_crates = installed_root.join("crates").canonicalize()?;
 
         assert_eq!(
-            resolve_toolchain_relative_path_in(Path::new("crates/incan_stdlib"), &search_paths),
-            installed_crates.join("incan_stdlib")
+            resolve_toolchain_relative_path_in(Path::new("crates/incan_std_core"), &search_paths),
+            installed_crates.join("incan_std_core")
         );
         assert_eq!(
             resolve_toolchain_relative_path_in(Path::new("crates/incan_derive"), &search_paths),
@@ -712,7 +718,7 @@ mod tests {
     fn sealed_runtime_root_requires_the_complete_compiler_source_closure() -> Result<(), Box<dyn std::error::Error>> {
         let runtime = tempfile::tempdir()?;
         fs::write(runtime.path().join("Cargo.lock"), "version = 4\n")?;
-        for crate_name in ["incan_core", "incan_derive", "incan_stdlib", "incan_web_macros"] {
+        for crate_name in super::SDK_RUNTIME_CRATES {
             let crate_root = runtime.path().join("crates").join(crate_name);
             fs::create_dir_all(&crate_root)?;
             fs::write(
@@ -738,11 +744,11 @@ mod tests {
         let sealed_crates = tmp.path().join("sealed-sdk/runtime/crates");
         let override_crates = tmp.path().join("explicit-override");
         for root in [&executable_root.join("crates"), &sealed_crates, &override_crates] {
-            let crate_root = root.join("incan_stdlib");
+            let crate_root = root.join("incan_std_core");
             fs::create_dir_all(&crate_root)?;
             fs::write(
                 crate_root.join("Cargo.toml"),
-                "[package]\nname = \"incan_stdlib\"\nversion = \"0.5.0\"\n",
+                "[package]\nname = \"incan_std_core\"\nversion = \"0.5.0\"\n",
             )?;
         }
 
@@ -753,14 +759,14 @@ mod tests {
             executable_bases: vec![executable_root],
         };
         assert_eq!(
-            resolve_toolchain_relative_path_in(Path::new("crates/incan_stdlib"), &search_paths),
-            fs::canonicalize(sealed_crates.join("incan_stdlib"))?
+            resolve_toolchain_relative_path_in(Path::new("crates/incan_std_core"), &search_paths),
+            fs::canonicalize(sealed_crates.join("incan_std_core"))?
         );
 
         search_paths.crates_override = Some(override_crates.clone());
         assert_eq!(
-            resolve_toolchain_relative_path_in(Path::new("crates/incan_stdlib"), &search_paths),
-            fs::canonicalize(override_crates.join("incan_stdlib"))?
+            resolve_toolchain_relative_path_in(Path::new("crates/incan_std_core"), &search_paths),
+            fs::canonicalize(override_crates.join("incan_std_core"))?
         );
         Ok(())
     }

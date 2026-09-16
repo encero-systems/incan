@@ -42,7 +42,7 @@ impl<'a> IrEmitter<'a> {
             quote! { &mut #object_tokens }
         };
 
-        Ok(quote! { *incan_stdlib::collections::list_get_mut(#list_mut, #idx_i64) })
+        Ok(quote! { *incan_std_core::collections::list_get_mut(#list_mut, #idx_i64) })
     }
 
     /// Emit an IR expression in lvalue (assignment-target) context.

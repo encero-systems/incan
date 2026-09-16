@@ -214,15 +214,15 @@ mod tests {
                 .contains("Rust interop module import of crate `serde_json`")
         );
         assert!(
-            refusal("from rust::incan_stdlib::text import normalize\n\ndef main() -> int:\n  return 1\n")
-                .contains("Rust interop item import of crate `incan_stdlib`")
+            refusal("from rust::incan_std_core::text import normalize\n\ndef main() -> int:\n  return 1\n")
+                .contains("Rust interop item import of crate `incan_std_core`")
         );
         assert!(
             refusal("import python \"os\"\n\ndef main() -> int:\n  return 1\n")
                 .contains("Python interop import of `os`")
         );
         assert!(
-            refusal("rust.module(\"incan_stdlib::testing\")\n\ndef main() -> int:\n  return 1\n")
+            refusal("rust.module(\"incan_std_testing\")\n\ndef main() -> int:\n  return 1\n")
                 .contains("Rust interop `rust.module` directive")
         );
 

@@ -24,7 +24,6 @@ use incan_frontend::ast::ImportKind;
 use incan_frontend::library_manifest::{ProviderCargoDependency, ProviderCargoDependencySource};
 use incan_frontend::parsed_module::ParsedModule;
 use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
-use oven_model::toolchain_layout::INCAN_STDLIB_CRATE_NAME;
 /// Explicit active SDK inventory override used by toolchain selection and SDK publication.
 pub const SDK_INVENTORY_OVERRIDE_ENV: &str = "INCAN_SDK_INVENTORY";
 
@@ -280,10 +279,6 @@ fn extend_requirements_with_selected_sdk_providers(
             let BackendImplementationRequirement::CargoFeature { crate_name, feature } = requirement else {
                 continue;
             };
-            if crate_name == INCAN_STDLIB_CRATE_NAME {
-                requirements.stdlib_features.push(feature);
-                continue;
-            }
             let Some(dependency) = requirements
                 .dependencies
                 .iter_mut()
@@ -307,8 +302,8 @@ fn extend_requirements_with_selected_sdk_providers(
         .sdk_artifact_projections
         .extend_from_slice(provider_plan.sdk_artifact_projections());
     normalize_sdk_artifact_projections(&mut requirements.sdk_artifact_projections);
-    requirements.stdlib_features.sort();
-    requirements.stdlib_features.dedup();
+    requirements.stdlib_facets.sort();
+    requirements.stdlib_facets.dedup();
     Ok(())
 }
 

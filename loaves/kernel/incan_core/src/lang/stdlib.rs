@@ -53,7 +53,82 @@ pub const STDLIB_SERDE: &str = "serde";
 /// Dynamic JSON value type exported by `std.json`.
 pub const JSON_VALUE_TYPE_NAME: &str = "JsonValue";
 /// Runtime Rust path carried by `std.json.JsonValue`.
-pub const JSON_VALUE_RUST_PATH: &str = "incan_stdlib::json::JsonValue";
+pub const JSON_VALUE_RUST_PATH: &str = "incan_std_data::json::JsonValue";
+
+/// The standard library's Rust facets: the runtime crates generated code links.
+///
+/// Each facet is the `rust/` crate of one component in `sdk-components.toml`, named `incan_std_<component>` after the
+/// component's `stdlib-<component>` id. The mandatory `core` facet serves the language itself — reflection, frozen
+/// constants, numerics, strings, collection helpers, the version check — and every generated program links it; the
+/// others serve the namespaces their component owns, and a generated program links one only when it reaches such a
+/// namespace. Cargo features on a single runtime crate used to play this role; a facet is a crate, so the compiler
+/// records crates, not flags.
+pub mod facets {
+    /// The mandatory facet every generated program links.
+    pub const CORE: &str = "incan_std_core";
+    /// `std.json`, `std.serde` and the ordinal-map helpers behind `std.collections`.
+    pub const DATA: &str = "incan_std_data";
+    /// `std.async`.
+    pub const ASYNC: &str = "incan_std_async";
+    /// `std.web`.
+    pub const WEB: &str = "incan_std_web";
+    /// `std.testing`.
+    pub const TESTING: &str = "incan_std_testing";
+    /// Every facet, the mandatory one first.
+    pub const ALL: [&str; 5] = [CORE, DATA, ASYNC, WEB, TESTING];
+
+    /// The facet a namespace's generated code links: the namespace's own facet, or the mandatory core facet.
+    pub fn for_namespace(namespace: &str) -> &'static str {
+        super::find_namespace(namespace)
+            .and_then(|entry| entry.facet)
+            .unwrap_or(CORE)
+    }
+
+    /// Whether a namespace's runtime module is the crate root of its facet rather than a module inside it.
+    ///
+    /// The core and data facets keep one module per namespace (`incan_std_core::strings`, `incan_std_data::json`);
+    /// the async, web and testing facets serve a single namespace and are that module themselves, so a path into
+    /// them starts at the crate (`incan_std_async::task`, never `incan_std_async::r#async::task`).
+    pub fn namespace_is_facet_root(namespace: &str) -> bool {
+        matches!(for_namespace(namespace), ASYNC | WEB | TESTING)
+    }
+
+    /// Whether a `::`-qualified Rust path starts with one of the facets, as `incan_std_core::strings::str_len` does.
+    pub fn path_names_a_facet(path: &str) -> bool {
+        path.split("::").next().is_some_and(is_facet)
+    }
+
+    /// Whether a crate name is one of the standard library's facets.
+    ///
+    /// Import sinks use this where they used to compare against the single runtime crate: a `from rust::` import of
+    /// a facet is toolchain-supplied, never a package dependency the project has to declare.
+    pub fn is_facet(crate_name: &str) -> bool {
+        ALL.contains(&crate_name)
+    }
+
+    /// The facet of the catalog component `stdlib-<name>`, or `None` when that component has no Rust facet.
+    pub fn for_component(component_id: &str) -> Option<&'static str> {
+        let name = component_id.strip_prefix("stdlib-")?;
+        ALL.iter()
+            .copied()
+            .find(|facet| facet.strip_prefix("incan_std_") == Some(name))
+    }
+
+    /// The facet that serves a runtime requirement named by a vocab manifest's `required_stdlib_features`.
+    ///
+    /// The vocab contract predates the facets and spells requirements as the runtime crate's old feature names;
+    /// those names stay the contract, and this is where they resolve. A facet name is accepted as its own
+    /// requirement so a manifest written after the split needs no translation.
+    pub fn for_requirement(requirement: &str) -> Option<&'static str> {
+        match requirement {
+            "json" | "ordinal" => Some(DATA),
+            "async" => Some(ASYNC),
+            "web" => Some(WEB),
+            "testing" => Some(TESTING),
+            facet => ALL.iter().copied().find(|known| *known == facet),
+        }
+    }
+}
 
 /// Stable ids for compiler-known stdlib JSON protocol traits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -204,8 +279,9 @@ pub fn is_graph_constructor_type(name: &str) -> bool {
 pub struct StdlibNamespace {
     /// Top-level namespace name (e.g., `"web"`, `"testing"`, `"async"`).
     pub name: &'static str,
-    /// Optional Cargo feature gate required for this namespace.
-    pub feature: Option<&'static str>,
+    /// The Rust facet this namespace's generated code links beyond the mandatory [`facets::CORE`], or `None` when
+    /// the core facet serves it.
+    pub facet: Option<&'static str>,
     /// Extra crate dependencies required by generated projects when this namespace is enabled.
     pub extra_crate_deps: &'static [StdlibExtraCrateDep],
     /// Known submodules for validation and LSP completion. Empty for leaf modules.
@@ -330,7 +406,7 @@ pub const STDLIB_TRAIT_METHOD_MODULES: &[StdlibTraitMethodModule] = &[
 pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     StdlibNamespace {
         name: "web",
-        feature: Some("web"),
+        facet: Some(facets::WEB),
         extra_crate_deps: &[
             StdlibExtraCrateDep {
                 crate_name: "incan_web_macros",
@@ -353,56 +429,56 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "testing",
-        feature: None,
+        facet: Some(facets::TESTING),
         extra_crate_deps: &[],
         submodules: &[],
         typechecker_only: false,
     },
     StdlibNamespace {
         name: "logging",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[],
         submodules: &[],
         typechecker_only: false,
     },
     StdlibNamespace {
         name: "registry",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[],
         submodules: &[],
         typechecker_only: false,
     },
     StdlibNamespace {
         name: "telemetry",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[],
         submodules: &["core"],
         typechecker_only: false,
     },
     StdlibNamespace {
         name: "environ",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[],
         submodules: &[],
         typechecker_only: false,
     },
     StdlibNamespace {
         name: "async",
-        feature: Some("async"),
+        facet: Some(facets::ASYNC),
         extra_crate_deps: &[],
         submodules: &["time", "task", "channel", "race", "sync", "prelude"],
         typechecker_only: false,
     },
     StdlibNamespace {
         name: STDLIB_INTEROP,
-        feature: None,
+        facet: None,
         extra_crate_deps: &[],
         submodules: &[],
         typechecker_only: false,
     },
     StdlibNamespace {
         name: "serde",
-        feature: Some("json"),
+        facet: Some(facets::DATA),
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "serde",
             source: StdlibExtraCrateSource::Version("1.0"),
@@ -413,7 +489,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: STDLIB_JSON,
-        feature: Some("json"),
+        facet: Some(facets::DATA),
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "serde",
             source: StdlibExtraCrateSource::Version("1.0"),
@@ -424,7 +500,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "toml",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[
             StdlibExtraCrateDep {
                 crate_name: "toml_edit",
@@ -452,35 +528,35 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "reflection",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[],
         submodules: &[],
         typechecker_only: false,
     },
     StdlibNamespace {
         name: "result",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[],
         submodules: &[],
         typechecker_only: false,
     },
     StdlibNamespace {
         name: "derives",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[],
         submodules: &["string", "comparison", "copying", "collection"],
         typechecker_only: false,
     },
     StdlibNamespace {
         name: "traits",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[],
         submodules: &["convert", "ops", "error", "indexing", "callable", "prelude"],
         typechecker_only: false,
     },
     StdlibNamespace {
         name: "math",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "libm",
             source: StdlibExtraCrateSource::Version("0.2"),
@@ -491,7 +567,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "fs",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[
             StdlibExtraCrateDep {
                 crate_name: "encoding_rs",
@@ -509,7 +585,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "datetime",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[],
         submodules: &[
             "runtime",
@@ -524,7 +600,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "runtime",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[],
         submodules: &[
             "prelude",
@@ -541,14 +617,14 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "graph",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[],
         submodules: &[],
         typechecker_only: false,
     },
     StdlibNamespace {
         name: "uuid",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "rand",
             source: StdlibExtraCrateSource::Version("0.8"),
@@ -559,7 +635,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "regex",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "regex",
             source: StdlibExtraCrateSource::Version("1.0"),
@@ -570,19 +646,18 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "collections",
-        // The source-level ordinal map implementation calls the optional runtime helpers in
-        // `incan_stdlib::collections::__private`.  Every generated program that imports
-        // `std.collections` therefore needs the matching `incan_stdlib/ordinal` feature;
-        // without it, a direct-rustc Oven unit can compile a source closure whose runtime
-        // crate has those helpers configured out.
-        feature: Some("ordinal"),
+        // The source-level ordinal map implementation calls the xxh3 key helpers in
+        // `incan_std_data::collections::__private`, so every generated program that imports `std.collections` links
+        // the data facet; without it, a direct-rustc Oven unit would compile a source closure whose helpers no
+        // crate supplies.
+        facet: Some(facets::DATA),
         extra_crate_deps: &[],
         submodules: &[],
         typechecker_only: false,
     },
     StdlibNamespace {
         name: "io",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "byteorder",
             source: StdlibExtraCrateSource::Version("1"),
@@ -593,7 +668,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "encoding",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[],
         submodules: &[
             "_shared", "prelude", "hex", "base32", "base64", "base85", "base58", "bech32",
@@ -602,7 +677,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "checksum",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "crc32fast",
             source: StdlibExtraCrateSource::Version("1"),
@@ -613,7 +688,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "hash",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[
             StdlibExtraCrateDep {
                 crate_name: "blake2",
@@ -661,7 +736,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "compression",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[
             StdlibExtraCrateDep {
                 crate_name: "flate2",
@@ -705,7 +780,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "tempfile",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "tempfile",
             source: StdlibExtraCrateSource::Version("3"),
@@ -716,7 +791,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: "rust",
-        feature: None,
+        facet: None,
         extra_crate_deps: &[],
         submodules: &[],
         // Capability bounds (Send, Sync, Static, Fn, FnMut, FnOnce) are native Rust traits already in scope in all
@@ -725,7 +800,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     },
     StdlibNamespace {
         name: STDLIB_BUILTINS,
-        feature: None,
+        facet: None,
         extra_crate_deps: &[],
         submodules: &[],
         // `std.builtins.<name>(...)` is an explicit call escape to the compiler's builtin-function registry. Builtin
@@ -842,12 +917,12 @@ pub fn known_stdlib_modules_for_hint() -> Vec<String> {
     known
 }
 
-/// Look up the Cargo feature gate for a stdlib module path.
-pub fn stdlib_feature_for(path: &[String]) -> Option<&'static str> {
+/// The Rust facet a stdlib module path links beyond the mandatory core facet, or `None` when core serves it.
+pub fn stdlib_facet_for(path: &[String]) -> Option<&'static str> {
     if path.len() < 2 || path[0] != STDLIB_ROOT {
         return None;
     }
-    find_namespace(&path[1]).and_then(|ns| ns.feature)
+    find_namespace(&path[1]).and_then(|ns| ns.facet)
 }
 
 /// Returns `true` when a stdlib module path refers to a typechecker-only namespace.
@@ -1239,16 +1314,27 @@ mod tests {
         let collections_ns = find_namespace("collections");
         let compression_ns = find_namespace("compression");
 
-        assert_eq!(async_ns.and_then(|ns| ns.feature), Some("async"));
+        assert_eq!(async_ns.and_then(|ns| ns.facet), Some(facets::ASYNC));
+        // The facet's layout decides the module path: async is its own crate root, json is a module of data,
+        // strings a module of core.
+        assert!(facets::namespace_is_facet_root("async"));
+        assert!(facets::namespace_is_facet_root("testing"));
+        assert!(!facets::namespace_is_facet_root("json"));
+        assert!(!facets::namespace_is_facet_root("collections"));
+        assert_eq!(facets::for_requirement("ordinal"), Some(facets::DATA));
+        assert_eq!(facets::for_component("stdlib-web"), Some(facets::WEB));
+        assert_eq!(facets::for_component("stdlib-system"), None);
+        assert!(facets::path_names_a_facet("incan_std_core::strings::str_len"));
+        assert!(!facets::path_names_a_facet("incan_stdlib_core::anything"));
         assert_eq!(reflection_ns.map(|ns| ns.submodules.is_empty()), Some(true));
         assert_eq!(fs_ns.map(|ns| ns.submodules.contains(&"path")), Some(true));
-        assert_eq!(fs_ns.and_then(|ns| ns.feature), None);
+        assert_eq!(fs_ns.and_then(|ns| ns.facet), None);
         assert_eq!(
             fs_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
             Some(vec!["encoding_rs", "rustix"])
         );
         assert_eq!(tempfile_ns.map(|ns| ns.submodules.is_empty()), Some(true));
-        assert_eq!(tempfile_ns.and_then(|ns| ns.feature), None);
+        assert_eq!(tempfile_ns.and_then(|ns| ns.facet), None);
         assert_eq!(
             tempfile_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
             Some(vec!["tempfile"])
@@ -1260,9 +1346,9 @@ mod tests {
                 .map(|dep| dep.crate_name),
             Some("libm")
         );
-        assert_eq!(graph_ns.map(|ns| ns.feature), Some(None));
+        assert_eq!(graph_ns.map(|ns| ns.facet), Some(None));
         assert_eq!(graph_ns.map(|ns| ns.submodules.is_empty()), Some(true));
-        assert_eq!(uuid_ns.map(|ns| ns.feature), Some(None));
+        assert_eq!(uuid_ns.map(|ns| ns.facet), Some(None));
         assert_eq!(
             uuid_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
             Some(vec!["rand"])
@@ -1283,7 +1369,7 @@ mod tests {
             json_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
             Some(vec!["serde"])
         );
-        assert_eq!(collections_ns.and_then(|ns| ns.feature), Some("ordinal"));
+        assert_eq!(collections_ns.and_then(|ns| ns.facet), Some(facets::DATA));
         assert_eq!(collections_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
         assert_eq!(collections_ns.map(|ns| ns.submodules.is_empty()), Some(true));
         assert_eq!(collections_ns.map(|ns| ns.typechecker_only), Some(false));
@@ -1293,7 +1379,7 @@ mod tests {
                 .map(|dep| dep.crate_name),
             Some("byteorder")
         );
-        assert_eq!(hash_ns.map(|ns| ns.feature), Some(None));
+        assert_eq!(hash_ns.map(|ns| ns.facet), Some(None));
         assert_eq!(
             hash_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
             Some(vec![
@@ -1311,14 +1397,14 @@ mod tests {
         assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"_core")), Some(true));
         assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"_streaming")), Some(true));
         assert_eq!(hash_ns.map(|ns| ns.typechecker_only), Some(false));
-        assert_eq!(checksum_ns.map(|ns| ns.feature), Some(None));
+        assert_eq!(checksum_ns.map(|ns| ns.facet), Some(None));
         assert_eq!(
             checksum_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
             Some(vec!["crc32fast"])
         );
         assert_eq!(checksum_ns.map(|ns| ns.submodules.is_empty()), Some(true));
         assert_eq!(checksum_ns.map(|ns| ns.typechecker_only), Some(false));
-        assert_eq!(compression_ns.map(|ns| ns.feature), Some(None));
+        assert_eq!(compression_ns.map(|ns| ns.facet), Some(None));
         assert_eq!(compression_ns.map(|ns| ns.submodules.contains(&"_core")), Some(true));
         assert_eq!(compression_ns.map(|ns| ns.submodules.contains(&"_auto")), Some(true));
         assert_eq!(compression_ns.map(|ns| ns.submodules.contains(&"gzip")), Some(true));
@@ -1332,7 +1418,7 @@ mod tests {
                 .map(|dep| dep.crate_name),
             Some("flate2")
         );
-        assert_eq!(datetime_ns.map(|ns| ns.feature), Some(None));
+        assert_eq!(datetime_ns.map(|ns| ns.facet), Some(None));
         assert_eq!(datetime_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
         assert_eq!(datetime_ns.map(|ns| ns.submodules.contains(&"civil.naive")), Some(true));
     }

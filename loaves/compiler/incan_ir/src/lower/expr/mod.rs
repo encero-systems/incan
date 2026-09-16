@@ -150,7 +150,7 @@ impl AstLowering {
     /// A recoverable projection is a wrapper emitted beside a declaration, and only the compilation that declares the
     /// type emits one. A package's inherent method therefore has no wrapper this compilation can name -- and when the
     /// package's type is itself a newtype over a Rust type, as `std.async.sync.MutexGuard` is over
-    /// `incan_stdlib`'s `MutexGuard`, no wrapper exists at all, because Rust forbids an inherent `impl` on a foreign
+    /// `incan_std_async`'s `MutexGuard`, no wrapper exists at all, because Rust forbids an inherent `impl` on a foreign
     /// type. Those methods are facades over the Rust ones and the call has to reach the Rust slot.
     ///
     /// Trait dispatch is decided here too. It used to be excluded, on the reasoning that a local type adopting a

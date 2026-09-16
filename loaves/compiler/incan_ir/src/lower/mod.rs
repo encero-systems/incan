@@ -408,7 +408,7 @@ impl AstLowering {
     /// Project a checked source identity into the physical namespace used by generated Rust.
     ///
     /// Source stdlib metadata is owned by `std.*`; source-backed stdlib modules are emitted below `incan_std.*` to
-    /// keep that internal implementation distinct from the external `incan_stdlib` crate. Every lowering path that
+    /// keep that internal implementation distinct from the external standard library facets. Every lowering path that
     /// compares or substitutes a checked stdlib identity must use the same one-way projection.
     pub(in crate::lower) fn emitted_source_identity_name(
         identity: &CanonicalSymbolId,

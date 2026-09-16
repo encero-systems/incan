@@ -21,7 +21,10 @@ use incan_provider::{
 use oven_model::manifest::{DependencySource, DependencySpec, GitReference, LibraryDependencySpec};
 
 /// Schema version for build and generated Rust inspection reports.
-pub const BUILD_REPORT_SCHEMA_VERSION: u32 = 1;
+///
+/// Version 2 renamed `dependencies.stdlib_features` to `stdlib_facets`: the standard library runtime is a set of
+/// crates a build links, not feature flags on one crate, and the field carries their names.
+pub const BUILD_REPORT_SCHEMA_VERSION: u32 = 2;
 
 /// Build report output format.
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
@@ -127,13 +130,13 @@ pub struct IncanDependencyReport {
     pub path: String,
 }
 
-/// Dependencies and stdlib features involved in the build.
+/// Dependencies and standard library facets involved in the build.
 #[derive(Debug, Clone, Serialize)]
 pub struct BuildDependencyReport {
     pub rust: Vec<RustDependencyReport>,
     pub rust_dev: Vec<RustDependencyReport>,
     pub incan: Vec<IncanDependencyReport>,
-    pub stdlib_features: Vec<String>,
+    pub stdlib_facets: Vec<String>,
 }
 
 /// Cargo feature and policy flags for the generated build.
@@ -501,13 +504,13 @@ pub fn dependencies_report(
     rust: &[DependencySpec],
     rust_dev: &[DependencySpec],
     incan: Vec<IncanDependencyReport>,
-    stdlib_features: Vec<String>,
+    stdlib_facets: Vec<String>,
 ) -> BuildDependencyReport {
     BuildDependencyReport {
         rust: rust.iter().map(rust_dependency_report).collect(),
         rust_dev: rust_dev.iter().map(rust_dependency_report).collect(),
         incan,
-        stdlib_features,
+        stdlib_facets,
     }
 }
 
