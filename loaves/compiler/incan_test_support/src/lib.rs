@@ -3,9 +3,9 @@
 //! fixture builders and artifact readers the roots compose.
 //!
 //! This crate is a dev-dependency of every ring whose integration tests launch the compiler or read the checkout, so a
-//! root can live in the package it exercises and still share one harness. It links ring crates only; the two helpers
-//! that reach the CLI (`parity_corpus`, `shadow_capability`) stay beside the roots that use them until the CLI has a
-//! package of its own.
+//! root can live in the package it exercises and still share one harness. It links ring crates only; the parity
+//! corpus's two helpers (`parity_corpus`, `shadow_capability`) live beside the driver's roots, which are the only ones
+//! that use them.
 
 pub mod builtin_stdlib;
 pub mod canonical_projection;

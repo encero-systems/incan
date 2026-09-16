@@ -467,7 +467,7 @@ shadow-comparison-evidence: test-prewarm-sdk
 			test -f "$$receipt" || { echo "Oven bake did not publish executable debug receipt $$receipt" >&2; exit 1; }; \
 		done; \
 		$(SHADOW_TEST_ENV) INCAN_SHADOW_OVEN_RECEIPT="$$core_receipt$(SHADOW_RECEIPT_PATH_SEPARATOR)$$json_receipt" \
-			cargo test --test shadow_comparison_tests --test parity_corpus_tests \
+			cargo test -p incan_driver --test shadow_comparison_tests --test parity_corpus_tests \
 				--test replacement_enumerate_zip_shadow_tests --test replacement_enumerate_zip_parity_cases \
 				--test replacement_scalar_conversion_shadow_tests \
 				--test replacement_isinstance_shadow_tests
@@ -602,7 +602,7 @@ test-rust-inspect:
 .PHONY: generated-rust-audit-gate  ## test - Run deterministic generated Rust audit helper checks
 generated-rust-audit-gate:
 	@echo "\033[1mRunning generated Rust audit helper checks...\033[0m"
-	@cargo test --test generated_rust_audit_tests
+	@cargo test -p incan_driver --test generated_rust_audit_tests
 	@python3 scripts/generated_rust_audit.py --format json --fail-on-missing \
 		--artifact program-main=tests/fixtures/generated_rust_audit/main.rs \
 		--artifact stdlib-copy=tests/fixtures/generated_rust_audit/nested >/dev/null

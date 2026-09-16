@@ -179,7 +179,7 @@ One exact source-local `std.async` activation executes same-module async calls, 
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_await`
 - Body IR: Observed `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_race_for`
 - Replacement executor: Observed `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_race`
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: Closed #1155 delivered direct task execution; open #988 owns exact paired source-observable evidence through #1146's completed route, so the broader async feature remains non-green.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: Closed #1155 delivered direct task execution; open #988 owns exact paired source-observable evidence through #1146's completed route, so the broader async feature remains non-green.
 - Blocker/migration: Closed #1155 delivered the bounded source-local task profile; open #988 owns its remaining paired source-observable comparison evidence.
 
 ### `call.named-and-variadic`
@@ -193,7 +193,7 @@ Named calls preserve resolved targets, generic arguments, positional/named bindi
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #988
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #988
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1152 delivered the callable runtime substrate; open #988 owns broadening named, variadic, and spread execution with receipt-bound evidence.
 
 ### `call.partial-binding`
@@ -207,7 +207,7 @@ Partial presets capture at construction, remain overrideable defaults, and prese
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #988
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #988
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Body IR and closed #1152 carry the source and callable-runtime substrate; open #988 owns the direct local callable forms that remain visibly refused.
 
 ### `call.stored-callables`
@@ -221,7 +221,7 @@ Stored closures and partials retain lexical capture timing, ownership, and isola
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #988
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #988
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1152 delivered the coherent callable-frame substrate; open #988 owns broadening the local callable targets that direct execution still refuses.
 
 ### `decorators.dsl-surfaces`
@@ -235,7 +235,7 @@ Decorators and scoped DSL surfaces preserve activation, dispatch, and source-own
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/collect/decorators.rs::fn validate_decorators_allowing_user_defined`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_function_body`; owner #555
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #555
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #555: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #555: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Surface packs and decorators require a source-to-runtime dispatch boundary before direct execution can classify them.
 
 ### `diagnostics.stable`
@@ -249,7 +249,7 @@ Source diagnostics retain intentional acceptance/refusal boundaries, spans, and 
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs::fn check_statement`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_function_body`; owner #655
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_free_function`; owner #655
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #655: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #655: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: The compatibility report and corpus need receipt-bound diagnostic evidence; generated Rust diagnostics are not a substitute.
 
 ### `error.result-and-try`
@@ -263,7 +263,7 @@ Result combinators and explicit propagation retain success, error, ordering, and
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_try`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_try`; owner #988
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #988
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1101 delivered the Body IR vocabulary and closed #1154 delivered Result/error value routing; open #988 owns broadening and comparing the remaining execution profile.
 
 ### `generator.expressions`
@@ -277,7 +277,7 @@ Generator expressions preserve construction-versus-consumption timing and lazy c
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_generator_expr`; owner #988
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::ReplacementGenerator`; owner #988
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1152 delivered the bounded generator-expression collect path; open #988 owns broader consumption and comparison, which remain non-green.
 
 ### `generator.functions`
@@ -291,7 +291,7 @@ Generator functions suspend and resume without replaying prior effects or losing
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_generator_expr`; owner #988
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::ReplacementGenerator`; owner #988
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1152 delivered the callable/lazy-generator substrate; open #988 owns the generator-function frames and resumption forms that remain explicit replacement refusals.
 
 ### `interop.rust-and-c`
@@ -305,7 +305,7 @@ Rust and C boundaries preserve checked signatures, coercions, explicit unsafe ac
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs::fn validate_rust_boundary_value`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #989
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #989
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #989: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #989: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Public ABI and interop parity is an explicit replacement-boundary slice, not a direct scalar-executor extension.
 
 ### `iteration.protocol-and-adapters`
@@ -319,8 +319,8 @@ Iterator protocols, adapters, and consumers preserve lazy dispatch, callback tim
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_general_iteration`; owner #988
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_loop`; owner #988
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
-- Case `replacement-body-v0-023` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output`
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Case `replacement-body-v0-023` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output`
 - Blocker/migration: Closed #1152 delivered the first callable/lazy-generator adapter profile; open #988 owns broader protocol dispatch, which remains blocked.
 
 ### `iteration.user-and-fallible`
@@ -334,7 +334,7 @@ User-defined and fallible iteration preserve protocol calls, terminal behavior, 
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_general_iteration`; owner #988
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_loop`; owner #988
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1101 delivered the Body IR protocol vocabulary; open #988 owns the runtime dispatch and error-routing profile required to admit these forms.
 
 ### `language.aggregates-and-projections`
@@ -348,10 +348,10 @@ Tuple, list, dict, set, slice, projection, mutation, equality, and ordering reta
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/collections.rs::fn check_list`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_aggregate`; owner #988
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn evaluate_aggregate`; owner #988
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
-- Case `replacement-body-v0-020` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output`
-- Case `replacement-body-v0-026` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output`
-- Case `replacement-body-v0-028` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output`
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Case `replacement-body-v0-020` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output`
+- Case `replacement-body-v0-026` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output`
+- Case `replacement-body-v0-028` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output`
 - Blocker/migration: Source-local scalar-key set/dict membership and entry count plus nonempty integer-list sorting execute directly. Standalone replacement-body-v0-020, replacement-body-v0-026 and replacement-body-v0-028 prove their exact streams and typed results across independent routes. These bounded proofs do not establish the full aggregate or ordering contract. Closed #1154 delivered the direct value-state substrate; open #988 owns broadening storage, projection, mutation, equality, and ordering execution.
 
 ### `language.control-flow`
@@ -365,7 +365,7 @@ Bounded scalar conditionals, loops, returns, assertions, and range iteration exe
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_if_expr`
 - Body IR: Observed `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_if`
 - Replacement executor: Observed `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_loop`
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; unscheduled evidence debt: The bounded direct profile has no scheduled owner for its remaining aggregate and corpus-case comparison evidence.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; unscheduled evidence debt: The bounded direct profile has no scheduled owner for its remaining aggregate and corpus-case comparison evidence.
 
 ### `language.control-flow-complete`
 
@@ -378,7 +378,7 @@ Control flow beyond the bounded scalar profile preserves value-carrying branches
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_if_expr`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_if_expr`; owner #988
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_loop`; owner #988
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: The current direct profile covers only the bounded scalar subset. Closed #1154 delivered the value and pattern runtime substrate; open #988 owns the remaining control-flow execution and comparison profile.
 
 ### `language.match-and-patterns`
@@ -392,7 +392,7 @@ Match, destructuring, alternation, guards, and exhaustiveness preserve branch se
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/match_.rs::fn check_match`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_match`; owner #988
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #988
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1101 delivered the Body IR vocabulary and closed #1154 delivered pattern dispatch over direct values; open #988 owns broadening and comparing the remaining match surface.
 
 ### `language.numeric-and-scalar`
@@ -406,11 +406,11 @@ Bounded scalar arithmetic, comparisons, boolean operators, strings, and int/bool
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn check_binary`
 - Body IR: Observed `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_binary`
 - Replacement executor: Observed `loaves/compiler/incan_emit/src/replacement/mod.rs::fn evaluate_binary`
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; unscheduled evidence debt: The bounded direct profile has no scheduled owner for its remaining aggregate and corpus-case comparison evidence.
-- Case `replacement-body-v0-001` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::legacy_receipt_identity`; Observed `tests/parity_corpus_tests.rs::replacement_receipt_identity`; Observed `tests/parity_corpus_tests.rs::fn the_compared_row_carries_two_route_receipts_and_its_oven_authority`
-- Case `replacement-body-v0-022` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output`
-- Case `replacement-body-v0-025` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output`
-- Case `replacement-body-v0-027` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output`
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; unscheduled evidence debt: The bounded direct profile has no scheduled owner for its remaining aggregate and corpus-case comparison evidence.
+- Case `replacement-body-v0-001` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::legacy_receipt_identity`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::replacement_receipt_identity`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_compared_row_carries_two_route_receipts_and_its_oven_authority`
+- Case `replacement-body-v0-022` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output`
+- Case `replacement-body-v0-025` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output`
+- Case `replacement-body-v0-027` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output`
 
 ### `language.numeric-complete`
 
@@ -423,8 +423,8 @@ Exact signed and unsigned widths, finite f32/f64, and decimal values retain thei
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs::fn check_assignment`
 - Body IR: Observed `loaves/compiler/incan_frontend/src/body_ir/primitives.rs::fn lower_checked_literal`
 - Replacement executor: Observed `loaves/compiler/incan_emit/src/replacement/mod.rs::fn validate_reachable_typed_numeric_profile`
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
-- Case `replacement-body-v0-029` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts`; Observed `tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts`; Observed `tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts`
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Case `replacement-body-v0-029` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts`
 - Blocker/migration: #1279 materializes the typed carrier and bounded movement/output contract. #988 owns the explicitly refused numeric operations, overflow behavior, aggregate integration, Debug formatting, resize methods, and decimal scalar conversions required before the wider feature can become green.
 
 ### `language.strings-and-format`
@@ -438,9 +438,9 @@ String operators and formatting preserve interpolation order, conversions, and r
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn check_binary`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_binary`; owner #988
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn evaluate_binary`; owner #988
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
-- Case `replacement-body-v0-021` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output`
-- Case `replacement-body-v0-024` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output`
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Case `replacement-body-v0-021` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output`
+- Case `replacement-body-v0-024` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output`
 - Blocker/migration: String concatenation, bounded scalar interpolation, selected canonical string helpers and Unicode-scalar string length execute directly. Closed #1101 delivered the Body IR vocabulary. The separate replacement-body-v0-021 and replacement-body-v0-024 corpus cases prove those bounded profiles, not this full formatting contract; open #988 owns broader execution and feature parity remains non-green.
 
 ### `module.identity-and-aliases`
@@ -454,7 +454,7 @@ Modules, imports, aliases, namespaces, and reexports resolve to one source-obser
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs::fn collect_import`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #1042
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #1042
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #1042: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #1042: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Canonical source identity is a prerequisite for a replacement profile that crosses module boundaries.
 
 ### `nominal.models-unions-enums`
@@ -468,8 +468,8 @@ Models, unions, value enums, newtypes, computed properties, and static storage p
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_decl.rs::fn check_model`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_constructor`; owner #988
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn evaluate_aggregate`; owner #988
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
-- Case `replacement-body-v0-030` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output`
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Case `replacement-body-v0-030` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output`; Observed `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output`
 - Blocker/migration: #1281 retains and executes the bounded checked int/bool/str/float `isinstance` target profile in replacement-body-v0-030. That case does not establish general runtime type values or the wider models/unions/enums/newtypes contract. Closed #1154 delivered the current direct nominal/value substrate; open #988 owns broadening the replacement execution profile.
 
 ### `package.public-boundaries`
@@ -483,7 +483,7 @@ Libraries, checked API metadata, providers, workspaces, and consumer imports pre
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs::fn collect_pub_imports`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #989
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #989
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #989: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #989: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Package and ABI boundaries deliberately remain outside the direct source-only profile until #656/#989 evidence exists.
 
 ### `runtime.std-data-services`
@@ -497,7 +497,7 @@ Data-oriented stdlib services preserve their documented input, output, and error
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #988
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #988
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1156 delivered one checked provider-service dispatch and closed #1154 delivered its value-state prerequisite; open #988 owns broadening direct data-service execution and comparison.
 
 ### `runtime.std-hosted-services`
@@ -511,7 +511,7 @@ Hosted filesystem, environment, I/O, web, temporary-resource, and process-adjace
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #988
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #988
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1156 delivered one checked provider-service dispatch. Open #988 owns broader direct execution and comparison, with authority and receipt facts still supplied by #662.
 
 ### `runtime.std-observability`
@@ -525,7 +525,7 @@ Logging, telemetry, registries, and metadata services preserve structured values
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #988
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #988
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Closed #1156 delivered one checked provider-service dispatch; open #988 owns broader direct observability execution and comparison, while provider authority and receipts remain explicit prerequisites.
 
 ### `testing-and-tooling`
@@ -539,7 +539,7 @@ Test discovery, assertions, formatter, build reports, inspection, lifecycle, ins
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_decl.rs::fn check_test_module`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_function_body`; owner #1034
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_free_function`; owner #1034
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #1034: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #1034: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: These are control-plane contracts with source and receipt evidence, not direct Body-IR execution rows.
 
 ### `types.traits-generics-reflection`
@@ -553,5 +553,5 @@ Traits, generics, type tokens, protocol hooks, derives, and resolved method sign
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/trait_bound_relations.rs::fn type_satisfies_explicit_bound`
 - Body IR: Planned `loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call`; owner #1033
 - Replacement executor: Planned `loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call`; owner #1033
-- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #1033: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
+- Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #1033: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
 - Blocker/migration: Type-directed runtime calls and reflection need canonical source facts and value representation beyond the current profile.

@@ -12,7 +12,7 @@ Utility scripts for development and CI.
 
 ## Generated Rust audit helper
 
-Run `make generated-rust-audit-gate` after changing the audit helper. The target is deterministic: it uses committed fixtures under `tests/fixtures/generated_rust_audit/` and does not require preexisting `target/incan/` generated artifacts.
+Run `make generated-rust-audit-gate` after changing the audit helper. The target is deterministic: it uses committed fixtures under `loaves/compiler/incan_driver/tests/fixtures/generated_rust_audit/` and does not require preexisting `target/incan/` generated artifacts.
 
 For real generated artifacts, run `scripts/generated_rust_audit.py` with explicit `--artifact SURFACE_CLASS=PATH` entries. Repository-local paths are rendered relative to the repository root in reports.
 
