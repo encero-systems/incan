@@ -14,7 +14,6 @@ path = "src/lib.rs"
 # Mirrors the root crate's defaults without `cli`, so `cargo test -p incan_frontend` compiles the inspector-driven
 # tests; the root selects features explicitly and never relies on these.
 default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
-lsp = []
 std_testing = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_testing"]
 std_async = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_async"]
 std_decorators = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_decorators"]

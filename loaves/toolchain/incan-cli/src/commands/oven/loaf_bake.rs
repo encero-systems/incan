@@ -170,12 +170,9 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     })?;
     let compiler_manifest = loaf_compiler_manifest_path(&options.compiler_root)?;
     let envelope_inspection_sources = match envelope {
-        OvenLoafEnvelope::CompilerSuite => legacy_cargo_resolved_registry_sources(
-            &options.cargo,
-            &compiler_manifest,
-            &["lsp".to_string()],
-            &authority_dir,
-        ),
+        OvenLoafEnvelope::CompilerSuite => {
+            legacy_cargo_resolved_registry_sources(&options.cargo, &compiler_manifest, &[], &authority_dir)
+        }
         OvenLoafEnvelope::Release => legacy_cargo_inspection_sources(
             &options.cargo,
             &compiler_manifest,
@@ -559,12 +556,8 @@ pub(crate) fn finish_loaf_bake(
         max_domain_physical_bytes: Some(max_domain_physical_bytes),
         max_domain_logical_bytes: Some(max_domain_logical_bytes),
     };
-    let (receipt, receipt_path) = compiler_libtests_receipt(
-        &options.compiler_root,
-        &options.rustc,
-        &["lsp".into()],
-        Some(&options.output),
-    )?;
+    let (receipt, receipt_path) =
+        compiler_libtests_receipt(&options.compiler_root, &options.rustc, &[], Some(&options.output))?;
     write_receipt(&receipt, &receipt_path).map_err(oven_error)?;
     let store = open_store(&store_options)?;
     let prepare = prepare_compiler_test_suite(&OvenLegacyCargoPrepareRequest {
@@ -577,7 +570,7 @@ pub(crate) fn finish_loaf_bake(
         rustc: options.rustc.clone(),
         sdk_inventory: Some(options.sdk_inventory.clone()),
         compiler_loaf_root: Some(options.output.clone()),
-        domain: "compiler-suite-lsp".to_string(),
+        domain: "compiler-suite".to_string(),
         publication_kind: OvenLegacyCargoPublicationKind::LibraryTests,
         source_evidence_key: "compiler-libtest-root".to_string(),
         compile_environment: BTreeMap::new(),

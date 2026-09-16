@@ -62,7 +62,7 @@ TEST_RUNTIME_ENV += INCAN_TEST_COMMAND_TIMINGS="$(INCAN_TEST_COMMAND_TIMINGS)"
 endif
 
 # After `make build` / `make build-fast`, symlink ~/.cargo/bin/incan → target/debug/incan so `incan` on PATH (IDE run,
-# other repos) matches this checkout. When `incan-lsp` was built (`make build` uses --features lsp), also symlink
+# other repos) matches this checkout. When `incan-lsp` was built (`make build` builds the `incan-lsp` package too), also symlink
 # ~/.cargo/bin/incan-lsp so the editor LSP matches without `cargo install`. Off when CI is set; opt out with
 # INCAN_SKIP_CARGO_BIN_LINK=1.
 ifneq ($(CI),)
@@ -116,7 +116,7 @@ _incan_link_debug_to_cargo_bin:
 .PHONY: build  ## build - Debug build (compiler + LSP); links ~/.cargo/bin/incan + incan-lsp locally
 build:
 	@echo "\033[1mBuilding (debug)...\033[0m"
-	@cargo build -p incan-cli -p incan --features incan/lsp
+	@cargo build -p incan-cli -p incan-lsp
 	@$(MAKE) _incan_link_debug_to_cargo_bin
 
 .PHONY: build-fast  ## build - Debug build (compiler only); links ~/.cargo/bin/incan locally
@@ -400,7 +400,7 @@ test-oven-replay:
 			INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="$(TARGET_DIR)" \
 			"$(TARGET_DIR)/debug/incan" oven compiler-libtests \
 				--compiler-root "$(CURDIR)" --rustc "$$rustc_path" --fixture-cargo "$$fixture_cargo_path" \
-				--feature lsp --output "$$suite_output" \
+				--output "$$suite_output" \
 				--store "$(INCAN_TEST_OVEN_COMPILER_SUITE_STORE)" \
 				$(INCAN_TEST_OVEN_COMPILER_SUITE_PARTITION_ARGS) \
 				--format text; \
@@ -427,7 +427,7 @@ test-prewarm-sdk:
 	@if [ "$(INCAN_TEST_COMPILER_ALREADY_BUILT)" = "1" ]; then \
 		test -x "$(TARGET_DIR)/debug/incan"; \
 	else \
-		$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" cargo build -p incan-cli -p incan --features incan/lsp; \
+		$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" cargo build -p incan-cli -p incan-lsp; \
 	fi
 	@$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
 		INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
@@ -772,7 +772,7 @@ test-one: test-prewarm-oven-loafs
 			CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="$(TARGET_DIR)" \
 			"$(TARGET_DIR)/debug/incan" oven compiler-libtests \
 				--compiler-root "$(CURDIR)" --rustc "$$rustc_path" --fixture-cargo "$$fixture_cargo_path" \
-				--feature lsp --target "$(TEST_ROOT)" $(if $(TEST_EXACT),--exact "$(TEST_EXACT)") \
+				--target "$(TEST_ROOT)" $(if $(TEST_EXACT),--exact "$(TEST_EXACT)") \
 				--output "$$root_output" --store "$(INCAN_TEST_OVEN_COMPILER_SUITE_STORE)" \
 				--format text; \
 		if [ -s "$$root_output/cargo-guard/invocations.log" ]; then \
@@ -789,13 +789,13 @@ test-one: test-prewarm-oven-loafs
 .PHONY: lsp  ## tool - Build the LSP server
 lsp:
 	@echo "\033[1mBuilding LSP server...\033[0m"
-	@cargo build --release --features lsp --bin incan-lsp
+	@cargo build --release -p incan-lsp --bin incan-lsp
 	@echo "\033[32m✓ LSP server built: target/release/incan-lsp\033[0m"
 
 .PHONY: install-lsp  ## tool - Install incan-lsp to ~/.cargo/bin
 install-lsp:
 	@echo "\033[1mInstalling incan-lsp...\033[0m"
-	@cargo install --path . --features lsp --bin incan-lsp --force
+	@cargo install --path loaves/toolchain/incan-lsp --bin incan-lsp --force
 	@echo "\033[32m✓ Installed to ~/.cargo/bin/incan-lsp\033[0m"
 	@echo "\033[33mℹ Ensure ~/.cargo/bin is on your PATH\033[0m"
 
@@ -829,7 +829,7 @@ vscode-package:
 toolchain-release-build:
 	@echo "\033[1mBuilding toolchain release binaries...\033[0m"
 	@cargo build --locked --release -p incan-cli --bin incan
-	@cargo build --locked --release --features lsp --bin incan-lsp
+	@cargo build --locked --release -p incan-lsp --bin incan-lsp
 	@echo "\033[32m✓ toolchain release binaries built\033[0m"
 
 .PHONY: toolchain-release-package  ## tool - Package local toolchain archive (TOOLCHAIN_DIST=/private/tmp/incan-local-test)

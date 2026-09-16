@@ -121,7 +121,7 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 
 - **CLI wiring for warnings**: surface `ast.warnings` via `eprint!` in `common.rs`'s `collect_modules()` — this automatically covers all CLI commands.
 - **LSP wiring for warnings**: after `parser::parse()` succeeds, loop `ast.warnings` and push each through `compile_error_to_diagnostic()` before typechecking.
-- **LSP is feature-gated**: `cargo build --features lsp` (or `make build`, which enables it) produces `incan-lsp`. For local dev, `make build` symlinks `~/.cargo/bin/incan-lsp` to `target/debug/incan-lsp` unless CI / `INCAN_SKIP_CARGO_BIN_LINK=1`; use `make install-lsp` or `cargo install --path . --features lsp --bin incan-lsp --force` when you need a crates.io-style install instead.
+- **LSP is its own package**: `cargo build -p incan-lsp` (or `make build`, which builds it beside the CLI) produces `incan-lsp` from `loaves/toolchain/incan-lsp`; there is no `lsp` Cargo feature anywhere in the workspace. For local dev, `make build` symlinks `~/.cargo/bin/incan-lsp` to `target/debug/incan-lsp` unless CI / `INCAN_SKIP_CARGO_BIN_LINK=1`; use `make install-lsp` or `cargo install --path loaves/toolchain/incan-lsp --bin incan-lsp --force` when you need a crates.io-style install instead.
 
 ## Docs and RFC tooling
 

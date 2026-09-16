@@ -19,17 +19,17 @@
 
 use std::collections::HashMap;
 
-use incan::backend::IrCodegen;
-use incan::backend::ir::codegen::GenerationError;
-use incan::format::{FormatConfig, Formatter, format_source};
-use incan::frontend::ast::{Declaration, EmbeddedFragmentExpr, EmbeddedOwnership, Expr, Program, Statement};
-use incan::frontend::library_manifest_index::{
+use incan_driver::backend::IrCodegen;
+use incan_driver::backend::ir::codegen::GenerationError;
+use incan_format::{FormatConfig, Formatter, format_source};
+use incan_frontend::ast::{Declaration, EmbeddedFragmentExpr, EmbeddedOwnership, Expr, Program, Statement};
+use incan_frontend::library_manifest::LibraryManifest;
+use incan_frontend::library_manifest_index::{
     LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
 };
-use incan::frontend::typechecker::TypeChecker;
-use incan::frontend::vocab_desugar_pass::desugar_program_vocab_blocks;
-use incan::frontend::{lexer, parser};
-use incan::library_manifest::LibraryManifest;
+use incan_frontend::typechecker::TypeChecker;
+use incan_frontend::vocab_desugar_pass::desugar_program_vocab_blocks;
+use incan_frontend::{lexer, parser};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 type KeywordMap = HashMap<String, Vec<incan_vocab::KeywordRegistration>>;
@@ -626,9 +626,8 @@ fn a_rejected_fragment_reports_its_own_grammar_and_nothing_else() -> TestResult 
 /// scope would be wrong" — so the one thing highlighting must never do is present DSL-owned syntax as a local, a
 /// parameter, a field or a call. Which *non*-name category a submode picks is a presentation choice that node
 /// kinds legitimately refine: a template string's literal run reads as string content, a comment as a comment.
-#[cfg(feature = "lsp")]
-fn resolves_as_an_incan_name(category: incan::lsp::semantic_tokens::Category) -> bool {
-    use incan::lsp::semantic_tokens::Category;
+fn resolves_as_an_incan_name(category: incan_lsp::semantic_tokens::Category) -> bool {
+    use incan_lsp::semantic_tokens::Category;
     matches!(
         category,
         Category::Variable
@@ -641,7 +640,6 @@ fn resolves_as_an_incan_name(category: incan::lsp::semantic_tokens::Category) ->
     )
 }
 
-#[cfg(feature = "lsp")]
 #[test]
 fn every_submode_highlights_dsl_bytes_apart_from_its_holes() -> TestResult {
     // Leg 8. RFC 081's Drawbacks make this tooling's obligation: "Tooling must make ownership visible enough that
@@ -649,8 +647,8 @@ fn every_submode_highlights_dsl_bytes_apart_from_its_holes() -> TestResult {
     // cursor position; highlighting is the surface a reader actually looks at, and it has to agree with hover
     // rather than form a second opinion. So this asserts the classification against `ownership_at` — the same
     // authority leg 3 checks — over every byte of every fragment in the matrix.
-    use incan::frontend::ast::EmbeddedOwnership;
-    use incan::lsp::semantic_tokens::{Category, classified_ranges};
+    use incan_frontend::ast::EmbeddedOwnership;
+    use incan_lsp::semantic_tokens::{Category, classified_ranges};
 
     for case in conformance_cases() {
         let (keyword_map, surface_map) = fixture_maps(case.keyword, case.submode, false);

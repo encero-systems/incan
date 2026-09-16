@@ -16,7 +16,7 @@ use tower_lsp::lsp_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString, Position, Range, Url,
 };
 
-use crate::frontend::diagnostics::{CompileError, DiagnosticPhase, ErrorKind, stable_diagnostic};
+use incan_frontend::diagnostics::{CompileError, DiagnosticPhase, ErrorKind, stable_diagnostic};
 
 /// Source text and URI resolved for one canonical declaration origin.
 #[derive(Debug, Clone)]
@@ -293,9 +293,9 @@ mod tests {
     fn lsp_diagnostic_projects_the_shared_compiler_fact() -> Result<(), Box<dyn std::error::Error>> {
         let source = "first\nsecond\n";
         let uri = Url::parse("file:///workspace/main.incn")?;
-        let error = CompileError::type_error("duplicate argument".to_string(), crate::frontend::ast::Span::new(6, 12))
+        let error = CompileError::type_error("duplicate argument".to_string(), incan_frontend::ast::Span::new(6, 12))
             .with_expected_actual("int", "str")
-            .with_related_span(crate::frontend::ast::Span::new(0, 5), "First argument named 'value'");
+            .with_related_span(incan_frontend::ast::Span::new(0, 5), "First argument named 'value'");
 
         let diagnostic = compile_error_to_diagnostic_with_phase(&error, source, &uri, DiagnosticPhase::Typecheck);
         let related = diagnostic
@@ -331,7 +331,7 @@ mod tests {
         );
         let error = CompileError::type_error(
             "alias argument mismatch".to_string(),
-            crate::frontend::ast::Span::new(0, 5),
+            incan_frontend::ast::Span::new(0, 5),
         )
         .with_related_declaration(declaration, "declaration of `parse`");
         let mut sources = RelatedDeclarationSources::new();
@@ -372,7 +372,7 @@ mod tests {
         );
         let error = CompileError::type_error(
             "alias argument mismatch".to_string(),
-            crate::frontend::ast::Span::new(0, 5),
+            incan_frontend::ast::Span::new(0, 5),
         )
         .with_related_declaration(declaration, "declaration of `parse`");
         let diagnostic = compile_error_to_diagnostic_with_phase_and_sources(

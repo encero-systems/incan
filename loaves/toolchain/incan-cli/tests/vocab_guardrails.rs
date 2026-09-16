@@ -33,7 +33,7 @@ fn semantic_compiler_paths_do_not_reverse_emitted_names_into_source_bindings() -
         "loaves/compiler/incan_emit/src",
         "loaves/compiler/incan_frontend/src",
         "loaves/compiler/incan_ir/src",
-        "src/lsp",
+        "loaves/toolchain/incan-lsp/src",
         "loaves/toolchain/incan-cli/src/commands/codegraph.rs",
     ] {
         collect_rust_files(&root.join(relative), &mut semantic_paths);

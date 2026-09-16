@@ -143,7 +143,7 @@ jobs:
       - name: Check the compiler library without the CLI
         run: cargo check --no-default-features --lib
       - name: Check the language server without the CLI
-        run: cargo check --no-default-features --features lsp --lib --bin incan-lsp
+        run: cargo check -p incan-lsp --no-default-features --lib --bin incan-lsp
       # The Oven ring depends on no Incan ring (`loaves/LAYOUT.md`): the `oven_*` crates must check in a workspace
       # that holds nothing else. `scripts/check_oven_ring.py` builds that workspace from the root manifest's tables.
       - name: Check the Oven ring without the compiler crates
@@ -217,7 +217,7 @@ jobs:
           make fetch-oven-loaf-sources
           make fetch-release-support-workspace-sources
       - name: Build the compiler
-        run: CARGO_BUILD_JOBS=2 cargo build --locked -p incan-cli -p incan --features incan/lsp --bins
+        run: CARGO_BUILD_JOBS=2 cargo build --locked -p incan-cli -p incan-lsp --bins
       - uses: ./.github/actions/restore-sdk-provider-store
       # macOS retains its own compiler and SDK because the Linux handoff cannot supply a macOS toolchain.
       - name: Prewarm platform SDK providers

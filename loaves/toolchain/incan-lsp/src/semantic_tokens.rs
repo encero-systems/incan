@@ -37,7 +37,7 @@ use incan_syntax::ast::{Declaration, EmbeddedNode, Expr, Param, Program, Spanned
 use incan_syntax::lexer::{self, FStringPart, Token, TokenKind};
 use tower_lsp::lsp_types::{SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokensLegend};
 
-use crate::frontend::ast_walk::any_expr_in_program;
+use incan_frontend::ast_walk::any_expr_in_program;
 
 // ============================================================================
 // LEGEND
@@ -1363,8 +1363,8 @@ mod tests {
         // The assertion is a ratio rather than a deadline, so it means the same thing on a fast machine, a slow
         // one, and a loaded CI runner: the same content at ten times the length may not cost a hundred times as
         // much. A quadratic pass fails this by a wide margin; a linear one passes with room to spare.
-        let source = std::fs::read_to_string("loaves/stdlib/data/src/collections.incn")
-            .map_err(|error| format!("fixture unavailable: {error}"))?;
+        let fixture = oven_model::toolchain_layout::development_root().join("loaves/stdlib/data/src/collections.incn");
+        let source = std::fs::read_to_string(&fixture).map_err(|error| format!("fixture unavailable: {error}"))?;
         let mut small_end = source.len() / 10;
         while small_end < source.len() && !source.is_char_boundary(small_end) {
             small_end += 1;

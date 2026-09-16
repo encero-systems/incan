@@ -24,8 +24,6 @@ pub use incan_frontend as frontend;
 pub mod inspect;
 pub use incan_frontend::library_manifest;
 pub mod lockfile;
-#[cfg(feature = "lsp")]
-pub mod lsp;
 pub use oven_model::manifest;
 pub mod numeric;
 pub use incan_ir::numeric_adapters;

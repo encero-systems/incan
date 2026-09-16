@@ -48,7 +48,7 @@ runs:
           INCAN_GENERATED_CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/incan_generated_shared_target" \
           "$GITHUB_WORKSPACE/target/debug/incan" oven compiler-libtests \
             --compiler-root "$GITHUB_WORKSPACE" --rustc "$rustc_path" --fixture-cargo "$fixture_cargo_path" \
-            --feature lsp --output "$output" \
+            --output "$output" \
             --store "$store" --format json \
             > "$output/compiler-suite-stdout.json"
         replay_finished="$(python3 -c 'import time; print(time.monotonic_ns() // 1_000_000)')"

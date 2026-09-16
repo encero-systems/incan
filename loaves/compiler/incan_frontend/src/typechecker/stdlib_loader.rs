@@ -96,7 +96,6 @@ pub struct TraitMeta {
 ///
 /// Resolved signatures and source declarations deliberately travel together so callers can render every overload and
 /// its docstring without reparsing the module for each public item.
-#[cfg(feature = "lsp")]
 #[derive(Debug, Clone, Default)]
 pub struct StdlibModuleLspMetadata {
     pub functions: Vec<StdlibFunctionLspMetadata>,
@@ -107,7 +106,6 @@ pub struct StdlibModuleLspMetadata {
 }
 
 /// One resolved stdlib overload paired with its source declaration when the function is source-defined.
-#[cfg(feature = "lsp")]
 #[derive(Debug, Clone)]
 pub struct StdlibFunctionLspMetadata {
     pub name: String,
@@ -254,7 +252,6 @@ impl StdlibAstCache {
     }
 
     /// Return one cached snapshot of public declarations, signatures, and docs for LSP rendering.
-    #[cfg(feature = "lsp")]
     pub fn lsp_metadata(&mut self, module_path: &[String]) -> StdlibModuleLspMetadata {
         self.ensure_loaded(module_path);
         let key = module_path.join(".");

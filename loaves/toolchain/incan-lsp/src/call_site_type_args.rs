@@ -2,11 +2,11 @@
 
 use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind};
 
-use crate::frontend::ast::{
-    CallArg, Condition, Declaration, Expr, MatchBody, Program, SliceExpr, Spanned, Statement, Type,
-};
 use incan_core::lang::conventions;
 use incan_core::lang::types::{collections, numerics, stringlike};
+use incan_frontend::ast::{
+    CallArg, Condition, Declaration, Expr, MatchBody, Program, SliceExpr, Spanned, Statement, Type,
+};
 
 // ---- Bracket scan (works with nested generics, e.g. `f[Dict[str, int]](...)`) ----
 
@@ -214,8 +214,8 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
         Expr::Loop(loop_expr) => call_site_types_in_stmts(&loop_expr.body, offset),
         Expr::Generator(generator) => call_site_type_in_expr(&generator.expr, offset).or_else(|| {
             generator.clauses.iter().find_map(|clause| match clause {
-                crate::frontend::ast::ComprehensionClause::For { iter, .. } => call_site_type_in_expr(iter, offset),
-                crate::frontend::ast::ComprehensionClause::If(condition) => call_site_type_in_expr(condition, offset),
+                incan_frontend::ast::ComprehensionClause::For { iter, .. } => call_site_type_in_expr(iter, offset),
+                incan_frontend::ast::ComprehensionClause::If(condition) => call_site_type_in_expr(condition, offset),
             })
         }),
         Expr::ListComp(boxed) => call_site_type_in_expr(&boxed.expr, offset)
@@ -228,15 +228,15 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
         Expr::Closure(_, body) => call_site_type_in_expr(body, offset),
         Expr::Tuple(items) | Expr::Set(items) => items.iter().find_map(|e| call_site_type_in_expr(e, offset)),
         Expr::List(entries) => entries.iter().find_map(|entry| match entry {
-            crate::frontend::ast::ListEntry::Element(value) | crate::frontend::ast::ListEntry::Spread(value) => {
+            incan_frontend::ast::ListEntry::Element(value) | incan_frontend::ast::ListEntry::Spread(value) => {
                 call_site_type_in_expr(value, offset)
             }
         }),
         Expr::Dict(pairs) => pairs.iter().find_map(|entry| match entry {
-            crate::frontend::ast::DictEntry::Pair(k, v) => {
+            incan_frontend::ast::DictEntry::Pair(k, v) => {
                 call_site_type_in_expr(k, offset).or_else(|| call_site_type_in_expr(v, offset))
             }
-            crate::frontend::ast::DictEntry::Spread(value) => call_site_type_in_expr(value, offset),
+            incan_frontend::ast::DictEntry::Spread(value) => call_site_type_in_expr(value, offset),
         }),
         Expr::Partial(partial) => {
             if let Some(hit) = call_site_type_in_expr(&partial.target, offset) {
@@ -253,7 +253,7 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
         Expr::Paren(inner) => call_site_type_in_expr(inner, offset),
         Expr::Constructor(_, args) => scan_call_args(args, offset),
         Expr::FString(parts) => parts.iter().find_map(|p| {
-            if let crate::frontend::ast::FStringPart::Expr { expr, .. } = p {
+            if let incan_frontend::ast::FStringPart::Expr { expr, .. } = p {
                 call_site_type_in_expr(expr, offset)
             } else {
                 None
@@ -265,23 +265,23 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
             call_site_type_in_expr(start, offset).or_else(|| call_site_type_in_expr(end, offset))
         }
         Expr::Surface(boxed) => match &boxed.payload {
-            crate::frontend::ast::SurfaceExprPayload::PrefixUnary(inner) => call_site_type_in_expr(inner, offset),
-            crate::frontend::ast::SurfaceExprPayload::RaceFor(race) => race.arms.iter().find_map(|arm| {
+            incan_frontend::ast::SurfaceExprPayload::PrefixUnary(inner) => call_site_type_in_expr(inner, offset),
+            incan_frontend::ast::SurfaceExprPayload::RaceFor(race) => race.arms.iter().find_map(|arm| {
                 call_site_type_in_expr(&arm.awaitable, offset).or_else(|| match &arm.body {
-                    crate::frontend::ast::RaceForBody::Expr(expr) => call_site_type_in_expr(expr, offset),
-                    crate::frontend::ast::RaceForBody::Block(stmts) => call_site_types_in_stmts(stmts, offset),
+                    incan_frontend::ast::RaceForBody::Expr(expr) => call_site_type_in_expr(expr, offset),
+                    incan_frontend::ast::RaceForBody::Block(stmts) => call_site_types_in_stmts(stmts, offset),
                 })
             }),
-            crate::frontend::ast::SurfaceExprPayload::LeadingDotPath { .. } => None,
-            crate::frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+            incan_frontend::ast::SurfaceExprPayload::LeadingDotPath { .. } => None,
+            incan_frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
                 call_site_type_in_expr(left, offset).or_else(|| call_site_type_in_expr(right, offset))
             }
-            crate::frontend::ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+            incan_frontend::ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
                 args.iter().find_map(|arg| match arg {
-                    crate::frontend::ast::CallArg::Positional(expr)
-                    | crate::frontend::ast::CallArg::Named(_, expr)
-                    | crate::frontend::ast::CallArg::PositionalUnpack(expr)
-                    | crate::frontend::ast::CallArg::KeywordUnpack(expr) => call_site_type_in_expr(expr, offset),
+                    incan_frontend::ast::CallArg::Positional(expr)
+                    | incan_frontend::ast::CallArg::Named(_, expr)
+                    | incan_frontend::ast::CallArg::PositionalUnpack(expr)
+                    | incan_frontend::ast::CallArg::KeywordUnpack(expr) => call_site_type_in_expr(expr, offset),
                 })
             }
         },
@@ -361,7 +361,7 @@ fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Ty
         }),
         Statement::Assert(assert_stmt) => call_site_type_in_assert_stmt(assert_stmt, offset),
         Statement::Surface(s) => match &s.payload {
-            crate::frontend::ast::SurfaceStmtPayload::KeywordArgs(exprs) => {
+            incan_frontend::ast::SurfaceStmtPayload::KeywordArgs(exprs) => {
                 exprs.iter().find_map(|e| call_site_type_in_expr(e, offset))
             }
         },
@@ -373,13 +373,13 @@ fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Ty
 
 /// Find call-site type argument opportunities inside an assert statement.
 fn call_site_type_in_assert_stmt(
-    assert_stmt: &crate::frontend::ast::AssertStmt,
+    assert_stmt: &incan_frontend::ast::AssertStmt,
     offset: usize,
 ) -> Option<&Spanned<Type>> {
     let core_hit = match &assert_stmt.kind {
-        crate::frontend::ast::AssertKind::Condition(condition) => call_site_type_in_expr(condition, offset),
-        crate::frontend::ast::AssertKind::IsPattern { value, .. } => call_site_type_in_expr(value, offset),
-        crate::frontend::ast::AssertKind::Raises { call, error_type } => call_site_type_in_expr(call, offset)
+        incan_frontend::ast::AssertKind::Condition(condition) => call_site_type_in_expr(condition, offset),
+        incan_frontend::ast::AssertKind::IsPattern { value, .. } => call_site_type_in_expr(value, offset),
+        incan_frontend::ast::AssertKind::Raises { call, error_type } => call_site_type_in_expr(call, offset)
             .or_else(|| (error_type.span.start <= offset && offset <= error_type.span.end).then_some(error_type)),
     };
     core_hit.or_else(|| {
@@ -699,7 +699,7 @@ pub(crate) fn call_site_type_argument_completion_items(ast: Option<&Program>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frontend::{lexer, parser};
+    use incan_frontend::{lexer, parser};
 
     #[test]
     fn detects_call_site_brackets_with_nested_generics() -> Result<(), &'static str> {
