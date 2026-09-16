@@ -7,6 +7,8 @@
 use std::fs;
 use std::process::Output;
 
+use incan_driver::build_report::BUILD_REPORT_SCHEMA_VERSION;
+
 mod support;
 
 #[path = "support/cli_project.rs"]
@@ -244,7 +246,7 @@ fn build_report_json_describes_executable_build() -> Result<(), Box<dyn std::err
     )?;
     assert_success(&output, "incan build --report json executable");
     let report = parse_json_stdout(&output)?;
-    assert_eq!(report["schema_version"], serde_json::json!(1));
+    assert_eq!(report["schema_version"], serde_json::json!(BUILD_REPORT_SCHEMA_VERSION));
     assert_eq!(report["status"], serde_json::json!("success"));
     assert_eq!(report["mode"], serde_json::json!("executable"));
     assert_eq!(report["profile"], serde_json::json!("release"));
