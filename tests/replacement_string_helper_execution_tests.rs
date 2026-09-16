@@ -1,6 +1,6 @@
 //! Direct execution and source-span boundaries for compiler-selected runtime string helpers.
 
-mod support;
+use incan_test_support as support;
 
 use incan::backend::replacement::{ProgramIo, ReplacementValue, execute_free_function_with_io};
 use incan::frontend::body_ir::{apply_body_ir_input_contract, build_body_ir_module_v0};

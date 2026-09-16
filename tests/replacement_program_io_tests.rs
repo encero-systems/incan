@@ -1,6 +1,6 @@
 //! Program streams must remain observable independently of successful execution and evidence publication.
 
-mod support;
+use incan_test_support as support;
 
 use std::fs;
 use std::path::Path;

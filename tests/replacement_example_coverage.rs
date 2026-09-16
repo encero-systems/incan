@@ -16,7 +16,7 @@
 //! assertion at all. An exact baseline makes movement in *either* direction a deliberate, reviewed event: improve
 //! the backend and the suite tells you to record the new number in the same change.
 
-mod support;
+use incan_test_support as support;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

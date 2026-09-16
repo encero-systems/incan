@@ -1,6 +1,6 @@
 //! Checkout and subprocess anchors remain explicit when the integration-test runner has another working directory.
 
-mod support;
+use incan_test_support as support;
 
 /// Source discovery always names the checkout that built this test root.
 #[test]

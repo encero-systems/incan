@@ -3,7 +3,7 @@
 //! These tests use proptest to verify invariants across many randomly
 //! generated inputs, catching edge cases that hand-written tests might miss.
 
-mod support;
+use incan_test_support as support;
 
 use std::collections::BTreeSet;
 

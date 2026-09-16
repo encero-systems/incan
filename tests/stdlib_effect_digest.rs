@@ -5,7 +5,7 @@
 //! replacement has to get right — it must move for a change the compiler would emit differently, and hold still
 //! for one it would not — and record what it costs against the real standard library.
 
-mod support;
+use incan_test_support as support;
 use support::repo_root;
 
 use incan::provider::effect_digest::{

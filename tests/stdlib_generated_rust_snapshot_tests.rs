@@ -8,13 +8,11 @@ use incan::backend::IrCodegen;
 use incan::frontend::{lexer, parser};
 use std::fs;
 
-mod support;
+use incan_test_support as support;
 
-#[path = "support/builtin_stdlib.rs"]
-mod builtin_stdlib_support;
+use incan_test_support::builtin_stdlib as builtin_stdlib_support;
 
-#[path = "support/canonical_projection.rs"]
-mod canonical_projection;
+use incan_test_support::canonical_projection;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

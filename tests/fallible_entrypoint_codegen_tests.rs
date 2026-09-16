@@ -3,8 +3,7 @@
 use incan::backend::IrCodegen;
 use incan::frontend::{lexer, parser};
 
-#[path = "support/canonical_projection.rs"]
-mod canonical_projection;
+use incan_test_support::canonical_projection;
 /// Fallible entrypoints retain the same runtime panic hook and Zen ordering as unit-returning entrypoints.
 #[test]
 fn fallible_main_preserves_entrypoint_setup_before_the_body() -> Result<(), Box<dyn std::error::Error>> {

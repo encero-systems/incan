@@ -4,10 +4,9 @@ use std::process::{Command, Output};
 
 use incan::library_manifest::LibraryManifest;
 
-mod support;
+use incan_test_support as support;
 
-#[path = "support/canonical_projection.rs"]
-mod canonical_projection;
+use incan_test_support::canonical_projection;
 
 const FIXTURE_ROOT: &str = "tests/fixtures/generated_rust_artifacts";
 

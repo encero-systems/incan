@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::{Arc, Barrier};
 
-mod support;
+use incan_test_support as support;
 
 /// Configure a project command with one caller-selected compiler binary.
 ///

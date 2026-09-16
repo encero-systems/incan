@@ -1,3 +1,19 @@
+//! The integration-test harness the compiler's roots share: where the checkout and the compiler under test are,
+//! how a nested `incan` subprocess is wired to the harness-selected generated target and SDK provider store, and the
+//! fixture builders and artifact readers the roots compose.
+//!
+//! This crate is a dev-dependency of every ring whose integration tests launch the compiler or read the checkout, so a
+//! root can live in the package it exercises and still share one harness. It links ring crates only; the two helpers
+//! that reach the CLI (`parity_corpus`, `shadow_capability`) stay beside the roots that use them until the CLI has a
+//! package of its own.
+
+pub mod builtin_stdlib;
+pub mod canonical_projection;
+pub mod cli_project;
+pub mod emitted_symbol_artifact;
+pub mod package_boundary_probe;
+pub mod package_project;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -7,8 +23,7 @@ use std::time::Instant;
 ///
 /// The checkout has a lockfile and the Loaves directory; no caller working directory or mutable environment override
 /// participates in source discovery. A missing checkout is a test setup error rather than a relative-path fallback.
-#[allow(dead_code)]
-pub(crate) fn repo_root() -> PathBuf {
+pub fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .find(|candidate| candidate.join("Cargo.lock").is_file() && candidate.join("loaves").is_dir())
@@ -17,8 +32,7 @@ pub(crate) fn repo_root() -> PathBuf {
 }
 
 /// Start the compiler in its checkout unless a test explicitly selects a temporary project directory.
-#[allow(dead_code)]
-pub(crate) fn repo_command() -> Command {
+pub fn repo_command() -> Command {
     let mut command = Command::new(incan_debug_binary());
     command.current_dir(repo_root());
     command
@@ -28,16 +42,14 @@ pub(crate) fn repo_command() -> Command {
 ///
 /// Normal test execution neither reads a clock nor emits timing output. The caller supplies a stable command label,
 /// while the current libtest thread identifies the regression that started it.
-#[allow(dead_code)]
-pub(crate) fn command_timing_started() -> Option<Instant> {
+pub fn command_timing_started() -> Option<Instant> {
     std::env::var_os("INCAN_TEST_COMMAND_TIMINGS")
         .filter(|value| !value.is_empty())
         .map(|_| Instant::now())
 }
 
 /// Emit one machine-searchable nested command duration for an explicit diagnostic run.
-#[allow(dead_code)]
-pub(crate) fn report_command_timing(label: &str, started: Option<Instant>) {
+pub fn report_command_timing(label: &str, started: Option<Instant>) {
     let Some(started) = started else {
         return;
     };
@@ -57,8 +69,7 @@ pub(crate) fn report_command_timing(label: &str, started: Option<Instant>) {
 ///
 /// A malformed or non-build response is ignored because this is only diagnostic evidence. The command's own status
 /// and its regression assertions remain authoritative.
-#[allow(dead_code)]
-pub(crate) fn report_build_phase_timing(label: &str, output: &Output) {
+pub fn report_build_phase_timing(label: &str, output: &Output) {
     if std::env::var_os("INCAN_TEST_COMMAND_TIMINGS").is_none() {
         return;
     }
@@ -91,8 +102,7 @@ pub(crate) fn report_build_phase_timing(label: &str, output: &Output) {
 ///
 /// Nextest rewrites `CARGO_BIN_EXE_incan` when a portable archive is extracted on another runner. Read it at runtime
 /// instead of embedding the archive producer's absolute `target/debug/incan` path in the test executable.
-#[allow(dead_code)]
-pub(crate) fn incan_binary() -> PathBuf {
+pub fn incan_binary() -> PathBuf {
     incan_debug_binary()
 }
 
@@ -100,8 +110,7 @@ pub(crate) fn incan_binary() -> PathBuf {
 ///
 /// Uses `CARGO_BIN_EXE_incan` when present (integration tests under `cargo test`) so we always run the artifact from
 /// the current build, including when `CARGO_TARGET_DIR` is not the default `target/`.
-#[allow(dead_code)]
-pub(crate) fn incan_debug_binary() -> PathBuf {
+pub fn incan_debug_binary() -> PathBuf {
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_incan") {
         let path = PathBuf::from(path);
         if path.exists() {
@@ -131,8 +140,7 @@ fn suite_selected_consumer_rustc() -> bool {
 ///
 /// Every nested build a subprocess test drives must land in the harness-selected target rather than the repository's
 /// default `target/`, and must inherit the prepared provider store unless the compiler suite already sealed one.
-#[allow(dead_code)]
-pub(crate) fn incan_command() -> Command {
+pub fn incan_command() -> Command {
     let mut command = repo_command();
     command
         .env("INCAN_GENERATED_CARGO_TARGET_DIR", generated_cargo_target_dir())
@@ -147,8 +155,7 @@ pub(crate) fn incan_command() -> Command {
 ///
 /// Incan colours CLI diagnostics whenever the child inherits a terminal, and CI runners differ on whether they do.
 /// Tests assert on the text, so they decolour first instead of depending on the runner's terminal detection.
-#[allow(dead_code)]
-pub(crate) fn strip_ansi_escapes(text: &str) -> String {
+pub fn strip_ansi_escapes(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
@@ -172,8 +179,7 @@ static TEST_PROJECT_COUNTER: AtomicU64 = AtomicU64::new(0);
 ///
 /// Several CLI tests rely on the default `target/incan/<name>` output location. The generated project name includes
 /// both the current process id and a local counter so those tests do not trample each other's generated Cargo projects.
-#[allow(dead_code)]
-pub(crate) fn unique_test_project_name(prefix: &str) -> String {
+pub fn unique_test_project_name(prefix: &str) -> String {
     let unique = TEST_PROJECT_COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("{prefix}_{}_{}", std::process::id(), unique)
 }
@@ -183,8 +189,7 @@ pub(crate) fn unique_test_project_name(prefix: &str) -> String {
 /// A stored compiler-suite child carries a direct-Rustc executable as well as the Loaf capability. Portable
 /// nextest acceptance archives receive the latter directly from their immutable provider artifact. Both forms have
 /// already received a sealed SDK inventory and must not replace it with the legacy generated-Cargo provider store.
-#[allow(dead_code)]
-pub(crate) fn oven_compiler_suite_is_active() -> bool {
+pub fn oven_compiler_suite_is_active() -> bool {
     std::env::var_os("INCAN_OVEN_COMPILER_SUITE_RUSTC").is_some_and(|value| !value.is_empty())
         || (std::env::var_os("INCAN_INTERNAL_OVEN_LOAF_EXECUTION").is_some_and(|value| value == "1")
             && std::env::var_os("INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT").is_some_and(|value| !value.is_empty()))
@@ -196,8 +201,7 @@ pub(crate) fn oven_compiler_suite_is_active() -> bool {
 /// evade the outer exit-97 guard. Callers therefore opt in only for `incan oven bake`, the named publisher boundary.
 /// The command deliberately retains the suite-selected consumer `RUSTC`: publisher Cargo may differ, but the
 /// produced Loaf must be compatible with the direct-Rustc consumer that will select it.
-#[allow(dead_code)]
-pub(crate) fn configure_explicit_oven_bake_command(command: &mut Command) -> std::io::Result<()> {
+pub fn configure_explicit_oven_bake_command(command: &mut Command) -> std::io::Result<()> {
     if !oven_compiler_suite_is_active() {
         return Ok(());
     }
@@ -218,8 +222,7 @@ pub(crate) fn configure_explicit_oven_bake_command(command: &mut Command) -> std
 ///
 /// `make` and CI preheat one task-local target before starting nextest. Subprocess helpers must preserve that
 /// selection instead of silently redirecting nested Cargo back into the repository's default `target/` tree.
-#[allow(dead_code)]
-pub(crate) fn generated_cargo_target_dir() -> PathBuf {
+pub fn generated_cargo_target_dir() -> PathBuf {
     selected_harness_path(
         "INCAN_GENERATED_CARGO_TARGET_DIR",
         "target/incan_generated_shared_target",
@@ -230,8 +233,7 @@ pub(crate) fn generated_cargo_target_dir() -> PathBuf {
 ///
 /// Cold-provider acceptance tests need independent provider stores, not three duplicate compilations of the same
 /// Cargo dependency graph. CI can select one job-local target for those tests; standalone runs remain isolated.
-#[allow(dead_code)]
-pub(crate) fn generated_cargo_target_dir_or(fallback: &Path) -> PathBuf {
+pub fn generated_cargo_target_dir_or(fallback: &Path) -> PathBuf {
     let selected = std::env::var_os("INCAN_GENERATED_CARGO_TARGET_DIR")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -240,8 +242,7 @@ pub(crate) fn generated_cargo_target_dir_or(fallback: &Path) -> PathBuf {
 }
 
 /// Return the compiled SDK provider store selected by the outer test harness.
-#[allow(dead_code)]
-pub(crate) fn sdk_provider_store() -> PathBuf {
+pub fn sdk_provider_store() -> PathBuf {
     selected_harness_path(
         "INCAN_INTERNAL_SDK_PROVIDER_STORE",
         "target/incan_test_sdk_provider_store",
@@ -252,8 +253,7 @@ pub(crate) fn sdk_provider_store() -> PathBuf {
 ///
 /// Ordinary test runs retain their isolated fallback. The dedicated CI lane can opt into one empty store for
 /// compatible cold consumers without allowing an already-warmed general provider store to weaken the proof.
-#[allow(dead_code)]
-pub(crate) fn cold_sdk_provider_store_or(fallback: &Path) -> PathBuf {
+pub fn cold_sdk_provider_store_or(fallback: &Path) -> PathBuf {
     let selected = std::env::var_os("INCAN_TEST_COLD_PROVIDER_STORE")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -266,8 +266,7 @@ pub(crate) fn cold_sdk_provider_store_or(fallback: &Path) -> PathBuf {
 /// The variable keeps its caller-relative meaning: a relative override names a path under the process working directory
 /// at the time it is read, the way Cargo itself interprets `CARGO_TARGET_DIR`, and only the fallback is spelled from
 /// the checkout.
-#[allow(dead_code)]
-pub(crate) fn selected_harness_path(variable: &str, fallback: &str) -> PathBuf {
+pub fn selected_harness_path(variable: &str, fallback: &str) -> PathBuf {
     let selected = std::env::var_os(variable)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)

@@ -43,18 +43,14 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
-#[path = "support/emitted_symbol_artifact.rs"]
-mod emitted_symbol_artifact;
+use incan_test_support::emitted_symbol_artifact;
 #[path = "support/parity_corpus.rs"]
 mod parity_corpus;
 #[path = "support/shadow_capability.rs"]
 mod shadow_capability;
 
-#[path = "support/package_boundary_probe.rs"]
-mod package_boundary_probe;
-#[path = "support/package_project.rs"]
-mod package_project;
-mod support;
+use incan_test_support as support;
+use incan_test_support::package_boundary_probe;
 
 /// The original scalar case that exercises the reusable paired-comparison route.
 const SHADOW_COMPARED_CASE_ID: &str = "replacement-body-v0-001";
@@ -4003,7 +3999,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             title: "A materialized package dependency executes natively and without linking Rust",
             category: BehaviorCategory::SupportedLanguageContract,
             lane: EvidenceLane::PackageImportBoundary,
-            evidence: "#989; #1339; tests/support/package_boundary_probe.rs::observe_package_boundary",
+            evidence: "#989; #1339; incan_test_support::package_boundary_probe::observe_package_boundary",
             disposition: Disposition::Preserved,
             source: PACKAGE_CONSUMER_SRC,
             evaluate: Some(case_package_consumer_call_executes),
@@ -4015,7 +4011,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             title: "A missing package representation refuses in packaging terms before output or receipt",
             category: BehaviorCategory::DiagnosticBehavior,
             lane: EvidenceLane::PackageImportBoundary,
-            evidence: "#989; RFC 123; tests/support/package_boundary_probe.rs::observe_package_boundary",
+            evidence: "#989; RFC 123; incan_test_support::package_boundary_probe::observe_package_boundary",
             disposition: Disposition::Preserved,
             source: PACKAGE_CONSUMER_SRC,
             evaluate: Some(case_package_representation_refusal_is_packaging_error),
@@ -4141,7 +4137,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             title: "Pinned release artifacts recover four Incan identity categories and reject host frames",
             category: BehaviorCategory::GeneratedArtifactBehavior,
             lane: EvidenceLane::GeneratedProjectRun,
-            evidence: "RFC 120 Cutover conformance; tests/support/emitted_symbol_artifact.rs::verify_pinned_release_artifact",
+            evidence: "RFC 120 Cutover conformance; incan_test_support::emitted_symbol_artifact::verify_pinned_release_artifact",
             disposition: Disposition::Preserved,
             source: "RFC 120 pinned Rust 1.98.0 release artifact",
             evaluate: None,
@@ -5706,7 +5702,7 @@ fn replacement_body_v0_cases_have_receipt_bound_non_green_execution_evidence() -
 // ============================================================================
 
 /// Where the CI-readable summary is written, honoring a harness-selected `CARGO_TARGET_DIR` when set (matching
-/// `tests/support/mod.rs`'s convention for other generated test artifacts) and falling back to the repository-local
+/// `incan_test_support`'s convention for other generated test artifacts) and falling back to the repository-local
 /// `target/` directory otherwise.
 fn summary_output_path() -> PathBuf {
     support::selected_harness_path("CARGO_TARGET_DIR", "target")

@@ -17,11 +17,11 @@ fn imported_provider_path(line: &str) -> Option<Vec<String>> {
 }
 
 /// Derive codegen fixture ownership from the same SDK component catalog and Incan entrypoints used by publication.
-pub(crate) fn artifact_module_paths() -> Vec<Vec<String>> {
+pub fn artifact_module_paths() -> Vec<Vec<String>> {
     static MODULE_PATHS: OnceLock<Vec<Vec<String>>> = OnceLock::new();
     MODULE_PATHS
         .get_or_init(|| {
-            let stdlib_root = crate::support::repo_root().join("loaves/stdlib");
+            let stdlib_root = crate::repo_root().join("loaves/stdlib");
             let catalog_path = stdlib_root.join("sdk-components.toml");
             let Ok(catalog_source) = std::fs::read_to_string(&catalog_path) else {
                 panic!("failed to read SDK component catalog at {}", catalog_path.display());

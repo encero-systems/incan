@@ -4,10 +4,9 @@ use std::process::{Command, Output};
 
 use incan::library_manifest::{LibraryManifest, TypeRef};
 
-mod support;
+use incan_test_support as support;
 
-#[path = "support/canonical_projection.rs"]
-mod canonical_projection;
+use incan_test_support::canonical_projection;
 
 /// Generated Rust read back with RFC 120 projections decoded to the spellings the source used.
 ///

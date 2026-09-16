@@ -1,6 +1,6 @@
 use std::fs;
 
-mod support;
+use incan_test_support as support;
 
 fn run_source_case(source: &str) -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;

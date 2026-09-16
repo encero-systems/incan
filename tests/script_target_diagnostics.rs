@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::fs;
 
-mod support;
+use incan_test_support as support;
 
 /// Every command that consumes script targets reports the same authored manifest error.
 #[test]

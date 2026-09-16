@@ -9,63 +9,55 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-use crate::support;
-
-#[path = "canonical_projection.rs"]
-mod canonical_projection;
+use crate::canonical_projection;
 
 /// Read generated Rust with RFC 120 projections decoded back to the spellings the source used.
 ///
 /// Every linker-visible Incan-origin declaration reaches generated Rust as an encoded projection, so an assertion
 /// written against a source spelling can only be evaluated after decoding. Decoding preserves the generated header
 /// comment; the caller compares against this text rather than the raw file.
-#[allow(dead_code)]
-pub(crate) fn read_generated_rust(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error>> {
+pub fn read_generated_rust(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error>> {
     let decoded = canonical_projection::decoded_source_spellings(&fs::read_to_string(path)?);
     Ok(canonical_projection::reformatted_after_decode(&decoded).unwrap_or(decoded))
 }
 
-/// The compiler under test, resolved once in `support::incan_debug_binary` for every root.
-#[allow(dead_code)]
-pub(crate) fn incan_binary() -> PathBuf {
-    support::incan_debug_binary()
+/// The compiler under test, resolved once in `crate::incan_debug_binary` for every root.
+pub fn incan_binary() -> PathBuf {
+    crate::incan_debug_binary()
 }
 
-#[allow(dead_code)]
-pub(crate) fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
+/// Run the compiler under test in `current_dir` with the harness's default environment and no extra variables.
+pub fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
     run_incan_with_env(current_dir, args, &[])
 }
 
 /// Publish a public-library provider before a separate consumer selects its package Loaf. This is intentionally
 /// distinct from normal `build --lib`: only the explicit Oven command may create the provider handoff.
-#[allow(dead_code)]
-pub(crate) fn run_explicit_oven_bake(current_dir: &Path) -> Result<Output, Box<dyn std::error::Error>> {
+pub fn run_explicit_oven_bake(current_dir: &Path) -> Result<Output, Box<dyn std::error::Error>> {
     run_explicit_oven_bake_with_home(current_dir, None)
 }
 
 /// Bake one project while sharing a caller-selected standalone Oven home with its later workspace replay.
-#[allow(dead_code)]
-pub(crate) fn run_explicit_oven_bake_with_home(
+pub fn run_explicit_oven_bake_with_home(
     current_dir: &Path,
     standalone_incan_home: Option<&Path>,
 ) -> Result<Output, Box<dyn std::error::Error>> {
     let mut command = configured_incan_command(current_dir, &["oven", "bake", "--project", "."]);
-    if !support::oven_compiler_suite_is_active()
+    if !crate::oven_compiler_suite_is_active()
         && let Some(incan_home) = standalone_incan_home
     {
         command.env("INCAN_HOME", incan_home);
     }
-    support::configure_explicit_oven_bake_command(&mut command)?;
-    let timing = support::command_timing_started();
+    crate::configure_explicit_oven_bake_command(&mut command)?;
+    let timing = crate::command_timing_started();
     let output = command.output()?;
-    support::report_command_timing("incan oven bake --project .", timing);
+    crate::report_command_timing("incan oven bake --project .", timing);
     Ok(output)
 }
 
 /// Copy one checked package handoff without following a symlink outside its fixture. The relocation test needs both the
 /// public library output and its immutable package Loaf collection.
-#[allow(dead_code)]
-pub(crate) fn copy_fixture_directory(source: &Path, destination: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub fn copy_fixture_directory(source: &Path, destination: &Path) -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(destination)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
@@ -87,8 +79,7 @@ pub(crate) fn copy_fixture_directory(source: &Path, destination: &Path) -> Resul
 
 /// Run a CLI command with a Cargo executable that records and rejects any launch.
 #[cfg(unix)]
-#[allow(dead_code)]
-pub(crate) fn run_incan_with_failing_cargo_guard(
+pub fn run_incan_with_failing_cargo_guard(
     current_dir: &Path,
     args: &[&str],
     guard_dir: &Path,
@@ -99,11 +90,7 @@ pub(crate) fn run_incan_with_failing_cargo_guard(
 
 /// Install one Cargo executable that records and rejects any launch.
 #[cfg(unix)]
-#[allow(dead_code)]
-pub(crate) fn install_failing_cargo_guard(
-    guard_dir: &Path,
-    marker: &Path,
-) -> Result<PathBuf, Box<dyn std::error::Error>> {
+pub fn install_failing_cargo_guard(guard_dir: &Path, marker: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     use std::os::unix::fs::PermissionsExt;
 
     fs::create_dir_all(guard_dir)?;
@@ -120,8 +107,7 @@ pub(crate) fn install_failing_cargo_guard(
 
 /// Run a guarded CLI command with explicit child-only environment handoffs.
 #[cfg(unix)]
-#[allow(dead_code)]
-pub(crate) fn run_incan_with_failing_cargo_guard_and_env(
+pub fn run_incan_with_failing_cargo_guard_and_env(
     current_dir: &Path,
     args: &[&str],
     guard_dir: &Path,
@@ -138,14 +124,14 @@ pub(crate) fn run_incan_with_failing_cargo_guard_and_env(
     for (key, value) in envs {
         command.env(*key, *value);
     }
-    let timing = support::command_timing_started();
+    let timing = crate::command_timing_started();
     let output = command.output()?;
-    support::report_command_timing(&format!("incan {} (Cargo guard)", args.join(" ")), timing);
+    crate::report_command_timing(&format!("incan {} (Cargo guard)", args.join(" ")), timing);
     Ok(output)
 }
 
-#[allow(dead_code)]
-pub(crate) fn run_incan_with_env(
+/// Run the compiler under test in `current_dir` with `envs` layered over the harness's default environment.
+pub fn run_incan_with_env(
     current_dir: &Path,
     args: &[&str],
     envs: &[(&str, &str)],
@@ -153,8 +139,9 @@ pub(crate) fn run_incan_with_env(
     run_incan_with_env_and_removed(current_dir, args, envs, &[])
 }
 
-#[allow(dead_code)]
-pub(crate) fn run_incan_with_env_and_removed(
+/// Run the compiler under test with `envs` added and `removed` variables cleared, for tests that must prove the
+/// compiler's behaviour without one ambient setting.
+pub fn run_incan_with_env_and_removed(
     current_dir: &Path,
     args: &[&str],
     envs: &[(&str, &str)],
@@ -164,29 +151,28 @@ pub(crate) fn run_incan_with_env_and_removed(
     for key in removed_envs {
         command.env_remove(key);
     }
-    let timing = support::command_timing_started();
+    let timing = crate::command_timing_started();
     let output = command.envs(envs.iter().copied()).output()?;
-    support::report_command_timing(&format!("incan {}", args.join(" ")), timing);
+    crate::report_command_timing(&format!("incan {}", args.join(" ")), timing);
     Ok(output)
 }
 
-#[allow(dead_code)]
-pub(crate) fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Command {
-    let mut command = support::repo_command();
+/// Build the compiler command every CLI root starts from: offline, banner off, the checkout's stdlib, and — outside
+/// the compiler suite, which seals its own — the harness-selected generated target, provider store and a
+/// project-local `INCAN_HOME`.
+pub fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Command {
+    let mut command = crate::repo_command();
     command
         .args(args)
         .current_dir(current_dir)
         .env("CARGO_NET_OFFLINE", "true")
         .env("INCAN_NO_BANNER", "1")
-        .env("INCAN_STDLIB", support::repo_root().join("loaves/stdlib"))
-        .env("INCAN_STDLIB_DIR", support::repo_root().join("loaves/stdlib"));
-    if !support::oven_compiler_suite_is_active() {
+        .env("INCAN_STDLIB", crate::repo_root().join("loaves/stdlib"))
+        .env("INCAN_STDLIB_DIR", crate::repo_root().join("loaves/stdlib"));
+    if !crate::oven_compiler_suite_is_active() {
         command
-            .env(
-                "INCAN_GENERATED_CARGO_TARGET_DIR",
-                support::generated_cargo_target_dir(),
-            )
-            .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store())
+            .env("INCAN_GENERATED_CARGO_TARGET_DIR", crate::generated_cargo_target_dir())
+            .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", crate::sdk_provider_store())
             // Explicit provider bakes must not contend with a developer's ambient store when this test binary runs
             // outside the suite.
             .env("INCAN_HOME", current_dir.join(".incan-test"));
@@ -195,8 +181,7 @@ pub(crate) fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Com
 }
 
 /// Return a Clang executable suitable for a header-only C ABI verifier fixture, when this host has one.
-#[allow(dead_code)]
-pub(crate) fn c_abi_test_clang() -> Option<String> {
+pub fn c_abi_test_clang() -> Option<String> {
     if let Some(executable) = std::env::var_os("INCAN_C_ABI_CLANG").filter(|value| !value.is_empty()) {
         return Some(executable.to_string_lossy().into_owned());
     }
@@ -219,8 +204,7 @@ pub(crate) fn c_abi_test_clang() -> Option<String> {
 /// Run one Unix CLI probe in its own process group so a timed-out recursive subprocess tree can be terminated
 /// together. Callers configure the command first, which keeps the watchdog independent of a fixture's environment.
 #[cfg(unix)]
-#[allow(dead_code)]
-pub(crate) fn run_command_with_timeout(
+pub fn run_command_with_timeout(
     mut command: Command,
     label: &str,
     timeout: std::time::Duration,
@@ -230,11 +214,11 @@ pub(crate) fn run_command_with_timeout(
     command.process_group(0).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn()?;
     let started = std::time::Instant::now();
-    let timing = support::command_timing_started();
+    let timing = crate::command_timing_started();
     loop {
         if child.try_wait()?.is_some() {
             let output = child.wait_with_output()?;
-            support::report_command_timing(&format!("{label} (timeout supervised)"), timing);
+            crate::report_command_timing(&format!("{label} (timeout supervised)"), timing);
             return Ok((output, false));
         }
         if started.elapsed() >= timeout {
@@ -263,7 +247,7 @@ pub(crate) fn run_command_with_timeout(
             while kill_started.elapsed() < std::time::Duration::from_secs(2) {
                 if child.try_wait()?.is_some() {
                     let output = child.wait_with_output()?;
-                    support::report_command_timing(&format!("{label} (timeout supervised)"), timing);
+                    crate::report_command_timing(&format!("{label} (timeout supervised)"), timing);
                     return Ok((output, true));
                 }
                 std::thread::sleep(std::time::Duration::from_millis(25));
@@ -276,8 +260,7 @@ pub(crate) fn run_command_with_timeout(
 
 /// Send one signal to the complete Unix process group owned by a bounded CLI probe.
 #[cfg(unix)]
-#[allow(dead_code)]
-pub(crate) fn signal_process_group(child_id: u32, signal: libc::c_int) -> std::io::Result<()> {
+pub fn signal_process_group(child_id: u32, signal: libc::c_int) -> std::io::Result<()> {
     let process_group = i32::try_from(child_id).map_err(|error| std::io::Error::other(error.to_string()))?;
     // SAFETY: The child was spawned with its PID as its process-group ID, and negating that validated positive ID
     // targets only the task-owned group. `signal` is one of libc's SIGTERM/SIGKILL constants supplied above.
@@ -293,9 +276,9 @@ pub(crate) fn signal_process_group(child_id: u32, signal: libc::c_int) -> std::i
     }
 }
 
+/// Run the compiler with one OS-level environment variable bound for the child only, on Unix.
 #[cfg(unix)]
-#[allow(dead_code)]
-pub(crate) fn run_incan_with_os_env(
+pub fn run_incan_with_os_env(
     current_dir: &Path,
     args: &[&str],
     key: &str,
@@ -304,8 +287,8 @@ pub(crate) fn run_incan_with_os_env(
     Ok(configured_incan_command(current_dir, args).env(key, value).output()?)
 }
 
-#[allow(dead_code)]
-pub(crate) fn assert_success(output: &Output, context: &str) {
+/// Fail with both streams when a compiler invocation the test expected to succeed did not.
+pub fn assert_success(output: &Output, context: &str) {
     assert!(
         output.status.success(),
         "{context} failed\nstdout:\n{}\nstderr:\n{}",
@@ -314,8 +297,8 @@ pub(crate) fn assert_success(output: &Output, context: &str) {
     );
 }
 
-#[allow(dead_code)]
-pub(crate) fn assert_failure(output: &Output, context: &str) {
+/// Fail with both streams when a compiler invocation the test expected to be refused succeeded.
+pub fn assert_failure(output: &Output, context: &str) {
     assert!(
         !output.status.success(),
         "{context} unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
@@ -324,8 +307,9 @@ pub(crate) fn assert_failure(output: &Output, context: &str) {
     );
 }
 
-#[allow(dead_code)]
-pub(crate) fn write_minimal_project(
+/// Write the smallest project the CLI accepts — a `loaf.toml` with `extra_manifest` appended and one
+/// `src/main.incn` — and return the entrypoint path.
+pub fn write_minimal_project(
     root: &Path,
     name: &str,
     extra_manifest: &str,
@@ -359,16 +343,16 @@ main = "src/main.incn"
 ///
 /// Interop-plan inspection re-hashes declared package inputs itself. The command tests below therefore need a valid
 /// canonical semantic projection, not the unrelated provider-install work performed by `incan lock`.
-#[allow(dead_code)]
-pub(crate) fn write_locked_oven_interop_plan(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let manifest = incan::manifest::ProjectManifest::discover(root)?.ok_or("interop fixture manifest was missing")?;
-    let interop = incan::oven_interop::locked_oven_interop_targets(&manifest)?;
-    let lock = incan::lockfile::IncanLock::new_with_semantic(
-        incan::version::INCAN_VERSION,
+pub fn write_locked_oven_interop_plan(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let manifest =
+        oven_model::manifest::ProjectManifest::discover(root)?.ok_or("interop fixture manifest was missing")?;
+    let interop = oven_model::oven_interop::locked_oven_interop_targets(&manifest)?;
+    let lock = oven_model::lock::IncanLock::new_with_semantic(
+        incan_core::version::INCAN_VERSION,
         "fixture".to_string(),
-        incan::lockfile::CargoFeatureSelection::default(),
-        incan::lockfile::SemanticLockState {
-            oven: Some(incan::lockfile::LockedOvenState { interop }),
+        oven_model::lock::CargoFeatureSelection::default(),
+        oven_model::lock::SemanticLockState {
+            oven: Some(oven_model::lock::LockedOvenState { interop }),
             ..Default::default()
         },
         String::new(),
@@ -378,30 +362,29 @@ pub(crate) fn write_locked_oven_interop_plan(root: &Path) -> Result<(), Box<dyn 
 }
 
 /// Write one workspace-root interop projection for a selected member without materializing SDK providers.
-#[allow(dead_code)]
-pub(crate) fn write_locked_workspace_oven_interop_plan(
+pub fn write_locked_workspace_oven_interop_plan(
     workspace_root: &Path,
     member_root: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let manifest = incan::manifest::ProjectManifest::discover(member_root)?
+    let manifest = oven_model::manifest::ProjectManifest::discover(member_root)?
         .ok_or("workspace interop fixture member manifest was missing")?;
-    let interop = incan::oven_interop::locked_oven_interop_targets(&manifest)?;
+    let interop = oven_model::oven_interop::locked_oven_interop_targets(&manifest)?;
     let member_root = member_root
         .strip_prefix(workspace_root)?
         .to_string_lossy()
         .replace('\\', "/");
-    let lock = incan::lockfile::IncanLock::new_with_semantic(
-        incan::version::INCAN_VERSION,
+    let lock = oven_model::lock::IncanLock::new_with_semantic(
+        incan_core::version::INCAN_VERSION,
         "fixture".to_string(),
-        incan::lockfile::CargoFeatureSelection::default(),
-        incan::lockfile::SemanticLockState {
-            workspace_members: vec![incan::lockfile::LockedWorkspaceMember {
+        oven_model::lock::CargoFeatureSelection::default(),
+        oven_model::lock::SemanticLockState {
+            workspace_members: vec![oven_model::lock::LockedWorkspaceMember {
                 member_root,
                 sdk: None,
                 packages: Vec::new(),
                 feature_edges: Vec::new(),
                 providers: Vec::new(),
-                oven: Some(incan::lockfile::LockedOvenState { interop }),
+                oven: Some(oven_model::lock::LockedOvenState { interop }),
             }],
             ..Default::default()
         },
@@ -411,13 +394,13 @@ pub(crate) fn write_locked_workspace_oven_interop_plan(
     Ok(())
 }
 
-#[allow(dead_code)]
-pub(crate) fn parse_json_stdout(output: &Output) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+/// Parse a command's stdout as one JSON document.
+pub fn parse_json_stdout(output: &Output) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 
-#[allow(dead_code)]
-pub(crate) fn parse_jsonl_stdout(output: &Output) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
+/// Parse a command's stdout as JSON Lines, one document per non-empty line.
+pub fn parse_jsonl_stdout(output: &Output) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
     let stdout = String::from_utf8(output.stdout.clone())?;
     stdout
         .lines()
@@ -431,8 +414,7 @@ pub(crate) fn parse_jsonl_stdout(output: &Output) -> Result<Vec<serde_json::Valu
 /// The language assertion is a property of *these fixtures*, which import nothing from Rust, not of the export
 /// format: RFC 106 keeps one graph across both languages and makes `language` an attribute of each fact, so a
 /// fixture that reaches a Rust item legitimately yields `"rust"` records and must not be checked with this helper.
-#[allow(dead_code)]
-pub(crate) fn assert_codegraph_record_contract(records: &[serde_json::Value]) {
+pub fn assert_codegraph_record_contract(records: &[serde_json::Value]) {
     assert!(!records.is_empty(), "codegraph export should include a header record");
     assert_eq!(records[0]["record"], serde_json::json!("header"));
     assert_eq!(records[0]["schema_version"], serde_json::json!(7));
@@ -467,8 +449,9 @@ pub(crate) fn assert_codegraph_record_contract(records: &[serde_json::Value]) {
     }
 }
 
-#[allow(dead_code)]
-pub(crate) fn assert_source_span_shape(span: &serde_json::Value, record: &serde_json::Value) {
+/// Assert a codegraph record's span carries the file, offsets and line/column fields every source-backed record
+/// must have.
+pub fn assert_source_span_shape(span: &serde_json::Value, record: &serde_json::Value) {
     assert!(
         span["file"].is_string()
             && span["start"].is_number()
@@ -481,8 +464,8 @@ pub(crate) fn assert_source_span_shape(span: &serde_json::Value, record: &serde_
     );
 }
 
-#[allow(dead_code)]
-pub(crate) fn assert_source_files_include(
+/// Assert a build report's `source_files` lists a path ending in each of `suffixes`.
+pub fn assert_source_files_include(
     report: &serde_json::Value,
     suffixes: &[&str],
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -500,8 +483,9 @@ pub(crate) fn assert_source_files_include(
     Ok(())
 }
 
-#[allow(dead_code)]
-pub(crate) fn stale_lockfile_without_changing_cargo_payload(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
+/// Corrupt a project's `oven.lock` fingerprint without touching its Cargo payload, and return the stale text, so a
+/// test can prove which side the lock check reads.
+pub fn stale_lockfile_without_changing_cargo_payload(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let lock_path = root.join("oven.lock");
     let original = fs::read_to_string(&lock_path)?;
     let stale = original.replace("deps-fingerprint = \"sha256:", "deps-fingerprint = \"sha256:stale");
@@ -509,8 +493,8 @@ pub(crate) fn stale_lockfile_without_changing_cargo_payload(root: &Path) -> Resu
     Ok(stale)
 }
 
-#[allow(dead_code)]
-pub(crate) fn write_order_summary_bundle(project_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+/// Write the `orders.summary` contract bundle fixture under `project_dir/contracts`.
+pub fn write_order_summary_bundle(project_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let contract_dir = project_dir.join("contracts");
     fs::create_dir_all(&contract_dir)?;
     fs::write(

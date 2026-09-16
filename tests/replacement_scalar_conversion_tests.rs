@@ -1,6 +1,6 @@
 //! RED-first coverage for compiler-selected scalar conversion builtins (#1249).
 
-mod support;
+use incan_test_support as support;
 
 use std::fs;
 use std::process::Command;

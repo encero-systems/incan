@@ -17,7 +17,7 @@ use std::process::{Command, Output};
 use incan::library_manifest::{ExportIdentityKind, ExportIdentityProjection, LibraryManifest};
 use sha2::{Digest, Sha256};
 
-mod support;
+use incan_test_support as support;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

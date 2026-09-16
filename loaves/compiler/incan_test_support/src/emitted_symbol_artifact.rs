@@ -17,7 +17,7 @@ use incan_semantics_core::{
 use rustc_demangle::try_demangle;
 use sha2::{Digest, Sha256};
 
-pub(crate) const SELECTED_RUST: &str = "1.98.0";
+pub const SELECTED_RUST: &str = "1.98.0";
 const FIXTURE_CRATE_NAME: &str = "incan_symbol_fixture";
 const FIXTURE_RUSTC_ARGS: &[&str] = &[
     "--crate-name",
@@ -32,21 +32,21 @@ const FIXTURE_RUSTC_ARGS: &[&str] = &[
 
 /// Verifiable facts recovered from one real optimized Rust-v0 artifact.
 #[derive(Debug, Clone)]
-pub(crate) struct ArtifactProjectionEvidence {
-    pub(crate) fixture_input_identity: String,
-    pub(crate) artifact_content_identity: String,
-    pub(crate) recovered_observation_identity: String,
-    pub(crate) recovered_identities: Vec<CanonicalSymbolId>,
-    pub(crate) saw_generic_u64_specialization: bool,
-    pub(crate) saw_non_incan_host_symbol: bool,
-    pub(crate) baseline_bytes: u64,
-    pub(crate) projected_bytes: u64,
-    pub(crate) baseline_identifier_bytes: usize,
-    pub(crate) projected_identifier_bytes: usize,
+pub struct ArtifactProjectionEvidence {
+    pub fixture_input_identity: String,
+    pub artifact_content_identity: String,
+    pub recovered_observation_identity: String,
+    pub recovered_identities: Vec<CanonicalSymbolId>,
+    pub saw_generic_u64_specialization: bool,
+    pub saw_non_incan_host_symbol: bool,
+    pub baseline_bytes: u64,
+    pub projected_bytes: u64,
+    pub baseline_identifier_bytes: usize,
+    pub projected_identifier_bytes: usize,
 }
 
 /// Compile and inspect the exact DD-0002 artifact fixture, refusing any missing or misclassified identity.
-pub(crate) fn verify_pinned_release_artifact() -> Result<ArtifactProjectionEvidence, Box<dyn Error>> {
+pub fn verify_pinned_release_artifact() -> Result<ArtifactProjectionEvidence, Box<dyn Error>> {
     if !matches!(std::env::consts::OS, "linux" | "macos") {
         return Err(format!(
             "the incan-v1 artifact fixture needs an nm adapter for supported CI platform `{}`",

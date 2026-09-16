@@ -1,6 +1,6 @@
 //! End-to-end proof for the bounded #988 Body-IR replacement executor.
 
-mod support;
+use incan_test_support as support;
 
 use std::collections::BTreeSet;
 use std::fs;

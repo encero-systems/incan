@@ -14,6 +14,7 @@ members = [
     "loaves/compiler/incan_oven_facet",
     "loaves/compiler/incan_provider",
     "loaves/compiler/incan_semantics_stdlib",
+    "loaves/compiler/incan_test_support",
     "loaves/compiler/rust_inspect",
     "loaves/kernel/incan_codegraph",
     "loaves/kernel/incan_core",
@@ -75,6 +76,7 @@ incan_web_macros = { path = "loaves/stdlib/derive/incan_web_macros", version = "
 incan_driver = { path = "loaves/compiler/incan_driver", default-features = false }
 incan_emit = { path = "loaves/compiler/incan_emit", default-features = false }
 incan_format = { path = "loaves/compiler/incan_format" }
+incan_test_support = { path = "loaves/compiler/incan_test_support" }
 incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = false }
 incan_ir = { path = "loaves/compiler/incan_ir", default-features = false }
 incan_oven_facet = { path = "loaves/compiler/incan_oven_facet" }
@@ -184,6 +186,8 @@ wasmtime = { version = "36.0.14", default-features = false, features = ["craneli
 wasmtime-wasi = { version = "36.0.14", default-features = false, features = ["preview1"] }
 
 [dev-dependencies]
+# The harness every integration-test root shares: checkout anchors, the compiler subprocess, fixture builders.
+incan_test_support = { workspace = true }
 # Artifact-level `incan-v1` conformance decodes the pinned toolchain's v0 symbols independently of compiler state.
 rustc-demangle = "0.1.27"
 # Unix process-group cleanup for bounded subprocess regression tests.

@@ -6,7 +6,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-mod support;
+use incan_test_support as support;
 
 /// One import spelling, the module that exercises it, and the helper source it has to reach.
 struct Spelling {

@@ -18,3 +18,5 @@ The pipeline from checked AST to emitted Rust, plus the session and provider mac
 See [`LAYOUT.md`](../LAYOUT.md) for the ring rules and the migration order.
 
 `incan_semantics_stdlib/` sits here too: the stdlib semantics packs are compiler implementation, not a kernel contract.
+
+`incan_test_support/` is the integration-test harness the rings' roots share — checkout anchors, the compiler subprocess wired to the harness-selected generated target and provider store, fixture builders and artifact readers. It is a dev-dependency only (`publish = false`) and links ring crates alone, so a root can live in the package it exercises; the two helpers that reach the CLI stay under the root `tests/support/` until the CLI has a package.

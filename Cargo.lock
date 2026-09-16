@@ -1446,6 +1446,7 @@ dependencies = [
  "incan_semantics_stdlib",
  "incan_std_core",
  "incan_syntax",
+ "incan_test_support",
  "incan_vocab",
  "insta",
  "libc",
@@ -1554,6 +1555,7 @@ dependencies = [
  "incan_semantics_core",
  "incan_std_core",
  "incan_syntax",
+ "incan_test_support",
  "incan_vocab",
  "oven_model",
  "prettyplease",
@@ -1735,6 +1737,25 @@ dependencies = [
  "miette",
  "serde",
  "tracing",
+]
+
+[[package]]
+name = "incan_test_support"
+version = "0.6.0-dev.4"
+dependencies = [
+ "incan_core",
+ "incan_frontend",
+ "incan_semantics_core",
+ "libc",
+ "oven_model",
+ "prettyplease",
+ "proc-macro2",
+ "rustc-demangle",
+ "serde_json",
+ "sha2",
+ "syn",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
 
-mod support;
+use incan_test_support as support;
 use support::{incan_binary, repo_root};
 
 static PREPARE_ASSETS_LOCK: Mutex<()> = Mutex::new(());

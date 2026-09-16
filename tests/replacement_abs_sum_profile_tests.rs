@@ -1,6 +1,6 @@
 //! Replacement-execution evidence for one checked builtin `abs`/`sum` overflow contract.
 
-mod support;
+use incan_test_support as support;
 
 use std::fs;
 use std::panic::{AssertUnwindSafe, catch_unwind};

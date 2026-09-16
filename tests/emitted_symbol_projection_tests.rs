@@ -7,8 +7,7 @@
 
 use std::error::Error;
 
-#[path = "support/emitted_symbol_artifact.rs"]
-mod emitted_symbol_artifact;
+use incan_test_support::emitted_symbol_artifact;
 
 #[test]
 fn pinned_v0_artifact_recovers_functions_generic_specializations_methods_and_statics() -> Result<(), Box<dyn Error>> {

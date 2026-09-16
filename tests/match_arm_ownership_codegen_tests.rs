@@ -4,8 +4,7 @@ use incan::backend::IrCodegen;
 use incan::frontend::{lexer, parser};
 use incan_semantics_core::SemanticSourceTargetKind;
 
-#[path = "support/canonical_projection.rs"]
-mod canonical_projection;
+use incan_test_support::canonical_projection;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

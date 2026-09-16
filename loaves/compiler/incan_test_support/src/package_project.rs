@@ -5,11 +5,9 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 
-use crate::support;
-
 /// Run the repository-built compiler with the test harness's coherent SDK/provider selection.
-pub(crate) fn command(project: &Path) -> Command {
-    let mut command = support::repo_command();
+pub fn command(project: &Path) -> Command {
+    let mut command = crate::repo_command();
     command
         .current_dir(project)
         .env("INCAN_NO_BANNER", "1")
@@ -19,7 +17,7 @@ pub(crate) fn command(project: &Path) -> Command {
 }
 
 /// Require a command to succeed while retaining complete diagnostics for a failed producer or consumer boundary.
-pub(crate) fn success(output: Output, phase: &str) -> Result<Output, Box<dyn Error>> {
+pub fn success(output: Output, phase: &str) -> Result<Output, Box<dyn Error>> {
     if !output.status.success() {
         return Err(format!(
             "{phase} failed:\n{}\n{}",
@@ -32,16 +30,16 @@ pub(crate) fn success(output: Output, phase: &str) -> Result<Output, Box<dyn Err
 }
 
 /// Publish a library or native consumer through the normal explicit Oven bake boundary.
-pub(crate) fn bake(project: &Path) -> Result<(), Box<dyn Error>> {
+pub fn bake(project: &Path) -> Result<(), Box<dyn Error>> {
     let mut build = command(project);
     build.args(["oven", "bake", "--project", "."]);
-    support::configure_explicit_oven_bake_command(&mut build)?;
+    crate::configure_explicit_oven_bake_command(&mut build)?;
     success(build.output()?, "Oven bake")?;
     Ok(())
 }
 
 /// Create one minimal project without sharing mutable source or generated output with another test.
-pub(crate) fn project(
+pub fn project(
     root: &Path,
     name: &str,
     source_name: &str,

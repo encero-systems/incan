@@ -5,7 +5,7 @@
 //! identity. Collision classes are found by measuring a corpus, not by predicting them — the overload case this
 //! guards was discovered exactly that way, and it was the only one in 2,078 declarations.
 
-mod support;
+use incan_test_support as support;
 
 use incan::frontend::body_ir::{apply_body_ir_input_contract, build_body_ir_module_v0};
 use incan::frontend::hir::build_hir_v0;

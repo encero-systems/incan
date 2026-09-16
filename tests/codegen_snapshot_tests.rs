@@ -16,14 +16,13 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fs;
 
-mod support;
+use incan_test_support as support;
 
 use support::repo_root;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
-#[path = "support/builtin_stdlib.rs"]
-mod builtin_stdlib_support;
+use incan_test_support::builtin_stdlib as builtin_stdlib_support;
 
 fn codegen_with_builtin_stdlib_inventory() -> IrCodegen<'static> {
     let mut codegen = IrCodegen::new();

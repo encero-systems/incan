@@ -3,32 +3,32 @@
 use std::error::Error;
 use std::fs;
 
-use incan::library_manifest::{LibraryManifest, digest_provider_artifact};
+use incan_frontend::library_manifest::{LibraryManifest, digest_provider_artifact};
 
 use crate::package_project::{bake, command, project, success};
 
 /// Concrete process observations for the two stable package-boundary corpus rows.
 #[derive(Debug)]
-pub(crate) struct PackageBoundaryObservation {
+pub struct PackageBoundaryObservation {
     /// Output from the fresh native consumer after provider source removal.
-    pub(crate) native_stdout: Vec<u8>,
+    pub native_stdout: Vec<u8>,
     /// Output from non-linking execution of the same consumer source.
-    pub(crate) replacement_stdout: Vec<u8>,
+    pub replacement_stdout: Vec<u8>,
     /// Whether the missing-representation request incorrectly succeeded.
-    pub(crate) refusal_success: bool,
+    pub refusal_success: bool,
     /// Captured output that must remain empty when package admission refuses.
-    pub(crate) refusal_stdout: Vec<u8>,
+    pub refusal_stdout: Vec<u8>,
     /// Diagnostic naming the package, its version and the missing representation.
-    pub(crate) refusal_stderr: String,
+    pub refusal_stderr: String,
     /// Whether the refused fresh consumer incorrectly obtained a completed receipt.
-    pub(crate) refusal_receipt_exists: bool,
+    pub refusal_receipt_exists: bool,
 }
 
 /// Publish one provider, remove its sources, and observe both execution routes before testing a missing descriptor.
 ///
 /// The final descriptor omission is a negative replacement-input fixture. It makes no claim that the modified
 /// package still satisfies native sealed-artifact integrity.
-pub(crate) fn observe_package_boundary(source: &str) -> Result<PackageBoundaryObservation, Box<dyn Error>> {
+pub fn observe_package_boundary(source: &str) -> Result<PackageBoundaryObservation, Box<dyn Error>> {
     let temporary = tempfile::tempdir()?;
     let provider = temporary.path().join("provider");
     let consumer = temporary.path().join("consumer");

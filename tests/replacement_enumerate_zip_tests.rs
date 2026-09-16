@@ -1,6 +1,6 @@
 //! Contract tests for the selected, canonical `enumerate` and `zip` replacement profile.
 
-mod support;
+use incan_test_support as support;
 
 use std::fs;
 use std::path::Path;

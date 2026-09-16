@@ -5,12 +5,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-mod support;
+use incan_test_support as support;
 
 use support::{incan_command, incan_debug_binary, repo_root, strip_ansi_escapes, unique_test_project_name};
 
-#[path = "support/canonical_projection.rs"]
-mod canonical_projection;
+use incan_test_support::canonical_projection;
 
 /// Read generated Rust with RFC 120 projections decoded back to the spellings the source used.
 ///
