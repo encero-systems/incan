@@ -403,9 +403,8 @@ mod tests {
         Ok(dependencies.keys().cloned().collect())
     }
 
-    /// The facets and derive crate every generated project links, whatever it imports.
-    const BASELINE_TOOLCHAIN_CRATES: [&str; 4] =
-        ["incan_derive", "incan_std_async", "incan_std_core", "incan_std_data"];
+    /// The facet and derive crate every generated project links, whatever it imports.
+    const BASELINE_TOOLCHAIN_CRATES: [&str; 2] = ["incan_derive", "incan_std_core"];
 
     fn assert_dependency_contract(
         toml: &str,
@@ -644,7 +643,16 @@ mod tests {
         assert_dependency_contract(
             &toml,
             &BASELINE_TOOLCHAIN_CRATES,
-            &["axum", "incan_web_macros", "inventory", "serde", "serde_json", "tokio"],
+            &[
+                "axum",
+                "incan_std_async",
+                "incan_std_data",
+                "incan_web_macros",
+                "inventory",
+                "serde",
+                "serde_json",
+                "tokio",
+            ],
         )
     }
 
@@ -657,14 +665,15 @@ mod tests {
 
         assert_dependency_contract(
             &toml,
+            &["incan_derive", "incan_std_core", "incan_std_data", "serde"],
             &[
-                "incan_derive",
+                "axum",
                 "incan_std_async",
-                "incan_std_core",
-                "incan_std_data",
-                "serde",
+                "incan_web_macros",
+                "inventory",
+                "serde_json",
+                "tokio",
             ],
-            &["axum", "incan_web_macros", "inventory", "serde_json", "tokio"],
         )
     }
 
@@ -685,7 +694,11 @@ mod tests {
         }]);
         let toml = generator.generate_cargo_toml()?;
 
-        assert_dependency_contract(&toml, &BASELINE_TOOLCHAIN_CRATES, &["xxhash-rust"])?;
+        assert_dependency_contract(
+            &toml,
+            &["incan_derive", "incan_std_core", "incan_std_data"],
+            &["xxhash-rust"],
+        )?;
         assert!(
             !toml.contains("/somewhere/else"),
             "the toolchain's facet path is authoritative over a provider-authored one, got:\n{toml}"
@@ -701,8 +714,16 @@ mod tests {
 
         assert_dependency_contract(
             &toml,
-            &BASELINE_TOOLCHAIN_CRATES,
-            &["axum", "incan_web_macros", "inventory", "serde", "serde_json", "tokio"],
+            &["incan_derive", "incan_std_async", "incan_std_core"],
+            &[
+                "axum",
+                "incan_std_data",
+                "incan_web_macros",
+                "inventory",
+                "serde",
+                "serde_json",
+                "tokio",
+            ],
         )
     }
 
@@ -734,14 +755,12 @@ mod tests {
             &[
                 "axum",
                 "incan_derive",
-                "incan_std_async",
                 "incan_std_core",
-                "incan_std_data",
                 "incan_std_web",
                 "incan_web_macros",
                 "inventory",
             ],
-            &["serde", "serde_json", "tokio"],
+            &["incan_std_async", "incan_std_data", "serde", "serde_json", "tokio"],
         )
     }
 
