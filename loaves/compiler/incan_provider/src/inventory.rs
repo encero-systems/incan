@@ -543,6 +543,11 @@ mod tests {
                     "--nocapture",
                 ])
                 .env(CHILD, "1")
+                // This child exercises a synthetic toolchain coordinate, not the suite's sealed runtime.
+                // Clear both authorities that otherwise suppress the fixture's explicit crate override.
+                .env_remove("INCAN_INTERNAL_OVEN_LOAF_EXECUTION")
+                .env_remove("INCAN_INTERNAL_OVEN_RUNTIME_ROOT")
+                .env_remove("INCAN_SDK_INVENTORY")
                 .env("INCAN_TOOLCHAIN_CRATES_DIR", workspace.path())
                 .output()?;
             assert!(
