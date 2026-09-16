@@ -628,12 +628,12 @@ mod tests {
                 backend_requirements: vec![BackendImplementationRequirement::CargoDependency { dependency }],
             }],
         };
-        let plan = |module: &str| {
-            ProviderPlan::new(
+        let plan = |module: &str| -> Result<ProviderPlan, Box<dyn std::error::Error>> {
+            Ok(ProviderPlan::new(
                 Default::default(),
                 vec![record.clone()],
                 [vec!["std".to_string(), module.to_string()]],
-            )
+            )?)
         };
         let narrow = plan("plain")?;
         let broad = plan("rich")?;
