@@ -31,7 +31,6 @@ oven_model = { workspace = true }
 rust_inspect = { workspace = true }
 hex = "0.4.3"
 quote = { workspace = true }
-regex = "1"
 semver = "1.0.27"
 serde = { workspace = true }
 serde_json = { workspace = true }
