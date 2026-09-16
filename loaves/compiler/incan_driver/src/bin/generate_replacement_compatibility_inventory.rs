@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         workspace_root.join("workspaces/docs-site/docs/contributing/reference/replacement_compatibility_inventory.md");
     let json = workspace_root
         .join("workspaces/docs-site/docs/contributing/reference/replacement_compatibility_inventory.json");
-    incan::replacement_compatibility::write_replacement_compatibility_inventory(&markdown, &json)?;
+    incan_driver::replacement_compatibility::write_replacement_compatibility_inventory(&markdown, &json)?;
     Ok(())
 }
 
@@ -27,9 +27,8 @@ fn workspace_root() -> Result<PathBuf, String> {
     {
         return Ok(root);
     }
-    let manifest_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if manifest_root.join("Cargo.toml").is_file() && manifest_root.join("loaves/stdlib").is_dir() {
-        return Ok(manifest_root);
+    if let Some(root) = workspace_ancestor(&PathBuf::from(env!("CARGO_MANIFEST_DIR"))) {
+        return Ok(root);
     }
     Err("could not locate an Incan workspace with checked std.features source".to_string())
 }
