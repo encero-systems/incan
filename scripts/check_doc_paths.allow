@@ -12,7 +12,7 @@
 .agents/skills/review-rust-prose/SKILL.md	src/bar.rs	Illustrative example filename in skill template or example project
 .agents/skills/review-rust-prose/SKILL.md	src/foo.rs	Illustrative example filename in skill template or example project
 .agents/skills/test/SKILL.md	loaves/compiler/incan_emit/tests/codegen_snapshots/my_feature.incn	Illustrative example filename in skill template or example project
-.agents/skills/test/SKILL.md	tests/fixtures/invalid/my_error_case.incn	Illustrative example filename in skill template or example project
+.agents/skills/test/SKILL.md	loaves/compiler/incan_test_support/fixtures/invalid/my_error_case.incn	Illustrative example filename in skill template or example project
 .agents/skills/test/SKILL.md	loaves/compiler/incan_emit/tests/snapshots/codegen_snapshot_tests__my_feature.snap	Illustrative example filename in skill template or example project
 README.md	src/main.incn	Illustrative example filename in skill template or example project
 workspaces/docs-site/docs/contributing/how-to/authoring_vocab_crates.md	src/lib.incn	Illustrative example filename in skill template or example project
@@ -21,3 +21,4 @@ workspaces/docs-site/docs/contributing/how-to/authoring_vocab_crates.md	src/lib.
 *	src/	A package- or project-relative source directory named beside its own README or in an example project layout, not a repository path
 workspaces/docs-site/docs/contributing/explanation/generated_rust_quality.md	src/**	The generated project's source tree inside a package artifact
 workspaces/docs-site/docs/contributing/how-to/authoring_vocab_crates.md	src/lib.rs	The example vocab companion crate's library root
+*	tests/	A component's own test directory in its README's layout tree (every stdlib component has one); the checkout root has no `tests/` since the shared fixtures moved to the harness crate (#1478)

@@ -36,7 +36,7 @@ fn nested_empty_first_list_runs_without_a_caller_annotation_issue1471() -> Resul
     write_minimal_project(tmp.path(), "nested_empty_first_list", "")?;
     fs::write(
         tmp.path().join("src/main.incn"),
-        fs::read_to_string(incan_test_support::repo_root().join("tests/fixtures/nested_list_loop_1471.incn"))?,
+        fs::read_to_string(incan_test_support::fixture("nested_list_loop_1471.incn"))?,
     )?;
     let bake = run_explicit_oven_bake(tmp.path())?;
     assert_success(&bake, "prepare nested empty-first list fixture");

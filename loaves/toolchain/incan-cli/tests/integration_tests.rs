@@ -25,11 +25,11 @@ use incan_frontend::module::{ExportedTypeLikeDoc, ExportedTypeLikeKind, exported
 use incan_frontend::{lexer, parser, typechecker};
 
 /// Shared with `src/frontend/module.rs` tests (`exported_type_like_docs`) for GitHub #247.
-/// The block-docstring fixture the checkout shares between roots, read from `tests/fixtures/` at test time.
+/// The block-docstring fixture the checkout shares between roots, read from the harness crate's fixtures at test time.
 fn block_docstring_public_type_like() -> Result<String, Box<dyn std::error::Error>> {
-    Ok(fs::read_to_string(
-        repo_root().join("tests/fixtures/block_docstring_public_type_like.incn"),
-    )?)
+    Ok(fs::read_to_string(incan_test_support::fixture(
+        "block_docstring_public_type_like.incn",
+    ))?)
 }
 
 /// Helper to run full pipeline on a source file
@@ -1713,7 +1713,7 @@ def main() -> None:
 /// Test that all valid fixtures compile successfully
 #[test]
 fn test_valid_fixtures() {
-    let fixtures_dir = repo_root().join("tests/fixtures/valid");
+    let fixtures_dir = incan_test_support::fixture("valid");
     if !fixtures_dir.exists() {
         return; // Skip if fixtures not present
     }
@@ -1743,7 +1743,7 @@ fn test_valid_fixtures() {
 /// Test that invalid fixtures produce errors
 #[test]
 fn test_invalid_fixtures() {
-    let fixtures_dir = repo_root().join("tests/fixtures/invalid");
+    let fixtures_dir = incan_test_support::fixture("invalid");
     if !fixtures_dir.exists() {
         return; // Skip if fixtures not present
     }
@@ -5159,7 +5159,7 @@ def main() -> None:
     fn test_std_encoding_hex_compile_and_run_strict_surface() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
             .arg("run")
-            .arg(repo_root().join("tests/fixtures/valid/std_encoding_hex_surface.incn"))
+            .arg(incan_test_support::fixture("valid/std_encoding_hex_surface.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
         assert!(
@@ -7929,7 +7929,7 @@ async def main() -> None:
     fn test_run_repro_model_traits() {
         let Ok(output) = incan_command()
             .arg("run")
-            .arg(repo_root().join("tests/fixtures/repro_model_traits.incn"))
+            .arg(incan_test_support::fixture("repro_model_traits.incn"))
             // This should not require network access (workspace deps should already be available).
             .env("CARGO_NET_OFFLINE", "true")
             .output()
@@ -7957,7 +7957,7 @@ async def main() -> None:
     fn test_run_field_info_reflection() {
         let Ok(output) = incan_command()
             .arg("run")
-            .arg(repo_root().join("tests/fixtures/field_info_reflection.incn"))
+            .arg(incan_test_support::fixture("field_info_reflection.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()
         else {
@@ -8040,7 +8040,7 @@ async def main() -> None:
     fn test_run_rfc023_stdlib_behavior_parity() {
         let Ok(output) = incan_command()
             .arg("run")
-            .arg(repo_root().join("tests/fixtures/rfc023_stdlib_behavior_parity.incn"))
+            .arg(incan_test_support::fixture("rfc023_stdlib_behavior_parity.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()
         else {
@@ -8091,7 +8091,7 @@ async def main() -> None:
     fn test_run_rfc030_std_collections_behavior() {
         let Ok(output) = incan_command()
             .arg("run")
-            .arg(repo_root().join("tests/fixtures/rfc030_std_collections_behavior.incn"))
+            .arg(incan_test_support::fixture("rfc030_std_collections_behavior.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()
         else {
@@ -8253,7 +8253,7 @@ async def main() -> None:
     fn test_run_rfc088_iterator_sum_float_and_newtype_matrix() {
         let Ok(output) = incan_command()
             .arg("run")
-            .arg(repo_root().join("tests/fixtures/rfc088_iterator_sum_runtime.incn"))
+            .arg(incan_test_support::fixture("rfc088_iterator_sum_runtime.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()
         else {
@@ -8277,7 +8277,7 @@ async def main() -> None:
     fn test_run_rfc064_std_encoding_behavior() {
         let Ok(output) = incan_command()
             .arg("run")
-            .arg(repo_root().join("tests/fixtures/rfc064_std_encoding_behavior.incn"))
+            .arg(incan_test_support::fixture("rfc064_std_encoding_behavior.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()
         else {
@@ -8309,7 +8309,7 @@ async def main() -> None:
 
         let output = incan_command()
             .arg("test")
-            .arg(repo_root().join("tests/fixtures/valid/test_std_uuid_surface.incn"))
+            .arg(incan_test_support::fixture("valid/test_std_uuid_surface.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
 
@@ -8331,7 +8331,7 @@ async def main() -> None:
     fn test_run_std_ordinal_map_surface() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
             .arg("run")
-            .arg(repo_root().join("tests/fixtures/valid/std_ordinal_map_surface.incn"))
+            .arg(incan_test_support::fixture("valid/std_ordinal_map_surface.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()
             .map_err(|error| format!("failed to run std.ordinal_map fixture: {error}"))?;
@@ -8347,7 +8347,7 @@ async def main() -> None:
 
         // Normal Oven output is project-local. This fixture is its own project root, so do not accidentally assert
         // the old Cargo-era process-working-directory target path when the direct-rustc consumer is correct.
-        let generated_project = repo_root().join("tests/fixtures/valid/target/incan/std_ordinal_map_surface");
+        let generated_project = incan_test_support::fixture("valid/target/incan/std_ordinal_map_surface");
         let generated_main = fs::read_to_string(generated_project.join("src/main.rs"))
             .map_err(|error| format!("failed to read generated std.ordinal_map consumer: {error}"))?;
         assert!(
@@ -8393,7 +8393,7 @@ async def main() -> None:
     fn assert_std_regex_surface_from_sealed_sdk_inventory() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let source = tmp.path().join("std_regex_surface.incn");
-        fs::copy(repo_root().join("tests/fixtures/valid/std_regex_surface.incn"), &source)?;
+        fs::copy(incan_test_support::fixture("valid/std_regex_surface.incn"), &source)?;
         let generated_project = tmp.path().join("target/incan/std_regex_surface");
         let oven_home = tmp.path().join("oven-home");
         let inventory = std::env::var_os("INCAN_SDK_INVENTORY")
@@ -8555,7 +8555,7 @@ async def main() -> None:
     fn explicit_stale_sdk_inventory_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let source = tmp.path().join("std_regex_surface.incn");
-        fs::copy(repo_root().join("tests/fixtures/valid/std_regex_surface.incn"), &source)?;
+        fs::copy(incan_test_support::fixture("valid/std_regex_surface.incn"), &source)?;
         let stale_inventory = tmp.path().join("stale-sdk-inventory.json");
         fs::write(
             &stale_inventory,
@@ -8708,7 +8708,7 @@ def main() -> None:
     fn test_run_u128_modulo_floor_div() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
             .arg("run")
-            .arg(repo_root().join("tests/fixtures/valid/u128_modulo_floor_div.incn"))
+            .arg(incan_test_support::fixture("valid/u128_modulo_floor_div.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
 
@@ -8726,7 +8726,7 @@ def main() -> None:
     fn test_run_rfc030_field_overlay_reflection() {
         let Ok(output) = incan_command()
             .arg("run")
-            .arg(repo_root().join("tests/fixtures/rfc030_field_overlay_reflection.incn"))
+            .arg(incan_test_support::fixture("rfc030_field_overlay_reflection.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()
         else {
@@ -9351,7 +9351,7 @@ def main() -> None:
 
         let output = incan_command()
             .arg("run")
-            .arg(repo_root().join("tests/fixtures/valid/std_datetime_surface.incn"))
+            .arg(incan_test_support::fixture("valid/std_datetime_surface.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
 
@@ -9436,7 +9436,7 @@ def main() -> None:
 
         let output = incan_command()
             .arg("run")
-            .arg(repo_root().join("tests/fixtures/valid/std_compression_surface.incn"))
+            .arg(incan_test_support::fixture("valid/std_compression_surface.incn"))
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
 
@@ -12423,19 +12423,19 @@ def database() -> Database:
 fn std_toml_manifest_and_lock_roundtrip_through_compiled_sdk() -> Result<(), Box<dyn std::error::Error>> {
     for (source, expected_stdout, uses_facade) in [
         (
-            fs::read_to_string(repo_root().join("tests/fixtures/valid/std_toml_typed_lookup.incn"))?
+            fs::read_to_string(incan_test_support::fixture("valid/std_toml_typed_lookup.incn"))?
                 .replace("from std.toml import", "from codec import"),
             "TOML typed lookup, strict kinds, paths, and locations passed",
             true,
         ),
         (
-            fs::read_to_string(repo_root().join("tests/fixtures/valid/std_toml_surface.incn"))?
+            fs::read_to_string(incan_test_support::fixture("valid/std_toml_surface.incn"))?
                 .replace("from std.toml import", "from codec import"),
             "TOML manifest, lock, datetime, and located errors passed",
             true,
         ),
         (
-            fs::read_to_string(repo_root().join("tests/fixtures/valid/std_toml_module_import.incn"))?.to_owned(),
+            fs::read_to_string(incan_test_support::fixture("valid/std_toml_module_import.incn"))?.to_owned(),
             "TOML root module-only roundtrip passed",
             false,
         ),
@@ -12509,7 +12509,7 @@ fn imported_rust_generic_bounds_remain_native_obligations() -> Result<(), Box<dy
     )?;
     fs::write(
         source_dir.join("bounds.incn"),
-        fs::read_to_string(repo_root().join("tests/fixtures/valid/rust_generic_bounds.incn"))?,
+        fs::read_to_string(incan_test_support::fixture("valid/rust_generic_bounds.incn"))?,
     )?;
     let main = source_dir.join("main.incn");
     fs::write(

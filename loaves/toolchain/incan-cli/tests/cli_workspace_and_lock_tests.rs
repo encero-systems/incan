@@ -573,7 +573,6 @@ def test_workspace_rust_dependency_is_available() -> None:
 
     let source_root = support::repo_root();
     let stdlib = source_root.join("loaves/stdlib");
-    let toolchain_crates = source_root.join("crates");
     let incan_home = root.path().join(".incan-home");
     let provider_store = support::cold_sdk_provider_store_or(&incan_home.join("cache/providers/sdk-v2"));
     let generated_target = support::generated_cargo_target_dir_or(&incan_home.join("generated-target"));
@@ -588,7 +587,6 @@ def test_workspace_rust_dependency_is_available() -> None:
             .env("INCAN_SOURCE_ROOT", &source_root)
             .env("INCAN_STDLIB", &stdlib)
             .env("INCAN_STDLIB_DIR", &stdlib)
-            .env("INCAN_TOOLCHAIN_CRATES_DIR", &toolchain_crates)
             .env("INCAN_HOME", &incan_home)
             .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", &provider_store)
             .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_target);

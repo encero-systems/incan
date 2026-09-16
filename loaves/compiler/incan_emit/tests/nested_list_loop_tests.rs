@@ -114,8 +114,7 @@ fn nested_list_all_empty_leaves_remain_unknown() -> TestResult {
 /// not erase the later string element type -- so the assertion follows it rather than pinning the older spelling.
 #[test]
 fn nested_list_loop_emits_owned_strings_without_caller_annotation() -> TestResult {
-    let source =
-        std::fs::read_to_string(incan_test_support::repo_root().join("tests/fixtures/nested_list_loop_1471.incn"))?;
+    let source = std::fs::read_to_string(incan_test_support::fixture("nested_list_loop_1471.incn"))?;
     let tokens = lexer::lex(&source).map_err(|errors| format!("{errors:?}"))?;
     let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let rust = IrCodegen::new().try_generate(&program)?;

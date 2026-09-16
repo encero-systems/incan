@@ -32,7 +32,7 @@ You are a test orchestrator for the Incan compiler. When invoked, you analyze th
 | `loaves/stdlib/*/rust/` | `cargo test -p incan_emit --test codegen_snapshot_tests` and `cargo test -p incan-cli --test integration_tests` |
 | `loaves/stdlib/derive/incan_derive/` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
 | `loaves/compiler/incan_emit/tests/codegen_snapshots/*.incn` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
-| `tests/fixtures/` | `cargo test -p incan-cli --test integration_tests` |
+| `loaves/compiler/incan_test_support/fixtures/` | `cargo test -p incan-cli --test integration_tests` |
 | `loaves/toolchain/incan-lsp/src/` | `cargo test -p incan-lsp` (unit tests in the backend and semantic-token modules) and `cargo test -p incan-lsp --test rfc081_embedded_conformance` |
 
 ## Snapshot handling
@@ -73,7 +73,7 @@ Flag (as suggestions, not failures) when:
 - New parser syntax has no parser unit test
 - New typechecker validation has no valid + invalid test case
 - New codegen path has no snapshot test
-- New diagnostic has no fixture in `tests/fixtures/invalid/`
+- New diagnostic has no fixture in `loaves/compiler/incan_test_support/fixtures/invalid/`
 - Changed CLI behavior has no integration test
 
 ## Full sweep mode

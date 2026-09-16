@@ -40,7 +40,6 @@ runs:
           INCAN_SOURCE_ROOT="$GITHUB_WORKSPACE" \
           INCAN_STDLIB="$GITHUB_WORKSPACE/loaves/stdlib" \
           INCAN_STDLIB_DIR="$GITHUB_WORKSPACE/loaves/stdlib" \
-          INCAN_TOOLCHAIN_CRATES_DIR="$GITHUB_WORKSPACE/crates" \
           INCAN_SDK_INVENTORY="$provider_root/sdk-inventory.json" \
           INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_path" \
           INCAN_INTERNAL_SDK_PROVIDER_STORE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_store" \

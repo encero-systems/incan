@@ -12,6 +12,9 @@ use std::path::PathBuf;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use std::process::Command;
 
+// The harness alias serves the aarch64-macOS-only bootstrap case below; on other hosts it would be an unused import
+// that the Linux lint lane rejects.
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use incan_test_support as support;
 
 use incan_test_support::cli_project;

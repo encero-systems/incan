@@ -31,6 +31,19 @@ pub fn repo_root() -> PathBuf {
         .unwrap_or_else(|| panic!("integration test package has no ancestor Incan checkout"))
 }
 
+/// The fixtures several rings' roots share: Incan programs, invalid inputs, boundary-parity and Oven bake projects.
+///
+/// They live with this crate because every root already links it; a fixture only one ring uses lives beside that
+/// ring's tests instead.
+pub fn fixtures_dir() -> PathBuf {
+    repo_root().join("loaves/compiler/incan_test_support/fixtures")
+}
+
+/// One shared fixture by its path inside [`fixtures_dir`].
+pub fn fixture(relative: &str) -> PathBuf {
+    fixtures_dir().join(relative)
+}
+
 /// Start the compiler in its checkout unless a test explicitly selects a temporary project directory.
 pub fn repo_command() -> Command {
     let mut command = Command::new(incan_debug_binary());
