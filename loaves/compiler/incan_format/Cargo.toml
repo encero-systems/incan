@@ -16,3 +16,8 @@ incan_semantics_core = { workspace = true }
 incan_syntax = { workspace = true }
 incan_vocab = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+# The formatting properties walk the committed examples through the harness's checkout anchor.
+incan_test_support = { workspace = true }
+proptest = "1"

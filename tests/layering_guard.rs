@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-mod support;
+use incan_test_support as support;
 use support::repo_root;
 
 use incan_core::lang::stdlib::{self, facets};

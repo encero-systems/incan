@@ -5561,9 +5561,9 @@ mod tests {
         assert!(OvenCompilerSuiteTargetCapabilities::for_target("incan", "lib", "src/lib.rs").generated_rust_closure);
         assert!(
             OvenCompilerSuiteTargetCapabilities::for_target(
-                "incan",
+                "incan_driver",
                 "test",
-                "tests/generated_rust_native_consumer_tests.rs"
+                "loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs"
             )
             .generated_rust_closure
         );
@@ -5577,9 +5577,9 @@ mod tests {
         );
         assert!(
             OvenCompilerSuiteTargetCapabilities::for_target(
-                "incan",
+                "incan_driver",
                 "test",
-                "tests/generated_rust_callability_artifact_tests.rs"
+                "loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs"
             )
             .cargo_fixture
         );
@@ -5593,17 +5593,17 @@ mod tests {
         );
         assert!(
             !OvenCompilerSuiteTargetCapabilities::for_target(
-                "incan",
+                "incan_driver",
                 "test",
-                "tests/generated_rust_native_consumer_tests.rs"
+                "loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs"
             )
             .explicit_bake_cargo
         );
         assert!(
             !OvenCompilerSuiteTargetCapabilities::for_target(
-                "incan",
+                "incan_driver",
                 "test",
-                "tests/generated_rust_native_consumer_tests.rs"
+                "loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs"
             )
             .cargo_fixture
         );

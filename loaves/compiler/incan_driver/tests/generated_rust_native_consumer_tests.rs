@@ -1,0 +1,367 @@
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+use incan_test_support as support;
+use oven_model::compiler_suite_env;
+
+fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
+    let source_root = support::repo_root();
+    let stdlib_root = source_root.join("loaves/stdlib");
+    let stored_suite = std::env::var_os(compiler_suite_env::OVEN_COMPILER_SUITE_CAPABILITY_ENV).is_some();
+    let mut command = support::repo_command();
+    command
+        .args(args)
+        .current_dir(current_dir)
+        .env("CARGO_NET_OFFLINE", "true")
+        .env("INCAN_NO_BANNER", "1")
+        .env(
+            "INCAN_GENERATED_CARGO_TARGET_DIR",
+            support::generated_cargo_target_dir(),
+        )
+        .env("INCAN_SOURCE_ROOT", &source_root)
+        .env("INCAN_STDLIB", &stdlib_root)
+        .env("INCAN_STDLIB_DIR", &stdlib_root)
+        .env("INCAN_TOOLCHAIN_CRATES_DIR", source_root.join("crates"));
+    if stored_suite {
+        // The stored compiler-suite runner supplies the direct-rustc closure below. Keep this producer step limited
+        // to checked/generated library source so the test body never asks its normal-command child to run Cargo.
+        command.env("INCAN_INTERNAL_LIBRARY_ARTIFACT_ONLY", "1");
+    } else {
+        command.env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store());
+    }
+    Ok(command.output()?)
+}
+
+/// The compiler-suite runner injects this exact direct-rustc closure only while executing its Cargo-free batch.
+///
+/// A normal `cargo test` keeps the pre-existing Cargo consumer branch below. That preserves the integration test's
+/// broad compatibility coverage while ensuring the Oven-scheduled form neither launches Cargo nor reads a Cargo
+/// target directory.
+struct CompilerSuiteRustcInputs {
+    rustc: PathBuf,
+    /// The mandatory facet's artifact; every facet reaches rustc through `externs`, this proves the closure is one.
+    #[allow(dead_code)]
+    stdlib: PathBuf,
+    sdk_inventory: PathBuf,
+    dependency_paths: Vec<PathBuf>,
+    externs: BTreeMap<String, PathBuf>,
+}
+
+fn compiler_suite_rustc_inputs() -> Result<Option<CompilerSuiteRustcInputs>, Box<dyn std::error::Error>> {
+    let Some(capability) = compiler_suite_env::OvenCompilerSuiteCapability::from_environment(
+        compiler_suite_env::OVEN_COMPILER_SUITE_CAPABILITY_ENV,
+    )?
+    else {
+        return Ok(None);
+    };
+    // Every facet the closure carries arrives as its own extern; the mandatory one must be present.
+    let stdlib = capability
+        .externs
+        .get("incan_std_core")
+        .cloned()
+        .ok_or("stored compiler-suite capability omitted incan_std_core")?;
+    let sdk_inventory = std::env::var_os("INCAN_SDK_INVENTORY")
+        .map(PathBuf::from)
+        .ok_or("stored compiler-suite capability omitted the SDK inventory")?;
+    Ok(Some(CompilerSuiteRustcInputs {
+        rustc: capability.rustc,
+        stdlib,
+        sdk_inventory,
+        dependency_paths: capability.dependency_search_paths,
+        externs: capability.externs,
+    }))
+}
+
+fn suite_rustc_command(inputs: &CompilerSuiteRustcInputs, current_dir: &Path) -> Command {
+    let mut command = Command::new(&inputs.rustc);
+    command.current_dir(current_dir);
+    for path in &inputs.dependency_paths {
+        command.arg("-L").arg(format!("dependency={}", path.display()));
+    }
+    for (crate_name, path) in &inputs.externs {
+        command.arg("--extern").arg(format!("{crate_name}={}", path.display()));
+    }
+    command
+}
+
+fn direct_oven_native_consumer_test(
+    producer: &Path,
+    consumer: &Path,
+    forge: &Path,
+    output_root: &Path,
+    inputs: &CompilerSuiteRustcInputs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    fs::create_dir_all(output_root)?;
+    let sdk_components = inputs
+        .sdk_inventory
+        .parent()
+        .ok_or("stored SDK inventory must have a provider root")?
+        .join("components");
+    let stdlib_core_source = sdk_components.join("stdlib-core/src/lib.rs");
+    assert!(
+        stdlib_core_source.is_file(),
+        "stored compiler-suite SDK inventory lacks stdlib-core source at {}",
+        stdlib_core_source.display()
+    );
+    let stdlib_core_library = output_root.join("libincan_stdlib_core.rlib");
+    let stdlib_core_output = suite_rustc_command(inputs, &sdk_components)
+        .args([
+            "--edition=2021",
+            "--crate-name",
+            "incan_stdlib_core",
+            "--crate-type",
+            "lib",
+        ])
+        .arg(&stdlib_core_source)
+        .arg("-o")
+        .arg(&stdlib_core_library)
+        .output()?;
+    assert_success(&stdlib_core_output, "direct rustc sealed stdlib-core provider library");
+
+    let producer_library = output_root.join("libnative_consumer_core.rlib");
+    let mut producer_command = suite_rustc_command(inputs, producer);
+    // This fixture deliberately compiles the generated Cargo-shaped source without starting Cargo. Supply the three
+    // package facts Cargo would otherwise inject, from the fixture's declared project metadata, to preserve the
+    // generated stdlib-version assertion under direct rustc.
+    producer_command
+        .env("CARGO_MANIFEST_DIR", producer.join("target/lib"))
+        .env("CARGO_PKG_NAME", "native_consumer_core")
+        .env("CARGO_PKG_VERSION", "0.1.0")
+        .arg("-L")
+        .arg(format!("dependency={}", output_root.display()));
+    let producer_output = producer_command
+        .args([
+            "--edition=2024",
+            "--crate-name",
+            "native_consumer_core",
+            "--crate-type",
+            "lib",
+            "--extern",
+        ])
+        .arg(format!("incan_stdlib_core={}", stdlib_core_library.display()))
+        .arg(producer.join("target/lib/src/lib.rs"))
+        .arg("-o")
+        .arg(&producer_library)
+        .output()?;
+    assert_success(&producer_output, "direct rustc generated producer library");
+
+    let consumer_binary = output_root.join("native_consumer_host_tests");
+    let consumer_output = suite_rustc_command(inputs, consumer)
+        .arg("-L")
+        .arg(format!("dependency={}", output_root.display()))
+        .args([
+            "--edition=2021",
+            "--crate-name",
+            "native_consumer_host",
+            "--test",
+            "--extern",
+        ])
+        .arg(format!("native_consumer_core={}", producer_library.display()))
+        .arg("--extern")
+        .arg(format!("incan_stdlib_core={}", stdlib_core_library.display()))
+        .arg(consumer.join("src/lib.rs"))
+        .arg("-o")
+        .arg(&consumer_binary)
+        .output()?;
+    assert_success(&consumer_output, "direct rustc native consumer test");
+    let consumer_run = Command::new(&consumer_binary).current_dir(consumer).output()?;
+    assert_success(&consumer_run, "direct rustc native consumer test binary");
+
+    let forge_output = suite_rustc_command(inputs, forge)
+        .arg("-L")
+        .arg(format!("dependency={}", output_root.display()))
+        .args([
+            "--edition=2021",
+            "--crate-name",
+            "native_constructor_forge",
+            "--crate-type",
+            "lib",
+        ])
+        .args(["--cfg", r#"feature="admission""#])
+        .args(["--cfg", r#"feature="defaulted""#])
+        .args(["--cfg", r#"feature="mixed""#])
+        .arg("--extern")
+        .arg(format!("native_consumer_core={}", producer_library.display()))
+        .arg("--extern")
+        .arg(format!("incan_stdlib_core={}", stdlib_core_library.display()))
+        .arg(forge.join("src/lib.rs"))
+        .arg("-o")
+        .arg(output_root.join("libnative_constructor_forge.rlib"))
+        .output()?;
+    assert!(
+        !forge_output.status.success(),
+        "native Rust forge unexpectedly compiled private model constructor inputs.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&forge_output.stdout),
+        String::from_utf8_lossy(&forge_output.stderr)
+    );
+    let forge_diagnostics = String::from_utf8_lossy(&forge_output.stderr);
+    for nominal in ["Admission", "Defaulted", "Mixed"] {
+        assert!(
+            forge_diagnostics.contains(nominal),
+            "native Rust forge failed for an unrelated reason; expected a constructor diagnostic for {nominal}:\n{forge_diagnostics}"
+        );
+    }
+    assert!(
+        forge_diagnostics.contains("expected function, tuple struct or tuple variant")
+            || forge_diagnostics.contains("takes 1 argument but 2 arguments were supplied"),
+        "native Rust forge did not fail at the sealed constructor boundary:\n{forge_diagnostics}"
+    );
+    Ok(())
+}
+
+fn run_cargo(current_dir: &Path, args: &[&str], target_dir: &Path) -> Result<Output, Box<dyn std::error::Error>> {
+    Ok(Command::new("cargo")
+        .args(args)
+        .current_dir(current_dir)
+        .env("CARGO_NET_OFFLINE", "true")
+        .env("CARGO_TARGET_DIR", target_dir)
+        .output()?)
+}
+
+fn assert_success(output: &Output, context: &str) {
+    assert!(
+        output.status.success(),
+        "{context} failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn write_fixture_file(root: &Path, relative_path: &str, contents: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let path = root.join(relative_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, contents)?;
+    Ok(())
+}
+
+/// Materialize the generated-library producer fixture, including sealed-model coverage.
+fn write_producer(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let producer = root.join("native_items");
+    write_fixture_file(
+        &producer,
+        "loaf.toml",
+        include_str!("fixtures/generated_rust_native_consumer/producer/loaf.toml"),
+    )?;
+    write_fixture_file(
+        &producer,
+        "src/lib.incn",
+        include_str!("fixtures/generated_rust_native_consumer/producer/src/lib.incn"),
+    )?;
+    write_fixture_file(
+        &producer,
+        "src/counters.incn",
+        include_str!("fixtures/generated_rust_native_consumer/producer/src/counters.incn"),
+    )?;
+    write_fixture_file(
+        &producer,
+        "src/admission.incn",
+        include_str!("fixtures/generated_rust_native_consumer/producer/src/admission.incn"),
+    )?;
+    Ok(producer)
+}
+
+fn write_consumer(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let consumer = root.join("native_consumer");
+    write_fixture_file(
+        &consumer,
+        "Cargo.toml",
+        include_str!("fixtures/generated_rust_native_consumer/consumer/Cargo.toml"),
+    )?;
+    write_fixture_file(
+        &consumer,
+        "src/lib.rs",
+        include_str!("fixtures/generated_rust_native_consumer/consumer/src/lib.rs"),
+    )?;
+    Ok(consumer)
+}
+
+/// Materialize the native Rust crate that must not forge private model construction.
+fn write_forge(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let forge = root.join("forge");
+    write_fixture_file(
+        &forge,
+        "Cargo.toml",
+        include_str!("fixtures/generated_rust_native_consumer/forge/Cargo.toml"),
+    )?;
+    write_fixture_file(
+        &forge,
+        "src/lib.rs",
+        include_str!("fixtures/generated_rust_native_consumer/forge/src/lib.rs"),
+    )?;
+    Ok(forge)
+}
+
+#[test]
+/// Verify generated-library Rust retains public capabilities without exposing private constructors.
+fn native_rust_consumer_can_call_generated_public_items() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let producer = write_producer(tmp.path())?;
+
+    let build_output = run_incan(&producer, &["build", "--lib"])?;
+    assert_success(&build_output, "incan build --lib native consumer producer");
+    let build_diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+    assert!(
+        !build_diagnostics.contains("private_interfaces"),
+        "generated producer leaked a private type through a public Rust interface:\n{build_diagnostics}"
+    );
+
+    let artifact_root = producer.join("target/lib");
+    assert!(
+        artifact_root.join("Cargo.toml").is_file(),
+        "expected generated Rust library Cargo.toml at {}",
+        artifact_root.display()
+    );
+    assert!(
+        artifact_root.join("src/lib.rs").is_file(),
+        "expected generated Rust library root at {}",
+        artifact_root.join("src/lib.rs").display()
+    );
+
+    let consumer = write_consumer(tmp.path())?;
+    let forge = write_forge(tmp.path())?;
+    if let Some(inputs) = compiler_suite_rustc_inputs()? {
+        direct_oven_native_consumer_test(&producer, &consumer, &forge, &tmp.path().join("native-direct"), &inputs)?;
+        return Ok(());
+    }
+
+    let cargo_test = run_cargo(
+        &consumer,
+        &["test", "--offline"],
+        &tmp.path().join("native-cargo-target"),
+    )?;
+    assert_success(&cargo_test, "native Rust cargo test against generated library");
+    let forge_check = run_cargo(
+        &forge,
+        &["check", "--offline", "--all-features"],
+        &tmp.path().join("native-cargo-target"),
+    )?;
+    assert!(
+        !forge_check.status.success(),
+        "native Rust forge unexpectedly compiled private model constructor inputs.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&forge_check.stdout),
+        String::from_utf8_lossy(&forge_check.stderr)
+    );
+    let forge_diagnostics = String::from_utf8_lossy(&forge_check.stderr);
+    for nominal in ["Admission", "Defaulted", "Mixed"] {
+        assert!(
+            forge_diagnostics.contains(nominal),
+            "native Rust forge failed for an unrelated reason; expected a constructor diagnostic for {nominal}:\n\
+             {forge_diagnostics}"
+        );
+    }
+    assert!(
+        forge_diagnostics.contains("expected function, tuple struct or tuple variant")
+            || forge_diagnostics.contains("takes 1 argument but 2 arguments were supplied"),
+        "native Rust forge did not fail at the sealed constructor boundary:\n{forge_diagnostics}"
+    );
+
+    Ok(())
+}

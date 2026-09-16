@@ -1,16 +1,11 @@
 //! RFC 089 `std.environ` accessors driven end to end through `incan run`.
 //!
 //! One of nine roots split out of the former `tests/cli_integration.rs`. The shared command surface lives in
-//! `tests/support/cli_project.rs`.
+//! `incan_test_support::cli_project`.
 
 use std::fs;
 
-mod support;
-
-#[path = "support/cli_project.rs"]
-mod cli_project;
-
-use cli_project::*;
+use incan_test_support::cli_project::*;
 
 /// One normal command covers the passing `std.environ` access matrix.
 ///

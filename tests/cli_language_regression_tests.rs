@@ -1,16 +1,11 @@
 //! Language and codegen regressions reproduced through `incan build`, `run`, and `test`.
 //!
 //! One of nine roots split out of the former `tests/cli_integration.rs`. The shared command surface lives in
-//! `tests/support/cli_project.rs`.
+//! `incan_test_support::cli_project`.
 
 use std::fs;
 
-mod support;
-
-#[path = "support/cli_project.rs"]
-mod cli_project;
-
-use cli_project::*;
+use incan_test_support::cli_project::*;
 
 #[test]
 fn run_synchronous_result_main_issue843() -> Result<(), Box<dyn std::error::Error>> {

@@ -23,8 +23,7 @@ const BORROWED_STRING_SOURCE: &str = r#"def observe() -> str:
     return encoded + "|" + source
 "#;
 
-const SCALAR_MATRIX_SOURCE: &str =
-    include_str!("../../../../../../tests/fixtures/replacement/json_stringify_scalars.incn");
+const SCALAR_MATRIX_SOURCE: &str = include_str!("../../../tests/fixtures/replacement/json_stringify_scalars.incn");
 
 const SCALAR_MATRIX_EXPECTED: &str =
     r#"7|-42|9223372036854775807|-9223372036854775807|true|false|"quote:\" slash:\\ line:\n tab:\t café 😀"|null"#;

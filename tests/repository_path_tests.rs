@@ -1,6 +1,6 @@
 //! Checkout and subprocess anchors remain explicit when the integration-test runner has another working directory.
 
-mod support;
+use incan_test_support as support;
 
 /// Source discovery always names the checkout that built this test root.
 #[test]
@@ -8,7 +8,7 @@ fn checkout_sources_are_absolute_and_present() {
     let root = support::repo_root();
     assert!(root.is_absolute());
     assert!(root.join("examples/intermediate/collections.incn").is_file());
-    assert!(root.join("tests/codegen_snapshots").is_dir());
+    assert!(root.join("loaves/compiler/incan_emit/tests/codegen_snapshots").is_dir());
 }
 
 /// A default CLI subprocess uses the checkout, independently of the parent process directory.

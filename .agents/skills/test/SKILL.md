@@ -37,15 +37,15 @@ Did you change the typechecker?
   → Add a test in loaves/compiler/incan_frontend/src/typechecker/tests.rs
 
 Did you change lowering or emission (codegen output)?
-  → Add a .incn file in tests/codegen_snapshots/
-  → Add a test function in tests/codegen_snapshot_tests.rs
-  → Run: INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests
+  → Add a .incn file in loaves/compiler/incan_emit/tests/codegen_snapshots/
+  → Add a test function in loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs
+  → Run: INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests
 
 Did you change end-to-end behavior (CLI, build, multi-file)?
   → Add a test in tests/integration_tests.rs
 
 Did you change the formatter?
-  → Property tests in tests/property_tests.rs verify idempotency
+  → Property tests in loaves/compiler/incan_format/tests/property_tests.rs verify idempotency
   → Also add a codegen snapshot if formatting affects output
 
 Did you add a diagnostic?
@@ -112,14 +112,14 @@ Helpers available: `check_str(source)`, `assert_check_ok(source)`, `check_str_wi
 
 ### Codegen snapshot test pattern
 
-1. Create `tests/codegen_snapshots/my_feature.incn`:
+1. Create `loaves/compiler/incan_emit/tests/codegen_snapshots/my_feature.incn`:
 
 ```incan
 def example() -> str:
     return "hello"
 ```
 
-2. Add to `tests/codegen_snapshot_tests.rs`:
+2. Add to `loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs`:
 
 ```rust
 #[test]
@@ -133,12 +133,12 @@ fn test_my_feature_codegen() {
 3. Generate the snapshot:
 
 ```bash
-INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests -- test_my_feature_codegen
+INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests -- test_my_feature_codegen
 ```
 
-4. Review: `cargo insta review` or check `tests/snapshots/codegen_snapshot_tests__my_feature.snap`.
+4. Review: `cargo insta review` or check `loaves/compiler/incan_emit/tests/snapshots/codegen_snapshot_tests__my_feature.snap`.
 
-Helpers available: `load_test_file(name)` (loads from `tests/codegen_snapshots/<name>.incn`), `generate_rust(source)`, `generate_rust_with_widgets_manifest(source)` (for library import tests).
+Helpers available: `load_test_file(name)` (loads from `loaves/compiler/incan_emit/tests/codegen_snapshots/<name>.incn`), `generate_rust(source)`, `generate_rust_with_widgets_manifest(source)` (for library import tests).
 
 ### Integration test pattern
 
@@ -168,7 +168,7 @@ Helpers available: `compile_source(source)`, `compile_file(path)`.
 
 ```bash
 # Run a specific test
-cargo test --test codegen_snapshot_tests -- test_my_feature
+cargo test -p incan_emit --test codegen_snapshot_tests -- test_my_feature
 
 # Run all typechecker tests
 cargo test -p incan --lib typechecker::tests
@@ -190,7 +190,7 @@ make test
 make pre-commit
 
 # Update all snapshots if codegen changed
-INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests
+INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests
 ```
 
 ## Step 5: Verify

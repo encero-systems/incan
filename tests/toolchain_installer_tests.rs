@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
 
-mod support;
+use incan_test_support as support;
 use support::{incan_binary, repo_root};
 
 static PREPARE_ASSETS_LOCK: Mutex<()> = Mutex::new(());
@@ -1421,7 +1421,7 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
     );
     assert!(
         makefile.contains(
-            "CARGO_PROFILE_TEST_DEBUG=0 CARGO_BUILD_JOBS=2 cargo test --locked --features lsp --test oven_pr_regressions"
+            "CARGO_PROFILE_TEST_DEBUG=0 CARGO_BUILD_JOBS=2 cargo test --locked -p incan_oven_facet --test oven_pr_regressions"
         ),
         "the bounded PR containment lane must suppress unused test debug information"
     );

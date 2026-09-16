@@ -1,16 +1,15 @@
 //! Workspace scope and fan-out, canonical lock publication, and locked/frozen build refusals.
 //!
 //! One of nine roots split out of the former `tests/cli_integration.rs`. The shared command surface lives in
-//! `tests/support/cli_project.rs`.
+//! `incan_test_support::cli_project`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-mod support;
+use incan_test_support as support;
 
-#[path = "support/cli_project.rs"]
-mod cli_project;
+use incan_test_support::cli_project;
 
 use cli_project::*;
 

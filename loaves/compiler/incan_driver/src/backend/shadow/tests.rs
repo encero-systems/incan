@@ -2,8 +2,8 @@
 //!
 //! Everything here is about the *rules*: how a typed result report is recovered without consuming program streams, how
 //! failures are classified, when two observations may be compared at all, and what survives a comparison that could not
-//! run. The end-to-end proof that two real executions agree lives in `tests/shadow_comparison_tests.rs`, because only a
-//! real Oven build can supply it.
+//! run. The end-to-end proof that two real executions agree lives in
+//! `loaves/compiler/incan_driver/tests/shadow_comparison_tests.rs`, because only a real Oven build can supply it.
 
 use super::*;
 

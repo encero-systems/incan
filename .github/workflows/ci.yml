@@ -176,7 +176,7 @@ jobs:
           shared-key: incan-emitted-symbol-1.98.0
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Prove incan-v1 recovery after v0 mangling and demangling
-        run: cargo test --locked --test emitted_symbol_projection_tests -- --nocapture
+        run: cargo test --locked -p incan_driver --test emitted_symbol_projection_tests -- --nocapture
 
   oven-platform-smoke:
     name: Platform C ABI gate (${{ matrix.name }})

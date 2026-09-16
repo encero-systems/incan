@@ -14,7 +14,7 @@ When adding boundary coverage, extend these fixture families before adding anoth
 
 ## Public-boundary evidence and remaining fixture work
 
-The executable corpus registers its checked-boundary cases in the `PackageImportBoundary` evidence lane. `RustInteropBehavior` is a behavior category rather than a lane, and still has no registered case: #987's own plan seeds a source-only corpus before Rust-interop rows. The package rows below also exercise a materialized dependency after its source and authored manifest have been removed. Both share one probe in `tests/support/package_boundary_probe.rs`; the native package suite uses the same project-command helpers.
+The executable corpus registers its checked-boundary cases in the `PackageImportBoundary` evidence lane. `RustInteropBehavior` is a behavior category rather than a lane, and still has no registered case: #987's own plan seeds a source-only corpus before Rust-interop rows. The package rows below also exercise a materialized dependency after its source and authored manifest have been removed. Both share one probe in `loaves/compiler/incan_test_support/src/package_boundary_probe.rs`; the native package suite uses the same project-command helpers.
 
 | Stable corpus case | Executed behavior |
 | --- | --- |
@@ -31,7 +31,7 @@ The existing regressions below are legacy-path evidence. Several build generated
 | --- | --- | --- |
 | `boundary_parity_preserves_absolute_crate_public_types_issue882` in `tests/rfc031_pub_import_integration_tests.rs` | A local `crate` import survives direct build, library re-export, and source test-batch compilation. | One replacement-selected case that executes both a local-module import and a package-consumer import, then compares their source-observable result with the reference route. |
 | `build_lib_artifacts_and_consumer_alias_typecheck` and the `check_reports_*pub_*` cases in `tests/rfc031_pub_import_integration_tests.rs` | Legacy `.incnlib` manifest lookup, `pub::` import acceptance, and current missing-library/export/artifact diagnostics. | A package-consumer case with checked public metadata and a public diagnostic/source-map record for an unavailable package, export, or version/profile incompatibility. |
-| `generated_library_and_pub_dependency_consumer_artifacts_match_baseline` in `tests/generated_rust_artifact_tests.rs` and `examples/advanced/library_package/` | The current producer/consumer artifact shape and a normal package-consumer flow. | A receipt-bound package fixture that proves the consumer used the selected caller/package contract, not generated project layout or executor-local import lookup. |
+| `generated_library_and_pub_dependency_consumer_artifacts_match_baseline` in `loaves/compiler/incan_driver/tests/generated_rust_artifact_tests.rs` and `examples/advanced/library_package/` | The current producer/consumer artifact shape and a normal package-consumer flow. | A receipt-bound package fixture that proves the consumer used the selected caller/package contract, not generated project layout or executor-local import lookup. |
 
 ### Remaining packet 2 coverage — [#1261 facade/re-export and checked public metadata](https://github.com/encero-systems/incan/issues/1261)
 
@@ -45,9 +45,9 @@ The existing regressions below are legacy-path evidence. Several build generated
 
 | Existing evidence | What it characterizes today | Later #989 fixture needed |
 | --- | --- | --- |
-| `tests/codegen_snapshots/rfc041_rust_coercions.incn`, `rfc041_interop_into_via.incn`, `rust_interop_associated_functions.incn`, `rust_interop_field_access.incn`, and `rfc043_imported_trait_associated_type.incn` | Current Rust-import, coercion, associated-call, field-access, and trait-associated-type emission behavior. | Replacement-selected call and coercion cases with a source-observable comparison against the reference route; generated Rust snapshots remain inspection evidence only. |
+| `loaves/compiler/incan_emit/tests/codegen_snapshots/rfc041_rust_coercions.incn`, `rfc041_interop_into_via.incn`, `rust_interop_associated_functions.incn`, `rust_interop_field_access.incn`, and `rfc043_imported_trait_associated_type.incn` | Current Rust-import, coercion, associated-call, field-access, and trait-associated-type emission behavior. | Replacement-selected call and coercion cases with a source-observable comparison against the reference route; generated Rust snapshots remain inspection evidence only. |
 | `compiled_provider_preserves_shared_rust_interop_contracts_issues834_835_961` in `tests/rfc031_pub_import_integration_tests.rs` and the Rust metadata/callback coverage in `tests/cli_rust_interop_tests.rs` | Current provider and compiler interop planning across a legacy compiled path. | A caller-facet case that proves supported Rust-host call shapes and refuses non-representable exports or boundary types before publishing an invalid consumer artifact. |
-| `tests/generated_rust_native_consumer_tests.rs` and `workspaces/docs-site/docs/language/how-to/rust_interop.md` | The existing generated-Rust native-consumer surface and the authored Rust-interop guidance. | Public diagnostic/source-map assertions that distinguish Incan domain, conversion, host-capability, version, and backend/runtime failures without deriving source identity from emitted names. |
+| `loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs` and `workspaces/docs-site/docs/language/how-to/rust_interop.md` | The existing generated-Rust native-consumer surface and the authored Rust-interop guidance. | Public diagnostic/source-map assertions that distinguish Incan domain, conversion, host-capability, version, and backend/runtime failures without deriving source identity from emitted names. |
 
 ### Required evidence before any row is executable parity
 

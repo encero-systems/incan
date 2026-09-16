@@ -3,7 +3,7 @@
 
 The parity corpus is acceptance evidence: a row dispositioned `Unsupported` or
 `Unavailable` asserts that a capability is not yet available, on the authority of
-the issue it names. `tests/support/parity_corpus.rs` already rejects
+the issue it names. `loaves/compiler/incan_driver/tests/support/parity_corpus.rs` already rejects
 `owning_issue: 0` and requires the reason text to cite the number -- but it never
 checks that the issue is still open, and it cannot, because the suite runs
 offline.
@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CORPUS = REPO_ROOT / "tests" / "parity_corpus_tests.rs"
+CORPUS = REPO_ROOT / "loaves" / "compiler" / "incan_driver" / "tests" / "parity_corpus_tests.rs"
 
 # `parity-987-unsupported-no-issue` is a deliberate red-state fixture proving the
 # corpus rejects a missing owner. It is never a real deferral.

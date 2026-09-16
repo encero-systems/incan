@@ -1,7 +1,7 @@
 //! Declared C ABI interop targets: verified bindings, platform requirements, and the sealed interop plan.
 //!
 //! One of nine roots split out of the former `tests/cli_integration.rs`. The shared command surface lives in
-//! `tests/support/cli_project.rs`.
+//! `incan_test_support::cli_project`.
 
 use std::fs;
 // Both are used only by `oven_interop_bake_bootstraps_direct_c_then_locked_run_uses_the_sealed_plan`, which is
@@ -12,10 +12,9 @@ use std::path::PathBuf;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use std::process::Command;
 
-mod support;
+use incan_test_support as support;
 
-#[path = "support/cli_project.rs"]
-mod cli_project;
+use incan_test_support::cli_project;
 
 use cli_project::*;
 

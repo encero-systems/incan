@@ -1,4 +1,4 @@
-mod support;
+use incan_test_support as support;
 use support::repo_root;
 
 use std::collections::BTreeSet;

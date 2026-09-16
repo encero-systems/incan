@@ -138,7 +138,7 @@ When adding a new derive macro:
 1. Define the trait in the owning stdlib facet (`incan_std_core` for reflection)
 2. Implement the proc macro here
 3. Update the compiler's `lower.rs` to emit the derive
-4. Add snapshot tests in `tests/codegen_snapshot_tests.rs`
+4. Add snapshot tests in `loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs`
 
 ## Version Compatibility
 

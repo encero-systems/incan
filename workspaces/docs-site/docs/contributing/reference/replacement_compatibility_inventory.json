@@ -3030,7 +3030,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -3044,7 +3044,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -3143,7 +3143,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -3157,7 +3157,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -3259,7 +3259,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Observed",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "replacement-body-v0-004",
                   "owner_issue": null,
                   "note": "The stable #987 seed corpus registers this bounded direct-execution evidence."
@@ -3273,7 +3273,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -3378,7 +3378,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Observed",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "replacement-body-v0-001",
                   "owner_issue": null,
                   "note": "The stable #987 seed corpus registers this bounded direct-execution evidence."
@@ -3392,7 +3392,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -3414,7 +3414,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "legacy_receipt_identity",
                       "owner_issue": null,
                       "note": "#1146 verifies the legacy Oven route's receipt identity for replacement-body-v0-001."
@@ -3422,7 +3422,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "replacement_receipt_identity",
                       "owner_issue": null,
                       "note": "#1146 verifies the direct replacement route's receipt identity for replacement-body-v0-001."
@@ -3430,7 +3430,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_compared_row_carries_two_route_receipts_and_its_oven_authority",
                       "owner_issue": null,
                       "note": "#1146 records the matched two-route source observable for replacement-body-v0-001."
@@ -3446,7 +3446,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 verifies the legacy Oven route receipt for replacement-body-v0-022."
@@ -3454,7 +3454,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 verifies the direct replacement route receipt for replacement-body-v0-022."
@@ -3462,7 +3462,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 records the matched typed result and exact streams for replacement-body-v0-022."
@@ -3478,7 +3478,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_scalar_json_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 verifies the legacy Oven route receipt for replacement-body-v0-025."
@@ -3486,7 +3486,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_scalar_json_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 verifies the direct replacement route receipt for replacement-body-v0-025."
@@ -3494,7 +3494,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_scalar_json_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 records exact scalar JSON bytes and the matched two-route source observable for replacement-body-v0-025."
@@ -3510,7 +3510,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 verifies the legacy Oven route receipt for replacement-body-v0-027."
@@ -3518,7 +3518,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 verifies the direct replacement route receipt for replacement-body-v0-027."
@@ -3526,7 +3526,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 records bounded canonical truthiness and exact streams for replacement-body-v0-027."
@@ -3620,7 +3620,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Observed",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "replacement-body-v0-029",
                   "owner_issue": null,
                   "note": "The stable #987 corpus registers only the bounded source-observable subset already executable here."
@@ -3634,7 +3634,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -3657,7 +3657,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the legacy Oven receipt for exact-width and decimal carrier transport in replacement-body-v0-029."
@@ -3665,7 +3665,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the direct replacement receipt for exact-width and decimal carrier transport in replacement-body-v0-029."
@@ -3673,7 +3673,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts",
                       "owner_issue": null,
                       "note": "The paired corpus test records matching exact streams and the typed result for exact-width and decimal carrier transport in replacement-body-v0-029."
@@ -3768,7 +3768,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Observed",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "replacement-body-v0-018",
                   "owner_issue": null,
                   "note": "The stable #987 seed corpus registers this bounded direct-execution evidence."
@@ -3782,7 +3782,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -3881,7 +3881,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -3895,7 +3895,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -3994,7 +3994,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -4008,7 +4008,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -4107,7 +4107,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -4121,7 +4121,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -4220,7 +4220,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -4234,7 +4234,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -4333,7 +4333,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -4347,7 +4347,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -4446,7 +4446,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -4460,7 +4460,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -4560,7 +4560,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Observed",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "replacement-body-v0-023",
                   "owner_issue": null,
                   "note": "The stable #987 corpus registers only the bounded direct profiles already executable inside this broader planned feature."
@@ -4574,7 +4574,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -4597,7 +4597,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the legacy Oven receipt for canonical list-based enumerate and Zip in replacement-body-v0-023."
@@ -4605,7 +4605,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the direct replacement receipt for canonical list-based enumerate and Zip in replacement-body-v0-023."
@@ -4613,7 +4613,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test records matching exact streams and the typed result for canonical list-based enumerate and Zip in replacement-body-v0-023."
@@ -4706,7 +4706,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -4720,7 +4720,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -4822,7 +4822,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Observed",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "replacement-body-v0-020",
                   "owner_issue": null,
                   "note": "The stable #987 corpus registers only the bounded direct profiles already executable inside this broader planned feature."
@@ -4836,7 +4836,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -4859,7 +4859,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the legacy Oven receipt for scalar-key set and dict membership in replacement-body-v0-020."
@@ -4867,7 +4867,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the direct replacement receipt for scalar-key set and dict membership in replacement-body-v0-020."
@@ -4875,7 +4875,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test records matching exact streams and the typed result for scalar-key set and dict membership in replacement-body-v0-020."
@@ -4891,7 +4891,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_collection_len_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the legacy Oven receipt for distinct set-entry and dict-key counts in replacement-body-v0-026."
@@ -4899,7 +4899,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_collection_len_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the direct replacement receipt for distinct set-entry and dict-key counts in replacement-body-v0-026."
@@ -4907,7 +4907,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_collection_len_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test records matching exact streams and the typed result for distinct set-entry and dict-key counts in replacement-body-v0-026."
@@ -4923,7 +4923,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the legacy Oven receipt for nonempty integer-list sorting in replacement-body-v0-028."
@@ -4931,7 +4931,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the direct replacement receipt for nonempty integer-list sorting in replacement-body-v0-028."
@@ -4939,7 +4939,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test records matching exact streams and the typed result for nonempty integer-list sorting in replacement-body-v0-028."
@@ -5032,7 +5032,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -5046,7 +5046,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -5145,7 +5145,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -5159,7 +5159,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -5260,7 +5260,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Observed",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "replacement-body-v0-021",
                   "owner_issue": null,
                   "note": "The stable #987 corpus registers only the bounded direct profiles already executable inside this broader planned feature."
@@ -5274,7 +5274,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -5297,7 +5297,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_string_helper_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the legacy Oven receipt for selected canonical string helpers in replacement-body-v0-021."
@@ -5305,7 +5305,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_string_helper_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the direct replacement receipt for selected canonical string helpers in replacement-body-v0-021."
@@ -5313,7 +5313,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_string_helper_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test records matching exact streams and the typed result for selected canonical string helpers in replacement-body-v0-021."
@@ -5329,7 +5329,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_string_len_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the legacy Oven receipt for Unicode-scalar string length in replacement-body-v0-024."
@@ -5337,7 +5337,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_string_len_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the direct replacement receipt for Unicode-scalar string length in replacement-body-v0-024."
@@ -5345,7 +5345,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_string_len_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test records matching exact streams and the typed result for Unicode-scalar string length in replacement-body-v0-024."
@@ -5438,7 +5438,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -5452,7 +5452,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -5552,7 +5552,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Observed",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "replacement-body-v0-030",
                   "owner_issue": null,
                   "note": "The stable #987 corpus registers only the bounded direct profiles already executable inside this broader planned feature."
@@ -5566,7 +5566,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -5589,7 +5589,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the legacy Oven receipt for checked int/bool/str/float isinstance targets over source-local union values in replacement-body-v0-030."
@@ -5597,7 +5597,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the direct replacement receipt for checked int/bool/str/float isinstance targets over source-local union values in replacement-body-v0-030."
@@ -5605,7 +5605,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test records matching exact streams and the typed result for checked int/bool/str/float isinstance targets over source-local union values in replacement-body-v0-030."
@@ -5698,7 +5698,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -5712,7 +5712,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -5811,7 +5811,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -5825,7 +5825,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -5924,7 +5924,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -5938,7 +5938,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -6037,7 +6037,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -6051,7 +6051,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -6150,7 +6150,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -6164,7 +6164,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -6263,7 +6263,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -6277,7 +6277,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -6376,7 +6376,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -6390,7 +6390,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."

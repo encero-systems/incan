@@ -45,9 +45,21 @@ impl OvenCompilerSuiteTargetCapabilities {
             (package_name, target_kind, source_relative_path),
             ("incan", "lib", "src/lib.rs")
                 | ("rust_inspect", "lib", "loaves/compiler/rust_inspect/src/lib.rs")
-                | ("incan", "test", "tests/generated_rust_artifact_tests.rs")
-                | ("incan", "test", "tests/generated_rust_callability_artifact_tests.rs")
-                | ("incan", "test", "tests/generated_cache_integration.rs")
+                | (
+                    "incan_driver",
+                    "test",
+                    "loaves/compiler/incan_driver/tests/generated_rust_artifact_tests.rs"
+                )
+                | (
+                    "incan_driver",
+                    "test",
+                    "loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs"
+                )
+                | (
+                    "incan_driver",
+                    "test",
+                    "loaves/compiler/incan_driver/tests/generated_cache_integration.rs"
+                )
         );
         let explicit_bake_cargo = matches!(
             (package_name, target_kind, source_relative_path),
@@ -61,7 +73,11 @@ impl OvenCompilerSuiteTargetCapabilities {
                 | ("incan", "test", "tests/canonical_item_imports.rs")
                 | ("incan", "test", "tests/package_boundary_facade_tests.rs")
                 | ("incan", "test", "tests/package_executable_representation.rs")
-                | ("incan", "test", "tests/parity_corpus_tests.rs")
+                | (
+                    "incan_driver",
+                    "test",
+                    "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs"
+                )
                 | ("incan", "test", "tests/rfc031_pub_import_integration_tests.rs")
         );
         Self {

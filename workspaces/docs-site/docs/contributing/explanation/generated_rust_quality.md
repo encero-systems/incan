@@ -94,8 +94,8 @@ Useful commands:
 
 ```bash
 incan --emit-rust path/to/file.incn
-cargo test --test codegen_snapshot_tests
-INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests
+cargo test -p incan_emit --test codegen_snapshot_tests
+INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests
 make pre-commit
 ```
 

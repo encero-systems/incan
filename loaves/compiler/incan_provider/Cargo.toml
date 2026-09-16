@@ -40,4 +40,5 @@ wasmtime = { version = "36.0.14", default-features = false, features = ["craneli
 
 [dev-dependencies]
 incan_frontend = { workspace = true, features = ["test_support"] }
+incan_test_support = { workspace = true }
 tempfile = "3"
