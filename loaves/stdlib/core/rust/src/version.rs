@@ -1,8 +1,8 @@
 //! Compile-time version compatibility check between the Incan compiler and its stdlib.
 //!
 //! When the Incan compiler generates a Rust project from user code, that project depends on the `incan_std_core` crate.
-//! If the stdlib the generated code links is not the one the compiler generated for — because a cached stdlib from
-//! a previous install is still in use, say — the generated code could break in subtle ways at runtime.
+//! An incompatible stdlib, such as a stale cached copy from a previous installation, can break generated code at
+//! runtime.
 //!
 //! This module prevents that by providing a macro that the compiler emits into every generated `main.rs`:
 //!
@@ -16,10 +16,10 @@
 //! The expansion deliberately does not require Cargo environment variables in the consumer, so Oven may invoke
 //! `rustc` directly.
 //!
-//! The stdlib carries its own version line, so the two versions need not be equal: a release stdlib is compatible
-//! with the line the compiler generates for under the semver caret rule (same major, a later or equal minor and
-//! patch; for `0.x` the minor is the compatibility line), while a prerelease on either side demands exact equality,
-//! because a `-dev.N` stdlib promises nothing about the next one.
+//! Released stdlibs follow caret compatibility from the declared numeric minimum: the same major after 1.0,
+//! the same minor for `0.x`, and the same patch for `0.0.x`. A released stdlib may succeed a declared prerelease;
+//! for example, code generated for `0.6.0-dev.4` accepts `0.6.1`. A linked prerelease demands exact equality because
+//! a `-dev.N` stdlib promises nothing about the next one.
 
 /// The version of this stdlib crate, read from `Cargo.toml` at compile time.
 ///
@@ -64,7 +64,7 @@ pub struct SemanticVersion {
 /// Parse `MAJOR.MINOR.PATCH[-prerelease][+build]` in a `const` context; `None` when the bytes are not that shape.
 ///
 /// Only the digits and the two separators are interpreted: the prerelease tag's content is irrelevant to the
-/// compatibility rule (any prerelease demands exact equality) and build metadata never affects compatibility.
+/// compatibility rule (a linked prerelease demands exact equality) and build metadata never affects compatibility.
 #[doc(hidden)]
 pub const fn parse_semantic_version(bytes: &[u8]) -> Option<SemanticVersion> {
     let mut components = [0u64; 3];
@@ -103,9 +103,9 @@ pub const fn parse_semantic_version(bytes: &[u8]) -> Option<SemanticVersion> {
 
 /// Whether the `linked` stdlib may serve code the compiler generated for the `generated_for` stdlib line.
 ///
-/// A prerelease on either side, or a version that does not parse, demands exact equality. Otherwise the semver caret
-/// rule applies: the same major, and a minor and patch no older than the line the compiler generates for — with the
-/// minor standing in for the major while the major is `0`.
+/// A linked prerelease demands exact equality. Released candidates follow caret bounds from the declared numeric
+/// minimum, even when that minimum names a prerelease: the same major after 1.0, the same minor for `0.x`, and the
+/// same patch for `0.0.x`. An unparseable version remains compatible only with its exact spelling.
 #[doc(hidden)]
 pub const fn stdlib_versions_compatible(generated_for: &[u8], linked: &[u8]) -> bool {
     if const_str_eq(generated_for, linked) {
@@ -115,8 +115,11 @@ pub const fn stdlib_versions_compatible(generated_for: &[u8], linked: &[u8]) -> 
     else {
         return false;
     };
-    if required.prerelease || candidate.prerelease || required.major != candidate.major {
+    if candidate.prerelease || required.major != candidate.major {
         return false;
+    }
+    if required.major == 0 && required.minor == 0 {
+        return candidate.minor == 0 && candidate.patch == required.patch;
     }
     if required.major == 0 {
         return required.minor == candidate.minor && candidate.patch >= required.patch;
@@ -126,9 +129,9 @@ pub const fn stdlib_versions_compatible(generated_for: &[u8], linked: &[u8]) -> 
 
 /// Compile-time assertion that the linked stdlib is compatible with the line the compiler generates for.
 ///
-/// Emitted by the Incan compiler into every generated `main.rs` with the stdlib version the compiler was built
-/// against. Expands to a `const _: () = { ... }` block that panics, which becomes a compile error, when the linked
-/// stdlib cannot serve that code under the rule in [`stdlib_versions_compatible`]. Example output on mismatch:
+/// Emitted into every generated `main.rs` with the compiler's declared stdlib requirement. Expands to a `const _: () =
+/// { ... }` block that panics, which becomes a compile error, when the linked stdlib cannot serve that code under the
+/// rule in [`stdlib_versions_compatible`]. Example output on mismatch:
 ///
 /// ```text
 /// Incan stdlib version mismatch: the compiler generates for the stdlib ring X.Y.Z, and the linked incan_std_core is not compatible with it
@@ -169,12 +172,28 @@ mod tests {
     }
 
     #[test]
-    fn a_prerelease_on_either_side_demands_exact_equality() {
+    fn a_linked_prerelease_demands_exact_equality() {
         assert!(!compatible("0.6.0-dev.4", "0.6.0-dev.5"));
         assert!(!compatible("0.6.0-dev.5", "0.6.0-dev.4"));
-        assert!(!compatible("0.6.0-dev.4", "0.6.0"));
+
         assert!(!compatible("0.6.0", "0.6.0-dev.4"));
         assert!(!compatible("0.6.0", "0.6.1-rc.1"));
+    }
+
+    #[test]
+    fn a_released_stdlib_can_succeed_the_declared_prerelease() {
+        assert!(compatible("0.6.0-dev.4", "0.6.0"));
+        assert!(compatible("0.6.0-dev.4", "0.6.1"));
+        assert!(!compatible("0.6.0-dev.4", "0.7.0"));
+        assert!(!compatible("0.6.0-dev.4", "1.0.0"));
+        assert!(!compatible("0.6.2-dev.4", "0.6.1"));
+    }
+
+    #[test]
+    fn a_zero_zero_release_keeps_its_patch_boundary() {
+        assert!(compatible("0.0.3-dev.1", "0.0.3"));
+        assert!(!compatible("0.0.3", "0.0.4"));
+        assert!(!compatible("0.0.3", "0.1.0"));
     }
 
     #[test]

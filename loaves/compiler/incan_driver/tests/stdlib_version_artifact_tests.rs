@@ -85,7 +85,7 @@ fn compile_generated_program(directory: &Path, generated: &str) -> Result<Output
 #[test]
 fn current_generated_program_accepts_patch_ahead_and_rejects_major_ahead() -> Result<(), Box<dyn Error>> {
     let tokens =
-        lexer::lex("def main():\n    pass\n").map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+        lexer::lex("def main() -> None:\n    pass\n").map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
     let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
     let generated = IrCodegen::new().try_generate(&program)?;
     assert!(generated.contains("incan_std_core::__incan_stdlib_version_check!"));
