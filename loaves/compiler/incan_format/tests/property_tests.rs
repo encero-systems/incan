@@ -7,7 +7,7 @@ use incan_test_support as support;
 
 use std::collections::BTreeSet;
 
-use incan::format::format_source;
+use incan_format::format_source;
 use proptest::prelude::*;
 
 // Note: Conversion module tests are complex due to IR construction requirements.
@@ -74,7 +74,7 @@ def main() -> ():
     /// Property: Formatting preserves semantic meaning (can parse before and after)
     #[test]
     fn format_preserves_parseability() -> Result<(), String> {
-        use incan::frontend::{lexer, parser};
+        use incan_syntax::{lexer, parser};
 
         let source = r#"
 def greet(name: str) -> str:
@@ -156,7 +156,7 @@ def greet(name: str) -> str:
     /// corpus walk deliberately does not set up.
     #[test]
     fn every_committed_example_round_trips() -> Result<(), String> {
-        use incan::frontend::{lexer, parser};
+        use incan_syntax::{lexer, parser};
         use std::path::{Path, PathBuf};
 
         fn collect(dir: &Path, found: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -347,7 +347,7 @@ mod proptest_strategies {
             func in simple_function_strategy()
         ) {
             // Parse
-            use incan::frontend::{lexer, parser};
+            use incan_syntax::{lexer, parser};
             let tokens = match lexer::lex(&func) {
                 Ok(tokens) => tokens,
                 Err(errs) => {
@@ -392,7 +392,7 @@ mod proptest_strategies {
         /// Property: Identifiers remain valid after round-trip through lexer
         #[test]
         fn identifiers_survive_lexing(ident in ident_strategy()) {
-            use incan::frontend::lexer;
+            use incan_syntax::lexer;
 
             let source = format!("x = {}", ident);
             let tokens = match lexer::lex(&source) {

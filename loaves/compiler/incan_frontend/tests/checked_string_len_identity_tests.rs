@@ -1,12 +1,12 @@
 //! Checked identity and Body-IR coverage for Unicode-scalar string length.
 
-use incan::frontend::ast;
-use incan::frontend::body_ir::build_body_ir_module_v0;
-use incan::frontend::typechecker::TypeChecker;
-use incan::frontend::{lexer, parser};
 use incan_core::lang::builtins::BuiltinFnId;
 use incan_core::lang::surface::string_methods::StringMethodId;
+use incan_frontend::ast;
+use incan_frontend::body_ir::build_body_ir_module_v0;
+use incan_frontend::typechecker::TypeChecker;
 use incan_semantics_core::body_ir::{BodyIrModule, CallableTarget, Callee, StatementKind};
+use incan_syntax::{lexer, parser};
 
 fn checked(source: &str) -> Result<(ast::Program, TypeChecker, Vec<String>), Box<dyn std::error::Error>> {
     let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;

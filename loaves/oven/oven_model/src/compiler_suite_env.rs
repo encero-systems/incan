@@ -55,7 +55,11 @@ impl OvenCompilerSuiteTargetCapabilities {
                     "test",
                     "loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs"
                 )
-                | ("incan", "test", "tests/generated_cache_integration.rs")
+                | (
+                    "incan_driver",
+                    "test",
+                    "loaves/compiler/incan_driver/tests/generated_cache_integration.rs"
+                )
         );
         let explicit_bake_cargo = matches!(
             (package_name, target_kind, source_relative_path),

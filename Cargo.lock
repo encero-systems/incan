@@ -1584,7 +1584,9 @@ dependencies = [
  "incan_core",
  "incan_semantics_core",
  "incan_syntax",
+ "incan_test_support",
  "incan_vocab",
+ "proptest",
  "thiserror 2.0.18",
 ]
 
@@ -1597,7 +1599,9 @@ dependencies = [
  "incan_format",
  "incan_semantics_core",
  "incan_semantics_stdlib",
+ "incan_std_core",
  "incan_syntax",
+ "incan_test_support",
  "incan_vocab",
  "oven_model",
  "quote",
@@ -1654,6 +1658,7 @@ dependencies = [
  "incan_core",
  "incan_frontend",
  "incan_semantics_core",
+ "incan_test_support",
  "incan_vocab",
  "oven_model",
  "oven_rustc",

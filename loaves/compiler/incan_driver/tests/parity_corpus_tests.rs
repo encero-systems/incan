@@ -120,8 +120,8 @@ use parity_corpus::{
 /// Lex, parse, and typecheck `src`, returning the typechecker's error messages (empty on success).
 ///
 /// Mirrors the helper already used by `loaves/compiler/incan_emit/tests/construction_diagnostics_tests.rs` and
-/// `tests/semantic_core_parity.rs` — kept local rather than shared because each corpus case wants a plain
-/// `ComparisonOutcome`, not a `Result` a caller must unwrap.
+/// `loaves/compiler/incan_frontend/tests/semantic_core_parity.rs` — kept local rather than shared because each corpus
+/// case wants a plain `ComparisonOutcome`, not a `Result` a caller must unwrap.
 fn typecheck_err_messages(src: &str) -> Result<Vec<String>, Vec<String>> {
     let tokens = lexer::lex(src).map_err(|errs| errs.into_iter().map(|e| e.message).collect::<Vec<_>>())?;
     let ast = parser::parse(&tokens).map_err(|errs| errs.into_iter().map(|e| e.message).collect::<Vec<_>>())?;

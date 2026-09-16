@@ -7,13 +7,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use incan::oven::legacy_cargo::{
+use oven_rustc::legacy_cargo::{
     OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoError, OvenLegacyCargoPrepareRequest,
     OvenLegacyCargoPublicationKind, prepare_direct_rustc_plan,
 };
-use incan::oven::native_test::{OvenNativeTestBatchRequest, run_native_test_batch_all_for_request};
-use incan::oven::store::{OvenStore, OvenStoreLimits};
-use incan::oven::{OvenGeneratedProjectRequest, receipt_generated_project};
+use oven_rustc::native_test::{OvenNativeTestBatchRequest, run_native_test_batch_all_for_request};
+use oven_store::store::{OvenStore, OvenStoreLimits};
+use oven_store::{OvenGeneratedProjectRequest, receipt_generated_project};
 
 #[test]
 fn native_timeout_terminates_descendants_that_retain_output_pipes() -> Result<(), Box<dyn std::error::Error>> {
@@ -92,8 +92,8 @@ fn legacy_cargo_capacity_abort_terminates_descendants() -> Result<(), Box<dyn st
 
     let started = Instant::now();
     let result = prepare_direct_rustc_plan(&OvenLegacyCargoPrepareRequest {
-        compiler: incan::oven_facet::compiler_identity(),
-        provider_hooks: incan::oven_facet::provider_hooks(),
+        compiler: incan_oven_facet::compiler_identity(),
+        provider_hooks: incan_oven_facet::provider_hooks(),
         store: &store,
         receipt,
         generated_project: project,

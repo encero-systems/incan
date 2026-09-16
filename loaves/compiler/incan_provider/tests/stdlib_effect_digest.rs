@@ -8,7 +8,7 @@
 use incan_test_support as support;
 use support::repo_root;
 
-use incan::provider::effect_digest::{
+use incan_provider::effect_digest::{
     ComponentSources, compiler_effect_digest, component_effect_digests, module_effect_digest, stdlib_effect_digest,
 };
 use std::collections::BTreeMap;
@@ -149,13 +149,13 @@ fn the_real_standard_library_digests_deterministically_and_cheaply() -> TestResu
     let root = repo_root();
 
     let started = Instant::now();
-    let first = incan::compiler_stack::run_on_compiler_stack({
+    let first = incan_frontend::compiler_stack::run_on_compiler_stack({
         let root = root.clone();
         move || compiler_effect_digest(&root).map_err(|error| error.to_string())
     })?;
     let elapsed = started.elapsed();
 
-    let second = incan::compiler_stack::run_on_compiler_stack({
+    let second = incan_frontend::compiler_stack::run_on_compiler_stack({
         let root = root.clone();
         move || compiler_effect_digest(&root).map_err(|error| error.to_string())
     })?;

@@ -14,14 +14,14 @@
 //! - a body-change fixture additionally **introduces a scope**, since an edit leaving the scope count unchanged shifts
 //!   no later index and cannot detect the leak at all.
 
-use incan::frontend::body_ir::{apply_body_ir_input_contract, build_body_ir_module_v0};
-use incan::frontend::hir::build_hir_v0;
-use incan::frontend::typechecker::TypeChecker;
-use incan::frontend::{lexer, parser};
+use incan_frontend::body_ir::{apply_body_ir_input_contract, build_body_ir_module_v0};
+use incan_frontend::hir::build_hir_v0;
+use incan_frontend::typechecker::TypeChecker;
 use incan_semantics_core::CanonicalSymbolId;
 use incan_semantics_core::body_ir::Body;
 use incan_semantics_core::semantic_digest::{body_without_docstring, semantic_digest};
 use incan_semantics_core::stable_identity::{DeclarationSignature, StableDeclarationId};
+use incan_syntax::{lexer, parser};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -81,7 +81,7 @@ fn digest_declarations(source: &str) -> Result<BTreeMap<String, String>, String>
 fn digest_pair(before: &str, after: &str) -> Result<DigestPair, Box<dyn std::error::Error>> {
     let before = before.to_string();
     let after = after.to_string();
-    incan::compiler_stack::run_on_compiler_stack(move || {
+    incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         Ok::<_, String>((digest_declarations(&before)?, digest_declarations(&after)?))
     })
     .map_err(Box::<dyn std::error::Error>::from)

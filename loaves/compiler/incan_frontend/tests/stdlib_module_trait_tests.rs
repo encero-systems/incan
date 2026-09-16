@@ -1,12 +1,12 @@
 //! Source-backed module imports retain the semantic traits used by their qualified codec bounds.
 
-use incan::frontend::api_metadata::{
+use incan_frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
 };
-use incan::frontend::ast::Program;
-use incan::frontend::typechecker::TypeChecker;
-use incan::frontend::{lexer, parser};
-use incan::library_manifest::LibraryManifest;
+use incan_frontend::ast::Program;
+use incan_frontend::library_manifest::LibraryManifest;
+use incan_frontend::typechecker::TypeChecker;
+use incan_syntax::{lexer, parser};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -83,7 +83,10 @@ fn explicit_codec_trait_imports_remain_valid() -> TestResult {
 /// Replay the exact source-only fixture that failed in the Linux integration root.
 #[test]
 fn original_toml_module_fixture_passes_bare_frontend_checking() -> TestResult {
-    let source = include_str!("fixtures/valid/std_toml_module_import.incn");
+    let source = std::fs::read_to_string(
+        incan_test_support::repo_root().join("tests/fixtures/valid/std_toml_module_import.incn"),
+    )?;
+    let source = source.as_str();
     TypeChecker::new()
         .check_program(&parsed(source)?)
         .map_err(|errors| format!("original fixture: {errors:?}"))?;

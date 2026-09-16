@@ -46,5 +46,8 @@ wasmtime-wasi = { version = "36.0.14", default-features = false, features = ["pr
 tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
+# The semantic-core parity roots compare the frontend's constant folding against the runtime facet's arithmetic.
+incan_std_core = { workspace = true }
+incan_test_support = { workspace = true }
 rust_inspect = { workspace = true, features = ["test_fixtures"] }
 tempfile = "3"

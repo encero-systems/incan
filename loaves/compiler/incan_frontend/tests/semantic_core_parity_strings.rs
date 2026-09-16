@@ -1,13 +1,13 @@
 //! Parity checks for string semantics between the shared semantic core and runtime stdlib,
 //! plus const-eval acceptance of string operations.
 
-use incan::frontend::typechecker::{ConstValue, TypeCheckInfo};
-use incan::frontend::{lexer, parser, typechecker};
 use incan_core::errors::IncanError;
 use incan_core::strings::{
     StringAccessError, str_char_at, str_concat, str_contains, str_slice, str_slice_byte_range,
     str_slice_from_byte_offset,
 };
+use incan_frontend::typechecker::{ConstValue, TypeCheckInfo};
+use incan_frontend::{lexer, parser, typechecker};
 use incan_std_core::strings::{
     str_concat as rt_str_concat, str_index as rt_str_index, str_slice as rt_str_slice,
     str_slice_byte_range as rt_str_slice_byte_range, str_slice_from_byte_offset as rt_str_slice_from_byte_offset,

@@ -65,7 +65,7 @@ fn runtime_floordiv_zero_matches_policy_error() {
 
 /// Evaluate a tiny Incan snippet with consts and return Ok(errors.len()) or Err(error_messages)
 fn run_const_eval_snippet(src: &str) -> Result<usize, Vec<String>> {
-    use incan::frontend::{lexer, parser, typechecker};
+    use incan_frontend::{lexer, parser, typechecker};
 
     let tokens = lexer::lex(src).map_err(|errs| errs.into_iter().map(|e| e.message).collect::<Vec<_>>())?;
     let ast = parser::parse(&tokens).map_err(|errs| errs.into_iter().map(|e| e.message).collect::<Vec<_>>())?;

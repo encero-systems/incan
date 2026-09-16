@@ -1,51 +1,25 @@
 # Tests
 
-This directory contains the Incan compiler's integration and snapshot test suite. Unit tests live inline in the source files they test (`#[cfg(test)]` modules).
+Integration roots live in the package they exercise, under that package's `tests/` directory; unit tests live inline in the source files they test (`#[cfg(test)]` modules). The roots still in this directory are the ones that exercise the `incan` command line as a whole; they move with the CLI when it becomes `loaves/toolchain/incan-cli`.
 
-## Test files
+## Where the roots live
 
-|                File                 |                                         What it tests                                         |                     How to run                     |
-| ----------------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `codegen_snapshot_tests.rs`         | End-to-end codegen: `.incn` input -> generated Rust output, verified against golden snapshots | `cargo test --test codegen_snapshot_tests`         |
-| `generated_rust_artifact_tests.rs`  | Final generated application, library, and `pub::` consumer package artifacts                  | `cargo test --test generated_rust_artifact_tests`  |
-| `generated_rust_audit_tests.rs`     | Deterministic generated Rust audit helper parsing, reporting, and strict-gate behavior        | `cargo test --test generated_rust_audit_tests`     |
-| `generated_rust_callability_artifact_tests.rs` | Package-facing callable exports and current callable boundary blockers             | `cargo test --test generated_rust_callability_artifact_tests` |
-| `generated_rust_native_consumer_tests.rs` | Native Rust crate consumption of generated Incan library artifacts                     | `cargo test --test generated_rust_native_consumer_tests` |
-| `integration_tests.rs`              | Full pipeline integration (parse + typecheck + lower + emit)                                  | `cargo test --test integration_tests`              |
-| `construction_diagnostics_tests.rs` | Diagnostic messages for constructor errors                                                    | `cargo test --test construction_diagnostics_tests` |
-| `lowering_error_propagation.rs`     | Error propagation through the lowering stage                                                  | `cargo test --test lowering_error_propagation`     |
-| `property_tests.rs`                 | Property-based tests (formatter idempotency, parseability, conversion determinism)            | `cargo test --test property_tests`                 |
-| `semantic_core_parity.rs`           | Parity between compiler and runtime semantic definitions                                      | `cargo test --test semantic_core_parity`           |
-| `semantic_core_parity_strings.rs`   | String-specific semantic parity                                                               | `cargo test --test semantic_core_parity_strings`   |
-| `stdlib_generated_rust_snapshot_tests.rs` | Representative generated Rust snapshots for selected stdlib modules                   | `cargo test --test stdlib_generated_rust_snapshot_tests` |
-| `vocab_guardrails.rs`               | Vocabulary drift detection between crates                                                     | `cargo test --test vocab_guardrails`               |
-| `layering_guard.rs`                 | Enforces crate dependency layering rules                                                      | `cargo test --test layering_guard`                 |
-| `test_example.incn`                 | Example Incan test file (used by the test runner)                                             | `incan test tests/test_example.incn`               |
+| Ring package | What its roots prove | How to run |
+| --- | --- | --- |
+| `loaves/compiler/incan_emit/tests/` | Codegen snapshots (`codegen_snapshots/` inputs, `snapshots/` insta goldens), lowering, ownership and construction diagnostics | `cargo test -p incan_emit --test codegen_snapshot_tests`; `INSTA_UPDATE=1` to regenerate |
+| `loaves/compiler/incan_driver/tests/` | The parity corpus (`support/parity_corpus.rs`), the replacement-backend proofs and their shadow comparisons, generated-Rust artifact, audit, callability and native-consumer tests, protected bindings, the generated cache | `cargo test -p incan_driver --test <root>` with a CLI built from the tree |
+| `loaves/compiler/incan_frontend/tests/` | Checked identities, declaration identity and semantic digests, semantic-core parity, stdlib module traits | `cargo test -p incan_frontend --test <root>` |
+| `loaves/compiler/incan_provider/tests/` | The stdlib effect digest | `cargo test -p incan_provider --test stdlib_effect_digest` |
+| `loaves/compiler/incan_format/tests/` | Formatter properties (`property_tests.rs`, with its proptest regressions file) | `cargo test -p incan_format --test property_tests` |
+| `loaves/compiler/incan_oven_facet/tests/` | Bounded Oven process-containment regressions | `make test-oven-pr-regressions` |
+| `loaves/compiler/incan_test_support/` | The harness every root shares: checkout anchors, the compiler subprocess, fixture builders, artifact readers | a dev-dependency, not a root |
 
-## Subdirectories
+Every root also runs through the Oven compiler suite (`make test`, or one root with `make test-one TEST_ROOT=<path>`), which is the authority for anything that bakes or launches the compiler.
 
-### `codegen_snapshots/`
+## Still here
 
-Incan source files (`.incn`) used as inputs for codegen snapshot tests. Each file exercises a specific language feature. To add a new snapshot test:
-
-1. Create a new `.incn` file here.
-2. Add a test function in `codegen_snapshot_tests.rs` that calls the snapshot helper with your file.
-3. Run `INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests` to generate the initial snapshot.
-4. Review the generated snapshot in `snapshots/`.
-
-### `snapshots/`
-
-Golden snapshot files generated by [insta](https://insta.rs). These are auto-generated — do not edit by hand. To update after codegen changes:
-
-```bash
-INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests
-```
-
-Or interactively: `cargo insta review`.
+`cli_*.rs`, `integration_tests.rs`, `rfc031_pub_import_integration_tests.rs`, `rfc081_embedded_conformance.rs`, `canonical_item_imports.rs`, `package_boundary_facade_tests.rs`, `package_executable_representation.rs`, `script_target_diagnostics.rs`, `std_encoding_algorithm_modules.rs`, `example_capability_coverage.rs`, `repository_path_tests.rs`, `toolchain_installer_tests.rs`, and the guardrails `layering_guard.rs`, `cli_layering_guardrails.rs`, `vocab_guardrails.rs`. Run one with `cargo test --test <root>`.
 
 ### `fixtures/`
 
-Incan source files used by integration tests:
-
-- `fixtures/valid/` — Programs that should compile successfully.
-- `fixtures/invalid/` — Programs that should produce specific diagnostics (type errors, missing imports, etc.).
+Incan sources the roots here share: `fixtures/valid/` (programs that compile), `fixtures/invalid/` (programs that produce specific diagnostics), the `oven_*` bake fixtures the Makefile and CI evidence lanes use, and the fixture directories of the roots above. A fixture used by one ring's roots alone lives beside them.

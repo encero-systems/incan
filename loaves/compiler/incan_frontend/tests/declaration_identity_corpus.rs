@@ -7,13 +7,13 @@
 
 use incan_test_support as support;
 
-use incan::frontend::body_ir::{apply_body_ir_input_contract, build_body_ir_module_v0};
-use incan::frontend::hir::build_hir_v0;
-use incan::frontend::typechecker::TypeChecker;
-use incan::frontend::{lexer, parser};
+use incan_frontend::body_ir::{apply_body_ir_input_contract, build_body_ir_module_v0};
+use incan_frontend::hir::build_hir_v0;
+use incan_frontend::typechecker::TypeChecker;
 use incan_semantics_core::body_ir::Body;
 use incan_semantics_core::stable_identity::{DeclarationSignature, StableDeclarationId};
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
+use incan_syntax::{lexer, parser};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -101,7 +101,7 @@ fn stable_declaration_identity_is_unique_across_the_standard_library() -> TestRe
     collect_sources(&stdlib_root, &mut sources)?;
     sources.sort();
 
-    let outcome = incan::compiler_stack::run_on_compiler_stack(move || {
+    let outcome = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let mut claims: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut modules_checked = 0usize;
         let mut modules_skipped = 0usize;
@@ -177,7 +177,7 @@ def internal(value: int) -> int:
     return value
 "#;
     let source = source.to_string();
-    let declarations = incan::compiler_stack::run_on_compiler_stack(move || {
+    let declarations = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let tokens = lexer::lex(&source).map_err(|errors| format!("lex: {errors:?}"))?;
         let program = parser::parse(&tokens).map_err(|errors| format!("parse: {errors:?}"))?;
         let program = apply_body_ir_input_contract(program, Path::new("visibility.incn"))
@@ -231,7 +231,7 @@ fn conformant_digest_covers_the_standard_library() -> TestResult {
     sources.sort();
 
     let started = Instant::now();
-    let outcome = incan::compiler_stack::run_on_compiler_stack(move || {
+    let outcome = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let mut digested = 0usize;
         let mut modules = 0usize;
         let mut skipped = 0usize;

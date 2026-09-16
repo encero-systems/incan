@@ -45,7 +45,7 @@ Did you change end-to-end behavior (CLI, build, multi-file)?
   → Add a test in tests/integration_tests.rs
 
 Did you change the formatter?
-  → Property tests in tests/property_tests.rs verify idempotency
+  → Property tests in loaves/compiler/incan_format/tests/property_tests.rs verify idempotency
   → Also add a codegen snapshot if formatting affects output
 
 Did you add a diagnostic?
