@@ -178,8 +178,8 @@ pub(crate) fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Com
         .current_dir(current_dir)
         .env("CARGO_NET_OFFLINE", "true")
         .env("INCAN_NO_BANNER", "1")
-        .env("INCAN_STDLIB", crate::support::repo_root().join("loaves/stdlib"))
-        .env("INCAN_STDLIB_DIR", crate::support::repo_root().join("loaves/stdlib"));
+        .env("INCAN_STDLIB", support::repo_root().join("loaves/stdlib"))
+        .env("INCAN_STDLIB_DIR", support::repo_root().join("loaves/stdlib"));
     if !support::oven_compiler_suite_is_active() {
         command
             .env(

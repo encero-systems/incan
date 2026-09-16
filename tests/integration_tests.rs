@@ -5074,7 +5074,7 @@ def main() -> None:
             .env("CARGO_NET_OFFLINE", "true")
             .env(
                 "INCAN_STDLIB",
-                repo_root().join("crates/incan_stdlib/stdlib"),
+                repo_root().join("loaves/stdlib"),
             )
             .output()?;
         assert!(

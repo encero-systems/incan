@@ -2542,7 +2542,11 @@ pub def display[T](data: DataSet[T]) -> None:
             crate_root.join("Cargo.toml"),
             format!(
                 "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[lib]\npath = \"src/lib.rs\"\n",
-                support::repo_root().join("crates").join("incan_vocab").display()
+                support::repo_root()
+                    .join(oven_model::toolchain_layout::development_support_crate_dir(
+                        "incan_vocab"
+                    ))
+                    .display()
             ),
         )?;
         std::fs::write(
@@ -2563,7 +2567,11 @@ pub def display[T](data: DataSet[T]) -> None:
             crate_root.join("Cargo.toml"),
             format!(
                 "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[lib]\npath = \"src/lib.rs\"\n",
-                support::repo_root().join("crates").join("incan_vocab").display()
+                support::repo_root()
+                    .join(oven_model::toolchain_layout::development_support_crate_dir(
+                        "incan_vocab"
+                    ))
+                    .display()
             ),
         )?;
         std::fs::write(
@@ -2585,7 +2593,11 @@ pub def display[T](data: DataSet[T]) -> None:
             crate_root.join("Cargo.toml"),
             format!(
                 "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[lib]\npath = \"src/lib.rs\"\ncrate-type = [\"rlib\", \"cdylib\"]\n",
-                support::repo_root().join("crates").join("incan_vocab").display()
+                support::repo_root()
+                    .join(oven_model::toolchain_layout::development_support_crate_dir(
+                        "incan_vocab"
+                    ))
+                    .display()
             ),
         )?;
         std::fs::write(crate_root.join("src/lib.rs"), lib_source)?;

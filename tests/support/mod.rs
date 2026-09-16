@@ -261,8 +261,13 @@ pub(crate) fn cold_sdk_provider_store_or(fallback: &Path) -> PathBuf {
     anchor_harness_path(selected)
 }
 
-/// Anchor relative outer-harness paths before nested commands switch to a fixture working directory.
-fn selected_harness_path(variable: &str, fallback: &str) -> PathBuf {
+/// Read one outer-harness path override, falling back to a checkout-relative location, and anchor it.
+///
+/// The variable keeps its caller-relative meaning: a relative override names a path under the process working directory
+/// at the time it is read, the way Cargo itself interprets `CARGO_TARGET_DIR`, and only the fallback is spelled from
+/// the checkout.
+#[allow(dead_code)]
+pub(crate) fn selected_harness_path(variable: &str, fallback: &str) -> PathBuf {
     let selected = std::env::var_os(variable)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -270,6 +275,10 @@ fn selected_harness_path(variable: &str, fallback: &str) -> PathBuf {
     anchor_harness_path(selected)
 }
 
+/// Make one harness path absolute before a nested command switches to a fixture working directory.
+///
+/// Relative overrides are resolved against the process working directory, never the checkout, so a caller who set
+/// `CARGO_BIN_EXE_incan=debug/incan` from a foreign directory still gets the binary they named.
 fn anchor_harness_path(selected: PathBuf) -> PathBuf {
     if selected.is_absolute() {
         selected
