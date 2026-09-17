@@ -535,8 +535,9 @@ fn backend_requirement_name(requirement: &BackendImplementationRequirement) -> S
 mod tests {
     use super::*;
     use std::collections::{BTreeMap, BTreeSet};
+    use std::env;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
     use oven_model::lock::{
@@ -544,8 +545,12 @@ mod tests {
     };
 
     use crate::{
-        ComponentSelectionReason, ProviderPlan, ProviderProvenance, ProviderRecord, ResolvedSdkComponents, SdkInventory,
+        ComponentSelectionReason, ProviderPlan, ProviderProvenance, ProviderRecord, ResolvedSdkComponents,
+        SdkComponentSelection, SdkInventory,
     };
+    use crate::inventory::{extend_requirements_with_provider_plan, resolve_sdk_component_selection};
+    use crate::requirements::ProjectRequirements;
+    use incan_frontend::library_manifest_index::LibraryManifestIndex;
     use oven_model::manifest::{DependencySource, DependencySpec};
     use oven_model::oven_interop::InteropCSection;
 
@@ -609,6 +614,20 @@ mod tests {
                 self.total_elapsed.as_micros(),
             )
         }
+    }
+
+    fn measurement_distribution(label: &str, mut values: Vec<u128>) -> Result<String, String> {
+        if values.is_empty() {
+            return Err(format!("the `{label}` distribution has no samples"));
+        }
+        values.sort_unstable();
+        let median = values[values.len() / 2];
+        Ok(format!(
+            "{label}_min_us={} {label}_median_us={} {label}_max_us={}",
+            values[0],
+            median,
+            values[values.len() - 1]
+        ))
     }
 
     fn measure_provider_semantic_identity_pass(
@@ -931,6 +950,104 @@ mod tests {
             eprintln!("provider-semantic-measurement phase=cold {}", cold.render());
             eprintln!("provider-semantic-measurement phase=warm {}", warm.render());
         }
+        Ok(())
+    }
+
+    const REPRESENTATIVE_SDK_INVENTORY_ENV: &str = "INCAN_PROVIDER_SEMANTIC_MEASURE_SDK_INVENTORY";
+    const REPRESENTATIVE_MEASUREMENT_REPEATS: usize = 9;
+
+    fn load_verified_sdk_measurement_inputs(
+        inventory_path: &Path,
+    ) -> Result<(ProviderPlan, Vec<DependencySpec>, Duration), Box<dyn std::error::Error>> {
+        let admission_started = Instant::now();
+        let inventory = SdkInventory::read_from_path(inventory_path)?;
+        inventory.validate_compiler_compatibility(
+            incan_lang::version::INCAN_VERSION,
+            incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION,
+        )?;
+        let components = resolve_sdk_component_selection(
+            &inventory,
+            &SdkComponentSelection::default(),
+            None,
+            None,
+            true,
+        )?;
+        let provider_plan = ProviderPlan::from_resolved_inputs(
+            LibraryManifestIndex::default(),
+            None,
+            Some(&inventory),
+            Some(&components),
+            std::iter::empty::<Vec<String>>(),
+        )?;
+        let mut requirements = ProjectRequirements::default();
+        extend_requirements_with_provider_plan(&mut requirements, &provider_plan)?;
+        Ok((provider_plan, requirements.sdk_path_dependencies, admission_started.elapsed()))
+    }
+
+    #[test]
+    #[ignore = "serial #1633 representative SDK measurement; requires an explicit verified inventory"]
+    fn measures_current_verified_sdk_provider_semantics_issue1633() -> TestResult {
+        let inventory_path = env::var_os(REPRESENTATIVE_SDK_INVENTORY_ENV)
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| format!("set {REPRESENTATIVE_SDK_INVENTORY_ENV} to the verified SDK inventory path"))?;
+        if !inventory_path.is_file() {
+            return Err(format!(
+                "{REPRESENTATIVE_SDK_INVENTORY_ENV} points to missing inventory {}",
+                inventory_path.display()
+            )
+            .into());
+        }
+
+        let mut admission_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut support_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut physical_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut preliminary_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut final_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut total_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut expected_identities = None;
+
+        for repeat in 0..REPRESENTATIVE_MEASUREMENT_REPEATS {
+            let (provider_plan, specs, admission_elapsed) = load_verified_sdk_measurement_inputs(&inventory_path)?;
+            let provider_count = provider_plan.records().count();
+            if provider_count < 2 {
+                return Err(format!(
+                    "representative SDK measurement requires multiple providers, but the default profile admitted {provider_count}"
+                )
+                .into());
+            }
+            let (identities, measurement) =
+                measure_provider_semantic_identity_pass("verified-sdk", &provider_plan, &specs)?;
+            if let Some(expected) = expected_identities.as_ref() {
+                assert_eq!(expected, &identities, "repeated SDK measurements must preserve identities");
+            } else {
+                expected_identities = Some(identities);
+            }
+            admission_samples.push(admission_elapsed.as_micros());
+            support_samples.push(measurement.support_closure_elapsed.as_micros());
+            physical_samples.push(measurement.physical_validation_elapsed.as_micros());
+            preliminary_samples.push(measurement.preliminary_elapsed.as_micros());
+            final_samples.push(measurement.final_elapsed.as_micros());
+            total_samples.push(measurement.total_elapsed.as_micros());
+            eprintln!(
+                "provider-semantic-measurement repeat={} providers={} admission_us={} {}",
+                repeat + 1,
+                provider_count,
+                admission_elapsed.as_micros(),
+                measurement.render()
+            );
+        }
+
+        eprintln!(
+            "provider-semantic-measurement-summary repeats={} {} {} {} {} {} {}",
+            REPRESENTATIVE_MEASUREMENT_REPEATS,
+            measurement_distribution("admission", admission_samples)?,
+            measurement_distribution("support_closure", support_samples)?,
+            measurement_distribution("physical_validation", physical_samples)?,
+            measurement_distribution("preliminary", preliminary_samples)?,
+            measurement_distribution("final", final_samples)?,
+            measurement_distribution("total", total_samples)?,
+        );
         Ok(())
     }
 
