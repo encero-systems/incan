@@ -2076,11 +2076,11 @@ mod selected_rust_facet_graph_tests {
         reidentify_unit(&mut graph, root)?;
         graph.clone().validated()?;
 
-        let provider_link = graph.units[root].linked_libraries[0].clone();
-        graph.units[root].linked_libraries = vec![OvenSelectedRustFacetLinkedLibrary::Provider {
-            target: graph.selection.host.clone(),
-            ..provider_link
-        }];
+        let OvenSelectedRustFacetLinkedLibrary::Provider { target, .. } = &mut graph.units[root].linked_libraries[0]
+        else {
+            return Err("fixture lost its provider link".into());
+        };
+        *target = graph.selection.host.clone();
         reidentify_unit(&mut graph, root)?;
         assert_eq!(
             refusal_field(graph, "provider target")?,
