@@ -921,8 +921,11 @@ pub struct OvenLegacyCargoSelectedUnit {
     pub target_kinds: Vec<String>,
     pub crate_types: Vec<String>,
     pub source_path: PathBuf,
-    /// Exact Cargo aliases and rustc-emitted outputs joined to this traced invocation.
-    #[serde(default)]
+    /// Exact transient Cargo aliases and rustc-emitted outputs joined to this traced invocation.
+    ///
+    /// These publisher-local paths authenticate the artifact join before export. They are deliberately absent from
+    /// the portable capture wire and identity; the sealed artifact digest and selected-unit identity replace them.
+    #[serde(default, skip_serializing)]
     pub artifact_paths: Vec<PathBuf>,
     /// Package-root-relative crate root derived from Cargo metadata and the selected target record.
     pub root_module: String,
