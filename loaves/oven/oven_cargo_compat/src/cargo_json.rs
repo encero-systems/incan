@@ -51,6 +51,8 @@ pub(crate) struct CargoCompilerArtifactTarget {
     #[serde(default)]
     pub(crate) kind: Vec<String>,
     #[serde(default)]
+    pub(crate) crate_types: Vec<String>,
+    #[serde(default)]
     pub(crate) src_path: PathBuf,
 }
 
