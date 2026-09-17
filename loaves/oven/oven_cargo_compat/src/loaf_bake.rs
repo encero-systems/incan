@@ -708,7 +708,7 @@ mod tests {
             build_script_tool_probes: Vec::new(),
             compiler: None,
         };
-        let mut bindings = BTreeMap::from([(capture_identity, "sha256:selected-unit".to_string())]);
+        let mut bindings = BTreeMap::from([(capture_identity.clone(), "sha256:selected-unit".to_string())]);
         let mut leaf = registry_leaf();
         leaf.selected_unit_identity = Some(capture_identity.clone());
         let mut leaves = vec![leaf.clone()];

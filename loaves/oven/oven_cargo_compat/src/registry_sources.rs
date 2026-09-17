@@ -544,10 +544,12 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        CargoCompilerArtifact, CargoCompilerArtifactProfile, CargoCompilerArtifactTarget, digest_bytes,
-        stage_registry_source_directory, traced_units_for_registry_artifact,
+        CargoCompilerArtifact, digest_bytes, stage_registry_source_directory, traced_units_for_registry_artifact,
     };
-    use crate::{OvenLegacyCargoSelectedUnit, OvenLegacyCargoSelectedUnitCapture};
+    use crate::{
+        CargoCompilerArtifactProfile, CargoCompilerArtifactTarget, OvenLegacyCargoSelectedUnit,
+        OvenLegacyCargoSelectedUnitCapture,
+    };
 
     fn selected_unit(package_id: &str, output: PathBuf, platform: &str, cfg: &str) -> OvenLegacyCargoSelectedUnit {
         OvenLegacyCargoSelectedUnit {
