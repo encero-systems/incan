@@ -23,14 +23,18 @@ const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 #[cfg(unix)]
 const STREAM_READ_BUFFER_BYTES: usize = 8 * 1024;
 
-/// The reason a bounded child process stopped.
+/// The final disposition of a bounded child-process attempt.
+///
+/// Stream limits discovered while draining output take precedence over requested cancellation or timeout: stdout
+/// overflow wins over stderr overflow, and either wins over the recorded cancellation or timeout. Without overflow,
+/// the first requested termination is retained; cancellation wins when cancellation and timeout are observed together.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BoundedProcessTermination {
-    /// The direct child exited before any configured refusal condition.
+    /// The direct child was reaped and both streams drained without any configured refusal condition.
     Completed,
-    /// The caller's cancellation flag was set while the child was running.
+    /// The caller's cancellation flag was observed before supervision finished, including draining inherited pipes.
     Cancelled,
-    /// The configured wall-clock timeout elapsed while the child was running.
+    /// The configured wall-clock timeout elapsed before supervision finished, including draining inherited pipes.
     TimedOut,
     /// Captured standard output exceeded its configured byte limit.
     StdoutLimitExceeded,
@@ -66,7 +70,9 @@ pub struct BoundedProcessOutput {
     pub termination: BoundedProcessTermination,
 }
 
-/// Put a child and all normally spawned descendants in an isolated process group.
+/// Configure an isolated process group for the child and normally spawned descendants on Unix.
+///
+/// On non-Unix platforms this helper does nothing and provides no descendant containment.
 pub fn isolate_process_group(command: &mut Command) {
     #[cfg(unix)]
     {
@@ -260,7 +266,10 @@ fn run_bounded_process_unix(
     })
 }
 
-/// Terminate and reap an isolated child process group.
+/// Terminate the isolated process group on Unix and reap its direct child.
+///
+/// On non-Unix platforms this kills and reaps only the direct child; descendants are not contained. Callers requiring
+/// descendant containment must use a supported platform or [`run_bounded_process`], which refuses unsupported hosts.
 ///
 /// Cargo, Rustdoc, libtest, build scripts, compilers, and linkers inherit the isolated group unless they explicitly
 /// create a new session, which none of the supported Oven child paths permit or require. GNU `kill` needs `--`
