@@ -3222,7 +3222,15 @@ mod tests {
 
     #[test]
     fn retained_runtime_compiler_executes_after_source_closure_is_removed() -> Result<(), Box<dyn std::error::Error>> {
-        let rustc = std::env::var_os("RUSTC").ok_or("Cargo did not provide the selected rustc path")?;
+        let rustc = if let Some(rustc) = std::env::var_os("RUSTC") {
+            PathBuf::from(rustc)
+        } else {
+            let selected = std::process::Command::new("rustup").args(["which", "rustc"]).output()?;
+            if !selected.status.success() {
+                return Err("rustup could not locate the selected rustc".into());
+            }
+            PathBuf::from(String::from_utf8(selected.stdout)?.trim())
+        };
         let rustc = fs::canonicalize(rustc)?;
         let target = crate::rustc::rustc_host_target(&rustc)?;
         let first_parent = tempfile::tempdir()?;
