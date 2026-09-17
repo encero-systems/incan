@@ -241,6 +241,59 @@ pub struct OvenReleaseToolchainMember {
     pub digest: String,
 }
 
+/// Retain the exact bounded compiler/sysroot closure used for one runtime-foundation target.
+pub fn stage_release_runtime_foundation_toolchain(
+    rustc: &Path,
+    target: &str,
+    destination: &Path,
+) -> Result<Vec<OvenReleaseToolchainMember>, OvenLoafError> {
+    if destination.exists() {
+        return Err(OvenLoafError::Preparation {
+            message: format!(
+                "retained Toolchain destination already exists: {}",
+                destination.display()
+            ),
+        });
+    }
+    fs::create_dir_all(destination).map_err(|source| OvenLoafError::Io {
+        path: destination.to_path_buf(),
+        source,
+    })?;
+    let evidence =
+        crate::rustc::direct_compiler::retention::direct_rustc_compiler_evidence(rustc, target).map_err(|error| {
+            OvenLoafError::Preparation {
+                message: error.to_string(),
+            }
+        })?;
+    let mut retained = Vec::with_capacity(evidence.members.len());
+    for member in evidence.members {
+        let relative_path = PathBuf::from(member.relative_path);
+        if !safe_generation_relative_path(&relative_path) {
+            return Err(OvenLoafError::Preparation {
+                message: "compiler closure contains an unsafe member path".to_string(),
+            });
+        }
+        let output = destination.join(&relative_path);
+        fs::create_dir_all(output.parent().ok_or_else(|| OvenLoafError::Preparation {
+            message: "compiler closure member has no parent".to_string(),
+        })?)
+        .map_err(|source| OvenLoafError::Io {
+            path: output.clone(),
+            source,
+        })?;
+        fs::copy(&member.source_path, &output).map_err(|source| OvenLoafError::Io {
+            path: member.source_path,
+            source,
+        })?;
+        retained.push(OvenReleaseToolchainMember {
+            relative_path,
+            digest: member.digest,
+        });
+    }
+    retained.sort();
+    Ok(retained)
+}
+
 /// Return the canonical descriptor digest publishers include in release compatibility evidence.
 pub fn release_runtime_foundation_member_descriptor_digest(
     member: &OvenReleaseRuntimeFoundationMember,
@@ -1837,6 +1890,8 @@ pub struct OvenHeldReleaseRuntimeFoundation {
     pub asset: crate::rustc::OvenMaterializedRuntimeFoundationAsset,
     /// Exact compiled Loaf manifest whose artifact catalogue the foundation matches.
     pub compiled_loaf: PathBuf,
+    /// Exact retained compiler/sysroot closure used for runtime rebuilds.
+    pub compiler: crate::rustc::OvenRuntimeCompilerClosure,
     _generation_lock: OvenLoafGenerationLock,
 }
 
@@ -1992,6 +2047,13 @@ pub fn acquire_committed_release_runtime_foundation(
         label: member.label.clone(),
         asset,
         compiled_loaf: loaf_root.join(&compiled.path),
+        compiler: crate::rustc::OvenRuntimeCompilerClosure::new(
+            loaf_root
+                .join(generation_directory_path(&manifest.generation_identity))
+                .join(&member.toolchain_root_relative_path)
+                .join("bin/rustc"),
+            member.toolchain_owner_identity.clone(),
+        ),
         _generation_lock: generation_lock,
     }))
 }
