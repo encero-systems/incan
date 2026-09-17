@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::artifact::OvenRustcRegistrySourcePackage;
+use super::{OvenRustcError, validate_project_inspection_authority_payload};
 use oven_store::OvenReceipt;
 use oven_store::store::{OvenArtifactKind, OvenStoreExecutionPayload, OvenStoreLease};
 use serde::{Deserialize, Serialize};
@@ -180,12 +181,159 @@ impl OvenLoadedProjectInspectionAuthority {
     }
 }
 
+/// Bind selected physical root units to the exact registry-edge intent held by one admitted inspection authority.
+///
+/// The raw physical producer supplies only Rust-facing aliases and already selected unit identities. This function
+/// obtains requested features and the default-feature choice exclusively from the sealed authority payload, then
+/// records the held Store identity as the root intent owner. It deliberately refuses a pre-populated root map:
+/// accepting values beside the admitted publisher record would recreate a second authority for authored intent.
+pub fn bind_loaded_project_inspection_root_intents(
+    graph: OvenSelectedRustFacetGraph,
+    root_units: BTreeMap<String, String>,
+    authority: &OvenLoadedProjectInspectionAuthority,
+) -> Result<ValidatedOvenSelectedRustFacetGraph, OvenRustcError> {
+    bind_project_inspection_root_intents(graph, root_units, authority.identity(), &authority.payload)
+}
+
+fn bind_project_inspection_root_intents(
+    mut graph: OvenSelectedRustFacetGraph,
+    root_units: BTreeMap<String, String>,
+    authority_identity: &str,
+    authority: &OvenProjectInspectionAuthorityPayload,
+) -> Result<ValidatedOvenSelectedRustFacetGraph, OvenRustcError> {
+    validate_project_inspection_authority_payload(authority)?;
+    if authority_identity.trim().is_empty() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "project inspection root authority",
+            message: "must retain an exact Store identity".to_string(),
+        });
+    }
+    if !graph.exposed_roots.is_empty() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust facet roots",
+            message: "must be empty before sealed inspection authority intent is bound".to_string(),
+        });
+    }
+    if root_units.is_empty() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust facet roots",
+            message: "must name at least one selected physical root".to_string(),
+        });
+    }
+    if !graph.owners.iter().any(|owner| {
+        owner.identity == authority_identity && owner.kind == OvenSelectedRustFacetOwnerKind::ProjectAuthority
+    }) {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust facet root authority",
+            message: "is not a declared ProjectAuthority owner in the selected physical graph".to_string(),
+        });
+    }
+
+    for (alias, unit_identity) in root_units {
+        let dependency = exact_project_inspection_root_dependency(authority, &alias)?;
+        let unit = graph
+            .units
+            .iter()
+            .find(|unit| unit.identity == unit_identity)
+            .ok_or_else(|| OvenRustcError::InvalidInput {
+                field: "selected Rust facet roots",
+                message: format!("alias `{alias}` names absent selected unit `{unit_identity}`"),
+            })?;
+        validate_project_inspection_root_unit(unit, dependency, authority, &alias)?;
+        graph.exposed_roots.insert(
+            alias,
+            OvenSelectedRustFacetRoot {
+                unit: unit_identity,
+                requested_features: dependency.requested_features.clone(),
+                default_features: dependency.default_features,
+                intent_owner: authority_identity.to_string(),
+            },
+        );
+    }
+    graph.validated().map_err(|error| OvenRustcError::InvalidInput {
+        field: "selected Rust facet graph",
+        message: format!("does not validate after sealed root intent binding: {error}"),
+    })
+}
+
+fn exact_project_inspection_root_dependency<'a>(
+    authority: &'a OvenProjectInspectionAuthorityPayload,
+    alias: &str,
+) -> Result<&'a OvenProjectInspectionRootDependency, OvenRustcError> {
+    let matches = authority
+        .registry_source_dependencies
+        .iter()
+        .chain(&authority.dev_registry_source_dependencies)
+        .filter(|dependency| dependency.alias == alias)
+        .collect::<Vec<_>>();
+    let Some(dependency) = matches.first().copied() else {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust facet roots",
+            message: format!("alias `{alias}` has no sealed registry root dependency"),
+        });
+    };
+    if matches.iter().skip(1).any(|candidate| **candidate != *dependency) {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust facet roots",
+            message: format!("alias `{alias}` has conflicting normal and dev sealed root dependencies"),
+        });
+    }
+    Ok(dependency)
+}
+
+fn validate_project_inspection_root_unit(
+    unit: &OvenSelectedRustFacetUnit,
+    dependency: &OvenProjectInspectionRootDependency,
+    authority: &OvenProjectInspectionAuthorityPayload,
+    alias: &str,
+) -> Result<(), OvenRustcError> {
+    let exact_sources = authority
+        .registry_sources
+        .iter()
+        .filter(|source| {
+            source.package.package == dependency.package
+                && source.package.version == dependency.version
+                && source.package.source.registry == dependency.registry
+                && source.package.source.checksum == dependency.checksum
+        })
+        .collect::<Vec<_>>();
+    let [source] = exact_sources.as_slice() else {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust facet root source",
+            message: format!(
+                "alias `{alias}` has {} exact sealed source records for {} {}",
+                exact_sources.len(),
+                dependency.package,
+                dependency.version
+            ),
+        });
+    };
+    let expected_identity = format!("registry:{}@{}", dependency.package, dependency.version);
+    if unit.crate_name != alias
+        || unit.package != dependency.package
+        || unit.package_version != dependency.version
+        || unit.source.kind != OvenSelectedRustFacetSourceKind::Registry
+        || unit.source.identity != expected_identity
+        || unit.source.root != "."
+        || unit.source.digest != source.package.source.digest
+    {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust facet root source",
+            message: format!(
+                "alias `{alias}` does not match its sealed package, version, registry source identity, or complete source digest"
+            ),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod selected_rust_facet_graph_tests {
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::Path;
 
+    use super::super::{OvenRustcError, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage};
     use super::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -370,6 +518,123 @@ mod selected_rust_facet_graph_tests {
                 },
             )]),
         })
+    }
+
+    fn authority_for_registry_root(
+        alias: &str,
+        unit: &OvenSelectedRustFacetUnit,
+        requested_features: Vec<String>,
+        default_features: bool,
+    ) -> OvenProjectInspectionAuthorityPayload {
+        let registry = "registry+https://example.invalid/index".to_string();
+        let checksum = "fixture-registry-checksum".to_string();
+        let source = OvenRustcRegistrySourcePackage {
+            package: unit.package.clone(),
+            version: unit.package_version.clone(),
+            features: requested_features.clone(),
+            source: OvenRustcRegistrySource {
+                registry: registry.clone(),
+                checksum: checksum.clone(),
+                relative_root: format!("registry-sources/{}-{}", unit.package, unit.package_version),
+                digest: unit.source.digest.clone(),
+            },
+        };
+        OvenProjectInspectionAuthorityPayload {
+            schema_version: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
+            project_identity: selected_graph_sha256(b"fixture project"),
+            source_authority_digest: selected_graph_sha256(b"fixture source authority"),
+            compiler_version: "0.6.0-dev.6".to_string(),
+            registry_lock_digest: selected_graph_sha256(b"fixture Cargo.lock"),
+            registry_source_dependencies: vec![OvenProjectInspectionRootDependency {
+                alias: alias.to_string(),
+                package: unit.package.clone(),
+                version: unit.package_version.clone(),
+                registry,
+                checksum,
+                requested_features,
+                default_features,
+            }],
+            dev_registry_source_dependencies: Vec::new(),
+            test_dependency_envelope: None,
+            constituents: Vec::new(),
+            registry_sources: vec![OvenProjectInspectionSource {
+                package: source,
+                owner: OvenProjectInspectionSourceOwner::Authority,
+            }],
+            generated_out_dirs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn selected_graph_binds_root_intent_from_its_exact_inspection_authority() -> TestResult {
+        let baseline = graph(b"pub fn use_dependency() {}\n")?;
+        let dependency = baseline
+            .units
+            .iter()
+            .find(|unit| unit.package == "dependency-package")
+            .cloned()
+            .ok_or("fixture graph lost registry dependency")?;
+        let authority_identity = selected_graph_sha256(b"fixture inspection authority");
+        let physical = OvenSelectedRustFacetGraph {
+            schema_version: OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION,
+            selection: baseline.selection,
+            owners: vec![
+                OvenSelectedRustFacetOwner {
+                    identity: authority_identity.clone(),
+                    kind: OvenSelectedRustFacetOwnerKind::ProjectAuthority,
+                },
+                OvenSelectedRustFacetOwner {
+                    identity: dependency_owner_identity(),
+                    kind: OvenSelectedRustFacetOwnerKind::Constituent,
+                },
+                OvenSelectedRustFacetOwner {
+                    identity: toolchain_owner_identity(),
+                    kind: OvenSelectedRustFacetOwnerKind::Toolchain,
+                },
+            ],
+            units: vec![dependency.clone()],
+            exposed_roots: BTreeMap::new(),
+        };
+        let authority = authority_for_registry_root("dependency_crate", &dependency, vec!["alloc".to_string()], false);
+        let bound = bind_project_inspection_root_intents(
+            physical,
+            BTreeMap::from([("dependency_crate".to_string(), dependency.identity.clone())]),
+            &authority_identity,
+            &authority,
+        )?;
+        let root = bound
+            .graph()
+            .exposed_roots
+            .get("dependency_crate")
+            .ok_or("bound graph lost renamed root")?;
+        assert_eq!(root.requested_features, ["alloc"]);
+        assert!(!root.default_features);
+        assert_eq!(
+            root.intent_owner,
+            selected_graph_sha256(b"fixture inspection authority")
+        );
+
+        let mut wrong_source = authority;
+        wrong_source.registry_sources[0].package.source.digest = selected_graph_sha256(b"wrong source");
+        assert!(matches!(
+            bind_project_inspection_root_intents(
+                OvenSelectedRustFacetGraph {
+                    schema_version: OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION,
+                    selection: bound.graph().selection.clone(),
+                    owners: bound.graph().owners.clone(),
+                    units: bound.graph().units.clone(),
+                    exposed_roots: BTreeMap::new(),
+                },
+                BTreeMap::from([("dependency_crate".to_string(), dependency.identity)]),
+                &selected_graph_sha256(b"fixture inspection authority"),
+                &wrong_source,
+            ),
+            Err(OvenRustcError::InvalidInput {
+                field: "selected Rust facet root source",
+                ..
+            })
+        ));
+        Ok(())
     }
 
     fn single_unit_graph(
