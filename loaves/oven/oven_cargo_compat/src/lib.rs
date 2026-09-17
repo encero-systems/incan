@@ -20,6 +20,7 @@ mod lock;
 mod registry_sources;
 mod rustc_trace;
 mod sdk_staging;
+mod selected_graph_projection;
 mod selected_unit_capture;
 mod workspace_authority;
 
@@ -30,6 +31,7 @@ pub use lock::*;
 pub use registry_sources::*;
 pub use rustc_trace::*;
 pub use sdk_staging::*;
+pub use selected_graph_projection::*;
 pub use selected_unit_capture::*;
 pub use workspace_authority::*;
 
