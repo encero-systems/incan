@@ -210,7 +210,7 @@ def unit_for(
     mut found: Option[AdmittedSelectedUnit] = None
     for unit in units:
         if unit.identity == identity:
-            if found != None:
+            if let Some(_) = found:
                 return Err(
                     IntakeError(
                         kind=IntakeErrorKind.Invalid,
