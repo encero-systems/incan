@@ -433,7 +433,7 @@ else
   done
   IFS="$saved_ifs"
   if [ -z "$cargo_bin" ]; then
-    cargo_bin="$(command -v cargo)" || fail "could not resolve Cargo for the release support workspace"
+    fail "could not resolve Cargo outside the repository target guard; set CARGO_BIN to an exact executable"
   fi
 fi
 # The resolved binary's own directory is the real Cargo home (`.cargo/bin/cargo`, whether reached
@@ -460,35 +460,13 @@ elif [ -d "$HOME/.cargo/registry" ]; then
 else
   cargo_home_dir="$(dirname "$(dirname "$cargo_bin")")"
 fi
-# The resolved binary is very likely rustup's own multiplexer (a `cargo` symlink or shim next to
-# `rustup` itself), which selects a toolchain at runtime by consulting `$RUSTUP_HOME` (default
-# `$HOME/.rustup`) for a configured default. That lookup fails here even after finding the right
-# Cargo: the guard's sandbox also redirects `HOME` to an isolated, per-root scratch directory with
-# no rustup state at all. Route around rustup's own toolchain selection entirely by resolving
-# directly to one real, installed toolchain's `cargo`.
-#
-# Prefer `$RUSTUP_HOME`/`$HOME/.rustup` first: that is rustup's own authoritative toolchains
-# location regardless of where its `cargo`/`rustup` shim binary physically lives, so it also covers
-# package-manager rustup installs (e.g. Homebrew's `rustup` formula, whose shims live under
-# `<prefix>/opt/rustup/bin/` rather than `~/.cargo/bin/`) where `.cargo`/`.rustup` are not siblings
-# of the resolved binary's directory. Fall back to the sibling-of-Cargo heuristic only when that
-# lookup is empty, which covers the guarded/sandboxed case above where `$HOME` itself is redirected
-# but the resolved Cargo binary's real location still has `.rustup` as a physical sibling.
-if [ -z "$explicit_cargo_bin" ]; then
-  direct_toolchain_cargo="$(
-    find "$rustup_home_dir/toolchains" -mindepth 3 -maxdepth 3 \
-      -type f -name cargo -path '*/bin/cargo' 2>/dev/null | head -1
-  )"
-  if [ -z "$direct_toolchain_cargo" ]; then
-    direct_toolchain_cargo="$(
-      find "$(dirname "$cargo_home_dir")/.rustup/toolchains" -mindepth 3 -maxdepth 3 \
-        -type f -name cargo -path '*/bin/cargo' 2>/dev/null | head -1
-    )"
-  fi
-  if [ -n "$direct_toolchain_cargo" ] && [ -x "$direct_toolchain_cargo" ]; then
-    cargo_bin="$direct_toolchain_cargo"
-  fi
-fi
+# A Cargo resolved outside the repository guard is commonly Rustup's shim. Ask its sibling Rustup for the active
+# toolchain's exact Cargo instead of selecting the first directory below `toolchains/`: filesystem order is not
+# toolchain authority. CI pins `RUSTUP_TOOLCHAIN`; ordinary local callers use Rustup's active override/default. A
+# caller-provided `CARGO_BIN` remains exact authority and a non-Rustup Cargo installation remains unchanged.
+cargo_bin="$(
+  workspaces/release/toolchain/resolve_release_cargo.sh "$cargo_bin" "$explicit_cargo_bin"
+)" || fail "could not resolve authoritative Cargo for release packaging"
 # `cargo metadata --offline` below resolves its registry cache from `$CARGO_HOME` (default
 # `$HOME/.cargo`), which is equally a victim of the guard's `$HOME` redirect: the offline cache
 # prewarmed into the real Cargo home would otherwise be invisible. `clear_inherited_cargo_environment`

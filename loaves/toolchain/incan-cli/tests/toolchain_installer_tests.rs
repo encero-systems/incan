@@ -157,6 +157,66 @@ fn release_policy_output_selector() -> PathBuf {
     repo_root().join("workspaces/release/toolchain/select_release_policy_output.sh")
 }
 
+fn release_cargo_selector() -> PathBuf {
+    repo_root().join("workspaces/release/toolchain/resolve_release_cargo.sh")
+}
+
+#[test]
+fn release_cargo_selector_preserves_explicit_and_uses_pinned_rustup_toolchain() -> Result<(), Box<dyn std::error::Error>>
+{
+    let fixture = tempfile::tempdir()?;
+    let bin = fixture.path().join("bin");
+    fs::create_dir_all(&bin)?;
+    let cargo = bin.join("cargo");
+    let pinned = bin.join("cargo-1.98.0");
+    let log = fixture.path().join("rustup.log");
+    fs::write(&cargo, "#!/bin/sh\nexit 0\n")?;
+    fs::write(&pinned, "#!/bin/sh\nexit 0\n")?;
+    fs::write(
+        bin.join("rustup"),
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf '%s\\n' '{}'\n",
+            log.display(),
+            pinned.display(),
+        ),
+    )?;
+    for path in [&cargo, &pinned, &bin.join("rustup")] {
+        let mut permissions = fs::metadata(path)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions)?;
+    }
+
+    let selected = Command::new(release_cargo_selector())
+        .env("RUSTUP_TOOLCHAIN", "1.98.0")
+        .arg(&cargo)
+        .arg("")
+        .output()?;
+    assert!(
+        selected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&selected.stderr)
+    );
+    assert_eq!(String::from_utf8(selected.stdout)?, format!("{}\n", pinned.display()));
+    assert_eq!(fs::read_to_string(&log)?, "which --toolchain 1.98.0 cargo\n");
+
+    fs::remove_file(&log)?;
+    let explicit = Command::new(release_cargo_selector())
+        .env("RUSTUP_TOOLCHAIN", "other")
+        .arg(&cargo)
+        .arg(&cargo)
+        .output()?;
+    assert!(explicit.status.success());
+    assert_eq!(String::from_utf8(explicit.stdout)?, format!("{}\n", cargo.display()));
+    assert!(!log.exists(), "explicit Cargo must not invoke ambient Rustup selection");
+
+    let missing = Command::new(release_cargo_selector())
+        .arg(fixture.path().join("missing-cargo"))
+        .arg("")
+        .output()?;
+    assert!(!missing.status.success(), "a missing default Cargo must fail closed");
+    Ok(())
+}
+
 #[test]
 fn production_archive_binds_the_exact_reported_release_policy_output() -> Result<(), Box<dyn std::error::Error>> {
     let script = fs::read_to_string(toolchain_package_archive_script())?;
@@ -189,6 +249,8 @@ fn production_archive_binds_the_exact_reported_release_policy_output() -> Result
     assert!(script.contains("INCAN_HOME=\"$release_policy_publisher_home\""));
     assert!(script.contains("explicit_cargo_bin=\"${CARGO_BIN:-}\""));
     assert!(script.contains("if [ -z \"$explicit_cargo_bin\" ]; then"));
+    assert!(script.contains("resolve_release_cargo.sh \"$cargo_bin\" \"$explicit_cargo_bin\""));
+    assert!(!script.contains("cargo_bin=\"$(command -v cargo)\""));
     assert!(script.contains("--policy-engine-store \"$policy_engine_store\""));
     assert!(script.contains("--policy-engine-identity \"$policy_engine_identity\""));
     assert!(script.contains("--policy-engine-target \"$target\""));
