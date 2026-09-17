@@ -313,11 +313,26 @@ pub(crate) fn validate_runtime_unit_policy(
                         ),
                     ));
                 }
-                if declared_artifacts.get(&input.source.path) != Some(&input.digest) {
+                let prefix = if input.source.path == "." {
+                    String::new()
+                } else {
+                    format!("{}/", input.source.path)
+                };
+                let expected = input
+                    .members
+                    .iter()
+                    .map(|member| (format!("{prefix}{}", member.path), member.digest.clone()))
+                    .collect::<BTreeMap<_, _>>();
+                let actual = declared_artifacts
+                    .iter()
+                    .filter(|(path, _)| path.starts_with(&prefix))
+                    .map(|(path, digest)| (path.clone(), digest.clone()))
+                    .collect::<BTreeMap<_, _>>();
+                if actual != expected {
                     return Err(runtime_foundation_invalid(
                         "runtime foundation generated input",
                         format!(
-                            "unit {} names generated input {} absent from the sealed artifact manifest",
+                            "unit {} names generated input {} whose complete member catalog differs from the sealed artifact manifest",
                             unit.crate_name, input.name
                         ),
                     ));

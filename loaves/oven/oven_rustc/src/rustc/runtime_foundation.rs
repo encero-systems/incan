@@ -982,7 +982,7 @@ mod tests {
                 name: "serde-private".to_string(),
                 source: OvenSelectedRustFacetPath {
                     owner: foundation_owner(),
-                    path: "generated/serde/private.rs".to_string(),
+                    path: "generated/serde".to_string(),
                 },
                 digest: generated_digest,
                 members: generated_members,
@@ -1371,6 +1371,36 @@ mod tests {
                 ..
             })
         ));
+        Ok(())
+    }
+
+    /// A generated tree must match the sealed manifest in both membership and per-file bytes.
+    #[test]
+    fn runtime_foundation_refuses_extra_or_changed_generated_members() -> Result<(), Box<dyn std::error::Error>> {
+        let baseline = foundation()?;
+        baseline.clone().validated()?;
+        let mut extra = baseline.clone();
+        extra.artifacts.supporting_artifacts.push(OvenRustcSupportingArtifact {
+            relative_path: "generated/serde/undeclared.rs".to_string(),
+            digest: selected_graph_sha256(b"undeclared"),
+        });
+        let mut changed = baseline;
+        let member = changed
+            .artifacts
+            .supporting_artifacts
+            .iter_mut()
+            .find(|artifact| artifact.relative_path == "generated/serde/private.rs")
+            .ok_or("fixture lost its generated member")?;
+        member.digest = selected_graph_sha256(b"changed");
+        for candidate in [extra, changed] {
+            assert!(matches!(
+                candidate.validated(),
+                Err(OvenRustcError::InvalidInput {
+                    field: "runtime foundation generated input",
+                    ..
+                })
+            ));
+        }
         Ok(())
     }
 

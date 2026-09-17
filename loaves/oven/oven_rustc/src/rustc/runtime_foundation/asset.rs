@@ -395,11 +395,22 @@ fn runtime_foundation_asset_member_paths(
         }
         for generated in &unit.generated_inputs {
             if generated.source.owner == foundation_owner {
-                record_runtime_foundation_asset_file(
+                record_runtime_foundation_asset_directory(
                     &mut members,
                     &generated.source.path,
-                    "runtime foundation generated member",
+                    "runtime foundation generated root",
                 )?;
+                for member in &generated.members {
+                    record_runtime_foundation_asset_file(
+                        &mut members,
+                        &runtime_foundation_asset_member_path(
+                            &generated.source.path,
+                            &member.path,
+                            "runtime foundation generated member",
+                        )?,
+                        "runtime foundation generated member",
+                    )?;
+                }
             }
         }
     }
