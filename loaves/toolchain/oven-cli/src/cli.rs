@@ -414,6 +414,20 @@ pub enum OvenLegacyCargoCommand {
         /// Bounded compiler-suite store baked with the compiler-suite envelope
         #[arg(long = "suite-store", value_name = "PATH")]
         suite_store: Option<PathBuf>,
+        /// Existing Oven store containing the exact release policy ProjectOutput
+        #[arg(
+            long = "policy-engine-store",
+            value_name = "PATH",
+            requires = "policy_engine_identity"
+        )]
+        policy_engine_store: Option<PathBuf>,
+        /// Exact ProjectOutput identity to embed in the release envelope
+        #[arg(
+            long = "policy-engine-identity",
+            value_name = "IDENTITY",
+            requires = "policy_engine_store"
+        )]
+        policy_engine_identity: Option<String>,
         /// Built-in release or compiler-suite Loaf envelope
         #[arg(long, value_enum)]
         envelope: OvenLoafEnvelopeArgument,

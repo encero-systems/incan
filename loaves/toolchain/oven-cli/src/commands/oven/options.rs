@@ -178,6 +178,10 @@ pub struct OvenLoafBakeCommandOptions {
     pub output: PathBuf,
     /// Bounded compiler-suite store baked beside a compiler-suite Loaf envelope.
     pub suite_store: Option<PathBuf>,
+    /// Optional existing ProjectOutput store, accepted only by the release publisher.
+    pub policy_engine_store: Option<PathBuf>,
+    /// Exact policy-engine ProjectOutput identity paired with `policy_engine_store`.
+    pub policy_engine_identity: Option<String>,
     /// Built-in release or compiler-suite envelope.
     pub envelope: OvenLoafEnvelopeArgument,
     /// Exact SDK provider inventory used to derive compatibility identities.

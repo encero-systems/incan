@@ -3312,13 +3312,14 @@ mod tests {
         compiler_suite_remove_generated_rust_closure, compiler_suite_selected_shard_references,
         compiler_suite_selection_context, compiler_suite_selection_report, compiler_suite_temporary_directory,
         compiler_suite_uses_indexed_foundations, compiler_suite_workspace_library_dependency_closure,
-        default_rustup_home, import_loaf_envelope_from_mirror_roots, interop_bake_terminal_message,
-        loaf_envelope_compatibility_map, loaf_envelope_default_limits, loaf_envelope_evidence,
-        loaf_fixture_action_name, loaf_generation_identity, native_test_failure_summary, oven_import,
+        default_rustup_home, import_loaf_envelope_from_mirror_roots, import_release_policy_output,
+        interop_bake_terminal_message, loaf_envelope_compatibility_map, loaf_envelope_default_limits,
+        loaf_envelope_evidence, loaf_fixture_action_name, loaf_generation_identity,
+        loaf_generation_identity_with_release_member, native_test_failure_summary, oven_import,
         oven_publish_direct_rustc_plan, oven_run, oven_test, parse_named_path, prepare_compiler_suite_child,
-        reuse_complete_loaf_envelope, run_compiler_suite_children_with_leases_retained,
-        run_prepared_compiler_suite_children, select_compiler_suite_shards, write_compiler_suite_report,
-        write_native_test_transcript,
+        release_policy_publisher_input, reuse_complete_loaf_envelope, run_compiler_suite_children_with_leases_retained,
+        run_prepared_compiler_suite_children, select_compiler_suite_shards, validate_release_policy_project_output,
+        write_compiler_suite_report, write_native_test_transcript,
     };
     use crate::{CliResult, OvenLoafEnvelopeArgument, OvenOutputFormat};
     use incan_driver::oven_store::{default_store_root, resolve_limits_with_environment_and_defaults};
@@ -3330,11 +3331,101 @@ mod tests {
         OvenCompilerWorkspaceLibrary, OvenCompilerWorkspaceLibraryKey,
     };
     use oven_rustc::loaf::{
-        OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION, OvenLoaf, OvenLoafEnvelope,
-        OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafMemberRole, acquire_exclusive_loaf_generation_lock,
-        loaf_envelope_specifications,
+        OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION, OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION,
+        OvenLoaf, OvenLoafEnvelope, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafMemberRole,
+        OvenReleaseStoreMember, acquire_exclusive_loaf_generation_lock, loaf_envelope_specifications,
     };
     use oven_rustc::loaf::{commit_loaf_generation, retire_unreferenced_loaf_generations};
+
+    #[test]
+    fn release_store_member_changes_the_generation_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let evidence = BTreeMap::from([("compiler".to_string(), "sha256:compiler".to_string())]);
+        let member = OvenReleaseStoreMember {
+            schema_version: OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION,
+            label: "rust-policy-engine".to_string(),
+            store_relative_path: PathBuf::from("project-outputs/rust-policy-engine/oven/store/v2"),
+            artifact_identity: "sha256:engine".to_string(),
+        };
+        let ordinary = loaf_generation_identity(OvenLoafEnvelope::Release, &evidence)?;
+        let embedded =
+            loaf_generation_identity_with_release_member(OvenLoafEnvelope::Release, &evidence, Some(&member))?;
+        assert_ne!(ordinary, embedded);
+        let mut swapped = member;
+        swapped.artifact_identity = "sha256:other".to_string();
+        assert_ne!(
+            embedded,
+            loaf_generation_identity_with_release_member(OvenLoafEnvelope::Release, &evidence, Some(&swapped))?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn policy_publisher_inputs_are_paired_and_release_only() {
+        let store = Path::new("policy-store");
+        assert!(release_policy_publisher_input(OvenLoafEnvelope::Release, None, None).is_ok());
+        assert!(release_policy_publisher_input(OvenLoafEnvelope::Release, Some(store), None).is_err());
+        assert!(release_policy_publisher_input(OvenLoafEnvelope::Release, None, Some("sha256:output")).is_err());
+        assert!(
+            release_policy_publisher_input(OvenLoafEnvelope::CompilerSuite, Some(store), Some("sha256:output"),)
+                .is_err()
+        );
+        assert_eq!(
+            release_policy_publisher_input(OvenLoafEnvelope::Release, Some(store), Some("sha256:output"))
+                .ok()
+                .flatten(),
+            Some((store, "sha256:output")),
+        );
+    }
+
+    #[test]
+    fn release_publisher_imports_the_exact_existing_project_output() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir_all(project.path().join("src"))?;
+        fs::write(
+            project.path().join("loaf.toml"),
+            "[project]\nname = \"oven_local_intake\"\nversion = \"0.1.0\"\n",
+        )?;
+        assert_eq!(
+            incan_driver::build::output_selection::baked_project_owner_identity(project.path())?,
+            digest_bytes(b"incan_oven_project_output_owner/1\0oven_local_intake"),
+            "the publisher must use the canonical ProjectOutput owner derivation",
+        );
+        fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+        let (receipt, mut payload, files) = incan_driver::build::test_support::fixture_project_output_publication(
+            project.path(),
+            "release",
+            "policy-engine",
+        )?;
+        payload.target_identity = "executable:src/plan_json_main.incn".to_string();
+        payload.entrypoint_relative_path = "src/plan_json_main.incn".to_string();
+        let source = tempfile::tempdir()?;
+        let limits = OvenStoreLimits::new(16 * 1024 * 1024, 16 * 1024 * 1024, 16 * 1024 * 1024);
+        let source_store = OvenStore::new(source.path(), limits);
+        let stored =
+            incan_driver::build::publication::publish_project_output_loaf(&source_store, &receipt, &payload, &files)?;
+        let identity = stored.identity.clone();
+        drop(stored);
+        let selected = source_store.select_payload_for_execution(&identity)?;
+        let mut wrong_entrypoint = payload.clone();
+        wrong_entrypoint.entrypoint_relative_path = "src/main.incn".to_string();
+        assert!(validate_release_policy_project_output(&selected.0, &wrong_entrypoint, &receipt).is_err());
+        drop(selected);
+
+        let staged = tempfile::tempdir()?;
+        let member = OvenReleaseStoreMember {
+            schema_version: OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION,
+            label: "rust-policy-engine".to_string(),
+            store_relative_path: PathBuf::from("project-outputs/rust-policy-engine/oven/store/v2"),
+            artifact_identity: identity.clone(),
+        };
+        import_release_policy_output(source.path(), staged.path(), &member, limits)?;
+
+        let embedded = OvenStore::new(staged.path().join(&member.store_relative_path), limits)
+            .select_payload_for_execution(&identity)?;
+        assert_eq!(embedded.0.identity, identity);
+        assert_eq!(embedded.2, serde_json::to_vec(&payload)?);
+        Ok(())
+    }
     use oven_rustc::native_test::{OvenNativeTestCaseCounts, OvenNativeTestCaseTiming};
     use oven_rustc::rustc::{
         OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OvenRustcArtifactManifest, OvenRustcArtifactPlan,
@@ -3567,6 +3658,7 @@ mod tests {
             scratch.path(),
             OvenLoafEnvelope::Release,
             &evidence,
+            None,
             &[stale.path().to_path_buf()],
         )?;
         assert!(
@@ -3579,6 +3671,7 @@ mod tests {
             scratch.path(),
             OvenLoafEnvelope::Release,
             &evidence,
+            None,
             &[stale.path().to_path_buf(), mirror.path().to_path_buf()],
         )?;
         let committed: OvenLoafEnvelopeManifest =
@@ -3594,6 +3687,7 @@ mod tests {
             scratch.path(),
             OvenLoafEnvelope::Release,
             &evidence,
+            None,
             OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
             Instant::now(),
         )?
@@ -3685,6 +3779,7 @@ mod tests {
             scratch.path(),
             OvenLoafEnvelope::Release,
             &output_churn_evidence,
+            None,
             OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
             Instant::now(),
         )?
@@ -3736,6 +3831,7 @@ mod tests {
                 scratch.path(),
                 OvenLoafEnvelope::Release,
                 &changed_runtime_evidence,
+                None,
                 OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
                 Instant::now(),
             )?
@@ -3916,6 +4012,8 @@ mod tests {
                 compiler_root: compiler_root.path().to_path_buf(),
                 output: output.path().to_path_buf(),
                 suite_store: Some(suite_store.path().to_path_buf()),
+                policy_engine_store: None,
+                policy_engine_identity: None,
                 envelope: OvenLoafEnvelopeArgument::CompilerSuite,
                 sdk_inventory,
                 cargo,

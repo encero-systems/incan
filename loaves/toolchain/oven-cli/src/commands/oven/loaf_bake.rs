@@ -9,6 +9,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
+use incan_driver::build::OvenProjectOutputPayload;
+use incan_driver::build::publication::stored_project_output_from_parts;
+use oven_rustc::loaf::{OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenReleaseStoreMember};
+use oven_store::store::{
+    OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, PublishedOvenStore,
+};
+
 use super::{
     CliError, CliResult, DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES,
     DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES,
@@ -22,12 +29,13 @@ use super::{
     acquire_exclusive_loaf_generation_lock, announce_oven_progress, commit_loaf_generation, compiler_libtests_receipt,
     elapsed_detail, env, human_bytes, import_loaf_envelope_from_configured_mirrors,
     isolate_loaf_fixture_toolchain_data, legacy_cargo_inspection_sources, legacy_cargo_resolved_registry_sources,
-    loaf_compiler_lock_path, loaf_compiler_manifest_path, loaf_directory_byte_counts, loaf_envelope_compatibility_map,
-    loaf_envelope_evidence, loaf_envelope_inspection_packages, loaf_envelope_name, loaf_envelope_specifications,
-    loaf_fixture_action_name, loaf_fixture_probe_is_expected_miss, loaf_generation_identity, loaf_raw_disk_bytes,
-    open_store, oven_error, pin_loaf_fixture_rustc, prepare_compiler_test_suite, prepare_loaf_from_generated_project,
-    print_json, read_receipt, retire_unreferenced_loaf_generations, reuse_complete_loaf_envelope,
-    stage_locked_loaf_fixture, write_receipt, write_sealed_oven_inspection_source_authority,
+    loaf_compiler_lock_path, loaf_compiler_manifest_path, loaf_directory_byte_counts,
+    loaf_envelope_compatibility_map_with_release_member, loaf_envelope_evidence, loaf_envelope_inspection_packages,
+    loaf_envelope_name, loaf_envelope_specifications, loaf_fixture_action_name, loaf_fixture_probe_is_expected_miss,
+    loaf_generation_identity_with_release_member, loaf_raw_disk_bytes, open_store, oven_error, pin_loaf_fixture_rustc,
+    prepare_compiler_test_suite, prepare_loaf_from_generated_project, print_json, read_receipt,
+    retire_unreferenced_loaf_generations, reuse_complete_loaf_envelope, stage_locked_loaf_fixture, write_receipt,
+    write_sealed_oven_inspection_source_authority,
 };
 
 /// Bake or exactly reuse one complete compiler-owned Alpha Loaf envelope.
@@ -74,6 +82,11 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         OvenLoafEnvelopeArgument::Release => OvenLoafEnvelope::Release,
         OvenLoafEnvelopeArgument::CompilerSuite => OvenLoafEnvelope::CompilerSuite,
     };
+    let publisher_input = release_policy_publisher_input(
+        envelope,
+        options.policy_engine_store.as_deref(),
+        options.policy_engine_identity.as_deref(),
+    )?;
     let default_limits = loaf_envelope_default_limits(envelope);
     let combined_max_physical_bytes = options.max_physical_bytes.unwrap_or(default_limits.max_physical_bytes);
     let existing_suite_physical_bytes = if envelope == OvenLoafEnvelope::CompilerSuite {
@@ -130,14 +143,33 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         preflight_elapsed_ms: started.elapsed().as_millis(),
         ..OvenLoafBakePhaseTiming::default()
     };
-    import_loaf_envelope_from_configured_mirrors(&options.output, scratch.path(), envelope, &evidence)?;
-    if let Some(report) =
-        reuse_complete_loaf_envelope(&options.output, scratch.path(), envelope, &evidence, limits, started)?
-    {
+    let release_store_member = publisher_input.map(|(_, identity)| OvenReleaseStoreMember {
+        schema_version: OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION,
+        label: "rust-policy-engine".to_string(),
+        store_relative_path: PathBuf::from("project-outputs/rust-policy-engine/oven/store/v2"),
+        artifact_identity: identity.to_string(),
+    });
+    import_loaf_envelope_from_configured_mirrors(
+        &options.output,
+        scratch.path(),
+        envelope,
+        &evidence,
+        release_store_member.as_ref(),
+    )?;
+    if let Some(report) = reuse_complete_loaf_envelope(
+        &options.output,
+        scratch.path(),
+        envelope,
+        &evidence,
+        release_store_member.as_ref(),
+        limits,
+        started,
+    )? {
         // Exact envelope validation and retirement require exclusive publication authority. Compiler-suite
         // completion then consumes the committed Loafs through a shared generation lease, so retaining the writer
         // lock across that transition would make this process wait on itself.
         let report = finish_loaf_bake_after_publication(publication_lock, &options, envelope, report, started)?;
+        verify_committed_release_policy_output(&options.output, release_store_member.as_ref())?;
         print_loaf_bake_report(&report, options.format)?;
         return Ok(ExitCode::SUCCESS);
     }
@@ -146,8 +178,10 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     // publisher's exclusive lock here would make the parent wait for a child that is waiting for the parent. The
     // staged generation is private and has no publication authority, so release exclusivity until the atomic commit.
     drop(publication_lock);
-    let compatibility_evidence = loaf_envelope_compatibility_map(&evidence);
-    let generation_identity = loaf_generation_identity(envelope, &compatibility_evidence)?;
+    let compatibility_evidence =
+        loaf_envelope_compatibility_map_with_release_member(&evidence, release_store_member.as_ref())?;
+    let generation_identity =
+        loaf_generation_identity_with_release_member(envelope, &compatibility_evidence, release_store_member.as_ref())?;
     let generation_name = generation_identity
         .strip_prefix("sha256:")
         .unwrap_or(&generation_identity);
@@ -156,6 +190,9 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     let generations_root = options.output.join("generations");
     fs::create_dir_all(&generations_root)
         .map_err(|error| CliError::failure(format!("could not create Loaf generations root: {error}")))?;
+    if let (Some((source_store, _)), Some(member)) = (publisher_input, release_store_member.as_ref()) {
+        import_release_policy_output(source_store, &staged_root, member, limits)?;
+    }
     let mut pending = Vec::new();
     let envelope_inspection_packages = loaf_envelope_inspection_packages(envelope).map_err(CliError::failure)?;
     // A cold first bake cannot consume a Loaf that does not exist yet. Resolve its Rust inspection sources once at
@@ -427,7 +464,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 }
             })
             .collect(),
-        release_store_member: None,
+        release_store_member: release_store_member.clone(),
     };
     let publication_lock = acquire_exclusive_loaf_generation_lock(&options.output).map_err(oven_error)?;
     let replacement_high_water = oven_cargo_compat::conservative_directory_reservation(&options.output)
@@ -501,8 +538,148 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     // `finish_loaf_bake` opens the committed Loafs as a normal shared-lease consumer. Publication and retirement
     // are complete, so release exclusive authority before crossing into that consumer phase.
     let report = finish_loaf_bake_after_publication(publication_lock, &options, envelope, report, started)?;
+    verify_committed_release_policy_output(&options.output, release_store_member.as_ref())?;
     print_loaf_bake_report(&report, options.format)?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// Validate and copy the exact release policy ProjectOutput into the private generation store.
+pub(crate) fn import_release_policy_output(
+    source_store: &Path,
+    staged_generation: &Path,
+    member: &OvenReleaseStoreMember,
+    limits: OvenStoreLimits,
+) -> CliResult<()> {
+    let mut selected = PublishedOvenStore::new(source_store)
+        .select_payloads_matching_for_execution(|manifest| manifest.identity == member.artifact_identity)
+        .map_err(oven_error)?;
+    if selected.len() != 1 {
+        return Err(CliError::failure(
+            "policy-engine store must contain exactly the declared identity",
+        ));
+    }
+    let selected = selected
+        .pop()
+        .ok_or_else(|| CliError::failure("policy-engine selection became empty"))?;
+    selected.verify_materialized_files().map_err(oven_error)?;
+    let receipt = selected
+        .original_native_receipt()
+        .cloned()
+        .ok_or_else(|| CliError::failure("release policy ProjectOutput has no original publisher receipt"))?;
+    let admitted = selected.admitted_materialized_files().to_vec();
+    let (manifest, artifact_root, payload_bytes, lease) = selected.into_parts();
+    let payload: OvenProjectOutputPayload = serde_json::from_slice(&payload_bytes)
+        .map_err(|error| CliError::failure(format!("release policy ProjectOutput payload is invalid: {error}")))?;
+    let stored = stored_project_output_from_parts(manifest.clone(), artifact_root.clone(), payload, lease)?;
+    validate_release_policy_project_output(&manifest, &stored.payload, &receipt)?;
+    let destination = OvenStore::new(staged_generation.join(&member.store_relative_path), limits);
+    let materialized_files = manifest
+        .materialized_files
+        .iter()
+        .map(|file| OvenArtifactMaterializedFile {
+            source_path: artifact_root.join(&file.relative_path),
+            relative_path: file.relative_path.clone(),
+        })
+        .collect();
+    let published = destination
+        .publish_verified_import(
+            &OvenArtifactPublishRequest {
+                receipt,
+                domain: manifest.domain.clone(),
+                kind: manifest.kind,
+                payload: payload_bytes,
+                materialized_files,
+            },
+            &admitted,
+        )
+        .map_err(oven_error)?;
+    if published.identity != member.artifact_identity {
+        return Err(CliError::failure(
+            "embedded policy-engine import changed its exact artifact identity",
+        ));
+    }
+    Ok(())
+}
+
+/// Accept the optional publisher input only as one complete release-only pair.
+pub(crate) fn release_policy_publisher_input<'a>(
+    envelope: OvenLoafEnvelope,
+    store: Option<&'a Path>,
+    identity: Option<&'a str>,
+) -> CliResult<Option<(&'a Path, &'a str)>> {
+    match (store, identity) {
+        (None, None) => Ok(None),
+        (Some(store), Some(identity)) if envelope == OvenLoafEnvelope::Release => Ok(Some((store, identity))),
+        (Some(_), Some(_)) => Err(CliError::failure(
+            "policy-engine inputs are accepted only for the release envelope",
+        )),
+        _ => Err(CliError::failure(
+            "--policy-engine-store and --policy-engine-identity must be supplied together",
+        )),
+    }
+}
+
+/// Re-prove the committed physical member after publication authority has been released.
+fn verify_committed_release_policy_output(output: &Path, expected: Option<&OvenReleaseStoreMember>) -> CliResult<()> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let held = oven_rustc::loaf::acquire_committed_release_store_member(output, &expected.label)
+        .map_err(oven_error)?
+        .ok_or_else(|| CliError::failure("committed release policy store member is missing"))?;
+    if held.payload.manifest.identity != expected.artifact_identity {
+        return Err(CliError::failure(
+            "committed release policy store member has the wrong artifact identity",
+        ));
+    }
+    let receipt = held
+        .payload
+        .original_native_receipt()
+        .ok_or_else(|| CliError::failure("committed release policy ProjectOutput has no publisher receipt"))?;
+    let payload: OvenProjectOutputPayload = serde_json::from_slice(&held.payload.payload).map_err(|error| {
+        CliError::failure(format!(
+            "committed release policy ProjectOutput payload is invalid: {error}"
+        ))
+    })?;
+    validate_release_policy_project_output(&held.payload.manifest, &payload, receipt)?;
+    Ok(())
+}
+
+/// Apply the Incan-owned semantic contract to either a source or committed generic store entry.
+pub(crate) fn validate_release_policy_project_output(
+    manifest: &oven_store::store::OvenArtifactManifest,
+    payload: &OvenProjectOutputPayload,
+    receipt: &oven_store::OvenReceipt,
+) -> CliResult<()> {
+    // `baked_project_owner_identity` derives this value from the manifest project name. The focused test below
+    // compares this publisher constant with that canonical helper so an identity-version change cannot drift here.
+    let expected_project_identity = oven_store::digest_bytes(b"incan_oven_project_output_owner/1\0oven_local_intake");
+    receipt
+        .verify_identity()
+        .map_err(|error| CliError::failure(format!("release policy publisher receipt is invalid: {error}")))?;
+    if manifest.kind != OvenArtifactKind::ProjectOutput
+        || manifest.intent != receipt.intent
+        || manifest.intent.profile != "release"
+        || payload.compiler_version != super::INCAN_VERSION
+        || payload.project_target != "executable"
+        || payload.target_identity != "executable:src/plan_json_main.incn"
+        || payload.entrypoint_relative_path != "src/plan_json_main.incn"
+        || payload.project_identity != expected_project_identity
+        || payload.source_authority_digest.trim().is_empty()
+        || payload.receipt_identity != receipt.identity
+        || payload.receipt_identity != manifest.receipt_identity
+        || payload.build_unit_identity != receipt.build_unit_identity
+        || payload.build_unit_identity != manifest.build_unit_identity
+    {
+        return Err(CliError::failure(
+            "release policy input is not the exact release core_engine ProjectOutput authority",
+        ));
+    }
+    payload
+        .backend_receipt
+        .verify_identity()
+        .map_err(|error| CliError::failure(format!("release policy backend receipt is invalid: {error}")))?;
+    Ok(())
 }
 
 /// Cross from exclusive envelope publication into normal shared-lease consumption.

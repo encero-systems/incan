@@ -133,6 +133,27 @@ pub(crate) fn loaf_envelope_compatibility_map(evidence: &OvenLoafEnvelopeEvidenc
     ])
 }
 
+/// Add the exact optional release asset to the evidence map that mirrors and reuse compare.
+pub(crate) fn loaf_envelope_compatibility_map_with_release_member(
+    evidence: &OvenLoafEnvelopeEvidence,
+    release_store_member: Option<&OvenReleaseStoreMember>,
+) -> CliResult<BTreeMap<String, String>> {
+    let mut compatibility = loaf_envelope_compatibility_map(evidence);
+    if let Some(member) = release_store_member {
+        compatibility.insert(
+            "release_store_member_artifact_identity".to_string(),
+            member.artifact_identity.clone(),
+        );
+        compatibility.insert(
+            "release_store_member_descriptor_digest".to_string(),
+            digest_bytes(&serde_json::to_vec(member).map_err(|error| {
+                CliError::failure(format!("could not encode release store member evidence: {error}"))
+            })?),
+        );
+    }
+    Ok(compatibility)
+}
+
 /// Return the content identity of the generation one envelope name and evidence map would commit.
 pub(crate) fn loaf_generation_identity(
     envelope: OvenLoafEnvelope,
@@ -177,6 +198,7 @@ pub(crate) fn import_loaf_envelope_from_configured_mirrors(
     scratch: &Path,
     envelope: OvenLoafEnvelope,
     evidence: &OvenLoafEnvelopeEvidence,
+    release_store_member: Option<&OvenReleaseStoreMember>,
 ) -> CliResult<()> {
     if output.join("envelope.json").is_file() {
         return Ok(());
@@ -185,7 +207,7 @@ pub(crate) fn import_loaf_envelope_from_configured_mirrors(
     if mirrors.is_empty() {
         return Ok(());
     }
-    import_loaf_envelope_from_mirror_roots(output, scratch, envelope, evidence, &mirrors)
+    import_loaf_envelope_from_mirror_roots(output, scratch, envelope, evidence, release_store_member, &mirrors)
 }
 
 /// Commit the expected generation from the first of `mirrors` that proves in full; see the configured wrapper.
@@ -194,10 +216,12 @@ pub(crate) fn import_loaf_envelope_from_mirror_roots(
     scratch: &Path,
     envelope: OvenLoafEnvelope,
     evidence: &OvenLoafEnvelopeEvidence,
+    release_store_member: Option<&OvenReleaseStoreMember>,
     mirrors: &[PathBuf],
 ) -> CliResult<()> {
-    let compatibility_evidence = loaf_envelope_compatibility_map(evidence);
-    let generation_identity = loaf_generation_identity(envelope, &compatibility_evidence)?;
+    let compatibility_evidence = loaf_envelope_compatibility_map_with_release_member(evidence, release_store_member)?;
+    let generation_identity =
+        loaf_generation_identity_with_release_member(envelope, &compatibility_evidence, release_store_member)?;
     let members = loaf_envelope_specifications(envelope)
         .iter()
         .map(|specification| LoafMemberExpectation {
@@ -213,7 +237,7 @@ pub(crate) fn import_loaf_envelope_from_mirror_roots(
         generation_identity: &generation_identity,
         evidence: &compatibility_evidence,
         members: &members,
-        release_store_member: None,
+        release_store_member,
     };
     let started = Instant::now();
     match import_loaf_envelope_from_mirrors(output, scratch, &expectation, mirrors) {
@@ -337,6 +361,7 @@ pub(crate) fn reuse_complete_loaf_envelope(
     scratch: &Path,
     envelope: OvenLoafEnvelope,
     evidence: &OvenLoafEnvelopeEvidence,
+    release_store_member: Option<&OvenReleaseStoreMember>,
     limits: OvenStoreLimits,
     started: Instant,
 ) -> CliResult<Option<OvenLoafBakeReport>> {
@@ -356,10 +381,11 @@ pub(crate) fn reuse_complete_loaf_envelope(
             manifest_path.display()
         ))
     })?;
-    let expected_evidence = loaf_envelope_compatibility_map(evidence);
+    let expected_evidence = loaf_envelope_compatibility_map_with_release_member(evidence, release_store_member)?;
     if manifest.schema_version != OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION
         || manifest.envelope != loaf_envelope_name(envelope)
         || manifest.evidence != expected_evidence
+        || manifest.release_store_member.as_ref() != release_store_member
     {
         return Ok(None);
     }
