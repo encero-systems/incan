@@ -4294,7 +4294,7 @@ mod tests {
             "[package]\nname = \"empty_generated_output\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
         )?;
         fs::write(&source, "fn main() {}\n")?;
-        let receipt = receipt_generated_project(&OvenGeneratedProjectRequest::new(
+        let request = OvenGeneratedProjectRequest::new(
             project.path(),
             "empty_generated_output",
             "0.1.0",
@@ -4302,7 +4302,9 @@ mod tests {
             "fixture-rustc",
             "debug",
             Vec::new(),
-        ))?;
+        )
+        .with_generated_source("generated-root", &source);
+        let receipt = receipt_generated_project(&request)?;
 
         let staging = tempfile::tempdir()?;
         let empty_digest = oven_rustc::rustc::selected_graph_generated_input_digest(&[])?;
