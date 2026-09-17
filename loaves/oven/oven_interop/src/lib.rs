@@ -19,8 +19,8 @@ use sha2::{Digest, Sha256};
 
 use oven_model::oven_interop::{
     InteropArtifactKind, InteropArtifactOrigin, InteropShimLanguage, InteropTargetPlatform, LockedInteropInput,
-    LockedInteropTarget, ToolchainRequirement, ios_target_kind, is_interop_native_library_name,
-    locked_interop_target_identity,
+    LockedInteropTarget, ToolchainRequirement, interop_execution_receipt_identity, ios_target_kind,
+    is_interop_native_library_name, locked_interop_target_identity,
 };
 pub use oven_model::oven_interop::{
     OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION, OVEN_INTEROP_EXECUTION_RECEIPT_INPUT,
@@ -1594,35 +1594,16 @@ pub fn receipt_interop_execution(
     let toolchain = validate_selected_capability("toolchain", target.toolchain.as_ref(), toolchain)?;
     let sdk = validate_selected_capability("SDK", target.sdk.as_ref(), sdk)?;
     let locked_target_identity = locked_interop_target_identity(target)?;
-    let identity = digest_serialized(
-        &OvenInteropExecutionReceiptIdentity {
-            schema_version: OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION,
-            locked_target_identity: &locked_target_identity,
-            target: &target.target,
-            toolchain: toolchain.as_ref(),
-            sdk: sdk.as_ref(),
-        },
-        "selected Oven interop execution receipt",
-    )?;
-    Ok(OvenInteropExecutionReceipt {
+    let mut receipt = OvenInteropExecutionReceipt {
         schema_version: OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION,
         locked_target_identity,
         target: target.target.clone(),
         toolchain,
         sdk,
-        identity,
-    })
-}
-
-/// Canonical identity fields excluding the self-referential receipt identity.
-#[derive(Serialize)]
-#[serde(rename_all = "kebab-case")]
-struct OvenInteropExecutionReceiptIdentity<'a> {
-    schema_version: u32,
-    locked_target_identity: &'a str,
-    target: &'a str,
-    toolchain: Option<&'a OvenInteropCapabilitySelection>,
-    sdk: Option<&'a OvenInteropCapabilitySelection>,
+        identity: String::new(),
+    };
+    receipt.identity = interop_execution_receipt_identity(&receipt)?;
+    Ok(receipt)
 }
 
 /// Check that one concrete selection satisfies the exact locked capability requirement.

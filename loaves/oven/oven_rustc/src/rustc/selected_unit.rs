@@ -16,7 +16,7 @@ use std::path::{Component, Path, PathBuf};
 
 use oven_model::oven_interop::{
     OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION, OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION,
-    OvenInteropExecutionProvenance,
+    OvenInteropExecutionProvenance, verify_interop_execution_receipt_identity,
 };
 
 use super::{
@@ -609,6 +609,12 @@ fn materialize_linked_libraries(
                         field: "selected Rust linked provider provenance",
                         message: error.to_string(),
                     })?;
+                verify_interop_execution_receipt_identity(&held.receipt).map_err(|error| {
+                    OvenRustcError::InvalidInput {
+                        field: "selected Rust linked provider provenance",
+                        message: error,
+                    }
+                })?;
                 if held.schema_version != OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION
                     || held.receipt.schema_version != OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION
                     || held.receipt.target != target.as_str()

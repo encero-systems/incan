@@ -68,6 +68,60 @@ pub struct OvenInteropExecutionReceipt {
     pub identity: String,
 }
 
+/// Recompute the canonical identity for a selected interop execution receipt.
+///
+/// The returned digest excludes `receipt.identity` itself, so a consumer can prove that the serialized receipt has
+/// not substituted an arbitrary self-asserted identity. This validates receipt structure only; binding the locked
+/// target identity to a retained locked-target record remains the responsibility of the caller that holds that
+/// record.
+pub fn interop_execution_receipt_identity(receipt: &OvenInteropExecutionReceipt) -> Result<String, String> {
+    if receipt.schema_version != OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION {
+        return Err(format!(
+            "unsupported Oven interop execution receipt schema {}",
+            receipt.schema_version
+        ));
+    }
+    digest_interop_execution_receipt_identity(&OvenInteropExecutionReceiptIdentity {
+        schema_version: receipt.schema_version,
+        locked_target_identity: &receipt.locked_target_identity,
+        target: &receipt.target,
+        toolchain: receipt.toolchain.as_ref(),
+        sdk: receipt.sdk.as_ref(),
+    })
+}
+
+/// Refuse a receipt whose self-reported identity does not match its canonical receipt fields.
+pub fn verify_interop_execution_receipt_identity(receipt: &OvenInteropExecutionReceipt) -> Result<(), String> {
+    let expected = interop_execution_receipt_identity(receipt)?;
+    if receipt.identity != expected {
+        return Err(format!(
+            "Oven interop execution receipt identity `{}` does not match canonical identity `{expected}`",
+            receipt.identity
+        ));
+    }
+    Ok(())
+}
+
+/// Canonical receipt fields excluding the self-referential receipt identity.
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct OvenInteropExecutionReceiptIdentity<'a> {
+    schema_version: u32,
+    locked_target_identity: &'a str,
+    target: &'a str,
+    toolchain: Option<&'a OvenInteropCapabilitySelection>,
+    sdk: Option<&'a OvenInteropCapabilitySelection>,
+}
+
+/// Serialize one receipt identity shape before hashing it with Oven's portable digest encoding.
+fn digest_interop_execution_receipt_identity(
+    value: &OvenInteropExecutionReceiptIdentity<'_>,
+) -> Result<String, String> {
+    serde_json::to_vec(value)
+        .map(|bytes| format!("sha256:{}", hex::encode(Sha256::digest(bytes))))
+        .map_err(|error| format!("failed to serialize Oven interop execution receipt identity: {error}"))
+}
+
 /// One static archive compiled or selected by the explicit interop baker.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
@@ -1445,6 +1499,24 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    #[test]
+    fn execution_receipt_identity_rejects_self_asserted_value() -> Result<(), Box<dyn std::error::Error>> {
+        let mut receipt = OvenInteropExecutionReceipt {
+            schema_version: OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION,
+            locked_target_identity: "sha256:locked-target".to_string(),
+            target: "x86_64-unknown-linux-gnu".to_string(),
+            toolchain: None,
+            sdk: None,
+            identity: String::new(),
+        };
+        receipt.identity = interop_execution_receipt_identity(&receipt)?;
+        verify_interop_execution_receipt_identity(&receipt)?;
+
+        receipt.target = "aarch64-apple-darwin".to_string();
+        assert!(verify_interop_execution_receipt_identity(&receipt).is_err());
+        Ok(())
+    }
 
     #[test]
     fn execution_provenance_wire_round_trips_with_the_legacy_shape() -> Result<(), Box<dyn std::error::Error>> {
