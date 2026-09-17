@@ -9707,12 +9707,12 @@
 <h1 id="stdasync-reference">std.async (reference)<a class="headerlink" href="#stdasync-reference" title="Permanent link">&para;</a></h1>
 <p>This page documents the <code>std.async</code> API surface exposed by the standard library. See the module source files for authoritative behavior:</p>
 <ul>
-<li><code>crates/incan_stdlib/stdlib/async/time.incn</code></li>
-<li><code>crates/incan_stdlib/stdlib/async/task.incn</code></li>
-<li><code>crates/incan_stdlib/stdlib/async/channel.incn</code></li>
-<li><code>crates/incan_stdlib/stdlib/async/sync.incn</code></li>
-<li><code>crates/incan_stdlib/stdlib/async/race.incn</code></li>
-<li><code>crates/incan_stdlib/stdlib/async/prelude.incn</code></li>
+<li><code>loaves/stdlib/async/src/async/time.incn</code></li>
+<li><code>loaves/stdlib/async/src/async/task.incn</code></li>
+<li><code>loaves/stdlib/async/src/async/channel.incn</code></li>
+<li><code>loaves/stdlib/async/src/async/sync.incn</code></li>
+<li><code>loaves/stdlib/async/src/async/race.incn</code></li>
+<li><code>loaves/stdlib/async/src/async/prelude.incn</code></li>
 </ul>
 <h2 id="interop-notes">Interop notes<a class="headerlink" href="#interop-notes" title="Permanent link">&para;</a></h2>
 <p><code>std.async.time</code> and <code>std.async.race</code> use direct Rust interop calls (for example <code>tokio::time</code>) for their timer-related operations rather than wrapping stdlib-runtime helper functions. The public signatures listed below remain unchanged. <code>std.async.task</code>, <code>std.async.channel</code>, <code>std.async.sync</code>, and <code>std.async.prelude</code> still retain wrapper-style surfaces where behavior depends on native Rust adapter contracts.</p>

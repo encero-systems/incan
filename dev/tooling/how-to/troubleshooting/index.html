@@ -9740,7 +9740,7 @@ incan<span class="w"> </span>tools<span class="w"> </span>doctor
 <div class="language-bash highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>/path/to/incan
 make<span class="w"> </span>build
 </code></pre></div>
-<p>On local machines, <code>make build</code> builds the compiler and LSP with <code>cargo build --features lsp</code>, then links <code>~/.cargo/bin/incan</code> to <code>target/debug/incan</code> and <code>~/.cargo/bin/incan-lsp</code> to <code>target/debug/incan-lsp</code>. Keep <code>~/.cargo/bin</code> early enough in your <code>PATH</code> that both tools resolve there.</p>
+<p>On local machines, <code>make build</code> builds the compiler and LSP with <code>cargo build -p incan-cli -p incan-lsp</code>, then links <code>~/.cargo/bin/incan</code> to <code>target/debug/incan</code> and <code>~/.cargo/bin/incan-lsp</code> to <code>target/debug/incan-lsp</code>. Keep <code>~/.cargo/bin</code> early enough in your <code>PATH</code> that both tools resolve there.</p>
 <p>If you intentionally want the release binary from a checkout:</p>
 <div class="language-bash highlight"><pre><span></span><code>make<span class="w"> </span>release
 ./target/release/incan<span class="w"> </span>--version

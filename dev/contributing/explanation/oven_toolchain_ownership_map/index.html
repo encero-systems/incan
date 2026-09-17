@@ -8226,10 +8226,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#test-coverage" class="md-nav__link">
+  <a href="#historical-test-coverage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Test coverage
+        Historical test coverage
       
     </span>
   </a>
@@ -9672,10 +9672,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#test-coverage" class="md-nav__link">
+  <a href="#historical-test-coverage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Test coverage
+        Historical test coverage
       
     </span>
   </a>
@@ -9726,7 +9726,8 @@
 
 <h1 id="oven-and-toolchain-ownership-map">Oven and toolchain ownership map<a class="headerlink" href="#oven-and-toolchain-ownership-map" title="Permanent link">&para;</a></h1>
 <p>This is the checked-in ownership map required by <a href="https://github.com/encero-systems/incan/issues/871">#871</a>: a component-by-component inventory of the Oven/toolchain control plane, classifying every supported responsibility as <strong>Incan semantic control</strong>, <strong>Rust host kernel</strong>, or <strong>explicitly excluded</strong> (compiler-internal, not part of the Incan-vs-Oven axis at all).</p>
-<p>Audited against <code>release/v0.5</code> (post v0.5 RC3, PR #1076 merged).</p>
+<p>The classification and numerical audit were recorded against <code>release/v0.5</code> (post v0.5 RC3, PR #1076 merged). Paths below have been updated for the settled v0.6 crate extraction; line counts, test counts and migration-risk observations remain historical evidence, not a fresh coverage assessment.</p>
+<p>Current ownership is split across <code>loaves/oven/oven_model/</code> (manifest, lock, workspace and lifecycle models), <code>loaves/oven/oven_store/</code> (receipts, stores, leases and process containment), and <code>loaves/oven/oven_rustc/</code> (native plans, Loaf baking, test execution and Cargo compatibility). Compiler-specific composition belongs to <code>loaves/compiler/incan_driver/</code> and <code>loaves/compiler/incan_provider/</code>; checked provider and manifest contracts live in <code>loaves/compiler/incan_frontend/</code>. The proposed additional Oven crates and toolchain binary moves have not landed.</p>
 <h2 id="the-classification-rule">The classification rule<a class="headerlink" href="#the-classification-rule" title="Permanent link">&para;</a></h2>
 <p>This map does not invent its own criteria. It applies the rule this repo already decided, quoted verbatim:</p>
 <ul>
@@ -9740,9 +9741,9 @@
 <li><strong>Confirmed Rust host kernel</strong>: the large majority of the audited surface — receipts, crash-safe publication, leases, resolver/provider-choice, scheduling, caches, and direct-rustc/Cargo-boundary invocation all cleanly match the quoted rule.</li>
 <li><strong>Migration candidates (Incan semantic control)</strong>: a materially-sized, concrete set — see table below. Most are pure data/schema/validation logic with zero filesystem, process, or crash-safety dependency.</li>
 <li><strong>Genuinely uncertain, needs an explicit decision</strong>: a smaller set where the code doesn't cleanly match either bucket, or where classification depends on a decision this map surfaces but doesn't make unilaterally.</li>
-<li><strong>Real architectural findings</strong> (not just classification, but things worth a decision): three are named below — the Cargo.lock/manifest reimplementation tension, the LSP→CLI boundary crossing, and the CLI's shim-vs-core blur in <code>build.rs</code>/<code>test_runner/execution.rs</code>.</li>
-<li><strong>No existing implementation-tracking issue covers this migration work in fine grain.</strong> #1034 ("migrate the full Oven semantic control plane to Incan authoring") is the umbrella; per its own stated scope it explicitly depends on this map ("Migration of every non-kernel Oven responsibility identified by the #870 ownership map"). This document is that map. Fine-grained delivery issues per component should be split out from #1034 once this lands, not invented ad hoc.</li>
-<li><strong>Test coverage was mechanically verified per file</strong>, not guessed — see the dedicated section below. The one finding worth reading before anything else: the largest migration-candidate block (<code>library_manifest/{model,wire,type_refs,validation}.rs</code>, 3,500 lines) has zero in-file unit tests.</li>
+<li><strong>Original architectural findings</strong>: the audit identified Cargo.lock/manifest reimplementation, LSP→CLI setup calls, and CLI/core mixing. The rows below distinguish those historical findings from the settled driver and Oven ownership after extraction.</li>
+<li><strong>Migration tracking</strong>: #1034 is the umbrella for the semantic-control-plane migration. The delivery issues recorded in the done-when checklist below preserve the original component breakdown; the crate extraction does not itself complete an Incan-authoring migration.</li>
+<li><strong>Historical test coverage was mechanically verified per file</strong>, not guessed — see the dedicated section below. The one finding worth reading before anything else: the largest migration-candidate block (<code>library_manifest/{model,wire,type_refs,validation}.rs</code>, 3,500 lines) has zero in-file unit tests.</li>
 </ul>
 <h2 id="confirmed-rust-host-kernel">Confirmed Rust host kernel<a class="headerlink" href="#confirmed-rust-host-kernel" title="Permanent link">&para;</a></h2>
 <p>Test counts are in-file <code>#[cfg(test)] mod tests</code> line/function counts, mechanically grepped — not a coverage-quality judgment, just a presence signal. See "Test coverage" below for how to read these.</p>
@@ -9758,109 +9759,109 @@
 <tbody>
 <tr>
 <td>Oven receipts &amp; build-unit identity</td>
-<td><code>src/oven.rs</code></td>
+<td><code>loaves/oven/oven_store/src/lib.rs</code></td>
 <td>Artifacts, receipts, crash-safe publication (staged-file + atomic rename)</td>
 <td>431 / 11</td>
 </tr>
 <tr>
 <td>Oven process-tree containment</td>
-<td><code>src/oven/process.rs</code></td>
+<td><code>loaves/oven/oven_store/src/process.rs</code></td>
 <td>Scheduling/crash-safety around provider execution (process-group isolation/reaping)</td>
 <td>0 / 0 ⚠️</td>
 </tr>
 <tr>
 <td>Compiler-suite process capability</td>
-<td><code>src/oven/compiler_suite_env.rs</code></td>
+<td><code>loaves/oven/oven_model/src/compiler_suite_env.rs</code></td>
 <td>Policy (capability admission table), artifacts (resolved closure)</td>
 <td>0 / 0 ⚠️</td>
 </tr>
 <tr>
 <td>Interop target requirements &amp; deployment planning</td>
-<td><code>src/oven_interop.rs</code></td>
+<td><code>loaves/oven/oven_model/src/oven_interop.rs</code></td>
 <td>Policy (manifest validation), target selection/locking</td>
 <td>531 / 6</td>
 </tr>
 <tr>
 <td>Provider catalog, feature graph, SDK inventory</td>
-<td><code>src/provider/{features,plan,sdk}.rs</code></td>
+<td><code>loaves/compiler/incan_frontend/src/provider/{features,plan,sdk}.rs</code></td>
 <td>Resolver/provider-choice, policy — the actual engine that runs providers, not provider logic itself</td>
 <td>1,346 / 36</td>
 </tr>
 <tr>
 <td>Generated Cargo artifact cache</td>
-<td><code>src/generated_cache.rs</code></td>
+<td><code>loaves/compiler/incan_driver/src/generated_cache.rs</code></td>
 <td>Caches, stores, leases (advisory-locked, size-bounded eviction)</td>
 <td>446 / 18</td>
 </tr>
 <tr>
 <td>Provider artifact content-addressing</td>
-<td><code>src/library_manifest/artifact.rs</code></td>
+<td><code>loaves/compiler/incan_frontend/src/library_manifest/artifact.rs</code></td>
 <td>Artifacts (deterministic digest identity)</td>
 <td>822 / 13</td>
 </tr>
 <tr>
 <td>Dependency resolver</td>
-<td><code>src/dependency_resolver.rs</code></td>
+<td><code>loaves/compiler/incan_provider/src/dependency_resolver.rs</code></td>
 <td>Resolver/policy over the Cargo dependency graph</td>
 <td>549 / 23</td>
 </tr>
 <tr>
 <td>Lockfile crash-safe publication &amp; semantic lock state</td>
-<td><code>src/lockfile.rs</code></td>
+<td><code>loaves/oven/oven_model/src/lock.rs</code></td>
 <td>Crash-safe publication (stage → sync → atomic rename), lock identity/artifacts</td>
 <td>1,443 / 26</td>
 </tr>
 <tr>
 <td>Workspace dependency inheritance, scope resolution, build ordering</td>
-<td><code>src/workspace.rs</code> (back half)</td>
+<td><code>loaves/oven/oven_model/src/workspace.rs</code> (back half)</td>
 <td>Resolver/policy (<code>workspace = true</code> inheritance), target selection, scheduling (topological build order)</td>
 <td>566 / 18 (whole file, front/back half not separable)</td>
 </tr>
 <tr>
 <td>Loaf envelope, generation commit, resolver/policy, toolchain resolution, build-unit identity, baker pipeline</td>
-<td><code>src/oven/loaf.rs</code></td>
+<td><code>loaves/oven/oven_rustc/src/loaf.rs</code></td>
 <td>Artifacts/receipts, crash-safe publication, resolver/provider-choice (tie-break policy), target selection</td>
 <td>1,444 / 27</td>
 </tr>
 <tr>
 <td>Native test process supervision &amp; scheduling</td>
-<td><code>src/oven/native_test.rs</code> (bulk)</td>
+<td><code>loaves/oven/oven_rustc/src/native_test.rs</code> (bulk)</td>
 <td>Scheduler, target selection, capability policy, receipt model (RFC 119 test-execution language, matched near-verbatim)</td>
 <td>699 / 19 (whole file, includes the small libtest-parsing migration candidate below)</td>
 </tr>
 <tr>
 <td>Store data model, publication, leases, inspection/pruning</td>
-<td><code>src/oven/store.rs</code></td>
+<td><code>loaves/oven/oven_store/src/store.rs</code></td>
 <td>Policy (capacity limits), crash-safe publication, leases (advisory-locked), caches/stores (eviction)</td>
 <td>856 / 25</td>
 </tr>
 <tr>
 <td>Interop receipt/plan model, native bake, toolchain/SDK selection, shim compilation</td>
-<td><code>src/oven/interop.rs</code> (bulk)</td>
+<td><code>loaves/oven/oven_interop/src/lib.rs</code> (bulk)</td>
 <td>Artifacts/receipts, resolver/provider-choice, provider execution</td>
 <td>2,707 / 20</td>
 </tr>
 <tr>
 <td>Rustc artifact manifest/plan, registry-leaf resolution, project inspection authority, direct rustc/rustdoc invocation</td>
-<td><code>src/oven/rustc.rs</code> (bulk)</td>
+<td><code>loaves/oven/oven_rustc/src/rustc.rs</code> (bulk)</td>
 <td>Planning, artifacts, resolver/provider-choice, stores/leases, direct rustc invocation (named explicitly in RFC 119 point 10)</td>
 <td>2,990 / 47 (whole file, includes the flagged diagnostic-formatting subset below)</td>
 </tr>
 <tr>
 <td>Direct-Rustc &amp; compiler-suite plan orchestration, Cargo unit-graph translation, subprocess wrapper, registry/SDK staging, publisher lease/lock, capacity accounting</td>
-<td><code>src/oven/legacy_cargo.rs</code> (bulk)</td>
+<td><code>loaves/oven/oven_cargo_compat/src/lib.rs</code> (bulk)</td>
 <td>Planning, artifacts, receipts, leases, crash-safe publication, scheduling — Cargo treated as authoritative per RFC 119's "explicit compatibility operation"</td>
 <td>3,966 / 58 (whole file, includes the flagged Cargo.lock-reimplementation subset below)</td>
 </tr>
 <tr>
 <td>Explicit Oven Alpha CLI surface</td>
-<td><code>src/cli/commands/oven.rs</code></td>
+<td><code>loaves/toolchain/oven-cli/src/commands/oven.rs</code></td>
 <td>Textbook match for "Oven CLI... implementation language non-normative," covered by the cache/store/lease/crash-safety exception</td>
 <td>2,465 / 45</td>
 </tr>
 <tr>
 <td>Oven-shaped commands: <code>lock</code>, <code>init</code>/<code>new</code>, <code>env</code>/<code>version</code>, <code>workspace inspect</code>, vocab companion crate compilation</td>
-<td><code>src/cli/commands/{lock,init,lifecycle,workspace,vocab_extraction}.rs</code></td>
+<td><code>loaves/toolchain/oven-cli/src/commands/lock.rs</code>, <code>loaves/toolchain/incan-cli/src/commands/{init,lifecycle,workspace}.rs</code>, <code>loaves/compiler/incan_provider/src/vocab_extraction.rs</code></td>
 <td>Dependency/lock/registry lifecycle, manifest/workspace selection, environments/project mutation — all named explicitly under "oven" in RFC 118's own command-ownership table</td>
 <td>488/14, 315/16, 103/4, 44/1, 294/14</td>
 </tr>
@@ -9880,84 +9881,84 @@
 <tbody>
 <tr>
 <td>Env overlay resolution</td>
-<td><code>src/project_lifecycle/env.rs</code></td>
+<td><code>loaves/oven/oven_model/src/project_lifecycle/env.rs</code></td>
 <td>Pure in-memory config merge; own doc comment already excludes CLI parsing, manifest I/O, filesystem updates</td>
 <td>859</td>
 <td>475 / 18</td>
 </tr>
 <tr>
 <td>Project version bump policy</td>
-<td><code>src/project_lifecycle/version.rs</code></td>
+<td><code>loaves/oven/oven_model/src/project_lifecycle/version.rs</code></td>
 <td>Pure SemVer string logic, no I/O</td>
 <td>417</td>
 <td>103 / 10</td>
 </tr>
 <tr>
 <td>Toolchain constraint compatibility</td>
-<td><code>src/project_lifecycle/toolchain.rs</code></td>
+<td><code>loaves/oven/oven_model/src/project_lifecycle/toolchain.rs</code></td>
 <td>Pure semver comparison, no I/O</td>
 <td>299</td>
 <td>57 / 4</td>
 </tr>
 <tr>
 <td>Library manifest model, wire format, type refs, validation</td>
-<td><code>src/library_manifest/{model,wire,type_refs,validation}.rs</code></td>
+<td><code>loaves/compiler/incan_frontend/src/library_manifest/{model,wire,type_refs,validation}.rs</code></td>
 <td>Schema/serde/structural validation only; carries artifact digests as opaque strings produced elsewhere (in <code>artifact.rs</code>, which stays Rust) — the identity computation and the schema are already cleanly separated in the code</td>
 <td>3,500</td>
 <td><strong>0 / 0 ⚠️ — the single largest coverage gap found in this audit</strong></td>
 </tr>
 <tr>
 <td>Manifest (<code>loaf.toml</code>) parsing &amp; shape validation</td>
-<td><code>src/manifest.rs</code></td>
+<td><code>loaves/oven/oven_model/src/manifest.rs</code></td>
 <td>TOML deserialization + <code>deny_unknown_fields</code> + structural checks; sits upstream of the resolver rather than doing resolution</td>
 <td>2,505</td>
 <td>538 / 28</td>
 </tr>
 <tr>
 <td>Workspace member discovery (glob expansion, ancestor-directory walking)</td>
-<td><code>src/workspace.rs</code> (front half)</td>
+<td><code>loaves/oven/oven_model/src/workspace.rs</code> (front half)</td>
 <td>Structural data-model construction, same character as manifest parsing — flagged with lower confidence than the rest of this table, see Uncertain section for the counter-argument</td>
 <td>~450 of 2,003</td>
 <td>566 / 18 (whole file, not separable)</td>
 </tr>
 <tr>
 <td>Libtest transcript parsing (case counts, timings)</td>
-<td><code>src/oven/native_test.rs</code> (<code>parse_libtest_*</code>)</td>
+<td><code>loaves/oven/oven_rustc/src/native_test.rs</code> (<code>parse_libtest_*</code>)</td>
 <td>Pure string/JSON extraction from an already-captured transcript, zero I/O</td>
 <td>~130</td>
 <td>699 / 19 (whole file, not separable)</td>
 </tr>
 <tr>
 <td>Rustc diagnostic bounding/rendering</td>
-<td><code>src/oven/rustc.rs</code> (<code>OvenRustcDiagnosticReport</code> <code>Display</code>, <code>parse_rustc_diagnostics</code>)</td>
+<td><code>loaves/oven/oven_rustc/src/rustc.rs</code> (<code>OvenRustcDiagnosticReport</code> <code>Display</code>, <code>parse_rustc_diagnostics</code>)</td>
 <td>Presentation/truncation policy over rustc's own diagnostic JSON, no Rust-specific dependency</td>
 <td>~580</td>
 <td>2,990 / 47 (whole file, not separable)</td>
 </tr>
 <tr>
 <td>Compiled SDK module inventory</td>
-<td><code>src/compiled_sdk.rs</code></td>
+<td><code>loaves/compiler/incan_provider/src/compiled_sdk.rs</code></td>
 <td>Pure derived-set query over a decision (<code>ProviderPlan</code>) made elsewhere; module doc says as much directly</td>
 <td>73</td>
 <td>15 / 1</td>
 </tr>
 <tr>
 <td><code>inspect bindings</code>, <code>check</code>/<code>explain</code>, <code>fmt</code>, debug flags, stdlib loader</td>
-<td><code>src/cli/commands/{binding_inspect,diagnostics,format,debug,stdlib_loader}.rs</code></td>
+<td><code>loaves/toolchain/incan-cli/src/commands/{binding_inspect,diagnostics,format,debug,stdlib_loader}.rs</code></td>
 <td>Direct-source/semantic work per RFC 118's own command-ownership table row: "Language services and semantic products → incan"</td>
 <td>~1,744 combined</td>
 <td><code>binding_inspect</code> 0/0 ⚠️, <code>diagnostics</code> 0/0 ⚠️, <code>format</code> 0/0 ⚠️, <code>debug</code> 21/1, <code>stdlib_loader</code> 0/0 ⚠️</td>
 </tr>
 <tr>
 <td><code>inspect codegraph</code>, <code>tools metadata</code> (metadata/model portion)</td>
-<td><code>src/cli/commands/{codegraph,tools}.rs</code></td>
+<td><code>loaves/toolchain/incan-cli/src/commands/codegraph.rs</code>, <code>loaves/toolchain/oven-cli/src/commands/tools.rs</code></td>
 <td>Same rule as above</td>
 <td>~2,991 + partial of 2,338</td>
 <td><code>codegraph</code> 115/3 (thin for its size), <code>tools</code> 508/9 (shared with the doctor portion below, not separable)</td>
 </tr>
 <tr>
 <td>Test discovery, module graph, reporting, types</td>
-<td><code>src/cli/test_runner/{discovery,module_graph,reporter,types}.rs</code></td>
+<td><code>loaves/compiler/incan_driver/src/testing/{discovery,module_graph,types}.rs</code>, <code>loaves/toolchain/incan-cli/src/test_runner/reporter.rs</code></td>
 <td>Semantic source-level test discovery and result presentation, no Oven/project state</td>
 <td>~2,740 combined</td>
 <td><code>discovery</code> 828/33, <code>module_graph</code> 127/3, <code>reporter</code> 0/0 ⚠️, <code>types</code> 0/0 ⚠️</td>
@@ -9977,57 +9978,57 @@
 <tbody>
 <tr>
 <td>Toolchain self-location (stdlib path resolution)</td>
-<td><code>src/toolchain_layout.rs</code></td>
+<td><code>loaves/oven/oven_model/src/toolchain_layout.rs</code></td>
 <td>Doesn't match any item on the RFC 118/119 list at all. Plausibly justified by bootstrapping (must run before any Incan runtime is located, needs <code>current_exe</code>/filesystem primitives) — but that justification is not stated anywhere in the file, so per RFC 119's "demonstrated limitation and tracked removal path" clause it should be flagged rather than assumed acceptable.</td>
 <td>328 / 14</td>
 </tr>
 <tr>
 <td>Workspace member discovery</td>
-<td><code>src/workspace.rs</code> (front half)</td>
+<td><code>loaves/oven/oven_model/src/workspace.rs</code> (front half)</td>
 <td>Structurally similar to manifest parsing (migration candidate), but gates workspace-wide command correctness before any command observes a malformed topology — a plausible reason to keep it Rust-adjacent. Judgment call, not asserted either way.</td>
 <td>566 / 18 (whole file, not separable)</td>
 </tr>
 <tr>
 <td><code>incan build</code> / <code>incan run</code> / <code>incan inspect rust</code></td>
-<td><code>src/cli/commands/build.rs</code></td>
-<td>The <em>command surface</em> is exactly the "project-scale convenience" RFC 118 requires to delegate shallowly to Oven — but ~90% of its 17,328 lines <em>is</em> Oven's plan-selection/build-unit/artifact/receipt logic itself, not a thin delegation call. This is a real misplacement, not an ownership-classification ambiguity: the logic belongs in Oven's operational core/API, and the CLI file should shrink to a thin caller. <strong>Decided</strong> in <a href="https://github.com/encero-systems/incan/issues/1094">#1094</a>: the logic moves into <code>src/oven/plan.rs</code>, alongside the low-level plan/receipt types it already composes.</td>
-<td>4,599 / 82 (26.5% of the file is tests — a real safety net exists for whatever refactor eventually splits this file)</td>
+<td><code>loaves/toolchain/incan-cli/src/commands/build.rs</code>, <code>loaves/compiler/incan_driver/src/build/</code>, <code>loaves/oven/oven_rustc/src/plan.rs</code></td>
+<td>The original audit found plan selection mixed into the CLI. The CLI now delegates build orchestration to <code>incan_driver</code>; native plan composition and selection live in <code>oven_rustc</code>. This records the settled Rust ownership split, not completion of the separate native-Incan CLI goal.</td>
+<td>Historical: 4,599 / 82 in the original combined file</td>
 </tr>
 <tr>
 <td>Test harness build/execution</td>
-<td><code>src/cli/test_runner/execution.rs</code></td>
+<td><code>loaves/toolchain/incan-cli/src/test_runner/execution.rs</code></td>
 <td>Same shim-vs-core blur as <code>build.rs</code> — it does call into Oven's plan/store, but also independently constructs build-unit inputs rather than making one clean delegation call. <strong>Decided</strong> alongside <code>build.rs</code> in <a href="https://github.com/encero-systems/incan/issues/1094">#1094</a>; tracked for implementation by #1095.</td>
 <td>513 / 23</td>
 </tr>
 <tr>
 <td><code>incan cache</code>, <code>inspect interop-plan</code>, <code>inspect providers</code>/<code>inspect features</code></td>
-<td><code>src/cli/commands/{cache,interop_plan,provider_inspect}.rs</code></td>
+<td><code>loaves/toolchain/incan-cli/src/commands/{cache,interop_plan,provider_inspect}.rs</code></td>
 <td>RFC 118's own command-ownership table places caches/providers/interop-plan facts under <code>oven inspect</code>, not <code>incan inspect</code> — these are Oven-operational facts currently surfaced under the wrong CLI surface. Not a Rust-vs-Incan question; a command-placement question.</td>
 <td><code>cache</code> 16/2, <code>interop_plan</code> 0/0 ⚠️, <code>provider_inspect</code> 0/0 ⚠️</td>
 </tr>
 <tr>
 <td><code>commands/common.rs</code></td>
-<td><code>src/cli/commands/common.rs</code></td>
-<td>A genuine grab-bag straddling both sides: module collection/typecheck orchestration (semantic, Incan CLI) sits alongside SDK-provider-store prep, dependency resolution, Cargo policy flags, and rust-inspect workspace prep (Oven). Needs decomposition along the boundary rather than one classification.</td>
-<td>2,835 / 77</td>
+<td>retired</td>
+<td>Was a grab-bag straddling both sides. Decomposed along the boundary: module collection, the compilation session, typecheck orchestration, project discovery, Cargo policy, and rust-inspect workspace prep are <code>loaves/compiler/incan_driver/src/*</code>; SDK-store identity, inventory discovery, SDK build, and project requirements are <code>loaves/compiler/incan_provider/src/*</code>. Nothing under <code>loaves/compiler/incan_driver/src</code> or <code>loaves/compiler/incan_provider/src</code> imports <code>crate::cli</code>.</td>
+<td>—</td>
 </tr>
 <tr>
 <td><code>incan tools doctor</code></td>
-<td><code>src/cli/commands/tools.rs</code> (doctor portion)</td>
+<td><code>loaves/toolchain/oven-cli/src/commands/tools.rs</code> (doctor portion)</td>
 <td>Neither semantic nor Oven project/artifact work — installation/toolchain-layout diagnostics. Closest to RFC 118's "Distribution and documentation" layer, which sits outside the Incan-vs-Oven split entirely.</td>
 <td>shared 508/9 with the metadata/model portion above, not separable</td>
 </tr>
 <tr>
 <td>Cargo.lock/manifest reimplementation inside the legacy-Cargo boundary</td>
-<td><code>src/oven/legacy_cargo.rs</code> (<code>locked_local_package</code>, <code>prune_lock_to_package</code>, <code>locked_generated_project*</code>, workspace-inheritance merging — ~950 lines)</td>
+<td><code>loaves/oven/oven_cargo_compat/src/lib.rs</code> (<code>locked_local_package</code>, <code>prune_lock_to_package</code>, <code>locked_generated_project*</code>, workspace-inheritance merging — ~950 lines)</td>
 <td>This block hand-parses and hand-writes <code>Cargo.lock</code>/<code>Cargo.toml</code> content and reimplements Cargo's own workspace-dependency-inheritance merging in Rust, before re-invoking Cargo to "normalize" the result. The validation half (confirming Cargo's output matches a pinned release graph) is legitimate policy per RFC 118. The construction half sits in tension with RFC 119's explicit statement that Oven must not "reinterpret Cargo results as an Oven-native lock." Needs a narrowing decision, not a default.</td>
 <td>3,966 / 58 (whole file, not separable)</td>
 </tr>
 <tr>
-<td>LSP → CLI internals boundary crossing</td>
-<td><code>src/lsp/backend.rs</code> (<code>prepare_lsp_rust_inspect_workspace*</code>, <code>resolved_rust_inspect_dependencies</code>, <code>spawn_rust_inspect_prewarm</code>, ~400 lines)</td>
-<td>The compiler-service layer directly imports and calls CLI-owned <code>dependency_resolver::resolve_dependencies</code>, <code>cli::commands::common::{CargoPolicy, cargo_command_flags, resolve_lock_context}</code>, and <code>resolve_generated_cargo_target</code> (which yields a <code>GeneratedCacheLease</code>) in-process. RFC 118 requires the inverse relationship: "Compiler service API — must expose bounded compilation and semantic services to Oven without making Oven invoke or import the Incan CLI." Here the compiler-service layer is reaching into CLI-owned resolver/policy/lease-acquisition code directly, rather than the Incan CLI going through Oven's API. Needs reconciling once the <code>commands/common.rs</code> split above happens — the boundary these calls should cross may change shape entirely.</td>
-<td>7,027 / 48 (whole file — large overall coverage, but the specific glue is not separable)</td>
+<td>LSP service preparation</td>
+<td><code>loaves/toolchain/incan-lsp/src/backend.rs</code>, <code>loaves/compiler/incan_driver/src/rust_inspect_workspace.rs</code></td>
+<td>The original audit found LSP calls into CLI-owned setup. The LSP now imports driver session, project discovery, Cargo policy and Rust-inspect workspace services. Keep this shared preparation in the driver; do not recreate a dependency on command handlers.</td>
+<td>Historical: 7,027 / 48 in the original backend file</td>
 </tr>
 </tbody>
 </table>
@@ -10044,38 +10045,38 @@
 <tbody>
 <tr>
 <td>LSP protocol implementation, diagnostics conversion, call-site generic-arg helpers</td>
-<td><code>src/lsp/{mod,diagnostics,call_site_type_args,backend}.rs</code> (excluding the flagged rust-inspect glue above)</td>
+<td><code>loaves/toolchain/incan-lsp/src/{lib,diagnostics,call_site_type_args,backend}.rs</code> (with service preparation described above)</td>
 <td><code>diagnostics</code> 78/4, <code>call_site_type_args</code> 47/4, <code>backend</code> 7,027/48 (whole file)</td>
 </tr>
 <tr>
 <td>Codegraph record schema</td>
-<td><code>crates/incan_codegraph/src/lib.rs</code> — explicitly disclaims orchestration in its own README</td>
+<td><code>loaves/kernel/incan_codegraph/src/lib.rs</code> — explicitly disclaims orchestration in its own README</td>
 <td>78 / 2</td>
 </tr>
 <tr>
 <td>Rust-inspect (rust-analyzer embedding for interop metadata)</td>
-<td><code>crates/rust_inspect/src/*.rs</code>, <code>src/rust_inspect/mod.rs</code> (a zero-logic re-export facade over the crate) — inherently Rust (wraps <code>ra_ap_hir</code>), and its <code>loader.rs</code> shows the <em>correct</em> trust direction: it defers to Oven's already-verified "sealed" source selection rather than re-deciding it</td>
-<td><code>lib.rs</code> 144/2, <code>loader.rs</code> 364/9, <code>extractor.rs</code> 362/9, <code>cache.rs</code> see note below, <code>cache_resolve.rs</code>/<code>generic_params.rs</code>/<code>cache_timing.rs</code>/<code>error.rs</code> 0/0 (small, mechanical, low individual risk)</td>
+<td><code>loaves/compiler/rust_inspect/src/</code> — inherently Rust (wraps <code>ra_ap_hir</code>), and its <code>loader.rs</code> shows the <em>correct</em> trust direction: it defers to Oven's already-verified "sealed" source selection rather than re-deciding it</td>
+<td>historical inspector entry point 144/2, <code>loader.rs</code> 364/9, <code>extractor.rs</code> 362/9, <code>cache.rs</code> see note below, <code>cache_resolve.rs</code>/<code>generic_params.rs</code>/<code>cache_timing.rs</code>/<code>error.rs</code> 0/0 (small, mechanical, low individual risk)</td>
 </tr>
 <tr>
 <td>Surface semantics registry</td>
-<td><code>src/semantics_registry.rs</code> — typechecker/IR-lowering plumbing, not on the Oven/CLI axis at all</td>
+<td><code>loaves/compiler/incan_frontend/src/semantics_registry.rs</code> — typechecker/IR-lowering plumbing, not on the Oven/CLI axis at all</td>
 <td>0 / 0 (24-line trivial glue, low individual risk)</td>
 </tr>
 </tbody>
 </table>
-<h2 id="test-coverage">Test coverage<a class="headerlink" href="#test-coverage" title="Permanent link">&para;</a></h2>
+<h2 id="historical-test-coverage">Historical test coverage<a class="headerlink" href="#historical-test-coverage" title="Permanent link">&para;</a></h2>
 <p>Recorded per #871's own required field ("public APIs, required capabilities, receipts, invariants, migration status, <strong>tests</strong>, and responsible delivery issue for every component"). Numbers above are in-file <code>#[cfg(test)] mod tests</code> line counts and <code>#[test]</code>-annotated function counts, mechanically grepped against every file in this audit — a presence/scale signal, not a test-quality judgment. A ⚠️ marks zero in-file unit tests found.</p>
-<p><strong>Cross-cutting integration coverage</strong> exists alongside the in-file numbers above and may cover some of the flagged files even without in-file unit tests: <code>tests/oven_pr_regressions.rs</code>, <code>tests/toolchain_installer_tests.rs</code>, and five <code>tests/fixtures/oven_*</code> fixture directories. This audit did not trace which specific files each integration test actually exercises — that would be a separate, deeper pass. Treat the ⚠️ rows below as "no unit-level safety net found in the file itself, verify integration coverage before touching," not as "definitely untested."</p>
-<p>One correction against a false positive: <code>crates/rust_inspect/src/cache.rs</code> (4,792 lines) greps as having no in-file test module, but its real test coverage lives in a separate <code>cache_tests.rs</code> file (1,756 lines) that this audit was explicitly told to skip when scoping the LSP/codegraph track. It is not a coverage gap — just a different test-file convention than the <code>mod tests</code> pattern used everywhere else in this codebase.</p>
-<p><strong>Real gaps worth flagging before any migration work starts, ranked by risk:</strong></p>
+<p><strong>Cross-cutting integration coverage</strong> exists alongside the in-file numbers above and may cover some of the flagged files even without in-file unit tests: <code>loaves/compiler/incan_oven_facet/tests/oven_pr_regressions.rs</code>, <code>loaves/toolchain/incan-cli/tests/toolchain_installer_tests.rs</code>, and five <code>loaves/compiler/incan_test_support/fixtures/oven_*</code> fixture directories. This audit did not trace which specific files each integration test actually exercises — that would be a separate, deeper pass. Treat the ⚠️ rows below as "no unit-level safety net found in the file itself, verify integration coverage before touching," not as "definitely untested."</p>
+<p>One correction against a false positive: <code>loaves/compiler/rust_inspect/src/cache.rs</code> (4,792 lines) greps as having no in-file test module, but its real test coverage lives in a separate <code>cache_tests.rs</code> file (1,756 lines) that this audit was explicitly told to skip when scoping the LSP/codegraph track. It is not a coverage gap — just a different test-file convention than the <code>mod tests</code> pattern used everywhere else in this codebase.</p>
+<p><strong>Risks identified by the original audit, to re-check before migration:</strong></p>
 <ol>
-<li><strong><code>library_manifest/{model,wire,type_refs,validation}.rs</code> (3,500 lines, migration candidate, 0 tests).</strong> This is the one finding that should change how #1034's work gets sequenced — migrating a 3,500-line, currently-untested schema/validation layer with no existing safety net is materially riskier than migrating a well-tested one. Writing characterization tests against current behavior before migrating this block is worth calling out explicitly as prerequisite work, not assumed away.</li>
-<li><strong><code>src/oven/process.rs</code> (0 tests) and <code>src/oven/compiler_suite_env.rs</code> (0 tests) — both confirmed Rust host kernel, not migration candidates, but untested low-level OS process/policy code</strong> is its own risk category worth someone's attention independent of this migration effort.</li>
+<li><strong><code>library_manifest/{model,wire,type_refs,validation}.rs</code> (3,500 lines, migration candidate, 0 tests).</strong> This is the one finding that should change how #1034's work gets sequenced — migrating a 3,500-line, schema/validation layer without in-file tests at the audit baseline with no existing safety net is materially riskier than migrating a well-tested one. Writing characterization tests against current behavior before migrating this block is worth calling out explicitly as prerequisite work, not assumed away.</li>
+<li><strong><code>loaves/oven/oven_store/src/process.rs</code> (0 tests) and <code>loaves/oven/oven_model/src/compiler_suite_env.rs</code> (0 tests) — both confirmed Rust host kernel, not migration candidates, but untested low-level OS process/policy code</strong> is its own risk category worth someone's attention independent of this migration effort.</li>
 <li><strong>A cluster of already-thin CLI commands with zero in-file tests</strong>: <code>binding_inspect.rs</code>, <code>diagnostics.rs</code>, <code>format.rs</code>, <code>stdlib_loader.rs</code>, <code>interop_plan.rs</code>, <code>provider_inspect.rs</code>, <code>reporter.rs</code>, <code>types.rs</code>. Several of these (<code>check</code>/<code>explain</code>, <code>fmt</code>) plausibly have snapshot/integration coverage elsewhere per CONTRIBUTING.md's property-testing section — worth confirming rather than assuming, given they showed up as zero here.</li>
 </ol>
 <h2 id="structural-note-the-cli-split-itself">Structural note: the CLI split itself<a class="headerlink" href="#structural-note-the-cli-split-itself" title="Permanent link">&para;</a></h2>
-<p><code>src/cli/mod.rs</code> currently implements a single, universal <code>incan</code> CLI — every Oven-shaped command (<code>init</code>, <code>new</code>, <code>lock</code>, <code>env</code>, <code>workspace</code>, <code>cache</code>, <code>oven ...</code>) is nested under the <code>incan</code> binary today, which is the exact shape RFC 118's "Alternatives considered" section rejects as the wrong end-state ("collapses language semantics, project mutation, cache/store ownership, registry trust... into one ambiguous command family"). This matches RFC 118's own stated release boundary — v0.5 does not backport the two-surface <code>incan</code>/<code>oven</code> split, which targets v0.7 — so it is not a defect this map is flagging as new. It's registered here because it's the container every "Oven CLI (currently under <code>incan</code>)" row above will eventually be carved out of.</p>
+<p><code>loaves/toolchain/incan-cli/src/lib.rs</code> currently implements a single, universal <code>incan</code> CLI — every Oven-shaped command (<code>init</code>, <code>new</code>, <code>lock</code>, <code>env</code>, <code>workspace</code>, <code>cache</code>, <code>oven ...</code>) is nested under the <code>incan</code> binary today, which is the exact shape RFC 118's "Alternatives considered" section rejects as the wrong end-state ("collapses language semantics, project mutation, cache/store ownership, registry trust... into one ambiguous command family"). This matches RFC 118's own stated release boundary — v0.5 does not backport the two-surface <code>incan</code>/<code>oven</code> split, which targets v0.7 — so it is not a defect this map is flagging as new. It's registered here because it's the container every "Oven CLI (currently under <code>incan</code>)" row above will eventually be carved out of.</p>
 <h2 id="done-when-checklist-per-871">Done-when checklist (per #871)<a class="headerlink" href="#done-when-checklist-per-871" title="Permanent link">&para;</a></h2>
 <ul class="task-list">
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Every supported responsibility has one classification and one rationale, recorded above.</li>

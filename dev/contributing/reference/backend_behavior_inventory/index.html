@@ -9722,7 +9722,7 @@
 </tr>
 <tr>
 <td>Stdlib/runtime behavior</td>
-<td>Behavior owned by <code>crates/incan_stdlib</code>, <code>crates/incan_core</code>, or <code>.incn</code> stdlib source.</td>
+<td>Behavior owned by a component's facet under <code>loaves/stdlib/&lt;component&gt;/rust</code>, <code>loaves/kernel/incan_lang</code>, or <code>.incn</code> stdlib source.</td>
 <td>Preserve as stdlib/runtime contract, and record runtime-service requirements explicitly.</td>
 </tr>
 <tr>
@@ -9765,12 +9765,12 @@
 <tbody>
 <tr>
 <td>Direct parser/typechecker tests</td>
-<td><code>src/frontend/**</code> unit tests, diagnostics tests, parser snapshots.</td>
+<td><code>loaves/compiler/incan_frontend/src/**</code> unit tests, diagnostics tests, parser snapshots.</td>
 <td>Source acceptance/rejection and diagnostic shape.</td>
 </tr>
 <tr>
 <td>Codegen snapshots</td>
-<td><code>tests/codegen_snapshot_tests.rs</code>, <code>tests/snapshots/**</code>.</td>
+<td><code>loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs</code>, <code>loaves/compiler/incan_emit/tests/snapshots/**</code>.</td>
 <td>Current generated Rust shape and emitter obligations.</td>
 </tr>
 <tr>
@@ -9807,31 +9807,31 @@
 <tbody>
 <tr>
 <td>Parser, syntax, and diagnostics</td>
-<td><code>crates/incan_syntax/src/parser/tests.rs</code>, <code>tests/fixtures/valid/**</code>, <code>tests/fixtures/invalid/**</code>, <code>tests/construction_diagnostics_tests.rs</code>, <code>tests/cli_integration.rs</code>, <code>src/cli/commands/diagnostics.rs</code>.</td>
+<td><code>loaves/kernel/incan_syntax/src/parser/tests.rs</code>, <code>loaves/compiler/incan_test_support/fixtures/valid/**</code>, <code>loaves/compiler/incan_test_support/fixtures/invalid/**</code>, <code>loaves/compiler/incan_emit/tests/construction_diagnostics_tests.rs</code>, <code>loaves/toolchain/incan-cli/tests/cli_surface_tests.rs</code>, <code>loaves/toolchain/incan-cli/src/commands/diagnostics.rs</code>.</td>
 </tr>
 <tr>
 <td>Code generation snapshots</td>
-<td><code>tests/codegen_snapshot_tests.rs</code>, <code>tests/codegen_snapshots/**</code>, <code>tests/snapshots/codegen_snapshot_tests__*.snap</code>.</td>
+<td><code>loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs</code>, <code>loaves/compiler/incan_emit/tests/codegen_snapshots/**</code>, <code>loaves/compiler/incan_emit/tests/snapshots/codegen_snapshot_tests__*.snap</code>.</td>
 </tr>
 <tr>
 <td>Generated projects and public artifacts</td>
-<td><code>tests/generated_rust_artifact_tests.rs</code>, <code>tests/generated_rust_audit_tests.rs</code>, <code>tests/generated_rust_callability_artifact_tests.rs</code>, <code>tests/generated_rust_native_consumer_tests.rs</code>, <code>tests/fixtures/generated_rust_artifacts/**</code>, <code>tests/fixtures/generated_rust_callability/**</code>, <code>tests/fixtures/generated_rust_native_consumer/**</code>.</td>
+<td><code>loaves/compiler/incan_driver/tests/generated_rust_artifact_tests.rs</code>, <code>loaves/compiler/incan_driver/tests/generated_rust_audit_tests.rs</code>, <code>loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs</code>, <code>loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs</code>, <code>loaves/compiler/incan_driver/tests/fixtures/generated_rust_artifacts/**</code>, <code>loaves/compiler/incan_driver/tests/fixtures/generated_rust_callability/**</code>, <code>loaves/compiler/incan_driver/tests/fixtures/generated_rust_native_consumer/**</code>.</td>
 </tr>
 <tr>
 <td>Package, import, facade, and checked API identity</td>
-<td><code>tests/fixtures/boundary_parity/README.md</code>, <code>tests/generated_rust_callability_artifact_tests.rs</code>, <code>workspaces/docs-site/docs/tooling/reference/checked_api_metadata.md</code>.</td>
+<td><code>loaves/compiler/incan_test_support/fixtures/boundary_parity/README.md</code>, <code>loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs</code>, <code>workspaces/docs-site/docs/tooling/reference/checked_api_metadata.md</code>.</td>
 </tr>
 <tr>
 <td>Stdlib and runtime surface</td>
-<td><code>tests/stdlib_generated_rust_snapshot_tests.rs</code>, <code>tests/std_encoding_algorithm_modules.rs</code>, <code>tests/fixtures/valid/std_*_surface.incn</code>, <code>workspaces/docs-site/docs/contributing/reference/generated_rust_stdlib_coverage.md</code>.</td>
+<td><code>loaves/compiler/incan_emit/tests/stdlib_generated_rust_snapshot_tests.rs</code>, <code>loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs</code>, <code>loaves/compiler/incan_test_support/fixtures/valid/std_*_surface.incn</code>, <code>workspaces/docs-site/docs/contributing/reference/generated_rust_stdlib_coverage.md</code>.</td>
 </tr>
 <tr>
 <td>Rust interop</td>
-<td><code>tests/codegen_snapshots/rfc041_rust_coercions.incn</code>, <code>tests/codegen_snapshots/rfc041_interop_into_via.incn</code>, <code>tests/codegen_snapshots/rust_interop_associated_functions.incn</code>, <code>tests/codegen_snapshots/rust_interop_field_access.incn</code>, <code>tests/codegen_snapshots/rfc043_imported_trait_associated_type.incn</code>, <code>examples/pro/rust_interop_pro.incn</code>, <code>workspaces/docs-site/docs/language/how-to/rust_interop.md</code>.</td>
+<td><code>loaves/compiler/incan_emit/tests/codegen_snapshots/rfc041_rust_coercions.incn</code>, <code>loaves/compiler/incan_emit/tests/codegen_snapshots/rfc041_interop_into_via.incn</code>, <code>loaves/compiler/incan_emit/tests/codegen_snapshots/rust_interop_associated_functions.incn</code>, <code>loaves/compiler/incan_emit/tests/codegen_snapshots/rust_interop_field_access.incn</code>, <code>loaves/compiler/incan_emit/tests/codegen_snapshots/rfc043_imported_trait_associated_type.incn</code>, <code>examples/pro/rust_interop_pro.incn</code>, <code>workspaces/docs-site/docs/language/how-to/rust_interop.md</code>.</td>
 </tr>
 <tr>
 <td>Vocab and desugaring</td>
-<td><code>tests/vocab_guardrails.rs</code>, <code>tests/codegen_snapshots/vocab_block_desugaring.incn</code>, <code>tests/codegen_snapshots/vocab_helper_backed_desugaring.incn</code>, <code>examples/pro/vocab_studiokit/**</code>, <code>examples/pro/vocab_querykit/**</code>, <code>examples/pro/vocab_routekit/**</code>.</td>
+<td><code>loaves/toolchain/incan-cli/tests/vocab_guardrails.rs</code>, <code>loaves/compiler/incan_emit/tests/codegen_snapshots/vocab_block_desugaring.incn</code>, <code>loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs</code> (inline helper-backed desugaring case), <code>examples/pro/vocab_studiokit/**</code>, <code>examples/pro/vocab_querykit/**</code>, <code>examples/pro/vocab_routekit/**</code>.</td>
 </tr>
 <tr>
 <td>Inspection and reports</td>

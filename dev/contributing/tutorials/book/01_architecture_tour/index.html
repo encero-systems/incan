@@ -9663,48 +9663,54 @@
 <h2 id="where-to-look-in-the-repository">Where to look in the repository<a class="headerlink" href="#where-to-look-in-the-repository" title="Permanent link">&para;</a></h2>
 <p>You can orient yourself with these anchors:</p>
 <ul>
-<li><code>crates/incan_syntax/</code>:<ul>
+<li><code>loaves/kernel/incan_syntax/</code>:<ul>
 <li>shared lexer/parser/AST/diagnostics</li>
 <li>used by compiler, formatter, and LSP to avoid drift</li>
 </ul>
 </li>
-<li><code>crates/incan_core/</code>:<ul>
+<li><code>loaves/kernel/incan_lang/</code>:<ul>
 <li>pure language policy and registries shared across compiler/runtime boundaries</li>
 </ul>
 </li>
-<li><code>crates/incan_semantics_core/</code> and <code>crates/incan_semantics_stdlib/</code>:<ul>
+<li><code>loaves/kernel/incan_semantics_core/</code> and <code>loaves/compiler/incan_semantics_stdlib/</code>:<ul>
 <li>descriptor contracts plus current stdlib semantics-pack implementation</li>
 </ul>
 </li>
-<li><code>crates/incan_vocab/</code>:<ul>
+<li><code>loaves/kernel/incan_vocab/</code>:<ul>
 <li>stable library manifest/desugarer contract for import-activated library DSLs</li>
 </ul>
 </li>
-<li><code>crates/rust_inspect/</code>:<ul>
+<li><code>loaves/compiler/rust_inspect/</code>:<ul>
 <li>staged Rust metadata preparation/cache subsystem for Rust interop</li>
 </ul>
 </li>
-<li><code>crates/incan_stdlib/</code>, <code>crates/incan_derive/</code>, and <code>crates/incan_web_macros/</code>:<ul>
+<li><code>loaves/stdlib/&lt;component&gt;/rust/</code> (the <code>incan_std_&lt;component&gt;</code> facets), <code>loaves/stdlib/derive/incan_derive/</code>, and <code>loaves/stdlib/derive/incan_web_macros/</code>:<ul>
 <li>runtime-only support used by generated Rust programs</li>
 </ul>
 </li>
-<li><code>src/frontend/</code>:<ul>
+<li><code>loaves/compiler/incan_frontend/src/</code>:<ul>
 <li>module resolution (<code>module.rs</code>)</li>
 <li>typechecker (<code>typechecker/</code>)</li>
 <li>symbol table + scope rules (<code>symbols.rs</code>)</li>
 </ul>
 </li>
-<li><code>src/backend/</code>:<ul>
-<li>IR + lowering (<code>ir/lower/</code>)</li>
-<li>emission (<code>ir/emit/</code>) producing Rust code</li>
-<li>project generation (<code>project.rs</code>)</li>
+<li><code>loaves/compiler/incan_ir/src/</code>:<ul>
+<li>IR definitions and lowering (<code>lower/</code>)</li>
 </ul>
 </li>
-<li><code>src/cli/</code>:<ul>
+<li><code>loaves/compiler/incan_emit/src/</code>:<ul>
+<li>emission (<code>emit/</code>) producing Rust code</li>
+</ul>
+</li>
+<li><code>loaves/compiler/incan_driver/src/backend/project/</code>:<ul>
+<li>generated-project planning and generation</li>
+</ul>
+</li>
+<li><code>loaves/toolchain/incan-cli/src/</code>:<ul>
 <li>CLI entrypoints and commands (<code>build</code>, <code>run</code>, <code>fmt</code>, <code>test</code>)</li>
 </ul>
 </li>
-<li><code>src/lsp/</code>:<ul>
+<li><code>loaves/toolchain/incan-lsp/src/</code>:<ul>
 <li>language server implementation that reuses frontend stages</li>
 </ul>
 </li>

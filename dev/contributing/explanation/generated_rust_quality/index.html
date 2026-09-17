@@ -9886,8 +9886,8 @@
 </ol>
 <p>Useful commands:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>--emit-rust<span class="w"> </span>path/to/file.incn
-cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--test<span class="w"> </span>codegen_snapshot_tests
-<span class="nv">INSTA_UPDATE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--test<span class="w"> </span>codegen_snapshot_tests
+cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-p<span class="w"> </span>incan_emit<span class="w"> </span>--test<span class="w"> </span>codegen_snapshot_tests
+<span class="nv">INSTA_UPDATE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-p<span class="w"> </span>incan_emit<span class="w"> </span>--test<span class="w"> </span>codegen_snapshot_tests
 make<span class="w"> </span>pre-commit
 </code></pre></div>
 <h2 id="when-to-broaden-scope">When To Broaden Scope<a class="headerlink" href="#when-to-broaden-scope" title="Permanent link">&para;</a></h2>

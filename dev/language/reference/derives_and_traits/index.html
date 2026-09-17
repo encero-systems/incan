@@ -11229,7 +11229,7 @@ So we can change the destination in one place if we move/rename sections.
 <ul>
 <li><code>Clone</code>, <code>Default</code>, <code>Debug</code>, <code>Eq</code>, <code>Ord</code>, and <code>Hash</code> are declared in <code>.incn</code> source.</li>
 <li>Implementations for adopting types come from ordinary Rust <code>#[derive(...)]</code> expansion during codegen.</li>
-<li>These traits are not modeled as runtime helper calls through <code>incan_stdlib::derives::*</code>.</li>
+<li>These traits are not modeled as runtime helper calls through <code>incan_std_core::derives::*</code>.</li>
 </ul>
 <p>For the curated stdlib-family view, see <a href="../stdlib/derives/">Standard library reference: <code>std.derives.*</code></a>.</p>
 

@@ -9691,7 +9691,7 @@
 <td>LocalImplementation</td>
 <td>4</td>
 <td>3</td>
-<td><code>src/backend/replacement/mod.rs::fn replacement_compatibility_direct_execution_contribution</code></td>
+<td><code>loaves/compiler/incan_driver/src/replacement_compatibility.rs::fn replacement_compatibility_direct_execution_contribution</code></td>
 <td>-</td>
 </tr>
 <tr>
@@ -9699,7 +9699,7 @@
 <td>LocalImplementation</td>
 <td>2</td>
 <td>2</td>
-<td><code>src/frontend/body_ir.rs::fn replacement_compatibility_body_ir_contribution</code></td>
+<td><code>loaves/compiler/incan_driver/src/replacement_compatibility.rs::fn replacement_compatibility_body_ir_contribution</code></td>
 <td>-</td>
 </tr>
 <tr>
@@ -9707,7 +9707,7 @@
 <td>MigrationBootstrap</td>
 <td>21</td>
 <td>16</td>
-<td><code>src/replacement_compatibility.rs::fn migration_bootstrap_compatibility_contribution</code></td>
+<td><code>loaves/compiler/incan_driver/src/replacement_compatibility.rs::fn migration_bootstrap_compatibility_contribution</code></td>
 <td>Retire this contributor when every remaining feature and requirement has moved to the module that implements its coherent mechanism; then retain the v0.5 source only as an explicitly historical regression fixture if a later migration needs it.</td>
 </tr>
 </tbody>
@@ -10706,362 +10706,362 @@
 <h3 id="asynctasks"><code>async.tasks</code><a class="headerlink" href="#asynctasks" title="Permanent link">&para;</a></h3>
 <p>One exact source-local <code>std.async</code> activation executes same-module async calls, direct await, and source-order ready-tie races through receipt-bound task frames.</p>
 <ul>
-<li><code>probe:async.tasks:bounded-direct-profile</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AsyncAwait</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_expr/control_flow.rs::fn check_await</code></li>
+<li><code>probe:async.tasks:bounded-direct-profile</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AsyncAwait</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_await</code></li>
 <li>Positive contract: One exact source-local <code>std.async</code> activation executes same-module async calls, direct await, and source-order ready-tie races through receipt-bound task frames.</li>
 <li>Negative contract: Inputs outside the bounded direct profile refuse visibly with their source span.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AsyncAwait</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_expr/control_flow.rs::fn check_await</code></li>
-<li>Body IR: Observed <code>src/frontend/body_ir.rs::fn lower_race_for</code></li>
-<li>Replacement executor: Observed <code>src/backend/replacement/mod.rs::fn execute_race</code></li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: Closed #1155 delivered direct task execution; open #988 owns exact paired source-observable evidence through #1146's completed route, so the broader async feature remains non-green.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AsyncAwait</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_await</code></li>
+<li>Body IR: Observed <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_race_for</code></li>
+<li>Replacement executor: Observed <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_race</code></li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: Closed #1155 delivered direct task execution; open #988 owns exact paired source-observable evidence through #1146's completed route, so the broader async feature remains non-green.</li>
 <li>Blocker/migration: Closed #1155 delivered the bounded source-local task profile; open #988 owns its remaining paired source-observable comparison evidence.</li>
 </ul>
 <h3 id="callnamed-and-variadic"><code>call.named-and-variadic</code><a class="headerlink" href="#callnamed-and-variadic" title="Permanent link">&para;</a></h3>
 <p>Named calls preserve resolved targets, generic arguments, positional/named binding, and spread diagnostics.</p>
 <ul>
-<li><code>probe:call.named-and-variadic:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallSiteGenerics</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_expr/calls.rs::fn check_call</code></li>
+<li><code>probe:call.named-and-variadic:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallSiteGenerics</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
 <li>Positive contract: Named calls preserve resolved targets, generic arguments, positional/named binding, and spread diagnostics.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallSiteGenerics</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_expr/calls.rs::fn check_call</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_call</code>; owner #988</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_call</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallSiteGenerics</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #988</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #988</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: Closed #1152 delivered the callable runtime substrate; open #988 owns broadening named, variadic, and spread execution with receipt-bound evidence.</li>
 </ul>
 <h3 id="callpartial-binding"><code>call.partial-binding</code><a class="headerlink" href="#callpartial-binding" title="Permanent link">&para;</a></h3>
 <p>Partial presets capture at construction, remain overrideable defaults, and preserve named/positional binding rules.</p>
 <ul>
-<li><code>probe:call.partial-binding:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallablePresets</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_expr/calls.rs::fn check_call</code></li>
+<li><code>probe:call.partial-binding:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallablePresets</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
 <li>Positive contract: Partial presets capture at construction, remain overrideable defaults, and preserve named/positional binding rules.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallablePresets</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_expr/calls.rs::fn check_call</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_call</code>; owner #988</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_call</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CallablePresets</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #988</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #988</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: Body IR and closed #1152 carry the source and callable-runtime substrate; open #988 owns the direct local callable forms that remain visibly refused.</li>
 </ul>
 <h3 id="callstored-callables"><code>call.stored-callables</code><a class="headerlink" href="#callstored-callables" title="Permanent link">&para;</a></h3>
 <p>Stored closures and partials retain lexical capture timing, ownership, and isolated local call frames.</p>
 <ul>
-<li><code>probe:call.stored-callables:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FirstClassFunctions</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_expr/calls.rs::fn check_call</code></li>
+<li><code>probe:call.stored-callables:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FirstClassFunctions</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
 <li>Positive contract: Stored closures and partials retain lexical capture timing, ownership, and isolated local call frames.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FirstClassFunctions</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_expr/calls.rs::fn check_call</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_call</code>; owner #988</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_call</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FirstClassFunctions</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #988</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #988</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: Closed #1152 delivered the coherent callable-frame substrate; open #988 owns broadening the local callable targets that direct execution still refuses.</li>
 </ul>
 <h3 id="decoratorsdsl-surfaces"><code>decorators.dsl-surfaces</code><a class="headerlink" href="#decoratorsdsl-surfaces" title="Permanent link">&para;</a></h3>
 <p>Decorators and scoped DSL surfaces preserve activation, dispatch, and source-owned diagnostics.</p>
 <ul>
-<li><code>probe:decorators.dsl-surfaces:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ScopedDslSurfaces</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/collect/decorators.rs::fn validate_decorators_allowing_user_defined</code></li>
+<li><code>probe:decorators.dsl-surfaces:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ScopedDslSurfaces</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/collect/decorators.rs::fn validate_decorators_allowing_user_defined</code></li>
 <li>Positive contract: Decorators and scoped DSL surfaces preserve activation, dispatch, and source-owned diagnostics.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ScopedDslSurfaces</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/collect/decorators.rs::fn validate_decorators_allowing_user_defined</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_function_body</code>; owner #555</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_call</code>; owner #555</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #555: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ScopedDslSurfaces</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/collect/decorators.rs::fn validate_decorators_allowing_user_defined</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_function_body</code>; owner #555</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #555</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #555: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: Surface packs and decorators require a source-to-runtime dispatch boundary before direct execution can classify them.</li>
 </ul>
 <h3 id="diagnosticsstable"><code>diagnostics.stable</code><a class="headerlink" href="#diagnosticsstable" title="Permanent link">&para;</a></h3>
 <p>Source diagnostics retain intentional acceptance/refusal boundaries, spans, and machine-readable identity.</p>
 <ul>
-<li><code>probe:diagnostics.stable:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StableDiagnostics</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_stmt.rs::fn check_statement</code></li>
+<li><code>probe:diagnostics.stable:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StableDiagnostics</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs::fn check_statement</code></li>
 <li>Positive contract: Source diagnostics retain intentional acceptance/refusal boundaries, spans, and machine-readable identity.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StableDiagnostics</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_stmt.rs::fn check_statement</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_function_body</code>; owner #655</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_free_function</code>; owner #655</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #655: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StableDiagnostics</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs::fn check_statement</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_function_body</code>; owner #655</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_free_function</code>; owner #655</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #655: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: The compatibility report and corpus need receipt-bound diagnostic evidence; generated Rust diagnostics are not a substitute.</li>
 </ul>
 <h3 id="errorresult-and-try"><code>error.result-and-try</code><a class="headerlink" href="#errorresult-and-try" title="Permanent link">&para;</a></h3>
 <p>Result combinators and explicit propagation retain success, error, ordering, and diagnostic behavior.</p>
 <ul>
-<li><code>probe:error.result-and-try:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ResultCombinators</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_expr/control_flow.rs::fn check_try</code></li>
+<li><code>probe:error.result-and-try:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ResultCombinators</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_try</code></li>
 <li>Positive contract: Result combinators and explicit propagation retain success, error, ordering, and diagnostic behavior.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ResultCombinators</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_expr/control_flow.rs::fn check_try</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_try</code>; owner #988</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_call</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ResultCombinators</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_try</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_try</code>; owner #988</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #988</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: Closed #1101 delivered the Body IR vocabulary and closed #1154 delivered Result/error value routing; open #988 owns broadening and comparing the remaining execution profile.</li>
 </ul>
 <h3 id="generatorexpressions"><code>generator.expressions</code><a class="headerlink" href="#generatorexpressions" title="Permanent link">&para;</a></h3>
 <p>Generator expressions preserve construction-versus-consumption timing and lazy collection in the admitted profile.</p>
 <ul>
-<li><code>probe:generator.expressions:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_expr/calls.rs::fn check_call</code></li>
+<li><code>probe:generator.expressions:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
 <li>Positive contract: Generator expressions preserve construction-versus-consumption timing and lazy collection in the admitted profile.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_expr/calls.rs::fn check_call</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_generator_expr</code>; owner #988</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::ReplacementGenerator</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_generator_expr</code>; owner #988</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::ReplacementGenerator</code>; owner #988</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: Closed #1152 delivered the bounded generator-expression collect path; open #988 owns broader consumption and comparison, which remain non-green.</li>
 </ul>
 <h3 id="generatorfunctions"><code>generator.functions</code><a class="headerlink" href="#generatorfunctions" title="Permanent link">&para;</a></h3>
 <p>Generator functions suspend and resume without replaying prior effects or losing local state.</p>
 <ul>
-<li><code>probe:generator.functions:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_expr/calls.rs::fn check_call</code></li>
+<li><code>probe:generator.functions:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
 <li>Positive contract: Generator functions suspend and resume without replaying prior effects or losing local state.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_expr/calls.rs::fn check_call</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_generator_expr</code>; owner #988</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::ReplacementGenerator</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::Generators</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs::fn check_call</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_generator_expr</code>; owner #988</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::ReplacementGenerator</code>; owner #988</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: Closed #1152 delivered the callable/lazy-generator substrate; open #988 owns the generator-function frames and resumption forms that remain explicit replacement refusals.</li>
 </ul>
 <h3 id="interoprust-and-c"><code>interop.rust-and-c</code><a class="headerlink" href="#interoprust-and-c" title="Permanent link">&para;</a></h3>
 <p>Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgements, and source-map diagnostics.</p>
 <ul>
-<li><code>probe:interop.rust-and-c:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedCBindingFoundation</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_expr/calls/rust_boundary.rs::fn validate_rust_boundary_value</code></li>
+<li><code>probe:interop.rust-and-c:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedCBindingFoundation</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs::fn validate_rust_boundary_value</code></li>
 <li>Positive contract: Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgements, and source-map diagnostics.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedCBindingFoundation</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_expr/calls/rust_boundary.rs::fn validate_rust_boundary_value</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_call</code>; owner #989</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_call</code>; owner #989</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #989: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedCBindingFoundation</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs::fn validate_rust_boundary_value</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #989</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #989</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #989: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: Public ABI and interop parity is an explicit replacement-boundary slice, not a direct scalar-executor extension.</li>
 </ul>
 <h3 id="iterationprotocol-and-adapters"><code>iteration.protocol-and-adapters</code><a class="headerlink" href="#iterationprotocol-and-adapters" title="Permanent link">&para;</a></h3>
 <p>Iterator protocols, adapters, and consumers preserve lazy dispatch, callback timing, exhaustion, and errors.</p>
 <ul>
-<li><code>probe:iteration.protocol-and-adapters:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IteratorAdapters</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol</code></li>
+<li><code>probe:iteration.protocol-and-adapters:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IteratorAdapters</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol</code></li>
 <li>Positive contract: Iterator protocols, adapters, and consumers preserve lazy dispatch, callback timing, exhaustion, and errors.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IteratorAdapters</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_general_iteration</code>; owner #988</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_loop</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Case <code>replacement-body-v0-023</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output</code></li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IteratorAdapters</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_general_iteration</code>; owner #988</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_loop</code>; owner #988</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Case <code>replacement-body-v0-023</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output</code></li>
 <li>Blocker/migration: Closed #1152 delivered the first callable/lazy-generator adapter profile; open #988 owns broader protocol dispatch, which remains blocked.</li>
 </ul>
 <h3 id="iterationuser-and-fallible"><code>iteration.user-and-fallible</code><a class="headerlink" href="#iterationuser-and-fallible" title="Permanent link">&para;</a></h3>
 <p>User-defined and fallible iteration preserve protocol calls, terminal behavior, and error routing.</p>
 <ul>
-<li><code>probe:iteration.user-and-fallible:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FallibleIteration</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol</code></li>
+<li><code>probe:iteration.user-and-fallible:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FallibleIteration</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol</code></li>
 <li>Positive contract: User-defined and fallible iteration preserve protocol calls, terminal behavior, and error routing.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FallibleIteration</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_general_iteration</code>; owner #988</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_loop</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::FallibleIteration</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn resolve_iteration_protocol</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_general_iteration</code>; owner #988</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_loop</code>; owner #988</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: Closed #1101 delivered the Body IR protocol vocabulary; open #988 owns the runtime dispatch and error-routing profile required to admit these forms.</li>
 </ul>
 <h3 id="languageaggregates-and-projections"><code>language.aggregates-and-projections</code><a class="headerlink" href="#languageaggregates-and-projections" title="Permanent link">&para;</a></h3>
 <p>Tuple, list, dict, set, slice, projection, mutation, equality, and ordering retain source semantics.</p>
 <ul>
-<li><code>probe:language.aggregates-and-projections:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdCollections</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_expr/collections.rs::fn check_list</code></li>
+<li><code>probe:language.aggregates-and-projections:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdCollections</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/collections.rs::fn check_list</code></li>
 <li>Positive contract: Tuple, list, dict, set, slice, projection, mutation, equality, and ordering retain source semantics.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdCollections</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_expr/collections.rs::fn check_list</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_aggregate</code>; owner #988</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn evaluate_aggregate</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Case <code>replacement-body-v0-020</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output</code></li>
-<li>Case <code>replacement-body-v0-026</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output</code></li>
-<li>Case <code>replacement-body-v0-028</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>tests/parity_corpus_tests.rs::fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output</code></li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdCollections</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/collections.rs::fn check_list</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_aggregate</code>; owner #988</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn evaluate_aggregate</code>; owner #988</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Case <code>replacement-body-v0-020</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output</code></li>
+<li>Case <code>replacement-body-v0-026</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_collection_len_row_carries_two_route_receipts_and_exact_output</code></li>
+<li>Case <code>replacement-body-v0-028</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output</code></li>
 <li>Blocker/migration: Source-local scalar-key set/dict membership and entry count plus nonempty integer-list sorting execute directly. Standalone replacement-body-v0-020, replacement-body-v0-026 and replacement-body-v0-028 prove their exact streams and typed results across independent routes. These bounded proofs do not establish the full aggregate or ordering contract. Closed #1154 delivered the direct value-state substrate; open #988 owns broadening storage, projection, mutation, equality, and ordering execution.</li>
 </ul>
 <h3 id="languagecontrol-flow"><code>language.control-flow</code><a class="headerlink" href="#languagecontrol-flow" title="Permanent link">&para;</a></h3>
 <p>Bounded scalar conditionals, loops, returns, assertions, and range iteration execute directly with explicit receipts.</p>
 <ul>
-<li><code>probe:language.control-flow:bounded-direct-profile</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_expr/control_flow.rs::fn check_if_expr</code></li>
+<li><code>probe:language.control-flow:bounded-direct-profile</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_if_expr</code></li>
 <li>Positive contract: Bounded scalar conditionals, loops, returns, assertions, and range iteration execute directly with explicit receipts.</li>
 <li>Negative contract: Inputs outside the bounded direct profile refuse visibly with their source span.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_expr/control_flow.rs::fn check_if_expr</code></li>
-<li>Body IR: Observed <code>src/frontend/body_ir.rs::fn lower_if</code></li>
-<li>Replacement executor: Observed <code>src/backend/replacement/mod.rs::fn execute_loop</code></li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; unscheduled evidence debt: The bounded direct profile has no scheduled owner for its remaining aggregate and corpus-case comparison evidence.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_if_expr</code></li>
+<li>Body IR: Observed <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_if</code></li>
+<li>Replacement executor: Observed <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_loop</code></li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; unscheduled evidence debt: The bounded direct profile has no scheduled owner for its remaining aggregate and corpus-case comparison evidence.</li>
 </ul>
 <h3 id="languagecontrol-flow-complete"><code>language.control-flow-complete</code><a class="headerlink" href="#languagecontrol-flow-complete" title="Permanent link">&para;</a></h3>
 <p>Control flow beyond the bounded scalar profile preserves value-carrying branches, pattern binding, loop results, and diagnostics.</p>
 <ul>
-<li><code>probe:language.control-flow-complete:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_expr/control_flow.rs::fn check_if_expr</code></li>
+<li><code>probe:language.control-flow-complete:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_if_expr</code></li>
 <li>Positive contract: Control flow beyond the bounded scalar profile preserves value-carrying branches, pattern binding, loop results, and diagnostics.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_expr/control_flow.rs::fn check_if_expr</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_if_expr</code>; owner #988</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_loop</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::IfWhileLet</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs::fn check_if_expr</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_if_expr</code>; owner #988</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_loop</code>; owner #988</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: The current direct profile covers only the bounded scalar subset. Closed #1154 delivered the value and pattern runtime substrate; open #988 owns the remaining control-flow execution and comparison profile.</li>
 </ul>
 <h3 id="languagematch-and-patterns"><code>language.match-and-patterns</code><a class="headerlink" href="#languagematch-and-patterns" title="Permanent link">&para;</a></h3>
 <p>Match, destructuring, alternation, guards, and exhaustiveness preserve branch selection and diagnostics.</p>
 <ul>
-<li><code>probe:language.match-and-patterns:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::PatternAlternation</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_expr/match_.rs::fn check_match</code></li>
+<li><code>probe:language.match-and-patterns:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::PatternAlternation</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/match_.rs::fn check_match</code></li>
 <li>Positive contract: Match, destructuring, alternation, guards, and exhaustiveness preserve branch selection and diagnostics.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::PatternAlternation</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_expr/match_.rs::fn check_match</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_match</code>; owner #988</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_call</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::PatternAlternation</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/match_.rs::fn check_match</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_match</code>; owner #988</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #988</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: Closed #1101 delivered the Body IR vocabulary and closed #1154 delivered pattern dispatch over direct values; open #988 owns broadening and comparing the remaining match surface.</li>
 </ul>
 <h3 id="languagenumeric-and-scalar"><code>language.numeric-and-scalar</code><a class="headerlink" href="#languagenumeric-and-scalar" title="Permanent link">&para;</a></h3>
 <p>Bounded scalar arithmetic, comparisons, boolean operators, strings, and int/bool/str/None JSON stringification execute directly from Body IR.</p>
 <ul>
-<li><code>probe:language.numeric-and-scalar:bounded-direct-profile</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_expr/ops.rs::fn check_binary</code></li>
+<li><code>probe:language.numeric-and-scalar:bounded-direct-profile</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn check_binary</code></li>
 <li>Positive contract: Bounded scalar arithmetic, comparisons, boolean operators, strings, and int/bool/str/None JSON stringification execute directly from Body IR.</li>
 <li>Negative contract: Inputs outside the bounded direct profile refuse visibly with their source span.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_expr/ops.rs::fn check_binary</code></li>
-<li>Body IR: Observed <code>src/frontend/body_ir.rs::fn lower_binary</code></li>
-<li>Replacement executor: Observed <code>src/backend/replacement/mod.rs::fn evaluate_binary</code></li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; unscheduled evidence debt: The bounded direct profile has no scheduled owner for its remaining aggregate and corpus-case comparison evidence.</li>
-<li>Case <code>replacement-body-v0-001</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>tests/parity_corpus_tests.rs::legacy_receipt_identity</code>; Observed <code>tests/parity_corpus_tests.rs::replacement_receipt_identity</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_compared_row_carries_two_route_receipts_and_its_oven_authority</code></li>
-<li>Case <code>replacement-body-v0-022</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output</code></li>
-<li>Case <code>replacement-body-v0-025</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output</code></li>
-<li>Case <code>replacement-body-v0-027</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output</code></li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn check_binary</code></li>
+<li>Body IR: Observed <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_binary</code></li>
+<li>Replacement executor: Observed <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn evaluate_binary</code></li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; unscheduled evidence debt: The bounded direct profile has no scheduled owner for its remaining aggregate and corpus-case comparison evidence.</li>
+<li>Case <code>replacement-body-v0-001</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::legacy_receipt_identity</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::replacement_receipt_identity</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_compared_row_carries_two_route_receipts_and_its_oven_authority</code></li>
+<li>Case <code>replacement-body-v0-022</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output</code></li>
+<li>Case <code>replacement-body-v0-025</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output</code></li>
+<li>Case <code>replacement-body-v0-027</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output</code></li>
 </ul>
 <h3 id="languagenumeric-complete"><code>language.numeric-complete</code><a class="headerlink" href="#languagenumeric-complete" title="Permanent link">&para;</a></h3>
 <p>Exact signed and unsigned widths, finite f32/f64, and decimal values retain their checked carrier through literals, constants, locals, lossless widening, source-local calls, entry arguments and results, Display output, receipts, reports, and bounded source-observable comparison. Public direct and shadow exact-float carriers reject NaN and infinities; ordinary float parsing remains separately compared. Arithmetic, unary operations, resize methods, Debug formatting, aggregates, matching, and decimal scalar casts remain explicit pre-effect refusals owned by #988.</p>
 <ul>
-<li><code>probe:language.numeric-complete:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_stmt.rs::fn check_assignment</code></li>
+<li><code>probe:language.numeric-complete:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs::fn check_assignment</code></li>
 <li>Positive contract: Exact signed and unsigned widths, finite f32/f64, and decimal values retain their checked carrier through literals, constants, locals, lossless widening, source-local calls, entry arguments and results, Display output, receipts, reports, and bounded source-observable comparison. Public direct and shadow exact-float carriers reject NaN and infinities; ordinary float parsing remains separately compared. Arithmetic, unary operations, resize methods, Debug formatting, aggregates, matching, and decimal scalar casts remain explicit pre-effect refusals owned by #988.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_stmt.rs::fn check_assignment</code></li>
-<li>Body IR: Observed <code>src/frontend/body_ir/primitives.rs::fn lower_checked_literal</code></li>
-<li>Replacement executor: Observed <code>src/backend/replacement/mod.rs::fn validate_reachable_typed_numeric_profile</code></li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Case <code>replacement-body-v0-029</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts</code></li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs::fn check_assignment</code></li>
+<li>Body IR: Observed <code>loaves/compiler/incan_frontend/src/body_ir/primitives.rs::fn lower_checked_literal</code></li>
+<li>Replacement executor: Observed <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn validate_reachable_typed_numeric_profile</code></li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Case <code>replacement-body-v0-029</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts</code></li>
 <li>Blocker/migration: #1279 materializes the typed carrier and bounded movement/output contract. #988 owns the explicitly refused numeric operations, overflow behavior, aggregate integration, Debug formatting, resize methods, and decimal scalar conversions required before the wider feature can become green.</li>
 </ul>
 <h3 id="languagestrings-and-format"><code>language.strings-and-format</code><a class="headerlink" href="#languagestrings-and-format" title="Permanent link">&para;</a></h3>
 <p>String operators and formatting preserve interpolation order, conversions, and runtime failures.</p>
 <ul>
-<li><code>probe:language.strings-and-format:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_expr/ops.rs::fn check_binary</code></li>
+<li><code>probe:language.strings-and-format:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn check_binary</code></li>
 <li>Positive contract: String operators and formatting preserve interpolation order, conversions, and runtime failures.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_expr/ops.rs::fn check_binary</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_binary</code>; owner #988</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn evaluate_binary</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Case <code>replacement-body-v0-021</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output</code></li>
-<li>Case <code>replacement-body-v0-024</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output</code></li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs::fn check_binary</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_binary</code>; owner #988</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn evaluate_binary</code>; owner #988</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Case <code>replacement-body-v0-021</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_helper_row_carries_two_route_receipts_and_exact_output</code></li>
+<li>Case <code>replacement-body-v0-024</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_string_len_row_carries_two_route_receipts_and_exact_output</code></li>
 <li>Blocker/migration: String concatenation, bounded scalar interpolation, selected canonical string helpers and Unicode-scalar string length execute directly. Closed #1101 delivered the Body IR vocabulary. The separate replacement-body-v0-021 and replacement-body-v0-024 corpus cases prove those bounded profiles, not this full formatting contract; open #988 owns broader execution and feature parity remains non-green.</li>
 </ul>
 <h3 id="moduleidentity-and-aliases"><code>module.identity-and-aliases</code><a class="headerlink" href="#moduleidentity-and-aliases" title="Permanent link">&para;</a></h3>
 <p>Modules, imports, aliases, namespaces, and reexports resolve to one source-observable identity.</p>
 <ul>
-<li><code>probe:module.identity-and-aliases:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NamespacedStdlib</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/collect/stdlib_imports.rs::fn collect_import</code></li>
+<li><code>probe:module.identity-and-aliases:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NamespacedStdlib</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs::fn collect_import</code></li>
 <li>Positive contract: Modules, imports, aliases, namespaces, and reexports resolve to one source-observable identity.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NamespacedStdlib</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/collect/stdlib_imports.rs::fn collect_import</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_call</code>; owner #1042</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_call</code>; owner #1042</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #1042: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NamespacedStdlib</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs::fn collect_import</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #1042</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #1042</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #1042: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: Canonical source identity is a prerequisite for a replacement profile that crosses module boundaries.</li>
 </ul>
 <h3 id="nominalmodels-unions-enums"><code>nominal.models-unions-enums</code><a class="headerlink" href="#nominalmodels-unions-enums" title="Permanent link">&para;</a></h3>
 <p>Models, unions, value enums, newtypes, computed properties, and static storage preserve construction and dispatch semantics.</p>
 <ul>
-<li><code>probe:nominal.models-unions-enums:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ComputedProperties</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_decl.rs::fn check_model</code></li>
+<li><code>probe:nominal.models-unions-enums:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ComputedProperties</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_decl.rs::fn check_model</code></li>
 <li>Positive contract: Models, unions, value enums, newtypes, computed properties, and static storage preserve construction and dispatch semantics.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ComputedProperties</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_decl.rs::fn check_model</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_constructor</code>; owner #988</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn evaluate_aggregate</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
-<li>Case <code>replacement-body-v0-030</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output</code></li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::ComputedProperties</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_decl.rs::fn check_model</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_constructor</code>; owner #988</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn evaluate_aggregate</code>; owner #988</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Case <code>replacement-body-v0-030</code> (ComparedMatch) using completed comparison infrastructure #1146: paired Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output</code>; Observed <code>loaves/compiler/incan_driver/tests/parity_corpus_tests.rs::fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output</code></li>
 <li>Blocker/migration: #1281 retains and executes the bounded checked int/bool/str/float <code>isinstance</code> target profile in replacement-body-v0-030. That case does not establish general runtime type values or the wider models/unions/enums/newtypes contract. Closed #1154 delivered the current direct nominal/value substrate; open #988 owns broadening the replacement execution profile.</li>
 </ul>
 <h3 id="packagepublic-boundaries"><code>package.public-boundaries</code><a class="headerlink" href="#packagepublic-boundaries" title="Permanent link">&para;</a></h3>
 <p>Libraries, checked API metadata, providers, workspaces, and consumer imports preserve public identity and defaults.</p>
 <ul>
-<li><code>probe:package.public-boundaries:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedApiMetadata</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/collect/stdlib_imports.rs::fn collect_pub_imports</code></li>
+<li><code>probe:package.public-boundaries:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedApiMetadata</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs::fn collect_pub_imports</code></li>
 <li>Positive contract: Libraries, checked API metadata, providers, workspaces, and consumer imports preserve public identity and defaults.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedApiMetadata</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/collect/stdlib_imports.rs::fn collect_pub_imports</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_call</code>; owner #989</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_call</code>; owner #989</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #989: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedApiMetadata</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs::fn collect_pub_imports</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #989</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #989</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #989: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: Package and ABI boundaries deliberately remain outside the direct source-only profile until #656/#989 evidence exists.</li>
 </ul>
 <h3 id="runtimestd-data-services"><code>runtime.std-data-services</code><a class="headerlink" href="#runtimestd-data-services" title="Permanent link">&para;</a></h3>
 <p>Data-oriented stdlib services preserve their documented input, output, and error contracts.</p>
 <ul>
-<li><code>probe:runtime.std-data-services:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdChecksum</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
+<li><code>probe:runtime.std-data-services:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdChecksum</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
 <li>Positive contract: Data-oriented stdlib services preserve their documented input, output, and error contracts.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdChecksum</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_call</code>; owner #988</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_call</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdChecksum</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #988</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #988</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: Closed #1156 delivered one checked provider-service dispatch and closed #1154 delivered its value-state prerequisite; open #988 owns broadening direct data-service execution and comparison.</li>
 </ul>
 <h3 id="runtimestd-hosted-services"><code>runtime.std-hosted-services</code><a class="headerlink" href="#runtimestd-hosted-services" title="Permanent link">&para;</a></h3>
 <p>Hosted filesystem, environment, I/O, web, temporary-resource, and process-adjacent services retain authority and lifecycle semantics.</p>
 <ul>
-<li><code>probe:runtime.std-hosted-services:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdEnviron</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
+<li><code>probe:runtime.std-hosted-services:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdEnviron</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
 <li>Positive contract: Hosted filesystem, environment, I/O, web, temporary-resource, and process-adjacent services retain authority and lifecycle semantics.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdEnviron</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_call</code>; owner #988</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_call</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdEnviron</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #988</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #988</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: Closed #1156 delivered one checked provider-service dispatch. Open #988 owns broader direct execution and comparison, with authority and receipt facts still supplied by #662.</li>
 </ul>
 <h3 id="runtimestd-observability"><code>runtime.std-observability</code><a class="headerlink" href="#runtimestd-observability" title="Permanent link">&para;</a></h3>
 <p>Logging, telemetry, registries, and metadata services preserve structured values and provider behavior.</p>
 <ul>
-<li><code>probe:runtime.std-observability:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdLogging</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
+<li><code>probe:runtime.std-observability:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdLogging</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
 <li>Positive contract: Logging, telemetry, registries, and metadata services preserve structured values and provider behavior.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdLogging</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_call</code>; owner #988</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_call</code>; owner #988</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::StdLogging</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs::fn lookup_function_symbol</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #988</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #988</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #988: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: Closed #1156 delivered one checked provider-service dispatch; open #988 owns broader direct observability execution and comparison, while provider authority and receipts remain explicit prerequisites.</li>
 </ul>
 <h3 id="testing-and-tooling"><code>testing-and-tooling</code><a class="headerlink" href="#testing-and-tooling" title="Permanent link">&para;</a></h3>
 <p>Test discovery, assertions, formatter, build reports, inspection, lifecycle, installer, and Oven observability preserve documented contracts.</p>
 <ul>
-<li><code>probe:testing-and-tooling:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::BuildReportsAndRustInspection</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/check_decl.rs::fn check_test_module</code></li>
+<li><code>probe:testing-and-tooling:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::BuildReportsAndRustInspection</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_decl.rs::fn check_test_module</code></li>
 <li>Positive contract: Test discovery, assertions, formatter, build reports, inspection, lifecycle, installer, and Oven observability preserve documented contracts.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::BuildReportsAndRustInspection</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/check_decl.rs::fn check_test_module</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_function_body</code>; owner #1034</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_free_function</code>; owner #1034</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #1034: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::BuildReportsAndRustInspection</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/check_decl.rs::fn check_test_module</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_function_body</code>; owner #1034</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_free_function</code>; owner #1034</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #1034: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: These are control-plane contracts with source and receipt evidence, not direct Body-IR execution rows.</li>
 </ul>
 <h3 id="typestraits-generics-reflection"><code>types.traits-generics-reflection</code><a class="headerlink" href="#typestraits-generics-reflection" title="Permanent link">&para;</a></h3>
 <p>Traits, generics, type tokens, protocol hooks, derives, and resolved method signatures preserve checked dispatch decisions.</p>
 <ul>
-<li><code>probe:types.traits-generics-reflection:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AbstractTraits</code>; negative IntentionalRefusal at Observed <code>src/frontend/typechecker/trait_bound_relations.rs::fn type_satisfies_explicit_bound</code></li>
+<li><code>probe:types.traits-generics-reflection:binding-and-refusal</code> — positive AcceptedBehavior at Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AbstractTraits</code>; negative IntentionalRefusal at Observed <code>loaves/compiler/incan_frontend/src/typechecker/trait_bound_relations.rs::fn type_satisfies_explicit_bound</code></li>
 <li>Positive contract: Traits, generics, type tokens, protocol hooks, derives, and resolved method signatures preserve checked dispatch decisions.</li>
 <li>Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.</li>
-<li>Source/AST: Observed <code>src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AbstractTraits</code></li>
-<li>Typechecker: Observed <code>src/frontend/typechecker/trait_bound_relations.rs::fn type_satisfies_explicit_bound</code></li>
-<li>Body IR: Planned <code>src/frontend/body_ir.rs::fn lower_call</code>; owner #1033</li>
-<li>Replacement executor: Planned <code>src/backend/replacement/mod.rs::fn execute_call</code>; owner #1033</li>
-<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #1033: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
+<li>Source/AST: Observed <code>loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::AbstractTraits</code></li>
+<li>Typechecker: Observed <code>loaves/compiler/incan_frontend/src/typechecker/trait_bound_relations.rs::fn type_satisfies_explicit_bound</code></li>
+<li>Body IR: Planned <code>loaves/compiler/incan_frontend/src/body_ir.rs::fn lower_call</code>; owner #1033</li>
+<li>Replacement executor: Planned <code>loaves/compiler/incan_emit/src/replacement/mod.rs::fn execute_call</code>; owner #1033</li>
+<li>Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed <code>loaves/compiler/incan_driver/tests/support/parity_corpus.rs::NonGreenShadowUnavailable</code>; outstanding evidence owner #1033: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.</li>
 <li>Blocker/migration: Type-directed runtime calls and reflection need canonical source facts and value representation beyond the current profile.</li>
 </ul>
 

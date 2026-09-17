@@ -10031,7 +10031,7 @@
 <div class="language-bash highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>/path/to/incan
 make<span class="w"> </span>build
 </code></pre></div>
-<p>This runs <code>cargo build --features lsp</code> and then links <code>~/.cargo/bin/incan</code> → <code>target/debug/incan</code> and <code>~/.cargo/bin/incan-lsp</code> → <code>target/debug/incan-lsp</code> when that binary exists. Set <code>INCAN_SKIP_CARGO_BIN_LINK=1</code> to skip linking, or rely on CI defaults (linking is off when <code>CI</code> is set).</p>
+<p>This runs <code>cargo build -p incan-cli -p incan-lsp</code> and then links <code>~/.cargo/bin/incan</code> → <code>target/debug/incan</code> and <code>~/.cargo/bin/incan-lsp</code> → <code>target/debug/incan-lsp</code> when that binary exists. Set <code>INCAN_SKIP_CARGO_BIN_LINK=1</code> to skip linking, or rely on CI defaults (linking is off when <code>CI</code> is set).</p>
 <p>Use this path when you are developing the compiler itself or testing behavior from a checkout. It avoids the common split-brain state where your terminal runs one <code>incan</code> binary while VS Code or Cursor keeps launching an older <code>incan-lsp</code>.</p>
 <p>Verify the shell side first:</p>
 <div class="language-bash highlight"><pre><span></span><code><span class="nb">command</span><span class="w"> </span>-v<span class="w"> </span>incan
@@ -10057,7 +10057,7 @@ make<span class="w"> </span>lsp
 </code></pre></div>
 <p>Then add <code>target/release</code> to your <code>PATH</code>, or install into <code>~/.cargo/bin</code>:</p>
 <div class="language-bash highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>/path/to/incan
-cargo<span class="w"> </span>install<span class="w"> </span>--path<span class="w"> </span>.<span class="w"> </span>--features<span class="w"> </span>lsp<span class="w"> </span>--bin<span class="w"> </span>incan-lsp<span class="w"> </span>--force
+cargo<span class="w"> </span>install<span class="w"> </span>--path<span class="w"> </span>loaves/toolchain/incan-lsp<span class="w"> </span>--bin<span class="w"> </span>incan-lsp<span class="w"> </span>--force
 </code></pre></div>
 <p>You can also use <code>make install-lsp</code> as a Makefile shortcut for the <code>cargo install</code> path.</p>
 <h3 id="install-vs-code-extension">Install VS Code Extension<a class="headerlink" href="#install-vs-code-extension" title="Permanent link">&para;</a></h3>

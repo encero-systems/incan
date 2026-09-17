@@ -9687,35 +9687,35 @@
 <p>Before you start, sanity-check which layer your change belongs in (to avoid language/tooling drift):</p>
 <p>Keep the pipeline aligned (to avoid language/tooling drift):</p>
 <ul>
-<li><strong>Syntax crate (<code>crates/incan_syntax/</code>)</strong>: lexer → parser → AST → diagnostics</li>
-<li><strong>Formatter (<code>src/format/</code>)</strong>: prints AST back (idempotent; never emits invalid syntax)</li>
-<li><strong>Semantic core (<code>crates/incan_core/</code>)</strong>: canonical vocab / shared semantic helpers (avoid duplicating “meaning” in multiple layers)</li>
-<li><strong>Compiler (<code>src/frontend/</code>, <code>src/backend/</code>)</strong>:<ul>
-<li><strong>typechecker</strong> validates and annotates</li>
-<li><strong>lowering</strong> turns AST into IR</li>
-<li><strong>emission</strong> generates correct Rust</li>
+<li><strong>Syntax crate (<code>loaves/kernel/incan_syntax/</code>)</strong>: lexer → parser → AST → diagnostics</li>
+<li><strong>Formatter (<code>loaves/compiler/incan_format/</code>)</strong>: prints AST back (idempotent; never emits invalid syntax)</li>
+<li><strong>Semantic core (<code>loaves/kernel/incan_lang/</code>)</strong>: canonical vocab / shared semantic helpers (avoid duplicating “meaning” in multiple layers)</li>
+<li><strong>Compiler (<code>loaves/compiler/</code>)</strong>:<ul>
+<li><strong>typechecker</strong> (<code>incan_frontend/</code>) validates and annotates</li>
+<li><strong>lowering</strong> (<code>incan_ir/</code>) turns AST into IR</li>
+<li><strong>emission</strong> (<code>incan_emit/</code>) generates correct Rust</li>
 </ul>
 </li>
-<li><strong>Runtime/stdlib (<code>crates/incan_stdlib/</code>, <code>stdlib/</code>)</strong>: behavior that can live outside the compiler should live here</li>
+<li><strong>Runtime/stdlib (<code>loaves/stdlib/&lt;component&gt;/{src,rust}/</code>)</strong>: behavior that can live outside the compiler should live here</li>
 </ul>
-<p><em>Rule of thumb</em>: prefer pushing shared meaning “down” into <code>incan_core</code>/<code>incan_syntax</code>/<code>incan_stdlib</code>, and keep the <code>incan</code> (root) crate focused on orchestration and pipeline wiring.</p>
+<p><em>Rule of thumb</em>: prefer pushing shared meaning “down” into <code>incan_lang</code>/<code>incan_syntax</code>/the stdlib facets, and keep the driver (<code>incan_driver/</code>) and the <code>incan</code> command line (<code>loaves/toolchain/incan-cli/</code>) focused on orchestration and pipeline wiring.</p>
 <h3 id="what-you-will-usually-touch">What you will usually touch<a class="headerlink" href="#what-you-will-usually-touch" title="Permanent link">&para;</a></h3>
-<p>Builtin changes typically land in the compiler (<code>incan</code> crate), so you will usually touch:</p>
+<p>Builtin changes typically span the compiler crates, so you will usually touch:</p>
 <ol>
 <li><strong>Frontend symbol table</strong> (so it typechecks)<ul>
-<li><code>src/frontend/symbols.rs</code> → builtin name + signature</li>
+<li><code>loaves/compiler/incan_frontend/src/symbols.rs</code> → builtin name + signature</li>
 </ul>
 </li>
 <li><strong>IR builtin enum</strong> (so lowering can represent it explicitly)<ul>
-<li><code>src/backend/ir/expr.rs</code> → <code>BuiltinFn</code> variant + name mapping</li>
+<li><code>loaves/compiler/incan_ir/src/expr.rs</code> → <code>BuiltinFn</code> variant + name mapping</li>
 </ul>
 </li>
 <li><strong>Lowering</strong> (so calls become <code>BuiltinCall</code>)<ul>
-<li><code>src/backend/ir/lower/expr.rs</code></li>
+<li><code>loaves/compiler/incan_ir/src/lower/expr/</code></li>
 </ul>
 </li>
 <li><strong>Emission</strong> (so Rust output matches the intended pattern)<ul>
-<li><code>src/backend/ir/emit/expressions/builtins.rs</code></li>
+<li><code>loaves/compiler/incan_emit/src/emit/expressions/builtins.rs</code></li>
 </ul>
 </li>
 <li><strong>Tests and docs</strong><ul>

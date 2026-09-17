@@ -9691,7 +9691,7 @@
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
 <p>The experimental direct replacement backend runs a compiled program without going through Rust emission. That backend has to answer a question the emission backend answers by construction: when the program prints, what actually reaches the user's terminal, and when?</p>
 <p>An earlier reading of this boundary treated program output as evidence to be captured rather than delivered — the executor accumulated rendered lines and the CLI relayed them only after the execution receipt had been persisted. That reading has since been reversed in the implementation, and the reversal is the reason this record exists. Output is now written through caller-supplied writers as execution proceeds, which changes what a failure leaves behind and what a receipt can honestly claim.</p>
-<p>The contract needs a durable statement because two wrong descriptions are easy to reach for. It is not a general effect system, and the line-oriented projection that survives in reports is not a typed effect trace. Naming the boundary once is cheaper than re-deriving it from <code>src/backend/replacement/program_io.rs</code> each time a builtin is admitted.</p>
+<p>The contract needs a durable statement because two wrong descriptions are easy to reach for. It is not a general effect system, and the line-oriented projection that survives in reports is not a typed effect trace. Naming the boundary once is cheaper than re-deriving it from <code>loaves/compiler/incan_emit/src/replacement/program_io.rs</code> each time a builtin is admitted.</p>
 <h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
 <ul>
 <li>
@@ -9713,7 +9713,7 @@
 <p><strong>An unrunnable shadow comparison stays visibly non-green.</strong> <code>unavailable_shadow_comparison</code> preserves the distinction between "nobody asked" and "asked and could not run": the first is <code>NotRequested</code>, the second is <code>Unavailable</code> carrying a reason that names the concrete boundary. Only the second is a non-green outcome. An unavailable comparison is a backend-selection regression signal, never grounds for falling back to the other backend.</p>
 </li>
 <li>
-<p><strong>Builtin admission is a registry decision, not a spelling decision.</strong> <code>EXECUTABLE_BUILTINS</code> in <code>src/backend/replacement/mod.rs</code> is the single source of truth for which builtins the direct profile executes. A builtin is admitted when its direct answer is proven not to diverge from the Rust-emission backend; anything else is refused. This record deliberately does not transcribe the membership list, because the list moves and a copy of it here would rot into a false boundary.</p>
+<p><strong>Builtin admission is a registry decision, not a spelling decision.</strong> <code>EXECUTABLE_BUILTINS</code> in <code>loaves/compiler/incan_emit/src/replacement/mod.rs</code> is the single source of truth for which builtins the direct profile executes. A builtin is admitted when its direct answer is proven not to diverge from the Rust-emission backend; anything else is refused. This record deliberately does not transcribe the membership list, because the list moves and a copy of it here would rot into a false boundary.</p>
 </li>
 </ul>
 <h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
@@ -9746,9 +9746,9 @@
 <ul>
 <li><a href="https://github.com/encero-systems/incan/issues/1249">Issue #1249: decide and represent how the replacement executor calls builtins like <code>println</code></a></li>
 <li><a href="https://github.com/encero-systems/incan/issues/1254">Issue #1254: execute replacement profiles from one CompilationSession analysis</a></li>
-<li><code>ProgramOutput</code>, <code>OutputCheckpoint</code> — <code>src/backend/replacement/program_io.rs</code></li>
-<li><code>EXECUTABLE_BUILTINS</code>, <code>ReplacementExecution::emitted_output</code>, <code>canonical_emitted_output_summary</code> — <code>src/backend/replacement/mod.rs</code></li>
-<li><code>ShadowComparisonState</code>, <code>unavailable_shadow_comparison</code>, <code>BackendExecutionReceipt</code> — <code>src/backend/selection.rs</code></li>
+<li><code>ProgramOutput</code>, <code>OutputCheckpoint</code> — <code>loaves/compiler/incan_emit/src/replacement/program_io.rs</code></li>
+<li><code>EXECUTABLE_BUILTINS</code>, <code>ReplacementExecution::emitted_output</code>, <code>canonical_emitted_output_summary</code> — <code>loaves/compiler/incan_emit/src/replacement/mod.rs</code></li>
+<li><code>ShadowComparisonState</code>, <code>unavailable_shadow_comparison</code>, <code>BackendExecutionReceipt</code> — <code>loaves/compiler/incan_emit/src/selection.rs</code></li>
 </ul>
 
 

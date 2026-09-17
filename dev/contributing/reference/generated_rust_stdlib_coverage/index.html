@@ -9913,10 +9913,10 @@
 
 
 <h1 id="generated-rust-stdlib-coverage-inventory">Generated Rust stdlib coverage inventory<a class="headerlink" href="#generated-rust-stdlib-coverage-inventory" title="Permanent link">&para;</a></h1>
-<p>This inventory tracks generated Rust coverage for every <code>crates/incan_stdlib/stdlib/**/*.incn</code> source module. It is a maintenance aid for deciding where generated stdlib Rust needs stronger tests; it is not a claim that the runtime behavior of every exported API is exhaustively covered.</p>
+<p>This inventory tracks generated Rust coverage for every <code>loaves/stdlib/**/*.incn</code> source module. It is a maintenance aid for deciding where generated stdlib Rust needs stronger tests; it is not a claim that the runtime behavior of every exported API is exhaustively covered.</p>
 <p>Generated from repo inspection on 2026-05-20 with:</p>
-<div class="language-sh highlight"><pre><span></span><code>rg<span class="w"> </span>--files<span class="w"> </span>crates/incan_stdlib/stdlib<span class="w"> </span><span class="p">|</span><span class="w"> </span>rg<span class="w"> </span><span class="s1">&#39;\.incn$&#39;</span>
-rg<span class="w"> </span>-n<span class="w"> </span><span class="s1">&#39;std_|from std\.|import std&#39;</span><span class="w"> </span>tests<span class="w"> </span>tests/codegen_snapshots<span class="w"> </span>crates/incan_stdlib/tests
+<div class="language-sh highlight"><pre><span></span><code>rg<span class="w"> </span>--files<span class="w"> </span>loaves/stdlib<span class="w"> </span><span class="p">|</span><span class="w"> </span>rg<span class="w"> </span><span class="s1">&#39;\.incn$&#39;</span>
+rg<span class="w"> </span>-n<span class="w"> </span><span class="s1">&#39;std_|from std\.|import std&#39;</span><span class="w"> </span>loaves/toolchain/incan-cli/tests<span class="w"> </span>loaves/compiler/incan_emit/tests/codegen_snapshots<span class="w"> </span>loaves/stdlib/core/rust/tests
 </code></pre></div>
 <h2 id="coverage-labels">Coverage labels<a class="headerlink" href="#coverage-labels" title="Permanent link">&para;</a></h2>
 <table>
@@ -9966,7 +9966,7 @@ rg<span class="w"> </span>-n<span class="w"> </span><span class="s1">&#39;std_|f
 <td><code>stdlib/collections.incn</code></td>
 <td><code>std.collections</code></td>
 <td><code>import/user-facing-covered</code></td>
-<td><code>tests/fixtures/rfc030_std_collections_behavior.incn</code>, <code>std_ordinal_map_surface</code>, <code>ordinal_key_builtin_impls</code>, <code>ordinal_map_str_fast_lookup</code>, and layering guards.</td>
+<td><code>loaves/compiler/incan_test_support/fixtures/rfc030_std_collections_behavior.incn</code>, <code>std_ordinal_map_surface</code>, <code>ordinal_key_builtin_impls</code>, <code>ordinal_map_str_fast_lookup</code>, and layering guards.</td>
 <td>Add a direct generated-Rust snapshot for the module source or a focused snapshot for the most important generated helpers.</td>
 </tr>
 <tr>
@@ -10015,7 +10015,7 @@ rg<span class="w"> </span>-n<span class="w"> </span><span class="s1">&#39;std_|f
 <td><code>stdlib/reflection.incn</code></td>
 <td><code>std.reflection</code></td>
 <td><code>import/user-facing-covered</code></td>
-<td><code>tests/fixtures/valid/std_reflection_import.incn</code>, <code>field_info_reflection.incn</code>, and missing-import diagnostics cover public import and compiler reflection behavior.</td>
+<td><code>loaves/compiler/incan_test_support/fixtures/valid/std_reflection_import.incn</code>, <code>field_info_reflection.incn</code>, and missing-import diagnostics cover public import and compiler reflection behavior.</td>
 <td>Add a generated-Rust snapshot for <code>FieldInfo</code> import/use.</td>
 </tr>
 <tr>
@@ -10344,35 +10344,35 @@ rg<span class="w"> </span>-n<span class="w"> </span><span class="s1">&#39;std_|f
 <td><code>stdlib/encoding/base32.incn</code></td>
 <td><code>std.encoding.base32</code></td>
 <td><code>import/user-facing-covered</code></td>
-<td><code>tests/std_encoding_algorithm_modules.rs</code> runs module source with vector and lenient decode assertions; RFC 064 fixture also imports it.</td>
+<td><code>loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs</code> runs module source with vector and lenient decode assertions; RFC 064 fixture also imports it.</td>
 <td>Add snapshot only if generated helper shape needs review.</td>
 </tr>
 <tr>
 <td><code>stdlib/encoding/base58.incn</code></td>
 <td><code>std.encoding.base58</code></td>
 <td><code>import/user-facing-covered</code></td>
-<td><code>tests/std_encoding_algorithm_modules.rs</code> and RFC 064 fixture.</td>
+<td><code>loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs</code> and RFC 064 fixture.</td>
 <td>Same as base32.</td>
 </tr>
 <tr>
 <td><code>stdlib/encoding/base64.incn</code></td>
 <td><code>std.encoding.base64</code></td>
 <td><code>import/user-facing-covered</code></td>
-<td><code>tests/std_encoding_algorithm_modules.rs</code> and RFC 064 fixture.</td>
+<td><code>loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs</code> and RFC 064 fixture.</td>
 <td>Same as base32.</td>
 </tr>
 <tr>
 <td><code>stdlib/encoding/base85.incn</code></td>
 <td><code>std.encoding.base85</code></td>
 <td><code>import/user-facing-covered</code></td>
-<td><code>tests/std_encoding_algorithm_modules.rs</code> and RFC 064 fixture.</td>
+<td><code>loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs</code> and RFC 064 fixture.</td>
 <td>Same as base32.</td>
 </tr>
 <tr>
 <td><code>stdlib/encoding/bech32.incn</code></td>
 <td><code>std.encoding.bech32</code></td>
 <td><code>import/user-facing-covered</code></td>
-<td><code>tests/std_encoding_algorithm_modules.rs</code> and RFC 064 fixture.</td>
+<td><code>loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs</code> and RFC 064 fixture.</td>
 <td>Same as base32.</td>
 </tr>
 </tbody>

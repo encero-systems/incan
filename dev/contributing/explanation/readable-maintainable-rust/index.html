@@ -10448,7 +10448,7 @@
 </code></pre></div>
 <h3 id="typical-ci-steps">Typical CI Steps<a class="headerlink" href="#typical-ci-steps" title="Permanent link">&para;</a></h3>
 <div class="language-bash highlight"><pre><span></span><code>cargo<span class="w"> </span>+nightly<span class="w"> </span>fmt<span class="w"> </span>--all<span class="w"> </span>--<span class="w"> </span>--check
-cargo<span class="w"> </span>clippy<span class="w"> </span>--all-targets<span class="w"> </span>--all-features<span class="w"> </span>--<span class="w"> </span>-D<span class="w"> </span>warnings
+cargo<span class="w"> </span>clippy<span class="w"> </span>--workspace<span class="w"> </span>--all-targets<span class="w"> </span>--all-features<span class="w"> </span>--<span class="w"> </span>-D<span class="w"> </span>warnings
 cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--all<span class="w"> </span>--verbose
 cargo<span class="w"> </span>audit
 cargo<span class="w"> </span>deny<span class="w"> </span>check

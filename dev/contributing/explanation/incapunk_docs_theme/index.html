@@ -9666,11 +9666,11 @@
 <p>Incus uses individual transparent WebP assets rather than a monolithic sprite atlas. The generated manifest groups poses by meaning: <code>tip</code>, <code>info</code>, <code>warning</code>, <code>hint</code>, <code>python</code>, <code>rust</code>, <code>javascript</code>, <code>composed-failure</code>, <code>system</code>, <code>success</code>, <code>neutral</code>, and <code>easter-egg</code>.</p>
 <p>Normal MkDocs admonitions are eligible automatically. The runtime chooses at most one Incus slot per page and selects its asset deterministically from the page path, so the character does not jump between poses during navigation or refresh. A small proportion of ordinary tip, hint, and info appearances use the Easter-egg pool instead.</p>
 <p>Seasonal assets stay outside the ordinary pool. The zombie variant is grouped under <code>seasonal-october</code> and is added to Easter-egg selection only during October.</p>
-<p>The extraction inventory and curation rules live in <code>workspaces/docs-site/scripts/extract_incus_library.py</code>; the browser-facing manifest lives beside the generated assets under <code>docs/shared/incapunk/incus-library/</code>. The original contact sheets are external curation inputs and are intentionally not published with the site. To rebuild the library, pass the two contact-sheet directories explicitly:</p>
-<div class="language-console highlight"><pre><span></span><code><span class="go">python scripts/extract_incus_library.py \</span>
+<p>The extraction inventory and curation rules live in <code>workspaces/docs-site/scripts/extract_incus_library.py</code>; the browser-facing manifest lives beside the generated assets under <code>docs/shared/incapunk/incus-library/</code>. The original contact sheets are external curation inputs and are intentionally not published with the site. To rebuild the library from the repository root, pass the two contact-sheet directories explicitly:</p>
+<div class="language-console highlight"><pre><span></span><code><span class="go">python workspaces/docs-site/scripts/extract_incus_library.py \</span>
 <span class="go">  --source-a /path/to/first-batch \</span>
 <span class="go">  --source-b /path/to/second-batch \</span>
-<span class="go">  --output docs/shared/incapunk/incus-library</span>
+<span class="go">  --output workspaces/docs-site/docs/shared/incapunk/incus-library</span>
 </code></pre></div>
 <h2 id="reference-workflow">Reference workflow<a class="headerlink" href="#reference-workflow" title="Permanent link">&para;</a></h2>
 <p>Use the shared tokens and components in <code>incapunk.css</code> as the visual reference when changing the theme: forged gold rails over dark graphite surfaces, restrained cyan and magenta in structural edges, and premium docs chrome rather than generic dark-mode SaaS styling.</p>

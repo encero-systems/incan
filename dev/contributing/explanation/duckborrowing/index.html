@@ -10000,7 +10000,7 @@
 <li>It must not encode ownership policy separately in every emitter.</li>
 </ul>
 <h2 id="where-it-runs">Where it runs<a class="headerlink" href="#where-it-runs" title="Permanent link">&para;</a></h2>
-<p>Duckborrowing lives in the backend IR path:</p>
+<p>Duckborrowing spans two compiler crates. <code>incan_ir</code> owns lowering, access markers and shared-binding inference. <code>incan_emit</code> owns the use-site planner, conversions, Rust emission and trait-bound inference. The emitter consumes the ownership facts recorded in IR:</p>
 <div class="language-text highlight"><pre><span></span><code>typed AST
   -&gt; lowering records value shapes and VarAccess
   -&gt; closed helper and cursor analysis refines proven shared bindings
@@ -10019,43 +10019,43 @@
 </thead>
 <tbody>
 <tr>
-<td><code>src/backend/ir/borrow_inference.rs</code></td>
+<td><code>loaves/compiler/incan_ir/src/borrow_inference.rs</code></td>
 <td>Proves shared helper parameters and local cursors before updating declaration and call signatures.</td>
 </tr>
 <tr>
-<td><code>src/backend/ir/ownership.rs</code></td>
+<td><code>loaves/compiler/incan_emit/src/ownership.rs</code></td>
 <td>Public ownership-planning facade. Defines <code>ValueUseSite</code> and use-site helpers.</td>
 </tr>
 <tr>
-<td><code>src/backend/ir/conversions.rs</code></td>
+<td><code>loaves/compiler/incan_emit/src/conversions.rs</code></td>
 <td>Core conversion policy. Returns <code>None</code>, <code>ToString</code>, <code>Into</code>, <code>Borrow</code>, <code>MutBorrow</code>, or <code>Clone</code>.</td>
 </tr>
 <tr>
-<td><code>src/backend/ir/emit/expressions/mod.rs</code></td>
+<td><code>loaves/compiler/incan_emit/src/emit/expressions/mod.rs</code></td>
 <td>Applies <code>emit_expr_for_use</code> recursively for expressions, literals, tuples, and match scrutinees.</td>
 </tr>
 <tr>
-<td><code>src/backend/ir/emit/expressions/calls.rs</code></td>
+<td><code>loaves/compiler/incan_emit/src/emit/expressions/calls.rs</code></td>
 <td>Applies call-argument ownership policy for Incan and external Rust calls.</td>
 </tr>
 <tr>
-<td><code>src/backend/ir/emit/expressions/methods/collection_methods.rs</code></td>
+<td><code>loaves/compiler/incan_emit/src/emit/expressions/methods/collection_methods.rs</code></td>
 <td>Plans collection receiver/key borrows, including string lookup probes.</td>
 </tr>
 <tr>
-<td><code>src/backend/ir/emit/statements.rs</code></td>
+<td><code>loaves/compiler/incan_emit/src/emit/statements.rs</code></td>
 <td>Applies assignment, return, match, dict-assignment, and loop ownership policy.</td>
 </tr>
 <tr>
-<td><code>src/backend/ir/lower/stmt.rs</code></td>
+<td><code>loaves/compiler/incan_ir/src/lower/stmt.rs</code></td>
 <td>Marks move-vs-read access for statement lowering, including tuple unpacking.</td>
 </tr>
 <tr>
-<td><code>src/backend/ir/trait_bound_inference.rs</code></td>
+<td><code>loaves/compiler/incan_emit/src/trait_bound_inference.rs</code></td>
 <td>Adds generic trait bounds needed by backend-inserted clones.</td>
 </tr>
 <tr>
-<td><code>src/backend/ir/types.rs</code></td>
+<td><code>loaves/compiler/incan_ir/src/types.rs</code></td>
 <td>Defines <code>IrType::is_copy()</code> so planning can distinguish cheap copies from owned materialization.</td>
 </tr>
 </tbody>
@@ -10158,7 +10158,7 @@
 <h3 id="match-scrutinees">Match scrutinees<a class="headerlink" href="#match-scrutinees" title="Permanent link">&para;</a></h3>
 <p>Generated Rust <code>match</code> consumes the scrutinee shape. The planner treats match scrutinees like owned-result materialization so borrowed or shared non-<code>Copy</code> values are cloned before matching when needed.</p>
 <h3 id="generic-clone-bounds">Generic clone bounds<a class="headerlink" href="#generic-clone-bounds" title="Permanent link">&para;</a></h3>
-<p>Backend-inserted <code>.clone()</code> calls are invisible to source-level trait-bound inference unless the backend mirrors them. When ownership planning can clone a generic value, <code>src/backend/ir/trait_bound_inference.rs</code> must add the corresponding <code>Clone</code> bound. Otherwise the generated Rust may fail only after codegen.</p>
+<p>Backend-inserted <code>.clone()</code> calls are invisible to source-level trait-bound inference unless the backend mirrors them. When ownership planning can clone a generic value, <code>loaves/compiler/incan_emit/src/trait_bound_inference.rs</code> must add the corresponding <code>Clone</code> bound. Otherwise the generated Rust may fail only after codegen.</p>
 <h2 id="contributor-rules">Contributor rules<a class="headerlink" href="#contributor-rules" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Do not fix ownership bugs by adding local <code>.clone()</code>, <code>&amp;</code>, <code>&amp;mut</code>, <code>.as_ref()</code>, <code>.to_string()</code>, or <code>.into()</code> in an emitter unless the operation is truly local to a Rust helper API.</li>
@@ -10173,7 +10173,7 @@
 <p>Ownership changes need tests at the layer where the behavior is decided and at least one generated-Rust check when the bug was observable only after emission.</p>
 <p>Use these test shapes:</p>
 <ul>
-<li>Conversion planner unit tests in <code>src/backend/ir/conversions.rs</code> for pure policy decisions.</li>
+<li>Conversion planner unit tests in <code>loaves/compiler/incan_emit/src/conversions.rs</code> for pure policy decisions.</li>
 <li>IR/codegen snapshot tests for emitted Rust shapes.</li>
 <li>Build or run tests for generated Rust when borrow checker behavior is the failure mode.</li>
 <li>Consumer checks from sibling projects when the bug came from real library patterns rather than a minimized fixture.</li>

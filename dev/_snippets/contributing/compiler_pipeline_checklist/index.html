@@ -9455,18 +9455,18 @@
 
 <p>Keep the pipeline aligned (to avoid language/tooling drift):</p>
 <ul>
-<li><strong>Syntax crate (<code>crates/incan_syntax/</code>)</strong>: lexer → parser → AST → diagnostics</li>
-<li><strong>Formatter (<code>src/format/</code>)</strong>: prints AST back (idempotent; never emits invalid syntax)</li>
-<li><strong>Semantic core (<code>crates/incan_core/</code>)</strong>: canonical vocab / shared semantic helpers (avoid duplicating “meaning” in multiple layers)</li>
-<li><strong>Compiler (<code>src/frontend/</code>, <code>src/backend/</code>)</strong>:<ul>
-<li><strong>typechecker</strong> validates and annotates</li>
-<li><strong>lowering</strong> turns AST into IR</li>
-<li><strong>emission</strong> generates correct Rust</li>
+<li><strong>Syntax crate (<code>loaves/kernel/incan_syntax/</code>)</strong>: lexer → parser → AST → diagnostics</li>
+<li><strong>Formatter (<code>loaves/compiler/incan_format/</code>)</strong>: prints AST back (idempotent; never emits invalid syntax)</li>
+<li><strong>Semantic core (<code>loaves/kernel/incan_lang/</code>)</strong>: canonical vocab / shared semantic helpers (avoid duplicating “meaning” in multiple layers)</li>
+<li><strong>Compiler (<code>loaves/compiler/</code>)</strong>:<ul>
+<li><strong>typechecker</strong> (<code>incan_frontend/</code>) validates and annotates</li>
+<li><strong>lowering</strong> (<code>incan_ir/</code>) turns AST into IR</li>
+<li><strong>emission</strong> (<code>incan_emit/</code>) generates correct Rust</li>
 </ul>
 </li>
-<li><strong>Runtime/stdlib (<code>crates/incan_stdlib/</code>, <code>stdlib/</code>)</strong>: behavior that can live outside the compiler should live here</li>
+<li><strong>Runtime/stdlib (<code>loaves/stdlib/&lt;component&gt;/{src,rust}/</code>)</strong>: behavior that can live outside the compiler should live here</li>
 </ul>
-<p><em>Rule of thumb</em>: prefer pushing shared meaning “down” into <code>incan_core</code>/<code>incan_syntax</code>/<code>incan_stdlib</code>, and keep the <code>incan</code> (root) crate focused on orchestration and pipeline wiring.</p>
+<p><em>Rule of thumb</em>: prefer pushing shared meaning “down” into <code>incan_lang</code>/<code>incan_syntax</code>/the stdlib facets, and keep the driver (<code>incan_driver/</code>) and the <code>incan</code> command line (<code>loaves/toolchain/incan-cli/</code>) focused on orchestration and pipeline wiring.</p>
 
 
 

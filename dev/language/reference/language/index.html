@@ -10526,7 +10526,7 @@
 <div class="admonition warning">
 <p class="admonition-title">Generated file</p>
 <p>Do not edit this page by hand. If it looks wrong/outdated, regenerate it from source and commit the result.</p>
-<p>Regenerate with: <code>cargo run -p incan_core --bin generate_lang_reference</code></p>
+<p>Regenerate with: <code>cargo run -p incan_lang --bin generate_lang_reference</code></p>
 </div>
 <h2 id="contents">Contents<a class="headerlink" href="#contents" title="Permanent link">&para;</a></h2>
 <ul>
@@ -11213,7 +11213,7 @@
 <thead>
 <tr>
 <th>Namespace</th>
-<th>Feature gate</th>
+<th>Runtime facet</th>
 <th>Submodules</th>
 <th>Activates soft keywords</th>
 </tr>
@@ -11221,13 +11221,13 @@
 <tbody>
 <tr>
 <td><code>std.web</code></td>
-<td><code>web</code></td>
+<td><code>incan_std_web</code></td>
 <td><code>std.web.app</code>, <code>std.web.routing</code>, <code>std.web.request</code>, <code>std.web.response</code>, <code>std.web.macros</code>, <code>std.web.prelude</code></td>
 <td>-</td>
 </tr>
 <tr>
 <td><code>std.testing</code></td>
-<td>-</td>
+<td><code>incan_std_testing</code></td>
 <td>-</td>
 <td>-</td>
 </tr>
@@ -11257,7 +11257,7 @@
 </tr>
 <tr>
 <td><code>std.async</code></td>
-<td><code>async</code></td>
+<td><code>incan_std_async</code></td>
 <td><code>std.async.time</code>, <code>std.async.task</code>, <code>std.async.channel</code>, <code>std.async.race</code>, <code>std.async.sync</code>, <code>std.async.prelude</code></td>
 <td><code>async</code>, <code>await</code></td>
 </tr>
@@ -11269,13 +11269,13 @@
 </tr>
 <tr>
 <td><code>std.serde</code></td>
-<td><code>json</code></td>
+<td><code>incan_std_data</code></td>
 <td><code>std.serde.json</code></td>
 <td>-</td>
 </tr>
 <tr>
 <td><code>std.json</code></td>
-<td><code>json</code></td>
+<td><code>incan_std_data</code></td>
 <td>-</td>
 <td>-</td>
 </tr>
@@ -11353,7 +11353,7 @@
 </tr>
 <tr>
 <td><code>std.collections</code></td>
-<td><code>ordinal</code></td>
+<td><code>incan_std_data</code></td>
 <td>-</td>
 <td>-</td>
 </tr>

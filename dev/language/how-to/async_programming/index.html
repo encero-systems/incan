@@ -11147,9 +11147,10 @@
     <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Result: </span><span class="si">{</span><span class="kt">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="generated-dependencies">Generated Dependencies<a class="headerlink" href="#generated-dependencies" title="Permanent link">&para;</a></h3>
-<p>Generated projects enable Tokio through the <code>incan_stdlib</code> async feature rather than adding a direct Tokio dependency for ordinary async stdlib use:</p>
+<p>Generated projects reach Tokio through the <code>incan_std_async</code> runtime facet, the Rust half of the <code>async</code> standard library component, rather than adding a direct Tokio dependency for ordinary async stdlib use:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
-<span class="n">incan_stdlib</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;async&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
+<span class="n">incan_std_core</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="w"> </span><span class="p">}</span>
+<span class="n">incan_std_async</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
 <h3 id="1-dont-block-the-runtime">1. Don't Block the Runtime<a class="headerlink" href="#1-dont-block-the-runtime" title="Permanent link">&para;</a></h3>
