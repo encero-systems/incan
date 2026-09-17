@@ -3296,6 +3296,10 @@ pub fn oven_run(options: OvenRunCommandOptions) -> CliResult<ExitCode> {
 
 #[cfg(test)]
 mod tests {
+    use super::loaf_bake::{
+        import_release_policy_output, release_policy_publisher_input, validate_release_policy_project_output,
+        verify_committed_release_policy_output,
+    };
     use super::{
         CompilerSuiteChildrenReport, CompilerSuiteFixtureCargoProxy, CompilerSuiteNativeTestRootReport,
         CompilerSuiteRustdocTestRootReport, CompilerSuiteTimingReport,
@@ -3312,15 +3316,14 @@ mod tests {
         compiler_suite_remove_generated_rust_closure, compiler_suite_selected_shard_references,
         compiler_suite_selection_context, compiler_suite_selection_report, compiler_suite_temporary_directory,
         compiler_suite_uses_indexed_foundations, compiler_suite_workspace_library_dependency_closure,
-        default_rustup_home, import_loaf_envelope_from_mirror_roots, import_release_policy_output,
-        interop_bake_terminal_message, loaf_envelope_compatibility_map,
-        loaf_envelope_compatibility_map_with_release_member, loaf_envelope_default_limits, loaf_envelope_evidence,
-        loaf_fixture_action_name, loaf_generation_identity, loaf_generation_identity_with_release_member,
-        native_test_failure_summary, oven_import, oven_publish_direct_rustc_plan, oven_run, oven_test,
-        parse_named_path, prepare_compiler_suite_child, release_policy_publisher_input, reuse_complete_loaf_envelope,
-        run_compiler_suite_children_with_leases_retained, run_prepared_compiler_suite_children,
-        select_compiler_suite_shards, validate_release_policy_project_output, verify_committed_release_policy_output,
-        write_compiler_suite_report, write_native_test_transcript,
+        default_rustup_home, import_loaf_envelope_from_mirror_roots, interop_bake_terminal_message,
+        loaf_envelope_compatibility_map, loaf_envelope_compatibility_map_with_release_member,
+        loaf_envelope_default_limits, loaf_envelope_evidence, loaf_fixture_action_name, loaf_generation_identity,
+        loaf_generation_identity_with_release_member, native_test_failure_summary, oven_import,
+        oven_publish_direct_rustc_plan, oven_run, oven_test, parse_named_path, prepare_compiler_suite_child,
+        reuse_complete_loaf_envelope, run_compiler_suite_children_with_leases_retained,
+        run_prepared_compiler_suite_children, select_compiler_suite_shards, write_compiler_suite_report,
+        write_native_test_transcript,
     };
     use crate::{CliResult, OvenLoafEnvelopeArgument, OvenOutputFormat};
     use incan_driver::oven_store::{default_store_root, resolve_limits_with_environment_and_defaults};
@@ -3388,7 +3391,7 @@ mod tests {
         )?;
         assert_eq!(
             incan_driver::build::output_selection::baked_project_owner_identity(project.path())?,
-            digest_bytes(b"incan_oven_project_output_owner/1\0oven_local_intake"),
+            incan_driver::build::output_selection::baked_project_owner_identity_for_name("oven_local_intake"),
             "the publisher must use the canonical ProjectOutput owner derivation",
         );
         fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;

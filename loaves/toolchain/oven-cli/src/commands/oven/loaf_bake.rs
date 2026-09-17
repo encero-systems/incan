@@ -664,9 +664,8 @@ pub(crate) fn validate_release_policy_project_output(
     payload: &OvenProjectOutputPayload,
     receipt: &oven_store::OvenReceipt,
 ) -> CliResult<()> {
-    // `baked_project_owner_identity` derives this value from the manifest project name. The focused test below
-    // compares this publisher constant with that canonical helper so an identity-version change cannot drift here.
-    let expected_project_identity = oven_store::digest_bytes(b"incan_oven_project_output_owner/1\0oven_local_intake");
+    let expected_project_identity =
+        incan_driver::build::output_selection::baked_project_owner_identity_for_name("oven_local_intake");
     receipt
         .verify_identity()
         .map_err(|error| CliError::failure(format!("release policy publisher receipt is invalid: {error}")))?;
