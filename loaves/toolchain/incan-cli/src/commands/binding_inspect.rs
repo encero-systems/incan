@@ -21,10 +21,10 @@ use incan_frontend::typechecker::{
     c_binding_descriptor_identity,
 };
 use incan_provider::FeatureSelection;
-use oven_model::oven_interop::locked_interop_target_identity;
-use oven_rustc::interop::{
+use oven_interop::{
     default_interop_execution_receipt_path, load_interop_execution_receipt, validate_interop_execution_receipt,
 };
+use oven_model::oven_interop::locked_interop_target_identity;
 
 use incan_driver::modules::collect_modules_detailed_with_session;
 use incan_driver::session::{CompilationAnalysis, CompilationSession};

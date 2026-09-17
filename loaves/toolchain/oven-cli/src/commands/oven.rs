@@ -37,13 +37,13 @@ use crate::{CliError, CliResult, ExitCode, OvenInteropAdapterArgument, OvenLoafE
 use incan_driver::interop_plan::locked_interop_plan_target;
 use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
-use oven_model::oven_interop::{LockedInteropTarget, ToolchainRequirement};
-use oven_rustc::interop::{
+use oven_interop::{
     OvenInteropAdapter, OvenInteropAdapterStageRequest, OvenInteropCapabilitySelection, OvenInteropNativeBakeRequest,
     bake_interop_native_plan, default_interop_execution_receipt_path, load_interop_execution_receipt,
     receipt_interop_execution, selected_interop_toolchain_identity, stage_interop_adapter,
     write_interop_execution_receipt,
 };
+use oven_model::oven_interop::{LockedInteropTarget, ToolchainRequirement};
 use oven_rustc::legacy_cargo::{
     OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION,
     OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1,

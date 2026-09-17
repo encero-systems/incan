@@ -18,7 +18,6 @@ use std::thread;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::interop::{OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, OVEN_INTEROP_PLAN_SCHEMA_INPUT};
 use crate::legacy_cargo::{
     OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoError, OvenLegacyCargoInspectionPackage,
     OvenLegacyCargoInspectionSource, OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind,
@@ -34,6 +33,7 @@ use crate::rustc::{
 };
 use oven_model::compiler_identity::CompilerIdentity;
 use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
+use oven_model::oven_interop::{OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, OVEN_INTEROP_PLAN_SCHEMA_INPUT};
 use oven_store::closure_proof::OvenClosureProof;
 use oven_store::process::{isolate_process_group, terminate_process_group};
 use oven_store::store::{OvenArtifactKind, OvenStore, OvenStoreError};

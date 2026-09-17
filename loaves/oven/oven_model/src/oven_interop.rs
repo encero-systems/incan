@@ -18,6 +18,20 @@ use sha2::{Digest, Sha256};
 
 use crate::manifest::ProjectManifest;
 
+// ---- Receipt input keys the interop execution contract writes ----
+//
+// The keys live with the model so the crate that derives Loaf identities can strip them without depending on
+// the crate that writes them.
+
+/// Receipt input key which makes the immutable final-plan contract explicit.
+///
+/// A change to the materialized interop plan must select a new immutable plan rather than treating an older
+/// receipt-compatible entry as reusable. Normal commands reconstruct this same input from the selected receipt.
+pub const OVEN_INTEROP_PLAN_SCHEMA_INPUT: &str = "oven-interop-plan-schema";
+
+/// Receipt input key that binds a normal consumer to one selected native-execution contract.
+pub const OVEN_INTEROP_EXECUTION_RECEIPT_INPUT: &str = "oven-interop-execution-receipt";
+
 /// Current compatibility format for the `[interop.c]` manifest section.
 pub const INTEROP_C_SCHEMA_VERSION: u32 = 1;
 

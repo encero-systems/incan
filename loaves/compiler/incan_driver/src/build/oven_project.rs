@@ -1014,7 +1014,7 @@ mod tests {
     use std::fs;
 
     use crate::build::OvenBakeProjectTarget;
-    use oven_rustc::interop::OVEN_INTEROP_EXECUTION_RECEIPT_INPUT;
+    use oven_interop::OVEN_INTEROP_EXECUTION_RECEIPT_INPUT;
     use oven_store::store::OvenStore;
     use oven_store::{OvenGeneratedProjectRequest, receipt_generated_project};
 

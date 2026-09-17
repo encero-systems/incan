@@ -39,6 +39,7 @@ incan_semantics_core = { workspace = true }
 incan_vocab = { workspace = true }
 oven_model = { workspace = true }
 oven_rustc = { workspace = true }
+oven_interop = { workspace = true }
 oven_store = { workspace = true }
 rust_inspect = { workspace = true }
 rustix = { version = "1.1.4", features = ["fs"] }
