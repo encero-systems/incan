@@ -88,21 +88,25 @@ pub enum SelectedCrateKind(str):
 
 @derive(Eq, Clone)
 pub model AdmittedSelectedUnit:
-    """Minimal selected-unit projection whose fields the host already cross-checked against the full graph."""
+    """Physical selected-unit evidence whose effective features the host already cross-checked against the graph."""
 
     pub identity: str
     pub node: GraphNode
     pub role: SelectedUnitRole
     pub crate_kind: SelectedCrateKind
+    # Effective compiler-facing activation observed for this physical unit. It deliberately says nothing about
+    # whether defaults were requested: that provenance lives only on GraphRoot.
     pub features: list[str]
-    pub default_features: bool
 
 
 @derive(Clone)
 pub model GraphRoot:
-    """One explicitly selected physical root; Incan derives purpose and demand from the admitted unit."""
+    """One physical root paired with the exact authority-owned feature request that selected it."""
 
     pub unit: str
+    pub requested_features: list[str]
+    pub default_features: bool
+    pub intent_owner: str
 
 
 @derive(Eq, Clone)
@@ -135,6 +139,8 @@ pub model GraphActivation:
     pub nodes: list[GraphNode]
     pub purposes: list[ActivationPurpose]
     pub activations: list[RustActivation]
+    # Derived default-feature demand aligned with `activations`; this is policy output, never physical-unit evidence.
+    pub default_features: list[bool]
     pub unit_purposes: Dict[str, ActivationPurpose]
     pub rounds: int
 
@@ -354,6 +360,18 @@ def root_purpose(
     return Ok(ActivationPurpose.Normal)
 
 
+def has_active_physical_parent(
+    binding: CheckedSlotBinding,
+    node: GraphNode,
+    purpose: ActivationPurpose,
+    unit_purposes: Dict[str, ActivationPurpose],
+) -> bool:
+    """Return whether one raw physical edge belongs to the policy node currently being settled."""
+    if binding.parent != node or binding.parent_unit not in unit_purposes:
+        return false
+    return unit_purposes[binding.parent_unit] == purpose
+
+
 pub def propagate_features(
     catalogs: Dict[str, RustDependencyCatalog],
     base: ActivationContext,
@@ -372,8 +390,9 @@ pub def propagate_features(
     catalog, and every active slot must bind one admitted selected child identity. Missing evidence refuses instead
     of silently turning a selected package into a leaf.
 
-    `base` carries the host and target identities every node shares. Each explicit root carries its own purpose and
-    demand; propagated children always use `Normal`, so a test root cannot activate a transitive package's dev edges.
+    `base` carries the host and target identities every node shares. Each explicit root carries authority-owned
+    requested features and default intent; propagated children always use `Normal`, so a test root cannot activate a
+    transitive package's dev edges. The physical unit's effective `features` only appears at final reconciliation.
 
     `max_rounds` bounds the iteration explicitly. Demands only grow and a graph's feature set is finite, so a fixed
     point exists; the bound is there so a malformed catalog reports a refusal instead of spinning.
@@ -417,12 +436,22 @@ pub def propagate_features(
     mut order: list[PolicyNode] = []
     mut queue = Deque[PolicyNode]()
     for root in roots:
+        if root.intent_owner == "":
+            return Err(
+                IntakeError(
+                    kind=IntakeErrorKind.Missing,
+                    manifest=manifest,
+                    field=["roots", root.unit, "intent_owner"],
+                    location=None,
+                    detail="identity-bound owner for the authored root feature intent",
+                ),
+            )
         selected = unit_for(units, root.unit, manifest)?
         purpose = root_purpose(selected, base.purpose, manifest)?
         unit_purposes[root.unit] = purpose
         if selected.role == SelectedUnitRole.CompilerSupport:
             continue
-        root_demand = NodeDemand(features=selected.features, default_features=selected.default_features)
+        root_demand = NodeDemand(features=root.requested_features, default_features=root.default_features)
         policy_node = PolicyNode(node=selected.node, purpose=purpose)
         key = activation_key(policy_node)
         if key not in demands:
@@ -434,36 +463,24 @@ pub def propagate_features(
                 demands[key] = widened
                 queue.append(policy_node)
 
+    # A compiler-support root has no Cargo manifest declaration to derive a child request from. The eventual host
+    # adapter must project the selected toolchain's sealed dependency-intent catalog; until that evidence exists,
+    # refusing is safer than treating observed child features as authored intent.
+    for binding in checked_bindings:
+        if (binding.compiler_support or binding.parent_is_compiler_support) and binding.parent_unit in unit_purposes:
+            return Err(
+                IntakeError(
+                    kind=IntakeErrorKind.Missing,
+                    manifest=manifest,
+                    field=["bindings", binding.parent_unit, binding.alias],
+                    location=None,
+                    detail="sealed compiler-support dependency intent",
+                ),
+            )
+
     mut rounds = 0
     mut settled: Dict[str, RustActivation] = {}
-    mut support_changed = true
-    while len(queue) > 0 or support_changed:
-        if len(queue) == 0:
-            support_changed = false
-            for binding in checked_bindings:
-                if (
-                    (binding.compiler_support or binding.parent_is_compiler_support)
-                    and binding.parent_unit in unit_purposes
-                ):
-                    child = unit_for(units, binding.child_unit, manifest)?
-                    if binding.child_unit not in unit_purposes:
-                        unit_purposes[binding.child_unit] = ActivationPurpose.Normal
-                        support_changed = true
-                        if child.role != SelectedUnitRole.CompilerSupport:
-                            child_policy = PolicyNode(node=child.node, purpose=ActivationPurpose.Normal)
-                            child_key = activation_key(child_policy)
-                            demand = NodeDemand(features=child.features, default_features=child.default_features)
-                            if child_key not in demands:
-                                demands[child_key] = demand
-                                order.append(child_policy)
-                                queue.append(child_policy)
-                            else:
-                                match merged(demands[child_key], demand):
-                                    Some(widened) =>
-                                        demands[child_key] = widened
-                                        queue.append(child_policy)
-                                    None => pass
-            continue
+    while len(queue) > 0:
         policy_node = queue.popleft()
         node = policy_node.node
         rounds += 1
@@ -487,48 +504,57 @@ pub def propagate_features(
         activation = activate_unit(unit, context, manifest)?
         settled[key] = activation
 
-        # First admit non-Cargo physical edges. Internal target edges make an owning library reachable without
-        # inventing a dependency declaration; compiler-support edges remain outside Cargo feature policy.
+        # First admit same-package physical edges. They make an owning library reachable without inventing a Cargo
+        # dependency declaration, so they carry the already-settled parent demand rather than reseeding from the
+        # child's observed effective features.
         for physical in checked_bindings:
-            if (physical.parent == node and physical.parent_unit in unit_purposes and unit_purposes[physical.parent_unit] == policy_node.purpose and (
-                physical.internal
-                or physical.compiler_support
-            )):
-                if (
-                    physical.child_unit in unit_purposes
-                    and unit_purposes[physical.child_unit] != ActivationPurpose.Normal
-                ):
-                    return Err(
-                        IntakeError(
-                            kind=IntakeErrorKind.Invalid,
-                            manifest=manifest,
-                            field=["bindings", physical.child_unit],
-                            location=None,
-                            detail="one physical unit cannot serve both normal and test activations",
-                        ),
-                    )
-                newly_reached = physical.child_unit not in unit_purposes
-                unit_purposes[physical.child_unit] = ActivationPurpose.Normal
-                if physical.internal:
-                    selected_child = unit_for(units, physical.child_unit, manifest)?
-                    child_policy = PolicyNode(node=physical.child, purpose=ActivationPurpose.Normal)
-                    child_key = activation_key(child_policy)
-                    child_demand = NodeDemand(
-                        features=selected_child.features,
-                        default_features=selected_child.default_features,
-                    )
-                    if child_key not in demands:
-                        demands[child_key] = child_demand
-                        order.append(child_policy)
+            if not has_active_physical_parent(physical, node, policy_node.purpose, unit_purposes):
+                continue
+            if physical.compiler_support:
+                return Err(
+                    IntakeError(
+                        kind=IntakeErrorKind.Missing,
+                        manifest=manifest,
+                        field=["bindings", physical.parent_unit, physical.alias],
+                        location=None,
+                        detail="sealed compiler-support dependency intent",
+                    ),
+                )
+            if not physical.internal:
+                continue
+            if (
+                physical.child_unit in unit_purposes
+                and unit_purposes[physical.child_unit] != ActivationPurpose.Normal
+            ):
+                return Err(
+                    IntakeError(
+                        kind=IntakeErrorKind.Invalid,
+                        manifest=manifest,
+                        field=["bindings", physical.child_unit],
+                        location=None,
+                        detail="one physical unit cannot serve both normal and test activations",
+                    ),
+                )
+            newly_reached = physical.child_unit not in unit_purposes
+            unit_purposes[physical.child_unit] = ActivationPurpose.Normal
+            child_policy = PolicyNode(node=physical.child, purpose=ActivationPurpose.Normal)
+            child_key = activation_key(child_policy)
+            child_demand = NodeDemand(
+                features=demand.features,
+                default_features=demand.default_features,
+            )
+            if child_key not in demands:
+                demands[child_key] = child_demand
+                order.append(child_policy)
+                queue.append(child_policy)
+            else:
+                match merged(demands[child_key], child_demand):
+                    Some(widened) =>
+                        demands[child_key] = widened
                         queue.append(child_policy)
-                    else:
-                        match merged(demands[child_key], child_demand):
-                            Some(widened) =>
-                                demands[child_key] = widened
-                                queue.append(child_policy)
-                            None =>
-                                if newly_reached:
-                                    queue.append(child_policy)
+                    None =>
+                        if newly_reached:
+                            queue.append(child_policy)
 
         for slot in activation.slots:
             match slot.activation:
@@ -599,12 +625,10 @@ pub def propagate_features(
                     mut added_physical = false
                     for physical in checked_bindings:
                         if (
-                            physical.parent == node
+                            has_active_physical_parent(physical, node, policy_node.purpose, unit_purposes)
                             and physical.alias == declaration.alias
                             and not physical.internal
                             and not physical.compiler_support
-                            and physical.parent_unit in unit_purposes
-                            and unit_purposes[physical.parent_unit] == policy_node.purpose
                         ):
                             if (
                                 physical.child != binding.child
@@ -650,8 +674,9 @@ pub def propagate_features(
                                 queue.append(child_policy)
 
     # Reconcile only after every declaration demand has reached its fixed point. The raw selected graph records the
-    # actual effective features/default state for each physical unit; policy is valid only when every reachable
-    # non-sysroot unit agrees with the settled package/domain/purpose activation it participates in.
+    # actual effective features for each physical unit; policy is valid only when every reachable non-sysroot unit
+    # agrees with the settled package/domain/purpose activation it participates in. Default intent is derived policy
+    # state, never a raw-unit claim.
     for unit in units:
         if unit.identity not in unit_purposes or unit.role == SelectedUnitRole.CompilerSupport:
             continue
@@ -677,18 +702,9 @@ pub def propagate_features(
                     detail="authenticated selected-unit features disagree with settled feature policy",
                 ),
             )
-        if unit.default_features != demands[key].default_features:
-            return Err(
-                IntakeError(
-                    kind=IntakeErrorKind.Invalid,
-                    manifest=manifest,
-                    field=["units", unit.identity, "default_features"],
-                    location=None,
-                    detail="authenticated selected-unit default-feature state disagrees with settled policy",
-                ),
-            )
 
     mut activations: list[RustActivation] = []
+    mut activation_defaults: list[bool] = []
     mut reached: list[GraphNode] = []
     mut reached_purposes: list[ActivationPurpose] = []
     for policy_node in order:
@@ -697,6 +713,7 @@ pub def propagate_features(
             reached.append(policy_node.node)
             reached_purposes.append(policy_node.purpose)
             activations.append(settled[key])
+            activation_defaults.append(demands[key].default_features)
     for binding in checked_bindings:
         if binding.parent_unit not in unit_purposes:
             return Err(
@@ -757,6 +774,7 @@ pub def propagate_features(
             nodes=reached,
             purposes=reached_purposes,
             activations=activations,
+            default_features=activation_defaults,
             unit_purposes=unit_purposes,
             rounds=rounds,
         ),

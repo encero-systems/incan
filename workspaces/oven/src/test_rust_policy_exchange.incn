@@ -9,8 +9,9 @@ from rust_policy_exchange import evaluate
 def request(
     role: str = "library",
     extra: str = "",
-    schema: str = "incan.oven.rust-policy-exchange/1",
+    schema: str = "incan.oven.rust-policy-exchange/2",
     operation: str = "validate_selected_rust_graph",
+    intent_owner: str = "sha256:project-authority",
 ) -> str:
     """One exact selected leaf; the manifest digest is SHA-256 of empty bytes."""
     mut document: Dict[str, JsonValue] = {"schema": JsonValue.string(schema), "operation": JsonValue.string(operation), "graph_digest": JsonValue.string(
@@ -27,9 +28,13 @@ def request(
                 )},
             ), "domain": JsonValue.string("target"), "role": JsonValue.string(role), "crate_kind": JsonValue.string(
                 "rlib",
-            ), "features": JsonValue.array([]), "default_features": JsonValue.bool(true)},
+            ), "features": JsonValue.array([])},
         )],
-    ), "roots": JsonValue.array([JsonValue.object({"unit": JsonValue.string("sha256:root-unit")})]), "bindings": JsonValue.array(
+    ), "roots": JsonValue.array([JsonValue.object(
+        {"unit": JsonValue.string("sha256:root-unit"), "requested_features": JsonValue.array([]), "default_features": JsonValue.bool(
+            true,
+        ), "intent_owner": JsonValue.string(intent_owner)},
+    )]), "bindings": JsonValue.array(
         [],
     ), "catalogs": JsonValue.array(
         [JsonValue.object(
@@ -37,7 +42,9 @@ def request(
                 {"name": JsonValue.string("root"), "version": JsonValue.string("1.0.0"), "source": JsonValue.string(
                     "path:root",
                 )},
-            ), "owner": JsonValue.string("sha256:project-owner"), "package_root": JsonValue.string("root"), "members": JsonValue.array(
+            ), "owner": JsonValue.string("sha256:project-owner"), "intent_owner": JsonValue.string(
+                "sha256:project-authority",
+            ), "package_root": JsonValue.string("root"), "members": JsonValue.array(
                 [JsonValue.string("Cargo.toml"), JsonValue.string("src/lib.rs")],
             ), "build_unit_present": JsonValue.bool(false), "manifest": JsonValue.object(
                 {"path": JsonValue.string("Cargo.toml"), "bytes_hex": JsonValue.string(""), "sha256_hex": JsonValue.string(
@@ -96,5 +103,10 @@ pub def test_selected_build_script_role_refuses() -> None:
 
 pub def test_unknown_schema_and_operation_refuse() -> None:
     """Protects strict refusal of unsupported schema and operation values."""
-    assert status(evaluate(request(schema="incan.oven.rust-policy-exchange/2"))) == "refused"
+    assert status(evaluate(request(schema="incan.oven.rust-policy-exchange/1"))) == "refused"
     assert status(evaluate(request(operation="select_again"))) == "refused"
+
+
+pub def test_root_intent_owner_must_match_its_catalog_authority() -> None:
+    """Protects refusal when root feature intent is detached from the admitted package authority."""
+    assert status(evaluate(request(intent_owner="sha256:other-authority"))) == "refused"

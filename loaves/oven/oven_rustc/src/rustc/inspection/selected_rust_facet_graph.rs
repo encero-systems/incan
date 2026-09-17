@@ -13,7 +13,7 @@ mod validation;
 pub use validation::*;
 
 /// Wire schema for the portable Rust facet graph selected before physical rust-analyzer projection.
-pub const OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION: u32 = 2;
+pub const OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION: u32 = 3;
 const OVEN_SELECTED_RUST_FACET_GRAPH_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-graph/1";
 pub(crate) const OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-unit/1";
 
@@ -222,10 +222,12 @@ pub struct OvenSelectedRustFacetUnit {
     pub root_module: String,
     /// Complete sorted source-file catalog. Absence cannot be represented as an empty leaf.
     pub source_members: Vec<OvenSelectedRustFacetSourceMember>,
-    /// Sorted effective feature set for this exact unit.
+    /// Sorted effective feature set observed for this exact physical unit.
+    ///
+    /// This is compiler-facing evidence, not a record of how Cargo's feature requests were authored. In particular,
+    /// it cannot distinguish a default-enabled dependency edge from an explicit request for the `default` feature.
+    /// Root request intent is carried separately by the policy exchange and must be bound to its inspection authority.
     pub features: Vec<String>,
-    /// Whether this unit's selected activation includes default features.
-    pub default_features: bool,
     /// Sorted complete cfg facts supplied to inspection; an explicitly checked empty set remains empty.
     pub cfg: Vec<String>,
     /// Complete selected environment. Empty means the producer checked and selected no values.
@@ -238,6 +240,23 @@ pub struct OvenSelectedRustFacetUnit {
     pub dependencies: Vec<OvenSelectedRustFacetDependency>,
     /// Sorted generated inputs with their exact output owners.
     pub generated_inputs: Vec<OvenSelectedRustFacetGeneratedInput>,
+}
+
+/// One exposed physical root and the authority-owned request that selected it.
+///
+/// `features` on a unit is only observed effective activation. This record retains the separate authored request and
+/// the owner that the physical adapter must resolve to an admitted inspection receipt before policy evaluation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenSelectedRustFacetRoot {
+    /// Selected physical unit identity for this Rust-facing alias.
+    pub unit: String,
+    /// Sorted explicitly requested root feature names.
+    pub requested_features: Vec<String>,
+    /// Whether the owning declaration requested default features.
+    pub default_features: bool,
+    /// Exact admitted owner identity that supplied this authored request.
+    pub intent_owner: String,
 }
 
 /// Strict wire form of the existing target/toolchain/profile/root-feature build intent.
@@ -304,8 +323,11 @@ pub struct OvenSelectedRustFacetSelection {
     pub target_cfg: OvenSelectedRustFacetCfgSnapshot,
     /// Dependency-role activation purpose.
     pub purpose: OvenSelectedRustFacetPurpose,
-    /// Whether the selected root activation includes default features.
-    pub default_features: bool,
+    /// Whether the publisher explicitly requested default features for its primary root.
+    ///
+    /// This is authored selection input. It is not inferred from any selected unit and does not contribute to a
+    /// physical unit identity.
+    pub root_default_features: bool,
     /// Semver-only compiler version required by rust-analyzer.
     pub toolchain_version: String,
     /// Exact target-spec file bound to the selected Store-owned toolchain closure.
@@ -324,8 +346,8 @@ pub struct OvenSelectedRustFacetGraph {
     pub owners: Vec<OvenSelectedRustFacetOwner>,
     /// Sorted complete selected unit table.
     pub units: Vec<OvenSelectedRustFacetUnit>,
-    /// Exact Rust-facing root alias to selected unit ID bindings.
-    pub exposed_roots: BTreeMap<String, String>,
+    /// Exact Rust-facing root aliases, selected physical units and authority-owned request intent.
+    pub exposed_roots: BTreeMap<String, OvenSelectedRustFacetRoot>,
 }
 
 /// Failure to admit a portable selected Rust graph.
@@ -620,11 +642,27 @@ impl OvenSelectedRustFacetGraph {
         if self.exposed_roots.is_empty() {
             return Err(selected_graph_missing("exposed_roots"));
         }
-        for (alias, unit) in &self.exposed_roots {
+        for (alias, root) in &self.exposed_roots {
             validate_selected_graph_alias(alias, "exposed_roots alias")?;
-            validate_selected_graph_digest(unit, &format!("exposed_roots.{alias}"))?;
-            if !unit_indexes.contains_key(unit.as_str()) {
-                return Err(selected_graph_missing(format!("exposed_roots.{alias} unit `{unit}`")));
+            validate_selected_graph_digest(&root.unit, &format!("exposed_roots.{alias}.unit"))?;
+            validate_selected_graph_sorted_strings(
+                &root.requested_features,
+                &format!("exposed_roots.{alias}.requested_features"),
+            )?;
+            let _intent_owner_kind = validate_selected_graph_owner_reference(
+                &root.intent_owner,
+                &owners,
+                &format!("exposed_roots.{alias}.intent_owner"),
+            )?;
+            // The retained owner table is the graph's admitted authority set. The later policy adapter chooses the
+            // payload-specific ProjectAuthority or Toolchain record; this physical schema must not guess that
+            // semantic classification from a source root.
+            referenced_owners.insert(root.intent_owner.clone());
+            if !unit_indexes.contains_key(root.unit.as_str()) {
+                return Err(selected_graph_missing(format!(
+                    "exposed_roots.{alias} unit `{}`",
+                    root.unit
+                )));
             }
         }
 
@@ -665,7 +703,7 @@ impl OvenSelectedRustFacetGraph {
         let mut pending = self
             .exposed_roots
             .values()
-            .filter_map(|identity| unit_indexes.get(identity.as_str()).copied())
+            .filter_map(|root| unit_indexes.get(root.unit.as_str()).copied())
             .collect::<Vec<_>>();
         while let Some(index) = pending.pop() {
             if !reachable.insert(index) {

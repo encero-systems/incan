@@ -784,7 +784,7 @@ mod tests {
             host_cfg: cfg_snapshot("aarch64", "macos"),
             target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
-            default_features: true,
+            root_default_features: true,
             toolchain_version: "1.85.0".to_string(),
             target_spec: OvenSelectedRustFacetTargetSpec {
                 source: OvenSelectedRustFacetPath {
@@ -844,7 +844,6 @@ mod tests {
             root_module: "src/lib.rs".to_string(),
             source_members: members,
             features: Vec::new(),
-            default_features: false,
             cfg: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
@@ -1088,7 +1087,15 @@ mod tests {
                     },
                 ],
                 units: vec![serde, serde_derive, core, stdlib.clone()],
-                exposed_roots: BTreeMap::from([("incan_std_core".to_string(), stdlib.identity)]),
+                exposed_roots: BTreeMap::from([(
+                    "incan_std_core".to_string(),
+                    crate::rustc::OvenSelectedRustFacetRoot {
+                        unit: stdlib.identity,
+                        requested_features: Vec::new(),
+                        default_features: true,
+                        intent_owner: toolchain_owner(),
+                    },
+                )]),
             },
             units,
         })

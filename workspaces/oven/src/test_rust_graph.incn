@@ -70,7 +70,6 @@ def selected(value: GraphNode, role: SelectedUnitRole = SelectedUnitRole.Library
         role=role,
         crate_kind=kind,
         features=[],
-        default_features=true,
     )
 
 
@@ -91,7 +90,6 @@ def selected_as(
         role=role,
         crate_kind=kind,
         features=[],
-        default_features=true,
     )
 
 
@@ -99,7 +97,6 @@ def selected_with_facts(
     identity: str,
     value: GraphNode,
     features: list[str],
-    default_features: bool,
     role: SelectedUnitRole = SelectedUnitRole.Library,
 ) -> AdmittedSelectedUnit:
     """Build a selected unit carrying host-authenticated feature facts for fixed-point reconciliation."""
@@ -110,13 +107,26 @@ def selected_with_facts(
         role=unit.role,
         crate_kind=unit.crate_kind,
         features=features,
-        default_features=default_features,
     )
 
 
 def root(value: GraphNode) -> GraphRoot:
-    """Build one admitted physical root from the fixture unit identity."""
-    return GraphRoot(unit=unit_id(value))
+    """Build one fixture root with explicit authority-owned default intent."""
+    return root_for_unit(unit_id(value))
+
+
+def root_for_unit(
+    identity: str,
+    requested_features: list[str] = [],
+    default_features: bool = true,
+) -> GraphRoot:
+    """Build one physical root paired with fixture-owned authored feature intent."""
+    return GraphRoot(
+        unit=identity,
+        requested_features=requested_features,
+        default_features=default_features,
+        intent_owner="fixture-inspection-authority",
+    )
 
 
 def edge(parent: GraphNode, alias: str, child: GraphNode) -> AdmittedSelectedEdge:
@@ -196,7 +206,6 @@ pub def test_resolved_identity_and_transitive_feature_union() -> None:
                 unit_id(shared),
                 shared,
                 ["alpha", "beta"],
-                true,
             )],
             [root(root_node)],
             bindings,
@@ -263,7 +272,6 @@ pub def test_late_feature_activation_uses_final_fixed_point_in_any_root_order() 
         unit_id(mid),
         mid,
         ["use-leaf"],
-        true,
     ), selected(leaf)]
     bindings = [edge(plain_root, "mid", mid), edge(feature_root, "bridge", bridge), edge(bridge, "mid", mid), edge(mid, "leaf",
         leaf,
@@ -422,7 +430,7 @@ pub def test_normal_and_test_roots_of_same_package_remain_distinct() -> None:
         helper_id,
         helper,
     )]
-    roots = [GraphRoot(unit=normal_id), GraphRoot(unit=test_id)]
+    roots = [root_for_unit(normal_id), root_for_unit(test_id)]
     result = require_ok(
         propagate_features(
             catalogs_from({"suite": "[dev-dependencies]\ntest-helper='1'\n", "test-helper": ""}),
@@ -507,7 +515,7 @@ pub def test_consistent_library_and_binary_edges_coalesce_by_policy_node() -> No
             base_context(),
             "Cargo.toml",
             units,
-            [GraphRoot(unit=lib_id), GraphRoot(unit=bin_id)],
+            [root_for_unit(lib_id), root_for_unit(bin_id)],
             bindings,
             16,
         ),
@@ -530,7 +538,7 @@ pub def test_binary_reaches_own_library_without_a_manifest_dependency_slot() -> 
                 package,
                 SelectedUnitRole.Library,
             )],
-            [GraphRoot(unit=binary_id)],
+            [root_for_unit(binary_id)],
             [physical_edge(binary_id, "app", library_id)],
             16,
         ),
@@ -539,50 +547,48 @@ pub def test_binary_reaches_own_library_without_a_manifest_dependency_slot() -> 
     assert result.unit_purposes[library_id] == ActivationPurpose.Normal
 
 
-pub def test_compiler_support_physical_closure_reaches_depth_two_without_catalogs() -> None:
-    """Protects compiler-support closure traversal beyond one physical edge."""
+pub def test_compiler_support_physical_closure_refuses_without_sealed_intent() -> None:
+    """Protects refusal rather than deriving compiler-support intent from selected physical features."""
     root_node = node("root")
     support_one = node("core", DependencyDomain.Target)
     support_two = node("alloc", DependencyDomain.Target)
-    result = require_ok(
-        propagate_features(
-            catalogs_from({"root": ""}),
-            base_context(),
-            "Cargo.toml",
-            [selected(root_node), selected(support_one, SelectedUnitRole.CompilerSupport), selected(
-                support_two,
-                SelectedUnitRole.CompilerSupport,
-            )],
-            [root(root_node)],
-            [edge(root_node, "core", support_one), edge(support_one, "alloc", support_two)],
-            16,
-        ),
-    )
-    assert unit_id(support_one) in result.unit_purposes
-    assert unit_id(support_two) in result.unit_purposes
+    match propagate_features(
+        catalogs_from({"root": ""}),
+        base_context(),
+        "Cargo.toml",
+        [selected(root_node), selected(support_one, SelectedUnitRole.CompilerSupport), selected(
+            support_two,
+            SelectedUnitRole.CompilerSupport,
+        )],
+        [root(root_node)],
+        [edge(root_node, "core", support_one), edge(support_one, "alloc", support_two)],
+        16,
+    ):
+        Ok(_) => fail("compiler-support edges require sealed toolchain intent")
+        Err(error) =>
+            assert "sealed compiler-support dependency intent" in error.message()
 
 
-pub def test_compiler_support_root_reaches_depth_two_without_catalogs() -> None:
-    """Protects compiler-support roots and their physical closure without catalogs."""
+pub def test_compiler_support_root_refuses_without_sealed_intent() -> None:
+    """Protects a compiler-support root from treating a physical edge as authored feature intent."""
     support = node("core")
     leaf = node("alloc")
-    result = require_ok(
-        propagate_features(
-            {},
-            base_context(),
-            "Cargo.toml",
-            [selected(support, SelectedUnitRole.CompilerSupport), selected(leaf, SelectedUnitRole.CompilerSupport)],
-            [root(support)],
-            [edge(support, "alloc", leaf)],
-            16,
-        ),
-    )
-    assert unit_id(support) in result.unit_purposes
-    assert unit_id(leaf) in result.unit_purposes
+    match propagate_features(
+        {},
+        base_context(),
+        "Cargo.toml",
+        [selected(support, SelectedUnitRole.CompilerSupport), selected(leaf, SelectedUnitRole.CompilerSupport)],
+        [root(support)],
+        [edge(support, "alloc", leaf)],
+        16,
+    ):
+        Ok(_) => fail("compiler-support root edges require sealed toolchain intent")
+        Err(error) =>
+            assert "sealed compiler-support dependency intent" in error.message()
 
 
-pub def test_compiler_support_edge_uses_ordinary_child_selected_features() -> None:
-    """Protects authenticated selected features when compiler support reaches an ordinary child."""
+pub def test_compiler_support_edge_refuses_without_sealed_intent() -> None:
+    """Protects ordinary children from inheriting demand from compiler-support physical output."""
     support = node("core")
     ordinary = node("ordinary")
     selected_ordinary = AdmittedSelectedUnit(
@@ -591,23 +597,22 @@ pub def test_compiler_support_edge_uses_ordinary_child_selected_features() -> No
         role=SelectedUnitRole.Library,
         crate_kind=SelectedCrateKind.Rlib,
         features=["enabled"],
-        default_features=false,
     )
-    result = require_ok(
-        propagate_features(
-            catalogs_from({"ordinary": "[features]\nenabled=[]\n"}),
-            base_context(),
-            "Cargo.toml",
-            [selected(support, SelectedUnitRole.CompilerSupport), selected_ordinary],
-            [root(support)],
-            [edge(support, "ordinary", ordinary)],
-            16,
-        ),
-    )
-    assert features_for(result, ordinary) == ["enabled"]
+    match propagate_features(
+        catalogs_from({"ordinary": "[features]\nenabled=[]\n"}),
+        base_context(),
+        "Cargo.toml",
+        [selected(support, SelectedUnitRole.CompilerSupport), selected_ordinary],
+        [root(support)],
+        [edge(support, "ordinary", ordinary)],
+        16,
+    ):
+        Ok(_) => fail("compiler-support edges cannot seed ordinary child demand from physical features")
+        Err(error) =>
+            assert "sealed compiler-support dependency intent" in error.message()
 
 
-def require_feature_fact_refusal(child_features: list[str], child_defaults: bool, declaration: str) -> str:
+def require_feature_fact_refusal(child_features: list[str], declaration: str) -> str:
     """Return the final reconciliation diagnostic for one deliberately inconsistent child unit."""
     parent = node("root")
     child = node("child")
@@ -616,7 +621,7 @@ def require_feature_fact_refusal(child_features: list[str], child_defaults: bool
         catalogs,
         base_context(),
         "Cargo.toml",
-        [selected(parent), selected_with_facts(unit_id(child), child, child_features, child_defaults)],
+        [selected(parent), selected_with_facts(unit_id(child), child, child_features)],
         [root(parent)],
         [edge(parent, "child", child)],
         16,
@@ -627,7 +632,7 @@ def require_feature_fact_refusal(child_features: list[str], child_defaults: bool
 
 pub def test_selected_unit_feature_omission_refuses_after_fixed_point() -> None:
     """Protects refusal when selected feature facts omit settled demands."""
-    error = require_feature_fact_refusal([], true, "[dependencies]\nchild={version='1',features=['alpha']}\n")
+    error = require_feature_fact_refusal([], "[dependencies]\nchild={version='1',features=['alpha']}\n")
     assert "features disagree" in error
 
 
@@ -635,16 +640,44 @@ pub def test_selected_unit_feature_extra_refuses_after_fixed_point() -> None:
     """Protects refusal when selected feature facts add unsettled demands."""
     error = require_feature_fact_refusal(
         ["alpha", "beta"],
-        true,
         "[dependencies]\nchild={version='1',features=['alpha']}\n",
     )
     assert "features disagree" in error
 
 
-pub def test_selected_unit_default_feature_mismatch_refuses_after_fixed_point() -> None:
-    """Protects refusal when selected default-feature state differs from policy."""
-    error = require_feature_fact_refusal([], true, "[dependencies]\nchild={version='1',default-features=false}\n")
-    assert "default-feature state disagrees" in error
+pub def test_root_default_intent_is_not_read_from_selected_unit() -> None:
+    """Protects two roots with equal physical features but distinct authored default intent."""
+    root_node = node("root")
+    result = require_ok(
+        propagate_features(
+            catalogs_from({"root": "[features]\ndefault=[]\n"}),
+            base_context(),
+            "Cargo.toml",
+            [selected(root_node)],
+            [root_for_unit(unit_id(root_node), [], false)],
+            [],
+            8,
+        ),
+    )
+    assert result.default_features == [false]
+
+
+pub def test_explicit_default_request_stays_distinct_from_default_enabled_intent() -> None:
+    """Protects authored `default` feature requests from being rewritten as a default-enabled root."""
+    root_node = node("root")
+    result = require_ok(
+        propagate_features(
+            catalogs_from({"root": "[features]\ndefault=[]\n"}),
+            base_context(),
+            "Cargo.toml",
+            [selected_with_facts(unit_id(root_node), root_node, ["default"])],
+            [root_for_unit(unit_id(root_node), ["default"], false)],
+            [],
+            8,
+        ),
+    )
+    assert result.activations[0].effective_features == ["default"]
+    assert result.default_features == [false]
 
 
 pub def test_coalesced_physical_units_must_all_match_settled_features() -> None:
@@ -665,9 +698,8 @@ pub def test_coalesced_physical_units_must_all_match_settled_features() -> None:
             first_child,
             child,
             ["alpha"],
-            true,
-        ), selected_with_facts(second_child, child, ["alpha", "beta"], true)],
-        [GraphRoot(unit=first_parent), GraphRoot(unit=second_parent)],
+        ), selected_with_facts(second_child, child, ["alpha", "beta"])],
+        [root_for_unit(first_parent), root_for_unit(second_parent)],
         [physical_edge(first_parent, "child", first_child), physical_edge(second_parent, "child", second_child)],
         16,
     ):
@@ -685,7 +717,6 @@ pub def test_role_kind_mismatch_is_refused() -> None:
         role=SelectedUnitRole.ProcMacro,
         crate_kind=SelectedCrateKind.Rlib,
         features=[],
-        default_features=true,
     )
     match propagate_features(
         catalogs_from({"macro": ""}),

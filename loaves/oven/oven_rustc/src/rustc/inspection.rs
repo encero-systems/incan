@@ -246,7 +246,7 @@ mod selected_rust_facet_graph_tests {
             host_cfg: cfg_snapshot("aarch64", "macos"),
             target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
-            default_features: true,
+            root_default_features: true,
             toolchain_version: "1.85.0".to_string(),
             target_spec: OvenSelectedRustFacetTargetSpec {
                 source: OvenSelectedRustFacetPath {
@@ -280,7 +280,6 @@ mod selected_rust_facet_graph_tests {
             root_module: "src/lib.rs".to_string(),
             source_members,
             features: Vec::new(),
-            default_features: false,
             cfg: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
@@ -326,7 +325,6 @@ mod selected_rust_facet_graph_tests {
             root_module: "src/lib.rs".to_string(),
             source_members,
             features: vec!["root-feature".to_string()],
-            default_features: true,
             cfg: vec!["feature=\"root-feature\"".to_string()],
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
@@ -364,7 +362,15 @@ mod selected_rust_facet_graph_tests {
                 },
             ],
             units: vec![root, leaf],
-            exposed_roots: BTreeMap::from([("fixture".to_string(), exposed_root)]),
+            exposed_roots: BTreeMap::from([(
+                "fixture".to_string(),
+                crate::rustc::OvenSelectedRustFacetRoot {
+                    unit: exposed_root,
+                    requested_features: Vec::new(),
+                    default_features: true,
+                    intent_owner: toolchain_owner_identity(),
+                },
+            )]),
         })
     }
 
@@ -395,7 +401,15 @@ mod selected_rust_facet_graph_tests {
                 },
             ],
             units: vec![unit],
-            exposed_roots: BTreeMap::from([("fixture".to_string(), identity)]),
+            exposed_roots: BTreeMap::from([(
+                "fixture".to_string(),
+                crate::rustc::OvenSelectedRustFacetRoot {
+                    unit: identity,
+                    requested_features: Vec::new(),
+                    default_features: true,
+                    intent_owner: toolchain_owner_identity(),
+                },
+            )]),
         })
     }
 
@@ -421,9 +435,9 @@ mod selected_rust_facet_graph_tests {
                 }
             }
         }
-        for identity in graph.exposed_roots.values_mut() {
-            if *identity == old {
-                *identity = new.clone();
+        for root in graph.exposed_roots.values_mut() {
+            if root.unit == old {
+                root.unit = new.clone();
             }
         }
         Ok(())
@@ -493,7 +507,15 @@ mod selected_rust_facet_graph_tests {
                 },
             ],
             units: vec![unit],
-            exposed_roots: BTreeMap::from([("fixture".to_string(), identity)]),
+            exposed_roots: BTreeMap::from([(
+                "fixture".to_string(),
+                crate::rustc::OvenSelectedRustFacetRoot {
+                    unit: identity,
+                    requested_features: Vec::new(),
+                    default_features: true,
+                    intent_owner: toolchain_owner_identity(),
+                },
+            )]),
         })
     }
 
@@ -585,9 +607,15 @@ mod selected_rust_facet_graph_tests {
         host.domain = OvenSelectedRustFacetDomain::Host;
         host.dependencies.clear();
         host.identity = selected_graph_unit_identity(&graph.selection, &host)?;
-        graph
-            .exposed_roots
-            .insert("fixture_host".to_string(), host.identity.clone());
+        graph.exposed_roots.insert(
+            "fixture_host".to_string(),
+            OvenSelectedRustFacetRoot {
+                unit: host.identity.clone(),
+                requested_features: Vec::new(),
+                default_features: true,
+                intent_owner: toolchain_owner_identity(),
+            },
+        );
         graph.units.push(host);
 
         let selected = graph.validated()?;
@@ -798,6 +826,14 @@ mod selected_rust_facet_graph_tests {
         assert!(matches!(
             OvenSelectedRustFacetGraph::decode_validated(&current_bytes),
             Err(OvenSelectedRustFacetGraphError::Invalid { .. })
+        ));
+
+        let mut prior = serde_json::from_slice::<serde_json::Value>(&selected.to_json_bytes()?)?;
+        prior["schema_version"] = serde_json::json!(2);
+        let prior_bytes = serde_json::to_vec(&prior)?;
+        assert!(matches!(
+            OvenSelectedRustFacetGraph::decode_validated(&prior_bytes),
+            Err(OvenSelectedRustFacetGraphError::UnsupportedSchema { found: 2, .. })
         ));
 
         let future = serde_json::to_vec(&serde_json::json!({
@@ -1095,6 +1131,15 @@ mod selected_rust_facet_graph_tests {
         changed.exposed_roots.insert("fixture_alias".to_string(), root);
         let changed = changed.validated()?;
         assert_ne!(first.digest(), changed.digest());
+
+        let mut changed_intent = graph(b"pub fn use_dependency() {}\n")?;
+        changed_intent
+            .exposed_roots
+            .get_mut("fixture")
+            .ok_or("fixture graph lost exposed root")?
+            .requested_features = vec!["root-feature".to_string()];
+        let changed_intent = changed_intent.validated()?;
+        assert_ne!(first.digest(), changed_intent.digest());
         Ok(())
     }
 
@@ -1130,12 +1175,40 @@ mod selected_rust_facet_graph_tests {
         ));
 
         let mut missing_root = baseline;
-        missing_root
-            .exposed_roots
-            .insert("fixture".to_string(), selected_graph_sha256(b"absent root"));
+        missing_root.exposed_roots.insert(
+            "fixture".to_string(),
+            OvenSelectedRustFacetRoot {
+                unit: selected_graph_sha256(b"absent root"),
+                requested_features: Vec::new(),
+                default_features: true,
+                intent_owner: toolchain_owner_identity(),
+            },
+        );
         assert!(matches!(
             missing_root.validated(),
             Err(OvenSelectedRustFacetGraphError::Missing { .. })
+        ));
+
+        let mut missing_root_intent_owner = graph(b"pub fn use_dependency() {}\n")?;
+        missing_root_intent_owner
+            .exposed_roots
+            .get_mut("fixture")
+            .ok_or("fixture graph lost exposed root")?
+            .intent_owner = selected_graph_sha256(b"absent root intent owner");
+        assert!(matches!(
+            missing_root_intent_owner.validated(),
+            Err(OvenSelectedRustFacetGraphError::Missing { .. })
+        ));
+
+        let mut noncanonical_root_intent = graph(b"pub fn use_dependency() {}\n")?;
+        noncanonical_root_intent
+            .exposed_roots
+            .get_mut("fixture")
+            .ok_or("fixture graph lost exposed root")?
+            .requested_features = vec!["zeta".to_string(), "alpha".to_string()];
+        assert!(matches!(
+            noncanonical_root_intent.validated(),
+            Err(OvenSelectedRustFacetGraphError::Invalid { .. })
         ));
         Ok(())
     }

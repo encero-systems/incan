@@ -874,7 +874,7 @@ mod tests {
             host_cfg: cfg_snapshot("x86_64", "linux"),
             target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
-            default_features: false,
+            root_default_features: false,
             toolchain_version: "1.85.0".to_string(),
             target_spec: OvenSelectedRustFacetTargetSpec {
                 source: OvenSelectedRustFacetPath {
@@ -912,7 +912,6 @@ mod tests {
             root_module: "src/lib.rs".to_string(),
             source_members: members,
             features: Vec::new(),
-            default_features: false,
             cfg: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
@@ -939,7 +938,15 @@ mod tests {
                 },
             ],
             units: vec![unit],
-            exposed_roots: BTreeMap::from([("fixture".to_string(), identity)]),
+            exposed_roots: BTreeMap::from([(
+                "fixture".to_string(),
+                crate::rustc::OvenSelectedRustFacetRoot {
+                    unit: identity,
+                    requested_features: Vec::new(),
+                    default_features: true,
+                    intent_owner: toolchain_owner(),
+                },
+            )]),
         }
         .validated()?)
     }
@@ -962,7 +969,15 @@ mod tests {
             path: "src".to_string(),
         }];
         unit.identity = selected_graph_unit_identity(&selection, unit)?;
-        graph.exposed_roots = BTreeMap::from([("fixture".to_string(), unit.identity.clone())]);
+        graph.exposed_roots = BTreeMap::from([(
+            "fixture".to_string(),
+            crate::rustc::OvenSelectedRustFacetRoot {
+                unit: unit.identity.clone(),
+                requested_features: Vec::new(),
+                default_features: true,
+                intent_owner: toolchain_owner(),
+            },
+        )]);
         Ok(graph.validated()?)
     }
 
