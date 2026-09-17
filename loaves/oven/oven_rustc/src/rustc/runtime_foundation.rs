@@ -1099,7 +1099,8 @@ mod tests {
     }
 
     #[test]
-    fn foundation_refuses_registry_features_that_disagree_with_selected_unit() -> TestResult {
+    fn foundation_refuses_registry_features_that_disagree_with_selected_unit() -> Result<(), Box<dyn std::error::Error>>
+    {
         let mut foundation = foundation()?;
         let source = foundation
             .artifacts
