@@ -284,9 +284,6 @@ fn release_cargo_selector_preserves_explicit_and_uses_pinned_rustup_toolchain() 
 #[test]
 fn production_archive_binds_the_exact_reported_release_policy_output() -> Result<(), Box<dyn std::error::Error>> {
     let script = fs::read_to_string(toolchain_package_archive_script())?;
-    let first_release_publish = script
-        .find("could not bake the package-local release Oven Loaf family")
-        .ok_or("package script does not publish its ordinary release Loaf family")?;
     let policy_bake = script
         .find("oven bake \\\n      --project \"workspaces/oven\"")
         .ok_or("package script does not bake its release policy project")?;
@@ -294,17 +291,14 @@ fn production_archive_binds_the_exact_reported_release_policy_output() -> Result
         .find("--policy-engine-store \"$policy_engine_store\"")
         .ok_or("package script does not finalize the release envelope with its policy engine")?;
     assert!(
-        first_release_publish < policy_bake && policy_bake < final_release_publish,
-        "package publication must establish package-local Loafs before the policy bake and add the engine afterward"
+        policy_bake < final_release_publish,
+        "package publication must prepare the source-authored policy engine before publishing its release family"
     );
     assert_eq!(
         script.matches("oven legacy-cargo bake-loafs").count(),
-        2,
-        "release packaging must use the authorized publisher once for the ordinary family and once to finalize its engine member"
+        1,
+        "release packaging must atomically publish one engine-bound release family"
     );
-    let first_publish = &script[..policy_bake];
-    assert!(first_publish.contains("--output \"$loaf_root\""));
-    assert!(!first_publish.contains("--policy-engine-store"));
     assert!(script.contains(
         "oven bake \\\n      --project \"workspaces/oven\" \\\n      --target \"$target\" \\\n      --format json"
     ));
@@ -1388,7 +1382,11 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
     assert!(
         makefile.contains("test-prewarm-oven-release-loafs: test-prewarm-sdk")
             && makefile.contains("--envelope release")
-            && makefile.contains("INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT"),
+            && makefile.contains("INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT")
+            && makefile.contains("select_release_policy_output.sh")
+            && makefile.contains("--policy-engine-store \"$$policy_engine_store\"")
+            && makefile.contains("--policy-engine-identity \"$$policy_engine_identity\"")
+            && makefile.contains("--policy-engine-target \"$$target\""),
         "normal-command evidence must use a staged toolchain with the typed release Loaf envelope"
     );
     assert!(
@@ -1398,8 +1396,8 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
             && makefile.contains("INCAN_TEST_LOAF_TOOLCHAIN ?= 1.98.0")
             && makefile.contains("INCAN_TEST_SUITE_TOOLCHAIN ?= 1.98.0")
             && makefile
-                .contains("--cargo \"$$(rustup which --toolchain \"$(INCAN_TEST_PUBLISHER_TOOLCHAIN)\" cargo)\"")
-            && makefile.contains("--rustc \"$$(rustup which --toolchain \"$(INCAN_TEST_LOAF_TOOLCHAIN)\" rustc)\""),
+                .contains("cargo_bin=\"$$(rustup which --toolchain \"$(INCAN_TEST_PUBLISHER_TOOLCHAIN)\" cargo)\"")
+            && makefile.contains("rustc_bin=\"$$(rustup which --toolchain \"$(INCAN_TEST_LOAF_TOOLCHAIN)\" rustc)\""),
         "the named publisher Cargo and direct-rustc consumer toolchains must remain separate"
     );
     assert!(
