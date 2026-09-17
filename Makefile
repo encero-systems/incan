@@ -522,13 +522,18 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 		mkdir -p "$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)"; \
 		policy_home="$$(mktemp -d "$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)/invocation.XXXXXX")"; \
 		trap 'rm -rf "$$policy_home"' EXIT HUP INT TERM; \
+		policy_toolchain_root="$$policy_home/toolchain"; \
+		mkdir -p "$$policy_toolchain_root/bin"; \
+		cp "$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" "$$policy_toolchain_root/bin/incan"; \
+		test ! -e "$$policy_toolchain_root/share/incan/oven/loafs/envelope.json"; \
 		$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
 			INCAN_HOME="$$policy_home" \
 			INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
 			INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
 			INCAN_SDK_INVENTORY="$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json" \
+			INCAN_INTERNAL_OVEN_LOAF_EXECUTION= INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT= \
 			CARGO="$$cargo_bin" RUSTC="$$rustc_bin" \
-			"$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" oven bake \
+			"$$policy_toolchain_root/bin/incan" oven bake \
 				--project "$(CURDIR)/workspaces/oven" --target "$$target" --format json \
 				> "$(INCAN_TEST_OVEN_RELEASE_POLICY_REPORT)"; \
 		policy_output="$$(workspaces/release/toolchain/select_release_policy_output.sh \

@@ -539,13 +539,20 @@ else
   # generation.
   release_policy_publisher_home="$(mktemp -d "${TMPDIR:-/tmp}/incan-release-policy-${target}.XXXXXX")"
   policy_bake_report="$release_policy_publisher_home/core-engine-bake.json"
+  policy_toolchain_root="$release_policy_publisher_home/toolchain"
+  mkdir -p "$policy_toolchain_root/bin"
+  cp "$package_dir/bin/incan" "$policy_toolchain_root/bin/incan"
+  [ ! -e "$policy_toolchain_root/share/incan/oven/loafs/envelope.json" ] \
+    || fail "release policy bootstrap unexpectedly has a preexisting Oven Loaf envelope"
   INCAN_HOME="$release_policy_publisher_home" \
     INCAN_STDLIB="$staged_stdlib_root" \
     INCAN_SDK_INVENTORY="$sdk_seed_root/sdk-inventory.json" \
     INCAN_TOOLCHAIN_CRATES_DIR="$package_dir/crates" \
+    INCAN_INTERNAL_OVEN_LOAF_EXECUTION= \
+    INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT= \
     CARGO="$cargo_bin" \
     RUSTC="$rustc_bin" \
-    "$package_dir/bin/incan" oven bake \
+    "$policy_toolchain_root/bin/incan" oven bake \
       --project "workspaces/oven" \
       --target "$target" \
       --format json > "$policy_bake_report" \

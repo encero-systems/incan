@@ -305,6 +305,12 @@ fn production_archive_binds_the_exact_reported_release_policy_output() -> Result
     assert!(script.contains("select_release_policy_output.sh"));
     assert!(script.contains("INCAN_SDK_INVENTORY=\"$sdk_seed_root/sdk-inventory.json\""));
     assert!(script.contains("INCAN_HOME=\"$release_policy_publisher_home\""));
+    assert!(script.contains("policy_toolchain_root=\"$release_policy_publisher_home/toolchain\""));
+    assert!(script.contains("cp \"$package_dir/bin/incan\" \"$policy_toolchain_root/bin/incan\""));
+    assert!(script.contains("[ ! -e \"$policy_toolchain_root/share/incan/oven/loafs/envelope.json\" ]"));
+    assert!(script.contains("INCAN_INTERNAL_OVEN_LOAF_EXECUTION="));
+    assert!(script.contains("INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="));
+    assert!(script.contains("\"$policy_toolchain_root/bin/incan\" oven bake"));
     assert!(script.contains("explicit_cargo_bin=\"${CARGO_BIN:-}\""));
     assert!(script.contains("if [ -z \"$explicit_cargo_bin\" ]; then"));
     assert!(script.contains("resolve_release_cargo.sh \"$explicit_cargo_bin\""));
@@ -1388,6 +1394,10 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
                 .contains("policy_home=\"$$(mktemp -d \"$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)/invocation.XXXXXX\")\"")
             && makefile.contains("trap 'rm -rf \"$$policy_home\"' EXIT HUP INT TERM")
             && !makefile.contains("rm -rf \"$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)\"")
+            && makefile.contains("policy_toolchain_root=\"$$policy_home/toolchain\"")
+            && makefile.contains("test ! -e \"$$policy_toolchain_root/share/incan/oven/loafs/envelope.json\"")
+            && makefile.contains("INCAN_INTERNAL_OVEN_LOAF_EXECUTION= INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT=")
+            && makefile.contains("\"$$policy_toolchain_root/bin/incan\" oven bake")
             && makefile.contains("--policy-engine-store \"$$policy_engine_store\"")
             && makefile.contains("--policy-engine-identity \"$$policy_engine_identity\"")
             && makefile.contains("--policy-engine-target \"$$target\""),
