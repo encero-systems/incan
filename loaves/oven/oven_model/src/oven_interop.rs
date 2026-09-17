@@ -32,6 +32,96 @@ pub const OVEN_INTEROP_PLAN_SCHEMA_INPUT: &str = "oven-interop-plan-schema";
 /// Receipt input key that binds a normal consumer to one selected native-execution contract.
 pub const OVEN_INTEROP_EXECUTION_RECEIPT_INPUT: &str = "oven-interop-execution-receipt";
 
+/// Compatibility version for one selected Oven interop execution receipt.
+pub const OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION: u32 = 1;
+/// Compatibility version for the stored native-archive provenance bound to one direct-Rustc plan.
+pub const OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION: u32 = 3;
+/// One concrete compiler or SDK capability selected by Oven for a locked interop target.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct OvenInteropCapabilitySelection {
+    /// Stable capability vocabulary required by the lock.
+    pub capability: String,
+    /// Concrete selected version checked against the locked semantic-version requirement.
+    pub version: String,
+    /// Content-derived identity of the selected tool or SDK provider.
+    pub identity: String,
+}
+
+/// Selected native-execution facts that join one locked target to an immutable Oven artifact plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct OvenInteropExecutionReceipt {
+    /// Wire-schema version for this selected-execution contract.
+    pub schema_version: u32,
+    /// Content identity of the locked target requirements and declared package inputs.
+    pub locked_target_identity: String,
+    /// Exact Rust/C target triple selected for the native shim and consumer link plan.
+    pub target: String,
+    /// Selected compiler capability, if required by the locked target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub toolchain: Option<OvenInteropCapabilitySelection>,
+    /// Selected SDK capability, if required by the locked target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sdk: Option<OvenInteropCapabilitySelection>,
+    /// Content identity of this selected execution contract.
+    pub identity: String,
+}
+
+/// One static archive compiled or selected by the explicit interop baker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct OvenInteropBakedArchive {
+    /// Locked package-local shim or artifact name used as the Rust native link name.
+    pub name: String,
+    /// Store-owned path below the execution provenance's native archive directory.
+    pub relative_path: String,
+    /// Content identity of the exact retained archive bytes.
+    pub digest: String,
+    /// Declared third-party origin retained beside the exact archive digest, when the package supplied one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<InteropArtifactOrigin>,
+}
+
+/// One declared dynamic library or framework file staged for a target-native packaging adapter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct OvenInteropBakedBundle {
+    /// Locked logical artifact name.
+    pub name: String,
+    /// Store-owned path below the execution provenance's bundled-runtime directory.
+    pub relative_path: String,
+    /// Content identity of the exact retained runtime file.
+    pub digest: String,
+    /// Runtime loader name retained for the target adapter.
+    pub runtime_name: String,
+    /// Logical adapter placement; never an absolute destination path.
+    pub placement: String,
+    /// Declared minimum platform version for the staged runtime.
+    pub minimum_platform: String,
+    /// Declared third-party origin retained beside the exact bundled-file digest, when the package supplied one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<InteropArtifactOrigin>,
+}
+
+/// Portable provenance copied into the immutable plan beside the baked native archives.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct OvenInteropExecutionProvenance {
+    /// Wire-schema version of this provenance record.
+    pub schema_version: u32,
+    /// Selected toolchain/SDK contract that authorized this native archive set.
+    pub receipt: OvenInteropExecutionReceipt,
+    /// Every archive available to direct Rustc through the plan's one native search directory.
+    pub archives: Vec<OvenInteropBakedArchive>,
+    /// Every bundled runtime file retained for receipt-bound direct execution or a target-native packaging adapter.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bundles: Vec<OvenInteropBakedBundle>,
+    /// Explicit target-native capabilities selected from the locked declaration without a package file hand-off.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub system_capabilities: Vec<String>,
+}
+
 /// Current compatibility format for the `[interop.c]` manifest section.
 pub const INTEROP_C_SCHEMA_VERSION: u32 = 1;
 
@@ -1355,6 +1445,59 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    #[test]
+    fn execution_provenance_wire_round_trips_with_the_legacy_shape() -> Result<(), Box<dyn std::error::Error>> {
+        let provenance = OvenInteropExecutionProvenance {
+            schema_version: OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION,
+            receipt: OvenInteropExecutionReceipt {
+                schema_version: OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION,
+                locked_target_identity: "sha256:locked-target".to_string(),
+                target: "x86_64-unknown-linux-gnu".to_string(),
+                toolchain: Some(OvenInteropCapabilitySelection {
+                    capability: "clang".to_string(),
+                    version: "18.1.0".to_string(),
+                    identity: "sha256:toolchain".to_string(),
+                }),
+                sdk: None,
+                identity: "sha256:receipt".to_string(),
+            },
+            archives: vec![OvenInteropBakedArchive {
+                name: "fixture".to_string(),
+                relative_path: "interop-native/libfixture.a".to_string(),
+                digest: "sha256:archive".to_string(),
+                origin: None,
+            }],
+            bundles: Vec::new(),
+            system_capabilities: Vec::new(),
+        };
+        let encoded = serde_json::to_value(&provenance)?;
+        assert_eq!(
+            encoded,
+            serde_json::json!({
+                "schema-version": OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION,
+                "receipt": {
+                    "schema-version": OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION,
+                    "locked-target-identity": "sha256:locked-target",
+                    "target": "x86_64-unknown-linux-gnu",
+                    "toolchain": {
+                        "capability": "clang",
+                        "version": "18.1.0",
+                        "identity": "sha256:toolchain"
+                    },
+                    "identity": "sha256:receipt"
+                },
+                "archives": [{
+                    "name": "fixture",
+                    "relative-path": "interop-native/libfixture.a",
+                    "digest": "sha256:archive"
+                }]
+            })
+        );
+        let decoded: OvenInteropExecutionProvenance = serde_json::from_value(encoded)?;
+        assert_eq!(decoded, provenance);
+        Ok(())
+    }
 
     fn project_with_oven_interop_inputs() -> Result<(TempDir, ProjectManifest), Box<dyn std::error::Error>> {
         let workspace = TempDir::new()?;

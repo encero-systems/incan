@@ -22,7 +22,12 @@ use oven_model::oven_interop::{
     LockedInteropTarget, ToolchainRequirement, ios_target_kind, is_interop_native_library_name,
     locked_interop_target_identity,
 };
-pub use oven_model::oven_interop::{OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, OVEN_INTEROP_PLAN_SCHEMA_INPUT};
+pub use oven_model::oven_interop::{
+    OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION, OVEN_INTEROP_EXECUTION_RECEIPT_INPUT,
+    OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION, OVEN_INTEROP_PLAN_SCHEMA_INPUT, OvenInteropBakedArchive,
+    OvenInteropBakedBundle, OvenInteropCapabilitySelection, OvenInteropExecutionProvenance,
+    OvenInteropExecutionReceipt,
+};
 use oven_rustc::loaf::LoafTemporaryDirectory;
 use oven_rustc::plan::selection::select_receipt_project_extension_execution_plan;
 use oven_rustc::rustc::{
@@ -32,15 +37,6 @@ use oven_store::process::{isolate_process_group, terminate_process_group};
 use oven_store::store::{OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore};
 use oven_store::{OvenBuildIntent, OvenReceipt, digest_bytes, receipt_with_build_unit_input};
 
-/// Compatibility version for one selected Oven interop execution receipt.
-pub const OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION: u32 = 1;
-/// Compatibility version for the stored native-archive provenance bound to one direct-Rustc plan.
-pub const OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION: u32 = 3;
-/// Current immutable final-plan materialization contract.
-///
-/// Version 5 records native directories beneath the loader-safe immutable store layout. A plan baked before the
-/// current directory encoding can embed a split ELF `RUNPATH`, so it must not be reused.
-const OVEN_INTEROP_PLAN_SCHEMA: &str = "5";
 /// Store-owned directory containing static archives baked from declared interop shims or artifacts.
 pub const OVEN_INTEROP_NATIVE_DIRECTORY: &str = "interop-native";
 /// Store-owned directory containing locked bundled runtime files for direct execution or a target packager.
@@ -58,92 +54,6 @@ const OVEN_INTEROP_ADAPTER_MANIFEST_SCHEMA_VERSION: u32 = 1;
 /// cross-toolchain invocation while ensuring a child compiler, linker, or build helper cannot retain the Oven
 /// publisher indefinitely. The isolated process group is terminated on expiry.
 const OVEN_INTEROP_BAKE_COMMAND_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-
-/// One concrete compiler or SDK capability selected by Oven for a locked interop target.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub struct OvenInteropCapabilitySelection {
-    /// Stable capability vocabulary required by the lock.
-    pub capability: String,
-    /// Concrete selected version checked against the locked semantic-version requirement.
-    pub version: String,
-    /// Content-derived identity of the selected tool or SDK provider.
-    pub identity: String,
-}
-
-/// Selected native-execution facts that join one locked target to an immutable Oven artifact plan.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub struct OvenInteropExecutionReceipt {
-    /// Wire-schema version for this selected-execution contract.
-    pub schema_version: u32,
-    /// Content identity of the locked target requirements and declared package inputs.
-    pub locked_target_identity: String,
-    /// Exact Rust/C target triple selected for the native shim and consumer link plan.
-    pub target: String,
-    /// Selected compiler capability, if required by the locked target.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub toolchain: Option<OvenInteropCapabilitySelection>,
-    /// Selected SDK capability, if required by the locked target.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sdk: Option<OvenInteropCapabilitySelection>,
-    /// Content identity of this selected execution contract.
-    pub identity: String,
-}
-
-/// One static archive compiled or selected by the explicit interop baker.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub struct OvenInteropBakedArchive {
-    /// Locked package-local shim or artifact name used as the Rust native link name.
-    pub name: String,
-    /// Store-owned path below [`OVEN_INTEROP_NATIVE_DIRECTORY`].
-    pub relative_path: String,
-    /// Content identity of the exact retained archive bytes.
-    pub digest: String,
-    /// Declared third-party origin retained beside the exact archive digest, when the package supplied one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub origin: Option<InteropArtifactOrigin>,
-}
-
-/// One declared dynamic library or framework file staged for a target-native packaging adapter.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub struct OvenInteropBakedBundle {
-    /// Locked logical artifact name.
-    pub name: String,
-    /// Store-owned path below [`OVEN_INTEROP_BUNDLED_DIRECTORY`].
-    pub relative_path: String,
-    /// Content identity of the exact retained runtime file.
-    pub digest: String,
-    /// Runtime loader name retained for the target adapter.
-    pub runtime_name: String,
-    /// Logical adapter placement; never an absolute destination path.
-    pub placement: String,
-    /// Declared minimum platform version for the staged runtime.
-    pub minimum_platform: String,
-    /// Declared third-party origin retained beside the exact bundled-file digest, when the package supplied one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub origin: Option<InteropArtifactOrigin>,
-}
-
-/// Portable provenance copied into the immutable plan beside the baked native archives.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub struct OvenInteropExecutionProvenance {
-    /// Wire-schema version of this provenance record.
-    pub schema_version: u32,
-    /// Selected toolchain/SDK contract that authorized this native archive set.
-    pub receipt: OvenInteropExecutionReceipt,
-    /// Every archive available to direct Rustc through the plan's one native search directory.
-    pub archives: Vec<OvenInteropBakedArchive>,
-    /// Every bundled runtime file retained for receipt-bound direct execution or a target-native packaging adapter.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub bundles: Vec<OvenInteropBakedBundle>,
-    /// Explicit target-native capabilities selected from the locked declaration without a package file hand-off.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub system_capabilities: Vec<String>,
-}
 
 /// Supported caller-owned native packaging layouts for an already baked interop plan.
 ///
