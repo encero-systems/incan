@@ -454,7 +454,8 @@ mod tests {
             reader.to_str().ok_or("reader path is not UTF-8")?,
             &[],
             Some(source.clone()),
-        )?;
+        )
+        .map_err(|()| "stdin forwarding fixture failed")?;
         assert!(status.success());
         assert_eq!(fs::read(received)?, source);
 
@@ -465,7 +466,8 @@ mod tests {
             failure.to_str().ok_or("failure path is not UTF-8")?,
             &[],
             Some(vec![b'x'; MAX_RUSTC_TRACE_RECORD_BYTES]),
-        )?;
+        )
+        .map_err(|()| "early-exit fixture failed")?;
         assert_eq!(status.code(), Some(23));
         Ok(())
     }
