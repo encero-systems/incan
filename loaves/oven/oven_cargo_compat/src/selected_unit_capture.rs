@@ -9,7 +9,10 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use super::{CargoBuildScriptExecuted, CargoInvocationOutput, CargoMetadata, CargoUnitGraph, OvenLegacyCargoError};
+use super::{
+    CargoBuildScriptExecuted, CargoInvocationOutput, CargoMetadata, CargoUnitGraph, OvenLegacyCargoError,
+    OvenLegacyCargoInspectionSource, OvenLegacyCargoInspectionSourceMember,
+};
 
 /// Publisher-only physical facts for one Cargo selected-unit graph.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,12 +36,27 @@ pub struct OvenLegacyCargoSelectedUnit {
     pub target_kinds: Vec<String>,
     pub crate_types: Vec<String>,
     pub source_path: PathBuf,
+    /// Package-root-relative crate root derived from Cargo metadata and the selected target record.
+    pub root_module: String,
     pub edition: String,
     pub mode: String,
     pub platform: Option<String>,
     pub effective_features: Vec<String>,
     pub dependencies: Vec<OvenLegacyCargoSelectedDependency>,
     pub build_script: Option<OvenLegacyCargoBuildScriptFacts>,
+    /// Exact staged registry source evidence, when this is a registry-backed unit.
+    pub registry_source: Option<OvenLegacyCargoSelectedRegistrySource>,
+}
+
+/// Registry source evidence joined by exact Cargo package coordinates before the transient publisher is released.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenLegacyCargoSelectedRegistrySource {
+    pub registry: String,
+    pub checksum: String,
+    pub digest: String,
+    pub root_module: String,
+    pub members: Vec<OvenLegacyCargoInspectionSourceMember>,
 }
 
 /// One exact Cargo unit-graph edge and its Rust extern alias when present.
@@ -164,6 +182,24 @@ pub fn capture_legacy_cargo_selected_units(
         let mut features = unit.features.clone();
         features.sort();
         features.dedup();
+        let package_root = package.manifest_path.parent().ok_or_else(|| {
+            OvenLegacyCargoError::Plan(format!(
+                "Cargo metadata manifest for `{}` has no package root",
+                unit.pkg_id
+            ))
+        })?;
+        let root_module = unit
+            .target
+            .src_path
+            .strip_prefix(package_root)
+            .map_err(|_| {
+                OvenLegacyCargoError::Plan(format!(
+                    "Cargo unit `{}` source root escaped its metadata package root",
+                    unit.pkg_id
+                ))
+            })?
+            .to_string_lossy()
+            .replace('\\', "/");
         let build_script = build_script_units
             .get(unit.pkg_id.as_str())
             .filter(|index| **index == units.len())
@@ -216,18 +252,68 @@ pub fn capture_legacy_cargo_selected_units(
             target_kinds: unit.target.kind.clone(),
             crate_types: unit.target.crate_types.clone(),
             source_path: unit.target.src_path.clone(),
+            root_module,
             edition: unit.target.edition.clone(),
             mode: unit.mode.clone(),
             platform: unit.platform.clone(),
             effective_features: features,
             dependencies,
             build_script,
+            registry_source: None,
         });
     }
     Ok(OvenLegacyCargoSelectedUnitCapture {
         roots: graph.roots.clone(),
         units,
     })
+}
+
+/// Join registry-backed selected units to the publisher's exact staged source catalogs.
+///
+/// Path and generated units deliberately remain unbound for the release publisher to join to its separately sealed
+/// owner. A registry unit must match exactly one catalog by package, version and Cargo source identity.
+pub fn bind_legacy_cargo_selected_registry_sources(
+    capture: &mut OvenLegacyCargoSelectedUnitCapture,
+    sources: &[OvenLegacyCargoInspectionSource],
+) -> Result<(), OvenLegacyCargoError> {
+    for unit in &mut capture.units {
+        let Some(registry) = unit
+            .package_source
+            .as_deref()
+            .filter(|source| source.starts_with("registry+"))
+        else {
+            continue;
+        };
+        let matches = sources
+            .iter()
+            .filter(|source| {
+                source.package == unit.package && source.version == unit.package_version && source.registry == registry
+            })
+            .collect::<Vec<_>>();
+        let [source] = matches.as_slice() else {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "selected registry unit `{}` {} from `{registry}` matched {} staged source catalogs",
+                unit.package,
+                unit.package_version,
+                matches.len()
+            )));
+        };
+        let root_module = unit.root_module.clone();
+        if root_module.is_empty() || !source.members.iter().any(|member| member.path == root_module) {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "selected registry unit `{}` root module is absent from its staged source catalog",
+                unit.package
+            )));
+        }
+        unit.registry_source = Some(OvenLegacyCargoSelectedRegistrySource {
+            registry: source.registry.clone(),
+            checksum: source.checksum.clone(),
+            digest: source.source_digest.clone(),
+            root_module,
+            members: source.members.clone(),
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -281,7 +367,35 @@ mod tests {
                 "out_dir": "/tmp/dep-out"
             }))?,
         };
-        let capture = capture_legacy_cargo_selected_units(&graph, &metadata, &[output])?;
+        let mut capture = capture_legacy_cargo_selected_units(&graph, &metadata, &[output])?;
+        let mut missing_source = capture.clone();
+        assert!(bind_legacy_cargo_selected_registry_sources(&mut missing_source, &[]).is_err());
+        bind_legacy_cargo_selected_registry_sources(
+            &mut capture,
+            &[OvenLegacyCargoInspectionSource {
+                package: "dep".to_string(),
+                version: "2.0.0".to_string(),
+                registry: "registry+https://example.invalid/index".to_string(),
+                checksum: "sealed-checksum".to_string(),
+                features: Vec::new(),
+                source_root: PathBuf::from("/staged/dep"),
+                source_digest: "sha256:sealed-source".to_string(),
+                members: vec![
+                    OvenLegacyCargoInspectionSourceMember {
+                        path: "Cargo.toml".to_string(),
+                        digest: "sha256:manifest".to_string(),
+                    },
+                    OvenLegacyCargoInspectionSourceMember {
+                        path: "build.rs".to_string(),
+                        digest: "sha256:build".to_string(),
+                    },
+                    OvenLegacyCargoInspectionSourceMember {
+                        path: "src/lib.rs".to_string(),
+                        digest: "sha256:lib".to_string(),
+                    },
+                ],
+            }],
+        )?;
         assert_eq!(capture.roots, [0]);
         assert_eq!(capture.units[0].effective_features, ["a", "z"]);
         assert_eq!(
@@ -289,6 +403,13 @@ mod tests {
             Some("dep_alias")
         );
         assert!(capture.units[1].build_script.is_none());
+        assert_eq!(
+            capture.units[1]
+                .registry_source
+                .as_ref()
+                .map(|source| source.root_module.as_str()),
+            Some("src/lib.rs")
+        );
         let build_script = capture.units[2]
             .build_script
             .as_ref()

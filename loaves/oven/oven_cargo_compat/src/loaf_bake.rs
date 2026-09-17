@@ -139,12 +139,17 @@ pub fn prepare_loaf_from_generated_project_with_selected_units(
             message: format!("loaf destination already exists: {}", output_directory.display()),
         });
     }
-    let selected_units = publication
+    let mut selected_units = publication
         .selected_units
         .take()
         .ok_or_else(|| OvenLoafError::Preparation {
             message: "fresh Loaf publication omitted its Cargo-selected physical unit capture".to_string(),
         })?;
+    super::bind_legacy_cargo_selected_registry_sources(&mut selected_units, context.inspection_sources).map_err(
+        |error| OvenLoafError::Preparation {
+            message: error.to_string(),
+        },
+    )?;
     let result = export_loaf(
         &store,
         &publication.plan_identity,
