@@ -252,6 +252,9 @@ fn checked_provider_semantic_context(
     provider_plan: &ProviderPlan,
     sdk_path_dependencies: &[DependencySpec],
 ) -> Result<(Vec<ProviderSemanticToolchainDependency>, String), String> {
+    // Construction validates and canonicalizes the immutable record set once; every session consumer must still
+    // surface a retained construction error before using the process-local identity.
+    provider_plan.semantic_projection_persistent_key()?;
     let semantic_toolchain_dependencies = semantic_toolchain_dependencies(sdk_path_dependencies)?;
     for provider in provider_plan.records() {
         let Some(artifact) = provider.artifact.as_ref() else {
