@@ -1543,7 +1543,7 @@ mod tests {
                 "features": [], "filenames": [wasm_artifact.clone()], "profile": {"test": false}
             }),
             serde_json::json!({
-                "reason": "incan-rustc-invocation", "rustc": rustc_name,
+                "reason": "incan-rustc-invocation", "rustc": rustc_name.clone(),
                 "arguments": ["--crate-name", "shared", "--crate-type", "lib", "--target", "wasm32-unknown-unknown", "-C", "extra-filename=", "--emit", "link", "--out-dir", wasm_dir.to_string_lossy(), "/fixture/shared/src/lib.rs"],
                 "environment": {"CARGO_MANIFEST_DIR": "/fixture/shared", "CARGO_PKG_NAME": "shared", "CARGO_PKG_VERSION": "1.0.0", "CARGO_PRIMARY_PACKAGE": "1"}
             }),
@@ -1685,13 +1685,17 @@ mod tests {
         let custom_dir = scratch.path().join("target/debug/build/root-sealed");
         let deps_dir = scratch.path().join("target/debug/deps");
         let output_dir = scratch.path().join("target/debug/build/root-output/out");
+        let target_output_dir = scratch.path().join("target/wasm/build/root-output/out");
         fs::create_dir_all(&custom_dir)?;
         fs::create_dir_all(&deps_dir)?;
         fs::create_dir_all(&output_dir)?;
+        fs::create_dir_all(&target_output_dir)?;
         let custom_artifact_path = custom_dir.join("build_script_build");
         let consumer_artifact_path = deps_dir.join("libroot-sealed.rlib");
+        let target_artifact_path = deps_dir.join("libroot-target.rlib");
         fs::write(&custom_artifact_path, b"custom")?;
         fs::write(&consumer_artifact_path, b"consumer")?;
+        fs::write(&target_artifact_path, b"target consumer")?;
         let metadata = serde_json::from_value::<CargoMetadata>(serde_json::json!({
             "packages": [{
                 "id": "root 1.0.0", "name": "root", "version": "1.0.0",
@@ -1712,7 +1716,16 @@ mod tests {
             "reason": "build-script-executed", "package_id": "root 1.0.0",
             "out_dir": output_dir.to_string_lossy(), "cfgs": ["sealed"]
         });
-        let first = [
+        let target_artifact = serde_json::json!({
+            "reason": "compiler-artifact", "package_id": "root 1.0.0",
+            "target": {"name": "root", "kind": ["lib"], "crate_types": ["lib"], "src_path": "/fixture/root/src/lib.rs"},
+            "features": [], "filenames": [target_artifact_path.clone()], "profile": {"test": false}
+        });
+        let target_build_script = serde_json::json!({
+            "reason": "build-script-executed", "package_id": "root 1.0.0",
+            "out_dir": target_output_dir.to_string_lossy(), "cfgs": ["target_sealed"]
+        });
+        let first = vec![
             custom_artifact.clone(),
             serde_json::json!({
                 "reason": "incan-rustc-invocation", "rustc": rustc_name.clone(),
@@ -1724,10 +1737,17 @@ mod tests {
             serde_json::json!({
                 "reason": "incan-rustc-invocation", "rustc": rustc_name,
                 "arguments": ["--crate-name", "root", "--crate-type", "lib", "-C", "extra-filename=-sealed", "--emit", "link", "--out-dir", deps_dir.to_string_lossy(), "/fixture/root/src/lib.rs"],
-                "environment": {"CARGO_MANIFEST_DIR": "/fixture/root", "CARGO_PKG_NAME": "root", "CARGO_PKG_VERSION": "1.0.0", "CARGO_PRIMARY_PACKAGE": "1", "OUT_DIR": output_dir.to_string_lossy()}
+                "environment": {"CARGO_MANIFEST_DIR": "/fixture/root", "CARGO_PKG_NAME": "root", "CARGO_PKG_VERSION": "1.0.0", "CARGO_PRIMARY_PACKAGE": "1", "OUT_DIR": output_dir.to_string_lossy(), "TARGET": "fixture-host"}
+            }),
+            target_build_script.clone(),
+            target_artifact.clone(),
+            serde_json::json!({
+                "reason": "incan-rustc-invocation", "rustc": rustc_name,
+                "arguments": ["--crate-name", "root", "--crate-type", "lib", "--target", "wasm32-unknown-unknown", "-C", "extra-filename=-target", "--emit", "link", "--out-dir", deps_dir.to_string_lossy(), "/fixture/root/src/lib.rs"],
+                "environment": {"CARGO_MANIFEST_DIR": "/fixture/root", "CARGO_PKG_NAME": "root", "CARGO_PKG_VERSION": "1.0.0", "CARGO_PRIMARY_PACKAGE": "1", "OUT_DIR": target_output_dir.to_string_lossy(), "TARGET": "wasm32-unknown-unknown"}
             }),
         ];
-        let second = [
+        let second = vec![
             {
                 let mut fresh = custom_artifact;
                 fresh["fresh"] = serde_json::Value::Bool(true);
@@ -1736,6 +1756,12 @@ mod tests {
             build_script,
             {
                 let mut fresh = consumer_artifact;
+                fresh["fresh"] = serde_json::Value::Bool(true);
+                fresh
+            },
+            target_build_script,
+            {
+                let mut fresh = target_artifact;
                 fresh["fresh"] = serde_json::Value::Bool(true);
                 fresh
             },
@@ -1754,7 +1780,7 @@ mod tests {
             &rustc,
             "fixture-host",
         )?;
-        assert_eq!(capture.units.len(), 2);
+        assert_eq!(capture.units.len(), 3);
         assert_eq!(capture.units[1].dependencies.len(), 1);
         assert_eq!(capture.units[1].dependencies[0].unit_index, 0);
         let facts = capture.units[1].dependencies[0]
@@ -1762,6 +1788,14 @@ mod tests {
             .as_ref()
             .ok_or("missing warm build-script facts")?;
         assert_eq!(facts.cfgs, ["sealed"]);
+        assert_eq!(capture.units[2].dependencies.len(), 1);
+        assert_eq!(capture.units[2].dependencies[0].unit_index, 0);
+        let target_facts = capture.units[2].dependencies[0]
+            .build_script
+            .as_ref()
+            .ok_or("missing target build-script facts")?;
+        assert_eq!(target_facts.cfgs, ["target_sealed"]);
+        assert_eq!(target_facts.out_dir, target_output_dir);
         let mut conflicting = second.clone();
         conflicting[1]["cfgs"] = serde_json::json!(["different"]);
         let conflict = capture_legacy_cargo_selected_units_from_trace(
@@ -1771,6 +1805,22 @@ mod tests {
             "fixture-host",
         );
         assert!(conflict.is_err());
+        let alternate_custom = custom_dir.join("build_script_build-alternate");
+        fs::write(&alternate_custom, b"alternate custom")?;
+        let mut ambiguous = first;
+        ambiguous.push(serde_json::json!({
+            "reason": "compiler-artifact", "package_id": "root 1.0.0",
+            "target": {"name": "build-script-build", "kind": ["custom-build"], "crate_types": ["bin"], "src_path": "/fixture/root/build.rs"},
+            "features": [], "filenames": [alternate_custom], "profile": {"test": false}
+        }));
+        ambiguous.push(serde_json::json!({
+            "reason": "incan-rustc-invocation", "rustc": rustc_name,
+            "arguments": ["--crate-name", "build_script_build", "--crate-type", "bin", "-C", "extra-filename=-alternate", "--emit", "link", "--out-dir", custom_dir.to_string_lossy(), "/fixture/root/build.rs"],
+            "environment": {"CARGO_MANIFEST_DIR": "/fixture/root", "CARGO_PKG_NAME": "root", "CARGO_PKG_VERSION": "1.0.0"}
+        }));
+        let ambiguity =
+            capture_legacy_cargo_selected_units_from_trace(&metadata, &[encode(&ambiguous)?], &rustc, "fixture-host");
+        assert!(matches!(ambiguity, Err(error) if error.to_string().contains("cannot bind consumer")));
         Ok(())
     }
 }
