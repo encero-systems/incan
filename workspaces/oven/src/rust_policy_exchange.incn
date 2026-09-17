@@ -174,7 +174,7 @@ def generated_input_digest(members: JsonValue, path: list[str]) -> Result[str, S
         name_json = JsonValue.string(name).to_json().map_err((_) => invalid(item_path + ["path"]))?
         digest_json = JsonValue.string(digest).to_json().map_err((_) => invalid(item_path + ["digest"]))?
         entries.append(name_json + ":" + digest_json)
-    encoded = "{" + entries.join(",") + "}"
+    encoded = "{" + ",".join(entries) + "}"
     return Ok("sha256:" + hexlify(sha256.digest(encoded.ordinal_bytes())))
 
 
