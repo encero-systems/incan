@@ -689,6 +689,7 @@ pub(crate) mod tests {
         Ok(selected_graph_sha256(&fs::read(&artifact)?))
     }
 
+    /// Declare the minimal Unix cfg evidence used by the sealed executor fixture.
     fn cfg_snapshot(architecture: &str, operating_system: &str) -> OvenSelectedRustFacetCfgSnapshot {
         OvenSelectedRustFacetCfgSnapshot {
             flags: vec!["unix".to_string()],
