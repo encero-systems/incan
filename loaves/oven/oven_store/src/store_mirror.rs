@@ -98,7 +98,8 @@ where
                 // left to the local bake. Not an error: a mirror may hold such entries beside importable ones.
                 continue;
             };
-            let admitted = candidate.admitted_materialized_files().to_vec();
+            let admitted_files = candidate.admitted_materialized_files().to_vec();
+            let admitted_directories = candidate.admitted_materialized_directories().to_vec();
             let (manifest, artifact_root, payload, _lease) = candidate.into_parts();
             let materialized_files = manifest
                 .materialized_files
@@ -125,7 +126,8 @@ where
                     materialized_files,
                     materialized_directories,
                 },
-                &admitted,
+                &admitted_files,
+                &admitted_directories,
             )?;
             imported.push(MirrorImport {
                 mirror: mirror.clone(),

@@ -335,6 +335,15 @@ impl OvenStoreExecutionPayload {
         &self.manifest.materialized_files
     }
 
+    /// Borrow the admitted empty-directory descriptors this payload's closure was proven against.
+    ///
+    /// An importing publisher must provide this complete set with the admitted file descriptors. Empty directories
+    /// have no bytes to hash, so their exact relative paths are the immutable evidence that proves their import.
+    #[must_use]
+    pub fn admitted_materialized_directories(&self) -> &[OvenArtifactMaterializedDirectoryManifest] {
+        &self.manifest.materialized_directories
+    }
+
     /// Verify the complete materialized file closure while retaining this payload's active lease.
     ///
     /// Call before importing the source files. An already admitted destination can reuse its own leased content
@@ -558,7 +567,7 @@ impl OvenStore {
 
     /// Publish an immutable payload after capacity admission and atomic same-filesystem staging.
     pub fn publish(&self, request: &OvenArtifactPublishRequest) -> Result<OvenArtifactManifest, OvenStoreError> {
-        self.publish_with_legacy_cargo_publisher_permission(request, false, true, None)
+        self.publish_with_legacy_cargo_publisher_permission(request, false, true, None, None)
     }
 
     /// Publish a portable package constituent imported wholesale from another store's admitted entry.
@@ -567,15 +576,23 @@ impl OvenStore {
     /// however, records the precise receipt that owns the provider output, so its destination store must retain that
     /// receipt-specific manifest instead of returning another entry with equivalent bytes and older provenance.
     ///
-    /// `admitted` is the source entry's immutable content record, held under the caller's execution lease. The
-    /// publication reads every source file exactly once and proves it against that record as it goes, so the import
-    /// is verified without hashing the same bytes a second time to describe the destination entry.
+    /// `admitted_files` and `admitted_directories` are the source entry's immutable content record, held under the
+    /// caller's execution lease. The publication reads every source file exactly once and proves it against that
+    /// record as it goes, so the import is verified without hashing the same bytes a second time to describe the
+    /// destination entry.
     pub fn publish_verified_import(
         &self,
         request: &OvenArtifactPublishRequest,
-        admitted: &[OvenArtifactMaterializedFileManifest],
+        admitted_files: &[OvenArtifactMaterializedFileManifest],
+        admitted_directories: &[OvenArtifactMaterializedDirectoryManifest],
     ) -> Result<OvenArtifactManifest, OvenStoreError> {
-        self.publish_with_legacy_cargo_publisher_permission(request, false, false, Some(admitted))
+        self.publish_with_legacy_cargo_publisher_permission(
+            request,
+            false,
+            false,
+            Some(admitted_files),
+            Some(admitted_directories),
+        )
     }
 
     /// Publish one immutable result owned by the explicit compatibility baker.
@@ -587,7 +604,7 @@ impl OvenStore {
         &self,
         request: &OvenArtifactPublishRequest,
     ) -> Result<OvenArtifactManifest, OvenStoreError> {
-        self.publish_with_legacy_cargo_publisher_permission(request, true, true, None)
+        self.publish_with_legacy_cargo_publisher_permission(request, true, true, None, None)
     }
 
     /// Implement one publication, admitting the active legacy publisher only through its named transition boundary.
@@ -596,7 +613,8 @@ impl OvenStore {
         request: &OvenArtifactPublishRequest,
         allow_legacy_cargo_publisher: bool,
         reuse_equivalent_direct_plan: bool,
-        admitted: Option<&[OvenArtifactMaterializedFileManifest]>,
+        admitted_files: Option<&[OvenArtifactMaterializedFileManifest]>,
+        admitted_directories: Option<&[OvenArtifactMaterializedDirectoryManifest]>,
     ) -> Result<OvenArtifactManifest, OvenStoreError> {
         let domain = normalized_domain(&request.domain)?;
         if request.payload.is_empty() {
@@ -605,8 +623,9 @@ impl OvenStore {
                 message: "payload must not be empty".to_string(),
             });
         }
-        let materialized_files = validated_materialized_files(&request.materialized_files, admitted)?;
-        let materialized_directories = validated_materialized_directories(&request.materialized_directories)?;
+        let materialized_files = validated_materialized_files(&request.materialized_files, admitted_files)?;
+        let materialized_directories =
+            validated_materialized_directories(&request.materialized_directories, admitted_directories)?;
         let logical_bytes = request_logical_bytes(&request.payload, &materialized_files)?;
         if logical_bytes > self.limits.max_domain_logical_bytes {
             return Err(OvenStoreError::CapacityBlocked {
@@ -766,7 +785,7 @@ impl OvenStore {
             });
         }
         let materialized_files = validated_materialized_files(&request.materialized_files, None)?;
-        let materialized_directories = validated_materialized_directories(&request.materialized_directories)?;
+        let materialized_directories = validated_materialized_directories(&request.materialized_directories, None)?;
         let logical_bytes = request_logical_bytes(&request.payload, &materialized_files)?;
         if logical_bytes > self.limits.max_domain_logical_bytes {
             return Err(OvenStoreError::CapacityBlocked {
@@ -846,7 +865,7 @@ impl OvenStore {
                 });
             }
             let materialized_files = validated_materialized_files(&request.materialized_files, None)?;
-            let materialized_directories = validated_materialized_directories(&request.materialized_directories)?;
+            let materialized_directories = validated_materialized_directories(&request.materialized_directories, None)?;
             let logical_bytes = request_logical_bytes(&request.payload, &materialized_files)?;
             if logical_bytes > self.limits.max_domain_logical_bytes {
                 return Err(OvenStoreError::CapacityBlocked {
@@ -2482,6 +2501,7 @@ fn validated_materialized_files(
 /// Validate explicit empty-directory leaves before they enter identity construction or store staging.
 fn validated_materialized_directories(
     directories: &[OvenArtifactMaterializedDirectory],
+    expected: Option<&[OvenArtifactMaterializedDirectoryManifest]>,
 ) -> Result<Vec<ValidatedMaterializedDirectory>, OvenStoreError> {
     let mut by_path = BTreeMap::new();
     for directory in directories {
@@ -2537,6 +2557,20 @@ fn validated_materialized_directories(
             return Err(OvenStoreError::InvalidInput {
                 field: "materialized directory",
                 message: format!("empty directory `{path}` cannot contain another declared directory"),
+            });
+        }
+    }
+    if let Some(expected) = expected {
+        let expected_paths = expected
+            .iter()
+            .map(|directory| normalized_materialized_relative_path(&directory.relative_path))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        let actual_paths = by_path.keys().cloned().collect::<BTreeSet<_>>();
+        if actual_paths != expected_paths {
+            return Err(OvenStoreError::Integrity {
+                identity: "materialized import".to_string(),
+                message: "imported closure does not cover every empty directory in the admitted source manifest"
+                    .to_string(),
             });
         }
     }
@@ -3369,10 +3403,6 @@ fn collect_materialized_files(
         empty_directories.insert(relative);
     }
     for child in children {
-        let child = child.map_err(|source| OvenStoreError::Io {
-            path: directory.to_path_buf(),
-            source,
-        })?;
         let path = child.path();
         let metadata = fs::symlink_metadata(&path).map_err(|source| OvenStoreError::Io {
             path: path.clone(),
@@ -4282,7 +4312,8 @@ struct ValidatedMaterializedDirectory {
 pub(crate) mod tests {
     use super::{
         LEGACY_CARGO_PUBLISHER_LOCK_FILE, LEGACY_CARGO_STAGING_DIRECTORY, OvenArtifactKind,
-        OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreError, OvenStoreLimits,
+        OvenArtifactMaterializedDirectory, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore,
+        OvenStoreError, OvenStoreLimits,
     };
     use crate::test_support::{request, write_project};
     use crate::{OvenGeneratedProjectRequest, receipt_generated_project};
@@ -4638,7 +4669,11 @@ pub(crate) mod tests {
         };
 
         let first = OvenStore::new(first_destination.path(), limits);
-        first.publish_verified_import(&import(), selected[0].admitted_materialized_files())?;
+        first.publish_verified_import(
+            &import(),
+            selected[0].admitted_materialized_files(),
+            selected[0].admitted_materialized_directories(),
+        )?;
 
         fs::remove_file(&artifact)?;
         fs::write(&artifact, b"changed content")?;
@@ -4648,7 +4683,69 @@ pub(crate) mod tests {
         selected[0].verify_admitted_record()?;
         let second = OvenStore::new(second_destination.path(), limits);
         assert!(matches!(
-            second.publish_verified_import(&import(), selected[0].admitted_materialized_files()),
+            second.publish_verified_import(
+                &import(),
+                selected[0].admitted_materialized_files(),
+                selected[0].admitted_materialized_directories(),
+            ),
+            Err(OvenStoreError::Integrity { .. })
+        ));
+        Ok(())
+    }
+
+    /// A verified import must carry every empty directory admitted with its source entry.
+    #[test]
+    fn verified_import_rejects_an_admitted_directory_set_mismatch() -> Result<(), Box<dyn std::error::Error>> {
+        let source_root = tempfile::tempdir()?;
+        let destination_root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let empty_generated_root = project.path().join("generated/empty");
+        fs::create_dir_all(&empty_generated_root)?;
+        let mut publication = request(project.path(), "directory-import-owner", b"native plan")?;
+        publication
+            .materialized_directories
+            .push(OvenArtifactMaterializedDirectory {
+                source_path: empty_generated_root,
+                relative_path: "generated/empty".to_string(),
+            });
+        let limits = OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000);
+        let source = OvenStore::new(source_root.path(), limits);
+        let published = source.publish(&publication)?;
+        let selected = source.select_payloads_for_execution(std::slice::from_ref(&published.identity))?;
+        let owner = selected.first().ok_or("directory import owner missing")?;
+        let import = OvenArtifactPublishRequest {
+            receipt: publication.receipt.clone(),
+            domain: published.domain.clone(),
+            kind: published.kind,
+            payload: publication.payload.clone(),
+            materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
+        };
+        let destination = OvenStore::new(destination_root.path(), limits);
+        assert!(matches!(
+            destination.publish_verified_import(
+                &import,
+                owner.admitted_materialized_files(),
+                owner.admitted_materialized_directories(),
+            ),
+            Err(OvenStoreError::Integrity { .. })
+        ));
+        let unexpected_root = project.path().join("generated/unexpected");
+        fs::create_dir_all(&unexpected_root)?;
+        let mut import_with_extra_directory = import;
+        import_with_extra_directory
+            .materialized_directories
+            .push(OvenArtifactMaterializedDirectory {
+                source_path: unexpected_root,
+                relative_path: "generated/unexpected".to_string(),
+            });
+        assert!(matches!(
+            destination.publish_verified_import(
+                &import_with_extra_directory,
+                owner.admitted_materialized_files(),
+                owner.admitted_materialized_directories(),
+            ),
             Err(OvenStoreError::Integrity { .. })
         ));
         Ok(())
@@ -5240,6 +5337,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Compatible receipts reuse one content-identical immutable entry.
     #[test]
     fn compatible_receipts_reuse_one_identical_immutable_entry() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -6201,7 +6299,11 @@ pub(crate) mod tests {
             materialized_directories: Vec::new(),
         };
         let destination = OvenStore::new(destination_root.path(), limits);
-        let imported = destination.publish_verified_import(&import, owner.admitted_materialized_files())?;
+        let imported = destination.publish_verified_import(
+            &import,
+            owner.admitted_materialized_files(),
+            owner.admitted_materialized_directories(),
+        )?;
         assert_eq!(imported, published);
         let imported_owners = destination.select_payloads_for_execution(std::slice::from_ref(&imported.identity))?;
         let imported_owner = imported_owners.first().ok_or("imported project output owner missing")?;

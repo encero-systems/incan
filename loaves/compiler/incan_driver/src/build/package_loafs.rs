@@ -20,7 +20,8 @@ use oven_rustc::plan::{OvenDirectRustcPlanSelection, OvenPackagedLibraryLoafEntr
 use oven_rustc::rustc::select_direct_rustc_plan_for_execution;
 use oven_store::digest_bytes;
 use oven_store::store::{
-    OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, PublishedOvenStore,
+    OvenArtifactKind, OvenArtifactMaterializedDirectory, OvenArtifactMaterializedFile, OvenArtifactPublishRequest,
+    OvenStore, PublishedOvenStore,
 };
 
 /// Copy one already selected project Loaf into the public provider artifact through normal immutable-store admission.
@@ -166,6 +167,7 @@ fn publish_selected_provider_loaf(
         ))
     })?;
     let admitted_files = selected.admitted_materialized_files().to_vec();
+    let admitted_directories = selected.admitted_materialized_directories().to_vec();
     let (manifest, artifact_root, payload, _lease) = selected.into_parts();
     if manifest.kind != entry_kind
         || manifest.build_unit_identity != receipt.build_unit_identity
@@ -184,6 +186,14 @@ fn publish_selected_provider_loaf(
             relative_path: file.relative_path.clone(),
         })
         .collect::<Vec<_>>();
+    let materialized_directories = manifest
+        .materialized_directories
+        .iter()
+        .map(|directory| OvenArtifactMaterializedDirectory {
+            source_path: artifact_root.join(&directory.relative_path),
+            relative_path: directory.relative_path.clone(),
+        })
+        .collect::<Vec<_>>();
     let exported = destination_store
         .publish_verified_import(
             &OvenArtifactPublishRequest {
@@ -192,8 +202,10 @@ fn publish_selected_provider_loaf(
                 kind: manifest.kind,
                 payload,
                 materialized_files,
+                materialized_directories,
             },
             &admitted_files,
+            &admitted_directories,
         )
         .map_err(|error| CliError::failure(format!("failed to publish provider Loaf during {operation}: {error}")))?;
     if exported.kind != entry_kind

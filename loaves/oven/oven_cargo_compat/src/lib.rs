@@ -1546,6 +1546,10 @@ pub fn prepare_direct_rustc_plan(
     })
 }
 
+/// Describe selected generated-output roots that are intentionally empty for immutable store publication.
+///
+/// Nonempty generated roots are already represented by their retained members. An empty root still changes the
+/// direct-rustc closure, so this returns its canonical root path for store staging and identity admission.
 fn retained_empty_generated_output_directories<'a>(
     staging: &Path,
     outputs: impl IntoIterator<Item = &'a OvenLegacyCargoSelectedGeneratedOutput>,

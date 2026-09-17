@@ -38,7 +38,8 @@ use oven_rustc::rustc::{
 use oven_store::process::{BoundedProcessLimits, BoundedProcessTermination, run_bounded_process};
 use oven_store::receipt_with_build_unit_input;
 use oven_store::store::{
-    OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, PublishedOvenStore,
+    OvenArtifactKind, OvenArtifactMaterializedDirectory, OvenArtifactMaterializedFile, OvenArtifactPublishRequest,
+    OvenStore, PublishedOvenStore,
 };
 
 const POLICY_EXCHANGE_MAX_BYTES: u64 = 16 * 1024 * 1024;
@@ -1009,7 +1010,8 @@ pub(crate) fn import_release_policy_output(
         .original_native_receipt()
         .cloned()
         .ok_or_else(|| CliError::failure("release policy ProjectOutput has no original publisher receipt"))?;
-    let admitted = selected.admitted_materialized_files().to_vec();
+    let admitted_files = selected.admitted_materialized_files().to_vec();
+    let admitted_directories = selected.admitted_materialized_directories().to_vec();
     let (manifest, artifact_root, payload_bytes, lease) = selected.into_parts();
     let payload: OvenProjectOutputPayload = serde_json::from_slice(&payload_bytes)
         .map_err(|error| CliError::failure(format!("release policy ProjectOutput payload is invalid: {error}")))?;
@@ -1024,6 +1026,14 @@ pub(crate) fn import_release_policy_output(
             relative_path: file.relative_path.clone(),
         })
         .collect();
+    let materialized_directories = manifest
+        .materialized_directories
+        .iter()
+        .map(|directory| OvenArtifactMaterializedDirectory {
+            source_path: artifact_root.join(&directory.relative_path),
+            relative_path: directory.relative_path.clone(),
+        })
+        .collect();
     let published = destination
         .publish_verified_import(
             &OvenArtifactPublishRequest {
@@ -1032,8 +1042,10 @@ pub(crate) fn import_release_policy_output(
                 kind: manifest.kind,
                 payload: payload_bytes,
                 materialized_files,
+                materialized_directories,
             },
-            &admitted,
+            &admitted_files,
+            &admitted_directories,
         )
         .map_err(oven_error)?;
     if published.identity != member.artifact_identity {
