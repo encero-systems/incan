@@ -4319,6 +4319,7 @@ fn round_physical(bytes: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use crate::{retained_empty_generated_output_directories, OvenLegacyCargoSelectedGeneratedOutput};
     use std::sync::Arc;
 
     use oven_model::compiler_identity::CompilerIdentity;
@@ -4406,14 +4407,14 @@ mod tests {
         let unexpected = acquired_empty_root.join("unexpected.txt");
         fs::write(&unexpected, b"tampered")?;
         assert!(
-            acquired.verify_admitted_payload().is_err(),
+            local.select_payload(&published.identity).is_err(),
             "adding content beneath a declared empty generated-output root must invalidate the admitted entry"
         );
         fs::remove_file(unexpected)?;
-        acquired.verify_admitted_payload()?;
+        local.select_payload(&published.identity)?;
         fs::remove_dir(acquired_empty_root)?;
         assert!(
-            acquired.verify_admitted_payload().is_err(),
+            local.select_payload(&published.identity).is_err(),
             "removing a declared empty generated-output root must invalidate the admitted entry"
         );
         Ok(())
@@ -4803,6 +4804,7 @@ mod tests {
                 loafs: members,
                 release_store_member: None,
                 runtime_foundation: None,
+                runtime_closure: None,
             })?,
         )?;
         Ok(())
