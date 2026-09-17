@@ -54,7 +54,7 @@ pub use oven_rustc::native_contract::{
     OvenCompilerTestSuiteToolchainDataPayload, OvenCompilerTestSuiteToolchainDataReference,
     OvenCompilerTestSuiteToolchainLoafGenerationReference, OvenCompilerWorkspaceLibrary,
     OvenCompilerWorkspaceLibraryKey, OvenLegacyCargoInspectionPackage, OvenLegacyCargoInspectionSource,
-    OvenProjectExtensionPayload, OvenProjectRegistrySourceDependency,
+    OvenLegacyCargoInspectionSourceMember, OvenProjectExtensionPayload, OvenProjectRegistrySourceDependency,
 };
 
 use serde::Serialize;
@@ -4220,6 +4220,7 @@ mod tests {
             features: features.iter().map(|feature| (*feature).to_string()).collect(),
             source_root: std::path::PathBuf::from("registry-sources/serde"),
             source_digest: "sha256:serde-tree".to_string(),
+            members: Vec::new(),
         };
         let mut other = source(&["std"]);
         other.package = "itoa".to_string();

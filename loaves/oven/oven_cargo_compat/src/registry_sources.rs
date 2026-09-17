@@ -10,11 +10,12 @@ use std::path::{Path, PathBuf};
 
 use super::{
     CargoChecksumLock, CargoCompilerArtifact, CargoInvocationOutput, CargoMetadata, InspectionPackageScope,
-    OvenBuildIntent, OvenLegacyCargoError, OvenLegacyCargoInspectionPackage, OvenRustcArtifactExtern,
-    OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact,
-    PendingRegistryLeaf, canonical_directory, compiler_artifact_platform, copy_regular_directory_tree, digest_bytes,
-    digest_source_tree, inspection_package_closure_ids, legacy_cargo_inspection_sources_from_metadata,
-    materialized_files_from_directory, regular_file_bytes, relative_path,
+    OvenBuildIntent, OvenLegacyCargoError, OvenLegacyCargoInspectionPackage, OvenLegacyCargoInspectionSourceMember,
+    OvenRustcArtifactExtern, OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
+    OvenRustcSupportingArtifact, PendingRegistryLeaf, canonical_directory, compiler_artifact_platform,
+    copy_regular_directory_tree, digest_bytes, digest_source_tree, inspection_package_closure_ids,
+    legacy_cargo_inspection_sources_from_metadata, materialized_files_from_directory, regular_file_bytes,
+    relative_path,
 };
 
 /// Decode exact registry checksums from the lock consumed by the named publisher.
@@ -90,7 +91,7 @@ pub fn stage_registry_source_directory(
     registry: &str,
     checksum: &str,
     source_root: &Path,
-) -> Result<(PathBuf, String), OvenLegacyCargoError> {
+) -> Result<(PathBuf, String, Vec<OvenLegacyCargoInspectionSourceMember>), OvenLegacyCargoError> {
     let source_root = canonical_directory(source_root, "registry package source")?;
     let identity = digest_bytes(format!("{registry}\0{package}\0{version}\0{checksum}").as_bytes());
     let identity = identity.strip_prefix("sha256:").unwrap_or(&identity);
@@ -103,7 +104,27 @@ pub fn stage_registry_source_directory(
             "could not digest staged registry package `{package}` {version}: {error}"
         ))
     })?;
-    Ok((staged_root, digest))
+    let members = materialized_files_from_directory(&staged_root, "", "staged registry package source")?
+        .into_iter()
+        .map(|file| {
+            let path = file.relative_path.strip_prefix('/').ok_or_else(|| {
+                OvenLegacyCargoError::Plan("staged registry member path lost its package-relative prefix".to_string())
+            })?;
+            Ok(OvenLegacyCargoInspectionSourceMember {
+                path: path.to_string(),
+                digest: digest_bytes(&regular_file_bytes(&file.source_path)?),
+            })
+        })
+        .collect::<Result<Vec<_>, OvenLegacyCargoError>>()?;
+    if members.is_empty()
+        || members.windows(2).any(|pair| pair[0].path >= pair[1].path)
+        || !members.iter().any(|member| member.path == "Cargo.toml")
+    {
+        return Err(OvenLegacyCargoError::Plan(
+            "staged registry package source has no complete ordered Cargo.toml/member inventory".to_string(),
+        ));
+    }
+    Ok((staged_root, digest, members))
 }
 
 /// Copy registry package source while excluding mutable output that is not part of the package archive.
@@ -474,4 +495,39 @@ pub fn publisher_registry_leaf_catalog(
     source_artifacts.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     source_artifacts.dedup_by(|left, right| left.relative_path == right.relative_path && left.digest == right.digest);
     Ok((sealed, source_artifacts))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::stage_registry_source_directory;
+
+    #[test]
+    fn staged_registry_source_retains_sorted_cargo_toml_and_member_digests() -> Result<(), Box<dyn std::error::Error>> {
+        let source = tempfile::tempdir()?;
+        let staging = tempfile::tempdir()?;
+        fs::create_dir_all(source.path().join("src"))?;
+        fs::write(
+            source.path().join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"1.0.0\"\n",
+        )?;
+        fs::write(source.path().join("src/lib.rs"), "pub fn marker() {}\n")?;
+
+        let (_, _, members) = stage_registry_source_directory(
+            staging.path(),
+            "fixture",
+            "1.0.0",
+            "registry+https://example.invalid/index",
+            "fixture-checksum",
+            source.path(),
+        )?;
+
+        assert_eq!(
+            members.iter().map(|member| member.path.as_str()).collect::<Vec<_>>(),
+            ["Cargo.toml", "src/lib.rs"],
+        );
+        assert!(members.iter().all(|member| member.digest.starts_with("sha256:")));
+        Ok(())
+    }
 }

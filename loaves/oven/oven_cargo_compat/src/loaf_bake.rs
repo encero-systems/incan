@@ -639,6 +639,7 @@ mod tests {
             features: vec!["derive".to_string(), "std".to_string()],
             source_root: source.path().to_path_buf(),
             source_digest,
+            members: Vec::new(),
         };
         let staging = tempfile::tempdir()?;
         let receipt = runtime_receipt_for_plan()?;

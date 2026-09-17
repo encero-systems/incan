@@ -509,4 +509,15 @@ pub struct OvenLegacyCargoInspectionSource {
     pub source_root: PathBuf,
     /// Digest of the complete regular-file source tree beneath `source_root`.
     pub source_digest: String,
+    /// Complete ordered regular-file inventory retained from the staged immutable source tree.
+    pub members: Vec<OvenLegacyCargoInspectionSourceMember>,
+}
+
+/// One exact regular file retained by the explicit publisher's staged registry source authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OvenLegacyCargoInspectionSourceMember {
+    /// Safe package-root-relative path.
+    pub path: String,
+    /// Digest of the regular file's exact bytes.
+    pub digest: String,
 }
