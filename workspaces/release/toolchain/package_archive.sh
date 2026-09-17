@@ -564,8 +564,9 @@ else
   policy_engine_identity="${policy_output#*	}"
   [ -n "$policy_engine_store" ] && [ -n "$policy_engine_identity" ] && [ "$policy_engine_store" != "$policy_engine_identity" ] \
     || fail "release policy bake selection did not report store and artifact identity"
-  # Re-enter the same explicit publisher with the exact ProjectOutput. Existing ordinary Loafs are reused; the
-  # committed generation is replaced atomically by the envelope whose release member names this engine identity.
+  # Re-enter the explicit publisher with the exact ProjectOutput. Adding the engine member changes the envelope
+  # evidence and can require the ordinary Loafs to be prepared again; the resulting complete generation is committed
+  # atomically with the release member that names this engine identity.
   "$package_dir/bin/incan" oven legacy-cargo bake-loafs \
     --compiler-root "$package_dir" \
     --output "$loaf_root" \
