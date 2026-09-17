@@ -65,7 +65,7 @@ pub enum OvenMaterializedRustFacetEnvironmentValue {
     Path(PathBuf),
 }
 
-/// One ordered native link input after its declared owner has been physically admitted.
+/// One ordered linked-library input after its declared owner has been physically admitted.
 ///
 /// Archives carry an exact verified file. Providers carry the target-specific capability, receipt and artifact
 /// admitted from their complete owner tree, so the executor never needs to discover a same-named host library.
@@ -118,7 +118,7 @@ pub struct OvenMaterializedRustFacetUnit {
     pub generated_inputs: Vec<(String, PathBuf, String)>,
     /// Compiler-owned bare externs admitted by the validated selected graph.
     pub sysroot_externs: Vec<String>,
-    /// Ordered native link inputs. Order and repeated entries are compiler-visible and are preserved exactly.
+    /// Ordered linked-library inputs. Order and repeated entries are compiler-visible and are preserved exactly.
     pub linked_libraries: Vec<OvenMaterializedRustFacetLinkedLibrary>,
 }
 
@@ -556,7 +556,7 @@ fn materialize_generated_input(
     Ok((input.name.clone(), path, input.digest.clone()))
 }
 
-/// Resolve one unit's ordered native link inputs without introducing linker discovery.
+/// Resolve one unit's ordered linked-library inputs without introducing linker discovery.
 ///
 /// Archive bytes use the same contained owner-relative file admission as every other selected file. A provider is
 /// retained only when its identity names an admitted `LinkedLibraryProvider`; its root is evidence of that held

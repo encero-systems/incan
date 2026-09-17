@@ -1105,7 +1105,7 @@ mod tests {
         };
         assert_eq!(toolchain_owner, owner);
         assert_eq!(target, "x86_64-unknown-linux-gnu");
-        assert_eq!(rustc_identity, "rustc 1.98.0 (fixture)");
+        assert_eq!(rustc_identity, "rustc 1.98.0");
         assert_eq!(
             target_cfg_digest,
             oven_rustc::rustc::selected_graph_sha256(&serde_json::to_vec(

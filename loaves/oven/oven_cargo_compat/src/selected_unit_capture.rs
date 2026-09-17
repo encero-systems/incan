@@ -1208,11 +1208,17 @@ fn retain_generated_output(
 
 /// Inventory a checked build-script output directory, including an explicitly empty directory.
 fn generated_output_members(root: &Path) -> Result<Vec<OvenSelectedRustFacetSourceMember>, OvenLegacyCargoError> {
-    materialized_files_from_directory(root, "", "Cargo build-script OUT_DIR")?
+    materialized_files_from_directory(root, "generated", "Cargo build-script OUT_DIR")?
         .into_iter()
         .map(|file| {
             Ok(OvenSelectedRustFacetSourceMember {
-                path: file.relative_path,
+                path: file
+                    .relative_path
+                    .strip_prefix("generated/")
+                    .ok_or_else(|| {
+                        OvenLegacyCargoError::Plan("generated member lost its inventory prefix".to_string())
+                    })?
+                    .to_string(),
                 digest: digest_bytes(&regular_file_bytes(&file.source_path)?),
             })
         })

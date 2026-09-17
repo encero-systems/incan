@@ -1692,16 +1692,23 @@ mod selected_rust_facet_graph_tests {
             rustc_identity: selected.selection.intent.toolchain.clone(),
             target_cfg_digest: cfg_digest,
         };
-        selected.validated()?;
+        let dependency = unit_index(&selected, "dependency_crate")?;
+        reidentify_unit(&mut selected, dependency)?;
+        let root = unit_index(&selected, "fixture")?;
+        reidentify_unit(&mut selected, root)?;
+        selected.clone().validated()?;
 
-        let mut changed_cfg = graph(b"pub fn use_dependency() {}\n")?;
+        let mut changed_cfg = selected;
         changed_cfg.selection.target_spec = OvenSelectedRustFacetTargetSpec::BuiltIn {
             toolchain_owner: toolchain_owner_identity(),
             target: changed_cfg.selection.intent.target.clone(),
             rustc_identity: changed_cfg.selection.intent.toolchain.clone(),
             target_cfg_digest: selected_graph_sha256(b"unrelated cfg"),
         };
-        assert!(changed_cfg.validated().is_err());
+        assert!(
+            matches!(changed_cfg.validated(), Err(OvenSelectedRustFacetGraphError::Invalid { field, .. })
+            if field == "selection.target_spec.target_cfg_digest")
+        );
         Ok(())
     }
 

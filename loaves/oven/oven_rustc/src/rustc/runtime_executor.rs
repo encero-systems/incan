@@ -516,7 +516,7 @@ fn append_materialized_sysroot_extern_arguments(command: &mut Command, sysroot_e
     }
 }
 
-/// Append ordered physically admitted native link inputs to one rustc invocation.
+/// Append ordered physically admitted linked-library inputs to one rustc invocation.
 ///
 /// Exact archives are passed directly to the linker instead of becoming `-L`/`-l` discovery inputs. Repeated
 /// archives remain repeated and their order is unchanged. Provider inputs have already been checked against held
