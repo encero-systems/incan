@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-use incan_driver::build::OvenProjectOutputPayload;
 use incan_driver::build::publication::stored_project_output_from_parts;
+use incan_driver::build::{OvenProjectOutputPayload, OvenStoredProjectOutput};
 use oven_rustc::loaf::{OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenReleaseStoreMember};
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, PublishedOvenStore,
@@ -197,9 +197,19 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     let generations_root = options.output.join("generations");
     fs::create_dir_all(&generations_root)
         .map_err(|error| CliError::failure(format!("could not create Loaf generations root: {error}")))?;
-    if let (Some((source_store, _, expected_target)), Some(member)) = (publisher_input, release_store_member.as_ref()) {
-        import_release_policy_output(source_store, &staged_root, member, expected_target, limits)?;
-    }
+    let _release_policy_output = if let (Some((source_store, _, expected_target)), Some(member)) =
+        (publisher_input, release_store_member.as_ref())
+    {
+        Some(import_release_policy_output(
+            source_store,
+            &staged_root,
+            member,
+            expected_target,
+            limits,
+        )?)
+    } else {
+        None
+    };
     let (release_member_logical_bytes, release_member_physical_bytes) =
         release_store_member_byte_counts(&staged_root, release_store_member.as_ref(), limits)?;
     let mut pending = Vec::new();
@@ -572,7 +582,7 @@ pub(crate) fn import_release_policy_output(
     member: &OvenReleaseStoreMember,
     expected_target: &str,
     limits: OvenStoreLimits,
-) -> CliResult<()> {
+) -> CliResult<OvenStoredProjectOutput> {
     let mut selected = PublishedOvenStore::new(source_store)
         .select_payloads_matching_for_execution(|manifest| manifest.identity == member.artifact_identity)
         .map_err(oven_error)?;
@@ -621,7 +631,22 @@ pub(crate) fn import_release_policy_output(
             "embedded policy-engine import changed its exact artifact identity",
         ));
     }
-    Ok(())
+    let mut selected = PublishedOvenStore::new(staged_generation.join(&member.store_relative_path))
+        .select_payloads_matching_for_execution(|manifest| manifest.identity == member.artifact_identity)
+        .map_err(oven_error)?;
+    if selected.len() != 1 {
+        return Err(CliError::failure(
+            "embedded policy-engine import did not retain exactly its declared identity",
+        ));
+    }
+    let selected = selected
+        .pop()
+        .ok_or_else(|| CliError::failure("embedded policy-engine selection became empty"))?;
+    selected.verify_materialized_files().map_err(oven_error)?;
+    let (manifest, artifact_root, payload_bytes, lease) = selected.into_parts();
+    let payload = serde_json::from_slice(&payload_bytes)
+        .map_err(|error| CliError::failure(format!("embedded policy-engine payload is invalid: {error}")))?;
+    stored_project_output_from_parts(manifest, artifact_root, payload, lease)
 }
 
 /// Accept the optional publisher input only as one complete release-only pair.
