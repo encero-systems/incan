@@ -43,7 +43,9 @@ Write an RFC when the *user-facing meaning* of the language changes, for example
     - implementation plan + touchpoints (frontend/backend/stdlib/tooling/tests)
 
 4. **Open a PR**
-    - Link the PR in the RFC’s “Status” section.
+    - Keep `Status` as `Draft` during proposal review.
+    - `Issue` links to the governing issue, if one has been filed.
+    - `RFC PR` records only the PR or PRs that implement the RFC. Leave it as `—` until implementation PRs exist; never use it for the proposal PR or a documentation-only PR.
     - Expect iteration: RFCs usually evolve over review.
 
 5. **Discuss** Use the PR discussion (and/or the linked issue) to gather feedback and converge.
