@@ -627,7 +627,7 @@ pub fn prepare_oven_project(
     };
     let runtime_foundation = match &plan_selection {
         OvenDirectRustcPlanSelection::ToolchainLoaf(native) => {
-            let Some(root) = native.release_envelope_root().map_err(oven_error)? else {
+            let Some(root) = native.release_envelope_root().map_err(|error| CliError::failure(error.to_string()))? else {
                 return Ok(OvenPreparedProject {
                     generator,
                     project_root,
@@ -651,7 +651,7 @@ pub fn prepare_oven_project(
                 });
             };
             let held = acquire_committed_release_runtime_foundation(&root, "rust-policy-foundation")
-                .map_err(oven_error)?
+                .map_err(|error| CliError::failure(error.to_string()))?
                 .ok_or_else(|| {
                     CliError::failure(
                         "selected ToolchainLoaf release has no admitted runtime dependency foundation".to_string(),
