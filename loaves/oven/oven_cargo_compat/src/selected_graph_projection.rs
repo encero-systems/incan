@@ -841,6 +841,8 @@ fn projection_error(field: &str, message: &str) -> OvenLegacyCargoError {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::Path;
     use std::path::PathBuf;
 
     use oven_rustc::rustc::{
@@ -857,6 +859,25 @@ mod tests {
 
     fn digest(bytes: &[u8]) -> String {
         selected_graph_sha256(bytes)
+    }
+
+    /// Create the minimum generated source closure required for an honest fixture receipt.
+    fn fixture_receipt_request(
+        directory: &Path,
+        name: &str,
+    ) -> Result<OvenGeneratedProjectRequest, Box<dyn std::error::Error>> {
+        let source = directory.join("generated.rs");
+        fs::write(&source, b"pub fn fixture() {}\n")?;
+        Ok(OvenGeneratedProjectRequest::new(
+            directory,
+            name,
+            "1.0.0",
+            "x86_64-unknown-linux-gnu",
+            "rustc 1.98.0",
+            "release",
+            Vec::new(),
+        )
+        .with_generated_source("generated.rs", source))
     }
 
     fn members() -> Vec<OvenSelectedRustFacetSourceMember> {
@@ -1018,16 +1039,8 @@ mod tests {
         let directory = tempdir()?;
         let digest = legacy_cargo_build_script_closure_digest(capture, &sealed.build_scripts)?;
         Ok(receipt_generated_project(
-            &OvenGeneratedProjectRequest::new(
-                directory.path(),
-                "selected-graph-fixture",
-                "1.0.0",
-                "x86_64-unknown-linux-gnu",
-                "rustc 1.98.0",
-                "release",
-                Vec::new(),
-            )
-            .with_build_unit_input(OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, digest),
+            &fixture_receipt_request(directory.path(), "selected-graph-fixture")?
+                .with_build_unit_input(OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, digest),
         )?)
     }
 
@@ -1048,7 +1061,14 @@ mod tests {
         capture.units[0].target_name = "fixture-bin".to_string();
         capture.units[0].target_kinds = vec!["bin".to_string()];
         capture.units[0].crate_types = vec!["bin".to_string()];
-        let graph = project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?, None)?;
+        capture
+            .compiler
+            .as_mut()
+            .ok_or("fixture compiler context missing")?
+            .host = "aarch64-apple-darwin".to_string();
+        let mut sealed = sealed(&capture)?;
+        sealed.selection.host = "aarch64-apple-darwin".to_string();
+        let graph = project_legacy_cargo_selected_graph(&capture, &sealed, None)?;
         assert_eq!(graph.units[0].role, OvenSelectedRustFacetUnitRole::Binary);
         Ok(())
     }
@@ -1093,15 +1113,8 @@ mod tests {
         let sealed = sealed(&capture)?;
         let raw = project_legacy_cargo_selected_graph(&capture, &sealed, None)?;
         let directory = tempdir()?;
-        let capture_receipt = receipt_generated_project(&OvenGeneratedProjectRequest::new(
-            directory.path(),
-            "compiler-release-fixture",
-            "1.0.0",
-            "x86_64-unknown-linux-gnu",
-            "rustc 1.98.0",
-            "release",
-            Vec::new(),
-        ))?;
+        let capture_receipt =
+            receipt_generated_project(&fixture_receipt_request(directory.path(), "compiler-release-fixture")?)?;
         let root = OvenCompilerSupportRootIntent {
             alias: "serde".to_string(),
             unit: raw.units[0].identity.clone(),
@@ -1334,15 +1347,10 @@ mod tests {
         );
         assert!(project_legacy_cargo_selected_graph(&capture, &sealed, None).is_err());
         let wrong_receipt_directory = tempdir()?;
-        let wrong_final_receipt = receipt_generated_project(&OvenGeneratedProjectRequest::new(
+        let wrong_final_receipt = receipt_generated_project(&fixture_receipt_request(
             wrong_receipt_directory.path(),
             "selected-graph-fixture",
-            "1.0.0",
-            "x86_64-unknown-linux-gnu",
-            "rustc 1.98.0",
-            "release",
-            Vec::new(),
-        ))?;
+        )?)?;
         assert!(project_legacy_cargo_selected_graph(&capture, &sealed, Some(&wrong_final_receipt)).is_err());
         let final_receipt = closure_final_receipt(&capture, &sealed)?;
         let graph = project_legacy_cargo_selected_graph(&capture, &sealed, Some(&final_receipt))?;
