@@ -4586,6 +4586,7 @@ mod tests {
                     .to_string(),
                 evidence: BTreeMap::new(),
                 loafs: members,
+                release_store_member: None,
             })?,
         )?;
         Ok(())

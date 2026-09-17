@@ -427,6 +427,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 }
             })
             .collect(),
+        release_store_member: None,
     };
     let publication_lock = acquire_exclusive_loaf_generation_lock(&options.output).map_err(oven_error)?;
     let replacement_high_water = oven_cargo_compat::conservative_directory_reservation(&options.output)

@@ -3514,6 +3514,7 @@ mod tests {
             generation_identity: generation_identity.to_string(),
             evidence: evidence.clone(),
             loafs: members,
+            release_store_member: None,
         };
         fs::write(root.join("envelope.json"), serde_json::to_vec(&manifest)?)?;
         Ok(manifest)
@@ -3782,6 +3783,7 @@ mod tests {
                 generation_identity: digest_bytes(b"fixture compiler-suite generation"),
                 evidence: BTreeMap::new(),
                 loafs: Vec::new(),
+                release_store_member: None,
             })?,
         )?;
         let (receipt, _) = super::compiler_libtests_receipt(compiler_root.path(), &rustc, &[], Some(output.path()))?;
@@ -3981,6 +3983,7 @@ mod tests {
                         digest_bytes(compiler_evidence.as_bytes()),
                     )]),
                     loafs: vec![member],
+                    release_store_member: None,
                 })?,
             )?;
             Ok(())
@@ -4027,6 +4030,7 @@ mod tests {
             generation_identity: "sha256:new-generation".to_string(),
             evidence: BTreeMap::new(),
             loafs: Vec::new(),
+            release_store_member: None,
         };
 
         let result = commit_loaf_generation(
@@ -4068,6 +4072,7 @@ mod tests {
                     generation_identity: generation_identity.clone(),
                     evidence: BTreeMap::new(),
                     loafs: Vec::new(),
+                    release_store_member: None,
                 };
                 barrier.wait();
                 let _lock = acquire_exclusive_loaf_generation_lock(&output).map_err(|error| error.to_string())?;
