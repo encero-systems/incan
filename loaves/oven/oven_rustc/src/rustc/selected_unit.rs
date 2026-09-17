@@ -11,6 +11,7 @@
 )]
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -124,9 +125,15 @@ pub struct OvenMaterializedRustFacetUnit {
 /// A physically admitted selected graph and its source-unit projection.
 #[derive(Debug, Clone)]
 pub struct OvenMaterializedRustFacetGraph {
-    target_spec: Option<PathBuf>,
+    target: OvenMaterializedRustTarget,
     units: BTreeMap<String, OvenMaterializedRustFacetUnit>,
     supplemental_source_roots: BTreeMap<(String, String), PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+enum OvenMaterializedRustTarget {
+    BuiltIn(String),
+    Custom(PathBuf),
 }
 
 impl OvenMaterializedRustFacetGraph {
@@ -134,7 +141,18 @@ impl OvenMaterializedRustFacetGraph {
     ///
     /// Built-in targets return `None`: the selected compiler owns those targets directly and no JSON file exists.
     pub fn custom_target_spec(&self) -> Option<&Path> {
-        self.target_spec.as_deref()
+        match &self.target {
+            OvenMaterializedRustTarget::BuiltIn(_) => None,
+            OvenMaterializedRustTarget::Custom(path) => Some(path),
+        }
+    }
+
+    /// Return the exact `rustc --target` argument admitted by the selected target descriptor.
+    pub fn compiler_target(&self) -> &OsStr {
+        match &self.target {
+            OvenMaterializedRustTarget::BuiltIn(target) => OsStr::new(target),
+            OvenMaterializedRustTarget::Custom(path) => path.as_os_str(),
+        }
     }
 
     /// Look up one selected source unit by its source-selection identity.
@@ -202,10 +220,12 @@ pub fn materialize_selected_rust_facet_graph_with_supplemental_source_members(
             ))
         })
         .collect::<Result<BTreeMap<_, _>, OvenRustcError>>()?;
-    let target_spec = match &graph.selection.target_spec {
-        super::OvenSelectedRustFacetTargetSpec::BuiltIn { .. } => None,
+    let target = match &graph.selection.target_spec {
+        super::OvenSelectedRustFacetTargetSpec::BuiltIn { target, .. } => {
+            OvenMaterializedRustTarget::BuiltIn(target.clone())
+        }
         super::OvenSelectedRustFacetTargetSpec::Custom { source, digest } => {
-            Some(resolve_file(&owners, source, digest, "selected Rust target spec")?)
+            OvenMaterializedRustTarget::Custom(resolve_file(&owners, source, digest, "selected Rust target spec")?)
         }
     };
     let compiled_identities = compiled_rust_unit_identities(selected, compiler_closure_digest)?;
@@ -308,7 +328,7 @@ pub fn materialize_selected_rust_facet_graph_with_supplemental_source_members(
         verify_supplemental_source_tree(source_root, members)?;
     }
     Ok(OvenMaterializedRustFacetGraph {
-        target_spec,
+        target,
         units,
         supplemental_source_roots,
     })

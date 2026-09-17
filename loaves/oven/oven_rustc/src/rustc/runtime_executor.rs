@@ -284,6 +284,7 @@ pub fn execute_runtime_foundation_rebuild(
             unit,
             source,
             selection,
+            materialized.sources().compiler_target(),
             materialized.artifact_plan(),
             &search_paths,
             &externs,
@@ -420,6 +421,7 @@ fn compile_rebuild_unit(
     unit: &OvenSelectedRustFacetUnit,
     source: &super::OvenMaterializedRustFacetUnit,
     selection: &super::OvenSelectedRustFacetSelection,
+    compiler_target: &std::ffi::OsStr,
     plan: &super::OvenRustcArtifactPlan,
     search_paths: &BTreeSet<PathBuf>,
     externs: &[(String, PathBuf)],
@@ -430,7 +432,7 @@ fn compile_rebuild_unit(
     command
         .args(["--crate-type", "lib"])
         .arg("--target")
-        .arg(&selection.intent.target)
+        .arg(compiler_target)
         .arg(format!("--edition={}", unit.edition))
         .arg("--crate-name")
         .arg(&unit.crate_name)
@@ -857,6 +859,7 @@ pub(crate) mod tests {
         dep_artifact_digest: &str,
         package_version: &str,
     ) -> Result<OvenRuntimeFoundation, Box<dyn std::error::Error>> {
+        let target_cfg = cfg_snapshot("fixture-target", "fixture");
         let selection = OvenSelectedRustFacetSelection {
             intent: OvenSelectedRustFacetIntent {
                 target: host.to_string(),
@@ -865,15 +868,14 @@ pub(crate) mod tests {
             },
             host: host.to_string(),
             host_cfg: cfg_snapshot("fixture-host", "fixture"),
-            target_cfg: cfg_snapshot("fixture-target", "fixture"),
+            target_cfg: target_cfg.clone(),
             purpose: OvenSelectedRustFacetPurpose::Normal,
             toolchain_version: "1.85.0".to_string(),
-            target_spec: OvenSelectedRustFacetTargetSpec::Custom {
-                source: OvenSelectedRustFacetPath {
-                    owner: toolchain_owner(),
-                    path: "target-spec.json".to_string(),
-                },
-                digest: selected_graph_sha256(b"{}"),
+            target_spec: OvenSelectedRustFacetTargetSpec::BuiltIn {
+                toolchain_owner: toolchain_owner(),
+                target: host.to_string(),
+                rustc_identity: toolchain.to_string(),
+                target_cfg_digest: selected_graph_sha256(&serde_json::to_vec(&target_cfg)?),
             },
         };
         let dep = library_unit(
