@@ -877,7 +877,7 @@ mod selected_rust_facet_graph_tests {
             edition: "2021".to_string(),
             source: source(
                 OvenSelectedRustFacetSourceKind::Compiler,
-                "rust-src:library/core",
+                &selected_graph_sha256(b"rust-src:library/core"),
                 &toolchain_owner_identity(),
                 &source_members,
             )?,
