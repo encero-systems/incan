@@ -303,11 +303,11 @@ mod tests {
 
     use super::*;
     use crate::rustc::{
-        OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION, OvenSelectedRustFacetGraph, OvenSelectedRustFacetIntent,
-        OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPurpose,
-        OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind,
-        OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec, selected_graph_sha256,
-        selected_graph_source_digest, selected_graph_unit_identity,
+        OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION, OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetGraph,
+        OvenSelectedRustFacetIntent, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
+        OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource,
+        OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec,
+        selected_graph_sha256, selected_graph_source_digest, selected_graph_unit_identity,
     };
 
     const COMPILER_CLOSURE: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
