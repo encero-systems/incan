@@ -110,3 +110,13 @@ pub def test_unknown_schema_and_operation_refuse() -> None:
 pub def test_root_intent_owner_must_match_its_catalog_authority() -> None:
     """Protects refusal when root feature intent is detached from the admitted package authority."""
     assert status(evaluate(request(intent_owner="sha256:other-authority"))) == "refused"
+
+
+pub def test_compiler_release_root_uses_its_sealed_source_catalog() -> None:
+    """Admits a compiler-release root only when the exchanged catalog carries the matching authored owner."""
+    assert status(evaluate(request(role="compiler_support"))) == "selected"
+
+
+pub def test_compiler_release_root_refuses_a_detached_intent_owner() -> None:
+    """Protects compiler-release policy from accepting feature intent outside its source-owned catalog."""
+    assert status(evaluate(request(role="compiler_support", intent_owner="sha256:other-authority"))) == "refused"

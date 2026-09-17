@@ -547,8 +547,8 @@ pub def test_binary_reaches_own_library_without_a_manifest_dependency_slot() -> 
     assert result.unit_purposes[library_id] == ActivationPurpose.Normal
 
 
-pub def test_compiler_support_physical_closure_refuses_without_sealed_intent() -> None:
-    """Protects refusal rather than deriving compiler-support intent from selected physical features."""
+pub def test_compiler_support_physical_closure_refuses_without_a_source_catalog() -> None:
+    """Protects refusal when compiler release units lack the source catalog that owns their authored intent."""
     root_node = node("root")
     support_one = node("core", DependencyDomain.Target)
     support_two = node("alloc", DependencyDomain.Target)
@@ -564,13 +564,13 @@ pub def test_compiler_support_physical_closure_refuses_without_sealed_intent() -
         [edge(root_node, "core", support_one), edge(support_one, "alloc", support_two)],
         16,
     ):
-        Ok(_) => fail("compiler-support edges require sealed toolchain intent")
+        Ok(_) => fail("raw compiler release edges require a matching source declaration")
         Err(error) =>
-            assert "sealed compiler-support dependency intent" in error.message()
+            assert "manifest declaration" in error.message()
 
 
-pub def test_compiler_support_root_refuses_without_sealed_intent() -> None:
-    """Protects a compiler-support root from treating a physical edge as authored feature intent."""
+pub def test_compiler_support_root_refuses_without_a_source_catalog() -> None:
+    """Protects a compiler release root from treating physical features as a substitute for source policy."""
     support = node("core")
     leaf = node("alloc")
     match propagate_features(
@@ -582,13 +582,13 @@ pub def test_compiler_support_root_refuses_without_sealed_intent() -> None:
         [edge(support, "alloc", leaf)],
         16,
     ):
-        Ok(_) => fail("compiler-support root edges require sealed toolchain intent")
+        Ok(_) => fail("compiler release roots require their source catalog")
         Err(error) =>
-            assert "sealed compiler-support dependency intent" in error.message()
+            assert "selected package catalog" in error.message()
 
 
-pub def test_compiler_support_edge_refuses_without_sealed_intent() -> None:
-    """Protects ordinary children from inheriting demand from compiler-support physical output."""
+pub def test_compiler_support_edge_refuses_without_a_source_catalog() -> None:
+    """Protects an ordinary child from inheriting demand before compiler release source policy is admitted."""
     support = node("core")
     ordinary = node("ordinary")
     selected_ordinary = AdmittedSelectedUnit(
@@ -607,9 +607,27 @@ pub def test_compiler_support_edge_refuses_without_sealed_intent() -> None:
         [edge(support, "ordinary", ordinary)],
         16,
     ):
-        Ok(_) => fail("compiler-support edges cannot seed ordinary child demand from physical features")
+        Ok(_) => fail("compiler release edges require source policy before propagation")
         Err(error) =>
-            assert "sealed compiler-support dependency intent" in error.message()
+            assert "selected package catalog" in error.message()
+
+
+pub def test_compiler_support_catalog_propagates_its_declared_child() -> None:
+    """Uses the same source-owned manifest activation for compiler release support as for ordinary Rust units."""
+    support = node("core")
+    child = node("alloc")
+    result = require_ok(
+        propagate_features(
+            catalogs_from({"core": "[dependencies]\nalloc='1'\n", "alloc": ""}),
+            base_context(),
+            "Cargo.toml",
+            [selected(support, SelectedUnitRole.CompilerSupport), selected(child, SelectedUnitRole.CompilerSupport)],
+            [root(support)],
+            [edge(support, "alloc", child)],
+            16,
+        ),
+    )
+    assert child in result.nodes
 
 
 def require_feature_fact_refusal(child_features: list[str], declaration: str) -> str:

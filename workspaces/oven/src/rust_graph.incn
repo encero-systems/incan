@@ -128,9 +128,7 @@ model CheckedSlotBinding:
     child_unit: str
     child: GraphNode
     child_is_proc_macro: bool
-    parent_is_compiler_support: bool
     internal: bool
-    compiler_support: bool
 
 
 pub model GraphActivation:
@@ -250,9 +248,7 @@ def admit_bindings(
                 child_unit=binding.child_unit,
                 child=child.node,
                 child_is_proc_macro=child.role == SelectedUnitRole.ProcMacro,
-                parent_is_compiler_support=parent.role == SelectedUnitRole.CompilerSupport,
                 internal=parent.node.package == child.node.package and child.role == SelectedUnitRole.Library,
-                compiler_support=child.role == SelectedUnitRole.CompilerSupport,
             ),
         )
     return Ok(checked)
@@ -272,9 +268,7 @@ def binding_for(
         if (
             binding.parent == parent
             and binding.alias == declaration.alias
-            and not binding.parent_is_compiler_support
             and not binding.internal
-            and not binding.compiler_support
             and binding.parent_unit in unit_purposes
             and unit_purposes[binding.parent_unit] == purpose
         ):
@@ -449,8 +443,6 @@ pub def propagate_features(
         selected = unit_for(units, root.unit, manifest)?
         purpose = root_purpose(selected, base.purpose, manifest)?
         unit_purposes[root.unit] = purpose
-        if selected.role == SelectedUnitRole.CompilerSupport:
-            continue
         root_demand = NodeDemand(features=root.requested_features, default_features=root.default_features)
         policy_node = PolicyNode(node=selected.node, purpose=purpose)
         key = activation_key(policy_node)
@@ -462,21 +454,6 @@ pub def propagate_features(
             if let Some(widened) = merged(demands[key], root_demand):
                 demands[key] = widened
                 queue.append(policy_node)
-
-    # A compiler-support root has no Cargo manifest declaration to derive a child request from. The eventual host
-    # adapter must project the selected toolchain's sealed dependency-intent catalog; until that evidence exists,
-    # refusing is safer than treating observed child features as authored intent.
-    for binding in checked_bindings:
-        if (binding.compiler_support or binding.parent_is_compiler_support) and binding.parent_unit in unit_purposes:
-            return Err(
-                IntakeError(
-                    kind=IntakeErrorKind.Missing,
-                    manifest=manifest,
-                    field=["bindings", binding.parent_unit, binding.alias],
-                    location=None,
-                    detail="sealed compiler-support dependency intent",
-                ),
-            )
 
     mut rounds = 0
     mut settled: Dict[str, RustActivation] = {}
@@ -510,16 +487,6 @@ pub def propagate_features(
         for physical in checked_bindings:
             if not has_active_physical_parent(physical, node, policy_node.purpose, unit_purposes):
                 continue
-            if physical.compiler_support:
-                return Err(
-                    IntakeError(
-                        kind=IntakeErrorKind.Missing,
-                        manifest=manifest,
-                        field=["bindings", physical.parent_unit, physical.alias],
-                        location=None,
-                        detail="sealed compiler-support dependency intent",
-                    ),
-                )
             if not physical.internal:
                 continue
             if (
@@ -628,7 +595,6 @@ pub def propagate_features(
                             has_active_physical_parent(physical, node, policy_node.purpose, unit_purposes)
                             and physical.alias == declaration.alias
                             and not physical.internal
-                            and not physical.compiler_support
                         ):
                             if (
                                 physical.child != binding.child
@@ -674,11 +640,11 @@ pub def propagate_features(
                                 queue.append(child_policy)
 
     # Reconcile only after every declaration demand has reached its fixed point. The raw selected graph records the
-    # actual effective features for each physical unit; policy is valid only when every reachable non-sysroot unit
-    # agrees with the settled package/domain/purpose activation it participates in. Default intent is derived policy
-    # state, never a raw-unit claim.
+    # actual effective features for each physical unit; policy is valid only when every reachable unit, including
+    # compiler release support, agrees with the settled package/domain/purpose activation it participates in.
+    # Default intent is derived policy state, never a raw-unit claim.
     for unit in units:
-        if unit.identity not in unit_purposes or unit.role == SelectedUnitRole.CompilerSupport:
+        if unit.identity not in unit_purposes:
             continue
         policy_node = PolicyNode(node=unit.node, purpose=unit_purposes[unit.identity])
         key = activation_key(policy_node)
@@ -725,7 +691,7 @@ pub def propagate_features(
                     detail=f"resolved binding has unreachable parent {node_key(binding.parent)}",
                 ),
             )
-        if binding.parent_is_compiler_support or binding.internal or binding.compiler_support:
+        if binding.internal:
             continue
         parent_policy = PolicyNode(node=binding.parent, purpose=unit_purposes[binding.parent_unit])
         parent_activation = settled[activation_key(parent_policy)]

@@ -193,7 +193,7 @@ def validate_root_intents(
     roots: list[GraphRoot],
     catalogs: list[CatalogInput],
 ) -> Result[None, SelectionError]:
-    """Require every root intent to name the exact catalog authority for its selected package."""
+    """Require every root, including compiler release support, to name its selected catalog authority."""
     for root_index in range(len(roots)):
         root = roots[root_index]
         mut selected: Option[AdmittedSelectedUnit] = None
