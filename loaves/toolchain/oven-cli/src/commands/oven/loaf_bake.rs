@@ -34,8 +34,8 @@ use super::{
     loaf_envelope_name, loaf_envelope_specifications, loaf_fixture_action_name, loaf_fixture_probe_is_expected_miss,
     loaf_generation_identity_with_release_member, loaf_raw_disk_bytes, open_store, oven_error, pin_loaf_fixture_rustc,
     prepare_compiler_test_suite, prepare_loaf_from_generated_project, print_json, read_receipt,
-    retire_unreferenced_loaf_generations, reuse_complete_loaf_envelope, stage_locked_loaf_fixture, write_receipt,
-    write_sealed_oven_inspection_source_authority,
+    release_store_member_byte_counts, retire_unreferenced_loaf_generations, reuse_complete_loaf_envelope,
+    stage_locked_loaf_fixture, write_receipt, write_sealed_oven_inspection_source_authority,
 };
 
 /// Bake or exactly reuse one complete compiler-owned Alpha Loaf envelope.
@@ -193,6 +193,8 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     if let (Some((source_store, _)), Some(member)) = (publisher_input, release_store_member.as_ref()) {
         import_release_policy_output(source_store, &staged_root, member, limits)?;
     }
+    let (release_member_logical_bytes, release_member_physical_bytes) =
+        release_store_member_byte_counts(&staged_root, release_store_member.as_ref(), limits)?;
     let mut pending = Vec::new();
     let envelope_inspection_packages = loaf_envelope_inspection_packages(envelope).map_err(CliError::failure)?;
     // A cold first bake cannot consume a Loaf that does not exist yet. Resolve its Rust inspection sources once at
@@ -426,8 +428,16 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     }
     phase_timing.fixture_preparation_elapsed_ms = fixture_preparation_started.elapsed().as_millis();
 
-    let logical_bytes = pending.iter().map(|entry| entry.result.logical_bytes).sum::<u64>();
-    let physical_bytes = pending.iter().map(|entry| entry.result.physical_bytes).sum::<u64>();
+    let logical_bytes = pending
+        .iter()
+        .map(|entry| entry.result.logical_bytes)
+        .sum::<u64>()
+        .saturating_add(release_member_logical_bytes);
+    let physical_bytes = pending
+        .iter()
+        .map(|entry| entry.result.physical_bytes)
+        .sum::<u64>()
+        .saturating_add(release_member_physical_bytes);
     if physical_bytes > max_physical_bytes {
         return Err(CliError::failure(format!(
             "Loaf envelope uses {physical_bytes} physical bytes, exceeding its {max_physical_bytes}-byte allowance"
@@ -620,7 +630,10 @@ pub(crate) fn release_policy_publisher_input<'a>(
 }
 
 /// Re-prove the committed physical member after publication authority has been released.
-fn verify_committed_release_policy_output(output: &Path, expected: Option<&OvenReleaseStoreMember>) -> CliResult<()> {
+pub(crate) fn verify_committed_release_policy_output(
+    output: &Path,
+    expected: Option<&OvenReleaseStoreMember>,
+) -> CliResult<()> {
     let Some(expected) = expected else {
         return Ok(());
     };

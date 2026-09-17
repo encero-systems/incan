@@ -16,7 +16,7 @@ use super::{
     CliError, CliResult, INCAN_VERSION, Instant, LoafEnvelopeExpectation, LoafMemberExpectation, LoafMirrorMiss,
     OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLegacyCargoCompilerSuiteResult, OvenLoafEnvelope,
     OvenLoafEnvelopeManifest, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation, OvenReleaseStoreMember,
-    OvenStoreInspection, OvenStoreLimits, announce_oven_progress, configured_mirrors, digest_bytes,
+    OvenStore, OvenStoreInspection, OvenStoreLimits, announce_oven_progress, configured_mirrors, digest_bytes,
     digest_runtime_crate_source, elapsed_detail, env, import_loaf_envelope_from_mirrors, loaf_directory_byte_counts,
     loaf_envelope_inspection_packages, loaf_envelope_specifications, loaf_raw_disk_bytes, oven_error,
     retire_unreferenced_loaf_generations, rustc_identity, validate_stored_loaf_for_reuse,
@@ -178,6 +178,26 @@ pub(crate) fn loaf_generation_identity_with_release_member(
     Ok(digest_bytes(&encoded.map_err(|error| {
         CliError::failure(format!("could not encode Loaf generation identity: {error}"))
     })?))
+}
+
+/// Measure the one exact embedded generic store entry included in envelope payload totals.
+pub(crate) fn release_store_member_byte_counts(
+    generation_root: &Path,
+    member: Option<&OvenReleaseStoreMember>,
+    limits: OvenStoreLimits,
+) -> CliResult<(u64, u64)> {
+    let Some(member) = member else {
+        return Ok((0, 0));
+    };
+    let inspection = OvenStore::new(generation_root.join(&member.store_relative_path), limits)
+        .inspect_for_exact_reuse()
+        .map_err(oven_error)?;
+    if inspection.entries.len() != 1 || inspection.entries[0].manifest.identity != member.artifact_identity {
+        return Err(CliError::failure(
+            "release policy store accounting did not find its one exact artifact",
+        ));
+    }
+    Ok((inspection.logical_bytes, inspection.physical_bytes))
 }
 
 /// Return the wire spelling of one checked fixture action.
@@ -423,8 +443,24 @@ pub(crate) fn reuse_complete_loaf_envelope(
             result,
         });
     }
-    let logical_bytes = reports.iter().map(|entry| entry.result.logical_bytes).sum::<u64>();
-    let physical_bytes = reports.iter().map(|entry| entry.result.physical_bytes).sum::<u64>();
+    let member_generation = output.join("generations").join(
+        manifest
+            .generation_identity
+            .strip_prefix("sha256:")
+            .unwrap_or(&manifest.generation_identity),
+    );
+    let (member_logical_bytes, member_physical_bytes) =
+        release_store_member_byte_counts(&member_generation, release_store_member, limits)?;
+    let logical_bytes = reports
+        .iter()
+        .map(|entry| entry.result.logical_bytes)
+        .sum::<u64>()
+        .saturating_add(member_logical_bytes);
+    let physical_bytes = reports
+        .iter()
+        .map(|entry| entry.result.physical_bytes)
+        .sum::<u64>()
+        .saturating_add(member_physical_bytes);
     if physical_bytes > limits.max_physical_bytes {
         return Err(CliError::failure(format!(
             "stored Loaf envelope uses {physical_bytes} physical bytes, exceeding its {}-byte allowance",
