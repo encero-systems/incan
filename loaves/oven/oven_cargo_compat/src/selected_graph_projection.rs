@@ -11,37 +11,17 @@ use std::path::Path;
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::loaf::OvenLoaf;
 use oven_rustc::rustc::{
-    OvenCompilerSupportRootIntentAuthority,
-    OvenRustcRegistrySource,
-    OvenRustcRegistrySourcePackage,
-    OvenSelectedRustFacetCrateKind,
-    OvenSelectedRustFacetDependency,
-    OvenSelectedRustFacetDomain,
-    OvenSelectedRustFacetEnvironmentValue,
-    OvenSelectedRustFacetGeneratedInput,
-    OvenSelectedRustFacetGraph,
-    OvenSelectedRustFacetLinkedLibrary,
-    OvenSelectedRustFacetOwner,
-    OvenSelectedRustFacetOwnerKind,
-    OvenSelectedRustFacetPath,
-    OvenSelectedRustFacetPurpose,
-    OvenSelectedRustFacetSelection,
-    OvenSelectedRustFacetSource,
-    OvenSelectedRustFacetSourceKind,
-    OvenSelectedRustFacetSourceMember,
-    OvenSelectedRustFacetTargetSpec,
-    OvenSelectedRustFacetUnit,
-    OvenSelectedRustFacetUnitRole,
-    ValidatedOvenSelectedRustFacetGraph,
-    bind_compiler_support_root_intents,
+    OVEN_RUNTIME_FOUNDATION_SCHEMA_VERSION, OvenCompilerSupportRootIntentAuthority, OvenRuntimeFoundation,
+    OvenRuntimeFoundationPackageSource, OvenRuntimeFoundationSourceInventory, OvenRuntimeFoundationUnit,
+    OvenRuntimeFoundationUnitExecution, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
+    OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDependency, OvenSelectedRustFacetDomain,
+    OvenSelectedRustFacetEnvironmentValue, OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph,
+    OvenSelectedRustFacetLinkedLibrary, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
+    OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection,
+    OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember,
+    OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole,
+    ValidatedOvenSelectedRustFacetGraph, bind_compiler_support_root_intents, selected_graph_sha256,
     selected_graph_unit_identity,
-    OVEN_RUNTIME_FOUNDATION_SCHEMA_VERSION,
-    OvenRuntimeFoundation,
-    OvenRuntimeFoundationUnit,
-    OvenRuntimeFoundationUnitExecution,
-    OvenRuntimeFoundationPackageSource,
-    OvenRuntimeFoundationSourceInventory,
-    selected_graph_sha256,
 };
 use oven_store::OvenReceipt;
 use oven_store::{receipt_with_build_unit_input, receipt_with_compiler_support_root_intent};
@@ -150,7 +130,7 @@ pub fn runtime_foundation_from_compiled_loaf(
     compiled_plan_identity: &str,
     artifact_owner: &str,
 ) -> Result<OvenRuntimeFoundation, OvenLegacyCargoError> {
-    let graph = finalized.selected_graph.graph();
+    let graph = finalized.graph.graph();
     if loaf.plan.intent.target != graph.selection.intent.target
         || loaf.plan.intent.toolchain != graph.selection.intent.toolchain
         || loaf.plan.intent.profile != graph.selection.intent.profile
