@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Current codegraph JSONL schema version.
-pub const CODEGRAPH_SCHEMA_VERSION: u32 = 7;
+pub const CODEGRAPH_SCHEMA_VERSION: u32 = 8;
 
 /// A declaration identity that survives edits.
 ///
@@ -36,11 +36,26 @@ pub struct CodegraphStableDeclarationId {
     pub declaration_name: String,
     /// Semantic declaration category.
     pub declaration_kind: String,
-    /// Whether the declaration is nested, without the discriminant's traversal-ordered value.
-    pub nested: bool,
+    /// Stable semantic location, excluding the traversal-ordered scope-table index.
+    pub location: CodegraphStableDeclarationLocation,
     /// Canonical rendering of the signature, when the producer proved one. This is what separates overloads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+}
+
+/// Stable semantic location of a declaration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CodegraphStableDeclarationLocation {
+    /// Declaration is unique at module/package/crate/registry level.
+    ModuleLevel,
+    /// Declaration belongs to a named semantic owner.
+    Nested {
+        /// Edit-stable nearest named owner.
+        owner: Box<CodegraphStableDeclarationId>,
+        /// Ordinal among same-name, same-kind bindings in that owner.
+        binding_ordinal: u32,
+    },
 }
 
 /// Storage-neutral projection of one compiler-owned canonical symbol identity.

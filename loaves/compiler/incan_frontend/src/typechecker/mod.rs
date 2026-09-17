@@ -2505,6 +2505,12 @@ impl TypeChecker {
                 .declaration_identities
                 .insert((span.start, span.end), identity.clone());
         }
+        for (span, identity) in self.symbols.nested_declaration_identities() {
+            self.type_info
+                .declarations
+                .nested_declaration_identities
+                .insert((span.start, span.end), identity.clone());
+        }
 
         self.type_info.declarations.hir_bindings_by_span.clear();
         let bindings = self

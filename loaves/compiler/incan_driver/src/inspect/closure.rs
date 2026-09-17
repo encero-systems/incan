@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use incan_codegraph::{CodegraphRecord, CodegraphStableDeclarationId};
+use incan_codegraph::{CodegraphRecord, CodegraphStableDeclarationId, CodegraphStableDeclarationLocation};
 use incan_semantics_core::closure_digest::{DependencyNode, closure_digests, update_delimited};
 use sha2::{Digest, Sha256};
 
@@ -21,14 +21,19 @@ use sha2::{Digest, Sha256};
 /// round trip, and a derived hash is neither.
 fn identity_key(identity: &CodegraphStableDeclarationId) -> String {
     let origin = format!("{:?}", identity.origin);
-    let nested = if identity.nested { "#nested" } else { "" };
+    let location = match &identity.location {
+        CodegraphStableDeclarationLocation::ModuleLevel => String::new(),
+        CodegraphStableDeclarationLocation::Nested { owner, binding_ordinal } => {
+            format!("#in({})[{binding_ordinal}]", identity_key(owner))
+        }
+    };
     let signature = identity
         .signature
         .as_deref()
         .map(|signature| format!("|{signature}"))
         .unwrap_or_default();
     format!(
-        "{}:{}:{}:{}{nested}{signature}",
+        "{}:{}:{}:{}{location}{signature}",
         identity.namespace, origin, identity.declaration_kind, identity.declaration_name
     )
 }
@@ -181,7 +186,8 @@ pub fn external_digest(records: &[CodegraphRecord]) -> String {
 mod tests {
     use super::*;
     use incan_codegraph::{
-        CodegraphCallRecord, CodegraphDeclarationRecord, CodegraphLanguage, CodegraphProvenance, CodegraphSymbolOrigin,
+        CodegraphCallRecord, CodegraphDeclarationRecord, CodegraphLanguage, CodegraphProvenance,
+        CodegraphStableDeclarationLocation, CodegraphSymbolOrigin,
     };
 
     fn identity(name: &str) -> CodegraphStableDeclarationId {
@@ -192,7 +198,7 @@ mod tests {
             },
             declaration_name: name.to_string(),
             declaration_kind: "function".to_string(),
-            nested: false,
+            location: CodegraphStableDeclarationLocation::ModuleLevel,
             signature: Some("()->Unit".to_string()),
         }
     }

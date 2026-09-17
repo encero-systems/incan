@@ -1001,6 +1001,173 @@ pub def entrypoint() -> int:
     Ok(())
 }
 
+/// Select checked references to `value` contained by one named declaration.
+fn value_references_owned_by<'a>(records: &'a [serde_json::Value], owner_name: &str) -> Vec<&'a serde_json::Value> {
+    records
+        .iter()
+        .filter(|record| {
+            record["record"] == serde_json::json!("reference")
+                && record["name"] == serde_json::json!("value")
+                && record["owner_id"].as_str().is_some_and(|owner_id| {
+                    records.iter().any(|owner| {
+                        owner["record"] == serde_json::json!("declaration")
+                            && owner["id"] == serde_json::json!(owner_id)
+                            && owner["name"] == serde_json::json!(owner_name)
+                    })
+                })
+        })
+        .collect()
+}
+
+#[test]
+fn inspect_codegraph_distinguishes_sibling_binding_stable_identities_issue1629()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("loaf.toml"),
+        r#"[project]
+name = "stable_binding_graph"
+version = "0.1.0"
+"#,
+    )?;
+    let main_path = src_dir.join("main.incn");
+    fs::write(
+        &main_path,
+        r#"def left(value: int) -> int:
+    return value
+
+def right(value: int) -> int:
+    return value
+
+def sibling_blocks() -> int:
+    mut total = 0
+    for value in [1]:
+        total += value
+    for value in [2]:
+        total += value
+    return total
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            main_path.to_str().ok_or("main path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+        ],
+    )?;
+    assert_success(&output, "stable binding identity codegraph export");
+    let records = parse_jsonl_stdout(&output)?;
+
+    let left = value_references_owned_by(&records, "left");
+    let right = value_references_owned_by(&records, "right");
+    assert_eq!(
+        left.len(),
+        1,
+        "left parameter reference was not projected once: {left:#?}"
+    );
+    assert_eq!(
+        right.len(),
+        1,
+        "right parameter reference was not projected once: {right:#?}"
+    );
+    assert_ne!(
+        left[0]["canonical_identity"], right[0]["canonical_identity"],
+        "same-named sibling parameters must retain distinct checked identities"
+    );
+
+    let sibling_blocks = value_references_owned_by(&records, "sibling_blocks");
+    assert_eq!(
+        sibling_blocks.len(),
+        2,
+        "the two sibling loop bindings must each have one projected reference: {sibling_blocks:#?}"
+    );
+    assert_ne!(
+        sibling_blocks[0]["canonical_identity"], sibling_blocks[1]["canonical_identity"],
+        "same-named bindings in sibling lexical blocks must retain distinct checked identities"
+    );
+    for reference in [left[0], right[0], sibling_blocks[0], sibling_blocks[1]] {
+        assert!(
+            reference["stable_identity"].is_object(),
+            "checked binding reference was missing its edit-stable identity: {reference}"
+        );
+    }
+
+    let mut collisions = Vec::new();
+    if left[0]["stable_identity"] == right[0]["stable_identity"] {
+        collisions.push("same-named parameters owned by sibling functions");
+    }
+    if sibling_blocks[0]["stable_identity"] == sibling_blocks[1]["stable_identity"] {
+        collisions.push("same-named bindings in sibling lexical blocks of one function");
+    }
+    assert!(
+        collisions.is_empty(),
+        "distinct checked bindings collapsed to the same edit-stable identity: {}",
+        collisions.join(", ")
+    );
+
+    let before = [
+        left[0]["stable_identity"].clone(),
+        right[0]["stable_identity"].clone(),
+        sibling_blocks[0]["stable_identity"].clone(),
+        sibling_blocks[1]["stable_identity"].clone(),
+    ];
+    fs::write(
+        &main_path,
+        r#"# Unrelated root movement and comments must not rekey checked bindings.
+def right(value: int) -> int:
+    return value
+
+def sibling_blocks() -> int:
+    mut total = 0
+    mut unrelated = 3
+    for value in [1]:
+        total += value
+    for value in [2]:
+        total += value
+    return total + unrelated
+
+def left(value: int) -> int:
+    return value
+"#,
+    )?;
+    let moved_output = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            main_path.to_str().ok_or("main path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+        ],
+    )?;
+    assert_success(&moved_output, "moved stable binding identity codegraph export");
+    let moved_records = parse_jsonl_stdout(&moved_output)?;
+    let moved_left = value_references_owned_by(&moved_records, "left");
+    let moved_right = value_references_owned_by(&moved_records, "right");
+    let moved_blocks = value_references_owned_by(&moved_records, "sibling_blocks");
+    assert_eq!(moved_left.len(), 1);
+    assert_eq!(moved_right.len(), 1);
+    assert_eq!(moved_blocks.len(), 2);
+    let after = [
+        moved_left[0]["stable_identity"].clone(),
+        moved_right[0]["stable_identity"].clone(),
+        moved_blocks[0]["stable_identity"].clone(),
+        moved_blocks[1]["stable_identity"].clone(),
+    ];
+    assert_eq!(
+        before, after,
+        "comments, root reordering, and an unrelated differently-named local must preserve stable binding identities"
+    );
+
+    Ok(())
+}
+
 #[test]
 fn inspect_codegraph_keeps_one_identity_through_alias_reexport_and_without_a_local_record()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -1058,6 +1225,7 @@ def entrypoint() -> int:
         })
         .ok_or("provider declaration was absent")?;
     let provider_identity = &provider["canonical_identity"];
+    let provider_stable_identity = &provider["stable_identity"];
     assert_eq!(provider_identity["declaration_name"], serde_json::json!("helper"));
     assert_eq!(provider["provenance"], serde_json::json!("checked"));
 
@@ -1068,6 +1236,7 @@ def entrypoint() -> int:
         })
         .ok_or("provider declaration alias was absent")?;
     assert_eq!(&declaration_alias["canonical_identity"], provider_identity);
+    assert_eq!(&declaration_alias["stable_identity"], provider_stable_identity);
     assert_ne!(declaration_alias["id"], provider["id"]);
 
     let reexport = records
@@ -1075,6 +1244,7 @@ def entrypoint() -> int:
         .find(|record| record["record"] == serde_json::json!("export") && record["name"] == serde_json::json!("h"))
         .ok_or("facade re-export record was absent")?;
     assert_eq!(&reexport["canonical_identity"], provider_identity);
+    assert_eq!(&reexport["stable_identity"], provider_stable_identity);
     assert_eq!(reexport["provenance"], serde_json::json!("checked"));
 
     let aliased_import = records
@@ -1097,6 +1267,7 @@ def entrypoint() -> int:
         })
         .ok_or("consumer alias binding was absent")?;
     assert_eq!(&aliased_binding["canonical_identity"], provider_identity);
+    assert_eq!(&aliased_binding["stable_identity"], provider_stable_identity);
     assert_eq!(aliased_import["provenance"], serde_json::json!("checked"));
 
     for record_kind in ["reference", "call"] {
@@ -1111,6 +1282,10 @@ def entrypoint() -> int:
         assert_eq!(
             &aliased["canonical_identity"], provider_identity,
             "every spelling must retain the original provider identity"
+        );
+        assert_eq!(
+            &aliased["stable_identity"], provider_stable_identity,
+            "every spelling must retain the original provider stable identity"
         );
         assert_eq!(
             aliased["target_id"], provider["id"],
@@ -1667,7 +1842,7 @@ def main() -> None:
     assert_eq!(first.stdout, second.stdout, "importer summary must be deterministic");
 
     let summary = parse_json_stdout(&first)?;
-    assert_eq!(summary["schema_version"], serde_json::json!(7));
+    assert_eq!(summary["schema_version"], serde_json::json!(8));
     assert_eq!(summary["mode"], serde_json::json!("strict"));
     assert_eq!(summary["metadata_record_count"], serde_json::json!(1));
     assert!(

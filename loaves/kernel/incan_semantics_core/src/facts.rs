@@ -155,6 +155,8 @@ pub enum SemanticFactKind {
     DeclarationIdentity,
     /// Unique nearest checked declaration owning one reference site.
     ReferenceOwner,
+    /// Stable owner plus collision-local ordinal for a nested declaration target.
+    StableDeclarationContext,
     /// Source anchor for a checked reference without parsing an opaque compiler node id.
     ReferenceSpan,
     /// Declaring type that requires a field or variant layout and its checked defaults.
@@ -177,6 +179,7 @@ impl SemanticFactKind {
             Self::SymbolIdentity => "symbol_identity",
             Self::DeclarationIdentity => "declaration_identity",
             Self::ReferenceOwner => "reference_owner",
+            Self::StableDeclarationContext => "stable_declaration_context",
             Self::ReferenceSpan => "reference_span",
             Self::RequiredMemberOwner => "required_member_owner",
             Self::RequiredReferenceTarget => "required_reference_target",
@@ -200,6 +203,7 @@ pub enum SemanticFactValue {
     Type(IncanType),
     SourceTarget(SemanticSourceTarget),
     CanonicalIdentity(CanonicalSymbolId),
+    StableDeclarationContext(CanonicalStableDeclarationContext),
     /// Original checked reference anchor used by inspection projections.
     SourceSpan(crate::HirSourceSpan),
     RegistryEntry(SemanticRegistryEntry),
@@ -228,6 +232,11 @@ impl SemanticFactValue {
         Self::CanonicalIdentity(value)
     }
 
+    /// Build a checked stable-declaration context sidecar.
+    pub fn stable_declaration_context(value: CanonicalStableDeclarationContext) -> Self {
+        Self::StableDeclarationContext(value)
+    }
+
     /// Build one checked typed-registry entry fact.
     pub fn registry_entry(value: SemanticRegistryEntry) -> Self {
         Self::RegistryEntry(value)
@@ -245,6 +254,7 @@ impl SemanticFactValue {
             Self::Type(value) => value.to_string(),
             Self::SourceTarget(value) => value.to_string(),
             Self::CanonicalIdentity(value) => value.render_compact(),
+            Self::StableDeclarationContext(value) => value.to_string(),
             Self::RegistryEntry(value) => value.to_string(),
             Self::AuthorityDecision(value) => value.to_string(),
             Self::Flag(value) => value.to_string(),
@@ -843,6 +853,26 @@ pub struct CanonicalSymbolId {
     pub declaration_span: crate::HirSourceSpan,
 }
 
+/// Checked, non-positional context needed to project a nested canonical identity across edits.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CanonicalStableDeclarationContext {
+    /// Nearest named semantic declaration owning the nested target.
+    pub owner: CanonicalSymbolId,
+    /// Ordinal among same-name, same-kind bindings inside that owner.
+    pub binding_ordinal: u32,
+}
+
+impl fmt::Display for CanonicalStableDeclarationContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "owner={} ordinal={}",
+            self.owner.render_compact(),
+            self.binding_ordinal
+        )
+    }
+}
+
 impl CanonicalSymbolId {
     /// Build the identity of a module-level declaration in a project source module.
     ///
@@ -998,6 +1028,18 @@ impl SemanticFactStore {
         self.facts_for_kind(subject, SemanticFactKind::SymbolIdentity)
             .filter_map(|fact| match &fact.value {
                 SemanticFactValue::CanonicalIdentity(identity) => Some(identity),
+                _ => None,
+            })
+    }
+
+    /// Return checked stable-declaration contexts for one source node.
+    pub fn stable_declaration_contexts_for(
+        &self,
+        subject: &CompilerNodeId,
+    ) -> impl Iterator<Item = &CanonicalStableDeclarationContext> {
+        self.facts_for_kind(subject, SemanticFactKind::StableDeclarationContext)
+            .filter_map(|fact| match &fact.value {
+                SemanticFactValue::StableDeclarationContext(context) => Some(context),
                 _ => None,
             })
     }

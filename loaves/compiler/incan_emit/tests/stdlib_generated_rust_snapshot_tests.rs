@@ -7,6 +7,8 @@
 use incan_emit::IrCodegen;
 use incan_frontend::{lexer, parser};
 use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use incan_test_support as support;
 
@@ -74,6 +76,57 @@ fn assert_import_snapshot(snapshot_name: &str, source: &str) -> TestResult {
     let rust_code = generate_rust(source, snapshot_name)?;
     insta::assert_snapshot!(snapshot_name, rust_code);
     Ok(())
+}
+
+/// Copy one complete stdlib tree without changing the checkout source used by other tests.
+fn copy_stdlib_tree(source: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let file_name = entry.file_name();
+        if matches!(file_name.to_str(), Some("target" | ".incan" | ".git")) {
+            continue;
+        }
+        let destination_path = destination.join(file_name);
+        if entry.file_type()?.is_dir() {
+            copy_stdlib_tree(&source_path, &destination_path)?;
+        } else {
+            fs::copy(source_path, destination_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Generate normalized `std.io` Rust in a fresh process whose stdlib source authority is `stdlib_root`.
+fn generate_std_io_from_root(stdlib_root: &Path, output_path: &Path) -> TestResult {
+    const CHILD_MODE: &str = "INCAN_TEST_1592_CHILD";
+    let output = Command::new(std::env::current_exe()?)
+        .args([
+            "--exact",
+            "issue_1592_std_io_is_invariant_to_collection_comment",
+            "--nocapture",
+        ])
+        .env(CHILD_MODE, "1")
+        .env("INCAN_STDLIB", stdlib_root)
+        .env("INCAN_STDLIB_DIR", stdlib_root)
+        .env("INCAN_TEST_1592_OUTPUT", output_path)
+        .output()?;
+    if !output.status.success() {
+        return Err(err_box(format!(
+            "#1592 codegen child failed for {}:\n{}\n{}",
+            stdlib_root.display(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        )));
+    }
+    Ok(())
+}
+
+/// Return the child-process output path used by the #1592 replay, when this invocation is a child.
+fn issue_1592_child_output() -> Option<PathBuf> {
+    std::env::var_os("INCAN_TEST_1592_CHILD")?;
+    std::env::var_os("INCAN_TEST_1592_OUTPUT").map(PathBuf::from)
 }
 
 #[test]
@@ -268,6 +321,55 @@ fn std_result_source_snapshot() -> TestResult {
 #[test]
 fn std_io_source_snapshot() -> TestResult {
     assert_stdlib_source_snapshot("std_io_source", "loaves/stdlib/system/src/io.incn")
+}
+
+#[test]
+/// Generated `std.io` must not depend on an imported trait default's absolute source position.
+fn issue_1592_std_io_is_invariant_to_collection_comment() -> TestResult {
+    if let Some(output_path) = issue_1592_child_output() {
+        let stdlib_root = PathBuf::from(std::env::var_os("INCAN_STDLIB").ok_or("#1592 child needs INCAN_STDLIB")?);
+        let source_path = stdlib_root.join("system/src/io.incn");
+        let source = fs::read_to_string(&source_path)?;
+        let context = source_path.display().to_string();
+        let generated = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
+            generate_rust(&source, &context).map_err(|error| error.to_string())
+        })
+        .map_err(err_box)?;
+        fs::write(output_path, generated)?;
+        return Ok(());
+    }
+
+    let workspace = tempfile::tempdir()?;
+    let checkout_stdlib = support::repo_root().join("loaves/stdlib");
+    let baseline_root = workspace.path().join("baseline-stdlib");
+    let shifted_root = workspace.path().join("shifted-stdlib");
+    copy_stdlib_tree(&checkout_stdlib, &baseline_root)?;
+    copy_stdlib_tree(&checkout_stdlib, &shifted_root)?;
+
+    let collection_path = shifted_root.join("core/src/derives/collection.incn");
+    let collection = fs::read_to_string(&collection_path)?;
+    let shifted = collection.replacen(
+        "\npub trait FallibleIterator[T, E]:",
+        "\n# Issue 1592 inert source-location shift.\npub trait FallibleIterator[T, E]:",
+        1,
+    );
+    if shifted == collection {
+        return Err(err_box("#1592 fixture could not find FallibleIterator insertion point"));
+    }
+    fs::write(collection_path, shifted)?;
+
+    let baseline_output = workspace.path().join("baseline.rs");
+    let shifted_output = workspace.path().join("shifted.rs");
+    generate_std_io_from_root(&baseline_root, &baseline_output)?;
+    generate_std_io_from_root(&shifted_root, &shifted_output)?;
+
+    let baseline = fs::read_to_string(baseline_output)?;
+    let shifted = fs::read_to_string(shifted_output)?;
+    assert_eq!(
+        baseline, shifted,
+        "an inert collection.incn comment changed generated std.io Rust"
+    );
+    Ok(())
 }
 
 #[test]
