@@ -56,7 +56,7 @@ rustc_channel_version() {
 }
 
 # Clear ambient Cargo/rustc-wrapper state before an internal Cargo invocation, mirroring
-# `clear_inherited_cargo_environment` in src/oven/rustc.rs. This script's own `cargo metadata`
+# `clear_inherited_cargo_environment` in loaves/oven/oven_rustc/src/rustc.rs. This script's own `cargo metadata`
 # calls are the release support workspace's authority; they must not inherit CARGO_* state
 # (target dir, build jobs, an rustc wrapper meant for a different build, etc.) from an
 # already-running, possibly nested Cargo/toolchain-managed parent process such as `cargo test`.
@@ -137,6 +137,27 @@ workspace_version() {
 version="$(workspace_version)"
 [ -n "$version" ] || fail "could not read workspace package version from Cargo.toml"
 
+# The archive's support workspace inherits the same dependency table as the checkout, so a member manifest that says
+# `serde = { workspace = true }` resolves in both. The nine support crates name each other through that table too;
+# their entries are rewritten to the archive layout, where every support crate sits beside this manifest and the
+# stdlib ring's version requirement still applies. Path entries for crates the archive does not ship are dropped.
+workspace_dependencies() {
+  awk '
+    /^\[workspace.dependencies\]/ { in_section=1; next }
+    /^\[/ { in_section=0 }
+    in_section && /^(incan_lang|incan_derive|incan_std_core|incan_std_data|incan_std_async|incan_std_web|incan_std_testing|incan_vocab|incan_web_macros) = / {
+      entry = $0
+      sub(/^[a-z_]+ = \{ path = "[^"]+"/, $1 " = { path = \"" $1 "\"", entry)
+      print entry
+      next
+    }
+    in_section && /path = "/ { next }
+    in_section && /^[A-Za-z0-9_-]+ = / { print }
+  ' Cargo.toml
+}
+workspace_dependencies_table="$(workspace_dependencies)"
+[ -n "$workspace_dependencies_table" ] || fail "could not read [workspace.dependencies] from Cargo.toml"
+
 if [ -n "${TOOLCHAIN_RELEASE:-}" ]; then
   release="$TOOLCHAIN_RELEASE"
 elif [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
@@ -147,14 +168,33 @@ fi
 
 incan_bin="${INCAN_BIN:-target/release/incan}"
 incan_lsp_bin="${INCAN_LSP_BIN:-target/release/incan-lsp}"
-stdlib_dir="${INCAN_STDLIB_SOURCE_DIR:-crates/incan_stdlib/stdlib}"
+stdlib_dir="${INCAN_STDLIB_SOURCE_DIR:-loaves/stdlib}"
 distribution_profile="${INCAN_SDK_DISTRIBUTION_PROFILE:-full}"
 [ -x "$incan_bin" ] || fail "incan binary is not executable: $incan_bin"
 [ -x "$incan_lsp_bin" ] || fail "incan-lsp binary is not executable: $incan_lsp_bin"
-[ -d "$stdlib_dir" ] || fail "stdlib source directory does not exist: $stdlib_dir"
-[ -f "$stdlib_dir/testing.incn" ] || fail "stdlib source directory is missing testing.incn: $stdlib_dir"
-for support_crate in incan_core incan_derive incan_stdlib incan_vocab incan_web_macros; do
-  [ -f "crates/${support_crate}/Cargo.toml" ] || fail "support crate is missing: crates/${support_crate}"
+[ -d "$stdlib_dir" ] || fail "stdlib root does not exist: $stdlib_dir"
+[ -f "$stdlib_dir/sdk-components.toml" ] || fail "stdlib root is missing its component catalog: $stdlib_dir"
+[ -f "$stdlib_dir/testing/src/testing.incn" ] || fail "stdlib root is missing the testing component's source: $stdlib_dir"
+# The checkout keeps each support crate in its ring; the archive keeps them side by side under `crates/`, the layout
+# every installed toolchain and staged runtime has. This table mirrors `development_support_crate_dir` in
+# `oven_model::toolchain_layout`.
+support_crate_source() {
+  case "$1" in
+    incan_lang) printf 'loaves/kernel/incan_lang' ;;
+    incan_vocab) printf 'loaves/kernel/incan_vocab' ;;
+    incan_derive) printf 'loaves/stdlib/derive/incan_derive' ;;
+    incan_web_macros) printf 'loaves/stdlib/derive/incan_web_macros' ;;
+    incan_std_core) printf 'loaves/stdlib/core/rust' ;;
+    incan_std_data) printf 'loaves/stdlib/data/rust' ;;
+    incan_std_async) printf 'loaves/stdlib/async/rust' ;;
+    incan_std_web) printf 'loaves/stdlib/web/rust' ;;
+    incan_std_testing) printf 'loaves/stdlib/testing/rust' ;;
+    *) printf 'crates/%s' "$1" ;;
+  esac
+}
+
+for support_crate in incan_lang incan_derive incan_std_core incan_std_data incan_std_async incan_std_web incan_std_testing incan_vocab incan_web_macros; do
+  [ -f "$(support_crate_source "$support_crate")/Cargo.toml" ] || fail "support crate is missing: $(support_crate_source "$support_crate")"
 done
 
 archive_counter=0
@@ -222,7 +262,7 @@ prepare_sdk_provider_seed() {
   local provider_builder="${INCAN_SDK_PROVIDER_BUILDER_BIN:-$incan_bin}"
   [ -x "$provider_builder" ] || fail "SDK provider builder is not executable: $provider_builder"
   provider_builder="$(cd "$(dirname "$provider_builder")" && pwd -P)/$(basename "$provider_builder")"
-  local staged_stdlib="$package_dir/crates/incan_stdlib/stdlib"
+  local staged_stdlib="$package_dir/stdlib"
   local probe="$package_dir/.incan-sdk-provider-seed-${target}-$$.incn"
   local path_file="$package_dir/.incan-sdk-provider-seed-${target}-$$.path"
   printf 'from std.result import map\n\ndef main() -> None:\n    pass\n' > "$probe"
@@ -265,26 +305,53 @@ rm -rf "$package_dir"
 mkdir -p "$package_dir/bin" "$package_dir/crates"
 cp "$incan_bin" "$package_dir/bin/incan"
 cp "$incan_lsp_bin" "$package_dir/bin/incan-lsp"
-for support_crate in incan_core incan_derive incan_stdlib incan_vocab incan_web_macros; do
+for support_crate in incan_lang incan_derive incan_std_core incan_std_data incan_std_async incan_std_web incan_std_testing incan_vocab incan_web_macros; do
   support_destination="$package_dir/crates/${support_crate}"
-  stage_tracked_tree "crates/${support_crate}" "$support_destination"
+  stage_tracked_tree "$(support_crate_source "$support_crate")" "$support_destination"
 done
+# The standard library's sources live in the ring, one component directory each; the installed toolchain keeps them
+# as `stdlib/` with the same component layout, one of the roots the compiler's stdlib-root policy looks for. Only
+# what a compiler reads ships: the catalog, each component's manifest, Incan sources and vocab companion. The derive
+# crates and each component's Rust facet ship as support crates under `crates/`, and tests and READMEs stay in the
+# repository.
+staged_stdlib_root="$package_dir/stdlib"
+stage_tracked_tree "loaves/stdlib" "$staged_stdlib_root"
+rm -rf "$staged_stdlib_root/derive" "$staged_stdlib_root/README.md"
+for component_dir in "$staged_stdlib_root"/*/; do
+  rm -rf "${component_dir}rust" "${component_dir}tests" "${component_dir}README.md"
+done
+# The interop component's vocab companion names `incan_vocab` by path. In the checkout that is the kernel ring; in
+# the archive the crate sits under `crates/`, three levels up from the companion and one across.
+staged_companion="$staged_stdlib_root/interop/vocab_companion/Cargo.toml"
+[ -f "$staged_companion" ] || fail "release package is missing the interop vocab companion manifest"
+sed -i.bak 's|incan_vocab = { path = "../../../kernel/incan_vocab" }|incan_vocab = { path = "../../../crates/incan_vocab" }|' "$staged_companion" \
+  && rm -f "$staged_companion.bak"
+grep -q 'path = "../../../crates/incan_vocab"' "$staged_companion" \
+  || fail "release package's interop vocab companion does not name the archived incan_vocab crate"
 if [ -z "${INCAN_SDK_PROVIDER_SEED_DIR:-}" ]; then
   release_provider_store="$package_dir/share/incan"
 fi
 cat > "$package_dir/crates/Cargo.toml" <<WORKSPACE
 [workspace]
 members = [
-    "incan_core",
+    "incan_lang",
     "incan_derive",
-    "incan_stdlib",
+    "incan_std_async",
+    "incan_std_core",
+    "incan_std_data",
+    "incan_std_testing",
+    "incan_std_web",
     "incan_vocab",
     "incan_web_macros",
 ]
 default-members = [
-    "incan_core",
+    "incan_lang",
     "incan_derive",
-    "incan_stdlib",
+    "incan_std_async",
+    "incan_std_core",
+    "incan_std_data",
+    "incan_std_testing",
+    "incan_std_web",
     "incan_vocab",
     "incan_web_macros",
 ]
@@ -301,6 +368,9 @@ homepage = "https://github.com/encero-systems/incan"
 keywords = ["programming-language", "compiler", "rust", "python"]
 categories = ["compilers", "development-tools"]
 
+[workspace.dependencies]
+${workspace_dependencies_table}
+
 # This non-default package keeps the locked registry-source authority used by the built-in release Loaf fixtures. It
 # is metadata-only release infrastructure; normal support-workspace commands operate on the default members above.
 [package]
@@ -313,7 +383,7 @@ publish = false
 path = "release-inspection-authority.rs"
 WORKSPACE
 printf '%s\n' '#![allow(dead_code)]' > "$package_dir/crates/release-inspection-authority.rs"
-git show HEAD:src/oven/fixtures/release_stdlib.toml \
+git show HEAD:loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml \
   | awk '
       /^\[rust-dependencies\]$/ {
         print "[dependencies]"
@@ -476,13 +546,15 @@ release_provider_store=""
 rm -f "$package_dir/share/incan/.incan.lock"
 # The staged source tree is the installed toolchain's authoritative Incan-language stdlib surface. SDK providers and
 # Oven Loafs contain generated Rust/runtime artifacts, but source imports, test discovery, and metadata inspection
-# still require these checked `.incn` declarations. Keep the versioned bundle beside its support crate rather than
-# restoring the obsolete top-level `stdlib/` layout.
-[ -f "$package_dir/crates/incan_stdlib/stdlib/prelude.incn" ] \
+# still require these checked `.incn` declarations. The bundle ships as `stdlib/`, the ring's own layout minus the
+# Rust facets, which are support crates.
+[ -f "$package_dir/stdlib/sdk-components.toml" ] \
+  || fail "release package is missing the built-in stdlib component catalog"
+[ -f "$package_dir/stdlib/core/src/prelude.incn" ] \
   || fail "release package is missing the built-in stdlib prelude source"
-[ -f "$package_dir/crates/incan_stdlib/stdlib/testing.incn" ] \
+[ -f "$package_dir/stdlib/testing/src/testing.incn" ] \
   || fail "release package is missing the built-in stdlib testing source"
-[ ! -d "$package_dir/stdlib" ] || fail "legacy top-level stdlib source unexpectedly entered the package"
+[ ! -d "$package_dir/crates/incan_stdlib" ] || fail "the retired incan_stdlib crate unexpectedly entered the package"
 
 # Ship the typed release envelope through the same explicit baker used by local and CI preparation. The baker owns
 # fixture source, identity, admission, accounting, and atomic publication; this packaging script only stages its output.

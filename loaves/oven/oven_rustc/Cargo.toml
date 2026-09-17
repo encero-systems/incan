@@ -1,0 +1,32 @@
+[package]
+name = "oven_rustc"
+version = "0.6.0-dev.5"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Oven's direct-Rustc planning and execution, Loaf envelopes, native tests and the legacy Cargo baker"
+
+[lib]
+name = "oven_rustc"
+path = "src/lib.rs"
+
+[features]
+# Fixtures and constructors the driver's tests reach into: on under `cfg(test)` and this feature.
+test_support = ["oven_store/test_support"]
+
+[dependencies]
+hex = "0.4.3"
+oven_model = { workspace = true }
+oven_store = { workspace = true }
+rustix = { version = "1.1.4", features = ["fs"] }
+semver = "1.0.27"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10.9"
+tempfile = "3"
+thiserror = { workspace = true }
+toml = "0.9"
+tracing = { workspace = true }
+
+[dev-dependencies]
+oven_store = { workspace = true, features = ["test_support"] }

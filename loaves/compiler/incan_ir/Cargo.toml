@@ -1,0 +1,33 @@
+[package]
+name = "incan_ir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The Incan compiler's IR and the lowering from the checked program to it"
+
+[lib]
+name = "incan_ir"
+path = "src/lib.rs"
+
+[features]
+# Mirrors the command line's defaults without `cli`, so `cargo test -p incan_ir` sees the stdlib semantics packs;
+# `incan-cli` selects features explicitly and never relies on these.
+default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
+rust_inspect = ["incan_frontend/rust_inspect"]
+std_testing = ["incan_frontend/std_testing"]
+std_async = ["incan_frontend/std_async"]
+std_decorators = ["incan_frontend/std_decorators"]
+
+[dependencies]
+incan_lang = { workspace = true }
+incan_frontend = { workspace = true }
+incan_semantics_core = { workspace = true }
+incan_vocab = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+incan_frontend = { workspace = true, features = ["test_support"] }
+tempfile = "3"

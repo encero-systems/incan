@@ -1,12 +1,12 @@
 # Generated Rust stdlib coverage inventory
 
-This inventory tracks generated Rust coverage for every `crates/incan_stdlib/stdlib/**/*.incn` source module. It is a maintenance aid for deciding where generated stdlib Rust needs stronger tests; it is not a claim that the runtime behavior of every exported API is exhaustively covered.
+This inventory tracks generated Rust coverage for every `loaves/stdlib/**/*.incn` source module. It is a maintenance aid for deciding where generated stdlib Rust needs stronger tests; it is not a claim that the runtime behavior of every exported API is exhaustively covered.
 
 Generated from repo inspection on 2026-05-20 with:
 
 ```sh
-rg --files crates/incan_stdlib/stdlib | rg '\.incn$'
-rg -n 'std_|from std\.|import std' tests tests/codegen_snapshots crates/incan_stdlib/tests
+rg --files loaves/stdlib | rg '\.incn$'
+rg -n 'std_|from std\.|import std' loaves/toolchain/incan-cli/tests loaves/compiler/incan_emit/tests/codegen_snapshots loaves/stdlib/core/rust/tests
 ```
 
 ## Coverage labels
@@ -25,14 +25,14 @@ rg -n 'std_|from std\.|import std' tests tests/codegen_snapshots crates/incan_st
 
 | Source file | Module | Current coverage | Evidence | Recommended next test |
 | --- | --- | --- | --- | --- |
-| `stdlib/collections.incn` | `std.collections` | `import/user-facing-covered` | `tests/fixtures/rfc030_std_collections_behavior.incn`, `std_ordinal_map_surface`, `ordinal_key_builtin_impls`, `ordinal_map_str_fast_lookup`, and layering guards. | Add a direct generated-Rust snapshot for the module source or a focused snapshot for the most important generated helpers. |
+| `stdlib/collections.incn` | `std.collections` | `import/user-facing-covered` | `loaves/compiler/incan_test_support/fixtures/rfc030_std_collections_behavior.incn`, `std_ordinal_map_surface`, `ordinal_key_builtin_impls`, `ordinal_map_str_fast_lookup`, and layering guards. | Add a direct generated-Rust snapshot for the module source or a focused snapshot for the most important generated helpers. |
 | `stdlib/result.incn` | `std.result` | `snapshot-covered` | `stdlib_generated_rust_snapshot_tests::std_result_source_snapshot` snapshots direct source compilation; `test_std_result_helpers_compile_and_run` and Result method dogfood tests run helper calls through generated projects. | Keep direct source snapshot aligned when Result helper lowering changes. |
 | `stdlib/prelude.incn` | `std` prelude | `snapshot-covered` | `stdlib_generated_rust_snapshot_tests::std_root_prelude_import_snapshot` snapshots representative root prelude re-exports for derive, conversion, ops, error, indexing, and callable traits. | Add more imported trait families only when the prelude surface expands. |
 | `stdlib/logging.incn` | `std.logging` | `import/user-facing-covered` | Multiple integration tests run `basic_config`, `get_logger`, ambient `log`, JSON rendering, invalid logger names, and structured fields. | Add one generated-Rust snapshot for a minimal `std.logging` import to guard emitted module wiring. |
 | `stdlib/testing.incn` | `std.testing` | `snapshot-covered` | `test_std_testing_compiled_codegen` snapshots direct module compilation; many CLI and integration tests exercise assertions, fixtures, parametrization, marks, resources, and skips. | Keep as-is unless new decorators/helpers are added. |
 | `stdlib/math.incn` | `std.math` | `snapshot-covered` | `std_math` codegen snapshot plus `test_std_math_module_constants_and_functions_run` and numeric-like helper runtime tests. | Add missing function cases only when public math surface expands. |
 | `stdlib/graph.incn` | `std.graph` | `snapshot-covered` | `test_std_graph_compiled_codegen`, `std_graph_import`, and `std_graph_surface` cover declarations, import lowering, constructors, DAGs, and multigraph edge IDs. | Keep import fixture aligned with any new graph types or methods. |
-| `stdlib/reflection.incn` | `std.reflection` | `import/user-facing-covered` | `tests/fixtures/valid/std_reflection_import.incn`, `field_info_reflection.incn`, and missing-import diagnostics cover public import and compiler reflection behavior. | Add a generated-Rust snapshot for `FieldInfo` import/use. |
+| `stdlib/reflection.incn` | `std.reflection` | `import/user-facing-covered` | `loaves/compiler/incan_test_support/fixtures/valid/std_reflection_import.incn`, `field_info_reflection.incn`, and missing-import diagnostics cover public import and compiler reflection behavior. | Add a generated-Rust snapshot for `FieldInfo` import/use. |
 | `stdlib/this.incn` | `std.this` | `missing` | No direct references found in tests or fixtures. | Add either a compile-only source test if this is internal glue, or delete/deprecate if unused. |
 | `stdlib/uuid.incn` | `std.uuid` | `snapshot-covered` | `test_std_uuid_compiled_codegen`, `std_uuid_import`, `std_uuid_surface`, and layering guards cover source-defined UUID generation/imports and absence of Rust-backed UUID type. | Keep as-is unless new UUID versions or formatting helpers are added. |
 | `stdlib/io.incn` | `std.io` | `snapshot-covered` | `stdlib_generated_rust_snapshot_tests::std_io_source_snapshot` snapshots direct source compilation; `test_std_io_compile_and_run_bytesio_core_and_numeric_helpers` exercises `BytesIO` and numeric helpers at runtime; fs, hash, compression, encoding, uuid, and tempfile tests also import it. | Keep direct source snapshot aligned when `BytesIO` or binary reader/writer lowering changes. |
@@ -94,11 +94,11 @@ rg -n 'std_|from std\.|import std' tests tests/codegen_snapshots crates/incan_st
 | `stdlib/encoding/prelude.incn` | `std.encoding` | `snapshot-covered` | `stdlib_generated_rust_snapshot_tests::std_encoding_prelude_import_snapshot` snapshots representative public prelude imports for family modules and `EncodingError`; `rfc064_std_encoding_behavior` imports the public prelude; algorithm modules are covered individually. | Add more family imports only when the public encoding prelude expands. |
 | `stdlib/encoding/_shared.incn` | `std.encoding._shared` | `indirect-only` | Imported by all algorithm modules and covered through their tests; no direct source/import target found. | Add a compact compile test for `EncodingError` and shared helpers. |
 | `stdlib/encoding/hex.incn` | `std.encoding.hex` | `import/user-facing-covered` | `std_encoding_hex_surface` fixture and RFC 064 encoding behavior fixture. | Add direct module-source runtime coverage like the other algorithms, or a generated-Rust snapshot. |
-| `stdlib/encoding/base32.incn` | `std.encoding.base32` | `import/user-facing-covered` | `tests/std_encoding_algorithm_modules.rs` runs module source with vector and lenient decode assertions; RFC 064 fixture also imports it. | Add snapshot only if generated helper shape needs review. |
-| `stdlib/encoding/base58.incn` | `std.encoding.base58` | `import/user-facing-covered` | `tests/std_encoding_algorithm_modules.rs` and RFC 064 fixture. | Same as base32. |
-| `stdlib/encoding/base64.incn` | `std.encoding.base64` | `import/user-facing-covered` | `tests/std_encoding_algorithm_modules.rs` and RFC 064 fixture. | Same as base32. |
-| `stdlib/encoding/base85.incn` | `std.encoding.base85` | `import/user-facing-covered` | `tests/std_encoding_algorithm_modules.rs` and RFC 064 fixture. | Same as base32. |
-| `stdlib/encoding/bech32.incn` | `std.encoding.bech32` | `import/user-facing-covered` | `tests/std_encoding_algorithm_modules.rs` and RFC 064 fixture. | Same as base32. |
+| `stdlib/encoding/base32.incn` | `std.encoding.base32` | `import/user-facing-covered` | `loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs` runs module source with vector and lenient decode assertions; RFC 064 fixture also imports it. | Add snapshot only if generated helper shape needs review. |
+| `stdlib/encoding/base58.incn` | `std.encoding.base58` | `import/user-facing-covered` | `loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs` and RFC 064 fixture. | Same as base32. |
+| `stdlib/encoding/base64.incn` | `std.encoding.base64` | `import/user-facing-covered` | `loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs` and RFC 064 fixture. | Same as base32. |
+| `stdlib/encoding/base85.incn` | `std.encoding.base85` | `import/user-facing-covered` | `loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs` and RFC 064 fixture. | Same as base32. |
+| `stdlib/encoding/bech32.incn` | `std.encoding.bech32` | `import/user-facing-covered` | `loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs` and RFC 064 fixture. | Same as base32. |
 
 ### `std.fs`
 

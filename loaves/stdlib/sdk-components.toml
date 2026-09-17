@@ -1,0 +1,82 @@
+[sdk]
+id = "incan"
+version = "0.6.0-dev.5"
+compiler-requirement = ">=0.6.0-dev.5,<0.7.0"
+
+[profiles]
+minimal = ["stdlib-core", "stdlib-interop"]
+default = [
+    "stdlib-core",
+    "stdlib-interop",
+    "stdlib-system",
+    "stdlib-codecs",
+    "stdlib-compression",
+    "stdlib-data",
+    "stdlib-async",
+    "stdlib-observability",
+    "stdlib-web",
+    "stdlib-testing",
+]
+full = [
+    "stdlib-core",
+    "stdlib-interop",
+    "stdlib-system",
+    "stdlib-codecs",
+    "stdlib-compression",
+    "stdlib-data",
+    "stdlib-async",
+    "stdlib-observability",
+    "stdlib-web",
+    "stdlib-testing",
+]
+
+[components.stdlib-core]
+project = "core"
+mandatory = true
+dependencies = []
+namespace-roots = ["features", "prelude", "registry", "result", "reflection", "this", "derives", "traits", "runtime"]
+
+[components.stdlib-interop]
+project = "interop"
+dependencies = ["stdlib-core"]
+namespace-roots = ["interop"]
+
+[components.stdlib-system]
+project = "system"
+dependencies = ["stdlib-core"]
+namespace-roots = ["environ", "io", "tempfile", "fs"]
+
+[components.stdlib-codecs]
+project = "codecs"
+dependencies = ["stdlib-core", "stdlib-system"]
+namespace-roots = ["checksum", "encoding"]
+
+[components.stdlib-compression]
+project = "compression"
+dependencies = ["stdlib-core", "stdlib-system"]
+namespace-roots = ["compression"]
+
+[components.stdlib-data]
+project = "data"
+dependencies = ["stdlib-core", "stdlib-system"]
+namespace-roots = ["collections", "graph", "hash", "json", "toml", "math", "uuid", "datetime", "regex", "serde"]
+
+[components.stdlib-async]
+project = "async"
+dependencies = ["stdlib-core"]
+namespace-roots = ["async"]
+
+[components.stdlib-observability]
+project = "observability"
+dependencies = ["stdlib-core", "stdlib-data"]
+namespace-roots = ["logging", "telemetry"]
+
+[components.stdlib-web]
+project = "web"
+dependencies = ["stdlib-core", "stdlib-data", "stdlib-async"]
+namespace-roots = ["web"]
+
+[components.stdlib-testing]
+project = "testing"
+dependencies = ["stdlib-core"]
+namespace-roots = ["testing"]

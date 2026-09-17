@@ -33,11 +33,11 @@ Use these anchors before creating new proof-only machinery:
 
 | Surface | Existing anchors |
 | --- | --- |
-| SDK install and package-manager shims | `tests/sdk_installer_tests.rs`, `workspaces/release/install-incan-sdk.sh`, `workspaces/release/sdk/manifest.schema.v1.json`, `workspaces/release/npm/**`, `workspaces/release/pip/**`. |
-| Starter and zero-clone flow | `tests/integration_tests.rs`, `src/cli/commands/init.rs`, `workspaces/docs-site/docs/language/reference/project_lifecycle.md`, `workspaces/docs-site/docs/tooling/how-to/install_and_run.md`. |
-| JSON diagnostics, build reports, and codegraph inspection | `tests/cli_integration.rs`, `src/cli/commands/diagnostics.rs`, `src/cli/commands/build_report.rs`, `src/cli/commands/codegraph.rs`, `workspaces/docs-site/docs/tooling/reference/cli_reference.md`, `workspaces/docs-site/docs/tooling/reference/codegraph_inspection.md`. |
-| Checked public API facts | `workspaces/docs-site/docs/tooling/reference/checked_api_metadata.md`, `tests/fixtures/boundary_parity/README.md`. |
-| Generated Rust inspection and artifact contracts | `tests/generated_rust_artifact_tests.rs`, `tests/generated_rust_audit_tests.rs`, `tests/generated_rust_native_consumer_tests.rs`, `workspaces/docs-site/docs/contributing/how-to/auditing_generated_rust.md`. |
+| SDK install and package-manager shims | `loaves/toolchain/incan-cli/tests/toolchain_installer_tests.rs`, `workspaces/release/install-incan.sh`, `workspaces/release/toolchain/manifest.schema.v1.json`, `workspaces/release/npm/**`, `workspaces/release/pip/**`. |
+| Starter and zero-clone flow | `loaves/toolchain/incan-cli/tests/integration_tests.rs`, `loaves/toolchain/incan-cli/src/commands/init.rs`, `workspaces/docs-site/docs/language/reference/project_lifecycle.md`, `workspaces/docs-site/docs/tooling/how-to/install_and_run.md`. |
+| JSON diagnostics, build reports, and codegraph inspection | `loaves/toolchain/incan-cli/tests/cli_surface_tests.rs`, `loaves/toolchain/incan-cli/src/commands/diagnostics.rs`, `loaves/toolchain/incan-cli/src/commands/build_report.rs`, `loaves/toolchain/incan-cli/src/commands/codegraph.rs`, `workspaces/docs-site/docs/tooling/reference/cli_reference.md`, `workspaces/docs-site/docs/tooling/reference/codegraph_inspection.md`. |
+| Checked public API facts | `workspaces/docs-site/docs/tooling/reference/checked_api_metadata.md`, `loaves/compiler/incan_test_support/fixtures/boundary_parity/README.md`. |
+| Generated Rust inspection and artifact contracts | `loaves/compiler/incan_driver/tests/generated_rust_artifact_tests.rs`, `loaves/compiler/incan_driver/tests/generated_rust_audit_tests.rs`, `loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs`, `workspaces/docs-site/docs/contributing/how-to/auditing_generated_rust.md`. |
 
 ## Initial dependency map
 

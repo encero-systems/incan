@@ -1,0 +1,23 @@
+[package]
+name = "incan_oven_facet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "What Oven learns about Incan: the compiler's identity and its provider facts, as Oven's hooks"
+
+[lib]
+name = "incan_oven_facet"
+path = "src/lib.rs"
+
+[dependencies]
+incan_lang = { workspace = true }
+incan_frontend = { workspace = true }
+incan_provider = { workspace = true }
+oven_model = { workspace = true }
+oven_rustc = { workspace = true }
+oven_cargo_compat = { workspace = true }
+oven_store = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

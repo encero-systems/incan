@@ -115,7 +115,7 @@ Built-in fixtures are provided by parameter name:
 - `tmp_workdir`
 - `env`
 
-`env` is backed by `incan_stdlib::testing::TestEnv`, which restores environment changes when dropped.
+`env` is backed by `incan_std_testing::TestEnv`, which restores environment changes when dropped.
 
 Fixture scopes:
 

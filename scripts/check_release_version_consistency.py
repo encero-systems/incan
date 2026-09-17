@@ -80,25 +80,51 @@ def mirrors(version: str) -> list[tuple[Path, re.Pattern[str], str]]:
             pip_form,
         ),
         (
-            Path("crates/incan_stdlib/stdlib/sdk-components.toml"),
+            Path("loaves/stdlib/sdk-components.toml"),
             re.compile(r'^version = "([^"]+)"', re.MULTILINE),
             cargo_form,
         ),
         (
-            Path("crates/incan_stdlib/stdlib/sdk-components.toml"),
+            Path("loaves/stdlib/sdk-components.toml"),
             re.compile(r'^compiler-requirement = "([^"]+)"', re.MULTILINE),
             sdk_requirement,
         ),
     ]
 
 
-def workspace_lock_version() -> str | None:
-    """Version ``Cargo.lock`` records for the root package, or ``None`` when the entry is absent."""
+def workspace_member_names() -> list[str]:
+    """Names of the workspace members that inherit the workspace version, read from their own manifests."""
+    manifest = (REPO_ROOT / "Cargo.toml").read_text(encoding="utf-8")
+    members = re.search(r"^members = \[(.*?)^\]", manifest, re.MULTILINE | re.DOTALL)
+    if not members:
+        raise SystemExit("check_release_version_consistency: no [workspace] members in Cargo.toml")
+    names = []
+    for relative in re.findall(r'"([^"]+)"', members.group(1)):
+        member = (REPO_ROOT / relative / "Cargo.toml").read_text(encoding="utf-8")
+        if not re.search(r"^version\.workspace = true$", member, re.MULTILINE):
+            continue
+        name = re.search(r'^name = "([^"]+)"$', member, re.MULTILINE)
+        if name:
+            names.append(name.group(1))
+    return names
+
+
+def workspace_lock_versions() -> list[tuple[str, str | None]]:
+    """The version ``Cargo.lock`` records for every member inheriting the workspace version.
+
+    The workspace root is virtual, so the lock has no single entry to read the version from; every member that
+    declares ``version.workspace = true`` must agree with the workspace, and a member the lock does not know is as
+    stale as a wrong number.
+    """
     lock = REPO_ROOT / "Cargo.lock"
     if not lock.is_file():
-        return None
-    match = re.search(r'^name = "incan"\nversion = "([^"]+)"', lock.read_text(encoding="utf-8"), re.MULTILINE)
-    return match.group(1) if match else None
+        return []
+    content = lock.read_text(encoding="utf-8")
+    versions = []
+    for name in workspace_member_names():
+        match = re.search(rf'^name = "{re.escape(name)}"\nversion = "([^"]+)"', content, re.MULTILINE)
+        versions.append((name, match.group(1) if match else None))
+    return versions
 
 
 def example_lock_versions() -> list[tuple[Path, str]]:
@@ -140,14 +166,17 @@ def main() -> int:
     # `Cargo.lock` is not hand-written, but bumping the workspace version without letting Cargo refresh it leaves the
     # two disagreeing, and every release job builds with `--locked`. That fails on the runner rather than here, after
     # a tag is already pushed, so it is checked alongside the hand-written mirrors.
-    lock_version = workspace_lock_version()
-    if lock_version is None:
-        failures.append("Cargo.lock: no root package version found to compare against the workspace version")
-    elif lock_version != version:
-        failures.append(
-            f"Cargo.lock: records {lock_version!r}, workspace is {version!r}"
-            " (run any cargo command to refresh it, then commit the result)"
-        )
+    lock_versions = workspace_lock_versions()
+    if not lock_versions:
+        failures.append("Cargo.lock: no workspace member version found to compare against the workspace version")
+    for name, lock_version in lock_versions:
+        if lock_version is None:
+            failures.append(f"Cargo.lock: no entry for workspace member {name!r}")
+        elif lock_version != version:
+            failures.append(
+                f"Cargo.lock: records {lock_version!r} for {name!r}, workspace is {version!r}"
+                " (run any cargo command to refresh it, then commit the result)"
+            )
 
     for relative, pattern, expected in mirrors(version):
         path = REPO_ROOT / relative

@@ -81,7 +81,7 @@ perf report
 
 ```bash
 # Profile compilation itself
-cargo flamegraph --bin incan -- build examples/advanced/async_await.incn
+cargo flamegraph -p incan-cli --bin incan -- build examples/advanced/async_await.incn
 
 # Or with samply (macOS)
 samply record ./target/release/incan build large_program.incn

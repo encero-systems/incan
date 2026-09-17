@@ -33,7 +33,7 @@ The report must use this exact top-level shape:
 ## Activity
 - [21:54] review started
 - [21:55] scope derived from issue 73 / RFC 015 / dirty worktree
-- [21:57] found 2 warnings in src/project_lifecycle/version.rs
+- [21:57] found 2 warnings in loaves/oven/oven_model/src/project_lifecycle/version.rs
 - [22:01] running make fmt
 - [22:04] make pre-commit passed
 
@@ -175,10 +175,10 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 - [ ] **Feature flows through all relevant stages.** If a new AST node is added:
   - Parsed and stored in the AST?
   - Validated in the typechecker (`check_decl`, `check_expr`, or `collect`)?
-  - Lowered in `src/backend/ir/lower/`?
-  - Emitted in `src/backend/ir/emit/`?
-- [ ] **Out-of-scope features are rejected at the typechecker**, not silently passed to lowering to fail later. Rejection should emit a typed diagnostic from `crates/incan_syntax/src/diagnostics/catalog/errors/`.
-- [ ] **Stdlib changes** (`crates/incan_stdlib/stdlib/`) have matching Rust-side backing in `crates/incan_stdlib/src/` and are registered in `STDLIB_NAMESPACES` (`crates/incan_core/src/lang/stdlib.rs`).
+  - Lowered in `loaves/compiler/incan_ir/src/lower/`?
+  - Emitted in `loaves/compiler/incan_emit/src/emit/`?
+- [ ] **Out-of-scope features are rejected at the typechecker**, not silently passed to lowering to fail later. Rejection should emit a typed diagnostic from `loaves/kernel/incan_syntax/src/diagnostics/catalog/errors/`.
+- [ ] **Stdlib changes** (`loaves/stdlib/`) have matching Rust-side backing in the owning component's facet (`loaves/stdlib/<component>/rust/src/`) and are registered in `STDLIB_NAMESPACES` (`loaves/kernel/incan_lang/src/lang/stdlib.rs`).
 
 ---
 
@@ -236,9 +236,9 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 
 ## Checklist 6 — Tests
 
-- [ ] **New functionality has tests.** For typechecker changes: unit tests in the `#[cfg(test)]` block. For codegen changes: a fixture in `tests/codegen_snapshots/` and a corresponding snapshot.
-- [ ] **Snapshots updated** if codegen changed. Command: `INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests`.
-- [ ] **Integration tests** (`tests/integration_tests.rs`) updated if the change affects end-to-end behavior.
+- [ ] **New functionality has tests.** For typechecker changes: unit tests in the `#[cfg(test)]` block. For codegen changes: a fixture in `loaves/compiler/incan_emit/tests/codegen_snapshots/` and a corresponding snapshot.
+- [ ] **Snapshots updated** if codegen changed. Command: `INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests`.
+- [ ] **Integration tests** (`loaves/toolchain/incan-cli/tests/integration_tests.rs`) updated if the change affects end-to-end behavior.
 - [ ] Both typechecker-level tests (semantic validation) AND codegen snapshot tests (end-to-end) exist for any pipeline feature.
 - [ ] **Compiler/runtime parity risks are tested** — when behavior exists in both compile-time checks and runtime helpers, add or verify parity coverage for the edge case.
 - [ ] **Tooling parity is preserved** — syntax, diagnostics, formatter, CLI, and LSP behavior stay aligned when shared frontend behavior changes.
@@ -265,12 +265,12 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 
 ## Checklist 8 — Architecture and layering
 
-- [ ] **Changes live in the correct layer/crate** — `incan_syntax` stays syntax-only; `incan_core` stays pure/deterministic; orchestration layers stay thin.
-- [ ] **Layering rules are preserved** — `incan` must not depend on `incan_stdlib` except as a dev-dependency; shared policy belongs in `incan_core`, runtime glue belongs in `incan_stdlib`.
+- [ ] **Changes live in the correct layer/crate** — `incan_syntax` stays syntax-only; `incan_lang` stays pure/deterministic; orchestration layers stay thin.
+- [ ] **Layering rules are preserved** — `incan` must not depend on a standard library facet (`incan_std_core` and the others) except as a dev-dependency; shared policy belongs in `incan_lang`, runtime glue belongs in the facets.
 - [ ] **No duplicated policy across layers** — if parser/typechecker/lowering/CLI/LSP need the same rule, prefer a shared helper, registry, or semantic pack.
 - [ ] **Registry-driven behavior stays registry-driven** — stdlib namespaces, soft keywords, surface semantics, and runtime requirements should extend the canonical registries rather than add hardcoded special cases.
 - [ ] **Runtime/compiler boundaries stay clean** — generated-program helpers belong in runtime crates; compiler logic belongs in compiler crates; avoid hidden drift between the two.
-- [ ] **Compiler/runtime parity uses `incan_core`** — shared semantics, canonical error text, and policy should come from `incan_core` rather than duplicated logic or string literals.
+- [ ] **Compiler/runtime parity uses `incan_lang`** — shared semantics, canonical error text, and policy should come from `incan_lang` rather than duplicated logic or string literals.
 - [ ] **Single source of truth is preserved** — do not recreate ad hoc registries, handwritten mirrors, or one-off resolution rules when a canonical table/module already exists.
 - [ ] **Language features use the right path** — prefer stdlib functions or builtins over new syntax unless control flow, evaluation rules, or typing rules genuinely require syntax; for import-activated features, prefer the semantics-pack path over ad hoc keyword handling.
 
@@ -280,7 +280,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 
 - [ ] **User-facing changes update the right docs** — rustdoc, docs-site pages, examples, and release notes stay aligned when behavior changes.
 - [ ] **Release-note inventories stay complete** — when the branch implements or materially completes an RFC/user-facing feature, verify the current release notes mention it in the implemented/features inventory where this repo expects that summary to live.
-- [ ] **Generated language reference is current** — if the change touches `crates/incan_core/src/lang/`, `crates/incan_core/src/bin/generate_lang_reference.rs`, or `workspaces/docs-site/docs/language/reference/language.md`, run `cargo run -p incan_core --bin generate_lang_reference`, inspect the resulting `language.md` diff, and require that generated diff to be committed or explicitly reported as blocked.
+- [ ] **Generated language reference is current** — if the change touches `loaves/kernel/incan_lang/src/lang/`, `loaves/kernel/incan_lang/src/bin/generate_lang_reference.rs`, or `workspaces/docs-site/docs/language/reference/language.md`, run `cargo run -p incan_lang --bin generate_lang_reference`, inspect the resulting `language.md` diff, and require that generated diff to be committed or explicitly reported as blocked.
 - [ ] **Compiler bugs discovered during review are surfaced explicitly** — if you find a likely compiler defect that should not be fixed inside the current change, invoke `flag-compiler-bug` instead of burying it in review notes.
 - [ ] **Repo learnings are captured when warranted** — if the change taught a durable lesson about architecture, testing, or pitfalls, consider whether `AGENTS.md` should be updated.
 
@@ -336,7 +336,7 @@ Before you write "no blockers", "no warnings", or equivalent clean-review langua
 - [ ] User-facing docs do not casually lean on RFC references unless the page is explicitly RFC/contributor-facing or the RFC appears in an explicit release-note inventory.
 - [ ] Docs, CLI help, examples, scaffolds, and release notes do not claim behavior the code does not implement.
 - [ ] Release-note inventories were updated where the repo expects them for implemented user-facing work.
-- [ ] If language registries or generated language-reference inputs changed, `cargo run -p incan_core --bin generate_lang_reference` was run and any resulting `workspaces/docs-site/docs/language/reference/language.md` diff was reviewed and committed.
+- [ ] If language registries or generated language-reference inputs changed, `cargo run -p incan_lang --bin generate_lang_reference` was run and any resulting `workspaces/docs-site/docs/language/reference/language.md` diff was reviewed and committed.
 - [ ] `make fmt` was run after fixes.
 - [ ] `make pre-commit` was run after the final fix pass, or you explicitly report why it was not run.
 

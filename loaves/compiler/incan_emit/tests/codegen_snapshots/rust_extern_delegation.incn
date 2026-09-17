@@ -1,0 +1,12 @@
+rust.module("incan_std_testing")
+
+@rust.extern
+def fail_t(msg: str) -> None:
+    ...
+
+def assert_true(value: bool) -> None:
+    if not value:
+        fail_t("assertion failed: expected true")
+
+def main() -> None:
+    assert_true(true)

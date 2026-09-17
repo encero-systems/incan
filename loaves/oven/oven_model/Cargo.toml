@@ -1,0 +1,25 @@
+[package]
+name = "oven_model"
+version = "0.6.0-dev.5"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Oven's project model: manifest, workspace, lifecycle policy, toolchain layout and interop declarations"
+
+[lib]
+name = "oven_model"
+path = "src/lib.rs"
+
+[dependencies]
+globset = "0.4.18"
+hex = "0.4.3"
+semver = "1.0.27"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10.9"
+thiserror = { workspace = true }
+toml = "0.9"
+toml_edit = { version = "0.25", features = ["parse", "serde"] }
+
+[dev-dependencies]
+tempfile = "3"

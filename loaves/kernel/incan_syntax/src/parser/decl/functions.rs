@@ -1,0 +1,328 @@
+/// Parsed receiver facts and remaining explicit parameters for one method declaration.
+type ParsedReceiverAndParams = (Option<Receiver>, Option<Spanned<Ident>>, Vec<Spanned<Param>>);
+
+/// Function and method parsing (including parameters and receivers).
+impl<'a> Parser<'a> {
+    /// Parse a function declaration.
+    fn function_decl(
+        &mut self,
+        decorators: Vec<Spanned<Decorator>>,
+        visibility: Visibility,
+    ) -> Result<FunctionDecl, CompileError> {
+        let mut surface_modifiers = Vec::new();
+        while let Some(id) = self.match_surface_keyword(KeywordSurfaceKind::DeclarationModifier) {
+            surface_modifiers.push(SurfaceModifier {
+                key: SurfaceFeatureKey::SoftKeyword(id),
+            });
+        }
+        self.expect_keyword(KeywordId::Def, "Expected 'def'")?;
+        let name = self.identifier()?;
+
+        // Parse optional generic type parameters: def func[T, E](...)
+        let type_params = self.type_params()?;
+
+        self.expect_punct(PunctuationId::LParen, "Expected '(' after function name")?;
+        let params = self.params()?;
+        self.expect_punct(PunctuationId::RParen, "Expected ')' after parameters")?;
+        self.expect_punct(PunctuationId::Arrow, "Expected '->' before return type")?;
+        let return_type = self.type_expr()?;
+        self.expect_punct(PunctuationId::Colon, "Expected ':' after return type")?;
+        self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
+        self.expect_suite_indent("Expected indented block")?;
+
+        let body = self.block()?;
+
+        self.expect(&TokenKind::Dedent, "Expected dedent after function body")?;
+
+        Ok(FunctionDecl {
+            visibility,
+            decorators,
+            surface_modifiers,
+            name,
+            type_params,
+            params,
+            return_type,
+            body,
+        })
+    }
+
+    /// Parse a method declaration, optionally allowing abstract body-less methods in trait contexts.
+    fn method_decl(
+        &mut self,
+        decorators: Vec<Spanned<Decorator>>,
+        allow_abstract: bool,
+    ) -> Result<Spanned<MethodDecl>, CompileError> {
+        let start = self.current_span().start;
+        let mut surface_modifiers = Vec::new();
+        while let Some(id) = self.match_surface_keyword(KeywordSurfaceKind::DeclarationModifier) {
+            surface_modifiers.push(SurfaceModifier {
+                key: SurfaceFeatureKey::SoftKeyword(id),
+            });
+        }
+        self.expect_keyword(KeywordId::Def, "Expected 'def'")?;
+        let name = self.identifier_or_from_keyword()?;
+        let type_params = self.type_params()?;
+        self.expect_punct(PunctuationId::LParen, "Expected '(' after method name")?;
+
+        // Parse receiver and params
+        let is_classmethod = decorators.iter().any(|decorator| {
+            incan_lang::lang::decorators::from_segments(&decorator.node.path.segments)
+                == Some(incan_lang::lang::decorators::DecoratorId::ClassMethod)
+        });
+        let (receiver, receiver_binding, params) = self.receiver_and_params(is_classmethod)?;
+
+        self.expect_punct(PunctuationId::RParen, "Expected ')' after parameters")?;
+        let trait_target = if self.match_keyword(KeywordId::For) {
+            Some(self.trait_bound_spanned()?)
+        } else {
+            None
+        };
+        self.expect_punct(PunctuationId::Arrow, "Expected '->' before return type")?;
+        let return_type = self.type_expr()?;
+        if self.check_keyword(KeywordId::For) {
+            return Err(errors::method_trait_target_after_return_type(self.current_span()));
+        }
+
+        // Check for abstract method (no body), ellipsis, or block.
+        let body = if self.check(&TokenKind::Newline) {
+            if !allow_abstract {
+                return Err(errors::method_decl_expected_body(self.current_span()));
+            }
+            None
+        } else if self.match_punct(PunctuationId::Colon) {
+            if self.match_punct(PunctuationId::Ellipsis) {
+                None
+            } else {
+                self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
+                self.expect_suite_indent("Expected indented block")?;
+                let b = self.block()?;
+                self.expect(&TokenKind::Dedent, "Expected dedent after method body")?;
+                Some(b)
+            }
+        } else {
+            return Err(errors::method_decl_expected_body(self.current_span()));
+        };
+
+        let end = self.tokens[self.pos - 1].span.end;
+
+        Ok(Spanned::new(
+            MethodDecl {
+                decorators,
+                surface_modifiers,
+                name,
+                type_params,
+                receiver,
+                receiver_binding,
+                params,
+                trait_target,
+                return_type,
+                body,
+            },
+            Span::new(start, end),
+        ))
+    }
+
+    /// Parse an RFC 046 computed property declaration in a member-bearing type body.
+    fn property_decl(
+        &mut self,
+        decorators: Vec<Spanned<Decorator>>,
+        allow_abstract: bool,
+    ) -> Result<Spanned<PropertyDecl>, CompileError> {
+        let start = self.current_span().start;
+        if !decorators.is_empty() {
+            return Err(errors::decorators_on_properties_not_supported(decorators[0].span));
+        }
+
+        let visibility = if self.match_keyword(KeywordId::Pub) {
+            Visibility::Public
+        } else {
+            Visibility::Private
+        };
+
+        let modifier_start = self.current_span();
+        let mut has_surface_modifier = false;
+        while self
+            .match_surface_keyword(KeywordSurfaceKind::DeclarationModifier)
+            .is_some()
+        {
+            has_surface_modifier = true;
+        }
+        if has_surface_modifier {
+            return Err(errors::property_modifiers_not_supported(modifier_start));
+        }
+
+        if !self.match_ident_text("property") {
+            return Err(errors::expected_token_message(
+                "Expected 'property'",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        }
+        let name = self.identifier_or_from_keyword()?;
+        if self.check_punct(PunctuationId::LParen) {
+            return Err(errors::property_parameters_not_supported(self.current_span()));
+        }
+        self.expect_punct(PunctuationId::Arrow, "Expected '->' before property return type")?;
+        let return_type = self.type_expr()?;
+
+        let body = if self.check(&TokenKind::Newline) {
+            if !allow_abstract {
+                return Err(errors::property_decl_expected_body(self.current_span()));
+            }
+            None
+        } else if self.match_punct(PunctuationId::Colon) {
+            if self.match_punct(PunctuationId::Ellipsis) {
+                if !allow_abstract {
+                    return Err(errors::property_decl_expected_body(self.current_span()));
+                }
+                None
+            } else {
+                self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
+                self.expect_suite_indent("Expected indented block")?;
+                let body = self.block()?;
+                self.expect(&TokenKind::Dedent, "Expected dedent after property body")?;
+                Some(body)
+            }
+        } else {
+            return Err(errors::property_decl_expected_body(self.current_span()));
+        };
+
+        let end = self.tokens[self.pos - 1].span.end;
+        Ok(Spanned::new(
+            PropertyDecl {
+                visibility,
+                name,
+                return_type,
+                body,
+            },
+            Span::new(start, end),
+        ))
+    }
+
+    /// Parse a receiver and parameters.
+    fn receiver_and_params(
+        &mut self,
+        is_classmethod: bool,
+    ) -> Result<ParsedReceiverAndParams, CompileError> {
+        self.skip_newlines();
+
+        // Check for receiver
+        let (receiver, receiver_binding) = if self.check_keyword(KeywordId::Mut) {
+            self.advance();
+            let span = self.current_span();
+            self.expect(&TokenKind::Keyword(KeywordId::SelfKw), "Expected 'self' after 'mut'")?;
+            self.skip_newlines();
+            if self.check(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                self.advance();
+                self.skip_newlines();
+            }
+            (
+                Some(Receiver::Mutable),
+                Some(Spanned::new(
+                    incan_lang::lang::keywords::as_str(KeywordId::SelfKw).to_string(),
+                    span,
+                )),
+            )
+        } else if self.check_keyword(KeywordId::SelfKw) {
+            let span = self.current_span();
+            self.advance();
+            self.skip_newlines();
+            if self.check(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                self.advance();
+                self.skip_newlines();
+            }
+            (
+                Some(Receiver::Immutable),
+                Some(Spanned::new(
+                    incan_lang::lang::keywords::as_str(KeywordId::SelfKw).to_string(),
+                    span,
+                )),
+            )
+        } else if is_classmethod && self.peek_ident_text(incan_lang::lang::keywords::as_str(KeywordId::Cls)) {
+            let span = self.current_span();
+            self.advance();
+            self.skip_newlines();
+            if self.check(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                self.advance();
+                self.skip_newlines();
+            }
+            (
+                None,
+                Some(Spanned::new(
+                    incan_lang::lang::keywords::as_str(KeywordId::Cls).to_string(),
+                    span,
+                )),
+            )
+        } else {
+            (None, None)
+        };
+
+        let params = if !self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
+            self.params()?
+        } else {
+            Vec::new()
+        };
+
+        Ok((receiver, receiver_binding, params))
+    }
+
+    /// Parse parameters.
+    fn params(&mut self) -> Result<Vec<Spanned<Param>>, CompileError> {
+        // Implicit line continuation: skip newlines after (
+        self.skip_newlines();
+
+        let mut params = Vec::new();
+        if !self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
+            loop {
+                // Allow trailing comma before )
+                self.skip_newlines();
+                if self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
+                    break;
+                }
+
+                params.push(self.param()?);
+                self.skip_newlines();
+                if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                    break;
+                }
+            }
+        }
+        Ok(params)
+    }
+
+    /// Parse a parameter.
+    fn param(&mut self) -> Result<Spanned<Param>, CompileError> {
+        let start = self.current_span().start;
+        // Check for optional 'mut' keyword
+        let is_mut = self.match_token(&TokenKind::Keyword(KeywordId::Mut));
+        let kind = if self.match_token(&TokenKind::Operator(OperatorId::StarStar)) {
+            ParamKind::RestKeyword
+        } else if self.match_token(&TokenKind::Operator(OperatorId::Star)) {
+            ParamKind::RestPositional
+        } else {
+            ParamKind::Normal
+        };
+        let name = self.identifier()?;
+        self.expect(
+            &TokenKind::Punctuation(PunctuationId::Colon),
+            "Expected ':' after parameter name",
+        )?;
+        let ty = self.type_expr()?;
+        let default = if self.match_token(&TokenKind::Operator(OperatorId::Eq)) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        let end = self.tokens[self.pos - 1].span.end;
+        Ok(Spanned::new(
+            Param {
+                is_mut,
+                kind,
+                name,
+                ty,
+                default,
+            },
+            Span::new(start, end),
+        ))
+    }
+}

@@ -70,7 +70,7 @@ Never name this section "Implementation plan", "Suggested rollout", or similar.
 - **Typechecker / Symbol resolution**: semantic checks or symbol table changes
 - **IR Lowering**: how the new construct lowers to IR
 - **Emission**: what changes in generated Rust output
-- **Stdlib / Runtime (`incan_stdlib`)**: runtime-side changes
+- **Stdlib / Runtime (the `incan_std_<component>` facets)**: runtime-side changes
 - **Formatter**: new syntax needs formatter support
 - **LSP / Tooling**: completion, hover, diagnostics impact
 ```

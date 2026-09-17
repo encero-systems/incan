@@ -1,0 +1,646 @@
+{
+  "files": [
+    {
+      "path": "loaves/compiler/incan_driver/src/backend/c_abi.rs",
+      "category": "C ABI target-triple selection and clang AST node-kind matching",
+      "expected_count": 5,
+      "expected_fingerprint": "0xca7bf27488024e44"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/backend/project/generator.rs",
+      "category": "generated project layout: std path roots, the target directory, the lock format marker, dependency table names, entry module names and the stdlib module",
+      "expected_count": 7,
+      "expected_fingerprint": "0x589c2a6f8554b08b"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/backend/project/runner.rs",
+      "category": "Cargo offline and frozen flag detection",
+      "expected_count": 1,
+      "expected_fingerprint": "0xdbb6cb2d2f7e5615"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/backend/shadow/abs_sum_profile_tests.rs",
+      "category": "shadow comparison legacy-route requirement environment flag",
+      "expected_count": 1,
+      "expected_fingerprint": "0x26029eabba9d5342"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/backend/shadow/enumerate_zip_tests.rs",
+      "category": "shadow comparison legacy-route requirement environment flag",
+      "expected_count": 1,
+      "expected_fingerprint": "0x6d92bc56a991a48f"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/backend/shadow/json_stringify_tests.rs",
+      "category": "shadow comparison legacy-route requirement environment flag",
+      "expected_count": 6,
+      "expected_fingerprint": "0x25f4d476ba282831"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/backend/shadow/legacy_oven.rs",
+      "category": "Cargo environment variable filtering for the legacy Oven route",
+      "expected_count": 1,
+      "expected_fingerprint": "0xc92aa5a8e9ab74d1"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/backend/shadow/len_string_tests.rs",
+      "category": "shadow comparison legacy-route requirement environment flag",
+      "expected_count": 1,
+      "expected_fingerprint": "0x6d92bc56a991a48f"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/backend/shadow/mod.rs",
+      "category": "shadow comparison entrypoint name, std::process observability exclusion and runtime failure message classification",
+      "expected_count": 7,
+      "expected_fingerprint": "0x413857b09adc9312"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/bake.rs",
+      "category": "Oven bake profile selection",
+      "expected_count": 3,
+      "expected_fingerprint": "0xf643e2ca93edf3f7"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/library_project.rs",
+      "category": "library build profile selection and stdlib crate exclusion",
+      "expected_count": 2,
+      "expected_fingerprint": "0x785d0f85e1758060"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/output_materialization.rs",
+      "category": "completed-output profile selection",
+      "expected_count": 1,
+      "expected_fingerprint": "0x6c28a9bbc1a5bab9"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/output_paths.rs",
+      "category": "host target-triple table, Cargo out-dir and build-script layout compatibility",
+      "expected_count": 7,
+      "expected_fingerprint": "0x4aebd9d8ae316bd9"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/output_selection.rs",
+      "category": "baked-output profile selection and path-source dependency projection",
+      "expected_count": 3,
+      "expected_fingerprint": "0x548c43ec45825911"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/oven_project.rs",
+      "category": "stdlib namespace and crate exclusion, Oven Loaf execution environment flags, existing-plan publication marker",
+      "expected_count": 7,
+      "expected_fingerprint": "0x577f02c48b929508"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/plan_authority.rs",
+      "category": "Oven Loaf execution environment flag",
+      "expected_count": 1,
+      "expected_fingerprint": "0x0f4d3698de00fc78"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/plan_selection.rs",
+      "category": "plan profile selection, existing-plan publication marker and test-dependency envelope version",
+      "expected_count": 3,
+      "expected_fingerprint": "0x6a7bfcf5ee6e1393"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/provider_compilation.rs",
+      "category": "incan_derive macro-dependency compatibility",
+      "expected_count": 7,
+      "expected_fingerprint": "0xa5538e05fb162812"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/provider_metadata.rs",
+      "category": "describe decorator fact projection",
+      "expected_count": 1,
+      "expected_fingerprint": "0x3737e4b5aaef1e61"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/publication.rs",
+      "category": "Rust source extension check for inspection authority",
+      "expected_count": 1,
+      "expected_fingerprint": "0x7a60930e105ab2a0"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/replacement.rs",
+      "category": "replacement backend main-function selection",
+      "expected_count": 1,
+      "expected_fingerprint": "0x6fe760297364f1c3"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/reuse.rs",
+      "category": "packaged-Loaf store relative path compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0x499c85fb4eca755f"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build/rust_extern.rs",
+      "category": "rust.extern decorator path matching",
+      "expected_count": 1,
+      "expected_fingerprint": "0xbed7f3dadd6d0868"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/build_report.rs",
+      "category": "Rust source extension check for report source files",
+      "expected_count": 1,
+      "expected_fingerprint": "0x408c977e67bf511f"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/cargo_policy.rs",
+      "category": "environment flag truthiness for Cargo policy",
+      "expected_count": 1,
+      "expected_fingerprint": "0x7b43ebb63741a15c"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/generated_cache.rs",
+      "category": "generated-cache opt-out values, Cargo profile and target environment passthrough, and Cargo flag parsing",
+      "expected_count": 5,
+      "expected_fingerprint": "0x8bfea3ce1344d984"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/inspect/closure.rs",
+      "category": "codegraph declaration visibility for closure export",
+      "expected_count": 1,
+      "expected_fingerprint": "0x9c478fb0eaa58204"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/inspect/codegraph.rs",
+      "category": "codegraph source discovery: the Incan file extension, ignored directories, public from-import filtering and crate-relative module segments",
+      "expected_count": 5,
+      "expected_fingerprint": "0x115079626d32282e"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/lock/rust_inspect.rs",
+      "category": "Oven Loaf environment flag for rust-inspect preparation",
+      "expected_count": 1,
+      "expected_fingerprint": "0xd3d35633f9d39474"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/modules.rs",
+      "category": "package entrypoint stem",
+      "expected_count": 1,
+      "expected_fingerprint": "0x8c4c9e75782e649a"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/project.rs",
+      "category": "project source discovery and generated-state source exclusion",
+      "expected_count": 3,
+      "expected_fingerprint": "0x20dd2e3b43ec0187"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/replacement_compatibility.rs",
+      "category": "replacement-compatibility registry: repository path traversal checks, evidence kinds, and the capability and feature identifiers the anchor profiles and body-corpus mappings key on",
+      "expected_count": 40,
+      "expected_fingerprint": "0x2bb3122e34c9a456"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/rust_inspect_workspace.rs",
+      "category": "rust-inspect workspace prewarm flags, lock-projection and primitive-namespace compatibility",
+      "expected_count": 5,
+      "expected_fingerprint": "0x2149b316c851f3d0"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/shadow_support.rs",
+      "category": "shadow comparison Oven Loaf environment flag and stdlib import exclusion",
+      "expected_count": 2,
+      "expected_fingerprint": "0x94412866de1f8595"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/testing/discovery.rs",
+      "category": "test discovery marker, fixture, conftest and parametrize vocabulary",
+      "expected_count": 26,
+      "expected_fingerprint": "0xe266ad39aa22ecd4"
+    },
+    {
+      "path": "loaves/compiler/incan_driver/src/testing/mod.rs",
+      "category": "test file discovery root directories",
+      "expected_count": 1,
+      "expected_fingerprint": "0x7dc8ae981cbf9965"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/checked_program/sdk_module_derives.rs",
+      "category": "checked SDK metadata derive-module assertions",
+      "expected_count": 1,
+      "expected_fingerprint": "0x85e10189cee98b1e"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/codegen.rs",
+      "category": "codegen facade compatibility and Rust serde fallback",
+      "expected_count": 4,
+      "expected_fingerprint": "0xcedb21689b86932d"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/codegen/capability_bridge.rs",
+      "category": "serialized trait capability argument matching",
+      "expected_count": 1,
+      "expected_fingerprint": "0x55a833df26b069fe"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/codegen/dependency_metadata.rs",
+      "category": "dependency metadata compatibility, web route preservation, and registry-backed iterator trait reachability",
+      "expected_count": 3,
+      "expected_fingerprint": "0xee7f98cf89bfc22b"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/codegen/serde_activation.rs",
+      "category": "serde activation compatibility",
+      "expected_count": 3,
+      "expected_fingerprint": "0x2b22f0e7dbaebdbd"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/codegen/string_try_from_bridge.rs",
+      "category": "std.environ generic conversion bridge compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x3447ddc21699825d"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/conversions.rs",
+      "category": "central argument conversion and canonical owned Rust String shape checks",
+      "expected_count": 2,
+      "expected_fingerprint": "0xc102811ab1ea1d38"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/decls/functions.rs",
+      "category": "callable and Rust macro emission compatibility with registry-backed iterator trait emission",
+      "expected_count": 3,
+      "expected_fingerprint": "0xcfacf5792303196e"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/decls/impls.rs",
+      "category": "generated stdlib JSON/newtype helper retention",
+      "expected_count": 4,
+      "expected_fingerprint": "0x3fc0034bdf2e07be"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/decls/mod.rs",
+      "category": "generated stdlib import path recognition",
+      "expected_count": 1,
+      "expected_fingerprint": "0x1c3e7de164e70908"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/decls/structures.rs",
+      "category": "derive macro emission compatibility",
+      "expected_count": 4,
+      "expected_fingerprint": "0xd279ee037e30c621"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/calls.rs",
+      "category": "testing helper and public-module emission compatibility",
+      "expected_count": 4,
+      "expected_fingerprint": "0x7070fb605180f8f9"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/comprehensions.rs",
+      "category": "dict view compatibility emission",
+      "expected_count": 1,
+      "expected_fingerprint": "0x79dfdfd491f691d1"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/indexing.rs",
+      "category": "callable source-name metadata emission",
+      "expected_count": 1,
+      "expected_fingerprint": "0x87dd19d1c7e84652"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
+      "category": "quarantined metadata-free method compatibility",
+      "expected_count": 11,
+      "expected_fingerprint": "0x78afd8a9c8305f8a"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/fast_paths.rs",
+      "category": "registered method fast-path receiver typing",
+      "expected_count": 2,
+      "expected_fingerprint": "0xd121f2f287b25f51"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/mod.rs",
+      "category": "numeric emission compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x7ab516025dc0a176"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
+      "category": "Rust path segment escaping and public dependency identity compatibility",
+      "expected_count": 3,
+      "expected_fingerprint": "0x24e1c86b39837a62"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/native_unions.rs",
+      "category": "`pub::` import-root segment in native union owner paths",
+      "expected_count": 2,
+      "expected_fingerprint": "0xf88a5f38a2f57053"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/program.rs",
+      "category": "callable source-name metadata use analysis",
+      "expected_count": 2,
+      "expected_fingerprint": "0x497886b639dd72c9"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/types.rs",
+      "category": "Rust path and static trait emission compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0xc141aee1d5c1ebe1"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/ownership.rs",
+      "category": "central external Rust duckborrower buffer planning",
+      "expected_count": 4,
+      "expected_fingerprint": "0xa966759c04bff596"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/reference_shape.rs",
+      "category": "central Rust reference-shape compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0x1f31d645283d8922"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/replacement/executable_resolution_tests.rs",
+      "category": "executable-resolution fixture program, module-name and executable-surface assertions",
+      "expected_count": 16,
+      "expected_fingerprint": "0x57b05cb06a4d87b3"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
+      "category": "replacement executor value-target selection",
+      "expected_count": 1,
+      "expected_fingerprint": "0xfe49ea402cb9f33b"
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/trait_bound_inference.rs",
+      "category": "clone/as_ref/self and reflection trait-bound inference compatibility",
+      "expected_count": 4,
+      "expected_fingerprint": "0x7b05117f4d9db0da"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/provider/features.rs",
+      "category": "manifest feature-section spelling",
+      "expected_count": 2,
+      "expected_fingerprint": "0x50c3a16c468f3c51"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/provider/plan.rs",
+      "category": "std and pub namespace authority claims",
+      "expected_count": 4,
+      "expected_fingerprint": "0x08c1bc0bf8f6ab34"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/testing_markers.rs",
+      "category": "metadata-loaded testing marker inventory",
+      "expected_count": 13,
+      "expected_fingerprint": "0x4d4acefa2e275e14"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/canonical_identity_tests.rs",
+      "category": "RFC 120 canonical identity conformance assertions",
+      "expected_count": 35,
+      "expected_fingerprint": "0x6564955906f965ce"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_decl.rs",
+      "category": "declaration-level stdlib, derive, and checked registry compatibility",
+      "expected_count": 24,
+      "expected_fingerprint": "0xb3c5a0a6bf8d7881"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/access.rs",
+      "category": "method/type access, contextual Rust receiver specialization, public modules, checked registry, and C output-slot boundary classification",
+      "expected_count": 51,
+      "expected_fingerprint": "0x880792af30221e0b"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/basics.rs",
+      "category": "basic expression Rust/stdlib escape compatibility",
+      "expected_count": 4,
+      "expected_fingerprint": "0xf0b6fe14e6b2b9a8"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs",
+      "category": "enum constructor, public-module member, and checked C output/string-constructor compatibility",
+      "expected_count": 16,
+      "expected_fingerprint": "0x9a95063b42aca948"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/constructors.rs",
+      "category": "constructor named-argument compatibility",
+      "expected_count": 3,
+      "expected_fingerprint": "0x90ea26ed761933dc"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs",
+      "category": "Rust-boundary borrowed display recognition",
+      "expected_count": 2,
+      "expected_fingerprint": "0x2c33eb1e16ffe7d2"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs",
+      "category": "async guard method control-flow policy",
+      "expected_count": 3,
+      "expected_fingerprint": "0x2893f90138d3e39f"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/mod.rs",
+      "category": "expression-level pub/rust namespace compatibility",
+      "expected_count": 3,
+      "expected_fingerprint": "0x2cba3072b14a1ec2"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs",
+      "category": "statement-level runtime exception compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0xe98b9ff171b2c549"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/collect.rs",
+      "category": "derive and public-module collection compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0x7f4b804370839554"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/collect/decorators.rs",
+      "category": "decorator and Rust module collection compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0xcfcbc25e50c8fd42"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs",
+      "category": "stdlib import, checked API target paths, exact provider Rust reexports, provider-bound roots, and extension-trait compatibility",
+      "expected_count": 13,
+      "expected_fingerprint": "0x06a60de7f5265c7f"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/const_eval.rs",
+      "category": "Rust module const classification compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x654cd60a41fc2f2f"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/mod.rs",
+      "category": "Rust display type parsing, provider ABI lookup, shared nominal String canonicalization, source type-name validation, stdlib derive compatibility, and dependency registry owner paths",
+      "expected_count": 43,
+      "expected_fingerprint": "0x2277a136a6feb452"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs",
+      "category": "stdlib loader primitive compatibility",
+      "expected_count": 7,
+      "expected_fingerprint": "0x892edd99ae071c7f"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/validate_rust_module.rs",
+      "category": "Rust module validation compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x3814274efdb9fae2"
+    },
+    {
+      "path": "loaves/compiler/incan_ir/src/expr.rs",
+      "category": "known iterator method enum classification",
+      "expected_count": 23,
+      "expected_fingerprint": "0x5c7ee976092c9c9a"
+    },
+    {
+      "path": "loaves/compiler/incan_ir/src/lower/decl/functions.rs",
+      "category": "generic callable source-name lowering compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0xc94cea987d050f33"
+    },
+    {
+      "path": "loaves/compiler/incan_ir/src/lower/decl/helpers.rs",
+      "category": "serde derive lowering compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0x7ca9fe0193f302ed"
+    },
+    {
+      "path": "loaves/compiler/incan_ir/src/lower/decl/mod.rs",
+      "category": "derive and checked registry lowering compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0x5f09539278cec8e5"
+    },
+    {
+      "path": "loaves/compiler/incan_ir/src/lower/expr/calls.rs",
+      "category": "public dependency call, checked C string construction, default lowering, and assert-raises policy",
+      "expected_count": 8,
+      "expected_fingerprint": "0xd7fbb13ceabbe8ed"
+    },
+    {
+      "path": "loaves/compiler/incan_ir/src/lower/expr/mod.rs",
+      "category": "method, public dependency, stdlib, checked C string-pointer, and output lowering compatibility",
+      "expected_count": 17,
+      "expected_fingerprint": "0x96d00a7b6140eca6"
+    },
+    {
+      "path": "loaves/compiler/incan_ir/src/lower/mod.rs",
+      "category": "derive and validation lowering compatibility",
+      "expected_count": 4,
+      "expected_fingerprint": "0xae0c6d1c895333e6"
+    },
+    {
+      "path": "loaves/compiler/incan_ir/src/lower/stmt.rs",
+      "category": "placeholder assignment lowering compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0xae028e0ef66ceaa2"
+    },
+    {
+      "path": "loaves/compiler/incan_ir/src/lower/types.rs",
+      "category": "lowered primitive and type-token spelling compatibility",
+      "expected_count": 9,
+      "expected_fingerprint": "0xeeb0ca6fafb43da6"
+    },
+    {
+      "path": "loaves/compiler/incan_provider/src/dependency_resolver.rs",
+      "category": "dependency resolver registry and package-alias policy",
+      "expected_count": 17,
+      "expected_fingerprint": "0xde8d324352b42342"
+    },
+    {
+      "path": "loaves/compiler/incan_provider/src/effect_digest.rs",
+      "category": "effect-digest source-tree target exclusion",
+      "expected_count": 1,
+      "expected_fingerprint": "0xb9e5e7e7fc4c5038"
+    },
+    {
+      "path": "loaves/compiler/incan_provider/src/inventory.rs",
+      "category": "SDK inventory manifest section",
+      "expected_count": 1,
+      "expected_fingerprint": "0x12ad1d34129ad869"
+    },
+    {
+      "path": "loaves/compiler/incan_provider/src/sdk_store.rs",
+      "category": "provider source-tree hashing target exclusion",
+      "expected_count": 1,
+      "expected_fingerprint": "0xf6b309b30611feae"
+    },
+    {
+      "path": "loaves/compiler/incan_provider/src/vocab_extraction.rs",
+      "category": "vocab desugarer artifact discovery, profile and crate-type checks",
+      "expected_count": 3,
+      "expected_fingerprint": "0xe97ac641de1e4572"
+    },
+    {
+      "path": "loaves/compiler/rust_inspect/src/cache.rs",
+      "category": "rust-inspect cache migration, generated Rust syntax metadata compatibility, and Rust prelude namespace shadowing",
+      "expected_count": 31,
+      "expected_fingerprint": "0x3adea7db74ff9e4a"
+    },
+    {
+      "path": "loaves/compiler/rust_inspect/src/cache_tests.rs",
+      "category": "rust-inspect generated metadata regression assertions",
+      "expected_count": 26,
+      "expected_fingerprint": "0x5560cdfc009162f8"
+    },
+    {
+      "path": "loaves/compiler/rust_inspect/src/cache_timing.rs",
+      "category": "rust-inspect timing environment compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0xdc8309b97ee19675"
+    },
+    {
+      "path": "loaves/compiler/rust_inspect/src/digest_tokens.rs",
+      "category": "Rust attribute and macro keywords the declaration digest excludes",
+      "expected_count": 2,
+      "expected_fingerprint": "0x4b52d4b8a76f66fd"
+    },
+    {
+      "path": "loaves/compiler/rust_inspect/src/extractor.rs",
+      "category": "rust-inspect display-shape normalization",
+      "expected_count": 11,
+      "expected_fingerprint": "0xba1b1488249dc03e"
+    },
+    {
+      "path": "loaves/compiler/rust_inspect/src/inspector.rs",
+      "category": "rust-inspect environment and unknown-display normalization",
+      "expected_count": 2,
+      "expected_fingerprint": "0xd1080e9767292290"
+    },
+    {
+      "path": "loaves/compiler/rust_inspect/src/loader.rs",
+      "category": "rust-inspect Rust edition compatibility for compiler-authored direct projects",
+      "expected_count": 2,
+      "expected_fingerprint": "0xfec68511646db439"
+    },
+    {
+      "path": "loaves/compiler/rust_inspect/src/receiver_contract.rs",
+      "category": "original Rust signature lifetime elision and static lifetime exclusions",
+      "expected_count": 3,
+      "expected_fingerprint": "0x1dc2b536c0293d40"
+    },
+    {
+      "path": "loaves/kernel/incan_lang/src/interop/coercions.rs",
+      "category": "registry-backed Rust-boundary coercion policy",
+      "expected_count": 39,
+      "expected_fingerprint": "0x309683062c796469"
+    },
+    {
+      "path": "loaves/kernel/incan_lang/src/interop/extension_traits.rs",
+      "category": "metadata-free Rust extension-trait fallback inventory",
+      "expected_count": 11,
+      "expected_fingerprint": "0x821039893ddb773a"
+    },
+    {
+      "path": "loaves/kernel/incan_lang/src/interop/metadata.rs",
+      "category": "registry-backed Rust collection and compiler-owned function metadata policy, plus shared Rust type-shape parsing including canonical owned String displays with allocator arguments",
+      "expected_count": 27,
+      "expected_fingerprint": "0x5b667e9989aff4dc"
+    }
+  ]
+}

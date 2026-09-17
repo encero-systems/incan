@@ -4,10 +4,10 @@ Thank you for your interest in contributing to the Incan programming language! T
 
 ## Start Here (Docs)
 
-- **Contributor docs (this repo)**: see `docs/contributing/`
-  - [Contributor Docs Index](docs/contributing/README.md)
-  - [Extending the Language](docs/contributing/extending_language.md) — when to add builtins vs new syntax
-- **Compiler architecture overview**: [docs/architecture.md](docs/architecture.md)
+- **Contributor docs (this repo)**: see `workspaces/docs-site/docs/contributing/`
+  - [Contributor Docs Index](workspaces/docs-site/docs/contributing/index.md)
+  - [Extending the Language](workspaces/docs-site/docs/contributing/how-to/extending_language.md) — when to add builtins vs new syntax
+- **Compiler architecture overview**: [Architecture](workspaces/docs-site/docs/contributing/explanation/architecture.md)
 
 ## Getting Started
 
@@ -44,26 +44,26 @@ The compiler is organized into a **frontend** (lex/parse/typecheck), a **backend
 
 For an up-to-date module map, see:
 
-- [Compiler Architecture](docs/architecture.md) (includes a module layout table)
+- [Compiler Architecture](workspaces/docs-site/docs/contributing/explanation/architecture.md) (includes a module layout table)
 
 ## Key Development Tasks
 
 ### Bumping the Version
 
-The workspace uses **Cargo workspace package metadata**, so you only bump versions in **one place**.
+The toolchain version lives in **one place**, the root `Cargo.toml`'s `[workspace.package] version`; the kernel, compiler and toolchain crates inherit it. Two rings ship on their own line — the Oven (`oven_model`, `oven_store`, `oven_rustc`) and the stdlib runtime (the `incan_std_*` facets, `incan_derive`, `incan_web_macros`) — and `incan_vocab`, the vocabulary registration contract, has carried its own since before the rings existed. Each of those declares an explicit `version` in its manifest, and the root `[workspace.dependencies]` entry for it repeats that line as a requirement beside its `path`; `scripts/check_ring_versions.py` (part of `make version-gate`) keeps the crates of a ring, and the table, in agreement.
 
-1. Edit the root `Cargo.toml` and update:
-   - `[workspace.package] version = "..."` (this is the single source of truth)
+1. Edit the root `Cargo.toml` and update `[workspace.package] version = "..."`. Bump a ring's line in the same change only when that ring actually changed: edit its crates' `version` and the matching `version` in the root table — and, for the stdlib ring, `incan_emit::GENERATED_FOR_STDLIB_VERSION`, the line the compiler generates code for (it does not link the runtime, so it declares the line instead).
 2. Verify everything still passes:
    - `cargo test`
-   - `make pre-commit` (fast local gate)
-   - `make pre-commit-full` (before pushing / opening PR)
+   - `make pre-commit-fast` (fast local gate)
+   - `make pre-commit` (full gate before pushing / opening PR)
 3. Commit the change.
 
 Notes:
 
-- The compiler exposes the version as `incan::version::INCAN_VERSION`, backed by `env!("CARGO_PKG_VERSION")`, so it updates automatically with the Cargo version.
-- Codegen snapshots are version-agnostic (they normalize the codegen header to `v<INCAN_VERSION>`), so version bumps should not churn snapshot files.
+- The compiler exposes the toolchain version as `incan_lang::version::INCAN_VERSION`, backed by `env!("CARGO_PKG_VERSION")`, so it updates automatically with the workspace version.
+- Generated code carries `incan_std_core::__incan_stdlib_version_check!("<stdlib line the compiler generates for>")`; the linked stdlib must be compatible with it (exactly equal for a prerelease line, same major.minor and no older patch for a release), so a stdlib bump that changes what generated code compiles against is a compatibility event, not a formality.
+- Codegen snapshots are version-agnostic (they normalize the codegen header to `v<INCAN_VERSION>` and the stdlib check to `<INCAN_STDLIB_VERSION>`), so version bumps should not churn snapshot files.
 
 ### Code Generation Overview
 
@@ -76,23 +76,23 @@ Incan AST → AstLowering → IR → IrEmitter (syn/quote) → prettyplease → 
 The single public entry point is `IrCodegen`:
 
 ```rust
-use incan::backend::IrCodegen;
+use incan_emit::IrCodegen;
 
-let mut codegen = IrCodegen::new();
+let codegen = IrCodegen::new();
 let rust_code = codegen.generate(&ast);
 ```
 
 Key files:
 
-- `ir/codegen.rs`: **Public entry point** (`IrCodegen`) - use this!
-- `ir/lower.rs`: AST to IR lowering (`AstLowering`)
-- `ir/emit.rs`: IR to Rust emission using syn/quote (`IrEmitter`)
-- `ir/conversions.rs`: Type conversions (string literals, borrows, ownership)
-- `ir/types.rs`, `ir/expr.rs`, `ir/stmt.rs`, `ir/decl.rs`: IR type definitions
+- `loaves/compiler/incan_emit/src/codegen.rs`: **Public entry point** (`IrCodegen`) - use this!
+- `loaves/compiler/incan_ir/src/lower/mod.rs`: AST to IR lowering (`AstLowering`)
+- `loaves/compiler/incan_emit/src/emit/mod.rs`: IR to Rust emission using syn/quote (`IrEmitter`)
+- `loaves/compiler/incan_emit/src/conversions.rs`: Type conversions (string literals, borrows, ownership)
+- `loaves/compiler/incan_ir/src/`: IR type definitions in `types.rs`, `expr.rs`, `stmt.rs` and `decl.rs`
 
 ### Type Conversions System
 
-The `conversions` module (`src/backend/ir/conversions.rs`) provides centralized handling of type conversions and borrow checking during Rust codegen. This is where we handle the mismatch between Incan's simple `str` type and Rust's `&str` vs `String` split for example.
+The `conversions` module (`loaves/compiler/incan_emit/src/conversions.rs`) provides centralized handling of type conversions and borrow checking during Rust codegen. This is where we handle the mismatch between Incan's simple `str` type and Rust's `&str` vs `String` split for example.
 
 **When to use conversions:**
 
@@ -116,14 +116,14 @@ let conversion = determine_conversion(
 let converted = conversion.apply(emitted_tokens);
 ```
 
-See `src/backend/ir/conversions.rs` for detailed documentation and 23 test cases covering all scenarios.
+See `loaves/compiler/incan_emit/src/conversions.rs` for the conversion policy and its focused regression tests.
 
 ### Adding a New Builtin Function
 
 This guidance can be found here:
 
-- See [Extending the Language](docs/contributing/extending_language.md) for the current builtin pipeline
-- For the builtins emitter implementation, see `src/backend/ir/emit/expressions/builtins.rs`
+- See [Extending the Language](workspaces/docs-site/docs/contributing/how-to/extending_language.md) for the current builtin pipeline
+- For the builtins emitter implementation, see `loaves/compiler/incan_emit/src/emit/expressions/builtins.rs`
 
 Example:
 
@@ -138,7 +138,7 @@ Example:
 
 ### Adding a New Expression Type
 
-See [Extending the Language](docs/contributing/extending_language.md) for the up-to-date end-to-end checklist (lexer → parser/AST → typechecker → lowering → IR → emission).
+See [Extending the Language](workspaces/docs-site/docs/contributing/how-to/extending_language.md) for the up-to-date end-to-end checklist (lexer → parser/AST → typechecker → lowering → IR → emission).
 
 ### Running Snapshot Tests
 
@@ -146,13 +146,13 @@ We use `insta` for golden snapshot tests:
 
 ```bash
 # Run codegen snapshot tests
-cargo test --test codegen_snapshot_tests
+cargo test -p incan_emit --test codegen_snapshot_tests
 
 # Review and accept changes
 cargo insta review
 ```
 
-Snapshot files are in `tests/snapshots/`.
+Snapshot files are in `loaves/compiler/incan_emit/tests/snapshots/`.
 
 ## Code Style
 
@@ -173,7 +173,7 @@ Snapshot files are in `tests/snapshots/`.
 
 ### Panic Policy
 
-From `src/lib.rs`:
+The rule every crate in the workspace follows (`AGENTS.md` states it as the first rule of the codebase):
 
 > The compiler should not panic under normal operation. All user-facing errors should be returned
 > as `Result` types and handled gracefully.
@@ -188,13 +188,13 @@ The CLI uses clap with derive macros. Commands return `CliResult<ExitCode>` inst
 
 ### Prelude Status
 
-The stdlib surface now compiles through the normal pipeline under `crates/incan_stdlib/stdlib/`. Source declarations are the primary contract for `std.*` modules, including the prelude-facing trait definitions. Some behavior is still realized by backend lowering or runtime bridges (for example derive-backed Rust traits and host-backed stdlib leaves), but the compiler no longer treats the stdlib as documentation-only stubs.
+The stdlib surface now compiles through the normal pipeline under `loaves/stdlib/`. Source declarations are the primary contract for `std.*` modules, including the prelude-facing trait definitions. Some behavior is still realized by backend lowering or runtime bridges (for example derive-backed Rust traits and host-backed stdlib leaves), but the compiler no longer treats the stdlib as documentation-only stubs.
 
 ### Property-Based Testing
 
 We use `proptest` for property-based testing of complex invariants.
 
-Property tests are in `tests/property_tests.rs` and verify:
+Property tests are in `loaves/compiler/incan_format/tests/property_tests.rs` and verify:
 
 - Formatting is idempotent
 - Formatting preserves parseability
@@ -203,7 +203,7 @@ Property tests are in `tests/property_tests.rs` and verify:
 Run property tests:
 
 ```bash
-cargo test --test property_tests
+cargo test -p incan_format --test property_tests
 ```
 
 ## Macro Discipline
@@ -212,15 +212,15 @@ Macros are powerful but can make code harder to understand. We follow strict gui
 
 ### Declarative Macros (`macro_rules!`)
 
-**Policy**: Declarative macros are **not allowed** in the main codebase outside of `crates/incan_derive`.
+**Policy**: Declarative macros are **not allowed** in the main codebase outside of `loaves/stdlib/derive/incan_derive`.
 
 **Rationale**: `macro_rules!` macros hide control flow and make debugging difficult. Use functions and generics instead.
 
-**Exception**: Derive macros in `crates/incan_derive/` may use `macro_rules!` for internal helpers.
+**Exception**: Derive macros in `loaves/stdlib/derive/incan_derive/` may use `macro_rules!` for internal helpers.
 
 ### Procedural Macros (Derive Macros)
 
-**Location**: `crates/incan_derive/`
+**Location**: `loaves/stdlib/derive/incan_derive/`
 
 **Requirements**:
 
@@ -229,11 +229,11 @@ Macros are powerful but can make code harder to understand. We follow strict gui
 3. **Testing**: Test with and without the derive
 4. **Error messages**: Provide clear compile errors for invalid usage
 
-**Example**: See `crates/incan_derive/src/lib.rs` for current patterns.
+**Example**: See `loaves/stdlib/derive/incan_derive/src/lib.rs` for current patterns.
 
 ### `quote!` Usage in Backend
 
-**Location**: `src/backend/ir/emit.rs`, `src/backend/ir/conversions.rs`
+**Location**: `loaves/compiler/incan_emit/src/emit/mod.rs`, `loaves/compiler/incan_emit/src/conversions.rs`
 
 **Guidelines**:
 
@@ -260,7 +260,7 @@ format!("pub struct {} {{ name: String }}", name)
 
 ### `syn` Usage
 
-**Location**: `src/backend/ir/emit.rs`
+**Location**: `loaves/compiler/incan_emit/src/emit/mod.rs`
 
 **Guidelines**:
 
@@ -281,3 +281,9 @@ Open an issue or reach out via the repository's discussion board.
 ## License
 
 By contributing, you agree that your contributions will be licensed under the Apache 2.0 license.
+
+## Checking documentation paths
+
+Run `make doc-paths` to check concrete repository paths in contributor documentation: the root contributor documents, non-state Markdown under `.agents/`, contributor pages under `workspaces/docs-site/docs/contributing/`, and crate READMEs under `loaves/`. Keep these references aligned with the files and directories that own the behavior.
+
+The checker checks concrete paths in every fenced block, including diagrams and shell examples. Commands and diagrams should name real repository inputs or clearly identified example-project files. Record intentional exceptions in `scripts/check_doc_paths.allow`, one tab-separated document, exact path token, and reason per line. The document field may be `*`; a path exception may use a trailing `/**` for a subtree. Other wildcard exception patterns are unsupported. Prefer a document-specific exact token for an illustrative filename; do not exempt a stale implementation path that should be corrected.

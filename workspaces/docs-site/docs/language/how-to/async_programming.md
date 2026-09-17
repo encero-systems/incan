@@ -648,11 +648,12 @@ def main() -> None:
 
 ### Generated Dependencies
 
-Generated projects enable Tokio through the `incan_stdlib` async feature rather than adding a direct Tokio dependency for ordinary async stdlib use:
+Generated projects reach Tokio through the `incan_std_async` runtime facet, the Rust half of the `async` standard library component, rather than adding a direct Tokio dependency for ordinary async stdlib use:
 
 ```toml
 [dependencies]
-incan_stdlib = { path = "...", features = ["async"] }
+incan_std_core = { path = "..." }
+incan_std_async = { path = "..." }
 ```
 
 ## Best Practices

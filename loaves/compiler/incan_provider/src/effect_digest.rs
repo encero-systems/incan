@@ -1,0 +1,448 @@
+//! Digesting what the compiler *produces* for the standard library, rather than what the compiler is made of.
+//!
+//! The SDK provider store is keyed by an identity that decides whether ten prepared components can be reused.
+//! Through store tag v3 that identity folded the whole compiler source tree, so editing any file under `src/` or
+//! `crates/` — a CLI command, an inspection module, the language server — rebuilt every component, roughly
+//! seventeen minutes paid on the next command after any compiler edit (#1495).
+//!
+//! Hashing the source tree answers the wrong question. What a consumer needs to know is not *did the compiler
+//! change* but *would this compiler produce different output for this standard library*. Those differ for almost
+//! every edit anyone makes. This module answers the second question directly, by running the compiler's own
+//! frontend over the standard library and digesting the result.
+//!
+//! # Why this is cheaper by three orders of magnitude
+//!
+//! Measured over all 104 standard-library sources, in-process, with no subprocess, no `rustc`, and no SDK
+//! preparation: HIR v0 plus Body IR v0 costs **1.80 s**. The rebuild it replaces costs roughly seventeen minutes.
+//! The work is not avoided by being clever; it is a different, much smaller question.
+//!
+//! # What must be covered, and why an Incan-only digest is unsound
+//!
+//! Every component links against the standard library facets, thousands of lines of Rust runtime. A digest that folded
+//! only `.incn` meaning would report a hit for an edit to that runtime, which is a false reuse of a component whose
+//! behaviour changed. The Rust half is therefore mandatory rather than an enhancement, and it is folded here beside the
+//! Incan half.
+//!
+//! # The transitional input, and when to remove it
+//!
+//! Today the compiler still lowers to Rust and emits it, so a change confined to lowering or emission alters
+//! generated output without moving any HIR. Two of this programme's own defects had exactly that shape. Until
+//! emission is gone, a digest over HIR alone would be a false hit for such a change, so the backend's own sources
+//! are folded in as a narrow, explicitly transitional input — narrow enough to exclude the rest of the compiler,
+//! and removed with the backend rather than maintained forever.
+//!
+//! This is the one place where the *source* of a compiler subsystem still reaches the key, and it is here because
+//! the alternative is unsound today, not because source hashing is the design.
+//!
+//! # The caller names the Rust roots
+//!
+//! Which Rust trees reach a compiled component is a property of the compiler's layout, not of digesting, so the
+//! caller supplies them as labelled roots rather than this module hard-coding three. A root is labelled so the
+//! hash distinguishes the same bytes arriving under a different role, and the labels are folded in the order
+//! given, which the caller keeps stable.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use incan_semantics_core::closure_digest::{DependencyNode, closure_digests, update_delimited};
+use incan_semantics_core::semantic_digest::{body_without_docstring, semantic_digest};
+use incan_semantics_core::stable_identity::{DeclarationSignature, StableDeclarationId};
+use sha2::{Digest, Sha256};
+
+/// Why the standard library's effect digest could not be computed.
+///
+/// Every variant is a refusal rather than a degraded answer. A digest that silently skipped a module it could not
+/// read would describe a smaller standard library than the one about to be compiled, and a consumer would reuse
+/// components built from sources this digest never saw.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EffectDigestError {
+    /// A source directory could not be enumerated.
+    #[error("failed to enumerate {path}: {message}")]
+    Enumerate {
+        /// The directory that could not be read.
+        path: PathBuf,
+        /// The underlying reason.
+        message: String,
+    },
+    /// A source file could not be read.
+    #[error("failed to read {path}: {message}")]
+    Read {
+        /// The file that could not be read.
+        path: PathBuf,
+        /// The underlying reason.
+        message: String,
+    },
+    /// A standard-library module did not compile far enough to digest.
+    ///
+    /// Reaching a caller means the module could be read but not understood, which [`stdlib_effect_digest`] handles
+    /// by folding the module's bytes instead. It is surfaced as an error type so a caller that wants to know can
+    /// ask, rather than because the digest gives up.
+    #[error("standard library module {path} did not reach Body IR: {message}")]
+    Uncompilable {
+        /// The module that failed.
+        path: PathBuf,
+        /// The stage's own diagnosis.
+        message: String,
+    },
+}
+
+/// Collect every file with one of the given extensions under a root, in a stable order.
+///
+/// Ordering is by full path so the digest does not depend on directory iteration order, which is not stable across
+/// filesystems.
+fn collect_sources(root: &Path, extensions: &[&str]) -> Result<Vec<PathBuf>, EffectDigestError> {
+    let mut found = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        let entries = fs::read_dir(&directory).map_err(|error| EffectDigestError::Enumerate {
+            path: directory.clone(),
+            message: error.to_string(),
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|error| EffectDigestError::Enumerate {
+                path: directory.clone(),
+                message: error.to_string(),
+            })?;
+            let path = entry.path();
+            let file_type = entry.file_type().map_err(|error| EffectDigestError::Enumerate {
+                path: path.clone(),
+                message: error.to_string(),
+            })?;
+            if file_type.is_dir() {
+                // Build output is derived from the very sources being digested, so folding it in would make the
+                // digest depend on whether a build had happened.
+                if path.file_name().is_some_and(|name| name == "target") {
+                    continue;
+                }
+                stack.push(path);
+            } else if file_type.is_file()
+                && path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extensions.contains(&extension))
+            {
+                found.push(path);
+            }
+        }
+    }
+    found.sort();
+    Ok(found)
+}
+
+/// Digest the meaning the compiler's frontend derives from one standard-library module.
+///
+/// Returns the module's declarations keyed by their rendered identity, so the caller folds them in a stable order
+/// that does not depend on declaration order within the file.
+fn module_meaning(path: &Path, source: &str) -> Result<BTreeMap<String, String>, EffectDigestError> {
+    use incan_frontend::body_ir::{apply_body_ir_input_contract, build_body_ir_module_v0};
+    use incan_frontend::typechecker::TypeChecker;
+    use incan_frontend::{lexer, parser};
+
+    let fail = |message: String| EffectDigestError::Uncompilable {
+        path: path.to_path_buf(),
+        message,
+    };
+
+    let tokens = lexer::lex(source).map_err(|errors| fail(format!("lex: {errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| fail(format!("parse: {errors:?}")))?;
+    let program =
+        apply_body_ir_input_contract(program, path).map_err(|errors| fail(format!("contract: {errors:?}")))?;
+    let module_path = vec![path.file_stem().unwrap_or_default().to_string_lossy().to_string()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(module_path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| fail(format!("typecheck: {errors:?}")))?;
+
+    let body_ir = build_body_ir_module_v0(&program, &module_path, checker.type_info());
+    let mut meanings = BTreeMap::new();
+    for body in &body_ir.bodies {
+        let Some(canonical) = body.canonical.as_ref() else {
+            continue;
+        };
+        // The key must be the *stable* identity, not the canonical one. `CanonicalSymbolId::render_compact()`
+        // ends in `@start..end`, so keying on it would make every declaration below an added comment look like a
+        // new declaration — the exact positional dependency this digest exists to remove, reintroduced through
+        // the map key rather than through the value.
+        let signature = Some(DeclarationSignature::from_callable_types(
+            body.params.iter().map(|param| &param.ty),
+            &body.return_type,
+        ));
+        let identity = StableDeclarationId::from_canonical(canonical, signature);
+        // The docstring is removed before digesting because a documentation edit cannot change what the compiler
+        // emits for a body, and the whole point of this digest is to stop such an edit costing a rebuild.
+        let digest =
+            semantic_digest(&body_without_docstring(body)).map_err(|error| fail(format!("digest: {error:?}")))?;
+        meanings.insert(identity.render_compact(), digest);
+    }
+    Ok(meanings)
+}
+
+/// The standard-library Incan sources inside a compiler checkout.
+pub const COMPILER_STDLIB_ROOT: &str = "loaves/stdlib";
+
+/// The Rust roots inside a compiler checkout whose content can change a compiled standard-library component.
+///
+/// # Why an inclusion list is sound here
+///
+/// #1495's own first step proposed narrowing the existing whole-tree hash by *excluding* paths, which fails open
+/// in the dangerous direction: forget to exclude something and you pay for it, forget that something belongs
+/// excluded and nothing tells you. This list is the other shape. It answers "what can reach a compiled component"
+/// and everything it omits is omitted for a stated reason, each of which is one of exactly two:
+///
+/// - **Covered by meaning.** `loaves/compiler/incan_frontend`, `loaves/kernel/incan_syntax` and
+///   `loaves/kernel/incan_vocab` are run, not hashed: the digest lexes, parses, checks and lowers all 104
+///   standard-library sources with this compiler, so a change to any of them that alters what the compiler understands
+///   moves the digest, and one that does not, does not. That is a stronger answer than hashing their source, not a
+///   weaker one.
+/// - **Cannot reach a component.** The toolchain ring (`loaves/toolchain`), the driver's orchestration and inspection
+///   (`loaves/compiler/incan_driver` outside its `backend`), the Oven ring, `loaves/kernel/incan_codegraph`,
+///   `loaves/compiler/rust_inspect` and every `tests/` root are the compiler's own tooling. They decide *when*
+///   components are built and *where* they are written, never what a component contains.
+///
+/// The second reason has one edge the digest does not cover by itself: publication code that changes the store's
+/// own layout or manifest produces a differently-shaped store from identical component content. That case is
+/// deliberate by construction and already has its own mechanism —
+/// [`incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION`], which the inventory validates on every cache hit and which
+/// is folded into the store identity beside this digest. Publication changes bump that constant; they do not rely on a
+/// source hash noticing them.
+///
+/// Lowering and emission are the transitional entries. They change generated Rust without moving any HIR, so until
+/// direct-HIR lands their source is folded: `loaves/compiler/incan_ir` and `loaves/compiler/incan_emit` since the
+/// layout rewrite moved them out of `src/backend`, and the rest of that backend (the generated-project shape and the
+/// shadow comparison, now `loaves/compiler/incan_driver/src/backend`) with them. They are labelled apart from the
+/// runtime crates for that reason, and they are removed with the backend rather than maintained. A root that stops
+/// existing fails the digest rather than silently narrowing it, so a move has to update this list.
+pub const COMPILER_RUST_EFFECT_ROOTS: &[(&str, &str)] = &[
+    ("stdlib-runtime-core", "loaves/stdlib/core/rust/src"),
+    ("stdlib-runtime-data", "loaves/stdlib/data/rust/src"),
+    ("stdlib-runtime-async", "loaves/stdlib/async/rust/src"),
+    ("stdlib-runtime-web", "loaves/stdlib/web/rust/src"),
+    ("stdlib-runtime-testing", "loaves/stdlib/testing/rust/src"),
+    ("lang", "loaves/kernel/incan_lang"),
+    ("derive", "loaves/stdlib/derive/incan_derive"),
+    ("web-macros", "loaves/stdlib/derive/incan_web_macros"),
+    ("semantics-core", "loaves/kernel/incan_semantics_core"),
+    ("semantics-stdlib", "loaves/compiler/incan_semantics_stdlib"),
+    ("transitional-lowering", "loaves/compiler/incan_ir/src"),
+    ("transitional-emission", "loaves/compiler/incan_emit/src"),
+    ("transitional-backend", "loaves/compiler/incan_driver/src/backend"),
+];
+
+/// Digest what the compiler in `checkout_root` would produce for its own standard library.
+///
+/// Resolves [`COMPILER_STDLIB_ROOT`] and [`COMPILER_RUST_EFFECT_ROOTS`] against the checkout and folds them through
+/// [`stdlib_effect_digest`], so a caller keying a cache does not restate the layout.
+///
+/// # Errors
+///
+/// Returns [`EffectDigestError`] when a root cannot be enumerated or a source cannot be read.
+pub fn compiler_effect_digest(checkout_root: &Path) -> Result<String, EffectDigestError> {
+    let roots: Vec<(&str, PathBuf)> = COMPILER_RUST_EFFECT_ROOTS
+        .iter()
+        .map(|(label, relative)| (*label, checkout_root.join(relative)))
+        .collect();
+    let borrowed: Vec<(&str, &Path)> = roots.iter().map(|(label, path)| (*label, path.as_path())).collect();
+    stdlib_effect_digest(&checkout_root.join(COMPILER_STDLIB_ROOT), &borrowed)
+}
+
+/// Digest what this compiler would produce for the standard library rooted at `stdlib_root`.
+///
+/// The returned digest moves when the compiler would emit different output and holds still otherwise. It folds the
+/// checked meaning of every `.incn` source under `stdlib_root`, then the token-level content of each Rust root in
+/// `rust_roots`, each under the label it is given.
+///
+/// A caller supplies two kinds of Rust root, and the distinction is in the label rather than in the treatment: the
+/// runtime crates a component links against, which are permanent, and the backend that lowers and emits, which is
+/// transitional and goes away with emission. A Rust root that does not exist is folded as absent; `stdlib_root`
+/// itself is required, because a digest with no standard library in it describes nothing.
+///
+/// # Errors
+///
+/// Returns [`EffectDigestError`] when a source cannot be read or a standard-library module does not compile. Both
+/// are refusals: a digest that skipped what it could not read would describe a different standard library.
+pub fn stdlib_effect_digest(stdlib_root: &Path, rust_roots: &[(&str, &Path)]) -> Result<String, EffectDigestError> {
+    let mut hasher = Sha256::new();
+    update_delimited(&mut hasher, b"incan-stdlib-effect-v2");
+    fold_incan_meaning(&mut hasher, stdlib_root)?;
+    fold_rust_roots(&mut hasher, rust_roots)?;
+    Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
+}
+
+/// Fold the checked meaning of every `.incn` source beneath one root: what the compiler understands, not its text.
+///
+/// Paths are folded relative to `root` and in sorted order, so the same sources under a different absolute prefix
+/// digest identically — which is what lets a component be digested from its own project directory and a whole
+/// standard library from its own root, by the same code.
+fn fold_incan_meaning(hasher: &mut Sha256, root: &Path) -> Result<(), EffectDigestError> {
+    update_delimited(hasher, b"incan-meaning");
+    for path in collect_sources(root, &["incn"])? {
+        let source = fs::read_to_string(&path).map_err(|error| EffectDigestError::Read {
+            path: path.clone(),
+            message: error.to_string(),
+        })?;
+        let relative = path.strip_prefix(root).unwrap_or(&path);
+        update_delimited(hasher, relative.to_string_lossy().as_bytes());
+        match module_meaning(&path, &source) {
+            Ok(meanings) => {
+                update_delimited(hasher, b"meaning");
+                for (identity, digest) in meanings {
+                    update_delimited(hasher, identity.as_bytes());
+                    update_delimited(hasher, digest.as_bytes());
+                }
+            }
+            // A module the frontend cannot check standalone still contributes. Folding its bytes over-invalidates
+            // for that module — a comment edit in it costs a rebuild — which is the safe direction, and it is one
+            // module out of 104 rather than a general fallback. Refusing outright would be worse: the digest would
+            // be unavailable whenever any module was mid-edit.
+            Err(_) => {
+                update_delimited(hasher, b"unchecked-source");
+                update_delimited(hasher, source.as_bytes());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Fold the token-level content of each labelled Rust root.
+fn fold_rust_roots(hasher: &mut Sha256, rust_roots: &[(&str, &Path)]) -> Result<(), EffectDigestError> {
+    for (label, root) in rust_roots {
+        update_delimited(hasher, b"rust-root");
+        update_delimited(hasher, label.as_bytes());
+        // A root that is not there is folded as absent rather than refused. Compiler layouts differ — a trimmed
+        // distribution need not ship every crate — and a missing tree is a different compiler, which "absent"
+        // already says. Refusing would make the key unavailable for a checkout that builds perfectly well.
+        if !root.is_dir() {
+            update_delimited(hasher, b"absent");
+            continue;
+        }
+        for path in collect_sources(root, &["rs"])? {
+            let source = fs::read_to_string(&path).map_err(|error| EffectDigestError::Read {
+                path: path.clone(),
+                message: error.to_string(),
+            })?;
+            let relative = path.strip_prefix(root).unwrap_or(&path);
+            update_delimited(hasher, relative.to_string_lossy().as_bytes());
+            update_delimited(
+                hasher,
+                rust_source_digest(&relative.to_string_lossy(), &source).as_bytes(),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Digest one Rust source file's tokens, falling back to its bytes when it does not parse.
+///
+/// The token digest survives reformatting and comment edits. A file that does not parse is not a reason to skip it
+/// — it is still an input — so its bytes are folded instead, which over-invalidates and never under-invalidates.
+fn rust_source_digest(module_path: &str, source: &str) -> String {
+    let mut hasher = Sha256::new();
+    match rust_inspect::digest_rust_source(module_path, source) {
+        Ok(digest) => {
+            for item in digest.items() {
+                update_delimited(&mut hasher, item.key.module_path.as_bytes());
+                update_delimited(&mut hasher, item.key.owner.as_deref().unwrap_or("").as_bytes());
+                update_delimited(&mut hasher, format!("{:?}", item.key.kind).as_bytes());
+                update_delimited(&mut hasher, item.key.name.as_bytes());
+                update_delimited(&mut hasher, item.key.signature_discriminant.as_bytes());
+                update_delimited(&mut hasher, item.digest.as_bytes());
+            }
+        }
+        // A file that does not parse is still an input. Folding its bytes over-invalidates, which costs time;
+        // skipping it would under-invalidate, which ships a component built from source this digest never saw.
+        Err(_) => {
+            update_delimited(&mut hasher, b"unparsed");
+            update_delimited(&mut hasher, source.as_bytes());
+        }
+    }
+    hex::encode(hasher.finalize())
+}
+
+/// One SDK component's own sources and the components it links.
+#[derive(Debug, Clone)]
+pub struct ComponentSources {
+    /// Directory holding this component's own `.incn` sources.
+    pub project: PathBuf,
+    /// Names of the components this one depends on, as declared in the catalog.
+    pub dependencies: BTreeSet<String>,
+}
+
+/// Digest what this compiler produces for each SDK component, folded along the component dependency graph.
+///
+/// [`stdlib_effect_digest`] answers one question for the whole standard library, which is the right shape for a
+/// single store identity and the wrong shape for deciding which components to rebuild: every component shares one
+/// answer, so editing a leaf rebuilds all ten. This returns one digest per component instead.
+///
+/// # What each component's digest covers
+///
+/// Its own `.incn` meaning, the shared Rust roots every component links or is produced by, and — through
+/// [`closure_digests`] — the digests of the components it depends on. That last part is what makes the result a
+/// closure rather than a local answer: editing `stdlib-core` moves every component that reaches it, editing a leaf
+/// moves only the leaf.
+///
+/// The shared Rust half is folded into *every* component rather than apportioned between them. That is deliberate
+/// over-invalidation: a change to the linked runtime or to the backend that emits it can reach any component, and
+/// nothing here proves which. Apportioning it would need the reachability answer RFC 106's graph is being built to
+/// give, and guessing it wrong produces a component built from sources its digest never saw.
+///
+/// # Errors
+///
+/// Returns [`EffectDigestError`] when a component's sources cannot be enumerated or read. A component naming a
+/// dependency absent from `components` is not an error here: [`closure_digests`] folds an unresolved edge as an
+/// explicit marker, which RFC 106 requires a consumer to read as affected rather than as absent.
+pub fn component_effect_digests(
+    components: &BTreeMap<String, ComponentSources>,
+    rust_roots: &[(&str, &Path)],
+) -> Result<BTreeMap<String, String>, EffectDigestError> {
+    // Folded once and shared. It is identical for every component by construction, and digesting the compiler's
+    // Rust trees ten times over would cost ten times as much for the same bytes.
+    let shared_rust = {
+        let mut hasher = Sha256::new();
+        update_delimited(&mut hasher, b"incan-component-rust-v1");
+        fold_rust_roots(&mut hasher, rust_roots)?;
+        hex::encode(hasher.finalize())
+    };
+
+    let mut nodes = BTreeMap::new();
+    for (name, sources) in components {
+        let mut hasher = Sha256::new();
+        update_delimited(&mut hasher, b"incan-component-effect-v1");
+        update_delimited(&mut hasher, name.as_bytes());
+        fold_incan_meaning(&mut hasher, &sources.project)?;
+        update_delimited(&mut hasher, b"shared-rust");
+        update_delimited(&mut hasher, shared_rust.as_bytes());
+        nodes.insert(
+            name.clone(),
+            DependencyNode {
+                digest: hex::encode(hasher.finalize()),
+                dependencies: sources.dependencies.clone(),
+            },
+        );
+    }
+
+    // `closure_digests` already labels each digest `sha256:`; re-labelling here doubled the prefix.
+    Ok(closure_digests(&nodes).into_iter().collect())
+}
+
+/// Digest one standard-library module's meaning, for callers that bucket per component rather than per tree.
+///
+/// Exposed so a consumer can ask which component an edit touched instead of rebuilding all of them.
+///
+/// # Errors
+///
+/// Returns [`EffectDigestError`] when the module cannot be read or does not compile.
+pub fn module_effect_digest(path: &Path) -> Result<String, EffectDigestError> {
+    let source = fs::read_to_string(path).map_err(|error| EffectDigestError::Read {
+        path: path.to_path_buf(),
+        message: error.to_string(),
+    })?;
+    let mut hasher = Sha256::new();
+    update_delimited(&mut hasher, b"incan-module-effect-v1");
+    for (identity, digest) in module_meaning(path, &source)? {
+        update_delimited(&mut hasher, identity.as_bytes());
+        update_delimited(&mut hasher, digest.as_bytes());
+    }
+    Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
+}

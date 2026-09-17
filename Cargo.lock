@@ -129,7 +129,7 @@ checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -146,7 +146,7 @@ checksum = "ffdcb70bdbc4d478427380519163274ac86e52916e10f0a8889adf0f96d3fee7"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -205,30 +205,6 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
-]
-
-[[package]]
-name = "backtrace"
-version = "0.3.76"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb531853791a215d7c62a30daf0dde835f381ab5de4589cfe7c649d2cbe92bd6"
-dependencies = [
- "addr2line",
- "cfg-if",
- "libc",
- "miniz_oxide",
- "object",
- "rustc-demangle",
- "windows-link",
-]
-
-[[package]]
-name = "backtrace-ext"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "537beee3be4a18fb023b570f80e3ae28003db9167a751266b259926e25539d50"
-dependencies = [
- "backtrace",
 ]
 
 [[package]]
@@ -512,7 +488,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -834,7 +810,7 @@ checksum = "d08b3a0bcc0d079199cd476b2cae8435016ec11d1c0986c6901c5ac223041534"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -856,7 +832,7 @@ checksum = "97369cbbc041bc366949bc74d34658d6cda5621039731c6310521892a3a20ae0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -1065,7 +1041,7 @@ checksum = "e835b70203e41293343137df5c0664546da5745f82ec9b84d40be8336958447b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -1444,8 +1420,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "incan"
-version = "0.6.0-dev.4"
+name = "incan-cli"
+version = "0.6.0-dev.5"
 dependencies = [
  "blake2",
  "blake3",
@@ -1454,29 +1430,30 @@ dependencies = [
  "clap",
  "crc32fast",
  "flate2",
- "globset",
  "hex",
  "hmac",
  "incan_codegraph",
- "incan_core",
+ "incan_driver",
+ "incan_format",
+ "incan_frontend",
+ "incan_lang",
+ "incan_oven_facet",
+ "incan_provider",
  "incan_semantics_core",
- "incan_semantics_stdlib",
- "incan_stdlib",
  "incan_syntax",
+ "incan_test_support",
  "incan_vocab",
- "insta",
  "libc",
  "md-5",
- "miette",
- "prettyplease",
- "proc-macro2",
- "proptest",
- "quote",
+ "oven-cli",
+ "oven_cargo_compat",
+ "oven_interop",
+ "oven_model",
+ "oven_rustc",
+ "oven_store",
  "rand 0.8.6",
  "regex",
  "rust_inspect",
- "rustc-demangle",
- "rustix 1.1.4",
  "semver",
  "serde",
  "serde_json",
@@ -1484,18 +1461,11 @@ dependencies = [
  "sha2",
  "sha3",
  "snap",
- "syn",
  "tempfile",
- "thiserror 2.0.18",
- "tokio",
  "toml",
  "toml_edit",
- "tower-lsp",
- "tracing",
  "tracing-subscriber",
  "uuid",
- "wasmtime",
- "wasmtime-wasi",
  "wat",
  "xxhash-rust",
  "xz2",
@@ -1503,35 +1473,215 @@ dependencies = [
 ]
 
 [[package]]
+name = "incan-lsp"
+version = "0.6.0-dev.5"
+dependencies = [
+ "incan_driver",
+ "incan_format",
+ "incan_frontend",
+ "incan_lang",
+ "incan_provider",
+ "incan_semantics_core",
+ "incan_syntax",
+ "incan_vocab",
+ "oven_model",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tower-lsp",
+ "tracing",
+]
+
+[[package]]
 name = "incan_codegraph"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "incan_core"
-version = "0.6.0-dev.4"
+name = "incan_derive"
+version = "0.6.0-dev.5"
+dependencies = [
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "incan_driver"
+version = "0.6.0-dev.5"
+dependencies = [
+ "clap",
+ "hex",
+ "incan_codegraph",
+ "incan_emit",
+ "incan_frontend",
+ "incan_ir",
+ "incan_lang",
+ "incan_oven_facet",
+ "incan_provider",
+ "incan_semantics_core",
+ "incan_test_support",
+ "incan_vocab",
+ "oven_cargo_compat",
+ "oven_interop",
+ "oven_model",
+ "oven_rustc",
+ "oven_store",
+ "proc-macro2",
+ "rust_inspect",
+ "rustix 1.1.4",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "syn 2.0.117",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+ "toml_edit",
+ "tracing",
+]
+
+[[package]]
+name = "incan_emit"
+version = "0.6.0-dev.5"
+dependencies = [
+ "hex",
+ "incan_frontend",
+ "incan_ir",
+ "incan_lang",
+ "incan_semantics_core",
+ "incan_std_core",
+ "incan_syntax",
+ "incan_test_support",
+ "incan_vocab",
+ "insta",
+ "oven_model",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "rust_inspect",
+ "serde",
+ "serde_json",
+ "sha2",
+ "syn 2.0.117",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tracing",
+ "wat",
+]
+
+[[package]]
+name = "incan_format"
+version = "0.6.0-dev.5"
+dependencies = [
+ "incan_lang",
+ "incan_semantics_core",
+ "incan_syntax",
+ "incan_test_support",
+ "incan_vocab",
+ "proptest",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "incan_frontend"
+version = "0.6.0-dev.5"
+dependencies = [
+ "hex",
+ "incan_format",
+ "incan_lang",
+ "incan_semantics_core",
+ "incan_semantics_stdlib",
+ "incan_std_core",
+ "incan_syntax",
+ "incan_test_support",
+ "incan_vocab",
+ "oven_model",
+ "quote",
+ "rust_inspect",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "syn 2.0.117",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+ "tracing",
+ "wasmtime",
+ "wasmtime-wasi",
+]
+
+[[package]]
+name = "incan_ir"
+version = "0.6.0-dev.5"
+dependencies = [
+ "incan_frontend",
+ "incan_lang",
+ "incan_semantics_core",
+ "incan_vocab",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "incan_lang"
+version = "0.6.0-dev.5"
 dependencies = [
  "serde",
 ]
 
 [[package]]
-name = "incan_derive"
-version = "0.6.0-dev.4"
+name = "incan_oven_facet"
+version = "0.6.0-dev.5"
 dependencies = [
- "proc-macro2",
- "quote",
- "syn",
+ "incan_frontend",
+ "incan_lang",
+ "incan_provider",
+ "oven_cargo_compat",
+ "oven_model",
+ "oven_rustc",
+ "oven_store",
+ "tempfile",
+]
+
+[[package]]
+name = "incan_provider"
+version = "0.6.0-dev.5"
+dependencies = [
+ "hex",
+ "incan_frontend",
+ "incan_lang",
+ "incan_semantics_core",
+ "incan_test_support",
+ "incan_vocab",
+ "oven_cargo_compat",
+ "oven_model",
+ "oven_rustc",
+ "oven_store",
+ "rust_inspect",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+ "wasmtime",
 ]
 
 [[package]]
 name = "incan_semantics_core"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "hex",
- "incan_core",
+ "incan_lang",
  "postcard",
  "serde",
  "serde_json",
@@ -1541,38 +1691,83 @@ dependencies = [
 
 [[package]]
 name = "incan_semantics_stdlib"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
- "incan_core",
+ "incan_lang",
  "incan_semantics_core",
 ]
 
 [[package]]
-name = "incan_stdlib"
-version = "0.6.0-dev.4"
+name = "incan_std_async"
+version = "0.6.0-dev.5"
 dependencies = [
- "axum",
- "incan_core",
+ "tokio",
+]
+
+[[package]]
+name = "incan_std_core"
+version = "0.6.0-dev.5"
+dependencies = [
  "incan_derive",
- "inventory",
+ "incan_lang",
+]
+
+[[package]]
+name = "incan_std_data"
+version = "0.6.0-dev.5"
+dependencies = [
+ "incan_std_core",
  "serde",
  "serde_json",
- "tokio",
  "xxhash-rust",
 ]
 
 [[package]]
-name = "incan_syntax"
-version = "0.6.0-dev.4"
+name = "incan_std_testing"
+version = "0.6.0-dev.5"
 dependencies = [
- "incan_core",
+ "incan_lang",
+ "incan_std_core",
+]
+
+[[package]]
+name = "incan_std_web"
+version = "0.6.0-dev.5"
+dependencies = [
+ "axum",
+ "inventory",
+ "tokio",
+]
+
+[[package]]
+name = "incan_syntax"
+version = "0.6.0-dev.5"
+dependencies = [
+ "incan_lang",
  "incan_semantics_core",
  "incan_vocab",
- "insta",
  "miette",
  "serde",
- "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "incan_test_support"
+version = "0.6.0-dev.5"
+dependencies = [
+ "incan_frontend",
+ "incan_lang",
+ "incan_semantics_core",
+ "libc",
+ "oven_model",
+ "prettyplease",
+ "proc-macro2",
+ "rustc-demangle",
+ "serde_json",
+ "sha2",
+ "syn 2.0.117",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]
@@ -1585,16 +1780,16 @@ dependencies = [
 
 [[package]]
 name = "incan_web_macros"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "axum",
- "incan_stdlib",
+ "incan_std_web",
  "inventory",
  "proc-macro2",
  "quote",
  "serde",
  "serde_json",
- "syn",
+ "syn 2.0.117",
  "tokio",
  "tower 0.5.3",
 ]
@@ -1684,12 +1879,6 @@ name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
-
-[[package]]
-name = "is_ci"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7655c9839580ee829dfacba1d1278c2b7883e50a277ff7541299489d6bdfdc45"
 
 [[package]]
 name = "is_terminal_polyfill"
@@ -1946,16 +2135,8 @@ version = "7.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f98efec8807c63c752b5bd61f862c165c115b0a35685bdcfd9238c7aeb592b7"
 dependencies = [
- "backtrace",
- "backtrace-ext",
  "cfg-if",
  "miette-derive",
- "owo-colors",
- "supports-color",
- "supports-hyperlinks",
- "supports-unicode",
- "terminal_size",
- "textwrap",
  "unicode-width 0.1.14",
 ]
 
@@ -1967,7 +2148,7 @@ checksum = "db5b29714e950dbb20d5e6f74f9dcec4edbcc1067bb7f8ed198c097b8c1a818b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2104,10 +2285,114 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
-name = "owo-colors"
-version = "4.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d211803b9b6b570f68772237e415a029d5a50c65d382910b879fb19d3271f94d"
+name = "oven-cli"
+version = "0.6.0-dev.5"
+dependencies = [
+ "clap",
+ "incan_driver",
+ "incan_frontend",
+ "incan_lang",
+ "incan_oven_facet",
+ "incan_provider",
+ "oven_cargo_compat",
+ "oven_interop",
+ "oven_model",
+ "oven_rustc",
+ "oven_store",
+ "rust_inspect",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "oven_cargo_compat"
+version = "0.6.0-dev.5"
+dependencies = [
+ "hex",
+ "oven_model",
+ "oven_rustc",
+ "oven_store",
+ "rustix 1.1.4",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "oven_interop"
+version = "0.6.0-dev.5"
+dependencies = [
+ "hex",
+ "oven_model",
+ "oven_rustc",
+ "oven_store",
+ "rustix 1.1.4",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
+name = "oven_model"
+version = "0.6.0-dev.5"
+dependencies = [
+ "globset",
+ "hex",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+ "toml_edit",
+]
+
+[[package]]
+name = "oven_registry"
+version = "0.6.0-dev.5"
+
+[[package]]
+name = "oven_rustc"
+version = "0.6.0-dev.5"
+dependencies = [
+ "hex",
+ "oven_model",
+ "oven_store",
+ "rustix 1.1.4",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "oven_store"
+version = "0.6.0-dev.5"
+dependencies = [
+ "hex",
+ "oven_model",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+]
 
 [[package]]
 name = "parking_lot"
@@ -2170,22 +2455,22 @@ dependencies = [
 
 [[package]]
 name = "pin-project"
-version = "1.1.11"
+version = "1.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1749c7ed4bcaf4c3d0a3efc28538844fb29bcdd7d2b67b2be7e20ba861ff517"
+checksum = "2466b2336ed02bcdca6b294417127b90ec92038d1d5c4fbeac971a922e0e0924"
 dependencies = [
  "pin-project-internal",
 ]
 
 [[package]]
 name = "pin-project-internal"
-version = "1.1.11"
+version = "1.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9b20ed30f105399776b9c883e68e536ef602a16ae6f596d2c473591d6ad64c6"
+checksum = "c96395f0a926bc13b1c17622aaddda1ecb55d49c8f1bf9777e4d877800a43f8b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2255,7 +2540,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2306,7 +2591,7 @@ checksum = "244667bea2e214273442a71f26adb12b88a41f66718fb2c6eea47c00f0dc325f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2380,7 +2665,7 @@ checksum = "4463e908a62c64c2a65c1966c2f4995d0e1f8b7dfc85a8b8de2562edf3d89070"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2458,7 +2743,7 @@ checksum = "15034c2fcaa5cf302aea6db20eda0f71fffeb0b372d6073cc50f940e974a2a47"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "synstructure",
 ]
 
@@ -2723,7 +3008,7 @@ checksum = "b1f611701d2a92baf6fe5cf4902ba5d7bef7abc397edf4b4af1e278174f33afb"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "synstructure",
 ]
 
@@ -2839,7 +3124,7 @@ checksum = "b93f5a7849f487b64d3707fdb95a8a4269bce4ed78bad10ee6a558374c635128"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3153,10 +3438,10 @@ dependencies = [
 
 [[package]]
 name = "rust_inspect"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "hex",
- "incan_core",
+ "incan_lang",
  "proc-macro2",
  "quote",
  "ra_ap_hir",
@@ -3173,7 +3458,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "syn",
+ "syn 2.0.117",
  "tempfile",
  "thiserror 2.0.18",
  "toml",
@@ -3325,7 +3610,7 @@ checksum = "3d844c1aa34946da46af683b5c27ec1088a3d9d84a2b837a108223fd830220e1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "synstructure",
 ]
 
@@ -3381,7 +3666,7 @@ checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3410,13 +3695,13 @@ dependencies = [
 
 [[package]]
 name = "serde_repr"
-version = "0.1.20"
+version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "175ee3e80ae9982737ca543e96133087cbd9a485eecc3bc4de9c1a37b47ea59c"
+checksum = "8d3b1629de253c70a0508c3899572da79ca359fdab27c7920ff00406df418906"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -3486,16 +3771,6 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
-
-[[package]]
-name = "signal-hook-registry"
-version = "1.4.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
-dependencies = [
- "errno",
- "libc",
-]
 
 [[package]]
 name = "simd-adler32"
@@ -3569,31 +3844,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
-name = "supports-color"
-version = "3.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c64fc7232dd8d2e4ac5ce4ef302b1d81e0b80d055b9d77c7c4f51f6aa4c867d6"
-dependencies = [
- "is_ci",
-]
-
-[[package]]
-name = "supports-hyperlinks"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e396b6523b11ccb83120b115a0b7366de372751aa6edf19844dfb13a6af97e91"
-
-[[package]]
-name = "supports-unicode"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7401a30af6cb5818bb64852270bb722533397edcfc7344954a38f420819ece2"
-
-[[package]]
 name = "syn"
 version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
+name = "syn"
+version = "3.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12df2e0110f65b775f769bb17ef989067a1d931b2eb822bd4346631eeada89f9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3614,7 +3879,7 @@ checksum = "728a70f3dbaf5bab7f0c4b1ac8d7ae5ea60a4b5549c8a5914361c99147a709d2"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3668,30 +3933,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "terminal_size"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60b8cb979cb11c32ce1603f8137b22262a9d131aaa5c37b5678025f22b8becd0"
-dependencies = [
- "rustix 1.1.4",
- "windows-sys 0.60.2",
-]
-
-[[package]]
 name = "text-size"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f18aa187839b2bdb1ad2fa35ead8c4c2976b64e4363c386d45ac0f7ee85c9233"
-
-[[package]]
-name = "textwrap"
-version = "0.16.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c13547615a44dc9c452a8a534638acdf07120d4b6847c8178705da06306a3057"
-dependencies = [
- "unicode-linebreak",
- "unicode-width 0.2.2",
-]
 
 [[package]]
 name = "thin-vec"
@@ -3725,7 +3970,7 @@ checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3736,7 +3981,7 @@ checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3800,9 +4045,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
- "parking_lot",
  "pin-project-lite",
- "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",
@@ -3816,18 +4059,19 @@ checksum = "385a6cb71ab9ab790c5fe8d67f1645e6c450a7ce006a33de03daa956cf70a496"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
 name = "tokio-util"
-version = "0.7.18"
+version = "0.7.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ae9cec805b01e8fc3fd2fe289f89149a9b66dd16786abd8b19cfa7b48cb0098"
+checksum = "494815d09bf52b5548659851081238f0ca39ff638363907596da739561c62c52"
 dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "libc",
  "pin-project-lite",
  "tokio",
 ]
@@ -3962,7 +4206,7 @@ checksum = "84fd902d4e0b9a4b27f2f440108dc034e1758628a9b702f8ec61ad66355422fa"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3991,7 +4235,7 @@ checksum = "7490cfa5ec963746568740651ac6781f701c9c5ea257c58e057f3ba8cf69e8da"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4075,12 +4319,6 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
-
-[[package]]
-name = "unicode-linebreak"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b09c83c3c29d37506a3e260c08c03743a6bb66a9cd432c6934ab501a190571f"
 
 [[package]]
 name = "unicode-properties"
@@ -4230,7 +4468,7 @@ dependencies = [
  "bumpalo",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "wasm-bindgen-shared",
 ]
 
@@ -4422,7 +4660,7 @@ dependencies = [
  "anyhow",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "wasmtime-internal-component-util",
  "wasmtime-internal-wit-bindgen",
  "wit-parser 0.236.1",
@@ -4535,7 +4773,7 @@ checksum = "e085bfce1cb2089dbeef6e280a5d598666923d3dcd308712fe429fe43c9d19f5"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4668,7 +4906,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "witx",
 ]
 
@@ -4680,7 +4918,7 @@ checksum = "a84de50b5bf6530a15bbb228043561d525c8e21c8929693c3078f7cad2051ad3"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "wiggle-generate",
 ]
 
@@ -4734,7 +4972,7 @@ checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4745,7 +4983,7 @@ checksum = "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4983,7 +5221,7 @@ dependencies = [
  "heck",
  "indexmap",
  "prettyplease",
- "syn",
+ "syn 2.0.117",
  "wasm-metadata",
  "wit-bindgen-core",
  "wit-component",
@@ -4999,7 +5237,7 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "wit-bindgen-core",
  "wit-bindgen-rust",
 ]
@@ -5111,7 +5349,7 @@ checksum = "b659052874eb698efe5b9e8cf382204678a0086ebf46982b79d6ca3182927e5d"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "synstructure",
 ]
 
@@ -5132,7 +5370,7 @@ checksum = "7e6cc098ea4d3bd6246687de65af3f920c430e236bee1e3bf2e441463f08a02f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -5152,7 +5390,7 @@ checksum = "d71e5d6e06ab090c67b5e44993ec16b72dcbaabc526db883a360057678b48502"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "synstructure",
 ]
 
@@ -5186,7 +5424,7 @@ checksum = "eadce39539ca5cb3985590102671f2567e659fca9666581ad3411d59207951f3"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]

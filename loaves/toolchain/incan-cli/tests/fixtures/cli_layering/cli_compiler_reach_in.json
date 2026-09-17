@@ -1,0 +1,65 @@
+{
+  "comment": "Baseline of compiler internals the CLI layer reaches into. This list ratchets DOWN only: removing an entry is the goal, adding one fails loaves/toolchain/incan-cli/tests/cli_layering_guardrails.rs. See issue #1297 and the sibling extraction chore #1298.",
+  "files": [
+    {
+      "path": "loaves/toolchain/incan-cli/src/commands/binding_inspect.rs",
+      "reaches": [
+        "incan_frontend::ast",
+        "incan_frontend::typechecker"
+      ]
+    },
+    {
+      "path": "loaves/toolchain/incan-cli/src/commands/build.rs",
+      "reaches": [
+        "incan_driver::backend::selection",
+        "incan_frontend::api_metadata",
+        "incan_frontend::ast",
+        "incan_frontend::diagnostics",
+        "incan_frontend::registry_metadata"
+      ]
+    },
+    {
+      "path": "loaves/toolchain/incan-cli/src/commands/diagnostics.rs",
+      "reaches": [
+        "incan_driver::backend::c_abi",
+        "incan_frontend::ast",
+        "incan_frontend::diagnostics"
+      ]
+    },
+    {
+      "path": "loaves/toolchain/incan-cli/src/commands/format.rs",
+      "reaches": [
+        "incan_frontend::diagnostics"
+      ]
+    },
+    {
+      "path": "loaves/toolchain/incan-cli/src/lib.rs",
+      "reaches": [
+        "incan_driver::backend::selection"
+      ]
+    },
+    {
+      "path": "loaves/toolchain/incan-cli/src/test_runner/execution.rs",
+      "reaches": [
+        "incan_frontend::ast",
+        "incan_frontend::decorator_resolution",
+        "incan_frontend::lexer",
+        "incan_frontend::library_manifest_index",
+        "incan_frontend::module",
+        "incan_frontend::parser",
+        "incan_frontend::testing_markers",
+        "incan_frontend::vocab_desugar_pass"
+      ]
+    },
+    {
+      "path": "loaves/toolchain/oven-cli/src/commands/tools.rs",
+      "reaches": [
+        "incan_frontend::api_metadata",
+        "incan_frontend::contract_metadata",
+        "incan_frontend::feature_metadata",
+        "incan_frontend::library_manifest_index",
+        "incan_frontend::registry_metadata"
+      ]
+    }
+  ]
+}

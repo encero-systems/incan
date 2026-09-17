@@ -22,16 +22,16 @@ Before you start, sanity-check which layer your change belongs in (to avoid lang
 
 ### What you will usually touch
 
-Builtin changes typically land in the compiler (`incan` crate), so you will usually touch:
+Builtin changes typically span the compiler crates, so you will usually touch:
 
 1. **Frontend symbol table** (so it typechecks)
-    - `src/frontend/symbols.rs` → builtin name + signature
+    - `loaves/compiler/incan_frontend/src/symbols.rs` → builtin name + signature
 2. **IR builtin enum** (so lowering can represent it explicitly)
-    - `src/backend/ir/expr.rs` → `BuiltinFn` variant + name mapping
+    - `loaves/compiler/incan_ir/src/expr.rs` → `BuiltinFn` variant + name mapping
 3. **Lowering** (so calls become `BuiltinCall`)
-    - `src/backend/ir/lower/expr.rs`
+    - `loaves/compiler/incan_ir/src/lower/expr/`
 4. **Emission** (so Rust output matches the intended pattern)
-    - `src/backend/ir/emit/expressions/builtins.rs`
+    - `loaves/compiler/incan_emit/src/emit/expressions/builtins.rs`
 5. **Tests and docs**
     - add a regression test (parse/typecheck/codegen)
     - add/adjust docs if it changes user-visible behavior

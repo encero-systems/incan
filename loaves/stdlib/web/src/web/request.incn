@@ -1,0 +1,63 @@
+"""
+HTTP Request Extractors
+
+Types for extracting data from HTTP requests.
+
+`Query[T]` and `Path[T]` are direct re-exports of Axum extractor tuple structs.
+They already implement `FromRequestParts`, so no extra wrapper types are needed.
+
+Example:
+    ```incan
+    from std.web.routing import route
+    from std.web.request import Query, Path
+    from std.web.response import Json
+
+    @route("/search")
+    async def search(params: Query[SearchParams]) -> Json[list[Result]]:
+        results = do_search(params.q, params.limit)
+        return Json(results)
+
+    @route("/users/{id}")
+    async def validate_user_route(_: Path[int]) -> Json[RouteStatus]:
+        return Json(RouteStatus(valid=True))
+    ```
+"""
+rust.module("incan_std_web")
+
+from rust::axum::extract import Query
+"""
+`Query[T]` — extract URL query parameters (`?key=value&...`) into a typed struct.
+
+`T` must implement `serde::Deserialize`. If deserialization fails, Axum returns
+`400 Bad Request` automatically.
+
+Example:
+    ```incan
+    from std.web.request import Query
+
+    class SearchParams:
+        q: str
+        limit: int = 20
+
+    @route("/search")
+    async def search(params: Query[SearchParams]) -> ...:
+        ...
+    ```
+"""
+
+from rust::axum::extract import Path
+"""
+`Path[T]` — extract path parameters (`/users/{id}`) into a typed value or struct.
+
+For a single parameter, `T` can be a primitive like `int` or `str`.
+Use a source-level scalar capture argument when the handler body needs the extracted value.
+
+Example:
+    ```incan
+    from std.web.request import Path
+
+    @route("/users/{id}")
+    async def validate_user_route(_: Path[int]) -> ...:
+        ...
+    ```
+"""

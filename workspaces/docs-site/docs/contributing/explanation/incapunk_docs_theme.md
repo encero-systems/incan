@@ -38,13 +38,13 @@ Normal MkDocs admonitions are eligible automatically. The runtime chooses at mos
 
 Seasonal assets stay outside the ordinary pool. The zombie variant is grouped under `seasonal-october` and is added to Easter-egg selection only during October.
 
-The extraction inventory and curation rules live in `workspaces/docs-site/scripts/extract_incus_library.py`; the browser-facing manifest lives beside the generated assets under `docs/shared/incapunk/incus-library/`. The original contact sheets are external curation inputs and are intentionally not published with the site. To rebuild the library, pass the two contact-sheet directories explicitly:
+The extraction inventory and curation rules live in `workspaces/docs-site/scripts/extract_incus_library.py`; the browser-facing manifest lives beside the generated assets under `docs/shared/incapunk/incus-library/`. The original contact sheets are external curation inputs and are intentionally not published with the site. To rebuild the library from the repository root, pass the two contact-sheet directories explicitly:
 
 ```console
-python scripts/extract_incus_library.py \
+python workspaces/docs-site/scripts/extract_incus_library.py \
   --source-a /path/to/first-batch \
   --source-b /path/to/second-batch \
-  --output docs/shared/incapunk/incus-library
+  --output workspaces/docs-site/docs/shared/incapunk/incus-library
 ```
 
 ## Reference workflow

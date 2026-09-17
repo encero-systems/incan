@@ -7,7 +7,7 @@ set -euo pipefail
 # package_archive.sh resolves that workspace with `cargo metadata --offline`, but nothing
 # else in the repository's normal build (`cargo fetch --locked` against the compiler
 # workspace, the vocab companion, or the Oven Loaf test fixtures) is guaranteed to have
-# already fetched every crate named in `src/oven/fixtures/release_stdlib.toml`. When one is
+# already fetched every crate named in `loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml`. When one is
 # missing from the offline registry cache, packaging fails with "could not derive the
 # release support workspace lock from the verified repository lock" and gives no indication
 # that a network-enabled prewarm step was skipped. Run this script -- with network access,
@@ -20,7 +20,7 @@ fail() {
 }
 
 # Clear ambient Cargo/rustc-wrapper state before the internal Cargo invocation below, mirroring
-# `clear_inherited_cargo_environment` in src/oven/rustc.rs and package_archive.sh's own copy.
+# `clear_inherited_cargo_environment` in loaves/oven/oven_rustc/src/rustc.rs and package_archive.sh's own copy.
 # Deliberately keeps `CARGO_HOME` -- callers rely on it to name the cache this script warms.
 clear_inherited_cargo_environment() {
   local name
@@ -33,10 +33,28 @@ clear_inherited_cargo_environment() {
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$repo_root"
 
-for support_crate in incan_core incan_derive incan_stdlib incan_vocab incan_web_macros; do
-  [ -f "crates/${support_crate}/Cargo.toml" ] || fail "support crate is missing: crates/${support_crate}"
+# The checkout keeps each support crate in its ring; the archive keeps them side by side under `crates/`, the layout
+# every installed toolchain and staged runtime has. This table mirrors `development_support_crate_dir` in
+# `oven_model::toolchain_layout`.
+support_crate_source() {
+  case "$1" in
+    incan_lang) printf 'loaves/kernel/incan_lang' ;;
+    incan_vocab) printf 'loaves/kernel/incan_vocab' ;;
+    incan_derive) printf 'loaves/stdlib/derive/incan_derive' ;;
+    incan_web_macros) printf 'loaves/stdlib/derive/incan_web_macros' ;;
+    incan_std_core) printf 'loaves/stdlib/core/rust' ;;
+    incan_std_data) printf 'loaves/stdlib/data/rust' ;;
+    incan_std_async) printf 'loaves/stdlib/async/rust' ;;
+    incan_std_web) printf 'loaves/stdlib/web/rust' ;;
+    incan_std_testing) printf 'loaves/stdlib/testing/rust' ;;
+    *) printf 'crates/%s' "$1" ;;
+  esac
+}
+
+for support_crate in incan_lang incan_derive incan_std_core incan_std_data incan_std_async incan_std_web incan_std_testing incan_vocab incan_web_macros; do
+  [ -f "$(support_crate_source "$support_crate")/Cargo.toml" ] || fail "support crate is missing: $(support_crate_source "$support_crate")"
 done
-[ -f "src/oven/fixtures/release_stdlib.toml" ] || fail "release stdlib dependency fixture is missing"
+[ -f "loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml" ] || fail "release stdlib dependency fixture is missing"
 
 workdir="$(mktemp -d)"
 trap 'rm -rf -- "$workdir"' EXIT
@@ -57,8 +75,8 @@ stage_tracked_tree() {
   rm "$source_archive"
 }
 
-for support_crate in incan_core incan_derive incan_stdlib incan_vocab incan_web_macros; do
-  stage_tracked_tree "crates/${support_crate}" "$package_dir/${support_crate}"
+for support_crate in incan_lang incan_derive incan_std_core incan_std_data incan_std_async incan_std_web incan_std_testing incan_vocab incan_web_macros; do
+  stage_tracked_tree "$(support_crate_source "$support_crate")" "$package_dir/${support_crate}"
 done
 
 workspace_version() {
@@ -75,19 +93,48 @@ workspace_version() {
 version="$(workspace_version)"
 [ -n "$version" ] || fail "could not read workspace package version from Cargo.toml"
 
+# The archive's support workspace inherits the same dependency table as the checkout, so a member manifest that says
+# `serde = { workspace = true }` resolves in both. The five support crates name each other through that table too;
+# their entries are rewritten to the archive layout, where every support crate sits beside this manifest and the
+# stdlib ring's version requirement still applies. Path entries for crates the archive does not ship are dropped.
+workspace_dependencies() {
+  awk '
+    /^\[workspace.dependencies\]/ { in_section=1; next }
+    /^\[/ { in_section=0 }
+    in_section && /^(incan_lang|incan_derive|incan_std_core|incan_std_data|incan_std_async|incan_std_web|incan_std_testing|incan_vocab|incan_web_macros) = / {
+      entry = $0
+      sub(/^[a-z_]+ = \{ path = "[^"]+"/, $1 " = { path = \"" $1 "\"", entry)
+      print entry
+      next
+    }
+    in_section && /path = "/ { next }
+    in_section && /^[A-Za-z0-9_-]+ = / { print }
+  ' Cargo.toml
+}
+workspace_dependencies_table="$(workspace_dependencies)"
+[ -n "$workspace_dependencies_table" ] || fail "could not read [workspace.dependencies] from Cargo.toml"
+
 cat > "$package_dir/Cargo.toml" <<WORKSPACE
 [workspace]
 members = [
-    "incan_core",
+    "incan_lang",
     "incan_derive",
-    "incan_stdlib",
+    "incan_std_async",
+    "incan_std_core",
+    "incan_std_data",
+    "incan_std_testing",
+    "incan_std_web",
     "incan_vocab",
     "incan_web_macros",
 ]
 default-members = [
-    "incan_core",
+    "incan_lang",
     "incan_derive",
-    "incan_stdlib",
+    "incan_std_async",
+    "incan_std_core",
+    "incan_std_data",
+    "incan_std_testing",
+    "incan_std_web",
     "incan_vocab",
     "incan_web_macros",
 ]
@@ -104,6 +151,9 @@ homepage = "https://github.com/encero-systems/incan"
 keywords = ["programming-language", "compiler", "rust", "python"]
 categories = ["compilers", "development-tools"]
 
+[workspace.dependencies]
+${workspace_dependencies_table}
+
 [package]
 name = "incan-release-inspection-authority"
 version = "${version}"
@@ -114,7 +164,7 @@ publish = false
 path = "release-inspection-authority.rs"
 WORKSPACE
 printf '%s\n' '#![allow(dead_code)]' > "$package_dir/release-inspection-authority.rs"
-git show HEAD:src/oven/fixtures/release_stdlib.toml \
+git show HEAD:loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml \
   | awk '
       /^\[rust-dependencies\]$/ {
         print "[dependencies]"

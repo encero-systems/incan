@@ -47,18 +47,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: incan-oven-evidence-sources-v1-${{ matrix.toolchain }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'crates/incan_stdlib/stdlib/components/**/vocab_companion/Cargo.lock', 'tests/fixtures/oven_loaf_dependencies/Cargo.lock') }}
+          key: incan-oven-evidence-sources-v2-${{ matrix.toolchain }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'loaves/stdlib/*/vocab_companion/Cargo.lock', 'loaves/compiler/incan_test_support/fixtures/oven_loaf_dependencies/Cargo.lock') }}
           restore-keys: |
-            incan-oven-evidence-sources-v1-${{ matrix.toolchain }}-${{ runner.os }}-${{ runner.arch }}-
+            incan-oven-evidence-sources-v2-${{ matrix.toolchain }}-${{ runner.os }}-${{ runner.arch }}-
       - name: Fetch locked compiler and Loaf publisher sources
         run: |
           make fetch-locked-cargo-sources
           make fetch-oven-loaf-sources
       - name: Build the compiler used by the baker and suite
-        run: CARGO_BUILD_JOBS=2 cargo build --locked --features lsp --bins
+        run: CARGO_BUILD_JOBS=2 cargo build --locked -p incan-cli -p incan-lsp -p oven-cli --bins
       - name: Build the release compiler used by normal-command benchmarks
         if: ${{ matrix.benchmark }}
-        run: CARGO_BUILD_JOBS=2 cargo build --locked --release --bin incan
+        run: CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan-cli --bin incan
       - uses: ./.github/actions/restore-sdk-provider-store
       - uses: ./.github/actions/install-nightly-toolchain
         with:
@@ -108,8 +108,8 @@ jobs:
             --rustc "$(rustup which --toolchain '${{ matrix.toolchain }}' rustc)" \
             --checkout-revision "$GITHUB_SHA" \
             --workload build \
-            --source "$GITHUB_WORKSPACE/src/oven/fixtures/release_core.incn" \
-            --clean-worktree-source "$clean_worktree/src/oven/fixtures/release_core.incn" \
+            --source "$GITHUB_WORKSPACE/loaves/oven/oven_rustc/src/fixtures/release_core.incn" \
+            --clean-worktree-source "$clean_worktree/loaves/oven/oven_rustc/src/fixtures/release_core.incn" \
             --incan-home "$RUNNER_TEMP/incan-oven-alpha-benchmark-home" \
             --output "$GITHUB_WORKSPACE/target/oven-alpha-benchmark" \
             --cargo-guard-dir "$guard" \

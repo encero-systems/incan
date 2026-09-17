@@ -1,16 +1,36 @@
 [workspace]
 members = [
-    ".",
-    "crates/incan_derive",
-    "crates/incan_vocab",
-    "crates/incan_stdlib",
-    "crates/incan_core",
-    "crates/incan_codegraph",
-    "crates/incan_syntax",
-    "crates/incan_semantics_core",
-    "crates/incan_semantics_stdlib",
-    "crates/incan_web_macros",
-    "crates/rust_inspect",
+    "loaves/stdlib/core/rust",
+    "loaves/stdlib/data/rust",
+    "loaves/stdlib/async/rust",
+    "loaves/stdlib/web/rust",
+    "loaves/stdlib/testing/rust",
+    "loaves/compiler/incan_driver",
+    "loaves/compiler/incan_emit",
+    "loaves/compiler/incan_format",
+    "loaves/compiler/incan_frontend",
+    "loaves/compiler/incan_ir",
+    "loaves/compiler/incan_oven_facet",
+    "loaves/compiler/incan_provider",
+    "loaves/compiler/incan_semantics_stdlib",
+    "loaves/compiler/incan_test_support",
+    "loaves/toolchain/incan-cli",
+    "loaves/toolchain/incan-lsp",
+    "loaves/toolchain/oven-cli",
+    "loaves/compiler/rust_inspect",
+    "loaves/kernel/incan_codegraph",
+    "loaves/kernel/incan_lang",
+    "loaves/kernel/incan_semantics_core",
+    "loaves/kernel/incan_syntax",
+    "loaves/kernel/incan_vocab",
+    "loaves/oven/oven_model",
+    "loaves/oven/oven_rustc",
+    "loaves/oven/oven_interop",
+    "loaves/oven/oven_registry",
+    "loaves/oven/oven_cargo_compat",
+    "loaves/oven/oven_store",
+    "loaves/stdlib/derive/incan_derive",
+    "loaves/stdlib/derive/incan_web_macros",
 ]
 exclude = ["target/incan"]
 resolver = "2"
@@ -20,10 +40,10 @@ resolver = "2"
 # needs postcard with `alloc`. That default feature pulls `heapless/cas`, which pulls the
 # unmaintained `atomic-polyfill` crate tracked by issue #260. Keep this patch narrow and remove it
 # when the upstream manifest disables postcard defaults.
-ra_ap_proc_macro_api = { path = "crates/third_party/ra_ap_proc_macro_api" }
+ra_ap_proc_macro_api = { path = "loaves/third_party/ra_ap_proc_macro_api" }
 
 [workspace.package]
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 description = "The Incan programming language compiler"
 edition = "2024"
 rust-version = "1.98"
@@ -35,136 +55,52 @@ readme = "README.md"
 keywords = ["programming-language", "compiler", "rust", "python"]
 categories = ["compilers", "development-tools"]
 
-[package]
-name = "incan"
-version.workspace = true
-license.workspace = true
-edition.workspace = true  # Rust 2024 edition
-rust-version.workspace = true
-repository.workspace = true
-homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
-authors.workspace = true
-description.workspace = true
-readme.workspace = true
-
-[features]
-default = ["cli", "std_testing", "std_async", "std_decorators"]
-cli = ["dep:clap", "dep:tracing-subscriber", "dep:tempfile", "rust_inspect"]
-lsp = ["dep:tower-lsp", "dep:tokio"]
-std_testing = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_testing"]
-std_async = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_async"]
-std_decorators = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_decorators"]
-# Rust dependency inspection via rust-analyzer (`ra_ap_*`) in the `rust_inspect` crate.
-# Kept optional for non-CLI/library builds; the CLI enables it so ordinary `rust::` imports can preserve
-# real function/type signatures.
-rust_inspect = ["dep:rust_inspect"]
-
-[dependencies]
-# Shared language/semantic helpers (canonical vocab)
-incan_core = { path = "crates/incan_core" }
-incan_codegraph = { path = "crates/incan_codegraph" }
-incan_vocab = { path = "crates/incan_vocab" }
-# Shared syntax frontend (lexer, parser, AST, diagnostics)
-incan_syntax = { path = "crates/incan_syntax" }
-# Shared semantics backend (type checker, semantic analysis)
-incan_semantics_core = { path = "crates/incan_semantics_core" }
-incan_semantics_stdlib = { path = "crates/incan_semantics_stdlib", optional = true }
-
-# LSP server implementation
-tower-lsp = { version = "0.20", optional = true }
-# Async runtime (for LSP and generated async code)
-tokio = { version = "1", features = ["full"], optional = true }
-# JSON serialization (for LSP protocol)
+# One version per shared dependency, declared once; members write `workspace = true` and add only the features they
+# need on top. Every manifest the layout rewrite (#1478) writes starts from this table.
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-
-# CLI parsing with typed subcommands
-clap = { version = "4.4", features = ["derive"], optional = true }
-# Already a dev-dependency below. The direct-rustc reuse path publishes a verified copy of a retained output through
-# a uniquely named sibling, so it needs the same crate at runtime under `cli`.
-tempfile = { version = "3", optional = true }
-# Composable error types
-thiserror = "2.0"
-# Rich error diagnostics with source context
-miette = { version = "7.0", features = ["fancy"] }
-
-# AST-based Rust code generation
-syn = { version = "2.0", features = ["full", "parsing", "printing"] }
+tokio = "1"
+tower-lsp = "0.20"
+syn = { version = "2.0", features = ["full", "parsing"] }
 quote = "1.0"
 proc-macro2 = "1.0"
-# Code formatting for generated Rust
-prettyplease = "0.2"
+thiserror = "2.0"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
-
-# TOML parsing for loaf.toml manifests (RFC 013/023)
-toml = "0.9"
-# Span-preserving TOML parsing for manifest diagnostics.
-toml_edit = { version = "0.25", features = ["parse", "serde"] }
-# Serde derive for manifest deserialization
-serde = { version = "1.0", features = ["derive"] }
-sha2 = "0.10.9"
-sha1 = "0.10"
-# Keyed MAC primitives for std.hash (#1075); 0.12 is the line matching digest 0.10.
-hmac = { version = "0.12", features = ["reset"] }
-blake3 = "1"
-hex = "0.4.3"
-semver = "1.0.27"
-globset = "0.4.18"
-# Safe, capability-oriented filesystem primitives for no-replace Oven publications.
-rustix = { version = "1.1.4", features = ["fs"] }
-rust_inspect = { path = "crates/rust_inspect", optional = true }
-# WASM runtime for desugarer packaging
-# 36.0.14 is the patched RUSTSEC-2026-0222/RUSTSEC-2026-0269 line compatible with Incan's Rust 1.93 MSRV.
-# Wasmtime 45 remains vulnerable, while the patched 46.0.2 release requires Rust 1.94.
-wasmtime = { version = "36.0.14", default-features = false, features = ["cranelift", "runtime", "std"] }
-wasmtime-wasi = { version = "36.0.14", default-features = false, features = ["preview1"] }
-
-[dev-dependencies]
-# Artifact-level `incan-v1` conformance decodes the pinned toolchain's v0 symbols independently of compiler state.
-rustc-demangle = "0.1.27"
-# Unix process-group cleanup for bounded subprocess regression tests.
-libc = "0.2"
-# Runtime crate used by std.io generated-project offline smoke tests.
-byteorder = "1"
-# Runtime crate used by std.uuid generated-project offline smoke tests.
-rand = "0.8"
-# Runtime crate used by supported Rust-interop example smoke tests. The compiler-suite foundation Loaf seals this
-# exact feature closure so normal examples can inspect and link `rust::uuid` without a Cargo fallback.
-uuid = { version = "1", features = ["v4", "serde"] }
-# Runtime crate used by std.regex generated-project offline smoke tests.
-regex = "1"
-# Runtime crates used by std.compression generated-project offline smoke tests.
-flate2 = "1"
-zstd = "0.13"
-bzip2 = "0.6"
-xz2 = "0.1"
-snap = "1"
-# Runtime crate used by std.checksum generated-project offline smoke tests.
-crc32fast = "1"
-# Runtime crates used by std.hash generated-project offline smoke tests.
-blake2 = "0.10"
-md5_010 = { package = "md-5", version = "0.10" }
-sha1 = "0.10"
-sha3 = "0.10"
-xxhash_rust = { package = "xxhash-rust", version = "0.8", features = ["xxh3", "xxh32", "xxh64"] }
-# Snapshot testing for codegen
-insta = { version = "1.45", features = ["glob"] }
-# Property-based testing
-proptest = "1"
-# Runtime crate for parity tests
-incan_stdlib = { path = "crates/incan_stdlib" }
-# Temporary directories for manifest discovery tests
-tempfile = "3"
-wat = "1"
-
-[package.metadata.cargo-udeps.ignore]
-# `regex` deliberately anchors generated std.regex consumers in Cargo.lock for offline test shards; the Rust test
-# harness does not link it directly.
-# `uuid` likewise anchors the compiler-suite's supported `rust::uuid` smoke closure; it is consumed by the explicit
-# legacy publisher, not by the Rust test harness.
-development = ["regex", "uuid"]
+# Every workspace crate is named here once — its directory, its ring's version requirement where that ring has
+# its own line, and `default-features = false` where any member consumes it without defaults — and members
+# inherit the entry. The release archive and the staged SDK runtime write their own tables against `crates/<name>`.
+incan_lang = { path = "loaves/kernel/incan_lang" }
+incan_derive = { path = "loaves/stdlib/derive/incan_derive", version = "0.6.0-dev.5" }
+incan_std_core = { path = "loaves/stdlib/core/rust", version = "0.6.0-dev.5" }
+incan_std_data = { path = "loaves/stdlib/data/rust", version = "0.6.0-dev.5" }
+incan_std_async = { path = "loaves/stdlib/async/rust", version = "0.6.0-dev.5" }
+incan_std_web = { path = "loaves/stdlib/web/rust", version = "0.6.0-dev.5" }
+incan_std_testing = { path = "loaves/stdlib/testing/rust", version = "0.6.0-dev.5" }
+incan_vocab = { path = "loaves/kernel/incan_vocab", version = "0.3.0" }
+incan_web_macros = { path = "loaves/stdlib/derive/incan_web_macros", version = "0.6.0-dev.5" }
+incan_driver = { path = "loaves/compiler/incan_driver", default-features = false }
+incan_emit = { path = "loaves/compiler/incan_emit", default-features = false }
+incan_format = { path = "loaves/compiler/incan_format" }
+incan_test_support = { path = "loaves/compiler/incan_test_support" }
+incan-cli = { path = "loaves/toolchain/incan-cli" }
+incan-lsp = { path = "loaves/toolchain/incan-lsp" }
+oven-cli = { path = "loaves/toolchain/oven-cli" }
+incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = false }
+incan_ir = { path = "loaves/compiler/incan_ir", default-features = false }
+incan_oven_facet = { path = "loaves/compiler/incan_oven_facet" }
+incan_provider = { path = "loaves/compiler/incan_provider", default-features = false }
+incan_semantics_stdlib = { path = "loaves/compiler/incan_semantics_stdlib" }
+rust_inspect = { path = "loaves/compiler/rust_inspect", default-features = false }
+incan_codegraph = { path = "loaves/kernel/incan_codegraph" }
+incan_semantics_core = { path = "loaves/kernel/incan_semantics_core" }
+incan_syntax = { path = "loaves/kernel/incan_syntax" }
+oven_model = { path = "loaves/oven/oven_model", version = "0.6.0-dev.5" }
+oven_rustc = { path = "loaves/oven/oven_rustc", version = "0.6.0-dev.5" }
+oven_interop = { path = "loaves/oven/oven_interop", version = "0.6.0-dev.5" }
+oven_registry = { path = "loaves/oven/oven_registry", version = "0.6.0-dev.5" }
+oven_cargo_compat = { path = "loaves/oven/oven_cargo_compat", version = "0.6.0-dev.5" }
+oven_store = { path = "loaves/oven/oven_store", version = "0.6.0-dev.5" }
 
 # The named, receipt-bound compatibility profile used only by Oven's explicit compiler-suite publisher. Normal
 # `incan build`, `incan run`, and `incan test` consume the resulting direct-rustc Oven Loaf and never select this
@@ -180,22 +116,3 @@ incremental = false
 # complete; optimize only this pure dependency while retaining debuggable compiler code.
 [profile.dev.package.sha2]
 opt-level = 3
-
-[[bin]]
-name = "incan"
-path = "src/main.rs"
-required-features = ["cli"]
-
-[[bin]]
-name = "incan-lsp"
-path = "src/bin/lsp.rs"
-required-features = ["lsp"]
-
-[[bin]]
-name = "generate_feature_inventory"
-path = "src/bin/generate_feature_inventory.rs"
-required-features = ["cli"]
-
-[lib]
-name = "incan"
-path = "src/lib.rs"

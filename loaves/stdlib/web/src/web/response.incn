@@ -1,0 +1,124 @@
+"""
+HTTP Response Types and Builders
+
+Provides typed response wrappers around Axum's response primitives, plus a
+`Response` builder for full control over status codes and headers.
+
+Example:
+    ```incan
+    from std.web.routing import route
+    from std.web.response import Response, Json, Html
+
+    @route("/")
+    async def index() -> Html:
+        return Html("<h1>Welcome!</h1>")
+
+    @route("/api/users/{id}")
+    async def get_user(id: int) -> Json[User]:
+        user = find_user(id)?
+        return Json(user)
+
+    @route("/redirect")
+    async def redirect() -> Response:
+        return Response.redirect("/new-location")
+    ```
+"""
+rust.module("incan_std_web")
+
+# Re-export Axum response tuple structs directly.
+# This preserves constructor ergonomics (`Json(value)`, `Html("<h1>...")`) in user code.
+from rust::axum import Json
+"""
+`Json[T]` — serialize `T` as JSON and set `Content-Type: application/json`.
+
+`T` must implement `serde::Serialize`. Construction uses tuple syntax:
+`Json(value)`.
+
+Example:
+    ```incan
+    from std.web.response import Json
+
+    @route("/api/ping")
+    async def ping() -> Json[str]:
+        return Json("pong")
+    ```
+"""
+
+from rust::axum::response import Html
+"""
+`Html` — return an HTML body with `Content-Type: text/html`.
+
+Example:
+    ```incan
+    from std.web.response import Html
+
+    @route("/hello")
+    async def hello() -> Html:
+        return Html("<h1>Hello, world!</h1>")
+    ```
+"""
+
+from rust::axum::response import Response as AxumRawResponse
+from std.web.macros import IntoResponse
+
+@rust.extern
+def response_html(content: str) -> AxumRawResponse:
+    """Create an HTML response (200 OK)."""
+    ...
+
+@rust.extern
+def response_ok() -> AxumRawResponse:
+    """Create an empty 200 OK response."""
+    ...
+
+@rust.extern
+def response_status(code: int, body: str) -> AxumRawResponse:
+    """Create a response with a custom status code and body."""
+    ...
+
+@rust.extern
+def response_redirect(location: str) -> AxumRawResponse:
+    """Create a 302 redirect response."""
+    ...
+
+@derive(IntoResponse)
+pub type Response = newtype AxumRawResponse:
+    """
+    HTTP response builder.
+
+    For common cases, use `Json` or `Html` directly.  `Response` gives full
+    control over status codes and headers.
+
+    Example:
+        ```incan
+        from std.web.response import Response
+
+        @route("/redirect")
+        async def redirect() -> Response:
+            return Response.redirect("/new-location")
+
+        @route("/error")
+        async def error() -> Response:
+            return Response.status(500, "Something went wrong")
+        ```
+    """
+
+    @staticmethod
+    def html(content: str) -> Response:
+        """Create an HTML response (200 OK)."""
+        return Response(response_html(content))
+
+    @staticmethod
+    def ok() -> Response:
+        """Create an empty 200 OK response."""
+        return Response(response_ok())
+
+    @staticmethod
+    def status(code: int, body: str) -> Response:
+        """Create a response with a custom status code."""
+        return Response(response_status(code, body))
+
+    @staticmethod
+    def redirect(location: str) -> Response:
+        """Create a 302 redirect response."""
+        return Response(response_redirect(location))

@@ -159,14 +159,14 @@ Every worker slice report must identify the worker that produced it, and the can
 
 ## Findings
 
-- [ ] F1 | warning | rustdoc | rustdoc prose | src/project_lifecycle/version.rs:122
+- [ ] F1 | warning | rustdoc | rustdoc prose | loaves/oven/oven_model/src/project_lifecycle/version.rs:122
   roles: rust-prose
   sources:
     - .agents/state/review-report.rust-prose.md
   status: open
   summary: Manually chopped single-paragraph rustdoc.
 
-- [ ] F2 | error | behavior | env dependency overlays are inspectable but not executable | src/cli/commands/lifecycle.rs:193
+- [ ] F2 | error | behavior | env dependency overlays are inspectable but not executable | loaves/toolchain/incan-cli/src/commands/lifecycle.rs:193
   roles: scope, architecture
   sources:
     - .agents/state/review-report.scope.md
@@ -180,7 +180,7 @@ Every worker slice report must identify the worker that produced it, and the can
 
 ## Clean Corroboration
 
-- src/project_lifecycle/env.rs — rust-prose clean
+- loaves/oven/oven_model/src/project_lifecycle/env.rs — rust-prose clean
 - workspaces/docs-site/docs/tooling/tutorials/getting_started.md — docs-claims clean
 
 Only record clean corroboration where the lack of findings materially matters:

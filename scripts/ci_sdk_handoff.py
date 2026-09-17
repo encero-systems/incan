@@ -132,7 +132,7 @@ def consume(options, expected):
                        INCAN_SOURCE_ROOT=str(options.workspace), INCAN_SDK_INVENTORY=str(selected_inventory))
     # Explicit inventory discovery rejects absent/incompatible data before source-checkout preparation is considered.
     try:
-        output = run([str(options.compiler), "check", "tests/fixtures/test_assert_canary.incn"],
+        output = run([str(options.compiler), "check", "loaves/compiler/incan_test_support/fixtures/test_assert_canary.incn"],
                      options.workspace, environment)
     except ValueError as error:
         raise ValueError(f"SDK validation failed: {error}") from error

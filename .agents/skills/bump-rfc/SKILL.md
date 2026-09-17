@@ -133,7 +133,7 @@ After the `## Layers affected` section, add two new sections: `## Implementation
 ### Stdlib / Runtime
 
 - [ ] Declare in `stdlib/<module>.incn` (if applicable).
-- [ ] Wire Rust backing type in `incan_stdlib` (if applicable).
+- [ ] Wire Rust backing type in the owning component's facet, `loaves/stdlib/<component>/rust/` (if applicable).
 
 ### Tests
 

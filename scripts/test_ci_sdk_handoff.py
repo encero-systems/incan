@@ -103,7 +103,7 @@ else:
         self.assertEqual(self.path_file.read_text(), f"{inventory.parent}\n")
         self.assertIn(f"INCAN_SDK_INVENTORY={inventory}\n", self.env_file.read_text())
         calls = [json.loads(line) for line in self.trace.read_text().splitlines()]
-        self.assertEqual(calls[-1]["args"], ["check", "tests/fixtures/test_assert_canary.incn"])
+        self.assertEqual(calls[-1]["args"], ["check", "loaves/compiler/incan_test_support/fixtures/test_assert_canary.incn"])
         self.assertEqual(calls[-1]["inventory"], str(inventory))
         self.assertFalse(self.cold_publisher.exists())
 

@@ -2,12 +2,12 @@
 
 This page documents the `std.async` API surface exposed by the standard library. See the module source files for authoritative behavior:
 
-- `crates/incan_stdlib/stdlib/async/time.incn`
-- `crates/incan_stdlib/stdlib/async/task.incn`
-- `crates/incan_stdlib/stdlib/async/channel.incn`
-- `crates/incan_stdlib/stdlib/async/sync.incn`
-- `crates/incan_stdlib/stdlib/async/race.incn`
-- `crates/incan_stdlib/stdlib/async/prelude.incn`
+- `loaves/stdlib/async/src/async/time.incn`
+- `loaves/stdlib/async/src/async/task.incn`
+- `loaves/stdlib/async/src/async/channel.incn`
+- `loaves/stdlib/async/src/async/sync.incn`
+- `loaves/stdlib/async/src/async/race.incn`
+- `loaves/stdlib/async/src/async/prelude.incn`
 
 ## Interop notes
 

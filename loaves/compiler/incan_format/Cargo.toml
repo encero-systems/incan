@@ -1,0 +1,23 @@
+[package]
+name = "incan_format"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The Incan source formatter"
+
+[lib]
+name = "incan_format"
+path = "src/lib.rs"
+
+[dependencies]
+incan_lang = { workspace = true }
+incan_semantics_core = { workspace = true }
+incan_syntax = { workspace = true }
+incan_vocab = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# The formatting properties walk the committed examples through the harness's checkout anchor.
+incan_test_support = { workspace = true }
+proptest = "1"

@@ -6,7 +6,7 @@
       "tag": "v0.5.0",
       "revision": "f6c17e0f8948c032f8b308236d57d9dee6ab1e9f",
       "source_blob": "42f718a9c35f816a68bb3ff13578eaf6725e3d0b",
-      "source_snapshot_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+      "source_snapshot_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
       "expected_descriptor_count": 67,
       "retirement_condition": "Retire this active baseline when the v0.5 replacement migration closes; retain the source only as an explicitly historical regression fixture if a later migration needs it."
     },
@@ -45,7 +45,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "NamespacedStdlib",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -88,7 +88,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "RustInteropBoundary",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -132,7 +132,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "CheckedCBindingFoundation",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -179,7 +179,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "OvenInteropRequirements",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -222,7 +222,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "IncanLibraries",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -264,7 +264,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StaticStorage",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -311,7 +311,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "FirstClassFunctions",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -353,7 +353,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "CallSiteGenerics",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -391,7 +391,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "AbstractTraits",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -434,7 +434,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "SourceDefinedDerivesTraits",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -476,7 +476,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "ModelFieldMetadata",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -524,7 +524,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "TypeTokensReflection",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -567,7 +567,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "ValueEnums",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -606,7 +606,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "UnionTypes",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -649,7 +649,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "ValidatedNewtypes",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -692,7 +692,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "NumericTypeSystem",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -734,7 +734,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "LoopExpressions",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -772,7 +772,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "IfWhileLet",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -809,7 +809,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "PatternAlternation",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -851,7 +851,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "EnumMethodsTraits",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -893,7 +893,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "ComputedProperties",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -936,7 +936,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "SymbolAliases",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -978,7 +978,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "CallablePresets",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1018,7 +1018,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "VariadicAndSpreadCalls",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1062,7 +1062,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "UserDefinedDecorators",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1105,7 +1105,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "Generators",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1144,7 +1144,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "IteratorAdapters",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1191,7 +1191,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "FallibleIteration",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1234,7 +1234,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "ResultCombinators",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1277,7 +1277,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "ProtocolHooks",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1320,7 +1320,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "RustTraitAdoption",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1358,7 +1358,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "RustAllow",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1398,7 +1398,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "ScopedDslSurfaces",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1441,7 +1441,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdWeb",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1481,7 +1481,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdMath",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1523,7 +1523,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdCollections",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1561,7 +1561,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdGraph",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1611,7 +1611,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdFs",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1650,7 +1650,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdIo",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1697,7 +1697,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdRegex",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1744,7 +1744,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdUuid",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1791,7 +1791,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdCompression",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1838,7 +1838,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdEncoding",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1890,7 +1890,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdHash",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1933,7 +1933,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdEnviron",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -1977,7 +1977,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdJson",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2016,7 +2016,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdTempfile",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2059,7 +2059,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdDatetime",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2098,7 +2098,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdTelemetryCore",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2136,7 +2136,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdLogging",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2184,7 +2184,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdChecksum",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2227,7 +2227,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "TestingAssertions",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2270,7 +2270,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "TestRunner",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2313,7 +2313,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "AsyncAwait",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2356,7 +2356,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "AsyncRace",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2399,7 +2399,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "ProjectLifecycle",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2442,7 +2442,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "WorkspaceMultiPackageProjects",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2482,7 +2482,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "ToolchainInstallerManifest",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2527,7 +2527,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "ZeroCloneStarterFlow",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2565,7 +2565,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StableDiagnostics",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2604,7 +2604,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "BuildReportsAndRustInspection",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2643,7 +2643,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "BuildTestOvenObservability",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2685,7 +2685,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "CodegraphInspection",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2723,7 +2723,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "CheckedApiMetadata",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2771,7 +2771,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "CompiledProvidersSdkComponentsPackageFeatures",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2813,7 +2813,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "FormatterContract",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2856,7 +2856,7 @@
           "anchor": {
             "surface": "SourceAst",
             "status": "Observed",
-            "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+            "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
             "selector": "StdRegistry",
             "owner_issue": null,
             "note": "The frozen release-era descriptor is the audited public-contract source."
@@ -2872,7 +2872,7 @@
       {
         "id": "frontend.body-ir.callable-values",
         "lifecycle": "LocalImplementation",
-        "repository_path": "src/frontend/body_ir.rs",
+        "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility.rs",
         "selector": "fn replacement_compatibility_body_ir_contribution",
         "retirement_condition": null,
         "feature_ids": [
@@ -2887,7 +2887,7 @@
       {
         "id": "backend.replacement.bounded-scalar-control",
         "lifecycle": "LocalImplementation",
-        "repository_path": "src/backend/replacement/mod.rs",
+        "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility.rs",
         "selector": "fn replacement_compatibility_direct_execution_contribution",
         "retirement_condition": null,
         "feature_ids": [
@@ -2905,7 +2905,7 @@
       {
         "id": "replacement-compatibility.migration-bootstrap",
         "lifecycle": "MigrationBootstrap",
-        "repository_path": "src/replacement_compatibility.rs",
+        "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility.rs",
         "selector": "fn migration_bootstrap_compatibility_contribution",
         "retirement_condition": "Retire this contributor when every remaining feature and requirement has moved to the module that implements its coherent mechanism; then retain the v0.5 source only as an explicitly historical regression fixture if a later migration needs it.",
         "feature_ids": [
@@ -2964,7 +2964,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "CallablePresets",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -2976,7 +2976,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_expr/calls.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs",
                 "selector": "fn check_call",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -2994,7 +2994,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "CallablePresets",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -3002,7 +3002,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_expr/calls.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs",
               "selector": "fn check_call",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -3010,7 +3010,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_call",
               "owner_issue": 988,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -3018,7 +3018,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_call",
               "owner_issue": 988,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -3030,7 +3030,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -3044,7 +3044,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -3077,7 +3077,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "FirstClassFunctions",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -3089,7 +3089,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_expr/calls.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs",
                 "selector": "fn check_call",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -3107,7 +3107,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "FirstClassFunctions",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -3115,7 +3115,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_expr/calls.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs",
               "selector": "fn check_call",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -3123,7 +3123,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_call",
               "owner_issue": 988,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -3131,7 +3131,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_call",
               "owner_issue": 988,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -3143,7 +3143,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -3157,7 +3157,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -3190,7 +3190,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "IfWhileLet",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -3202,7 +3202,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_expr/control_flow.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs",
                 "selector": "fn check_if_expr",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary supplies the current source admission anchor for this bounded direct profile."
@@ -3220,7 +3220,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "IfWhileLet",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -3228,7 +3228,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_expr/control_flow.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs",
               "selector": "fn check_if_expr",
               "owner_issue": null,
               "note": "The audited typechecker boundary supplies the current source admission anchor for this bounded direct profile."
@@ -3236,7 +3236,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Observed",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_if",
               "owner_issue": null,
               "note": "Body IR lowers the currently bounded direct profile through compiler-owned operation records."
@@ -3244,7 +3244,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Observed",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_loop",
               "owner_issue": null,
               "note": "The replacement evaluator seam executes the currently bounded direct profile; the #987 corpus is recorded separately."
@@ -3259,7 +3259,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Observed",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "replacement-body-v0-004",
                   "owner_issue": null,
                   "note": "The stable #987 seed corpus registers this bounded direct-execution evidence."
@@ -3273,7 +3273,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -3305,7 +3305,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "NumericTypeSystem",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -3317,7 +3317,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_expr/ops.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs",
                 "selector": "fn check_binary",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary supplies the current source admission anchor for this bounded direct profile."
@@ -3335,7 +3335,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "NumericTypeSystem",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -3343,7 +3343,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_expr/ops.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs",
               "selector": "fn check_binary",
               "owner_issue": null,
               "note": "The audited typechecker boundary supplies the current source admission anchor for this bounded direct profile."
@@ -3351,7 +3351,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Observed",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_binary",
               "owner_issue": null,
               "note": "Body IR lowers the currently bounded direct profile through compiler-owned operation records."
@@ -3359,7 +3359,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Observed",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn evaluate_binary",
               "owner_issue": null,
               "note": "The replacement evaluator seam executes the currently bounded direct profile; the #987 corpus is recorded separately."
@@ -3378,7 +3378,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Observed",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "replacement-body-v0-001",
                   "owner_issue": null,
                   "note": "The stable #987 seed corpus registers this bounded direct-execution evidence."
@@ -3392,7 +3392,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -3414,7 +3414,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "legacy_receipt_identity",
                       "owner_issue": null,
                       "note": "#1146 verifies the legacy Oven route's receipt identity for replacement-body-v0-001."
@@ -3422,7 +3422,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "replacement_receipt_identity",
                       "owner_issue": null,
                       "note": "#1146 verifies the direct replacement route's receipt identity for replacement-body-v0-001."
@@ -3430,7 +3430,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_compared_row_carries_two_route_receipts_and_its_oven_authority",
                       "owner_issue": null,
                       "note": "#1146 records the matched two-route source observable for replacement-body-v0-001."
@@ -3446,7 +3446,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 verifies the legacy Oven route receipt for replacement-body-v0-022."
@@ -3454,7 +3454,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 verifies the direct replacement route receipt for replacement-body-v0-022."
@@ -3462,7 +3462,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 records the matched typed result and exact streams for replacement-body-v0-022."
@@ -3478,7 +3478,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_scalar_json_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 verifies the legacy Oven route receipt for replacement-body-v0-025."
@@ -3486,7 +3486,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_scalar_json_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 verifies the direct replacement route receipt for replacement-body-v0-025."
@@ -3494,7 +3494,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_scalar_json_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 records exact scalar JSON bytes and the matched two-route source observable for replacement-body-v0-025."
@@ -3510,7 +3510,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 verifies the legacy Oven route receipt for replacement-body-v0-027."
@@ -3518,7 +3518,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 verifies the direct replacement route receipt for replacement-body-v0-027."
@@ -3526,7 +3526,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "#1249 records bounded canonical truthiness and exact streams for replacement-body-v0-027."
@@ -3553,7 +3553,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "NumericTypeSystem",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -3565,7 +3565,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_stmt.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs",
                 "selector": "fn check_assignment",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -3583,7 +3583,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "NumericTypeSystem",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -3591,7 +3591,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_stmt.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs",
               "selector": "fn check_assignment",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -3599,7 +3599,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Observed",
-              "repository_path": "src/frontend/body_ir/primitives.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir/primitives.rs",
               "selector": "fn lower_checked_literal",
               "owner_issue": null,
               "note": "Body IR represents the admitted subset at this compiler-owned lowering seam."
@@ -3607,7 +3607,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Observed",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn validate_reachable_typed_numeric_profile",
               "owner_issue": null,
               "note": "The replacement executor admits the bounded subset and refuses the remaining feature surface before effects."
@@ -3620,7 +3620,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Observed",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "replacement-body-v0-029",
                   "owner_issue": null,
                   "note": "The stable #987 corpus registers only the bounded source-observable subset already executable here."
@@ -3634,7 +3634,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -3657,7 +3657,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the legacy Oven receipt for exact-width and decimal carrier transport in replacement-body-v0-029."
@@ -3665,7 +3665,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the direct replacement receipt for exact-width and decimal carrier transport in replacement-body-v0-029."
@@ -3673,7 +3673,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_typed_numeric_row_carries_exact_type_and_two_route_receipts",
                       "owner_issue": null,
                       "note": "The paired corpus test records matching exact streams and the typed result for exact-width and decimal carrier transport in replacement-body-v0-029."
@@ -3700,7 +3700,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "AsyncAwait",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -3712,7 +3712,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_expr/control_flow.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs",
                 "selector": "fn check_await",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary supplies the current source admission anchor for this bounded direct profile."
@@ -3730,7 +3730,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "AsyncAwait",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -3738,7 +3738,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_expr/control_flow.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs",
               "selector": "fn check_await",
               "owner_issue": null,
               "note": "The audited typechecker boundary supplies the current source admission anchor for this bounded direct profile."
@@ -3746,7 +3746,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Observed",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_race_for",
               "owner_issue": null,
               "note": "Body IR lowers the currently bounded direct profile through compiler-owned operation records."
@@ -3754,7 +3754,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Observed",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_race",
               "owner_issue": null,
               "note": "The replacement evaluator seam executes the currently bounded direct profile; the #987 corpus is recorded separately."
@@ -3768,7 +3768,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Observed",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "replacement-body-v0-018",
                   "owner_issue": null,
                   "note": "The stable #987 seed corpus registers this bounded direct-execution evidence."
@@ -3782,7 +3782,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -3815,7 +3815,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "CallSiteGenerics",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -3827,7 +3827,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_expr/calls.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs",
                 "selector": "fn check_call",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -3845,7 +3845,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "CallSiteGenerics",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -3853,7 +3853,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_expr/calls.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs",
               "selector": "fn check_call",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -3861,7 +3861,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_call",
               "owner_issue": 988,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -3869,7 +3869,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_call",
               "owner_issue": 988,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -3881,7 +3881,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -3895,7 +3895,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -3928,7 +3928,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "ScopedDslSurfaces",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -3940,7 +3940,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/collect/decorators.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/collect/decorators.rs",
                 "selector": "fn validate_decorators_allowing_user_defined",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -3958,7 +3958,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "ScopedDslSurfaces",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -3966,7 +3966,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/collect/decorators.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/collect/decorators.rs",
               "selector": "fn validate_decorators_allowing_user_defined",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -3974,7 +3974,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_function_body",
               "owner_issue": 555,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -3982,7 +3982,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_call",
               "owner_issue": 555,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -3994,7 +3994,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -4008,7 +4008,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -4041,7 +4041,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "StableDiagnostics",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -4053,7 +4053,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_stmt.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs",
                 "selector": "fn check_statement",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -4071,7 +4071,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "StableDiagnostics",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -4079,7 +4079,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_stmt.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs",
               "selector": "fn check_statement",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -4087,7 +4087,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_function_body",
               "owner_issue": 655,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -4095,7 +4095,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_free_function",
               "owner_issue": 655,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -4107,7 +4107,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -4121,7 +4121,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -4154,7 +4154,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "ResultCombinators",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -4166,7 +4166,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_expr/control_flow.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs",
                 "selector": "fn check_try",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -4184,7 +4184,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "ResultCombinators",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -4192,7 +4192,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_expr/control_flow.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs",
               "selector": "fn check_try",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -4200,7 +4200,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_try",
               "owner_issue": 988,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -4208,7 +4208,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_call",
               "owner_issue": 988,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -4220,7 +4220,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -4234,7 +4234,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -4267,7 +4267,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "Generators",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -4279,7 +4279,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_expr/calls.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs",
                 "selector": "fn check_call",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -4297,7 +4297,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "Generators",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -4305,7 +4305,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_expr/calls.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs",
               "selector": "fn check_call",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -4313,7 +4313,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_generator_expr",
               "owner_issue": 988,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -4321,7 +4321,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "ReplacementGenerator",
               "owner_issue": 988,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -4333,7 +4333,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -4347,7 +4347,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -4380,7 +4380,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "Generators",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -4392,7 +4392,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_expr/calls.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs",
                 "selector": "fn check_call",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -4410,7 +4410,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "Generators",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -4418,7 +4418,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_expr/calls.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls.rs",
               "selector": "fn check_call",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -4426,7 +4426,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_generator_expr",
               "owner_issue": 988,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -4434,7 +4434,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "ReplacementGenerator",
               "owner_issue": 988,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -4446,7 +4446,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -4460,7 +4460,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -4493,7 +4493,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "IteratorAdapters",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -4505,7 +4505,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_expr/ops.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs",
                 "selector": "fn resolve_iteration_protocol",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -4523,7 +4523,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "IteratorAdapters",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -4531,7 +4531,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_expr/ops.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs",
               "selector": "fn resolve_iteration_protocol",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -4539,7 +4539,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_general_iteration",
               "owner_issue": 988,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -4547,7 +4547,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_loop",
               "owner_issue": 988,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -4560,7 +4560,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Observed",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "replacement-body-v0-023",
                   "owner_issue": null,
                   "note": "The stable #987 corpus registers only the bounded direct profiles already executable inside this broader planned feature."
@@ -4574,7 +4574,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -4597,7 +4597,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the legacy Oven receipt for canonical list-based enumerate and Zip in replacement-body-v0-023."
@@ -4605,7 +4605,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the direct replacement receipt for canonical list-based enumerate and Zip in replacement-body-v0-023."
@@ -4613,7 +4613,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_enumerate_zip_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test records matching exact streams and the typed result for canonical list-based enumerate and Zip in replacement-body-v0-023."
@@ -4640,7 +4640,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "FallibleIteration",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -4652,7 +4652,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_expr/ops.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs",
                 "selector": "fn resolve_iteration_protocol",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -4670,7 +4670,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "FallibleIteration",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -4678,7 +4678,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_expr/ops.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs",
               "selector": "fn resolve_iteration_protocol",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -4686,7 +4686,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_general_iteration",
               "owner_issue": 988,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -4694,7 +4694,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_loop",
               "owner_issue": 988,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -4706,7 +4706,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -4720,7 +4720,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -4753,7 +4753,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "StdCollections",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -4765,7 +4765,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_expr/collections.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/collections.rs",
                 "selector": "fn check_list",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -4783,7 +4783,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "StdCollections",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -4791,7 +4791,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_expr/collections.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/collections.rs",
               "selector": "fn check_list",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -4799,7 +4799,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_aggregate",
               "owner_issue": 988,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -4807,7 +4807,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn evaluate_aggregate",
               "owner_issue": 988,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -4822,7 +4822,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Observed",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "replacement-body-v0-020",
                   "owner_issue": null,
                   "note": "The stable #987 corpus registers only the bounded direct profiles already executable inside this broader planned feature."
@@ -4836,7 +4836,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -4859,7 +4859,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the legacy Oven receipt for scalar-key set and dict membership in replacement-body-v0-020."
@@ -4867,7 +4867,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the direct replacement receipt for scalar-key set and dict membership in replacement-body-v0-020."
@@ -4875,7 +4875,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_hashed_membership_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test records matching exact streams and the typed result for scalar-key set and dict membership in replacement-body-v0-020."
@@ -4891,7 +4891,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_collection_len_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the legacy Oven receipt for distinct set-entry and dict-key counts in replacement-body-v0-026."
@@ -4899,7 +4899,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_collection_len_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the direct replacement receipt for distinct set-entry and dict-key counts in replacement-body-v0-026."
@@ -4907,7 +4907,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_collection_len_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test records matching exact streams and the typed result for distinct set-entry and dict-key counts in replacement-body-v0-026."
@@ -4923,7 +4923,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the legacy Oven receipt for nonempty integer-list sorting in replacement-body-v0-028."
@@ -4931,7 +4931,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the direct replacement receipt for nonempty integer-list sorting in replacement-body-v0-028."
@@ -4939,7 +4939,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_sorted_int_list_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test records matching exact streams and the typed result for nonempty integer-list sorting in replacement-body-v0-028."
@@ -4966,7 +4966,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "IfWhileLet",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -4978,7 +4978,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_expr/control_flow.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs",
                 "selector": "fn check_if_expr",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -4996,7 +4996,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "IfWhileLet",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -5004,7 +5004,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_expr/control_flow.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs",
               "selector": "fn check_if_expr",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -5012,7 +5012,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_if_expr",
               "owner_issue": 988,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -5020,7 +5020,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_loop",
               "owner_issue": 988,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -5032,7 +5032,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -5046,7 +5046,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -5079,7 +5079,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "PatternAlternation",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -5091,7 +5091,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_expr/match_.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/match_.rs",
                 "selector": "fn check_match",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -5109,7 +5109,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "PatternAlternation",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -5117,7 +5117,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_expr/match_.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/match_.rs",
               "selector": "fn check_match",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -5125,7 +5125,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_match",
               "owner_issue": 988,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -5133,7 +5133,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_call",
               "owner_issue": 988,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -5145,7 +5145,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -5159,7 +5159,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -5192,7 +5192,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "NumericTypeSystem",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -5204,7 +5204,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_expr/ops.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs",
                 "selector": "fn check_binary",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -5222,7 +5222,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "NumericTypeSystem",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -5230,7 +5230,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_expr/ops.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/ops.rs",
               "selector": "fn check_binary",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -5238,7 +5238,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_binary",
               "owner_issue": 988,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -5246,7 +5246,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn evaluate_binary",
               "owner_issue": 988,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -5260,7 +5260,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Observed",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "replacement-body-v0-021",
                   "owner_issue": null,
                   "note": "The stable #987 corpus registers only the bounded direct profiles already executable inside this broader planned feature."
@@ -5274,7 +5274,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -5297,7 +5297,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_string_helper_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the legacy Oven receipt for selected canonical string helpers in replacement-body-v0-021."
@@ -5305,7 +5305,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_string_helper_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the direct replacement receipt for selected canonical string helpers in replacement-body-v0-021."
@@ -5313,7 +5313,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_string_helper_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test records matching exact streams and the typed result for selected canonical string helpers in replacement-body-v0-021."
@@ -5329,7 +5329,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_string_len_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the legacy Oven receipt for Unicode-scalar string length in replacement-body-v0-024."
@@ -5337,7 +5337,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_string_len_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the direct replacement receipt for Unicode-scalar string length in replacement-body-v0-024."
@@ -5345,7 +5345,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_string_len_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test records matching exact streams and the typed result for Unicode-scalar string length in replacement-body-v0-024."
@@ -5372,7 +5372,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "NamespacedStdlib",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -5384,7 +5384,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/collect/stdlib_imports.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs",
                 "selector": "fn collect_import",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -5402,7 +5402,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "NamespacedStdlib",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -5410,7 +5410,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/collect/stdlib_imports.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs",
               "selector": "fn collect_import",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -5418,7 +5418,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_call",
               "owner_issue": 1042,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -5426,7 +5426,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_call",
               "owner_issue": 1042,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -5438,7 +5438,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -5452,7 +5452,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -5485,7 +5485,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "ComputedProperties",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -5497,7 +5497,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_decl.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_decl.rs",
                 "selector": "fn check_model",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -5515,7 +5515,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "ComputedProperties",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -5523,7 +5523,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_decl.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_decl.rs",
               "selector": "fn check_model",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -5531,7 +5531,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_constructor",
               "owner_issue": 988,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -5539,7 +5539,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn evaluate_aggregate",
               "owner_issue": 988,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -5552,7 +5552,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Observed",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "replacement-body-v0-030",
                   "owner_issue": null,
                   "note": "The stable #987 corpus registers only the bounded direct profiles already executable inside this broader planned feature."
@@ -5566,7 +5566,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -5589,7 +5589,7 @@
                     "legacy_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the legacy Oven receipt for checked int/bool/str/float isinstance targets over source-local union values in replacement-body-v0-030."
@@ -5597,7 +5597,7 @@
                     "replacement_receipt": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test verifies the direct replacement receipt for checked int/bool/str/float isinstance targets over source-local union values in replacement-body-v0-030."
@@ -5605,7 +5605,7 @@
                     "comparison_record": {
                       "surface": "IndependentComparison",
                       "status": "Observed",
-                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                       "selector": "fn the_isinstance_targets_row_carries_two_route_receipts_and_exact_output",
                       "owner_issue": null,
                       "note": "The paired corpus test records matching exact streams and the typed result for checked int/bool/str/float isinstance targets over source-local union values in replacement-body-v0-030."
@@ -5632,7 +5632,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "CheckedApiMetadata",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -5644,7 +5644,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/collect/stdlib_imports.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs",
                 "selector": "fn collect_pub_imports",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -5662,7 +5662,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "CheckedApiMetadata",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -5670,7 +5670,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/collect/stdlib_imports.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs",
               "selector": "fn collect_pub_imports",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -5678,7 +5678,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_call",
               "owner_issue": 989,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -5686,7 +5686,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_call",
               "owner_issue": 989,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -5698,7 +5698,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -5712,7 +5712,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -5745,7 +5745,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "StdChecksum",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -5757,7 +5757,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/stdlib_loader.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs",
                 "selector": "fn lookup_function_symbol",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -5775,7 +5775,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "StdChecksum",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -5783,7 +5783,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/stdlib_loader.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs",
               "selector": "fn lookup_function_symbol",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -5791,7 +5791,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_call",
               "owner_issue": 988,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -5799,7 +5799,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_call",
               "owner_issue": 988,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -5811,7 +5811,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -5825,7 +5825,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -5858,7 +5858,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "StdEnviron",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -5870,7 +5870,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/stdlib_loader.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs",
                 "selector": "fn lookup_function_symbol",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -5888,7 +5888,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "StdEnviron",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -5896,7 +5896,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/stdlib_loader.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs",
               "selector": "fn lookup_function_symbol",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -5904,7 +5904,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_call",
               "owner_issue": 988,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -5912,7 +5912,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_call",
               "owner_issue": 988,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -5924,7 +5924,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -5938,7 +5938,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -5971,7 +5971,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "StdLogging",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -5983,7 +5983,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/stdlib_loader.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs",
                 "selector": "fn lookup_function_symbol",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -6001,7 +6001,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "StdLogging",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -6009,7 +6009,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/stdlib_loader.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs",
               "selector": "fn lookup_function_symbol",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -6017,7 +6017,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_call",
               "owner_issue": 988,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -6025,7 +6025,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_call",
               "owner_issue": 988,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -6037,7 +6037,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -6051,7 +6051,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -6084,7 +6084,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "BuildReportsAndRustInspection",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -6096,7 +6096,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_decl.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_decl.rs",
                 "selector": "fn check_test_module",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -6114,7 +6114,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "BuildReportsAndRustInspection",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -6122,7 +6122,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_decl.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_decl.rs",
               "selector": "fn check_test_module",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -6130,7 +6130,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_function_body",
               "owner_issue": 1034,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -6138,7 +6138,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_free_function",
               "owner_issue": 1034,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -6150,7 +6150,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -6164,7 +6164,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -6197,7 +6197,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "AbstractTraits",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -6209,7 +6209,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/trait_bound_relations.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/trait_bound_relations.rs",
                 "selector": "fn type_satisfies_explicit_bound",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -6227,7 +6227,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "AbstractTraits",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -6235,7 +6235,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/trait_bound_relations.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/trait_bound_relations.rs",
               "selector": "fn type_satisfies_explicit_bound",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -6243,7 +6243,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_call",
               "owner_issue": 1033,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -6251,7 +6251,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_call",
               "owner_issue": 1033,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -6263,7 +6263,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -6277,7 +6277,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."
@@ -6310,7 +6310,7 @@
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
-                "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+                "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
                 "selector": "CheckedCBindingFoundation",
                 "owner_issue": null,
                 "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -6322,7 +6322,7 @@
               "anchor": {
                 "surface": "Typechecker",
                 "status": "Observed",
-                "repository_path": "src/frontend/typechecker/check_expr/calls/rust_boundary.rs",
+                "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs",
                 "selector": "fn validate_rust_boundary_value",
                 "owner_issue": null,
                 "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -6340,7 +6340,7 @@
             "source_ast": {
               "surface": "SourceAst",
               "status": "Observed",
-              "repository_path": "src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
+              "repository_path": "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn",
               "selector": "CheckedCBindingFoundation",
               "owner_issue": null,
               "note": "The linked frozen public descriptor supplies the source-level contract crosswalk."
@@ -6348,7 +6348,7 @@
             "typechecker": {
               "surface": "Typechecker",
               "status": "Observed",
-              "repository_path": "src/frontend/typechecker/check_expr/calls/rust_boundary.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs",
               "selector": "fn validate_rust_boundary_value",
               "owner_issue": null,
               "note": "The audited typechecker boundary is the current admission or diagnostic seam; feature-specific positive and negative probes remain owned materialization work."
@@ -6356,7 +6356,7 @@
             "body_ir": {
               "surface": "BodyIr",
               "status": "Planned",
-              "repository_path": "src/frontend/body_ir.rs",
+              "repository_path": "loaves/compiler/incan_frontend/src/body_ir.rs",
               "selector": "fn lower_call",
               "owner_issue": 989,
               "note": "The Body-IR lowering boundary is the materialization point for the planned source contract."
@@ -6364,7 +6364,7 @@
             "replacement_executor": {
               "surface": "ReplacementExecutor",
               "status": "Planned",
-              "repository_path": "src/backend/replacement/mod.rs",
+              "repository_path": "loaves/compiler/incan_emit/src/replacement/mod.rs",
               "selector": "fn execute_call",
               "owner_issue": 989,
               "note": "The direct replacement call boundary remains planned or intentionally refused until this feature's requirements land."
@@ -6376,7 +6376,7 @@
                 "anchor": {
                   "surface": "ParityCorpus",
                   "status": "Planned",
-                  "repository_path": "tests/parity_corpus_tests.rs",
+                  "repository_path": "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs",
                   "selector": "fn seed_corpus",
                   "owner_issue": 987,
                   "note": "#987 owns materializing the reserved stable corpus case with direct/refusal evidence."
@@ -6390,7 +6390,7 @@
                   "anchor": {
                     "surface": "IndependentComparison",
                     "status": "Observed",
-                    "repository_path": "tests/support/parity_corpus.rs",
+                    "repository_path": "loaves/compiler/incan_driver/tests/support/parity_corpus.rs",
                     "selector": "NonGreenShadowUnavailable",
                     "owner_issue": null,
                     "note": "#1146 completed the reusable paired-comparison route; outstanding case and aggregate evidence has separate ownership."

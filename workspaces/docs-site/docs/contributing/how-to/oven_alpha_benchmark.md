@@ -25,7 +25,7 @@ bash scripts/bench_oven_alpha.sh \
   --rustc "$(rustup which --toolchain 1.98.0 rustc)" \
   --checkout-revision "$(git rev-parse HEAD)" \
   --workload test \
-  --source tests/fixtures/test_assert_canary.incn \
+  --source loaves/compiler/incan_test_support/fixtures/test_assert_canary.incn \
   --incan-home /tmp/incan-oven-test-home \
   --output /tmp/incan-oven-test-evidence \
   --cargo-guard-dir /tmp/incan-oven-cargo-guard \
@@ -39,7 +39,7 @@ git worktree add --detach /tmp/incan-oven-benchmark-clean HEAD
 # Add --clean-worktree-source /tmp/incan-oven-benchmark-clean/tests/fixtures/test_assert_canary.incn
 ```
 
-For build or run, set `--workload build` or `--workload run` and use a small project inside the documented release envelope; the checked sources that bake that envelope live in `src/oven/fixtures/`. A `std.testing` fixture is debug-only and is intentionally not a release-build benchmark. On Linux, use a task-specific directory below `/tmp`; the store must start empty so its first materialization is attributable. The default developer policy is 12 GiB aggregate physical allocation, 12 GiB physical allocation per compatibility domain, and 6 GiB logical artifact bytes per domain. The compiler-suite policy is explicitly 16 GiB aggregate physical, 6 GiB domain physical, and 4 GiB domain logical. Pass explicit byte overrides only when recording a different policy.
+For build or run, set `--workload build` or `--workload run` and use a small project inside the documented release envelope; the checked sources that bake that envelope live in `loaves/oven/oven_rustc/src/fixtures/`. A `std.testing` fixture is debug-only and is intentionally not a release-build benchmark. On Linux, use a task-specific directory below `/tmp`; the store must start empty so its first materialization is attributable. The default developer policy is 12 GiB aggregate physical allocation, 12 GiB physical allocation per compatibility domain, and 6 GiB logical artifact bytes per domain. The compiler-suite policy is explicitly 16 GiB aggregate physical, 6 GiB domain physical, and 4 GiB domain logical. Pass explicit byte overrides only when recording a different policy.
 
 Pass the exact `rustc` compatible with the shipped Loafs. The harness passes it as `RUSTC` to every measured command and records both its path and `--version` identity. This prevents an ambient Rustup default from minting an incompatible receipt and turning a toolchain mismatch into a misleading benchmark failure.
 
@@ -62,12 +62,12 @@ The repository suite has one explicit preparation boundary and one Cargo-guarded
 1. `make test-prewarm-oven-loafs` invokes the internal compiler-suite publisher once to create or exactly reuse the typed Loaf envelope and receipt-bound compiler-suite store.
 2. `incan oven compiler-libtests` compiles and executes every discovered root from the prepared store with Cargo guarded out.
 
-The Makefile owns only this command composition. Oven owns Loaf identity, contents, admission, storage policy, selection, root inventory, and reporting. `make test-one TEST_ROOT=tests/cli_integration.rs` is the fast failure-isolation path; `make test-oven` is the complete local gate. Both pin the explicit publisher to `nightly-2026-03-24`, while the consumer remains direct `rustc`.
+The Makefile owns only this command composition. Oven owns Loaf identity, contents, admission, storage policy, selection, root inventory, and reporting. `make test-one TEST_ROOT=loaves/toolchain/incan-cli/tests/cli_surface_tests.rs` is the fast failure-isolation path; `make test-oven` is the complete local gate. Both pin the explicit publisher to `nightly-2026-03-24`, while the consumer remains direct `rustc`.
 
 ```bash
-cargo build --features lsp
+cargo build -p incan-cli -p incan-lsp
 INCAN_TEST_COMPILER_ALREADY_BUILT=1 make test-prewarm-oven-loafs
-make test-one TEST_ROOT=tests/cli_integration.rs
+make test-one TEST_ROOT=loaves/toolchain/incan-cli/tests/cli_surface_tests.rs
 make test-oven
 ```
 

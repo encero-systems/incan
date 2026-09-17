@@ -1,0 +1,51 @@
+[package]
+name = "incan_frontend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The Incan compiler frontend: parsed modules, symbols, the typechecker, Body IR and the provider contract"
+
+[lib]
+name = "incan_frontend"
+path = "src/lib.rs"
+
+[features]
+# Mirrors the command line's defaults without `cli`, so `cargo test -p incan_frontend` compiles the inspector-driven
+# tests; `incan-cli` selects features explicitly and never relies on these.
+default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
+std_testing = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_testing"]
+std_async = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_async"]
+std_decorators = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_decorators"]
+rust_inspect = ["rust_inspect/inspector"]
+test_support = ["dep:tempfile", "rust_inspect/test_fixtures"]
+
+[dependencies]
+incan_lang = { workspace = true }
+incan_vocab = { workspace = true }
+incan_syntax = { workspace = true }
+incan_semantics_core = { workspace = true }
+incan_semantics_stdlib = { workspace = true, optional = true }
+incan_format = { workspace = true }
+oven_model = { workspace = true }
+rust_inspect = { workspace = true }
+hex = "0.4.3"
+quote = { workspace = true }
+semver = "1.0.27"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10.9"
+syn = { workspace = true, features = ["printing"] }
+thiserror = { workspace = true }
+toml = "0.9"
+tracing = { workspace = true }
+wasmtime = { version = "36.0.14", default-features = false, features = ["cranelift", "runtime", "std"] }
+wasmtime-wasi = { version = "36.0.14", default-features = false, features = ["preview1"] }
+tempfile = { version = "3", optional = true }
+
+[dev-dependencies]
+# The semantic-core parity roots compare the frontend's constant folding against the runtime facet's arithmetic.
+incan_std_core = { workspace = true }
+incan_test_support = { workspace = true }
+rust_inspect = { workspace = true, features = ["test_fixtures"] }
+tempfile = "3"

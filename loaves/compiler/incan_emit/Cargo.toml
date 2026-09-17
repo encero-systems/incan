@@ -1,0 +1,54 @@
+[package]
+name = "incan_emit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Rust emission from the Incan IR, the replacement backend and backend selection"
+
+[lib]
+name = "incan_emit"
+path = "src/lib.rs"
+
+[features]
+# Mirrors the command line's defaults without `cli`, so `cargo test -p incan_emit` sees the stdlib semantics packs;
+# `incan-cli` selects features explicitly and never relies on these.
+default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
+rust_inspect = ["incan_ir/rust_inspect", "incan_frontend/rust_inspect", "rust_inspect/inspector"]
+test_support = ["dep:tempfile", "incan_frontend/test_support", "rust_inspect/test_fixtures"]
+std_testing = ["incan_ir/std_testing", "incan_frontend/std_testing"]
+std_async = ["incan_ir/std_async", "incan_frontend/std_async"]
+std_decorators = ["incan_ir/std_decorators", "incan_frontend/std_decorators"]
+
+[dependencies]
+hex = "0.4.3"
+incan_lang = { workspace = true }
+incan_frontend = { workspace = true }
+incan_ir = { workspace = true }
+incan_semantics_core = { workspace = true }
+incan_syntax = { workspace = true }
+incan_vocab = { workspace = true }
+oven_model = { workspace = true }
+prettyplease = "0.2"
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+rust_inspect = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10.9"
+syn = { workspace = true, features = ["printing"] }
+thiserror = { workspace = true }
+tempfile = { version = "3", optional = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+incan_frontend = { workspace = true, features = ["test_support"] }
+# The mandatory runtime facet the emitted code links; the emitter only names it in generated tokens, and links it
+# for the parity tests alone, so the compiler ring never depends on the runtime it generates for.
+incan_std_core = { workspace = true }
+incan_test_support = { workspace = true }
+insta = { version = "1.45", features = ["glob"] }
+rust_inspect = { workspace = true, features = ["test_fixtures"] }
+tempfile = "3"
+# The vocab desugarer fixtures are assembled from WebAssembly text at test time.
+wat = "1"

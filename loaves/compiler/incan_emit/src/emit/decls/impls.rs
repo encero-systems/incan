@@ -1,0 +1,761 @@
+//! Impl block emission.
+//!
+//! Handles `emit_impl` (including `@derive(Validate)`, trait impls, and `__fields__` reflection).
+
+use proc_macro2::{Literal, TokenStream};
+use quote::{format_ident, quote};
+use std::collections::HashSet;
+
+use incan_lang::lang::conventions;
+use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::magic_methods;
+use incan_lang::lang::trait_capabilities;
+use incan_lang::lang::traits::{self as core_traits, TraitId};
+use incan_semantics_core::encode_incan_symbol_identity;
+
+use super::super::{EmitError, IrEmitter};
+use incan_ir::types::{IR_UNION_TYPE_NAME, IrType};
+
+impl<'a> IrEmitter<'a> {
+    /// Return whether one inherent method implementation will be present in the generated Rust module.
+    fn inherent_method_is_needed(
+        &self,
+        impl_block: &incan_ir::decl::IrImpl,
+        method: &incan_ir::decl::IrFunction,
+    ) -> bool {
+        self.should_emit_method(&impl_block.target_type, &method.name, &method.visibility)
+            || !method.lint_allows.is_empty()
+            || !method.rust_attributes.is_empty()
+            || (self.emit_std_string_try_from_newtype_impls
+                && self
+                    .newtype_construction
+                    .get(&impl_block.target_type)
+                    .and_then(|plan| plan.checked_constructor.as_ref())
+                    == Some(&method.name))
+    }
+
+    /// Emit an impl block, including generated convenience methods and trait impl adapters.
+    pub(in crate::emit) fn emit_impl(&self, impl_block: &incan_ir::decl::IrImpl) -> Result<TokenStream, EmitError> {
+        let target_type = format_ident!("{}", &impl_block.target_type);
+
+        // RFC 023: emit generic type parameters with trait bounds (declaration) and bare names (type positions).
+        let generics = self.emit_type_params(&impl_block.type_params);
+        let generics_bare = self.emit_type_params_bare(&impl_block.type_params);
+        let previous_method_owner_type_params = self.current_method_owner_type_params.replace(Some((
+            false,
+            impl_block.type_params.iter().map(|param| param.name.clone()).collect(),
+        )));
+
+        let mut regular_methods = Vec::new();
+        let mut borrowed_observer_methods = Vec::new();
+        let mut trait_impls = Vec::new();
+
+        for method in &impl_block.methods {
+            if self.needs_result_observer_callable_helper(&impl_block.target_type)
+                && let Some(helper) = self.emit_result_observer_borrowed_method(method)?
+                && self.claim_result_observer_callable_helper(&impl_block.target_type)
+            {
+                borrowed_observer_methods.push(helper);
+            }
+
+            let method_is_needed = self.inherent_method_is_needed(impl_block, method);
+            match magic_methods::from_str(method.name.as_str()) {
+                Some(magic_methods::MagicMethodId::Eq) => {
+                    let body_stmts = self.emit_stmts(&method.body)?;
+                    trait_impls.push(quote! {
+                        impl #generics PartialEq for #target_type #generics_bare {
+                            fn eq(&self, other: &Self) -> bool {
+                                #(#body_stmts)*
+                            }
+                        }
+                    });
+                }
+                Some(magic_methods::MagicMethodId::Str) => {
+                    regular_methods.push(self.emit_method(method)?);
+                    trait_impls.push(quote! {
+                        impl #generics std::fmt::Display for #target_type #generics_bare {
+                            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                                write!(f, "{}", self.__str__())
+                            }
+                        }
+                    });
+                }
+                Some(magic_methods::MagicMethodId::ClassName) | Some(magic_methods::MagicMethodId::Fields)
+                    if method_is_needed =>
+                {
+                    regular_methods.push(self.emit_method(method)?);
+                }
+                _ if method_is_needed => {
+                    regular_methods.push(self.emit_method(method)?);
+                }
+                _ => {}
+            }
+        }
+
+        if self.preserve_public_items
+            && impl_block.trait_name.is_none()
+            && self
+                .generated_use_analysis
+                .borrow()
+                .public_types
+                .contains(&impl_block.target_type)
+        {
+            for projection in &impl_block.source_method_projections {
+                let projected_name = encode_incan_symbol_identity(&projection.identity);
+                let method = impl_block
+                    .methods
+                    .iter()
+                    .find(|method| method.name == projected_name)
+                    .ok_or_else(|| {
+                        EmitError::InternalInvariant(format!(
+                            "Rust-facing projection for `{}.{}` has no canonical method implementation",
+                            impl_block.target_type, projection.source_name
+                        ))
+                    })?;
+                if !matches!(method.visibility, incan_ir::decl::Visibility::Private)
+                    && self.inherent_method_is_needed(impl_block, method)
+                {
+                    regular_methods.push(self.emit_source_method_projection(method, projection)?);
+                }
+            }
+        }
+
+        let fields_name = magic_methods::as_str(magic_methods::MagicMethodId::Fields);
+        let has_fields_method = impl_block.methods.iter().any(|m| m.name == fields_name);
+        if impl_block.trait_name.is_none()
+            && !has_fields_method
+            && self.should_emit_method(
+                &impl_block.target_type,
+                fields_name,
+                &incan_ir::decl::Visibility::Private,
+            )
+            && let Some(fields_method) = self.emit_fields_method(&impl_block.target_type)?
+        {
+            regular_methods.push(fields_method);
+        }
+
+        // @derive(Validate): generate `TypeName::new(...) -> Result[TypeName, E]` that calls `validate()`.
+        if impl_block.trait_name.is_none()
+            && let Some(derives) = self.struct_derives.get(&impl_block.target_type)
+        {
+            let has_validate = derives
+                .iter()
+                .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Validate));
+            if has_validate
+                && !impl_block.methods.iter().any(|m| m.name == conventions::NEW_METHOD)
+                && self.should_emit_method(
+                    &impl_block.target_type,
+                    conventions::NEW_METHOD,
+                    &incan_ir::decl::Visibility::Private,
+                )
+                && let Some(validate_fn) = impl_block
+                    .methods
+                    .iter()
+                    .find(|m| m.name == conventions::VALIDATE_METHOD)
+            {
+                let ret_ty = self.emit_type(&validate_fn.return_type);
+
+                let field_names = self
+                    .struct_field_names
+                    .get(&impl_block.target_type)
+                    .cloned()
+                    .unwrap_or_default();
+
+                let mut params: Vec<TokenStream> = Vec::new();
+                let mut init_fields: Vec<TokenStream> = Vec::new();
+
+                for fname in field_names {
+                    let f_ident = format_ident!("{}", fname);
+                    if let Some(default_expr) = self
+                        .struct_field_defaults
+                        .get(&(impl_block.target_type.clone(), fname.clone()))
+                    {
+                        let default_tokens = self.emit_expr(default_expr)?;
+                        init_fields.push(quote! { #f_ident: #default_tokens });
+                    } else {
+                        let f_ty = self
+                            .struct_field_types
+                            .get(&(impl_block.target_type.clone(), fname.clone()))
+                            .cloned()
+                            .unwrap_or(IrType::Unknown);
+                        let f_ty_tokens = self.emit_type(&f_ty);
+                        params.push(quote! { #f_ident: #f_ty_tokens });
+                        init_fields.push(quote! { #f_ident });
+                    }
+                }
+
+                regular_methods.push(quote! {
+                    /// Construct a validated instance of this model.
+                    pub fn new(#(#params),*) -> #ret_ty {
+                        let tmp = Self { #(#init_fields),* };
+                        tmp.validate()
+                    }
+                });
+            }
+        }
+
+        let main_impl = if let Some(trait_name) = &impl_block.trait_name {
+            let associated_types: Vec<TokenStream> = impl_block
+                .associated_types
+                .iter()
+                .map(|associated_type| {
+                    let name = format_ident!("{}", associated_type.name);
+                    let ty = self.emit_type(&associated_type.ty);
+                    quote! { type #name = #ty; }
+                })
+                .collect();
+            let mut trait_methods: Vec<TokenStream> = impl_block
+                .methods
+                .iter()
+                .filter(|m| {
+                    !matches!(
+                        magic_methods::from_str(m.name.as_str()),
+                        Some(
+                            magic_methods::MagicMethodId::Eq
+                                | magic_methods::MagicMethodId::Str
+                                | magic_methods::MagicMethodId::ClassName
+                                | magic_methods::MagicMethodId::Fields
+                                | magic_methods::MagicMethodId::FieldValue
+                                | magic_methods::MagicMethodId::FieldItems
+                        )
+                    )
+                })
+                .map(|m| self.emit_trait_method(m))
+                .collect::<Result<_, _>>()?;
+            if incan_lang::lang::stdlib::is_stdlib_json_serialize_trait_name(trait_name)
+                && !impl_block.methods.iter().any(|method| method.name == "to_json")
+            {
+                trait_methods.push(quote! {
+                    fn to_json(&self) -> String {
+                        incan_std_data::json::__private::stringify_or_raise(self, stringify!(#target_type))
+                    }
+                });
+            }
+            if incan_lang::lang::stdlib::is_stdlib_json_deserialize_trait_name(trait_name)
+                && !impl_block.methods.iter().any(|method| method.name == "from_json")
+            {
+                trait_methods.push(quote! {
+                    fn from_json(json_str: String) -> Result<Self, String> {
+                        incan_std_data::json::__private::parse_or_error(&json_str)
+                    }
+                });
+            }
+            if Self::is_std_convert_trait_impl(impl_block, TraitId::From)
+                && !impl_block.methods.iter().any(|method| method.name == "from")
+                && let Some(source_ty) = impl_block.trait_type_args.first()
+            {
+                let source_ty = self.emit_type(source_ty);
+                trait_methods.push(quote! {
+                    fn from(value: #source_ty) -> Self {
+                        #target_type::from(value)
+                    }
+                });
+            }
+            if Self::is_std_convert_trait_impl(impl_block, TraitId::TryFrom)
+                && !impl_block.methods.iter().any(|method| method.name == "try_from")
+                && let Some(source_ty) = impl_block.trait_type_args.first()
+            {
+                let source_ty = self.emit_type(source_ty);
+                trait_methods.push(quote! {
+                    fn try_from(value: #source_ty) -> Result<Self, String> {
+                        #target_type::try_from(value)
+                    }
+                });
+            }
+            let trait_tokens = self.emit_supertrait_bound_path(trait_name, &impl_block.trait_type_args);
+            quote! {
+                impl #generics #trait_tokens for #target_type #generics_bare {
+                    #(#associated_types)*
+                    #(#trait_methods)*
+                }
+            }
+        } else if !regular_methods.is_empty() {
+            quote! {
+                impl #generics #target_type #generics_bare {
+                    #(#regular_methods)*
+                }
+            }
+        } else {
+            quote! {}
+        };
+
+        let method_projection_impl = if !impl_block.method_projections.is_empty() {
+            let methods = impl_block
+                .method_projections
+                .iter()
+                .map(|projection| {
+                    let method = impl_block
+                        .methods
+                        .iter()
+                        .find(|method| method.name == projection.abi_method_name)
+                        .ok_or_else(|| {
+                            EmitError::InternalInvariant(format!(
+                                "recoverable projection for `{}.{}` has no matching trait ABI method",
+                                impl_block.target_type, projection.abi_method_name
+                            ))
+                        })?;
+                    self.emit_trait_method_projection(impl_block, method, projection)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            quote! {
+                impl #generics #target_type #generics_bare {
+                    #(#methods)*
+                }
+            }
+        } else {
+            quote! {}
+        };
+
+        let borrowed_observer_impl = if borrowed_observer_methods.is_empty() {
+            quote! {}
+        } else {
+            quote! {
+                impl #generics #target_type #generics_bare {
+                    #(#borrowed_observer_methods)*
+                }
+            }
+        };
+
+        self.current_method_owner_type_params
+            .replace(previous_method_owner_type_params);
+        Ok(quote! {
+            #main_impl
+            #method_projection_impl
+            #borrowed_observer_impl
+            #(#trait_impls)*
+        })
+    }
+
+    /// Emit a recoverable Incan-origin entry point beside a Rust ABI-constrained method slot.
+    ///
+    /// The trait slot itself must keep the trait declaration's Rust spelling. This inherent wrapper is the concrete
+    /// source declaration's independently decodable artifact symbol, and concrete call sites target it directly.
+    fn emit_trait_method_projection(
+        &self,
+        impl_block: &incan_ir::decl::IrImpl,
+        method: &incan_ir::decl::IrFunction,
+        projection: &incan_ir::decl::IrMethodProjection,
+    ) -> Result<TokenStream, EmitError> {
+        let name = Self::rust_ident(&encode_incan_symbol_identity(&projection.identity));
+        let slot = Self::rust_ident(&projection.abi_method_name);
+        let params = method
+            .params
+            .iter()
+            .map(|param| {
+                if param.is_self {
+                    match param.mutability {
+                        incan_ir::types::Mutability::Mutable => quote! { &mut self },
+                        incan_ir::types::Mutability::Immutable | incan_ir::types::Mutability::OwnedMutable => {
+                            quote! { &self }
+                        }
+                    }
+                } else {
+                    let param_name = Self::rust_ident(&param.name);
+                    let ty = self.emit_type(&param.ty);
+                    quote! { #param_name: #ty }
+                }
+            })
+            .collect::<Vec<_>>();
+        let args = method
+            .params
+            .iter()
+            .map(|param| {
+                if param.is_self {
+                    quote! { self }
+                } else {
+                    let name = Self::rust_ident(&param.name);
+                    quote! { #name }
+                }
+            })
+            .collect::<Vec<_>>();
+        let generics = self.emit_type_params(&method.type_params);
+        let turbofish = if method.type_params.is_empty() {
+            quote! {}
+        } else {
+            let names = method
+                .type_params
+                .iter()
+                .map(|param| Self::rust_ident(&param.name))
+                .collect::<Vec<_>>();
+            quote! { :: < #(#names),* > }
+        };
+        let return_type = match &method.return_type {
+            IrType::Unit => quote! {},
+            ty => {
+                let ty = self.emit_method_return_type(ty, &method.type_params);
+                quote! { -> #ty }
+            }
+        };
+        let async_keyword = method.is_async.then(|| quote! { async });
+        let await_suffix = method.is_async.then(|| quote! { .await });
+        let invocation = if impl_block.trait_name.is_none()
+            && magic_methods::from_str(&projection.abi_method_name) == Some(magic_methods::MagicMethodId::Eq)
+        {
+            let forwarded = args.iter().skip(1).map(|arg| quote! { &#arg });
+            quote! { <Self as std::cmp::PartialEq>::eq(self, #(#forwarded),*) }
+        } else if let Some(trait_name) = impl_block.trait_name.as_deref() {
+            let trait_tokens = self.emit_supertrait_bound_path(trait_name, &impl_block.trait_type_args);
+            quote! { <Self as #trait_tokens>::#slot #turbofish (#(#args),*) }
+        } else if method.params.first().is_some_and(|param| param.is_self) {
+            let forwarded = args.iter().skip(1);
+            quote! { self.#slot #turbofish (#(#forwarded),*) }
+        } else {
+            quote! { Self::#slot #turbofish (#(#args),*) }
+        };
+        Ok(quote! {
+            #[inline(never)]
+            pub #async_keyword fn #name #generics (#(#params),*) #return_type {
+                #invocation #await_suffix
+            }
+        })
+    }
+
+    /// Emit one source-spelled native Rust method that forwards to its canonical Incan implementation.
+    ///
+    /// This mirrors the top-level `use canonical as source` compatibility surface. Rust cannot alias an associated
+    /// item, so inherent methods need a thin wrapper instead. The wrapper contains no authored behavior: validation,
+    /// module initialization, and the method body all remain owned by the canonical target.
+    fn emit_source_method_projection(
+        &self,
+        method: &incan_ir::decl::IrFunction,
+        projection: &incan_ir::decl::IrSourceMethodProjection,
+    ) -> Result<TokenStream, EmitError> {
+        let name = Self::rust_ident(&projection.source_name);
+        let target = Self::rust_ident(&encode_incan_symbol_identity(&projection.identity));
+        let params = method
+            .params
+            .iter()
+            .map(|param| {
+                if param.is_self {
+                    match param.mutability {
+                        incan_ir::types::Mutability::Mutable => quote! { &mut self },
+                        incan_ir::types::Mutability::Immutable | incan_ir::types::Mutability::OwnedMutable => {
+                            quote! { &self }
+                        }
+                    }
+                } else {
+                    let param_name = Self::rust_ident(&param.name);
+                    let ty = self.emit_type(&param.ty);
+                    if matches!(param.mutability, incan_ir::types::Mutability::Mutable)
+                        && !matches!(param.ty, IrType::Int | IrType::Float | IrType::Bool)
+                    {
+                        quote! { #param_name: &mut #ty }
+                    } else {
+                        quote! { #param_name: #ty }
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+        let args = method
+            .params
+            .iter()
+            .filter(|param| !param.is_self)
+            .map(|param| Self::rust_ident(&param.name))
+            .collect::<Vec<_>>();
+        let generics = self.emit_type_params(&method.type_params);
+        let turbofish = if method.type_params.is_empty() {
+            quote! {}
+        } else {
+            let names = method
+                .type_params
+                .iter()
+                .map(|param| Self::rust_ident(&param.name))
+                .collect::<Vec<_>>();
+            quote! { :: < #(#names),* > }
+        };
+        let return_type = match &method.return_type {
+            IrType::Unit => quote! {},
+            ty => {
+                let ty = self.emit_method_return_type(ty, &method.type_params);
+                quote! { -> #ty }
+            }
+        };
+        let visibility = self.emit_visibility(&method.visibility);
+        let async_keyword = method.is_async.then(|| quote! { async });
+        let await_suffix = method.is_async.then(|| quote! { .await });
+        let invocation = if method.params.first().is_some_and(|param| param.is_self) {
+            quote! { self.#target #turbofish (#(#args),*) }
+        } else {
+            quote! { Self::#target #turbofish (#(#args),*) }
+        };
+        let doc_attrs = self.emit_public_rustdoc_attrs(&method.visibility, method.docstring.as_deref());
+        Ok(quote! {
+            #(#doc_attrs)*
+            #[inline]
+            #visibility #async_keyword fn #name #generics (#(#params),*) #return_type {
+                #invocation #await_suffix
+            }
+        })
+    }
+
+    /// Return whether an impl targets one canonical `std.traits.convert` trait.
+    fn is_std_convert_trait_impl(impl_block: &incan_ir::decl::IrImpl, expected: TraitId) -> bool {
+        let Some(module_path) = impl_block.trait_module_path.as_deref() else {
+            return false;
+        };
+        if !trait_capabilities::module_path_matches(trait_capabilities::string_try_from(), module_path) {
+            return false;
+        }
+        let source_name = impl_block
+            .trait_source_name
+            .as_deref()
+            .or(impl_block.trait_name.as_deref());
+        source_name.and_then(core_traits::from_str) == Some(expected)
+    }
+
+    /// Emit compiler-generated field overlay methods for a struct, independent of source impl blocks.
+    pub(in crate::emit) fn emit_field_overlay_methods_for_struct(
+        &self,
+        strukt: &incan_ir::decl::IrStruct,
+        explicit_method_names: &HashSet<String>,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        let field_value_name = magic_methods::as_str(magic_methods::MagicMethodId::FieldValue);
+        let field_items_name = magic_methods::as_str(magic_methods::MagicMethodId::FieldItems);
+        let mut methods = Vec::new();
+        let used_methods = &self.generated_use_analysis.borrow().used_methods;
+
+        if !explicit_method_names.contains(field_value_name)
+            && used_methods.contains(&(strukt.name.clone(), field_value_name.to_string()))
+            && let Some(field_value_method) = self.emit_field_value_method(&strukt.name)?
+        {
+            methods.push(field_value_method);
+        }
+
+        if !explicit_method_names.contains(field_items_name)
+            && used_methods.contains(&(strukt.name.clone(), field_items_name.to_string()))
+            && let Some(field_items_method) = self.emit_field_items_method(&strukt.name)?
+        {
+            methods.push(field_items_method);
+        }
+
+        if methods.is_empty() {
+            return Ok(None);
+        }
+
+        let target_type = Self::rust_ident(&strukt.name);
+        let generics = self.emit_type_params(&strukt.type_params);
+        let generics_bare = self.emit_type_params_bare(&strukt.type_params);
+        Ok(Some(quote! {
+            impl #generics #target_type #generics_bare {
+                #(#methods)*
+            }
+        }))
+    }
+
+    /// Build reflection metadata entries for model fields.
+    pub(in crate::emit) fn reflection_field_info_entries(
+        &self,
+        struct_name: &str,
+    ) -> Result<Option<(Literal, Vec<TokenStream>)>, EmitError> {
+        let Some(field_names) = self.public_reflection_field_names(struct_name) else {
+            return Ok(None);
+        };
+        let mut field_infos = Vec::new();
+
+        for field_name in &field_names {
+            let key = (struct_name.to_string(), field_name.clone());
+            let ty = self.struct_field_types.get(&key).ok_or_else(|| {
+                EmitError::Unsupported(format!(
+                    "missing field type metadata for '{}.{}'",
+                    struct_name, field_name
+                ))
+            })?;
+            let alias = self.struct_field_aliases.get(&key).and_then(|v| v.clone());
+            let description = self.struct_field_descriptions.get(&key).and_then(|v| v.clone());
+            let has_default = self.struct_field_defaults.contains_key(&key);
+
+            let alias_token = alias
+                .as_ref()
+                .map(|a| quote! { Some(incan_std_core::frozen::FrozenStr::new(#a)) })
+                .unwrap_or_else(|| quote! { None });
+            let description_token = description
+                .as_ref()
+                .map(|d| quote! { Some(incan_std_core::frozen::FrozenStr::new(#d)) })
+                .unwrap_or_else(|| quote! { None });
+            let wire_name = alias.as_deref().unwrap_or(field_name);
+            // RFC 021: Use Incan-style type name, not Rust type name
+            let type_name = self
+                .struct_field_surface_type_names
+                .get(&key)
+                .cloned()
+                .flatten()
+                .unwrap_or_else(|| ty.incan_name());
+
+            field_infos.push(quote! {
+                incan_std_core::reflection::FieldInfo {
+                    name: incan_std_core::frozen::FrozenStr::new(#field_name),
+                    alias: #alias_token,
+                    description: #description_token,
+                    wire_name: incan_std_core::frozen::FrozenStr::new(#wire_name),
+                    type_name: incan_std_core::frozen::FrozenStr::new(#type_name),
+                    has_default: #has_default,
+                    extra: incan_std_core::frozen::FrozenDict::new(&[]),
+                }
+            });
+        }
+
+        let field_count = Literal::usize_unsuffixed(field_infos.len());
+        Ok(Some((field_count, field_infos)))
+    }
+
+    /// Return canonical field names that are safe to expose through the public runtime-reflection surface.
+    ///
+    /// Checked API and library manifests retain type-private field declarations for compiler consumers. Runtime
+    /// reflection is an ordinary value surface, so it omits those fields.
+    pub(in crate::emit) fn public_reflection_field_names(&self, struct_name: &str) -> Option<Vec<String>> {
+        let field_names = self.struct_field_names.get(struct_name)?;
+        Some(
+            field_names
+                .iter()
+                .filter(|field_name| {
+                    !self
+                        .struct_type_private_fields
+                        .contains(&(struct_name.to_string(), (*field_name).clone()))
+                })
+                .cloned()
+                .collect(),
+        )
+    }
+
+    /// Emit the generated `__fields__` reflection method for a struct when field metadata is available.
+    fn emit_fields_method(&self, struct_name: &str) -> Result<Option<TokenStream>, EmitError> {
+        let Some((field_count, field_infos)) = self.reflection_field_info_entries(struct_name)? else {
+            return Ok(None);
+        };
+        Ok(Some(quote! {
+            /// Returns field metadata for this type.
+            pub fn __fields__(&self) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
+                static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; #field_count] = [#(#field_infos),*];
+                incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
+            }
+        }))
+    }
+
+    /// Resolve the Rust value type shared by generated field overlay methods for a lowered struct.
+    ///
+    /// The generated `__field_value__()` and `__field_items__()` methods expose a single value slot type. Homogeneous
+    /// fields use their common type directly; heterogeneous concrete fields use an anonymous union. Generic field
+    /// shapes are skipped because anonymous union definitions are monomorphic today.
+    fn field_overlay_value_type_for_struct(&self, struct_name: &str) -> Result<Option<IrType>, EmitError> {
+        let Some(field_names) = self.public_reflection_field_names(struct_name) else {
+            return Ok(None);
+        };
+        let mut value_types = Vec::new();
+        for field_name in &field_names {
+            let key = (struct_name.to_string(), field_name.clone());
+            let ty = self.struct_field_types.get(&key).ok_or_else(|| {
+                EmitError::Unsupported(format!(
+                    "missing field type metadata for '{}.{}'",
+                    struct_name, field_name
+                ))
+            })?;
+            if ty.contains_generic_parameter() {
+                return Ok(None);
+            }
+            value_types.push(ty.clone());
+        }
+        if value_types.is_empty() {
+            return Ok(Some(IrType::Unit));
+        }
+        value_types.sort_by_key(IrType::rust_name);
+        value_types.dedup();
+        if value_types.len() == 1 {
+            Ok(value_types.pop())
+        } else {
+            Ok(Some(IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), value_types)))
+        }
+    }
+
+    /// Emit the Rust expression that converts one struct field into the overlay value slot type.
+    ///
+    /// Heterogeneous overlays wrap cloned field values in the generated union variant that corresponds to the field's
+    /// concrete type. Homogeneous overlays can clone the field value directly.
+    fn field_overlay_value_expr(&self, value_ty: &IrType, field_ty: &IrType, field_name: &str) -> TokenStream {
+        let field_ident = format_ident!("{}", field_name);
+        if value_ty.is_union()
+            && let Some(variant_index) = value_ty.union_variant_index_for_member(field_ty)
+        {
+            let variant_ident = format_ident!("{}", IrType::union_variant_name(variant_index));
+            let union_path = self.emit_union_type_path(value_ty);
+            return quote! { #union_path :: #variant_ident(self.#field_ident.clone()) };
+        }
+        quote! { self.#field_ident.clone() }
+    }
+
+    /// Emit the compiler-provided `__field_value__` method for a concrete model or class struct.
+    ///
+    /// The method accepts canonical field names and model aliases, returning `None` for unknown names. It is omitted
+    /// when field metadata is missing or when the field value shape cannot be represented as a concrete Rust type.
+    fn emit_field_value_method(&self, struct_name: &str) -> Result<Option<TokenStream>, EmitError> {
+        let Some(field_names) = self.public_reflection_field_names(struct_name) else {
+            return Ok(None);
+        };
+        let Some(value_ty) = self.field_overlay_value_type_for_struct(struct_name)? else {
+            return Ok(None);
+        };
+        let value_ty_tokens = self.emit_type(&value_ty);
+        let mut arms = Vec::new();
+        for field_name in &field_names {
+            let key = (struct_name.to_string(), field_name.clone());
+            let field_ty = self.struct_field_types.get(&key).ok_or_else(|| {
+                EmitError::Unsupported(format!(
+                    "missing field type metadata for '{}.{}'",
+                    struct_name, field_name
+                ))
+            })?;
+            let value = self.field_overlay_value_expr(&value_ty, field_ty, field_name);
+            let mut keys = vec![field_name.clone()];
+            if let Some(Some(alias)) = self.struct_field_aliases.get(&key)
+                && alias != field_name
+            {
+                keys.push(alias.clone());
+            }
+            for lookup_key in keys {
+                arms.push(quote! { #lookup_key => Some(#value) });
+            }
+        }
+
+        Ok(Some(quote! {
+            /// Return a reflected field value by canonical field name or model alias.
+            pub fn __field_value__(&self, name: String) -> Option<#value_ty_tokens> {
+                match name.as_str() {
+                    #(#arms,)*
+                    _ => None,
+                }
+            }
+        }))
+    }
+
+    /// Emit the compiler-provided `__field_items__` method for a concrete model or class struct.
+    ///
+    /// The returned vector preserves lowered field order, including inherited class fields that lowering already
+    /// prepended before child fields.
+    fn emit_field_items_method(&self, struct_name: &str) -> Result<Option<TokenStream>, EmitError> {
+        let Some(field_names) = self.public_reflection_field_names(struct_name) else {
+            return Ok(None);
+        };
+        let Some(value_ty) = self.field_overlay_value_type_for_struct(struct_name)? else {
+            return Ok(None);
+        };
+        let value_ty_tokens = self.emit_type(&value_ty);
+        let mut items = Vec::new();
+        for field_name in &field_names {
+            let key = (struct_name.to_string(), field_name.clone());
+            let field_ty = self.struct_field_types.get(&key).ok_or_else(|| {
+                EmitError::Unsupported(format!(
+                    "missing field type metadata for '{}.{}'",
+                    struct_name, field_name
+                ))
+            })?;
+            let value = self.field_overlay_value_expr(&value_ty, field_ty, field_name);
+            items.push(quote! { (#field_name.to_string(), #value) });
+        }
+
+        Ok(Some(quote! {
+            /// Return reflected field name/value pairs in declaration order.
+            pub fn __field_items__(&self) -> Vec<(String, #value_ty_tokens)> {
+                vec![#(#items),*]
+            }
+        }))
+    }
+}

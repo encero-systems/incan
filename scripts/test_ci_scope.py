@@ -60,7 +60,7 @@ else:
                 self.assertEqual(self.scope(event=event, reference=True), self.scope(event=event))
 
     def test_registry_and_verified_example_prs_still_select_reference(self):
-        for path in ["crates/incan_core/src/lang/example.rs",
+        for path in ["loaves/kernel/incan_lang/src/lang/example.rs",
                      "workspaces/docs-site/docs/language/reference/language.md",
                      "workspaces/docs-site/docs/_snippets/language/examples/verified_web.incn"]:
             with self.subTest(path=path):

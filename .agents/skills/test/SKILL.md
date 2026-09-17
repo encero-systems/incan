@@ -31,25 +31,25 @@ For non-trivial changes, do a quick pattern intake before writing or changing te
 
 ```text
 Did you change the parser?
-  → Add a test in crates/incan_syntax/src/parser/tests.rs
+  → Add a test in loaves/kernel/incan_syntax/src/parser/tests.rs
 
 Did you change the typechecker?
-  → Add a test in src/frontend/typechecker/tests.rs
+  → Add a test in loaves/compiler/incan_frontend/src/typechecker/tests.rs
 
 Did you change lowering or emission (codegen output)?
-  → Add a .incn file in tests/codegen_snapshots/
-  → Add a test function in tests/codegen_snapshot_tests.rs
-  → Run: INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests
+  → Add a .incn file in loaves/compiler/incan_emit/tests/codegen_snapshots/
+  → Add a test function in loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs
+  → Run: INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests
 
 Did you change end-to-end behavior (CLI, build, multi-file)?
-  → Add a test in tests/integration_tests.rs
+  → Add a test in loaves/toolchain/incan-cli/tests/integration_tests.rs
 
 Did you change the formatter?
-  → Property tests in tests/property_tests.rs verify idempotency
+  → Property tests in loaves/compiler/incan_format/tests/property_tests.rs verify idempotency
   → Also add a codegen snapshot if formatting affects output
 
 Did you add a diagnostic?
-  → Add a fixture in tests/fixtures/invalid/ that triggers it
+  → Add a fixture in loaves/compiler/incan_test_support/fixtures/invalid/ that triggers it
   → Add an integration test that asserts the diagnostic message
 ```
 
@@ -64,7 +64,7 @@ For any pipeline feature (parser through emission), write **both**:
 
 ### Parser test pattern
 
-File: `crates/incan_syntax/src/parser/tests.rs`
+File: `loaves/kernel/incan_syntax/src/parser/tests.rs`
 
 ```rust
 #[test]
@@ -83,7 +83,7 @@ Helpers available: `parse_str(source)`, `parse_str_with_module_path(source, path
 
 ### Typechecker test pattern
 
-File: `src/frontend/typechecker/tests.rs`
+File: `loaves/compiler/incan_frontend/src/typechecker/tests.rs`
 
 ```rust
 #[test]
@@ -112,14 +112,14 @@ Helpers available: `check_str(source)`, `assert_check_ok(source)`, `check_str_wi
 
 ### Codegen snapshot test pattern
 
-1. Create `tests/codegen_snapshots/my_feature.incn`:
+1. Create `loaves/compiler/incan_emit/tests/codegen_snapshots/my_feature.incn`:
 
 ```incan
 def example() -> str:
     return "hello"
 ```
 
-2. Add to `tests/codegen_snapshot_tests.rs`:
+2. Add to `loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs`:
 
 ```rust
 #[test]
@@ -133,16 +133,16 @@ fn test_my_feature_codegen() {
 3. Generate the snapshot:
 
 ```bash
-INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests -- test_my_feature_codegen
+INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests -- test_my_feature_codegen
 ```
 
-4. Review: `cargo insta review` or check `tests/snapshots/codegen_snapshot_tests__my_feature.snap`.
+4. Review: `cargo insta review` or check `loaves/compiler/incan_emit/tests/snapshots/codegen_snapshot_tests__my_feature.snap`.
 
-Helpers available: `load_test_file(name)` (loads from `tests/codegen_snapshots/<name>.incn`), `generate_rust(source)`, `generate_rust_with_widgets_manifest(source)` (for library import tests).
+Helpers available: `load_test_file(name)` (loads from `loaves/compiler/incan_emit/tests/codegen_snapshots/<name>.incn`), `generate_rust(source)`, `generate_rust_with_widgets_manifest(source)` (for library import tests).
 
 ### Integration test pattern
 
-File: `tests/integration_tests.rs`
+File: `loaves/toolchain/incan-cli/tests/integration_tests.rs`
 
 ```rust
 #[test]
@@ -159,7 +159,7 @@ Helpers available: `compile_source(source)`, `compile_file(path)`.
 
 ### Invalid fixture pattern
 
-1. Create `tests/fixtures/invalid/my_error_case.incn` with code that should fail.
+1. Create `loaves/compiler/incan_test_support/fixtures/invalid/my_error_case.incn` with code that should fail.
 2. Add an integration test that asserts the expected diagnostic.
 
 ## Step 4: Run the tests
@@ -168,7 +168,7 @@ Helpers available: `compile_source(source)`, `compile_file(path)`.
 
 ```bash
 # Run a specific test
-cargo test --test codegen_snapshot_tests -- test_my_feature
+cargo test -p incan_emit --test codegen_snapshot_tests -- test_my_feature
 
 # Run all typechecker tests
 cargo test -p incan --lib typechecker::tests
@@ -177,7 +177,7 @@ cargo test -p incan --lib typechecker::tests
 cargo test -p incan_syntax --lib parser::tests
 
 # Run integration tests
-cargo test --test integration_tests
+cargo test -p incan-cli --test integration_tests
 ```
 
 ### Before finishing (full suite)
@@ -190,7 +190,7 @@ make test
 make pre-commit
 
 # Update all snapshots if codegen changed
-INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests
+INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests
 ```
 
 ## Step 5: Verify

@@ -1,0 +1,68 @@
+[package]
+name = "incan_driver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The Incan compiler driver: sessions, builds, the generated project, inspection and the compatibility corpus"
+
+[lib]
+name = "incan_driver"
+path = "src/lib.rs"
+
+[features]
+# The defaults the toolchain ring selects, so `cargo test -p incan_driver` sees the stdlib semantics packs and the
+# argument derives the CLI's tests exercise; the binaries select features explicitly and never rely on these.
+default = ["cli", "rust_inspect", "std_testing", "std_async", "std_decorators"]
+# The `clap::ValueEnum` derives on the driver's report and test-runner enums, for the binary that parses arguments,
+# plus the build pipeline and the generator's managed-cache lease, which the retired root crate gated the same way
+# and which have not yet been cut loose from it (#1479). The compatibility corpus's checked collection needs none of it.
+cli = ["dep:clap"]
+rust_inspect = ["incan_frontend/rust_inspect", "incan_ir/rust_inspect", "incan_emit/rust_inspect", "incan_provider/rust_inspect", "rust_inspect/inspector"]
+std_testing = ["incan_frontend/std_testing", "incan_ir/std_testing", "incan_emit/std_testing", "incan_provider/std_testing"]
+std_async = ["incan_frontend/std_async", "incan_ir/std_async", "incan_emit/std_async", "incan_provider/std_async"]
+std_decorators = ["incan_frontend/std_decorators", "incan_ir/std_decorators", "incan_emit/std_decorators", "incan_provider/std_decorators"]
+# Fixtures the CLI's tests share with the driver's.
+test_support = ["incan_provider/test_support", "incan_emit/test_support", "incan_frontend/test_support", "rust_inspect/test_fixtures", "oven_store/test_support", "oven_rustc/test_support"]
+
+[dependencies]
+clap = { version = "4.4", features = ["derive"], optional = true }
+hex = "0.4.3"
+incan_codegraph = { workspace = true }
+incan_lang = { workspace = true }
+incan_emit = { workspace = true }
+incan_frontend = { workspace = true }
+incan_ir = { workspace = true }
+incan_oven_facet = { workspace = true }
+incan_provider = { workspace = true }
+incan_semantics_core = { workspace = true }
+incan_vocab = { workspace = true }
+oven_model = { workspace = true }
+oven_rustc = { workspace = true }
+oven_cargo_compat = { workspace = true }
+oven_interop = { workspace = true }
+oven_store = { workspace = true }
+rust_inspect = { workspace = true }
+rustix = { version = "1.1.4", features = ["fs"] }
+semver = "1.0.27"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha1 = "0.10"
+sha2 = "0.10.9"
+tempfile = "3"
+thiserror = { workspace = true }
+toml = "0.9"
+toml_edit = { version = "0.25", features = ["parse", "serde"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+incan_emit = { workspace = true, features = ["test_support"] }
+incan_frontend = { workspace = true, features = ["test_support"] }
+incan_provider = { workspace = true, features = ["test_support"] }
+incan_test_support = { workspace = true }
+# The parity corpus reads generated Rust as a token stream to locate projected declarations.
+proc-macro2 = { workspace = true }
+syn = { workspace = true, features = ["printing"] }
+oven_rustc = { workspace = true, features = ["test_support"] }
+oven_store = { workspace = true, features = ["test_support"] }
+rust_inspect = { workspace = true, features = ["test_fixtures"] }
