@@ -133,6 +133,11 @@ pub fn legacy_cargo_builtin_target_spec(
     })
 }
 
+/// Identify the execution node that supplies retained build-script facts to a consumer edge.
+fn is_build_script_unit(unit: &OvenLegacyCargoSelectedUnit) -> bool {
+    unit.mode == "run-custom-build" && unit.target_kinds.iter().any(|kind| kind == "custom-build")
+}
+
 /// Project one exact physical Cargo capture into a rootless selected Rust graph.
 ///
 /// The result deliberately has no exposed roots. Cargo's observed effective features become only per-unit compiler
@@ -1103,7 +1108,13 @@ mod tests {
         assert_eq!(rustc_identity, "rustc 1.98.0 (fixture)");
         assert_eq!(
             target_cfg_digest,
-            oven_rustc::rustc::selected_graph_sha256(&serde_json::to_vec(&capture.compiler.unwrap().target_cfg)?)
+            oven_rustc::rustc::selected_graph_sha256(&serde_json::to_vec(
+                &capture
+                    .compiler
+                    .as_ref()
+                    .ok_or("fixture lost compiler facts")?
+                    .target_cfg
+            )?)
         );
         Ok(())
     }

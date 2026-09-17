@@ -720,7 +720,7 @@ impl OvenSelectedRustFacetGraph {
                 validate_selected_graph_text(target, "selection.target_spec.target")?;
                 validate_selected_graph_text(rustc_identity, "selection.target_spec.rustc_identity")?;
                 validate_selected_graph_digest(target_cfg_digest, "selection.target_spec.target_cfg_digest")?;
-                if owners.get(toolchain_owner) != Some(&OvenSelectedRustFacetOwnerKind::Toolchain) {
+                if owners.get(toolchain_owner.as_str()) != Some(&OvenSelectedRustFacetOwnerKind::Toolchain) {
                     return Err(selected_graph_invalid(
                         "selection.target_spec.toolchain_owner",
                         "must reference the graph's Toolchain owner",
