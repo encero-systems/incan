@@ -270,7 +270,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
             )));
         }
     }
-    capture_legacy_cargo_selected_units(
+    let mut capture = capture_legacy_cargo_selected_units(
         &CargoUnitGraph {
             version: 1,
             units,
@@ -278,7 +278,11 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
         },
         metadata,
         outputs,
-    )
+    )?;
+    for (unit, item) in capture.units.iter_mut().zip(&matched) {
+        unit.cfg = rustc_non_feature_cfgs(&item.invocation.arguments);
+    }
+    Ok(capture)
 }
 
 /// Check Cargo artifact outputs against the invocation's exact output directory, file and filename suffix facts.
@@ -376,6 +380,17 @@ fn rustc_feature_cfgs(arguments: &[String]) -> Vec<String> {
     features
 }
 
+/// Return sorted unique non-feature cfg values passed to one exact rustc invocation.
+fn rustc_non_feature_cfgs(arguments: &[String]) -> Vec<String> {
+    let mut cfg = argument_values(arguments, "--cfg")
+        .into_iter()
+        .filter(|value| !(value.starts_with("feature=\"") && value.ends_with('"')))
+        .collect::<Vec<_>>();
+    cfg.sort();
+    cfg.dedup();
+    cfg
+}
+
 /// Publisher-only physical facts for one Cargo selected-unit graph.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -417,6 +432,8 @@ pub struct OvenLegacyCargoSelectedUnit {
     pub edition: String,
     pub mode: String,
     pub platform: Option<String>,
+    /// Exact non-feature rustc cfg arguments; Cargo features remain separately named by `effective_features`.
+    pub cfg: Vec<String>,
     pub effective_features: Vec<String>,
     pub dependencies: Vec<OvenLegacyCargoSelectedDependency>,
     pub build_script: Option<OvenLegacyCargoBuildScriptFacts>,
@@ -644,6 +661,7 @@ pub fn capture_legacy_cargo_selected_units(
             edition: unit.target.edition.clone(),
             mode: unit.mode.clone(),
             platform: unit.platform.clone(),
+            cfg: Vec::new(),
             effective_features: features,
             dependencies,
             build_script,
@@ -980,6 +998,7 @@ mod tests {
                 edition: "2024".to_string(),
                 mode: "run-custom-build".to_string(),
                 platform: None,
+                cfg: Vec::new(),
                 effective_features: Vec::new(),
                 dependencies: Vec::new(),
                 build_script: Some(OvenLegacyCargoBuildScriptFacts {
@@ -1040,7 +1059,7 @@ mod tests {
             }),
             serde_json::json!({
                 "reason": "incan-rustc-invocation", "rustc": rustc.clone(),
-                "arguments": ["--crate-name", "dep", "--crate-type", "lib", "--edition", "2021", "--out-dir", "/target", "/fixture/dep/src/lib.rs"],
+                "arguments": ["--crate-name", "dep", "--crate-type", "lib", "--edition", "2021", "--cfg", "target_has_atomic=\"ptr\"", "--out-dir", "/target", "/fixture/dep/src/lib.rs"],
                 "environment": {"CARGO_MANIFEST_DIR": "/fixture/dep", "CARGO_PKG_NAME": "dep", "CARGO_PKG_VERSION": "2.0.0"}
             }),
             serde_json::json!({
@@ -1065,6 +1084,7 @@ mod tests {
             Path::new(&rustc),
         )?;
         assert_eq!(capture.roots, [1]);
+        assert_eq!(capture.units[0].cfg, ["target_has_atomic=\"ptr\""]);
         assert_eq!(capture.units[1].dependencies[0].unit_index, 0);
         assert_eq!(
             capture.units[1].dependencies[0].extern_crate_name.as_deref(),
