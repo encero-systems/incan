@@ -776,6 +776,16 @@ mod tests {
                 relative_path: "crates/facet_runtime".to_string(),
             },
         };
+        // The facet's lowering also reaches a registry crate; a consumer that spells `std.rich` itself needs it,
+        // one that only links a library built on the facet does not.
+        let registry_dependency = ProviderCargoDependency {
+            crate_name: "regex".to_string(),
+            package: None,
+            version: Some("1.0".to_string()),
+            features: BTreeSet::new(),
+            default_features: true,
+            source: ProviderCargoDependencySource::Registry,
+        };
         let provider_root = workspace.path().join("provider");
         fs::create_dir_all(provider_root.join("src"))?;
         fs::write(provider_root.join("src/lib.rs"), "pub fn provider() {}\n")?;
@@ -793,7 +803,7 @@ mod tests {
                 required_modules: BTreeSet::from([vec!["rich".to_string()]]),
                 required_features: BTreeSet::new(),
                 cargo_features: Default::default(),
-                cargo_dependencies: vec![dependency.clone()],
+                cargo_dependencies: vec![dependency.clone(), registry_dependency.clone()],
             });
         let provider_manifest_path = provider_root.join("facet_provider.incnlib");
         provider_manifest.write_to_path(&provider_manifest_path)?;
@@ -828,7 +838,12 @@ mod tests {
                 id: "rich".to_string(),
                 required_modules: BTreeSet::from([vec!["rich".to_string()]]),
                 required_features: BTreeSet::new(),
-                backend_requirements: vec![BackendImplementationRequirement::CargoDependency { dependency }],
+                backend_requirements: vec![
+                    BackendImplementationRequirement::CargoDependency { dependency },
+                    BackendImplementationRequirement::CargoDependency {
+                        dependency: registry_dependency,
+                    },
+                ],
             }],
         };
 
@@ -886,6 +901,7 @@ mod tests {
             implementation_facets: Vec::new(),
         };
 
+        let provider_for_direct_use = provider.clone();
         // The consumer reaches only `std.plain`; on its own that selects no facet and links no runtime crate.
         let alone = ProviderPlan::new(
             Default::default(),
@@ -901,8 +917,10 @@ mod tests {
                 .any(|spec| spec.crate_name == "facet_runtime")
         );
 
-        // With the compiled library in the graph, the consumer links the library's artifact and therefore every
-        // facet of the provider that artifact was built against.
+        // With the compiled library in the graph, the consumer links the library's artifact and therefore the
+        // runtime crate of every facet the provider has -- and nothing more: the facet's registry crate belongs to
+        // a program that spells the namespace itself, and here it would collide with the consumer's own
+        // `[rust-dependencies]` spelling of `regex` (the rooted-workspace lock regression).
         let with_library = ProviderPlan::new(
             Default::default(),
             vec![provider, library],
@@ -917,17 +935,34 @@ mod tests {
         );
         let mut requirements = ProjectRequirements::default();
         extend_requirements_with_provider_plan(&mut requirements, &with_library)?;
+        let linked = requirements
+            .dependencies
+            .iter()
+            .map(|spec| spec.crate_name.as_str())
+            .collect::<Vec<_>>();
         assert!(
-            requirements
+            linked.contains(&"facet_runtime"),
+            "the facet's runtime crate must be linked through the library, got {linked:?}"
+        );
+        assert!(
+            !linked.contains(&"regex"),
+            "the facet's registry crate must not be projected through the library, got {linked:?}"
+        );
+
+        // A consumer that reaches `std.rich` itself still gets the facet's registry crate.
+        let direct = ProviderPlan::new(
+            Default::default(),
+            vec![provider_for_direct_use],
+            [vec!["std".to_string(), "rich".to_string()]],
+        )?;
+        let mut direct_requirements = ProjectRequirements::default();
+        extend_requirements_with_provider_plan(&mut direct_requirements, &direct)?;
+        assert!(
+            direct_requirements
                 .dependencies
                 .iter()
-                .any(|spec| spec.crate_name == "facet_runtime"),
-            "the facet's runtime crate must be linked through the library, got {:?}",
-            requirements
-                .dependencies
-                .iter()
-                .map(|spec| spec.crate_name.as_str())
-                .collect::<Vec<_>>()
+                .any(|spec| spec.crate_name == "regex"),
+            "a program that spells the namespace links the facet's registry crate"
         );
         Ok(())
     }

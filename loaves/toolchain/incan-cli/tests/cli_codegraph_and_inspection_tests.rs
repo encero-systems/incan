@@ -6,6 +6,7 @@
 
 use std::fs;
 
+use incan_driver::build_report::BUILD_REPORT_SCHEMA_VERSION;
 use incan_test_support as support;
 
 use incan_test_support::cli_project;
@@ -63,8 +64,12 @@ def main() -> None:
     assert_success(&build, "incan build --report json semantic inspection fixture");
     let build_json = parse_json_stdout(&build)?;
     // Each report is independently versioned; this test asserts shared *project identity*, not a shared schema
-    // number. The check report moved to v2 when it began carrying warnings, while build reports stayed at v1.
-    assert_eq!(build_json["schema_version"], serde_json::json!(1));
+    // number. The check report moved to v2 when it began carrying warnings; the build report carries its own line,
+    // read from the constant so a bump there does not silently strand this pin.
+    assert_eq!(
+        build_json["schema_version"],
+        serde_json::json!(BUILD_REPORT_SCHEMA_VERSION)
+    );
     assert_eq!(build_json["project"]["name"], serde_json::json!("semantic_probe"));
     assert_source_files_include(&build_json, &["src/main.incn", "src/helpers.incn"])?;
 
@@ -96,7 +101,10 @@ def main() -> None:
     assert_codegraph_record_contract(&records);
     // Codegraph is a separate versioned projection. RFC 113 adds checked registry records under codegraph schema v2,
     // while build reports retain their independently versioned schema.
-    assert_eq!(build_json["schema_version"], serde_json::json!(1));
+    assert_eq!(
+        build_json["schema_version"],
+        serde_json::json!(BUILD_REPORT_SCHEMA_VERSION)
+    );
     assert_eq!(records[0]["compiler_version"], build_json["compiler_version"]);
     assert_eq!(records[0]["package"]["name"], serde_json::json!("semantic_probe"));
     assert!(records.iter().any(|record| {

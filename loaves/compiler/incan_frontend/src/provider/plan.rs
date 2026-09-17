@@ -8,8 +8,8 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 
 use crate::library_manifest::{
-    LibraryManifest, LibraryManifestError, ProviderCargoDependency, ProviderDependencyKind, ProviderDependencyMetadata,
-    ProviderImplementationFacet, digest_provider_artifact,
+    LibraryManifest, LibraryManifestError, ProviderCargoDependency, ProviderCargoDependencySource,
+    ProviderDependencyKind, ProviderDependencyMetadata, ProviderImplementationFacet, digest_provider_artifact,
 };
 use crate::library_manifest_index::{
     LibraryArtifactKind, LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
@@ -1094,11 +1094,36 @@ impl ProviderPlan {
     }
 
     /// Return the private backend requirements of the facets this compilation links for `provider`.
+    ///
+    /// A facet this compilation's own module use selects contributes everything it names: the generated code spells
+    /// that namespace, so it needs the facet's runtime crate, the registry crates its lowering reaches, and its Cargo
+    /// features. A facet linked only because a compiled project dependency implemented against the provider (see
+    /// [`Self::linked_implementation_facets`]) contributes its toolchain runtime crate alone. The library's sealed
+    /// artifact already carries whatever registry crates its implementation reached, this consumer's generated code
+    /// names none of them, and putting them in its requirements would collide with the consumer's own
+    /// `[rust-dependencies]` spellings of the same crates.
     pub fn linked_backend_requirements(&self, provider: &ProviderRecord) -> BTreeSet<BackendImplementationRequirement> {
-        self.linked_implementation_facets(provider)
-            .into_iter()
-            .flat_map(|facet| facet.backend_requirements.iter().cloned())
-            .collect()
+        let mut requirements = self.selected_backend_requirements(provider);
+        if self
+            .library_projected_sdk_roots()
+            .contains(&provider.identity.stable_key())
+        {
+            requirements.extend(
+                provider
+                    .implementation_facets
+                    .iter()
+                    .flat_map(|facet| facet.backend_requirements.iter())
+                    .filter(|requirement| {
+                        matches!(
+                            requirement,
+                            BackendImplementationRequirement::CargoDependency { dependency }
+                                if matches!(dependency.source, ProviderCargoDependencySource::Toolchain { .. })
+                        )
+                    })
+                    .cloned(),
+            );
+        }
+        requirements
     }
 
     /// Reject any enabled provider whose artifact is unavailable before compilation starts.

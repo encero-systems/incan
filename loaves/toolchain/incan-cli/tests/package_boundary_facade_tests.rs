@@ -218,9 +218,10 @@ fn artifact_inventory(
 /// Two source-free providers reached from one consumer leave their published store entries untouched (#1458).
 ///
 /// The providers are baked, their sources removed, and the consumer is baked over their sealed artifacts. Today that
-/// bake refuses at the #1241 boundary — each provider compiled the shared registry units for itself and one binary
-/// cannot hold two builds of one unit — and the refusal must not republish or mutate either provider's entry. The
-/// `84` this consumer used to print came from a unified Cargo build a normal command was never allowed to make.
+/// bake refuses at the #1241 boundary — the intermediate provider was compiled against its own re-materialized copy
+/// of the shared one, and one binary cannot hold two builds of one unit — and the refusal must not republish or
+/// mutate either provider's entry. The `84` this consumer used to print came from a unified Cargo build a normal
+/// command was never allowed to make.
 #[test]
 fn source_free_native_diamond_preserves_published_store_inventory_issue1458() -> TestResult {
     let fixture = tempfile::tempdir()?;
@@ -314,11 +315,15 @@ fn source_free_native_diamond_preserves_published_store_inventory_issue1458() ->
             "src/main.incn",
             "from pub::stock import answer\nfrom pub::pricing import quote\n\ndef main() -> None:\n    println(answer() + quote())\n",
         )?;
-        // Two source-free providers each compiled the same registry units for themselves, and one binary cannot
-        // hold two builds of one unit: rustc refuses the colliding `StableCrateId`s, and Oven names that as the
-        // #1241 boundary rather than surfacing the raw rustc report. Until the third-party direct-rustc cutover
-        // reconciles shared registry units that is where this bake stops -- never at a Cargo build, which is what
-        // the removed unified-Cargo detour used to do here -- and it leaves every published entry alone.
+        // `pricing` was compiled against its own re-materialized copy of `catalog`, and one binary cannot hold two
+        // builds of one unit: rustc refuses the pair, and Oven names that as the #1241 boundary rather than
+        // surfacing the raw rustc report. Which rustc report it is depends on what the consumer's plan presents:
+        // two copies on the search path collide on their `StableCrateId`; one copy beside a consumer that was
+        // built against the other is rejected as a mismatched version (`E0460`). Both are the crate-loading family
+        // `direct_rustc_composition_failure` names, and neither is the sources failing to compile. Until the
+        // third-party direct-rustc cutover reconciles shared units that is where this bake stops -- never at a Cargo
+        // build, which is what the removed unified-Cargo detour used to do here -- and it leaves every published
+        // entry alone.
         let consumer_bake = bake(&consumer)?;
         let diagnostics = format!(
             "{}\n{}",
@@ -330,8 +335,9 @@ fn source_free_native_diamond_preserves_published_store_inventory_issue1458() ->
             "the diamond consumer bake must stop at the Oven boundary rather than fall back to Cargo:\n{diagnostics}"
         );
         assert!(
-            diagnostics.contains("#1241") && diagnostics.contains("colliding StableCrateId"),
-            "the refusal must name the #1241 boundary and carry rustc's collision report:\n{diagnostics}"
+            diagnostics.contains("#1241")
+                && (diagnostics.contains("colliding StableCrateId") || diagnostics.contains("E0460")),
+            "the refusal must name the #1241 boundary and carry rustc's crate-loading report:\n{diagnostics}"
         );
         assert!(
             !diagnostics.to_lowercase().contains("cargo-compatibility"),
