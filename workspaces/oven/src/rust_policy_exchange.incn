@@ -145,12 +145,11 @@ def decode_members(
     value: JsonValue,
     path: list[str],
     allow_empty: bool,
-) -> Result[Dict[str, str], SelectionError]:
+) -> Result[None, SelectionError]:
     """Decode one canonical member catalog, allowing an empty catalog only for an explicit generated output."""
     values = array(value, path)?
     if not allow_empty and len(values) == 0:
         return Err(invalid(path))
-    mut members: Dict[str, str] = Dict()
     mut previous: str = ""
     for index in range(len(values)):
         member_path = path + [str(index)]
@@ -161,18 +160,22 @@ def decode_members(
         if name <= previous:
             return Err(invalid(member_path + ["path"]))
         previous = name
-        members[name] = digest
-    return Ok(members)
+    return Ok(None)
 
 
-def generated_input_digest(members: Dict[str, str], path: list[str]) -> Result[str, SelectionError]:
+def generated_input_digest(members: JsonValue, path: list[str]) -> Result[str, SelectionError]:
     """Hash an explicit generated tree, including the checked-empty tree, as the raw graph schema does."""
-    mut values: Dict[str, JsonValue] = Dict()
-    for name in members.keys():
-        values[name] = JsonValue.string(members[name])
-    match JsonValue.object(values).to_json():
-        Err(_) => return Err(invalid(path))
-        Ok(encoded) => return Ok("sha256:" + hexlify(sha256.digest(encoded.ordinal_bytes())))
+    values = array(members, path)?
+    mut entries: list[str] = []
+    for index in range(len(values)):
+        item_path = path + [str(index)]
+        name = text_field(values[index], "path", item_path)?
+        digest = text_field(values[index], "digest", item_path)?
+        name_json = JsonValue.string(name).to_json().map_err((_) => invalid(item_path + ["path"]))?
+        digest_json = JsonValue.string(digest).to_json().map_err((_) => invalid(item_path + ["digest"]))?
+        entries.append(name_json + ":" + digest_json)
+    encoded = "{" + entries.join(",") + "}"
+    return Ok("sha256:" + hexlify(sha256.digest(encoded.ordinal_bytes())))
 
 
 def decode_environment(value: JsonValue, path: list[str]) -> Result[JsonValue, SelectionError]:
@@ -210,7 +213,8 @@ def decode_generated_inputs(value: JsonValue, path: list[str]) -> Result[JsonVal
         previous = name
         decode_location(field(item, "source", item_path)?, item_path + ["source"])?
         declared_digest = nonempty(text_field(item, "digest", item_path)?, item_path + ["digest"])?
-        members = decode_members(field(item, "members", item_path)?, item_path + ["members"], true)?
+        members = field(item, "members", item_path)?
+        decode_members(members, item_path + ["members"], true)?
         if generated_input_digest(members, item_path + ["members"])? != declared_digest:
             return Err(invalid(item_path + ["digest"]))
     return Ok(value)
@@ -248,14 +252,20 @@ def decode_linked_libraries(value: JsonValue, path: list[str]) -> Result[JsonVal
             artifact = field(item, "artifact", item_path)?
             decode_location(artifact, item_path + ["artifact"])?
             declared_digest = nonempty(text_field(item, "digest", item_path)?, item_path + ["digest"])?
-            members = decode_members(field(item, "members", item_path)?, item_path + ["members"], false)?
+            members_value = field(item, "members", item_path)?
+            decode_members(members_value, item_path + ["members"], false)?
             artifact_path = text_field(artifact, "path", item_path + ["artifact"])?
             search_root_path = text_field(search_root, "path", item_path + ["search_root"])?
             prefix = "" if search_root_path == "." else search_root_path + "/"
             if not artifact_path.startswith(prefix):
                 return Err(invalid(item_path + ["artifact"]))
             member_path = artifact_path[len(prefix):len(artifact_path)]
-            match members.get(member_path):
+            mut artifact_digest: Option[str] = None
+            members = array(members_value, item_path + ["members"])?
+            for member in members:
+                if text_field(member, "path", item_path + ["members"])? == member_path:
+                    artifact_digest = Some(text_field(member, "digest", item_path + ["members"])?)
+            match artifact_digest:
                 Some(member_digest) =>
                     if member_digest != declared_digest:
                         return Err(invalid(item_path + ["members"]))
