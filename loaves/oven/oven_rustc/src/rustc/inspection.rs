@@ -517,7 +517,7 @@ fn validate_compiler_support_root_intent_authority(
             message: "must retain its exact capture receipt identity".to_string(),
         });
     }
-    let mut prior_alias = None;
+    let mut prior_alias: Option<&str> = None;
     for root in &authority.roots {
         if root.alias.trim().is_empty()
             || root.unit.trim().is_empty()
@@ -530,7 +530,7 @@ fn validate_compiler_support_root_intent_authority(
                     .to_string(),
             });
         }
-        if prior_alias.as_ref().is_some_and(|prior: &String| prior >= &root.alias) {
+        if prior_alias.is_some_and(|prior| prior >= root.alias.as_str()) {
             return Err(OvenRustcError::InvalidInput {
                 field: "compiler support root intent authority",
                 message: "roots must be strictly sorted by alias".to_string(),
@@ -546,7 +546,7 @@ fn validate_compiler_support_root_intent_authority(
                 message: format!("alias `{}` has noncanonical requested features", root.alias),
             });
         }
-        prior_alias = Some(&root.alias);
+        prior_alias = Some(root.alias.as_str());
     }
     Ok(())
 }
