@@ -1321,7 +1321,8 @@ mod tests {
             .push(super::super::OvenLegacyCargoBuildScriptToolProbe {
                 package_id: capture.units[1].package_id.clone(),
                 out_dir: PathBuf::from("/transient/out"),
-                domain: "x86_64-unknown-linux-gnu".to_string(),
+                target_context: "x86_64-unknown-linux-gnu".to_string(),
+                rustc_target: "x86_64-unknown-linux-gnu".to_string(),
                 digest: digest(b"first bounded probe"),
             });
         let first_probe_digest = legacy_cargo_build_script_closure_digest(&capture, &sealed.build_scripts)?;

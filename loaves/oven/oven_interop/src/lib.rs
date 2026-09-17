@@ -18,9 +18,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use oven_model::oven_interop::{
-    InteropArtifactKind, InteropArtifactOrigin, InteropShimLanguage, InteropTargetPlatform, LockedInteropInput,
-    LockedInteropTarget, ToolchainRequirement, interop_execution_receipt_identity, ios_target_kind,
-    is_interop_native_library_name, locked_interop_target_identity,
+    InteropArtifactKind, InteropShimLanguage, InteropTargetPlatform, LockedInteropInput, LockedInteropTarget,
+    ToolchainRequirement, interop_execution_receipt_identity, ios_target_kind, is_interop_native_library_name,
+    locked_interop_target_identity,
 };
 pub use oven_model::oven_interop::{
     OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION, OVEN_INTEROP_EXECUTION_RECEIPT_INPUT,
@@ -37,6 +37,8 @@ use oven_store::process::{isolate_process_group, terminate_process_group};
 use oven_store::store::{OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore};
 use oven_store::{OvenBuildIntent, OvenReceipt, digest_bytes, receipt_with_build_unit_input};
 
+/// Version 5 uses loader-safe immutable store paths; older paths can split ELF RUNPATH entries.
+const OVEN_INTEROP_PLAN_SCHEMA: &str = "5";
 /// Store-owned directory containing static archives baked from declared interop shims or artifacts.
 pub const OVEN_INTEROP_NATIVE_DIRECTORY: &str = "interop-native";
 /// Store-owned directory containing locked bundled runtime files for direct execution or a target packager.
