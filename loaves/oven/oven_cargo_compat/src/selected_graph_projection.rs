@@ -17,11 +17,15 @@ use oven_rustc::rustc::{
     selected_graph_unit_identity,
 };
 use oven_store::OvenReceipt;
+use serde::Serialize;
 
 use super::{
     OvenLegacyCargoError, OvenLegacyCargoSelectedGeneratedOutput, OvenLegacyCargoSelectedUnit,
     OvenLegacyCargoSelectedUnitCapture,
 };
+
+/// Receipt key binding the complete selected build-script closure to a final publisher transaction.
+pub const OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT: &str = "legacy-cargo-build-script-closure";
 
 /// Publisher-retained physical binding for one Cargo-selected unit.
 ///
@@ -55,7 +59,7 @@ pub struct OvenLegacyCargoSelectedGeneratedBinding {
 }
 
 /// One selected environment value matched to an exact build-script observation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OvenLegacyCargoSelectedEnvironmentBinding {
     /// Exact raw Cargo observation retained only for producer-side comparison.
     pub observed_value: String,
@@ -64,18 +68,18 @@ pub struct OvenLegacyCargoSelectedEnvironmentBinding {
 }
 
 /// Complete typed linked-library closure matched to one build-script observation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OvenLegacyCargoSelectedLinkedLibraryBinding {
-    /// Sorted exact raw Cargo library directives retained only for producer-side comparison.
+    /// Exact raw Cargo library directives in compiler-observed order, including duplicates.
     pub observed_libraries: Vec<String>,
-    /// Sorted exact raw Cargo search-path directives retained only for producer-side comparison.
+    /// Exact raw Cargo search-path directives in compiler-observed order, including duplicates.
     pub observed_paths: Vec<String>,
-    /// Sorted typed archive or provider facts that enter graph identity.
+    /// Ordered typed archive or provider facts that enter graph identity without deduplication.
     pub libraries: Vec<OvenSelectedRustFacetLinkedLibrary>,
 }
 
 /// One complete selected build-script closure consumed by an exact physical unit edge.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct OvenLegacyCargoSelectedBuildScriptBinding {
     /// Each exact selected environment key and its portable representation.
     pub environment: BTreeMap<String, OvenLegacyCargoSelectedEnvironmentBinding>,
@@ -99,6 +103,8 @@ pub struct OvenLegacyCargoSelectedGraphProjection {
     pub generated: BTreeMap<(usize, usize), OvenLegacyCargoSelectedGeneratedBinding>,
     /// Environment and linked-library closures keyed by the same consuming build-script edge.
     pub build_scripts: BTreeMap<(usize, usize), OvenLegacyCargoSelectedBuildScriptBinding>,
+    /// Verified final receipt that binds the complete selected build-script observation-to-binding join.
+    pub build_script_authority_receipt: Option<OvenReceipt>,
 }
 
 /// Project one exact physical Cargo capture into a rootless selected Rust graph.
@@ -112,6 +118,7 @@ pub fn project_legacy_cargo_selected_graph(
 ) -> Result<OvenSelectedRustFacetGraph, OvenLegacyCargoError> {
     validate_projection_compiler(capture, sealed)?;
     validate_projection_bindings(capture, sealed)?;
+    validate_build_script_authority(capture, sealed)?;
 
     let mut pending = (0..capture.units.len())
         .filter(|index| !is_build_script_unit(&capture.units[*index]))
@@ -226,6 +233,96 @@ fn validate_projection_compiler(
         return Err(projection_error(
             "selected compiler capture",
             "does not exactly match the sealed host, target, toolchain and cfg selection",
+        ));
+    }
+    Ok(())
+}
+
+/// One canonical capture-to-binding record folded into the final receipt.
+#[derive(Serialize)]
+struct BuildScriptAuthorityRecord<'a> {
+    consumer: usize,
+    build_unit: usize,
+    package: &'a str,
+    cfg: &'a [String],
+    environment: &'a BTreeMap<String, String>,
+    linked_libraries: &'a [String],
+    linked_paths: &'a [String],
+    output: Option<&'a OvenLegacyCargoSelectedGeneratedOutput>,
+    binding: Option<&'a OvenLegacyCargoSelectedBuildScriptBinding>,
+}
+
+/// Digest every selected build-script observation and its typed closure binding in canonical edge order.
+pub fn legacy_cargo_build_script_closure_digest(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    bindings: &BTreeMap<(usize, usize), OvenLegacyCargoSelectedBuildScriptBinding>,
+) -> Result<String, OvenLegacyCargoError> {
+    let mut records = Vec::new();
+    for (consumer, unit) in capture.units.iter().enumerate() {
+        for dependency in &unit.dependencies {
+            let Some(build_unit) = capture.units.get(dependency.unit_index) else {
+                return Err(projection_error(
+                    "selected Cargo dependency",
+                    "names an absent capture unit",
+                ));
+            };
+            if !is_build_script_unit(build_unit) {
+                continue;
+            }
+            let facts = build_unit
+                .build_script
+                .as_ref()
+                .ok_or_else(|| projection_error("selected build-script unit", "has no structured retained facts"))?;
+            records.push(BuildScriptAuthorityRecord {
+                consumer,
+                build_unit: dependency.unit_index,
+                package: &build_unit.package_id,
+                cfg: &facts.cfgs,
+                environment: &facts.environment,
+                linked_libraries: &facts.linked_libraries,
+                linked_paths: &facts.linked_paths,
+                output: facts.output.as_ref(),
+                binding: bindings.get(&(consumer, dependency.unit_index)),
+            });
+        }
+    }
+    let bytes = serde_json::to_vec(&("incan.oven.legacy-cargo-build-script-closure/1", records))
+        .map_err(|error| projection_error("selected build-script closure", &error.to_string()))?;
+    Ok(oven_rustc::rustc::selected_graph_sha256(&bytes))
+}
+
+/// Require every selected build-script closure to be sealed by the verified final publisher receipt.
+fn validate_build_script_authority(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+) -> Result<(), OvenLegacyCargoError> {
+    let has_build_script = capture.units.iter().any(is_build_script_unit);
+    if !has_build_script {
+        if sealed.build_script_authority_receipt.is_some() {
+            return Err(projection_error(
+                "selected build-script closure",
+                "has a receipt without a selected build-script unit",
+            ));
+        }
+        return Ok(());
+    }
+    let receipt = sealed
+        .build_script_authority_receipt
+        .as_ref()
+        .ok_or_else(|| projection_error("selected build-script closure", "has no final receipt authority"))?;
+    receipt
+        .verify_identity()
+        .map_err(|error| projection_error("selected build-script closure receipt", &error.to_string()))?;
+    let digest = legacy_cargo_build_script_closure_digest(capture, &sealed.build_scripts)?;
+    if receipt
+        .sources
+        .build_unit_inputs
+        .get(OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT)
+        != Some(&digest)
+    {
+        return Err(projection_error(
+            "selected build-script closure receipt",
+            "does not bind the exact capture-to-typed-closure digest",
         ));
     }
     Ok(())
@@ -395,6 +492,22 @@ fn projected_build_script_facts(
                 .environment
                 .get(name)
                 .ok_or_else(|| projection_error("selected build-script environment", "has no typed sealed binding"))?;
+            match &bound.value {
+                OvenSelectedRustFacetEnvironmentValue::Text { value } if value == observed => {}
+                OvenSelectedRustFacetEnvironmentValue::Text { .. } => {
+                    return Err(projection_error(
+                        "selected build-script environment",
+                        "text value does not exactly match its captured value",
+                    ));
+                }
+                OvenSelectedRustFacetEnvironmentValue::Path { .. }
+                | OvenSelectedRustFacetEnvironmentValue::SensitiveDigest { .. } => {
+                    return Err(projection_error(
+                        "selected build-script environment",
+                        "requires a receipt-bound owner rebinding or keyed capture digest",
+                    ));
+                }
+            }
             if &bound.observed_value != observed {
                 return Err(projection_error(
                     "selected build-script environment",
@@ -452,31 +565,13 @@ fn projected_build_script_facts(
     cfg.sort();
     cfg.dedup();
     generated_inputs.sort_by(|left, right| left.name.cmp(&right.name).then_with(|| left.digest.cmp(&right.digest)));
-    linked_libraries.sort_by_key(projected_linked_library_sort_key);
-    linked_libraries.dedup();
+    // Cargo's link-directive order and multiplicity are compiler-visible; preserve both exactly.
     Ok(ProjectedBuildScriptFacts {
         cfg,
         environment,
         generated_inputs,
         linked_libraries,
     })
-}
-
-/// Return a stable producer ordering key matching the selected-graph linked-library wire ordering.
-fn projected_linked_library_sort_key(library: &OvenSelectedRustFacetLinkedLibrary) -> String {
-    match library {
-        OvenSelectedRustFacetLinkedLibrary::Archive {
-            name,
-            kind,
-            artifact,
-            digest,
-        } => {
-            format!("archive:{kind:?}:{name}:{}:{digest}", artifact.owner, artifact.path)
-        }
-        OvenSelectedRustFacetLinkedLibrary::Provider { name, kind, provider } => {
-            format!("provider:{kind:?}:{name}:{provider}")
-        }
-    }
 }
 
 /// Verify one retained build-script output binding and convert it to the graph's generated-input form.
@@ -878,7 +973,29 @@ mod tests {
             )]),
             generated: BTreeMap::new(),
             build_scripts: BTreeMap::new(),
+            build_script_authority_receipt: None,
         })
+    }
+
+    fn bind_build_script_authority(
+        capture: &OvenLegacyCargoSelectedUnitCapture,
+        sealed: &mut OvenLegacyCargoSelectedGraphProjection,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempdir()?;
+        let digest = legacy_cargo_build_script_closure_digest(capture, &sealed.build_scripts)?;
+        sealed.build_script_authority_receipt = Some(receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
+                directory.path(),
+                "selected-graph-fixture",
+                "1.0.0",
+                "x86_64-unknown-linux-gnu",
+                "rustc 1.98.0",
+                "release",
+                Vec::new(),
+            )
+            .with_build_unit_input(OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, digest),
+        )?);
+        Ok(())
     }
 
     #[test]
@@ -1049,6 +1166,7 @@ mod tests {
             },
         );
 
+        bind_build_script_authority(&capture, &mut sealed)?;
         let graph = project_legacy_cargo_selected_graph(&capture, &sealed)?;
         assert_eq!(graph.units[0].cfg, ["has_bindings", "target_has_atomic=\"8\""]);
         assert_eq!(graph.units[0].generated_inputs.len(), 1);
@@ -1139,6 +1257,7 @@ mod tests {
                 }),
             },
         );
+        bind_build_script_authority(&capture, &mut sealed)?;
         let graph = project_legacy_cargo_selected_graph(&capture, &sealed)?;
         assert_eq!(
             graph.units[0].environment["DEP_FIXTURE"],

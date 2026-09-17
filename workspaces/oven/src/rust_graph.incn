@@ -18,6 +18,7 @@ package alone. Build-script declarations remain inventory-only and never enter t
 """
 
 from std.collections import Deque, OrderedSet
+from std.json import JsonValue
 from manifest_errors import IntakeError, IntakeErrorKind
 from rust_activation import (
     activate_unit,
@@ -86,7 +87,18 @@ pub enum SelectedCrateKind(str):
     ProcMacro = "proc_macro"
 
 
-@derive(Eq, Clone)
+@derive(Clone)
+pub model SelectedUnitClosure:
+    """Exact non-feature closure facts retained by the authenticated selected-unit projection."""
+
+    # These JSON values stay structural evidence. Rust has already validated their physical representation and
+    # Incan validates their wire shape; this graph never interprets them as Cargo activation demand.
+    pub environment: JsonValue
+    pub generated_inputs: JsonValue
+    pub linked_libraries: JsonValue
+
+
+@derive(Clone)
 pub model AdmittedSelectedUnit:
     """Physical selected-unit evidence whose effective features the host already cross-checked against the graph."""
 
@@ -94,6 +106,8 @@ pub model AdmittedSelectedUnit:
     pub node: GraphNode
     pub role: SelectedUnitRole
     pub crate_kind: SelectedCrateKind
+    # Exact physical closure data is validated by the exchange and echoed without Rust/Cargo reinterpretation.
+    pub closure: SelectedUnitClosure
     # Effective compiler-facing activation observed for this physical unit. It deliberately says nothing about
     # whether defaults were requested: that provenance lives only on GraphRoot.
     pub features: list[str]

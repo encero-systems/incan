@@ -4,7 +4,7 @@ from std.json import JsonValue, parse
 from plan_json import evaluate as evaluate_selection
 from rust_policy_exchange import evaluate as evaluate_rust_policy
 
-const RUST_POLICY_SCHEMA: str = "incan.oven.rust-policy-exchange/2"
+const RUST_POLICY_SCHEMA: str = "incan.oven.rust-policy-exchange/3"
 
 
 pub def evaluate(source: str) -> JsonValue:

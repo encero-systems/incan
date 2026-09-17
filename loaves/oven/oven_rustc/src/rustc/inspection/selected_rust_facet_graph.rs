@@ -282,7 +282,9 @@ pub struct OvenSelectedRustFacetUnit {
     pub dependencies: Vec<OvenSelectedRustFacetDependency>,
     /// Sorted generated inputs with their exact output owners.
     pub generated_inputs: Vec<OvenSelectedRustFacetGeneratedInput>,
-    /// Sorted complete linked-library inputs retained by the selected publisher closure.
+    /// Ordered complete linked-library inputs retained by the selected publisher closure.
+    ///
+    /// Linker order and duplicate directives are compiler-visible, so this preserves both exactly.
     pub linked_libraries: Vec<OvenSelectedRustFacetLinkedLibrary>,
 }
 
@@ -409,21 +411,6 @@ pub struct ValidatedOvenSelectedRustFacetGraph {
 )]
 struct OvenSelectedRustFacetGraphHeader {
     schema_version: u32,
-}
-
-/// Return the canonical ordering key for one exact linked-library input.
-fn linked_library_sort_key(link: &OvenSelectedRustFacetLinkedLibrary) -> (u8, &str, &str) {
-    match link {
-        OvenSelectedRustFacetLinkedLibrary::Archive { name, artifact, .. } => (0, name, artifact.path.as_str()),
-        OvenSelectedRustFacetLinkedLibrary::Provider { name, kind, provider } => {
-            let family = match kind {
-                OvenSelectedRustFacetLinkedLibraryKind::Framework => 1,
-                OvenSelectedRustFacetLinkedLibraryKind::System => 2,
-                OvenSelectedRustFacetLinkedLibraryKind::Static | OvenSelectedRustFacetLinkedLibraryKind::Dynamic => 3,
-            };
-            (family, name, provider)
-        }
-    }
 }
 
 /// Validate one declared linked-library input and all identities it references.
@@ -760,16 +747,6 @@ impl OvenSelectedRustFacetGraph {
                     &mut referenced_owners,
                     &format!("{field}.linked_libraries[{link_index}]"),
                 )?;
-            }
-            if unit
-                .linked_libraries
-                .windows(2)
-                .any(|pair| linked_library_sort_key(&pair[0]) >= linked_library_sort_key(&pair[1]))
-            {
-                return Err(selected_graph_invalid(
-                    format!("{field}.linked_libraries"),
-                    "must be sorted and unique",
-                ));
             }
         }
 

@@ -12,6 +12,7 @@ from rust_graph import (
     package_key,
     propagate_features,
     AdmittedSelectedUnit,
+    SelectedUnitClosure,
     GraphActivation,
     GraphNode,
     GraphRoot,
@@ -23,7 +24,7 @@ from rust_graph import (
 from rust_source import read_dependency_catalog, RustDependencyCatalog
 from source_inventory import inert_build_script_warnings, package_source_inventory, PackageSourceInventory
 
-const SCHEMA: str = "incan.oven.rust-policy-exchange/2"
+const SCHEMA: str = "incan.oven.rust-policy-exchange/3"
 const OPERATION: str = "validate_selected_rust_graph"
 
 
@@ -113,7 +114,7 @@ def decode_units(value: JsonValue) -> Result[list[AdmittedSelectedUnit], Selecti
     for index in range(len(values)):
         path = ["units", str(index)]
         item = values[index]
-        exact_object(item, ["identity", "package", "domain", "role", "crate_kind", "features"], path)?
+        exact_object(item, ["identity", "package", "domain", "role", "crate_kind", "closure", "features"], path)?
         units.append(
             AdmittedSelectedUnit(
                 identity=nonempty(text_field(item, "identity", path)?, path + ["identity"])?,
@@ -123,10 +124,87 @@ def decode_units(value: JsonValue) -> Result[list[AdmittedSelectedUnit], Selecti
                 ),
                 role=decode_role(text_field(item, "role", path)?, path + ["role"])?,
                 crate_kind=decode_crate_kind(text_field(item, "crate_kind", path)?, path + ["crate_kind"])?,
+                closure=decode_closure(field(item, "closure", path)?, path + ["closure"])?,
                 features=strings(field(item, "features", path)?, path + ["features"])?,
             ),
         )
     return Ok(units)
+
+
+def decode_closure(value: JsonValue, path: list[str]) -> Result[SelectedUnitClosure, SelectionError]:
+    """Decode exact physical closure facts without interpreting Cargo directives or feature demand."""
+    exact_object(value, ["environment", "generated_inputs", "linked_libraries"], path)?
+    environment = field(value, "environment", path)?
+    generated = field(value, "generated_inputs", path)?
+    linked = field(value, "linked_libraries", path)?
+    if not environment.is_object():
+        return Err(invalid(path + ["environment"]))
+    for name in environment.keys():
+        environment_value = field(environment, name, path + ["environment"])?
+        kind = text_field(environment_value, "kind", path + ["environment", name])?
+        if kind == "text":
+            exact_object(environment_value, ["kind", "value"], path + ["environment", name])?
+            text_field(environment_value, "value", path + ["environment", name])?
+        elif kind == "path":
+            exact_object(environment_value, ["kind", "value"], path + ["environment", name])?
+            location = field(environment_value, "value", path + ["environment", name])?
+            exact_object(location, ["owner", "path"], path + ["environment", name, "value"])?
+            nonempty(text_field(location, "owner", path + ["environment", name, "value"])?, path + ["environment", name, "value", "owner"])?
+            nonempty(text_field(location, "path", path + ["environment", name, "value"])?, path + ["environment", name, "value", "path"])?
+        elif kind == "sensitive_digest":
+            exact_object(environment_value, ["kind", "hmac_sha256"], path + ["environment", name])?
+            nonempty(text_field(environment_value, "hmac_sha256", path + ["environment", name])?, path + ["environment", name, "hmac_sha256"])?
+        else:
+            return Err(invalid(path + ["environment", name, "kind"]))
+    generated_values = array(generated, path + ["generated_inputs"])?
+    mut generated_names = Dict[str, bool]()
+    for index in range(len(generated_values)):
+        item = generated_values[index]
+        item_path = path + ["generated_inputs", str(index)]
+        exact_object(item, ["name", "source", "digest", "members"], item_path)?
+        name = nonempty(text_field(item, "name", item_path)?, item_path + ["name"])?
+        if name in generated_names:
+            return Err(invalid(item_path + ["name"]))
+        generated_names[name] = true
+        source = field(item, "source", item_path)?
+        exact_object(source, ["owner", "path"], item_path + ["source"])?
+        nonempty(text_field(source, "owner", item_path + ["source"])?, item_path + ["source", "owner"])?
+        nonempty(text_field(source, "path", item_path + ["source"])?, item_path + ["source", "path"])?
+        nonempty(text_field(item, "digest", item_path)?, item_path + ["digest"])?
+        members = array(field(item, "members", item_path)?, item_path + ["members"])?
+        if len(members) == 0:
+            return Err(invalid(item_path + ["members"]))
+        for member_index in range(len(members)):
+            member_path = item_path + ["members", str(member_index)]
+            exact_object(members[member_index], ["path", "digest"], member_path)?
+            nonempty(text_field(members[member_index], "path", member_path)?, member_path + ["path"])?
+            nonempty(text_field(members[member_index], "digest", member_path)?, member_path + ["digest"])?
+    linked_values = array(linked, path + ["linked_libraries"])?
+    for index in range(len(linked_values)):
+        item = linked_values[index]
+        item_path = path + ["linked_libraries", str(index)]
+        input = text_field(item, "input", item_path)?
+        if input == "archive":
+            exact_object(item, ["input", "name", "kind", "artifact", "digest"], item_path)?
+            kind = text_field(item, "kind", item_path)?
+            if kind != "static" and kind != "dynamic":
+                return Err(invalid(item_path + ["kind"]))
+            artifact = field(item, "artifact", item_path)?
+            exact_object(artifact, ["owner", "path"], item_path + ["artifact"])?
+            nonempty(text_field(artifact, "owner", item_path + ["artifact"])?, item_path + ["artifact", "owner"])?
+            nonempty(text_field(artifact, "path", item_path + ["artifact"])?, item_path + ["artifact", "path"])?
+            nonempty(text_field(item, "name", item_path)?, item_path + ["name"])?
+            nonempty(text_field(item, "digest", item_path)?, item_path + ["digest"])?
+        elif input == "provider":
+            exact_object(item, ["input", "name", "kind", "provider"], item_path)?
+            kind = text_field(item, "kind", item_path)?
+            if kind != "framework" and kind != "system":
+                return Err(invalid(item_path + ["kind"]))
+            nonempty(text_field(item, "name", item_path)?, item_path + ["name"])?
+            nonempty(text_field(item, "provider", item_path)?, item_path + ["provider"])?
+        else:
+            return Err(invalid(item_path + ["input"]))
+    return Ok(SelectedUnitClosure(environment=environment, generated_inputs=generated, linked_libraries=linked))
 
 
 def decode_roots(value: JsonValue) -> Result[list[GraphRoot], SelectionError]:
@@ -406,7 +484,7 @@ def selected(
                     domain_name(unit.node.domain),
                 ), "purpose": JsonValue.string(purpose_name(purpose)), "role": JsonValue.string(role_name(unit.role)), "crate_kind": JsonValue.string(
                     crate_kind_name(unit.crate_kind),
-                ), "features": JsonValue.array([JsonValue.string(feature) for feature in unit.features])},
+                ), "closure": JsonValue.object({"environment": unit.closure.environment, "generated_inputs": unit.closure.generated_inputs, "linked_libraries": unit.closure.linked_libraries}), "features": JsonValue.array([JsonValue.string(feature) for feature in unit.features])},
             ),
         )
     return JsonValue.object(

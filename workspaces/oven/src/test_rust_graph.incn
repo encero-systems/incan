@@ -18,10 +18,12 @@ from rust_graph import (
     AdmittedSelectedEdge,
     SelectedPackageIdentity,
     SelectedCrateKind,
+    SelectedUnitClosure,
     SelectedUnitRole,
     propagate_features,
 )
 from manifest_errors import IntakeError
+from std.json import JsonValue
 from std.testing import fail, fail_t
 
 
@@ -57,6 +59,15 @@ def unit_id(value: GraphNode) -> str:
     return f"unit::{package_key(value.package)}::{str(value.domain)}"
 
 
+def empty_closure() -> SelectedUnitClosure:
+    """Build the empty non-feature physical closure used by graph-only fixtures."""
+    return SelectedUnitClosure(
+        environment=JsonValue.object({}),
+        generated_inputs=JsonValue.array([]),
+        linked_libraries=JsonValue.array([]),
+    )
+
+
 def selected(value: GraphNode, role: SelectedUnitRole = SelectedUnitRole.Library) -> AdmittedSelectedUnit:
     """Build a selected physical unit whose role determines its authenticated crate kind."""
     mut kind = SelectedCrateKind.Rlib
@@ -69,6 +80,7 @@ def selected(value: GraphNode, role: SelectedUnitRole = SelectedUnitRole.Library
         node=value,
         role=role,
         crate_kind=kind,
+        closure=empty_closure(),
         features=[],
     )
 
@@ -89,6 +101,7 @@ def selected_as(
         node=value,
         role=role,
         crate_kind=kind,
+        closure=empty_closure(),
         features=[],
     )
 
@@ -106,6 +119,7 @@ def selected_with_facts(
         node=unit.node,
         role=unit.role,
         crate_kind=unit.crate_kind,
+        closure=unit.closure,
         features=features,
     )
 
@@ -596,6 +610,7 @@ pub def test_compiler_support_edge_refuses_without_a_source_catalog() -> None:
         node=ordinary,
         role=SelectedUnitRole.Library,
         crate_kind=SelectedCrateKind.Rlib,
+        closure=empty_closure(),
         features=["enabled"],
     )
     match propagate_features(
@@ -752,6 +767,7 @@ pub def test_role_kind_mismatch_is_refused() -> None:
         node=script,
         role=SelectedUnitRole.ProcMacro,
         crate_kind=SelectedCrateKind.Rlib,
+        closure=empty_closure(),
         features=[],
     )
     match propagate_features(

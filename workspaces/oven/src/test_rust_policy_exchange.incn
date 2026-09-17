@@ -9,11 +9,26 @@ from rust_policy_exchange import evaluate
 def request(
     role: str = "library",
     extra: str = "",
-    schema: str = "incan.oven.rust-policy-exchange/2",
+    schema: str = "incan.oven.rust-policy-exchange/3",
     operation: str = "validate_selected_rust_graph",
     intent_owner: str = "sha256:project-authority",
+    malformed_closure: bool = false,
+    sensitive_environment: bool = false,
 ) -> str:
     """One exact selected leaf; the manifest digest is SHA-256 of empty bytes."""
+    mut closure = JsonValue.object(
+        {"environment": JsonValue.object({}), "generated_inputs": JsonValue.array([]), "linked_libraries": JsonValue.array([])},
+    )
+    if malformed_closure:
+        closure = JsonValue.object({"environment": JsonValue.object({})})
+    elif sensitive_environment:
+        closure = JsonValue.object(
+            {"environment": JsonValue.object(
+                {"DEP_TOKEN": JsonValue.object(
+                    {"kind": JsonValue.string("sensitive_digest"), "hmac_sha256": JsonValue.string("sha256:token")},
+                )},
+            ), "generated_inputs": JsonValue.array([]), "linked_libraries": JsonValue.array([])},
+        )
     mut document: Dict[str, JsonValue] = {"schema": JsonValue.string(schema), "operation": JsonValue.string(operation), "graph_digest": JsonValue.string(
         "sha256:selected-graph",
     ), "context": JsonValue.object(
@@ -28,7 +43,7 @@ def request(
                 )},
             ), "domain": JsonValue.string("target"), "role": JsonValue.string(role), "crate_kind": JsonValue.string(
                 "rlib",
-            ), "features": JsonValue.array([])},
+            ), "closure": closure, "features": JsonValue.array([])},
         )],
     ), "roots": JsonValue.array([JsonValue.object(
         {"unit": JsonValue.string("sha256:root-unit"), "requested_features": JsonValue.array([]), "default_features": JsonValue.bool(
@@ -86,9 +101,41 @@ pub def test_selected_leaf_echoes_authenticated_graph_identity() -> None:
                 Some(_) => pass
 
 
+pub def test_selected_leaf_echoes_exact_empty_closure() -> None:
+    """Protects preservation of the host-authenticated closure through policy output."""
+    response = evaluate(request())
+    match response.get("units"):
+        None => fail("selected response omitted physical units")
+        Some(value) =>
+            match value.as_array():
+                None => fail("selected response physical units were not an array")
+                Some(units) =>
+                    if len(units) != 1:
+                        fail("selected response changed the physical unit count")
+                    match units[0].get("closure"):
+                        None => fail("selected response omitted the unit closure")
+                        Some(closure) =>
+                            match closure.get("linked_libraries"):
+                                None => fail("selected response omitted linked closure facts")
+                                Some(libraries) =>
+                                    match libraries.as_array():
+                                        None => fail("selected linked closure facts were not an array")
+                                        Some(values) => assert len(values) == 0
+
+
+pub def test_sensitive_closure_digest_is_structurally_preserved() -> None:
+    """Protects the sensitive-digest wire shape without exposing a raw environment value."""
+    assert status(evaluate(request(sensitive_environment=true))) == "selected"
+
+
 pub def test_core_engine_dispatches_the_rust_policy_schema() -> None:
     """Protects core-engine dispatch for the closed Rust policy schema."""
     assert status(evaluate_core(request())) == "selected"
+
+
+pub def test_malformed_physical_closure_refuses() -> None:
+    """Protects the closure envelope from accepting incomplete physical evidence."""
+    assert status(evaluate(request(malformed_closure=true))) == "refused"
 
 
 pub def test_unknown_top_level_field_refuses() -> None:
@@ -104,6 +151,7 @@ pub def test_selected_build_script_role_refuses() -> None:
 pub def test_unknown_schema_and_operation_refuse() -> None:
     """Protects strict refusal of unsupported schema and operation values."""
     assert status(evaluate(request(schema="incan.oven.rust-policy-exchange/1"))) == "refused"
+    assert status(evaluate(request(schema="incan.oven.rust-policy-exchange/2"))) == "refused"
     assert status(evaluate(request(operation="select_again"))) == "refused"
 
 
