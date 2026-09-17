@@ -317,11 +317,15 @@ struct ResolvedArtifactGraph {
     public_dependencies: BTreeMap<PathBuf, Vec<(String, String)>>,
 }
 
+/// Allocate an identity for this process only; persisted readings use the content-derived key instead.
 fn next_provider_semantic_projection_identity() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(1);
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Encode every immutable admitted provider record into a versioned persistent cache key.
+///
+/// Checked manifest serialization can fail for in-memory fixtures; retain that failure so consumers refuse reuse.
 fn provider_semantic_projection_persistent_key(records: &BTreeMap<String, ProviderRecord>) -> Result<String, String> {
     let mut hasher = Sha256::new();
     hasher.update(b"incan-provider-semantic-plan-v3\0");
