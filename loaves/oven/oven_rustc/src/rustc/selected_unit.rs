@@ -16,7 +16,8 @@ use std::path::{Component, Path, PathBuf};
 
 use super::{
     OvenCompiledRustUnitIdentity, OvenRustcError, OvenSelectedRustFacetEnvironmentValue,
-    OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph, OvenSelectedRustFacetPath,
+    OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph, OvenSelectedRustFacetLinkedLibrary,
+    OvenSelectedRustFacetLinkedLibraryKind, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath,
     OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetUnit, ValidatedOvenSelectedRustFacetGraph,
     compiled_rust_unit_identities, digest_regular_file,
 };
@@ -58,6 +59,35 @@ pub enum OvenMaterializedRustFacetEnvironmentValue {
     Path(PathBuf),
 }
 
+/// One ordered native link input after its declared owner has been physically admitted.
+///
+/// Archives carry an exact verified file. Providers retain only their admitted owner root; schema 4 does not yet
+/// define a target-specific file or linker-argument mapping, so the executor must refuse them rather than discover
+/// a same-named library from ambient linker paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OvenMaterializedRustFacetLinkedLibrary {
+    /// Exact static or dynamic archive bytes retained beneath an admitted owner.
+    Archive {
+        /// Linker-visible declared name retained for evidence and diagnostics.
+        name: String,
+        /// Declared static or dynamic linkage class.
+        kind: OvenSelectedRustFacetLinkedLibraryKind,
+        /// Canonical path of the verified regular non-symlink file.
+        artifact: PathBuf,
+        /// Digest of the exact verified bytes.
+        digest: String,
+    },
+    /// Logical framework or system capability beneath an admitted provider owner.
+    Provider {
+        /// Linker-visible declared capability name.
+        name: String,
+        /// Declared framework or system linkage class.
+        kind: OvenSelectedRustFacetLinkedLibraryKind,
+        /// Canonical root of the admitted provider owner.
+        provider_root: PathBuf,
+    },
+}
+
 /// A physically verified selected source unit ready for the direct-Rustc publisher.
 #[derive(Debug, Clone)]
 pub struct OvenMaterializedRustFacetUnit {
@@ -71,6 +101,8 @@ pub struct OvenMaterializedRustFacetUnit {
     pub exclude_dirs: Vec<PathBuf>,
     pub environment: BTreeMap<String, OvenMaterializedRustFacetEnvironmentValue>,
     pub generated_inputs: Vec<(String, PathBuf, String)>,
+    /// Ordered native link inputs. Order and repeated entries are compiler-visible and are preserved exactly.
+    pub linked_libraries: Vec<OvenMaterializedRustFacetLinkedLibrary>,
 }
 
 /// A physically admitted selected graph and its source-unit projection.
@@ -212,6 +244,7 @@ pub fn materialize_selected_rust_facet_graph_with_supplemental_source_members(
             .iter()
             .map(|input| materialize_generated_input(&owners, input))
             .collect::<Result<Vec<_>, _>>()?;
+        let linked_libraries = materialize_linked_libraries(graph, &owners, unit)?;
         let compiled_identity =
             compiled_identities
                 .get(&unit.identity)
@@ -232,6 +265,7 @@ pub fn materialize_selected_rust_facet_graph_with_supplemental_source_members(
                     exclude_dirs,
                     environment,
                     generated_inputs,
+                    linked_libraries,
                 },
             )
             .is_some()
@@ -481,6 +515,62 @@ fn materialize_generated_input(
         });
     }
     Ok((input.name.clone(), path, input.digest.clone()))
+}
+
+/// Resolve one unit's ordered native link inputs without introducing linker discovery.
+///
+/// Archive bytes use the same contained owner-relative file admission as every other selected file. A provider is
+/// retained only when its identity names an admitted `LinkedLibraryProvider`; its root is evidence of that held
+/// owner, not permission to search the root or the host by name.
+fn materialize_linked_libraries(
+    graph: &OvenSelectedRustFacetGraph,
+    owners: &BTreeMap<String, PathBuf>,
+    unit: &OvenSelectedRustFacetUnit,
+) -> Result<Vec<OvenMaterializedRustFacetLinkedLibrary>, OvenRustcError> {
+    unit.linked_libraries
+        .iter()
+        .map(|library| match library {
+            OvenSelectedRustFacetLinkedLibrary::Archive {
+                name,
+                kind,
+                artifact,
+                digest,
+            } => Ok(OvenMaterializedRustFacetLinkedLibrary::Archive {
+                name: name.clone(),
+                kind: *kind,
+                artifact: resolve_file(owners, artifact, digest, "selected Rust linked archive")?,
+                digest: digest.clone(),
+            }),
+            OvenSelectedRustFacetLinkedLibrary::Provider { name, kind, provider } => {
+                let declared = graph
+                    .owners
+                    .iter()
+                    .find(|owner| owner.identity == *provider)
+                    .ok_or_else(|| OvenRustcError::InvalidInput {
+                        field: "selected Rust linked provider",
+                        message: format!("names absent owner `{provider}`"),
+                    })?;
+                if declared.kind != OvenSelectedRustFacetOwnerKind::LinkedLibraryProvider {
+                    return Err(OvenRustcError::InvalidInput {
+                        field: "selected Rust linked provider",
+                        message: format!("owner `{provider}` is not a linked-library provider"),
+                    });
+                }
+                let provider_root = owners
+                    .get(provider)
+                    .cloned()
+                    .ok_or_else(|| OvenRustcError::InvalidInput {
+                        field: "selected Rust linked provider",
+                        message: format!("references unbound owner `{provider}`"),
+                    })?;
+                Ok(OvenMaterializedRustFacetLinkedLibrary::Provider {
+                    name: name.clone(),
+                    kind: *kind,
+                    provider_root,
+                })
+            }
+        })
+        .collect()
 }
 
 /// Require the physical tree under `root` to be exactly the member set the selection declared.
@@ -1013,6 +1103,149 @@ mod tests {
         assert!(unit.root_module.ends_with("src/lib.rs"));
         assert_eq!(unit.include_dirs, vec![unit.source_root.clone()]);
         assert!(unit.generated_inputs.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn materializes_linked_archives_in_declared_order_with_repetition() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let archive_owner = selected_graph_sha256(b"linked archive owner");
+        let archive_root = root.path().join("linked");
+        fs::create_dir_all(&archive_root)?;
+        fs::write(archive_root.join("libfixture.a"), b"linked archive")?;
+        let digest = selected_graph_sha256(b"linked archive");
+        let mut graph = selected_graph()?.graph().clone();
+        graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: archive_owner.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::Constituent,
+        });
+        let unit = graph.units.first_mut().ok_or("fixture has no selected unit")?;
+        let archive = crate::rustc::OvenSelectedRustFacetLinkedLibrary::Archive {
+            name: "fixture".to_string(),
+            kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+            artifact: OvenSelectedRustFacetPath {
+                owner: archive_owner.clone(),
+                path: "libfixture.a".to_string(),
+            },
+            digest: digest.clone(),
+        };
+        unit.linked_libraries = vec![archive.clone(), archive];
+        let unit = unit.clone();
+        let mut owner_roots = roots(root.path())?
+            .into_iter()
+            .map(|owner| (owner.identity, owner.root))
+            .collect::<BTreeMap<_, _>>();
+        owner_roots.insert(archive_owner, fs::canonicalize(&archive_root)?);
+
+        let linked = materialize_linked_libraries(&graph, &owner_roots, &unit)?;
+        assert_eq!(linked.len(), 2);
+        assert_eq!(linked[0], linked[1]);
+        assert!(matches!(
+            &linked[0],
+            OvenMaterializedRustFacetLinkedLibrary::Archive { artifact, digest: actual, .. }
+                if artifact.ends_with("libfixture.a") && actual == &digest
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn linked_archive_materialization_refuses_tampered_bytes() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let archive_owner = selected_graph_sha256(b"linked archive owner");
+        let archive_root = root.path().join("linked");
+        fs::create_dir_all(&archive_root)?;
+        fs::write(archive_root.join("libfixture.a"), b"tampered")?;
+        let mut graph = selected_graph()?.graph().clone();
+        graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: archive_owner.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::Constituent,
+        });
+        let unit = graph.units.first_mut().ok_or("fixture has no selected unit")?;
+        unit.linked_libraries = vec![crate::rustc::OvenSelectedRustFacetLinkedLibrary::Archive {
+            name: "fixture".to_string(),
+            kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+            artifact: OvenSelectedRustFacetPath {
+                owner: archive_owner.clone(),
+                path: "libfixture.a".to_string(),
+            },
+            digest: selected_graph_sha256(b"expected"),
+        }];
+        let unit = unit.clone();
+        let mut owner_roots = roots(root.path())?
+            .into_iter()
+            .map(|owner| (owner.identity, owner.root))
+            .collect::<BTreeMap<_, _>>();
+        owner_roots.insert(archive_owner, fs::canonicalize(&archive_root)?);
+
+        assert!(materialize_linked_libraries(&graph, &owner_roots, &unit).is_err());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_archive_materialization_refuses_symlinks() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let archive_owner = selected_graph_sha256(b"linked archive owner");
+        let archive_root = root.path().join("linked");
+        fs::create_dir_all(&archive_root)?;
+        fs::write(archive_root.join("actual.a"), b"linked archive")?;
+        symlink("actual.a", archive_root.join("libfixture.a"))?;
+        let mut graph = selected_graph()?.graph().clone();
+        graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: archive_owner.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::Constituent,
+        });
+        let unit = graph.units.first_mut().ok_or("fixture has no selected unit")?;
+        unit.linked_libraries = vec![crate::rustc::OvenSelectedRustFacetLinkedLibrary::Archive {
+            name: "fixture".to_string(),
+            kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+            artifact: OvenSelectedRustFacetPath {
+                owner: archive_owner.clone(),
+                path: "libfixture.a".to_string(),
+            },
+            digest: selected_graph_sha256(b"linked archive"),
+        }];
+        let unit = unit.clone();
+        let mut owner_roots = roots(root.path())?
+            .into_iter()
+            .map(|owner| (owner.identity, owner.root))
+            .collect::<BTreeMap<_, _>>();
+        owner_roots.insert(archive_owner, fs::canonicalize(&archive_root)?);
+
+        assert!(materialize_linked_libraries(&graph, &owner_roots, &unit).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn materializes_provider_only_from_declared_provider_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let provider = selected_graph_sha256(b"linked provider");
+        let provider_root = root.path().join("provider");
+        fs::create_dir_all(&provider_root)?;
+        let mut graph = selected_graph()?.graph().clone();
+        graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: provider.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::LinkedLibraryProvider,
+        });
+        let unit = graph.units.first_mut().ok_or("fixture has no selected unit")?;
+        unit.linked_libraries = vec![crate::rustc::OvenSelectedRustFacetLinkedLibrary::Provider {
+            name: "Security".to_string(),
+            kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Framework,
+            provider: provider.clone(),
+        }];
+        let unit = unit.clone();
+        let mut owner_roots = roots(root.path())?
+            .into_iter()
+            .map(|owner| (owner.identity, owner.root))
+            .collect::<BTreeMap<_, _>>();
+        owner_roots.insert(provider, fs::canonicalize(&provider_root)?);
+
+        let linked = materialize_linked_libraries(&graph, &owner_roots, &unit)?;
+        assert!(matches!(
+            &linked[0],
+            OvenMaterializedRustFacetLinkedLibrary::Provider { provider_root: actual, .. }
+                if actual == &fs::canonicalize(provider_root)?
+        ));
         Ok(())
     }
 

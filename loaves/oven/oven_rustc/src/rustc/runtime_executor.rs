@@ -22,8 +22,9 @@ use std::process::Command;
 
 use super::{
     OvenCompiledRustUnitIdentity, OvenMaterializedRuntimeFoundation, OvenMaterializedRustFacetEnvironmentValue,
-    OvenRuntimeFoundationUnitExecution, OvenRustcError, OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDomain,
-    OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole, ValidatedOvenRuntimeFoundation, apply_oven_profile,
+    OvenMaterializedRustFacetLinkedLibrary, OvenRuntimeFoundationUnitExecution, OvenRustcError,
+    OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDomain, OvenSelectedRustFacetUnit,
+    OvenSelectedRustFacetUnitRole, ValidatedOvenRuntimeFoundation, apply_oven_profile,
     clear_inherited_cargo_environment, digest_regular_file, parse_rustc_diagnostics, verified_regular_file,
 };
 
@@ -491,6 +492,7 @@ fn compile_rebuild_unit(
     for (alias, path) in externs {
         command.arg("--extern").arg(format!("{alias}={}", path.display()));
     }
+    append_materialized_link_arguments(&mut command, &source.linked_libraries)?;
     let result = command.output().map_err(|source_error| OvenRustcError::Io {
         path: closure.rustc().to_path_buf(),
         source: source_error,
@@ -501,6 +503,38 @@ fn compile_rebuild_unit(
         });
     }
     verified_regular_file(artifact, "runtime rebuild output")?;
+    Ok(())
+}
+
+/// Append ordered physically admitted native link inputs to one rustc invocation.
+///
+/// Exact archives are passed directly to the linker instead of becoming `-L`/`-l` discovery inputs. Repeated
+/// archives remain repeated and their order is unchanged. A logical provider is refused because schema 4 carries
+/// only its held owner identity and logical name; it has no target-specific exact linker path or flag mapping.
+fn append_materialized_link_arguments(
+    command: &mut Command,
+    libraries: &[OvenMaterializedRustFacetLinkedLibrary],
+) -> Result<(), OvenRustcError> {
+    for library in libraries {
+        match library {
+            OvenMaterializedRustFacetLinkedLibrary::Archive { artifact, .. } => {
+                command.arg("-C").arg(format!("link-arg={}", artifact.display()));
+            }
+            OvenMaterializedRustFacetLinkedLibrary::Provider {
+                name,
+                kind,
+                provider_root,
+            } => {
+                return Err(runtime_executor_invalid(
+                    "runtime executor linked provider",
+                    format!(
+                        "provider `{name}` ({kind:?}) at {} has no exact target-specific linker mapping",
+                        provider_root.display()
+                    ),
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -529,6 +563,52 @@ pub(crate) mod tests {
         OvenSelectedRustFacetTargetSpec, resolve_active_rustc, rustc_host_target, rustc_identity,
         selected_graph_sha256, selected_graph_source_digest, selected_graph_unit_identity,
     };
+
+    #[test]
+    fn linked_archive_arguments_preserve_exact_order_and_multiplicity() -> Result<(), Box<dyn std::error::Error>> {
+        let first = PathBuf::from("admitted/libfirst.a");
+        let second = PathBuf::from("admitted/libsecond.a");
+        let archive = |name: &str, artifact: &Path| OvenMaterializedRustFacetLinkedLibrary::Archive {
+            name: name.to_string(),
+            kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+            artifact: artifact.to_path_buf(),
+            digest: selected_graph_sha256(name.as_bytes()),
+        };
+        let libraries = vec![
+            archive("first", &first),
+            archive("second", &second),
+            archive("first", &first),
+        ];
+        let mut command = Command::new("rustc");
+        append_materialized_link_arguments(&mut command, &libraries)?;
+        assert_eq!(
+            command
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            [
+                "-C",
+                "link-arg=admitted/libfirst.a",
+                "-C",
+                "link-arg=admitted/libsecond.a",
+                "-C",
+                "link-arg=admitted/libfirst.a",
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn linked_provider_refuses_before_ambient_linker_discovery() {
+        let libraries = [OvenMaterializedRustFacetLinkedLibrary::Provider {
+            name: "Security".to_string(),
+            kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Framework,
+            provider_root: PathBuf::from("admitted/provider"),
+        }];
+        let mut command = Command::new("rustc");
+        assert!(append_materialized_link_arguments(&mut command, &libraries).is_err());
+        assert_eq!(command.get_args().count(), 0);
+    }
     use oven_store::OvenBuildIntent;
 
     /// Compiler closure identity the fixture binds to the retained host compiler.
