@@ -435,7 +435,7 @@ struct ProviderSemanticDigestCounters {
 fn provider_dependency_semantic_digests_observed(
     provider_plan: &ProviderPlan,
     semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
-    mut counters: Option<&mut ProviderSemanticDigestCounters>,
+    counters: Option<&mut ProviderSemanticDigestCounters>,
 ) -> Result<BTreeMap<String, String>, String> {
     provider_dependency_semantic_digests_observed_with_context(
         provider_plan,

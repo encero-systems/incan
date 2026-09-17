@@ -328,15 +328,15 @@ fn next_provider_semantic_projection_identity() -> u64 {
 /// Checked manifest serialization can fail for in-memory fixtures; retain that failure so consumers refuse reuse.
 fn provider_semantic_projection_persistent_key(records: &BTreeMap<String, ProviderRecord>) -> Result<String, String> {
     let mut hasher = Sha256::new();
-    hasher.update(b"incan-provider-semantic-plan-v2\0");
+    hasher.update(b"incan-provider-semantic-plan-v3\0");
     for (identity, record) in records {
-        let manifest = match (record.manifest.as_ref(), record.artifact.as_ref()) {
+        let manifest_digest = match (record.manifest.as_ref(), record.artifact.as_ref()) {
             (Some(manifest), Some(artifact)) => Some(
-                retained_sdk_manifest_wire(manifest, &artifact.manifest_path)
+                retained_sdk_manifest_digest(manifest, &artifact.manifest_path)
                     .map(Ok)
-                    .unwrap_or_else(|| canonical_manifest_wire(manifest))?,
+                    .unwrap_or_else(|| canonical_manifest_digest(manifest))?,
             ),
-            (Some(manifest), None) => Some(canonical_manifest_wire(manifest)?),
+            (Some(manifest), None) => Some(canonical_manifest_digest(manifest)?),
             (None, _) => None,
         };
         let artifact = record.artifact.as_ref().map(|artifact| {
@@ -362,7 +362,7 @@ fn provider_semantic_projection_persistent_key(records: &BTreeMap<String, Provid
             "namespace_claims": record.namespace_claims,
             "available": record.available,
             "enabled": record.enabled,
-            "manifest": manifest,
+            "manifest_digest": manifest_digest,
             "artifact": artifact,
             "implementation_facets": record.implementation_facets,
         });
@@ -1742,7 +1742,7 @@ type SdkManifestFileStamp = (PathBuf, u64, Option<SystemTime>);
 /// own integrity test caught it. The key here is what the file system reports about the file that was read.
 struct SdkManifestMemoEntry {
     manifest: Arc<LibraryManifest>,
-    canonical_wire: String,
+    canonical_digest: String,
 }
 
 fn sdk_manifest_memo() -> &'static Mutex<HashMap<SdkManifestFileStamp, SdkManifestMemoEntry>> {
@@ -1777,7 +1777,7 @@ fn read_sdk_provider_manifest(
         }
     })?;
     let manifest = Arc::new(LibraryManifest::from_json_str(&wire)?);
-    let canonical_wire = canonical_json_wire(&wire)?;
+    let canonical_digest = digest_canonical_json_wire(&wire)?;
     if let Some(stamp) = stamp
         && let Ok(mut memo) = sdk_manifest_memo().lock()
     {
@@ -1785,7 +1785,7 @@ fn read_sdk_provider_manifest(
             stamp,
             SdkManifestMemoEntry {
                 manifest: Arc::clone(&manifest),
-                canonical_wire,
+                canonical_digest,
             },
         );
     }
@@ -1816,16 +1816,24 @@ fn canonical_json_wire(wire: &str) -> Result<String, crate::library_manifest::Li
         .map_err(|error| crate::library_manifest::LibraryManifestError::Serialize(error.to_string()))
 }
 
-fn canonical_manifest_wire(manifest: &LibraryManifest) -> Result<String, String> {
+/// Compute the stable digest used by plan fingerprints for a separately constructed checked manifest.
+fn canonical_manifest_digest(manifest: &LibraryManifest) -> Result<String, String> {
     let wire = manifest.to_json_string().map_err(|error| error.to_string())?;
-    canonical_json_wire(&wire).map_err(|error| error.to_string())
+    digest_canonical_json_wire(&wire).map_err(|error| error.to_string())
 }
 
-fn retained_sdk_manifest_wire(manifest: &Arc<LibraryManifest>, manifest_path: &Path) -> Option<String> {
+/// Canonicalize and digest already validated manifest transport without rebuilding its semantic publication model.
+fn digest_canonical_json_wire(wire: &str) -> Result<String, crate::library_manifest::LibraryManifestError> {
+    let canonical = canonical_json_wire(wire)?;
+    Ok(format!("sha256:{}", hex::encode(Sha256::digest(canonical.as_bytes()))))
+}
+
+/// Reuse a digest only when the current SDK manifest is the exact memoized parse of the current stamped file.
+fn retained_sdk_manifest_digest(manifest: &Arc<LibraryManifest>, manifest_path: &Path) -> Option<String> {
     let stamp = sdk_manifest_file_stamp(manifest_path)?;
     let memo = sdk_manifest_memo().lock().ok()?;
     let entry = memo.get(&stamp)?;
-    Arc::ptr_eq(manifest, &entry.manifest).then(|| entry.canonical_wire.clone())
+    Arc::ptr_eq(manifest, &entry.manifest).then(|| entry.canonical_digest.clone())
 }
 
 /// Return active provider-local module claims, falling back to checked API metadata for pre-RFC-114 artifacts.
