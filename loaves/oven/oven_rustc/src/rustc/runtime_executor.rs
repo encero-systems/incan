@@ -574,6 +574,7 @@ pub(crate) mod tests {
         selected_graph_sha256, selected_graph_source_digest, selected_graph_unit_identity,
     };
 
+    /// Exact archive paths, including repeats, reach the linker in declared order.
     #[test]
     fn linked_archive_arguments_preserve_exact_order_and_multiplicity() -> Result<(), Box<dyn std::error::Error>> {
         let first = PathBuf::from("admitted/libfirst.a");
@@ -608,6 +609,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Framework and system arguments retain admitted paths and declared ordering.
     #[test]
     fn linked_provider_arguments_use_only_verified_paths_and_preserve_order() -> Result<(), Box<dyn std::error::Error>>
     {
