@@ -2147,6 +2147,16 @@ mod selected_rust_facet_graph_tests {
         reidentify_unit(&mut graph, root)?;
         graph.clone().validated()?;
 
+        let encoded = serde_json::to_value(&graph.units[root].linked_libraries[0])?;
+        assert_eq!(
+            encoded.get("input").and_then(serde_json::Value::as_str),
+            Some("provider")
+        );
+        assert_eq!(encoded.get("name").and_then(serde_json::Value::as_str), Some("Fixture"));
+        assert!(encoded.get("details").is_none());
+        let decoded: OvenSelectedRustFacetLinkedLibrary = serde_json::from_value(encoded)?;
+        assert_eq!(decoded, graph.units[root].linked_libraries[0]);
+
         let OvenSelectedRustFacetLinkedLibrary::Provider { details } = &mut graph.units[root].linked_libraries[0]
         else {
             return Err("fixture lost its provider link".into());
