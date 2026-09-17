@@ -327,6 +327,7 @@ pub fn bind_compiler_support_root_intents(
     bind_compiler_support_root_intents_for_receipts(graph, authority, capture_receipt, final_receipt)
 }
 
+/// Bind authored roots after verifying both receipts and their exact capture-to-final relationship.
 fn bind_compiler_support_root_intents_for_receipts(
     mut graph: OvenSelectedRustFacetGraph,
     authority: &OvenCompilerSupportRootIntentAuthority,
@@ -427,6 +428,7 @@ fn bind_compiler_support_root_intents_for_receipts(
     })
 }
 
+/// Require the final receipt to preserve capture evidence and add only the canonical root-intent input.
 fn validate_compiler_support_root_intent_receipts(
     authority: &OvenCompilerSupportRootIntentAuthority,
     capture_receipt: &OvenReceipt,
@@ -493,6 +495,7 @@ pub fn compiler_support_root_intent_digest(
         })
 }
 
+/// Validate the authority schema, capture identity, nonempty coordinates, and canonical root and feature ordering.
 fn validate_compiler_support_root_intent_authority(
     authority: &OvenCompilerSupportRootIntentAuthority,
 ) -> Result<(), OvenRustcError> {
