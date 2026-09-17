@@ -1500,14 +1500,12 @@ mod tests {
         let tampered_bytes = serde_json::to_vec_pretty(&tampered)?;
         fs::write(&provenance, &tampered_bytes)?;
         let mut tampered_unit = unit;
-        if let crate::rustc::OvenSelectedRustFacetLinkedLibrary::Provider {
-            provenance_digest,
-            members,
-            ..
-        } = &mut tampered_unit.linked_libraries[0]
+        if let crate::rustc::OvenSelectedRustFacetLinkedLibrary::Provider { details } =
+            &mut tampered_unit.linked_libraries[0]
         {
-            *provenance_digest = selected_graph_sha256(&tampered_bytes);
-            let provenance_member = members
+            details.provenance_digest = selected_graph_sha256(&tampered_bytes);
+            let provenance_member = details
+                .members
                 .iter_mut()
                 .find(|member| member.path == "provenance/interop-execution.json")
                 .ok_or("provider fixture has no provenance member")?;
