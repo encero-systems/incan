@@ -14,6 +14,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use oven_model::oven_interop::{
+    OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION, OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION,
+    OvenInteropExecutionProvenance,
+};
+
 use super::{
     OvenCompiledRustUnitIdentity, OvenRustcError, OvenSelectedRustFacetEnvironmentValue,
     OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph, OvenSelectedRustFacetLinkedLibrary,
@@ -61,9 +66,8 @@ pub enum OvenMaterializedRustFacetEnvironmentValue {
 
 /// One ordered native link input after its declared owner has been physically admitted.
 ///
-/// Archives carry an exact verified file. Providers retain only their admitted owner root; schema 4 does not yet
-/// define a target-specific file or linker-argument mapping, so the executor must refuse them rather than discover
-/// a same-named library from ambient linker paths.
+/// Archives carry an exact verified file. Providers carry the target-specific capability, receipt and artifact
+/// admitted from their complete owner tree, so the executor never needs to discover a same-named host library.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OvenMaterializedRustFacetLinkedLibrary {
     /// Exact static or dynamic archive bytes retained beneath an admitted owner.
@@ -83,8 +87,18 @@ pub enum OvenMaterializedRustFacetLinkedLibrary {
         name: String,
         /// Declared framework or system linkage class.
         kind: OvenSelectedRustFacetLinkedLibraryKind,
-        /// Canonical root of the admitted provider owner.
-        provider_root: PathBuf,
+        /// Exact target verified against the held provider provenance.
+        target: String,
+        /// Provider-declared capability verified against the held provenance.
+        capability: String,
+        /// Exact provider receipt identity verified against the held provenance.
+        receipt_identity: String,
+        /// Canonical directory containing the physically admitted link input.
+        search_root: PathBuf,
+        /// Canonical path of the exact selected provider artifact.
+        artifact: PathBuf,
+        /// Digest of the exact selected provider artifact.
+        digest: String,
     },
 }
 
@@ -541,7 +555,20 @@ fn materialize_linked_libraries(
                 artifact: resolve_file(owners, artifact, digest, "selected Rust linked archive")?,
                 digest: digest.clone(),
             }),
-            OvenSelectedRustFacetLinkedLibrary::Provider { name, kind, provider } => {
+            OvenSelectedRustFacetLinkedLibrary::Provider {
+                name,
+                kind,
+                provider,
+                target,
+                capability,
+                receipt_identity,
+                provenance,
+                provenance_digest,
+                search_root,
+                artifact,
+                digest,
+                members,
+            } => {
                 let declared = graph
                     .owners
                     .iter()
@@ -556,21 +583,87 @@ fn materialize_linked_libraries(
                         message: format!("owner `{provider}` is not a linked-library provider"),
                     });
                 }
-                let provider_root = owners
-                    .get(provider)
-                    .cloned()
-                    .ok_or_else(|| OvenRustcError::InvalidInput {
+                let expected_target = match unit.domain {
+                    super::OvenSelectedRustFacetDomain::Host => graph.selection.host.as_str(),
+                    super::OvenSelectedRustFacetDomain::Target => graph.selection.intent.target.as_str(),
+                };
+                if target != expected_target {
+                    return Err(OvenRustcError::InvalidInput {
                         field: "selected Rust linked provider",
-                        message: format!("references unbound owner `{provider}`"),
+                        message: format!("target `{target}` does not match unit target `{expected_target}`"),
+                    });
+                }
+                let provenance_path = resolve_file(
+                    owners,
+                    provenance,
+                    provenance_digest,
+                    "selected Rust linked provider provenance",
+                )?;
+                let provenance_bytes = fs::read(&provenance_path).map_err(|source| OvenRustcError::Io {
+                    path: provenance_path.clone(),
+                    source,
+                })?;
+                let held: OvenInteropExecutionProvenance =
+                    serde_json::from_slice(&provenance_bytes).map_err(|error| OvenRustcError::InvalidInput {
+                        field: "selected Rust linked provider provenance",
+                        message: error.to_string(),
                     })?;
+                if held.schema_version != OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION
+                    || held.receipt.schema_version != OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION
+                    || held.receipt.target != target.as_str()
+                    || held.receipt.identity != receipt_identity.as_str()
+                    || !held.system_capabilities.iter().any(|held| held == capability)
+                {
+                    return Err(OvenRustcError::InvalidInput {
+                        field: "selected Rust linked provider provenance",
+                        message: "does not bind the selected schema, target, receipt and capability".to_string(),
+                    });
+                }
+                let search_root = resolve_directory_path(owners, search_root, "selected Rust linked provider root")?;
+                let member_digest =
+                    super::selected_graph_source_digest(members).map_err(|error| OvenRustcError::InvalidInput {
+                        field: "selected Rust linked provider members",
+                        message: error.to_string(),
+                    })?;
+                verify_source_tree(&search_root, members, &member_digest, None)?;
+                let artifact = resolve_file(owners, artifact, digest, "selected Rust linked provider artifact")?;
+                if !artifact.starts_with(&search_root) {
+                    return Err(OvenRustcError::InvalidInput {
+                        field: "selected Rust linked provider artifact",
+                        message: "is outside its exact provider search root".to_string(),
+                    });
+                }
+                if *kind == OvenSelectedRustFacetLinkedLibraryKind::Framework {
+                    validate_framework_artifact(&search_root, &artifact, name)?;
+                }
                 Ok(OvenMaterializedRustFacetLinkedLibrary::Provider {
                     name: name.clone(),
                     kind: *kind,
-                    provider_root,
+                    target: target.clone(),
+                    capability: capability.clone(),
+                    receipt_identity: receipt_identity.clone(),
+                    search_root,
+                    artifact,
+                    digest: digest.clone(),
                 })
             }
         })
         .collect()
+}
+
+/// Require an admitted framework artifact to be the named binary inside the exact named framework directory.
+fn validate_framework_artifact(search_root: &Path, artifact: &Path, name: &str) -> Result<(), OvenRustcError> {
+    let expected = search_root.join(format!("{name}.framework")).join(name);
+    if artifact != expected {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust linked framework",
+            message: format!(
+                "{} is not the exact `{name}.framework/{name}` artifact",
+                artifact.display()
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Require the physical tree under `root` to be exactly the member set the selection declared.
@@ -1218,10 +1311,43 @@ mod tests {
 
     #[test]
     fn materializes_provider_only_from_declared_provider_owner() -> Result<(), Box<dyn std::error::Error>> {
+        use oven_model::oven_interop::{OvenInteropExecutionProvenance, OvenInteropExecutionReceipt};
+
         let root = tempfile::tempdir()?;
         let provider = selected_graph_sha256(b"linked provider");
         let provider_root = root.path().join("provider");
-        fs::create_dir_all(&provider_root)?;
+        let framework = provider_root.join("Security.framework/Security");
+        let provenance = provider_root.join("provenance/interop-execution.json");
+        fs::create_dir_all(framework.parent().ok_or("framework has no parent")?)?;
+        fs::create_dir_all(provenance.parent().ok_or("provenance has no parent")?)?;
+        fs::write(&framework, b"framework")?;
+        let receipt_identity = selected_graph_sha256(b"provider receipt");
+        let held = OvenInteropExecutionProvenance {
+            schema_version: OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION,
+            receipt: OvenInteropExecutionReceipt {
+                schema_version: OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION,
+                locked_target_identity: selected_graph_sha256(b"locked target"),
+                target: "x86_64-unknown-linux-gnu".to_string(),
+                toolchain: None,
+                sdk: None,
+                identity: receipt_identity.clone(),
+            },
+            archives: Vec::new(),
+            bundles: Vec::new(),
+            system_capabilities: vec!["apple.framework.Security".to_string()],
+        };
+        let provenance_bytes = serde_json::to_vec_pretty(&held)?;
+        fs::write(&provenance, &provenance_bytes)?;
+        let members = vec![
+            OvenSelectedRustFacetSourceMember {
+                path: "Security.framework/Security".to_string(),
+                digest: selected_graph_sha256(b"framework"),
+            },
+            OvenSelectedRustFacetSourceMember {
+                path: "provenance/interop-execution.json".to_string(),
+                digest: selected_graph_sha256(&provenance_bytes),
+            },
+        ];
         let mut graph = selected_graph()?.graph().clone();
         graph.owners.push(OvenSelectedRustFacetOwner {
             identity: provider.clone(),
@@ -1232,6 +1358,24 @@ mod tests {
             name: "Security".to_string(),
             kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Framework,
             provider: provider.clone(),
+            target: "x86_64-unknown-linux-gnu".to_string(),
+            capability: "apple.framework.Security".to_string(),
+            receipt_identity: receipt_identity.clone(),
+            provenance: OvenSelectedRustFacetPath {
+                owner: provider.clone(),
+                path: "provenance/interop-execution.json".to_string(),
+            },
+            provenance_digest: selected_graph_sha256(&provenance_bytes),
+            search_root: OvenSelectedRustFacetPath {
+                owner: provider.clone(),
+                path: ".".to_string(),
+            },
+            artifact: OvenSelectedRustFacetPath {
+                owner: provider.clone(),
+                path: "Security.framework/Security".to_string(),
+            },
+            digest: selected_graph_sha256(b"framework"),
+            members,
         }];
         let unit = unit.clone();
         let mut owner_roots = roots(root.path())?
@@ -1243,9 +1387,22 @@ mod tests {
         let linked = materialize_linked_libraries(&graph, &owner_roots, &unit)?;
         assert!(matches!(
             &linked[0],
-            OvenMaterializedRustFacetLinkedLibrary::Provider { provider_root: actual, .. }
-                if actual == &fs::canonicalize(provider_root)?
+            OvenMaterializedRustFacetLinkedLibrary::Provider {
+                receipt_identity: actual_receipt,
+                search_root: actual_root,
+                artifact: actual_artifact,
+                ..
+            } if actual_receipt == &receipt_identity
+                && actual_root == &fs::canonicalize(&provider_root)?
+                && actual_artifact == &fs::canonicalize(&framework)?
         ));
+        let mut unheld = unit;
+        if let crate::rustc::OvenSelectedRustFacetLinkedLibrary::Provider { capability, .. } =
+            &mut unheld.linked_libraries[0]
+        {
+            *capability = "apple.framework.Unheld".to_string();
+        }
+        assert!(materialize_linked_libraries(&graph, &owner_roots, &unheld).is_err());
         Ok(())
     }
 

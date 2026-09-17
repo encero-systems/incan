@@ -509,8 +509,9 @@ fn compile_rebuild_unit(
 /// Append ordered physically admitted native link inputs to one rustc invocation.
 ///
 /// Exact archives are passed directly to the linker instead of becoming `-L`/`-l` discovery inputs. Repeated
-/// archives remain repeated and their order is unchanged. A logical provider is refused because schema 4 carries
-/// only its held owner identity and logical name; it has no target-specific exact linker path or flag mapping.
+/// archives remain repeated and their order is unchanged. Provider inputs have already been checked against held
+/// target-specific provenance and exact member bytes; frameworks use only their admitted search root, while system
+/// inputs pass their exact selected artifact directly to the linker.
 fn append_materialized_link_arguments(
     command: &mut Command,
     libraries: &[OvenMaterializedRustFacetLinkedLibrary],
@@ -523,16 +524,25 @@ fn append_materialized_link_arguments(
             OvenMaterializedRustFacetLinkedLibrary::Provider {
                 name,
                 kind,
-                provider_root,
-            } => {
-                return Err(runtime_executor_invalid(
-                    "runtime executor linked provider",
-                    format!(
-                        "provider `{name}` ({kind:?}) at {} has no exact target-specific linker mapping",
-                        provider_root.display()
-                    ),
-                ));
-            }
+                search_root,
+                artifact,
+                ..
+            } => match kind {
+                crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Framework => {
+                    command.arg("-L").arg(format!("framework={}", search_root.display()));
+                    command.arg("-l").arg(format!("framework={name}"));
+                }
+                crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::System => {
+                    command.arg("-C").arg(format!("link-arg={}", artifact.display()));
+                }
+                crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static
+                | crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Dynamic => {
+                    return Err(runtime_executor_invalid(
+                        "runtime executor linked provider",
+                        format!("provider `{name}` has archive linkage kind {kind:?}"),
+                    ));
+                }
+            },
         }
     }
     Ok(())
@@ -599,15 +609,49 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn linked_provider_refuses_before_ambient_linker_discovery() {
-        let libraries = [OvenMaterializedRustFacetLinkedLibrary::Provider {
-            name: "Security".to_string(),
-            kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Framework,
-            provider_root: PathBuf::from("admitted/provider"),
-        }];
+    fn linked_provider_arguments_use_only_verified_paths_and_preserve_order() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let provider = |name: &str, kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind, artifact: &str| {
+            OvenMaterializedRustFacetLinkedLibrary::Provider {
+                name: name.to_string(),
+                kind,
+                target: "aarch64-apple-darwin".to_string(),
+                capability: format!("fixture.{name}"),
+                receipt_identity: selected_graph_sha256(name.as_bytes()),
+                search_root: PathBuf::from("admitted/provider"),
+                artifact: PathBuf::from(artifact),
+                digest: selected_graph_sha256(artifact.as_bytes()),
+            }
+        };
+        let libraries = [
+            provider(
+                "Security",
+                crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Framework,
+                "admitted/provider/Security.framework/Security",
+            ),
+            provider(
+                "sqlite3",
+                crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::System,
+                "admitted/provider/libsqlite3.tbd",
+            ),
+        ];
         let mut command = Command::new("rustc");
-        assert!(append_materialized_link_arguments(&mut command, &libraries).is_err());
-        assert_eq!(command.get_args().count(), 0);
+        append_materialized_link_arguments(&mut command, &libraries)?;
+        assert_eq!(
+            command
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            [
+                "-L",
+                "framework=admitted/provider",
+                "-l",
+                "framework=Security",
+                "-C",
+                "link-arg=admitted/provider/libsqlite3.tbd",
+            ]
+        );
+        Ok(())
     }
     use oven_store::OvenBuildIntent;
 
