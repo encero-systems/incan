@@ -3492,10 +3492,9 @@ mod tests {
             )?
             .is_some()
         );
-        fs::write(
-            generation_root.join(embedded_native.strip_prefix(staged.path())?),
-            "tampered",
-        )?;
+        let committed_executable = generation_root.join(embedded_native.strip_prefix(staged.path())?);
+        fs::remove_file(&committed_executable)?;
+        fs::write(&committed_executable, "tampered")?;
         assert!(verify_committed_release_policy_output(output.path(), Some(&member)).is_err());
         Ok(())
     }
