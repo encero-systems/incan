@@ -2,8 +2,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
@@ -338,7 +338,7 @@ pub struct ProviderPlan {
     /// This bootstrap-only grant disappears once the checked provider manifest is published and must never be
     /// populated by installed SDK consumers.
     bootstrap_sdk_namespace_roots: BTreeSet<String>,
-    /// Canonical structure consumed by semantic identity projection, computed once when the plan becomes immutable.
+    /// Process-local identity assigned when this immutable record set is constructed.
     semantic_projection_identity: u64,
 }
 
@@ -922,7 +922,9 @@ impl ProviderPlan {
         self.records.values()
     }
 
-    /// Return the immutable structural identity of every fact consumed by provider semantic projection.
+    /// Return this immutable record set's process-local semantic-projection identity.
+    ///
+    /// This value scopes in-memory memoization only. It is never serialized or used as an artifact/content identity.
     pub fn semantic_projection_identity(&self) -> u64 {
         self.semantic_projection_identity
     }
