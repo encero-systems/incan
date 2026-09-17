@@ -630,6 +630,24 @@ pub def test_compiler_support_catalog_propagates_its_declared_child() -> None:
     assert child in result.nodes
 
 
+pub def test_compiler_support_raw_features_cannot_seed_policy() -> None:
+    """Refuses an observed compiler-release feature absent from its authority-owned root intent."""
+    support = node("core")
+    support_id = unit_id(support)
+    match propagate_features(
+        catalogs_from({"core": "[features]\nobserved=[]\n"}),
+        base_context(),
+        "Cargo.toml",
+        [selected_with_facts(support_id, support, ["observed"], SelectedUnitRole.CompilerSupport)],
+        [root_for_unit(support_id, default_features=false)],
+        [],
+        16,
+    ):
+        Ok(_) => fail("raw compiler-release features must not become authored policy demand")
+        Err(error) =>
+            assert "authenticated selected-unit features disagree with settled feature policy" in error.message()
+
+
 def require_feature_fact_refusal(child_features: list[str], declaration: str) -> str:
     """Return the final reconciliation diagnostic for one deliberately inconsistent child unit."""
     parent = node("root")
