@@ -1475,7 +1475,8 @@ impl AstLowering {
                     if let Some(type_paths) = type_paths {
                         self.active_trait_default_type_paths.push(type_paths);
                     }
-                    self.active_imported_trait_defaults.push(has_type_paths);
+                    self.active_imported_trait_defaults
+                        .push(self.imported_trait_decls.get(trait_name).copied().unwrap_or(false));
                     let substitutions = trait_type_params
                         .iter()
                         .map(|param| param.name.clone())

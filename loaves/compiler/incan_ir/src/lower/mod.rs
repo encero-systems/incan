@@ -126,6 +126,8 @@ pub struct AstLowering {
     pub trait_methods: HashMap<String, Vec<String>>,
     /// Track full trait declarations for default-method expansion into impl blocks.
     pub trait_decls: HashMap<String, ast::TraitDecl>,
+    /// Whether each registered trait declaration originates in an imported source module.
+    pub imported_trait_decls: HashMap<String, bool>,
     /// Canonical helper paths needed when expanding default methods from imported traits.
     pub trait_default_function_paths: HashMap<String, HashMap<String, Vec<String>>>,
     /// Canonical defining-module type paths used by imported trait defaults.
@@ -629,6 +631,7 @@ impl AstLowering {
             class_decls: HashMap::new(),
             trait_methods: HashMap::new(),
             trait_decls: HashMap::new(),
+            imported_trait_decls: HashMap::new(),
             trait_default_function_paths: HashMap::new(),
             trait_default_type_paths: HashMap::new(),
             active_trait_default_function_paths: Vec::new(),
@@ -1500,6 +1503,8 @@ impl AstLowering {
                 for module_key in &module_keys {
                     self.trait_decls
                         .insert(format!("{module_key}.{}", tr.name), trait_decl.clone());
+                    self.imported_trait_decls
+                        .insert(format!("{module_key}.{}", tr.name), true);
                 }
             }
         }
@@ -2115,6 +2120,7 @@ impl AstLowering {
                 let mut trait_decl = t.clone();
                 trait_decl.methods = trait_methods;
                 self.trait_decls.insert(t.name.clone(), trait_decl);
+                self.imported_trait_decls.insert(t.name.clone(), false);
                 let aliases = Self::method_alias_rebindings(&t.method_aliases);
                 if !aliases.is_empty() {
                     self.type_method_rebindings.insert(t.name.clone(), aliases);
@@ -3659,6 +3665,7 @@ impl AstLowering {
                 .filter(|decl| Self::trait_decl_has_lowerable_defaults(decl))
             {
                 self.trait_decls.entry(alias.clone()).or_insert_with(|| decl.clone());
+                self.imported_trait_decls.entry(alias.clone()).or_insert(true);
             }
             let prefix = format!("{module_key}.");
             for (qualified, decl) in &existing {
@@ -3671,6 +3678,9 @@ impl AstLowering {
                 self.trait_decls
                     .entry(format!("{alias}.{trait_name}"))
                     .or_insert_with(|| decl.clone());
+                self.imported_trait_decls
+                    .entry(format!("{alias}.{trait_name}"))
+                    .or_insert(true);
             }
         }
     }
@@ -3747,7 +3757,8 @@ impl AstLowering {
                 self.trait_default_type_paths
                     .entry(local_name.clone())
                     .or_insert(default_type_paths);
-                self.trait_decls.entry(local_name).or_insert(trait_decl);
+                self.trait_decls.entry(local_name.clone()).or_insert(trait_decl);
+                self.imported_trait_decls.entry(local_name).or_insert(true);
             }
         }
         Ok(())
