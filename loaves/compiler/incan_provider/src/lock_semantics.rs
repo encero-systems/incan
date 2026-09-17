@@ -1589,9 +1589,18 @@ mod tests {
         let session = ProviderSemanticIdentitySession::default();
         let first = session.identities(&fixture.provider_plan, &fixture.specs)?;
 
+        let equivalent_records = fixture
+            .provider_plan
+            .records()
+            .cloned()
+            .map(|mut record| {
+                record.manifest = record.manifest.as_deref().cloned().map(Arc::new);
+                record
+            })
+            .collect();
         let equivalent_plan = ProviderPlan::new(
             incan_frontend::library_manifest_index::LibraryManifestIndex::default(),
-            fixture.provider_plan.records().cloned().collect(),
+            equivalent_records,
             std::iter::empty::<Vec<String>>(),
         )?;
         assert_eq!(

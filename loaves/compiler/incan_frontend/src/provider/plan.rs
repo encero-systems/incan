@@ -334,9 +334,9 @@ fn provider_semantic_projection_persistent_key(records: &BTreeMap<String, Provid
             (Some(manifest), Some(artifact)) => Some(
                 retained_sdk_manifest_wire(manifest, &artifact.manifest_path)
                     .map(Ok)
-                    .unwrap_or_else(|| manifest.to_json_string().map_err(|error| error.to_string()))?,
+                    .unwrap_or_else(|| canonical_manifest_wire(manifest))?,
             ),
-            (Some(manifest), None) => Some(manifest.to_json_string().map_err(|error| error.to_string())?),
+            (Some(manifest), None) => Some(canonical_manifest_wire(manifest)?),
             (None, _) => None,
         };
         let artifact = record.artifact.as_ref().map(|artifact| {
@@ -1770,13 +1770,14 @@ fn read_sdk_provider_manifest(
     {
         return Ok(Arc::clone(&entry.manifest));
     }
-    let canonical_wire = std::fs::read_to_string(manifest_path).map_err(|source| {
+    let wire = std::fs::read_to_string(manifest_path).map_err(|source| {
         crate::library_manifest::LibraryManifestError::Read {
             path: manifest_path.to_path_buf(),
             source,
         }
     })?;
-    let manifest = Arc::new(LibraryManifest::from_json_str(&canonical_wire)?);
+    let manifest = Arc::new(LibraryManifest::from_json_str(&wire)?);
+    let canonical_wire = canonical_json_wire(&wire)?;
     if let Some(stamp) = stamp
         && let Ok(mut memo) = sdk_manifest_memo().lock()
     {
@@ -1789,6 +1790,35 @@ fn read_sdk_provider_manifest(
         );
     }
     Ok(manifest)
+}
+
+fn canonical_json_wire(wire: &str) -> Result<String, crate::library_manifest::LibraryManifestError> {
+    fn canonicalize(value: serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Array(values) => {
+                serde_json::Value::Array(values.into_iter().map(canonicalize).collect())
+            }
+            serde_json::Value::Object(values) => serde_json::Value::Object(
+                values
+                    .into_iter()
+                    .map(|(key, value)| (key, canonicalize(value)))
+                    .collect::<BTreeMap<_, _>>()
+                    .into_iter()
+                    .collect(),
+            ),
+            value => value,
+        }
+    }
+
+    let value = serde_json::from_str(wire)
+        .map_err(|error| crate::library_manifest::LibraryManifestError::Parse(error.to_string()))?;
+    serde_json::to_string(&canonicalize(value))
+        .map_err(|error| crate::library_manifest::LibraryManifestError::Serialize(error.to_string()))
+}
+
+fn canonical_manifest_wire(manifest: &LibraryManifest) -> Result<String, String> {
+    let wire = manifest.to_json_string().map_err(|error| error.to_string())?;
+    canonical_json_wire(&wire).map_err(|error| error.to_string())
 }
 
 fn retained_sdk_manifest_wire(manifest: &Arc<LibraryManifest>, manifest_path: &Path) -> Option<String> {
