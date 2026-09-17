@@ -135,11 +135,12 @@ const COMPILER_LIBTEST_RECEIPT_RELATIVE_PATH: &str = ".incan/oven/compiler-libte
 /// discover nor launch Cargo.
 pub fn oven_bake_project(
     project: PathBuf,
+    target: Option<String>,
     package_features: FeatureSelection,
     format: OvenOutputFormat,
 ) -> CliResult<ExitCode> {
     incan_driver::project::warn_once_about_ignored_cargo_manifest(&project);
-    let report = incan_driver::build::bake::bake_oven_project_targets(&project, &package_features)?;
+    let report = incan_driver::build::bake::bake_oven_project_targets(&project, &package_features, target.as_deref())?;
     match format {
         OvenOutputFormat::Text => {
             for profile in &report.profiles {
@@ -3370,18 +3371,28 @@ mod tests {
     #[test]
     fn policy_publisher_inputs_are_paired_and_release_only() {
         let store = Path::new("policy-store");
-        assert!(release_policy_publisher_input(OvenLoafEnvelope::Release, None, None).is_ok());
-        assert!(release_policy_publisher_input(OvenLoafEnvelope::Release, Some(store), None).is_err());
-        assert!(release_policy_publisher_input(OvenLoafEnvelope::Release, None, Some("sha256:output")).is_err());
+        assert!(release_policy_publisher_input(OvenLoafEnvelope::Release, None, None, None).is_ok());
+        assert!(release_policy_publisher_input(OvenLoafEnvelope::Release, Some(store), None, None).is_err());
+        assert!(release_policy_publisher_input(OvenLoafEnvelope::Release, None, Some("sha256:output"), None).is_err());
         assert!(
-            release_policy_publisher_input(OvenLoafEnvelope::CompilerSuite, Some(store), Some("sha256:output"),)
-                .is_err()
+            release_policy_publisher_input(
+                OvenLoafEnvelope::CompilerSuite,
+                Some(store),
+                Some("sha256:output"),
+                Some("aarch64-apple-darwin"),
+            )
+            .is_err()
         );
         assert_eq!(
-            release_policy_publisher_input(OvenLoafEnvelope::Release, Some(store), Some("sha256:output"))
-                .ok()
-                .flatten(),
-            Some((store, "sha256:output")),
+            release_policy_publisher_input(
+                OvenLoafEnvelope::Release,
+                Some(store),
+                Some("sha256:output"),
+                Some("aarch64-apple-darwin"),
+            )
+            .ok()
+            .flatten(),
+            Some((store, "sha256:output", "aarch64-apple-darwin")),
         );
     }
 
@@ -3416,7 +3427,14 @@ mod tests {
         let selected = source_store.select_payload_for_execution(&identity)?;
         let mut wrong_entrypoint = payload.clone();
         wrong_entrypoint.entrypoint_relative_path = "src/main.incn".to_string();
-        assert!(validate_release_policy_project_output(&selected.0, &wrong_entrypoint, &receipt).is_err());
+        assert!(
+            validate_release_policy_project_output(&selected.0, &wrong_entrypoint, &receipt, &receipt.intent.target,)
+                .is_err()
+        );
+        assert!(
+            validate_release_policy_project_output(&selected.0, &payload, &receipt, "wrong-target").is_err(),
+            "the archive target is part of the release policy input authority"
+        );
         drop(selected);
 
         let staged = tempfile::tempdir()?;
@@ -3438,14 +3456,27 @@ mod tests {
             artifact_identity: wrong.identity.clone(),
         };
         drop(wrong);
-        assert!(import_release_policy_output(wrong_source.path(), staged.path(), &wrong_member, limits).is_err());
+        assert!(
+            import_release_policy_output(
+                wrong_source.path(),
+                staged.path(),
+                &wrong_member,
+                &receipt.intent.target,
+                limits,
+            )
+            .is_err()
+        );
         let member = OvenReleaseStoreMember {
             schema_version: OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION,
             label: "rust-policy-engine".to_string(),
             store_relative_path: PathBuf::from("project-outputs/rust-policy-engine/oven/store/v2"),
             artifact_identity: identity.clone(),
         };
-        import_release_policy_output(source.path(), staged.path(), &member, limits)?;
+        assert!(
+            import_release_policy_output(source.path(), staged.path(), &member, "wrong-target", limits).is_err(),
+            "cold import must refuse a ProjectOutput for another archive target"
+        );
+        import_release_policy_output(source.path(), staged.path(), &member, &receipt.intent.target, limits)?;
 
         let embedded = OvenStore::new(staged.path().join(&member.store_relative_path), limits)
             .select_payload_for_execution(&identity)?;
@@ -3496,10 +3527,16 @@ mod tests {
             )?
             .is_some()
         );
-        let committed_executable = generation_root.join(embedded_native.strip_prefix(staged.path())?);
-        fs::remove_file(&committed_executable)?;
-        fs::write(&committed_executable, "tampered")?;
-        assert!(verify_committed_release_policy_output(output.path(), Some(&member)).is_err());
+        assert!(
+            verify_committed_release_policy_output(output.path(), Some(&member), Some("wrong-target")).is_err(),
+            "committed reuse must re-prove the archive target"
+        );
+        let committed_native = generation_root.join(embedded_native.strip_prefix(staged.path())?);
+        fs::remove_file(&committed_native)?;
+        fs::write(&committed_native, "tampered")?;
+        assert!(
+            verify_committed_release_policy_output(output.path(), Some(&member), Some(&receipt.intent.target)).is_err()
+        );
         Ok(())
     }
     use oven_rustc::native_test::{OvenNativeTestCaseCounts, OvenNativeTestCaseTiming};
@@ -4093,6 +4130,7 @@ mod tests {
                 suite_store: Some(suite_store.path().to_path_buf()),
                 policy_engine_store: None,
                 policy_engine_identity: None,
+                policy_engine_target: None,
                 envelope: OvenLoafEnvelopeArgument::CompilerSuite,
                 sdk_inventory,
                 cargo,

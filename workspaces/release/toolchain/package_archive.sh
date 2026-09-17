@@ -588,20 +588,15 @@ else
     RUSTC="$rustc_bin" \
     "$package_dir/bin/incan" oven bake \
       --project "workspaces/oven" \
+      --target "$target" \
       --format json > "$policy_bake_report" \
     || fail "could not explicitly bake the release policy project"
-  policy_output_count="$(
-    jq '[.outputs[] | select(.project_target == "executable:src/plan_json_main.incn" and .profile == "release")] | length' \
-      "$policy_bake_report"
-  )" || fail "could not read the structured release policy bake report"
-  [ "$policy_output_count" = "1" ] \
-    || fail "release policy bake must report exactly one release core_engine ProjectOutput"
-  policy_engine_store="$(jq -er '.store | select(type == "string" and length > 0)' "$policy_bake_report")" \
-    || fail "release policy bake did not report its Oven store"
-  policy_engine_identity="$(
-    jq -er '.outputs[] | select(.project_target == "executable:src/plan_json_main.incn" and .profile == "release") | .artifact_identity | select(type == "string" and length > 0)' \
-      "$policy_bake_report"
-  )" || fail "release policy bake did not report the exact core_engine ProjectOutput identity"
+  policy_output="$($repo_root/workspaces/release/toolchain/select_release_policy_output.sh "$policy_bake_report" "$target")" \
+    || fail "could not select the exact target-bound release core_engine ProjectOutput"
+  policy_engine_store="${policy_output%%	*}"
+  policy_engine_identity="${policy_output#*	}"
+  [ -n "$policy_engine_store" ] && [ -n "$policy_engine_identity" ] && [ "$policy_engine_store" != "$policy_engine_identity" ] \
+    || fail "release policy bake selection did not report store and artifact identity"
   "$package_dir/bin/incan" oven legacy-cargo bake-loafs \
     --compiler-root "$package_dir" \
     --output "$loaf_root" \
@@ -611,6 +606,7 @@ else
     --rustc "$rustc_bin" \
     --policy-engine-store "$policy_engine_store" \
     --policy-engine-identity "$policy_engine_identity" \
+    --policy-engine-target "$target" \
     --format json >/dev/null \
     || fail "could not bake the release Oven Loaf envelope"
   packaged_policy_identity="$(jq -er '.release_store_member.artifact_identity | select(type == "string" and length > 0)' "$loaf_root/envelope.json")" \

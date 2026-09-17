@@ -510,7 +510,11 @@ fn publish_project_lock_after_provider_bake(
 pub fn bake_oven_project_targets(
     project: &Path,
     package_features: &FeatureSelection,
+    requested_target: Option<&str>,
 ) -> CliResult<OvenProjectBakeReport> {
+    if requested_target.is_some_and(|target| target.trim().is_empty()) {
+        return Err(CliError::failure("explicit Oven bake target must not be empty"));
+    }
     let project = project
         .to_str()
         .ok_or_else(|| CliError::failure(format!("Oven project path is not valid UTF-8: {}", project.display())))?;
@@ -520,13 +524,17 @@ pub fn bake_oven_project_targets(
         .ok_or_else(|| CliError::failure("explicit Oven project bake discovered no dependency-surface entrypoint"))?
         .to_path_buf();
     let store = open_default_oven_store()?;
-    let mut authority_context = OvenProjectBakeAuthorityContext::default();
+    let mut authority_context = OvenProjectBakeAuthorityContext {
+        requested_target: requested_target.map(str::to_owned),
+        ..OvenProjectBakeAuthorityContext::default()
+    };
     if canonical_baked_project_lock_path(&project_root)?.is_file()
         && let Some(reused) = try_reuse_baked_project(
             &project_root,
             &targets,
             &store,
             package_features,
+            requested_target,
             &mut authority_context,
         )?
     {

@@ -130,6 +130,9 @@ pub enum OvenCommand {
         /// Project root containing loaf.toml and src/lib.incn and/or src/main.incn
         #[arg(long, value_name = "PATH", default_value = ".")]
         project: PathBuf,
+        /// Explicit Rust compilation target; defaults to the active compiler's host target
+        #[arg(long, value_name = "TRIPLE")]
+        target: Option<String>,
         /// Select Incan package features for the baked project Loaf
         #[command(flatten)]
         package_features: PackageFeatureCliFlags,
@@ -418,16 +421,23 @@ pub enum OvenLegacyCargoCommand {
         #[arg(
             long = "policy-engine-store",
             value_name = "PATH",
-            requires = "policy_engine_identity"
+            requires_all = ["policy_engine_identity", "policy_engine_target"]
         )]
         policy_engine_store: Option<PathBuf>,
         /// Exact ProjectOutput identity to embed in the release envelope
         #[arg(
             long = "policy-engine-identity",
             value_name = "IDENTITY",
-            requires = "policy_engine_store"
+            requires_all = ["policy_engine_store", "policy_engine_target"]
         )]
         policy_engine_identity: Option<String>,
+        /// Exact Rust target required of the embedded policy engine
+        #[arg(
+            long = "policy-engine-target",
+            value_name = "TRIPLE",
+            requires_all = ["policy_engine_store", "policy_engine_identity"]
+        )]
+        policy_engine_target: Option<String>,
         /// Built-in release or compiler-suite Loaf envelope
         #[arg(long, value_enum)]
         envelope: OvenLoafEnvelopeArgument,

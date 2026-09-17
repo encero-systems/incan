@@ -153,19 +153,68 @@ fn toolchain_package_archive_script() -> PathBuf {
     repo_root().join("workspaces/release/toolchain/package_archive.sh")
 }
 
+fn release_policy_output_selector() -> PathBuf {
+    repo_root().join("workspaces/release/toolchain/select_release_policy_output.sh")
+}
+
 #[test]
 fn production_archive_binds_the_exact_reported_release_policy_output() -> Result<(), Box<dyn std::error::Error>> {
     let script = fs::read_to_string(toolchain_package_archive_script())?;
-    assert!(script.contains("oven bake \\\n      --project \"workspaces/oven\" \\\n      --format json"));
-    assert!(script.contains(".project_target == \"executable:src/plan_json_main.incn\""));
-    assert!(script.contains(".profile == \"release\""));
+    assert!(script.contains(
+        "oven bake \\\n      --project \"workspaces/oven\" \\\n      --target \"$target\" \\\n      --format json"
+    ));
+    assert!(script.contains("select_release_policy_output.sh"));
     assert!(script.contains("INCAN_SDK_INVENTORY=\"$sdk_seed_root/sdk-inventory.json\""));
     assert!(script.contains("INCAN_HOME=\"$release_policy_publisher_home\""));
     assert!(script.contains("--policy-engine-store \"$policy_engine_store\""));
     assert!(script.contains("--policy-engine-identity \"$policy_engine_identity\""));
+    assert!(script.contains("--policy-engine-target \"$target\""));
     assert!(script.contains(".release_store_member.artifact_identity"));
     assert!(script.contains("release_policy_publisher_home=\"$(mktemp -d"));
     assert!(script.contains("rm -rf \"$release_policy_publisher_home\""));
+    Ok(())
+}
+
+#[test]
+fn release_policy_output_selector_enforces_exact_target_and_cardinality() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = tempfile::tempdir()?;
+    let report = fixture.path().join("report.json");
+    fs::write(
+        &report,
+        r#"{"store":"/managed/store","outputs":[
+          {"project_target":"executable:src/plan_json_main.incn","profile":"release","target":"aarch64-apple-darwin","artifact_identity":"sha256:arm"},
+          {"project_target":"executable:src/plan_json_main.incn","profile":"release","target":"x86_64-apple-darwin","artifact_identity":"sha256:x86"}
+        ]}"#,
+    )?;
+    let selected = Command::new(release_policy_output_selector())
+        .arg(&report)
+        .arg("x86_64-apple-darwin")
+        .output()?;
+    assert!(
+        selected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&selected.stderr)
+    );
+    assert_eq!(String::from_utf8(selected.stdout)?, "/managed/store\tsha256:x86\n");
+
+    let missing = Command::new(release_policy_output_selector())
+        .arg(&report)
+        .arg("wasm32-wasip1")
+        .status()?;
+    assert!(!missing.success());
+
+    fs::write(
+        &report,
+        r#"{"store":"/managed/store","outputs":[
+          {"project_target":"executable:src/plan_json_main.incn","profile":"release","target":"x86_64-apple-darwin","artifact_identity":"sha256:first"},
+          {"project_target":"executable:src/plan_json_main.incn","profile":"release","target":"x86_64-apple-darwin","artifact_identity":"sha256:second"}
+        ]}"#,
+    )?;
+    let ambiguous = Command::new(release_policy_output_selector())
+        .arg(&report)
+        .arg("x86_64-apple-darwin")
+        .status()?;
+    assert!(!ambiguous.success());
     Ok(())
 }
 

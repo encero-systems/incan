@@ -388,11 +388,14 @@ pub fn prepare_library_project(
         .then(resolve_active_rustc)
         .transpose()
         .map_err(|error| CliError::failure(error.to_string()))?;
-    let oven_target = oven_rustc
+    let requested_target = authority_context
         .as_ref()
-        .map(|rustc| rustc_host_target(rustc))
-        .transpose()
-        .map_err(|error| CliError::failure(error.to_string()))?;
+        .and_then(|context| context.requested_target.clone());
+    let oven_target = match (oven_rustc.as_ref(), requested_target) {
+        (Some(_), Some(target)) => Some(target),
+        (Some(rustc), None) => Some(rustc_host_target(rustc).map_err(|error| CliError::failure(error.to_string()))?),
+        (None, _) => None,
+    };
     let oven_toolchain = oven_rustc
         .as_ref()
         .map(|rustc| rustc_identity(rustc))

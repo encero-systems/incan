@@ -1716,6 +1716,7 @@ headers = ["interop/include/bridge.h"]
                 &targets,
                 &consumer_store,
                 &FeatureSelection::default(),
+                None,
                 &mut authority_context,
             )?
             .is_none(),
@@ -1801,6 +1802,7 @@ headers = ["interop/include/bridge.h"]
                 &targets,
                 &store,
                 &FeatureSelection::default(),
+                None,
                 &mut context,
             )?
             .is_none()
@@ -1824,6 +1826,7 @@ headers = ["interop/include/bridge.h"]
                 &targets,
                 &store,
                 &FeatureSelection::default(),
+                None,
                 &mut context,
             )?
             .is_none()

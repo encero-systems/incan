@@ -295,7 +295,13 @@ pub fn prepare_oven_project(
     lap = Instant::now();
     let mut oven_build_inputs = oven_build_unit_inputs(&provider_plan, &project_requirements, &resolved)?;
     let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
-    let rustc_target = rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
+    let rustc_target = authority_context
+        .as_ref()
+        .and_then(|context| context.requested_target.clone())
+        .map_or_else(
+            || rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string())),
+            Ok,
+        )?;
     let rustc_toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
     if oven_plan_mode != OvenProjectPlanMode::InteropBootstrap {
         append_oven_interop_execution_build_inputs(&mut oven_build_inputs, manifest.as_ref(), &rustc_target)?;

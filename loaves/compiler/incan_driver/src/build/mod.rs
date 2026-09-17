@@ -312,6 +312,8 @@ pub struct OvenProjectBakeOutputReport {
     pub project_target: String,
     /// Build profile of this completed output.
     pub profile: String,
+    /// Exact Rust compilation target authorized by the output receipt.
+    pub target: String,
     /// Receipt authorizing the completed output.
     pub receipt_identity: String,
     /// Receipt-bound compilation identity of the completed output.
@@ -325,6 +327,7 @@ impl From<&OvenStoredProjectOutput> for OvenProjectBakeOutputReport {
             artifact_identity: output.identity.clone(),
             project_target: output.payload.target_identity.clone(),
             profile: output.profile.clone(),
+            target: output.intent.target.clone(),
             receipt_identity: output.payload.receipt_identity.clone(),
             build_unit_identity: output.payload.build_unit_identity.clone(),
         }
@@ -446,6 +449,8 @@ pub struct OvenProjectBakeAuthorityContext {
     pub source_digester: ProjectSourceAuthorityDigester,
     pub providers: HashMap<PathBuf, MemoizedPackagedProviderAuthority>,
     pub initial_project_source_authority: Option<String>,
+    /// Caller-owned target override accepted only by explicit project bake.
+    pub requested_target: Option<String>,
 }
 
 /// One manifest-backed Incan entrypoint admitted by `incan oven bake`.

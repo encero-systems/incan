@@ -23,9 +23,10 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
     match command {
         OvenCommand::Bake {
             project,
+            target,
             package_features,
             format,
-        } => commands::oven_bake_project(project, package_features.into(), format),
+        } => commands::oven_bake_project(project, target, package_features.into(), format),
         OvenCommand::SdkProviderStoreIdentity { compiler_root } => {
             let identity = incan_provider::sdk_store::sdk_provider_store_identity_for_compiler_root(&compiler_root)?;
             println!("{identity}");
@@ -120,6 +121,7 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
                 suite_store,
                 policy_engine_store,
                 policy_engine_identity,
+                policy_engine_target,
                 envelope,
                 sdk_inventory,
                 cargo,
@@ -134,6 +136,7 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
                 suite_store,
                 policy_engine_store,
                 policy_engine_identity,
+                policy_engine_target,
                 envelope,
                 sdk_inventory,
                 cargo,

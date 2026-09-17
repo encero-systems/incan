@@ -182,6 +182,8 @@ pub struct OvenLoafBakeCommandOptions {
     pub policy_engine_store: Option<PathBuf>,
     /// Exact policy-engine ProjectOutput identity paired with `policy_engine_store`.
     pub policy_engine_identity: Option<String>,
+    /// Exact Rust target required of the embedded policy engine.
+    pub policy_engine_target: Option<String>,
     /// Built-in release or compiler-suite envelope.
     pub envelope: OvenLoafEnvelopeArgument,
     /// Exact SDK provider inventory used to derive compatibility identities.

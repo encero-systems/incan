@@ -209,6 +209,7 @@ pub fn try_reuse_baked_project(
     targets: &[(OvenBakeProjectTarget, PathBuf)],
     store: &OvenStore,
     package_features: &FeatureSelection,
+    requested_target: Option<&str>,
     authority_context: &mut OvenProjectBakeAuthorityContext,
 ) -> CliResult<Option<OvenProjectBakeReport>> {
     // A completed project-output payload is selected only for the default command projection. Feature-qualified project
@@ -218,7 +219,10 @@ pub fn try_reuse_baked_project(
         return Ok(None);
     }
     let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
-    let target = rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
+    let target = requested_target.map(str::to_owned).map_or_else(
+        || rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string())),
+        Ok,
+    )?;
     let toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
     let lock_dependencies_fingerprint = baked_project_lock_dependencies_fingerprint(project_root)?;
     let mut expected_outputs = Vec::new();
