@@ -579,6 +579,17 @@ mod tests {
     }
 
     #[test]
+    fn cfg_snapshot_probe_keeps_host_and_cross_target_facts_distinct() -> TestResult {
+        let rustc = resolve_active_rustc()?;
+        let (host, target) = rustc_host_and_target_cfg_snapshots(&rustc, "wasm32-unknown-unknown")?;
+        assert_eq!(host.values["target_arch"], [std::env::consts::ARCH]);
+        assert_eq!(target.values["target_arch"], ["wasm32"]);
+        assert_eq!(target.values["target_os"], ["unknown"]);
+        assert!(rustc_cfg_snapshot(&rustc, Some("not-an-oven-target")).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn cfg_snapshot_command_uses_only_the_verified_compiler_and_explicit_target() -> TestResult {
         let command = rustc_cfg_snapshot_command(Path::new("/sealed/rustc"), Some("x86_64-unknown-linux-gnu"))?;
         let arguments = command
