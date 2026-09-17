@@ -160,6 +160,27 @@ fn release_policy_output_selector() -> PathBuf {
 #[test]
 fn production_archive_binds_the_exact_reported_release_policy_output() -> Result<(), Box<dyn std::error::Error>> {
     let script = fs::read_to_string(toolchain_package_archive_script())?;
+    let first_release_publish = script
+        .find("could not bake the package-local release Oven Loaf family")
+        .ok_or("package script does not publish its ordinary release Loaf family")?;
+    let policy_bake = script
+        .find("oven bake \\\n      --project \"workspaces/oven\"")
+        .ok_or("package script does not bake its release policy project")?;
+    let final_release_publish = script
+        .find("--policy-engine-store \"$policy_engine_store\"")
+        .ok_or("package script does not finalize the release envelope with its policy engine")?;
+    assert!(
+        first_release_publish < policy_bake && policy_bake < final_release_publish,
+        "package publication must establish package-local Loafs before the policy bake and add the engine afterward"
+    );
+    assert_eq!(
+        script.matches("oven legacy-cargo bake-loafs").count(),
+        2,
+        "release packaging must use the authorized publisher once for the ordinary family and once to finalize its engine member"
+    );
+    let first_publish = &script[..policy_bake];
+    assert!(first_publish.contains("--output \"$loaf_root\""));
+    assert!(!first_publish.contains("--policy-engine-store"));
     assert!(script.contains(
         "oven bake \\\n      --project \"workspaces/oven\" \\\n      --target \"$target\" \\\n      --format json"
     ));

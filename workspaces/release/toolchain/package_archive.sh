@@ -578,6 +578,18 @@ else
     || fail "release policy project is missing workspaces/oven/loaf.toml"
   [ -f "workspaces/oven/src/plan_json_main.incn" ] \
     || fail "release policy entrypoint is missing workspaces/oven/src/plan_json_main.incn"
+  # Establish the ordinary package-local release family before compiling the policy engine. The staged `incan`
+  # resolves compiler-owned Loafs relative to its own executable; publishing here keeps that lookup inside this
+  # package and prevents an ambient development-checkout Loaf from becoming engine build authority.
+  "$package_dir/bin/incan" oven legacy-cargo bake-loafs \
+    --compiler-root "$package_dir" \
+    --output "$loaf_root" \
+    --envelope release \
+    --sdk-inventory "$sdk_seed_root/sdk-inventory.json" \
+    --cargo "$cargo_bin" \
+    --rustc "$rustc_bin" \
+    --format json >/dev/null \
+    || fail "could not bake the package-local release Oven Loaf family"
   release_policy_publisher_home="$(mktemp -d "${TMPDIR:-/tmp}/incan-release-policy-${target}.XXXXXX")"
   policy_bake_report="$release_policy_publisher_home/core-engine-bake.json"
   INCAN_HOME="$release_policy_publisher_home" \
@@ -597,6 +609,8 @@ else
   policy_engine_identity="${policy_output#*	}"
   [ -n "$policy_engine_store" ] && [ -n "$policy_engine_identity" ] && [ "$policy_engine_store" != "$policy_engine_identity" ] \
     || fail "release policy bake selection did not report store and artifact identity"
+  # Re-enter the same explicit publisher with the exact ProjectOutput. Existing ordinary Loafs are reused; the
+  # committed generation is replaced atomically by the envelope whose release member names this engine identity.
   "$package_dir/bin/incan" oven legacy-cargo bake-loafs \
     --compiler-root "$package_dir" \
     --output "$loaf_root" \
