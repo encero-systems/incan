@@ -514,7 +514,8 @@ pub struct OvenLegacyCargoInspectionSource {
 }
 
 /// One exact regular file retained by the explicit publisher's staged registry source authority.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OvenLegacyCargoInspectionSourceMember {
     /// Safe package-root-relative path.
     pub path: String,
