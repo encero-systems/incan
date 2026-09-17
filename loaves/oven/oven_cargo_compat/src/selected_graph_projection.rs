@@ -861,6 +861,17 @@ mod tests {
         selected_graph_sha256(bytes)
     }
 
+    /// Return complete canonical cfg evidence for the retained fixture compiler.
+    fn fixture_cfg_snapshot() -> OvenSelectedRustFacetCfgSnapshot {
+        OvenSelectedRustFacetCfgSnapshot {
+            flags: vec!["unix".to_string()],
+            values: BTreeMap::from([
+                ("target_arch".to_string(), vec!["x86_64".to_string()]),
+                ("target_os".to_string(), vec!["linux".to_string()]),
+            ]),
+        }
+    }
+
     /// Create the minimum generated source closure required for an honest fixture receipt.
     fn fixture_receipt_request(
         directory: &Path,
@@ -896,14 +907,8 @@ mod tests {
                 profile: "release".to_string(),
             },
             host: "x86_64-unknown-linux-gnu".to_string(),
-            host_cfg: OvenSelectedRustFacetCfgSnapshot {
-                flags: Vec::new(),
-                values: BTreeMap::new(),
-            },
-            target_cfg: OvenSelectedRustFacetCfgSnapshot {
-                flags: Vec::new(),
-                values: BTreeMap::new(),
-            },
+            host_cfg: fixture_cfg_snapshot(),
+            target_cfg: fixture_cfg_snapshot(),
             purpose: OvenSelectedRustFacetPurpose::Normal,
             toolchain_version: "1.98.0".to_string(),
             target_spec: OvenSelectedRustFacetTargetSpec {
@@ -927,14 +932,8 @@ mod tests {
                 target: "x86_64-unknown-linux-gnu".to_string(),
                 toolchain: "rustc 1.98.0".to_string(),
                 rustc_identity: "rustc 1.98.0".to_string(),
-                host_cfg: OvenSelectedRustFacetCfgSnapshot {
-                    flags: Vec::new(),
-                    values: BTreeMap::new(),
-                },
-                target_cfg: OvenSelectedRustFacetCfgSnapshot {
-                    flags: Vec::new(),
-                    values: BTreeMap::new(),
-                },
+                host_cfg: fixture_cfg_snapshot(),
+                target_cfg: fixture_cfg_snapshot(),
             }),
             units: vec![OvenLegacyCargoSelectedUnit {
                 package_id: "registry+https://example.invalid/index#serde@1.0.0".to_string(),
