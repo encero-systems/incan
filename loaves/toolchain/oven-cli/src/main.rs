@@ -31,6 +31,9 @@ enum OvenTopLevelCommand {
 }
 
 fn main() {
+    if let Some(exit_code) = oven_cargo_compat::run_legacy_rustc_trace_wrapper() {
+        process::exit(exit_code);
+    }
     let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(

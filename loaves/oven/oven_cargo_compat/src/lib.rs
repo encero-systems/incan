@@ -18,6 +18,7 @@ mod compiler_suite_targets;
 mod inspection_sources;
 mod lock;
 mod registry_sources;
+mod rustc_trace;
 mod sdk_staging;
 mod selected_unit_capture;
 mod workspace_authority;
@@ -27,6 +28,7 @@ pub use compiler_suite_targets::*;
 pub use inspection_sources::*;
 pub use lock::*;
 pub use registry_sources::*;
+pub use rustc_trace::*;
 pub use sdk_staging::*;
 pub use selected_unit_capture::*;
 pub use workspace_authority::*;
@@ -65,7 +67,7 @@ use oven_rustc::rustc::{
     OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, OvenRustcArtifactExtern,
     OvenRustcArtifactManifest, OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
     OvenRustcSupportingArtifact, clear_inherited_cargo_environment, rerooted_artifact_staging_source,
-    rustc_host_target, rustc_identity, select_direct_rustc_plan_identity,
+    rustc_host_and_target_cfg_snapshots, rustc_host_target, rustc_identity, select_direct_rustc_plan_identity,
     validate_project_extension_payload_against_base,
 };
 use oven_store::process::{isolate_process_group, terminate_process_group};
@@ -1207,6 +1209,23 @@ pub fn prepare_direct_rustc_plan(
         Some(metadata) => metadata,
         None => read_legacy_cargo_metadata(&request.cargo, &cargo_manifest, &request.receipt.intent.features)?,
     };
+    let mut selected_units = if outputs_have_rustc_trace(&cargo_outputs) {
+        let mut capture = capture_legacy_cargo_selected_units_from_trace(&metadata, &cargo_outputs)?;
+        let (host_cfg, target_cfg) =
+            rustc_host_and_target_cfg_snapshots(&request.rustc, &request.receipt.intent.target)
+                .map_err(|error| OvenLegacyCargoError::Plan(error.to_string()))?;
+        capture.compiler = Some(OvenLegacyCargoSelectedCompilerContext {
+            host: rustc_host.clone(),
+            target: request.receipt.intent.target.clone(),
+            toolchain: request.receipt.intent.toolchain.clone(),
+            rustc_identity: rustc_identity.clone(),
+            host_cfg,
+            target_cfg,
+        });
+        Some(capture)
+    } else {
+        None
+    };
     let resolved_direct_dependencies = resolve_direct_dependency_packages(&metadata, &direct_dependencies)?;
     let reported_artifact_files = publisher_output_artifact_paths(&cargo_outputs, &request.receipt.intent.profile)?;
     let (dependency_search_paths, externs, mut supporting_artifacts) = if reported_artifact_files.is_empty() {
@@ -1229,6 +1248,12 @@ pub fn prepare_direct_rustc_plan(
             &cargo_outputs,
         )?
     };
+    if let Some(selected_units) = selected_units.as_mut() {
+        supporting_artifacts.extend(retain_legacy_cargo_selected_generated_outputs(
+            selected_units,
+            &staging,
+        )?);
+    }
     let provider_entrypoints = provider_compilation_externs(
         request.provider_compilations,
         &consumer_direct_dependencies,
@@ -1500,9 +1525,7 @@ pub fn prepare_direct_rustc_plan(
         cargo_manifest_digest: digest_bytes(&cargo_manifest_bytes),
         cargo_lock_digest: digest_bytes(&cargo_lock_bytes),
         registry_leaves,
-        // Stable Cargo does not expose exact physical unit edges. Do not publish a partial graph from package-level
-        // metadata or artifact filenames; the runtime-foundation producer must supply exact admitted evidence.
-        selected_units: None,
+        selected_units,
         transient_reservation_bytes,
         reclaimed_store_entries,
     })
@@ -2876,6 +2899,20 @@ fn run_legacy_cargo_invocation(
     let capture_stem = format!(".oven-cargo-{}-{}", std::process::id(), command_name);
     let stdout_path = target.join(format!("{capture_stem}.stdout"));
     let stderr_path = target.join(format!("{capture_stem}.stderr"));
+    let rustc_trace_path = target.join(format!("{capture_stem}.rustc.jsonl"));
+    let rustc_wrapper = current_rustc_trace_wrapper()?;
+    if rustc_wrapper.is_some() {
+        match fs::remove_file(&rustc_trace_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(OvenLegacyCargoError::Io {
+                    path: rustc_trace_path.clone(),
+                    source,
+                });
+            }
+        }
+    }
     let stdout = File::create(&stdout_path).map_err(|source| OvenLegacyCargoError::Io {
         path: stdout_path.clone(),
         source,
@@ -2936,6 +2973,12 @@ fn run_legacy_cargo_invocation(
         .env("RUSTC", &rustc)
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
+    if let Some(rustc_wrapper) = rustc_wrapper.as_ref() {
+        command
+            .env("RUSTC_WRAPPER", rustc_wrapper)
+            .env(OVEN_RUSTC_TRACE_WRAPPER_ENV, "1")
+            .env(OVEN_RUSTC_TRACE_PATH_ENV, &rustc_trace_path);
+    }
     if compact_debug_info && profile == "debug" {
         command.env("CARGO_PROFILE_DEV_DEBUG", "0");
     }
@@ -2977,7 +3020,7 @@ fn run_legacy_cargo_invocation(
             }
         }
     };
-    let stdout = fs::read(&stdout_path).map_err(|source| OvenLegacyCargoError::Io {
+    let mut stdout = fs::read(&stdout_path).map_err(|source| OvenLegacyCargoError::Io {
         path: stdout_path.clone(),
         source,
     })?;
@@ -2993,6 +3036,10 @@ fn run_legacy_cargo_invocation(
         return Err(OvenLegacyCargoError::CargoFailed {
             output: format!("{stdout}\n{stderr}").trim().to_string(),
         });
+    }
+    if rustc_wrapper.is_some() {
+        append_rustc_trace(&mut stdout, &rustc_trace_path)?;
+        let _ = fs::remove_file(&rustc_trace_path);
     }
     let reservation = conservative_directory_reservation(capacity_root)?;
     if reservation > transient_limit {
@@ -7489,7 +7536,7 @@ version = "1.0.0"
         fs::write(
             &cargo,
             format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf '%s\\n' '{{\"reason\":\"build-finished\",\"success\":true}}'\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf '%s\\n' '{{\"reason\":\"incan-rustc-invocation\",\"rustc\":\"rustc\",\"arguments\":[\"--crate-name\",\"fixture\"],\"environment\":{{}}}}' > \"$INCAN_OVEN_RUSTC_TRACE_PATH\"\nprintf '%s\\n' '{{\"reason\":\"build-finished\",\"success\":true}}'\n",
                 log.display()
             ),
         )?;

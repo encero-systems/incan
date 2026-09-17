@@ -11,11 +11,249 @@ use oven_rustc::rustc::OvenSelectedRustFacetCfgSnapshot;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    CargoBuildScriptExecuted, CargoInvocationOutput, CargoMetadata, CargoUnitGraph, OvenLegacyCargoError,
-    OvenLegacyCargoInspectionSource, OvenLegacyCargoInspectionSourceMember, OvenRustcSupportingArtifact,
-    canonical_directory, copy_regular_directory_tree, digest_bytes, digest_source_tree,
+    CargoBuildScriptExecuted, CargoCompilerArtifact, CargoInvocationOutput, CargoMetadata, CargoUnitGraph,
+    CargoUnitGraphDependency, CargoUnitGraphTarget, CargoUnitGraphUnit, OvenLegacyCargoError,
+    OvenLegacyCargoInspectionSource, OvenLegacyCargoInspectionSourceMember, OvenLegacyRustcInvocation,
+    OvenRustcSupportingArtifact, canonical_directory, copy_regular_directory_tree, digest_bytes, digest_source_tree,
     materialized_files_from_directory, regular_file_bytes,
 };
+
+/// Reconstruct Cargo's exact compiled-unit edges from the stable compiler-artifact stream and observed rustc argv.
+pub fn capture_legacy_cargo_selected_units_from_trace(
+    metadata: &CargoMetadata,
+    outputs: &[CargoInvocationOutput],
+) -> Result<OvenLegacyCargoSelectedUnitCapture, OvenLegacyCargoError> {
+    let mut artifacts = Vec::new();
+    let mut invocations = Vec::new();
+    let mut build_scripts = Vec::new();
+    for output in outputs {
+        for line in output
+            .stdout
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+        {
+            let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) else {
+                continue;
+            };
+            match value.get("reason").and_then(serde_json::Value::as_str) {
+                Some("compiler-artifact") => {
+                    artifacts.push(serde_json::from_value::<CargoCompilerArtifact>(value).map_err(|error| {
+                        OvenLegacyCargoError::Plan(format!("invalid Cargo compiler-artifact record: {error}"))
+                    })?)
+                }
+                Some("incan-rustc-invocation") => invocations.push(
+                    serde_json::from_value::<OvenLegacyRustcInvocation>(value).map_err(|error| {
+                        OvenLegacyCargoError::Plan(format!("invalid stable rustc invocation record: {error}"))
+                    })?,
+                ),
+                Some("build-script-executed") => build_scripts.push(
+                    serde_json::from_value::<CargoBuildScriptExecuted>(value).map_err(|error| {
+                        OvenLegacyCargoError::Plan(format!("invalid Cargo build-script execution record: {error}"))
+                    })?,
+                ),
+                _ => {}
+            }
+        }
+    }
+    let packages = metadata
+        .packages
+        .iter()
+        .map(|package| (package.id.as_str(), package))
+        .collect::<BTreeMap<_, _>>();
+    struct Matched<'a> {
+        invocation: &'a OvenLegacyRustcInvocation,
+        artifact: &'a CargoCompilerArtifact,
+    }
+    let mut matched = Vec::new();
+    for artifact in &artifacts {
+        let package = packages.get(artifact.package_id.as_str()).ok_or_else(|| {
+            OvenLegacyCargoError::Plan(format!(
+                "compiler artifact names absent package `{}`",
+                artifact.package_id
+            ))
+        })?;
+        let expected_manifest = package
+            .manifest_path
+            .parent()
+            .map(|path| path.to_string_lossy().to_string())
+            .ok_or_else(|| OvenLegacyCargoError::Plan("Cargo package manifest has no parent".to_string()))?;
+        let mut candidates = invocations.iter().filter(|invocation| {
+            invocation.environment.get("CARGO_MANIFEST_DIR") == Some(&expected_manifest)
+                && invocation.environment.get("CARGO_PKG_NAME") == Some(&package.name)
+                && argument_value(&invocation.arguments, "--crate-name")
+                    .is_some_and(|name| name == artifact.target.name.replace('-', "_"))
+                && invocation
+                    .arguments
+                    .iter()
+                    .any(|source| Path::new(source) == artifact.target.src_path)
+                && artifact.profile.test == invocation.arguments.iter().any(|argument| argument == "--test")
+                && {
+                    let mut artifact_features = artifact.features.clone();
+                    artifact_features.sort();
+                    artifact_features.dedup();
+                    artifact_features == rustc_feature_cfgs(&invocation.arguments)
+                }
+        });
+        let Some(invocation) = candidates.next() else {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "Cargo compiler artifact for `{}` has no exact rustc invocation",
+                artifact.target.name
+            )));
+        };
+        if candidates.next().is_some() {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "Cargo compiler artifact for `{}` has ambiguous rustc invocations",
+                artifact.target.name
+            )));
+        }
+        matched.push(Matched { invocation, artifact });
+    }
+    let mut artifact_units = BTreeMap::new();
+    for (index, item) in matched.iter().enumerate() {
+        for filename in &item.artifact.filenames {
+            artifact_units.insert(filename.to_string_lossy().to_string(), index);
+        }
+    }
+    let mut units = Vec::new();
+    let mut roots = Vec::new();
+    for (index, item) in matched.iter().enumerate() {
+        let invocation = item.invocation;
+        let artifact = item.artifact;
+        let crate_types = argument_values(&invocation.arguments, "--crate-type");
+        let mode = if artifact.profile.test { "test" } else { "build" }.to_string();
+        let dependencies = extern_arguments(&invocation.arguments)
+            .into_iter()
+            .filter_map(|(alias, path)| artifact_units.get(&path).map(|child| (alias, *child)))
+            .map(|(alias, child)| CargoUnitGraphDependency {
+                index: child,
+                extern_crate_name: Some(alias),
+            })
+            .collect();
+        let custom_build = artifact.target.kind.iter().any(|kind| kind == "custom-build");
+        if invocation.environment.contains_key("CARGO_PRIMARY_PACKAGE") && !custom_build {
+            roots.push(index);
+        }
+        units.push(CargoUnitGraphUnit {
+            pkg_id: artifact.package_id.clone(),
+            target: CargoUnitGraphTarget {
+                kind: artifact.target.kind.clone(),
+                crate_types,
+                name: artifact.target.name.clone(),
+                src_path: artifact.target.src_path.clone(),
+                edition: argument_value(&invocation.arguments, "--edition")
+                    .unwrap_or("2015")
+                    .to_string(),
+            },
+            mode: if custom_build {
+                "run-custom-build".to_string()
+            } else {
+                mode
+            },
+            platform: argument_value(&invocation.arguments, "--target").map(ToString::to_string),
+            features: rustc_feature_cfgs(&invocation.arguments),
+            dependencies,
+        });
+    }
+    for record in &build_scripts {
+        let custom = units
+            .iter()
+            .enumerate()
+            .filter(|(_, unit)| {
+                unit.pkg_id == record.package_id && unit.target.kind.iter().any(|kind| kind == "custom-build")
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let [custom] = custom.as_slice() else {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "build-script facts for `{}` cannot bind to one exact compiled custom-build unit",
+                record.package_id
+            )));
+        };
+        let out_dir = record.out_dir.to_string_lossy();
+        let mut bound = false;
+        for (index, item) in matched.iter().enumerate() {
+            if item.artifact.package_id == record.package_id
+                && item
+                    .invocation
+                    .environment
+                    .get("OUT_DIR")
+                    .is_some_and(|value| value == out_dir.as_ref())
+            {
+                units[index].dependencies.push(CargoUnitGraphDependency {
+                    index: *custom,
+                    extern_crate_name: None,
+                });
+                bound = true;
+            }
+        }
+        if !bound {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "build-script facts for `{}` match no exact consumer OUT_DIR",
+                record.package_id
+            )));
+        }
+    }
+    capture_legacy_cargo_selected_units(
+        &CargoUnitGraph {
+            version: 1,
+            units,
+            roots,
+        },
+        metadata,
+        outputs,
+    )
+}
+
+fn argument_value<'a>(arguments: &'a [String], name: &str) -> Option<&'a str> {
+    arguments
+        .windows(2)
+        .find(|pair| pair[0] == name)
+        .map(|pair| pair[1].as_str())
+        .or_else(|| {
+            arguments
+                .iter()
+                .find_map(|argument| argument.strip_prefix(&format!("{name}=")))
+        })
+}
+
+fn argument_values(arguments: &[String], name: &str) -> Vec<String> {
+    arguments
+        .windows(2)
+        .filter(|pair| pair[0] == name)
+        .flat_map(|pair| pair[1].split(','))
+        .chain(
+            arguments
+                .iter()
+                .filter_map(|argument| argument.strip_prefix(&format!("{name}="))),
+        )
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn extern_arguments(arguments: &[String]) -> Vec<(String, String)> {
+    argument_values(arguments, "--extern")
+        .into_iter()
+        .filter_map(|value| {
+            value
+                .split_once('=')
+                .map(|(alias, path)| (alias.to_string(), path.to_string()))
+        })
+        .collect()
+}
+
+fn rustc_feature_cfgs(arguments: &[String]) -> Vec<String> {
+    let mut features = argument_values(arguments, "--cfg")
+        .into_iter()
+        .filter_map(|cfg| {
+            cfg.strip_prefix("feature=\"")
+                .and_then(|value| value.strip_suffix('"'))
+                .map(ToString::to_string)
+        })
+        .collect::<Vec<_>>();
+    features.sort();
+    features.dedup();
+    features
+}
 
 /// Publisher-only physical facts for one Cargo selected-unit graph.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -653,6 +891,51 @@ mod tests {
         );
         assert_eq!(artifacts.len(), 2);
         assert!(staging.join(&retained.relative_root).join("generated.rs").is_file());
+        Ok(())
+    }
+
+    #[test]
+    fn stable_trace_binds_exact_extern_path_to_compiled_child() -> Result<(), Box<dyn std::error::Error>> {
+        let metadata = serde_json::from_value::<CargoMetadata>(serde_json::json!({
+            "packages": [
+                {"id": "root 1.0.0", "name": "root", "version": "1.0.0", "manifest_path": "/fixture/root/Cargo.toml"},
+                {"id": "dep 2.0.0", "name": "dep", "version": "2.0.0", "manifest_path": "/fixture/dep/Cargo.toml"}
+            ]
+        }))?;
+        let records = [
+            serde_json::json!({
+                "reason": "compiler-artifact", "package_id": "dep 2.0.0",
+                "target": {"name": "dep", "kind": ["lib"], "src_path": "/fixture/dep/src/lib.rs"},
+                "features": [], "filenames": ["/target/libdep-sealed.rlib"], "profile": {"test": false}
+            }),
+            serde_json::json!({
+                "reason": "incan-rustc-invocation", "rustc": "/toolchain/rustc",
+                "arguments": ["--crate-name", "dep", "--crate-type", "lib", "--edition", "2021", "/fixture/dep/src/lib.rs"],
+                "environment": {"CARGO_MANIFEST_DIR": "/fixture/dep", "CARGO_PKG_NAME": "dep", "CARGO_PKG_VERSION": "2.0.0"}
+            }),
+            serde_json::json!({
+                "reason": "compiler-artifact", "package_id": "root 1.0.0",
+                "target": {"name": "root", "kind": ["bin"], "src_path": "/fixture/root/src/main.rs"},
+                "features": [], "filenames": ["/target/root"], "profile": {"test": false}
+            }),
+            serde_json::json!({
+                "reason": "incan-rustc-invocation", "rustc": "/toolchain/rustc",
+                "arguments": ["--crate-name", "root", "--crate-type", "bin", "--edition", "2024", "--extern", "dep=/target/libdep-sealed.rlib", "/fixture/root/src/main.rs"],
+                "environment": {"CARGO_MANIFEST_DIR": "/fixture/root", "CARGO_PKG_NAME": "root", "CARGO_PKG_VERSION": "1.0.0", "CARGO_PRIMARY_PACKAGE": "1"}
+            }),
+        ];
+        let mut stdout = Vec::new();
+        for record in records {
+            stdout.extend_from_slice(&serde_json::to_vec(&record)?);
+            stdout.push(b'\n');
+        }
+        let capture = capture_legacy_cargo_selected_units_from_trace(&metadata, &[CargoInvocationOutput { stdout }])?;
+        assert_eq!(capture.roots, [1]);
+        assert_eq!(capture.units[1].dependencies[0].unit_index, 0);
+        assert_eq!(
+            capture.units[1].dependencies[0].extern_crate_name.as_deref(),
+            Some("dep")
+        );
         Ok(())
     }
 }
