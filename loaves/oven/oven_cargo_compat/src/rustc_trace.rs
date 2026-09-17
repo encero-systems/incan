@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use super::OvenLegacyCargoError;
 
+/// Trace file selected by the explicit compatibility publisher for its wrapper subprocesses.
 pub const OVEN_RUSTC_TRACE_PATH_ENV: &str = "INCAN_OVEN_RUSTC_TRACE_PATH";
+/// Marker that makes the `incan` or `oven` executable dispatch the rustc wrapper protocol before CLI parsing.
 pub const OVEN_RUSTC_TRACE_WRAPPER_ENV: &str = "INCAN_OVEN_RUSTC_TRACE_WRAPPER";
 const MAX_RUSTC_TRACE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_RUSTC_TRACE_RECORD_BYTES: usize = 1024 * 1024;
@@ -20,9 +22,13 @@ const MAX_RUSTC_TRACE_RECORDS: usize = 100_000;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OvenLegacyRustcInvocation {
+    /// Stable discriminator used when the record is mixed into Cargo's JSON message stream.
     pub reason: String,
+    /// Exact compiler executable invoked by Cargo, later checked against the publisher request.
     pub rustc: String,
+    /// Ordered rustc arguments, excluding the compiler executable itself.
     pub arguments: Vec<String>,
+    /// Allowlisted Cargo compilation context needed to bind the invocation to a package and physical variant.
     pub environment: BTreeMap<String, String>,
 }
 

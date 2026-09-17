@@ -1151,10 +1151,10 @@ pub fn prepare_direct_rustc_plan(
     let target = staging.join("target");
     let transient_limit = publisher_reservation.transient_limit_bytes;
     let reclaimed_store_entries = publisher_reservation.prune_report.removed_entries;
-    // Normal release publication uses stable Cargo. `--unit-graph` is an unstable Cargo interface and must remain
-    // confined to the separately provisioned compiler-suite producer. The stable JSON artifact and build-script
-    // stream below remains publication authority; selected-graph capture stays absent until its physical adapter
-    // can derive exact unit edges without adding a nightly requirement to installed release tooling.
+    // Normal release publication uses stable Cargo. `--unit-graph` is an unstable Cargo interface and remains
+    // confined to the separately provisioned compiler-suite producer. The stable publisher instead joins Cargo's
+    // artifact/build-script messages to exact successful rustc invocations, retaining physical unit edges without
+    // adding a nightly requirement to installed release tooling.
     let cargo_outputs = run_legacy_cargo(
         &request.cargo,
         &request.rustc,
@@ -2332,8 +2332,10 @@ fn run_legacy_cargo(
     )?;
     let mut outputs = vec![first];
     if publication_kind == OvenLegacyCargoPublicationKind::LibraryTests {
-        // The same explicit publisher also materializes the compiler CLI and its own library so normal test setup can
-        // bake it through direct rustc. No normal test command receives this Cargo authority or target path.
+        // The same explicit publisher also materializes the compiler CLI and its own library in the first call's
+        // target. Cargo can report the already-built closure as fresh here; the capture accepts those records only
+        // because the earlier output in this returned transaction retains their exact traced invocations. No normal
+        // test command receives this Cargo authority or target path.
         outputs.push(run_legacy_cargo_invocation(
             cargo,
             rustc,
