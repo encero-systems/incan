@@ -220,8 +220,19 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
                 .get("CARGO_CRATE_NAME")
                 .map(String::as_str)
                 .unwrap_or("<absent>");
+            let package = invocation
+                .environment
+                .get("CARGO_PKG_NAME")
+                .map(String::as_str)
+                .unwrap_or("<absent>");
+            let arguments = invocation
+                .arguments
+                .iter()
+                .take(32)
+                .map(|argument| argument.chars().take(256).collect::<String>())
+                .collect::<Vec<_>>();
             return Err(OvenLegacyCargoError::Plan(format!(
-                "stable rustc invocation {index} for crate `{crate_name}` (Cargo crate `{cargo_crate}`) has no Cargo artifact or bounded build-script tool-probe identity"
+                "stable rustc invocation {index} for crate `{crate_name}` (Cargo crate `{cargo_crate}`, package `{package}`) has no Cargo artifact or bounded build-script tool-probe identity; arguments: {arguments:?}"
             )));
         };
         let probe_package = packages
