@@ -1737,10 +1737,12 @@ mod tests {
     use oven_model::manifest::{DependencySource, DependencySpec};
 
     use super::{
-        OvenCompilerSuiteRequest, OvenGeneratedProjectRequest, OvenImportRequest, OvenProviderHookError,
-        OvenProviderHooks, OvenReceipt, default_receipt_path, digest_bytes, generated_project_source_evidence,
-        import_frozen_project, receipt_generated_project, receipt_generated_project_with_source_evidence,
-        receipt_native_compiler_suite, receipt_with_build_unit_input, receipt_without_build_unit_input, write_receipt,
+        OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT, OvenCompilerSuiteRequest, OvenError,
+        OvenGeneratedProjectRequest, OvenImportRequest, OvenProviderHookError, OvenProviderHooks, OvenReceipt,
+        default_receipt_path, digest_bytes, generated_project_source_evidence, import_frozen_project,
+        receipt_generated_project, receipt_generated_project_with_source_evidence, receipt_native_compiler_suite,
+        receipt_with_build_unit_input, receipt_with_compiler_support_root_intent, receipt_without_build_unit_input,
+        write_receipt,
     };
 
     /// A hook that fails the way a compiler would, with its own typed error behind the hook error.
@@ -2101,6 +2103,12 @@ mod tests {
         assert_eq!(final_receipt.project, capture.project);
         assert_eq!(final_receipt.intent, capture.intent);
         assert_eq!(final_receipt.compatibility, capture.compatibility);
+        let mut expected_sources = capture.sources.clone();
+        expected_sources.build_unit_inputs.insert(
+            OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT.to_string(),
+            "sha256:compiler-root-intent".to_string(),
+        );
+        assert_eq!(final_receipt.sources, expected_sources);
         assert_eq!(
             final_receipt.sources.supplemental_digests,
             capture.sources.supplemental_digests
