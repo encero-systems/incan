@@ -1562,6 +1562,8 @@ mod tests {
         fs::create_dir_all(&staged_compiled_root)?;
         fs::create_dir_all(&toolchain_root)?;
         write_materialization_fixture(foundation_source.path(), &toolchain_root)?;
+        fs::create_dir_all(toolchain_root.join("bin"))?;
+        fs::write(toolchain_root.join("bin/rustc"), b"rustc")?;
         write_foundation_materialization_fixture(&staged_compiled_root, compiled_toolchain.path())?;
 
         let mut foundation = foundation()?;
@@ -1652,6 +1654,15 @@ mod tests {
             physical_bytes: compiled_physical_bytes,
             path: generation_relative.join(compiled_relative).join("loaf.json"),
         };
+        let mut toolchain_paths = Vec::new();
+        crate::loaf::collect_regular_member_paths(&toolchain_root, &toolchain_root, &mut toolchain_paths)?;
+        let toolchain_members = toolchain_paths
+            .into_iter()
+            .map(|relative_path| {
+                let digest = digest_bytes(&fs::read(toolchain_root.join(&relative_path))?);
+                Ok(crate::loaf::OvenReleaseToolchainMember { relative_path, digest })
+            })
+            .collect::<Result<Vec<_>, std::io::Error>>()?;
         let runtime_member = OvenReleaseRuntimeFoundationMember {
             schema_version: OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION,
             label: OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL.to_string(),
@@ -1661,6 +1672,7 @@ mod tests {
             compiled_plan_identity: plan_identity,
             toolchain_owner_identity: toolchain_owner(),
             toolchain_root_relative_path: "toolchain".into(),
+            toolchain_members,
         };
         let mut evidence = BTreeMap::new();
         bind_release_runtime_foundation_evidence(&mut evidence, &runtime_member)?;
@@ -1705,6 +1717,15 @@ mod tests {
             acquire_committed_release_runtime_foundation(output.path(), OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL)?
                 .ok_or("runtime foundation was not acquired")?;
         assert_eq!(held.asset.foundation_identity(), asset.foundation_identity);
+        drop(held);
+        fs::write(
+            output.path().join(&generation_relative).join("toolchain/bin/rustc"),
+            b"tampered",
+        )?;
+        assert!(
+            acquire_committed_release_runtime_foundation(output.path(), OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL)
+                .is_err()
+        );
         let exclusive = fs::File::open(output.path().join(OVEN_LOAF_ENVELOPE_LOCK_FILE))?;
         assert!(matches!(exclusive.try_lock(), Err(fs::TryLockError::WouldBlock)));
         drop(held);

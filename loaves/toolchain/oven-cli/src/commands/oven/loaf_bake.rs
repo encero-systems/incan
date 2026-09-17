@@ -23,7 +23,7 @@ use oven_cargo_compat::{
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::loaf::{
     OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION, OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenLoaf,
-    OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember,
+    OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember, OvenReleaseToolchainMember,
 };
 use oven_rustc::rustc::{OvenRuntimeFoundationAsset, publish_runtime_foundation_asset};
 use oven_store::process::{BoundedProcessLimits, BoundedProcessTermination, run_bounded_process};
@@ -655,6 +655,24 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         let toolchain_root = staged_root.join(&toolchain_relative);
         fs::create_dir_all(&toolchain_root)
             .map_err(|error| CliError::failure(format!("could not create retained Rust toolchain root: {error}")))?;
+        let retained_rustc = PathBuf::from("bin/rustc");
+        let retained_rustc_path = toolchain_root.join(&retained_rustc);
+        fs::create_dir_all(
+            retained_rustc_path
+                .parent()
+                .ok_or_else(|| CliError::failure("retained Rust compiler path has no parent".to_string()))?,
+        )
+        .map_err(|error| CliError::failure(format!("could not create retained Rust compiler directory: {error}")))?;
+        let rustc_bytes = fs::read(&options.rustc)
+            .map_err(|error| CliError::failure(format!("could not read the selected Rust compiler: {error}")))?;
+        fs::copy(&options.rustc, &retained_rustc_path)
+            .map_err(|error| CliError::failure(format!("could not retain the selected Rust compiler: {error}")))?;
+        let retained_selection = PathBuf::from("selection.json");
+        let selection_bytes = serde_json::to_vec(&finalized.graph.graph().selection)
+            .map_err(|error| CliError::failure(format!("could not encode retained Rust selection: {error}")))?;
+        fs::write(toolchain_root.join(&retained_selection), &selection_bytes).map_err(|error| {
+            CliError::failure(format!("could not retain the selected Rust target evidence: {error}"))
+        })?;
         let foundation_relative = PathBuf::from("runtime-foundations/rust-policy-foundation");
         let admitted = publish_runtime_foundation_asset(
             asset,
@@ -672,6 +690,16 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             compiled_plan_identity: final_entry.result.plan_identity.clone(),
             toolchain_owner_identity: evidence.rustc_identity.clone(),
             toolchain_root_relative_path: toolchain_relative,
+            toolchain_members: vec![
+                OvenReleaseToolchainMember {
+                    relative_path: retained_rustc,
+                    digest: oven_store::digest_bytes(&rustc_bytes),
+                },
+                OvenReleaseToolchainMember {
+                    relative_path: retained_selection,
+                    digest: oven_store::digest_bytes(&selection_bytes),
+                },
+            ],
         })
     } else {
         None

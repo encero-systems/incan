@@ -39,7 +39,7 @@ pub const OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION: u32 = 4;
 /// Wire schema for an optional generic store member embedded beside one Loaf generation.
 pub const OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION: u32 = 1;
 /// Wire schema for a runtime foundation bound to one compiled release Loaf.
-pub const OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION: u32 = 1;
+pub const OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION: u32 = 2;
 /// Stable release-envelope label for the runtime foundation carrier.
 pub const OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL: &str = "rust-policy-foundation";
 pub use oven_model::compiler_suite_env::OVEN_LOAF_ENV;
@@ -227,6 +227,18 @@ pub struct OvenReleaseRuntimeFoundationMember {
     pub toolchain_owner_identity: String,
     /// Safe generation-relative directory holding that Toolchain owner's physical members.
     pub toolchain_root_relative_path: PathBuf,
+    /// Exact compiler-owned regular files retained below `toolchain_root_relative_path`.
+    pub toolchain_members: Vec<OvenReleaseToolchainMember>,
+}
+
+/// One digest-verified compiler-owned member retained for runtime foundation materialization.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenReleaseToolchainMember {
+    /// Safe path relative to the retained Toolchain root.
+    pub relative_path: PathBuf,
+    /// SHA-256 identity of the exact retained bytes.
+    pub digest: String,
 }
 
 /// Return the canonical descriptor digest publishers include in release compatibility evidence.
@@ -279,8 +291,21 @@ pub fn validate_release_runtime_foundation_member(
         || !canonical_sha256_identity(&member.toolchain_owner_identity)
         || !safe_generation_relative_path(&member.foundation_relative_path)
         || !safe_generation_relative_path(&member.toolchain_root_relative_path)
+        || member.toolchain_members.is_empty()
     {
         return Err("runtime-foundation member has incomplete identity or unsafe paths".to_string());
+    }
+    let mut prior = None;
+    for toolchain_member in &member.toolchain_members {
+        if !safe_generation_relative_path(&toolchain_member.relative_path)
+            || !canonical_sha256_identity(&toolchain_member.digest)
+            || prior
+                .as_ref()
+                .is_some_and(|path| path >= &toolchain_member.relative_path)
+        {
+            return Err("runtime-foundation Toolchain members are unsafe or not canonical".to_string());
+        }
+        prior = Some(toolchain_member.relative_path.clone());
     }
     if member
         .foundation_relative_path
@@ -351,6 +376,43 @@ pub fn prove_release_runtime_foundation_member(
             message: "runtime-foundation member resolves outside its held generation".to_string(),
         });
     }
+    let mut retained_paths = Vec::new();
+    collect_regular_member_paths(&canonical_toolchain, &canonical_toolchain, &mut retained_paths)?;
+    if retained_paths
+        != member
+            .toolchain_members
+            .iter()
+            .map(|candidate| candidate.relative_path.clone())
+            .collect::<Vec<_>>()
+    {
+        return Err(OvenLoafError::InvalidLoaf {
+            path: canonical_toolchain.clone(),
+            message: "retained Toolchain directory does not exactly match its declared members".to_string(),
+        });
+    }
+    for toolchain_member in &member.toolchain_members {
+        let path = canonical_toolchain.join(&toolchain_member.relative_path);
+        let canonical = fs::canonicalize(&path).map_err(|source| OvenLoafError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        let metadata = fs::symlink_metadata(&path).map_err(|source| OvenLoafError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        if !canonical.starts_with(&canonical_toolchain)
+            || !metadata.file_type().is_file()
+            || digest_bytes(&fs::read(&canonical).map_err(|source| OvenLoafError::Io {
+                path: canonical.clone(),
+                source,
+            })?) != toolchain_member.digest
+        {
+            return Err(OvenLoafError::InvalidLoaf {
+                path,
+                message: "retained Toolchain member identity does not match its descriptor".to_string(),
+            });
+        }
+    }
     let admitted =
         crate::rustc::admit_runtime_foundation_asset_for_publication(&canonical_foundation, &canonical_toolchain)
             .map_err(|error| OvenLoafError::Preparation {
@@ -407,6 +469,50 @@ pub fn prove_release_runtime_foundation_member(
         });
     }
     Ok(materialized)
+}
+
+/// Enumerate one retained member tree without following links or admitting special files.
+pub(crate) fn collect_regular_member_paths(
+    root: &Path,
+    directory: &Path,
+    members: &mut Vec<PathBuf>,
+) -> Result<(), OvenLoafError> {
+    let mut entries = fs::read_dir(directory)
+        .map_err(|source| OvenLoafError::Io {
+            path: directory.to_path_buf(),
+            source,
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|source| OvenLoafError::Io {
+            path: directory.to_path_buf(),
+            source,
+        })?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(|source| OvenLoafError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        if file_type.is_dir() {
+            collect_regular_member_paths(root, &path, members)?;
+        } else if file_type.is_file() {
+            members.push(
+                path.strip_prefix(root)
+                    .map_err(|_| OvenLoafError::InvalidLoaf {
+                        path: path.clone(),
+                        message: "retained Toolchain member is outside its root".to_string(),
+                    })?
+                    .to_path_buf(),
+            );
+        } else {
+            return Err(OvenLoafError::InvalidLoaf {
+                path,
+                message: "retained Toolchain tree contains a link or special file".to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Return whether one externally stored identity is a canonical lowercase SHA-256 digest.
@@ -3003,6 +3109,10 @@ mod tests {
             compiled_plan_identity: compiled.plan_identity.clone(),
             toolchain_owner_identity: digest_bytes(b"toolchain-owner"),
             toolchain_root_relative_path: PathBuf::from("runtime-foundation/toolchain"),
+            toolchain_members: vec![OvenReleaseToolchainMember {
+                relative_path: PathBuf::from("bin/rustc"),
+                digest: digest_bytes(b"rustc"),
+            }],
         };
         let mut evidence = BTreeMap::new();
         bind_release_runtime_foundation_evidence(&mut evidence, &member)?;

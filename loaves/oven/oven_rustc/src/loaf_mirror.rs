@@ -22,8 +22,8 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::loaf::{
     OvenLoaf, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafMemberRole, OvenReleaseRuntimeFoundationMember,
-    OvenReleaseStoreMember, commit_loaf_generation, prove_release_runtime_foundation_member,
-    prove_release_store_member_payload, validate_stored_loaf,
+    OvenReleaseStoreMember, OvenReleaseToolchainMember, commit_loaf_generation,
+    prove_release_runtime_foundation_member, prove_release_store_member_payload, validate_stored_loaf,
 };
 use oven_store::digest_source_tree;
 
@@ -677,6 +677,10 @@ mod tests {
             compiled_plan_identity: compiled.plan_identity.clone(),
             toolchain_owner_identity: digest_bytes(b"toolchain owner"),
             toolchain_root_relative_path: PathBuf::from("runtime-foundation/toolchain"),
+            toolchain_members: vec![OvenReleaseToolchainMember {
+                relative_path: PathBuf::from("bin/rustc"),
+                digest: digest_bytes(b"rustc"),
+            }],
         };
         manifest.runtime_foundation = Some(OvenReleaseRuntimeFoundationMember {
             foundation_identity: digest_bytes(b"swapped foundation"),
