@@ -42,6 +42,7 @@ The RFC lifecycle has four statuses. Different sections are required — or forb
 ## Checklist 1 — Structural completeness (all statuses)
 
 - [ ] Header block present with all eight fields: Status, Created, Author(s), Related, Issue, RFC PR, Written against, Shipped in.
+- [ ] `RFC PR` is `—` unless implementation PRs exist. Every linked PR implements RFC scope; proposal PRs and documentation-only PRs must not appear in this field. Verify the linked PR changes rather than inferring implementation from its title.
 - [ ] `Written against:` reflects the Incan version that was current when the RFC was authored (never a future or planned version).
 - [ ] `Shipped in:` is `—` for Draft/Planned/In Progress; only filled for Done.
 - [ ] Sections follow canonical order: Summary → (Core model) → Motivation → Goals → Non-Goals → Guide-level explanation → Reference-level explanation → Design details → Alternatives considered → Drawbacks → (Implementation architecture) → **Layers affected** → (Implementation Plan + Checklist, In Progress/Done only) → **Design Decisions** / **Unresolved questions** (Draft: one or both, any order; **Planned+ rule** after that).

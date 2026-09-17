@@ -11,8 +11,8 @@
     - RFC 096 (declaration metadata blocks)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
-- **Issue:** https://github.com/encero-systems/incan/issues/663
-- **RFC PR:** -
+- **Issue:** [#663](https://github.com/encero-systems/incan/issues/663)
+- **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
 - **Shipped in:** —
 
@@ -233,6 +233,10 @@ Suggestions must be phrased as advice, not certainty. Risks must name the common
 Category, confidence, priority, profile, suppression, and baseline state shape presentation and policy. They must not be used as hidden reasons to drop evidence-backed findings before output unless the user selected a profile, suppression, or baseline that explicitly hides them.
 
 Findings must be de-duplicated before output. Identical findings produced through multiple import roots must appear once.
+
+### Investigation consumers
+
+RFC 126 proposes evidence-backed investigations that may reference Architect findings when forming and testing hypotheses. A finding remains advisory evidence about a rule match; its priority and confidence do not establish the cause of a runtime failure. An investigation must retain the finding's source snapshot, rule identity, evidence, and counterexample risks separately from its execution observations. Architect does not acquire process-control, experiment-execution, or automatic-repair responsibilities through this integration.
 
 ### Rule categories
 
