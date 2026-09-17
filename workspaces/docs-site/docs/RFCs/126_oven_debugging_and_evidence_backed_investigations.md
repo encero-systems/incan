@@ -15,7 +15,7 @@
     - RFC 116, RFC 117, RFC 118, and RFC 119 (foreign boundaries and Oven operational authority)
     - RFC 120, RFC 121, RFC 123, and RFC 124 (source, type, executable, and compiled-unit identity)
 - **Issue:** [#1638](https://github.com/encero-systems/incan/issues/1638)
-- **RFC PR:** —
+- **RFC PR:** [#1645](https://github.com/encero-systems/incan/pull/1645)
 - **Written against:** v0.6.0-dev.4
 - **Shipped in:** —
 
