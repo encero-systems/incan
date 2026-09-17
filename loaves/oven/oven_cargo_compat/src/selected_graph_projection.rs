@@ -516,9 +516,10 @@ fn projected_build_script_facts(
         if !is_build_script_unit(build_unit) {
             continue;
         }
-        let facts = build_unit
+        let facts = dependency
             .build_script
             .as_ref()
+            .or(build_unit.build_script.as_ref())
             .ok_or_else(|| projection_error("selected build-script unit", "has no structured retained facts"))?;
         let edge = (consumer, dependency.unit_index);
         let binding = sealed.build_scripts.get(&edge).cloned().unwrap_or_default();
@@ -902,6 +903,7 @@ mod tests {
         Ok(OvenLegacyCargoSelectedUnitCapture {
             roots: vec![0],
             rustc_invocations_observed: true,
+            build_script_tool_probes: Vec::new(),
             compiler: Some(super::super::OvenLegacyCargoSelectedCompilerContext {
                 host: "x86_64-unknown-linux-gnu".to_string(),
                 target: "x86_64-unknown-linux-gnu".to_string(),
@@ -1147,6 +1149,7 @@ mod tests {
             .push(super::super::OvenLegacyCargoSelectedDependency {
                 unit_index: 1,
                 extern_crate_name: None,
+                build_script: None,
             });
         capture.units.push(OvenLegacyCargoSelectedUnit {
             package_id: "registry+https://example.invalid/index#serde@1.0.0".to_string(),
@@ -1234,6 +1237,7 @@ mod tests {
             .push(super::super::OvenLegacyCargoSelectedDependency {
                 unit_index: 1,
                 extern_crate_name: None,
+                build_script: None,
             });
         capture.units.push(OvenLegacyCargoSelectedUnit {
             package_id: "registry+https://example.invalid/index#serde@1.0.0".to_string(),
