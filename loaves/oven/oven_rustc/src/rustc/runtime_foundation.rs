@@ -683,8 +683,7 @@ mod tests {
         OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetUnit,
         OvenSelectedRustFacetUnitRole,
     };
-    use fs2::FileExt;
-    use oven_store::OvenBuildIntent;
+    use oven_store::{OvenBuildIntent, digest_bytes};
 
     use crate::loaf::{
         OVEN_LOAF_ENVELOPE_LOCK_FILE, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION,
@@ -1598,12 +1597,9 @@ mod tests {
                 .ok_or("runtime foundation was not acquired")?;
         assert_eq!(held.asset.foundation_identity(), asset.foundation_identity);
         let exclusive = fs::File::open(output.path().join(OVEN_LOAF_ENVELOPE_LOCK_FILE))?;
-        assert!(matches!(
-            exclusive.try_lock_exclusive(),
-            Err(fs::TryLockError::WouldBlock)
-        ));
+        assert!(matches!(exclusive.try_lock(), Err(fs::TryLockError::WouldBlock)));
         drop(held);
-        exclusive.try_lock_exclusive()?;
+        exclusive.try_lock()?;
         drop(exclusive);
 
         let descriptor_path = output

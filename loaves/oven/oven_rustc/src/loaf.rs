@@ -64,7 +64,7 @@ pub const OVEN_NO_IMPLICIT_DEPENDENCY_BUILD: &str = "will not compile them for y
 pub const OVEN_SOURCE_COMPILER_VOCAB_SUPPORT_BUILD_INPUT: &str = "source-compiler-vocab-support";
 const TOOLCHAIN_LOAF_RELATIVE_ROOT: &str = "share/incan/oven/loafs";
 pub static LOAF_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-const OVEN_LOAF_ENVELOPE_LOCK_FILE: &str = ".envelope.lock";
+pub(crate) const OVEN_LOAF_ENVELOPE_LOCK_FILE: &str = ".envelope.lock";
 
 /// Built-in compiler-owned Loaf set prepared by the explicit baker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2917,6 +2917,7 @@ mod tests {
         committed_loaf_paths, digest_runtime_crate_source, generation_directory_path, loaf_envelope_specifications,
         loaf_from_loaf, prove_release_store_member_payload, registry_source_dependencies_supported_by_catalog,
         select_most_specific_compatible_loaf, validate_loaf_declared_file_set,
+        validate_release_runtime_foundation_member,
     };
 
     #[cfg(unix)]
