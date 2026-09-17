@@ -225,7 +225,9 @@ pub fn materialize_selected_rust_facet_graph_with_supplemental_source_members(
             OvenMaterializedRustTarget::BuiltIn(target.clone())
         }
         super::OvenSelectedRustFacetTargetSpec::Custom { source, digest } => {
-            OvenMaterializedRustTarget::Custom(resolve_file(&owners, source, digest, "selected Rust target spec")?)
+            let path = resolve_file(&owners, source, digest, "selected Rust target spec")?;
+            validate_custom_target_spec(&path)?;
+            OvenMaterializedRustTarget::Custom(path)
         }
     };
     let compiled_identities = compiled_rust_unit_identities(selected, compiler_closure_digest)?;
@@ -332,6 +334,25 @@ pub fn materialize_selected_rust_facet_graph_with_supplemental_source_members(
         units,
         supplemental_source_roots,
     })
+}
+
+/// Require a custom target spec to be an actual JSON object before it can reach rustc.
+fn validate_custom_target_spec(path: &Path) -> Result<(), OvenRustcError> {
+    let bytes = fs::read(path).map_err(|source| OvenRustcError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let value = serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|error| OvenRustcError::InvalidInput {
+        field: "selected Rust target spec",
+        message: format!("is not valid JSON: {error}"),
+    })?;
+    if !value.is_object() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust target spec",
+            message: "must be a JSON object".to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// Validate and group admitted supplemental source members by their existing physical source root.
@@ -1244,6 +1265,21 @@ mod tests {
         assert!(unit.root_module.ends_with("src/lib.rs"));
         assert_eq!(unit.include_dirs, vec![unit.source_root.clone()]);
         assert!(unit.generated_inputs.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn custom_target_spec_refuses_invalid_json_before_compiler_execution() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("custom-target.json");
+        fs::write(&path, b"not json")?;
+        assert!(matches!(
+            validate_custom_target_spec(&path),
+            Err(OvenRustcError::InvalidInput {
+                field: "selected Rust target spec",
+                ..
+            })
+        ));
         Ok(())
     }
 

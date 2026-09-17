@@ -429,10 +429,9 @@ fn compile_rebuild_unit(
     artifact: &Path,
 ) -> Result<(), OvenRustcError> {
     let mut command = Command::new(closure.rustc());
+    command.args(["--crate-type", "lib"]);
+    append_compiler_target(&mut command, compiler_target);
     command
-        .args(["--crate-type", "lib"])
-        .arg("--target")
-        .arg(compiler_target)
         .arg(format!("--edition={}", unit.edition))
         .arg("--crate-name")
         .arg(&unit.crate_name)
@@ -514,6 +513,11 @@ fn append_materialized_sysroot_extern_arguments(command: &mut Command, sysroot_e
     for sysroot_extern in sysroot_externs {
         command.arg("--extern").arg(sysroot_extern);
     }
+}
+
+/// Append the exact already-materialized built-in triple or verified custom JSON path.
+fn append_compiler_target(command: &mut Command, compiler_target: &std::ffi::OsStr) {
+    command.arg("--target").arg(compiler_target);
 }
 
 /// Append ordered physically admitted linked-library inputs to one rustc invocation.
@@ -615,6 +619,18 @@ pub(crate) mod tests {
                 "-C",
                 "link-arg=admitted/libfirst.a",
             ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn custom_target_uses_the_exact_admitted_json_path() -> Result<(), Box<dyn std::error::Error>> {
+        let target = PathBuf::from("/sealed/toolchain/targets/custom.json");
+        let mut command = Command::new("rustc");
+        append_compiler_target(&mut command, target.as_os_str());
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [std::ffi::OsStr::new("--target"), target.as_os_str()]
         );
         Ok(())
     }
