@@ -22,7 +22,7 @@ description: Generate a PR description following the repository's pull request t
    - Internal architectural changes
    - Risks or breaking changes
 7. **Fill in the template** - Use the analysis to populate each section of the PR template.
-8. **Add issue reference** - If an issue number was found, append `Closes #<issue number>` at the end of the PR description.
+8. **Add issue reference** - If an issue number was found and the diff completes its verified scope, append `Closes #<issue number>` at the end of the PR description. Use `Refs #<issue number>` when the PR delivers only part of the issue.
 9. **Output the PR description** - Return the complete PR description in markdown format, ready to be used in a pull request.
 
 ## PR Template Location
@@ -67,7 +67,7 @@ If the template is not found, the skill uses the standard template structure.
 
 ## Output Format
 
-Return the PR description in markdown format, ready to be used in a pull request. Include all sections of the template, with checkboxes for items that need user verification. If an issue number was found, append `Closes #<issue number>` at the end of the PR description.
+Return the PR description in markdown format, ready to be used in a pull request. Include all sections of the template, with checkboxes for items that need user verification. If an issue number was found, close it only when the diff completes its verified scope; otherwise append `Refs #<issue number>`.
 
 For RFC-driven PRs, include the final RFC lifecycle state in the verification or docs section. If full RFC scope is implemented, the PR description should reference the RFC under `workspaces/docs-site/docs/RFCs/closed/implemented/`; if it is not, describe the remaining RFC checklist items instead of using a closing keyword that would close the issue.
 
