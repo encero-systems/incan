@@ -77,13 +77,25 @@ pub model Duration:
 
     @staticmethod
     def from_secs(secs: int) -> Duration:
-        """Create a duration from whole seconds."""
+        """
+        Create a nonnegative duration from whole seconds.
+
+        Nonpositive values produce zero. Positive integers retain their exact value.
+        """
+        if secs <= 0:
+            return Duration(secs=0, nanos=0)
         return Duration(secs=secs, nanos=0)
 
     @staticmethod
     def from_millis(millis: int) -> Duration:
-        """Create a duration from whole milliseconds."""
-        secs = int(millis / 1000)
+        """
+        Create a nonnegative duration from whole milliseconds.
+
+        Nonpositive values produce zero. Positive integers are decomposed exactly without floating-point conversion.
+        """
+        if millis <= 0:
+            return Duration(secs=0, nanos=0)
+        secs = millis // 1000
         nanos = (millis % 1000) * 1000000
         return Duration(secs=secs, nanos=nanos)
 
