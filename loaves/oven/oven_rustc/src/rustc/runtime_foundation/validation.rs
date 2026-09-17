@@ -162,6 +162,7 @@ pub(crate) fn validate_runtime_foundation_package_source(
     Ok(())
 }
 
+/// Validate an owner-relative portable package root, treating `.` as the owner root and rejecting traversal or platform-specific paths.
 fn portable_package_root_components(value: &str) -> Result<Vec<&str>, OvenRustcError> {
     if value == "." {
         return Ok(Vec::new());
