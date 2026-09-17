@@ -40,6 +40,7 @@ pub fn run_legacy_rustc_trace_wrapper() -> Option<i32> {
     Some(run_marked_rustc_trace_wrapper().unwrap_or(1))
 }
 
+/// Execute one already-marked wrapper request and fail closed on malformed protocol or trace persistence.
 fn run_marked_rustc_trace_wrapper() -> Result<i32, ()> {
     let trace = env::var_os(OVEN_RUSTC_TRACE_PATH_ENV).map(PathBuf::from).ok_or(())?;
     let mut arguments = env::args_os().skip(1);
@@ -106,6 +107,7 @@ fn run_marked_rustc_trace_wrapper() -> Result<i32, ()> {
     Ok(exit_code)
 }
 
+/// Validate a bounded wrapper trace and append its records to the matching Cargo JSON stream.
 pub(crate) fn append_rustc_trace(stdout: &mut Vec<u8>, trace: &Path) -> Result<(), OvenLegacyCargoError> {
     let file = match File::open(trace) {
         Ok(file) => file,
@@ -204,6 +206,7 @@ pub(crate) fn append_rustc_trace(stdout: &mut Vec<u8>, trace: &Path) -> Result<(
     Ok(())
 }
 
+/// Return whether Cargo reported at least one compiler artifact and explicitly marked every artifact fresh.
 fn cargo_output_is_entirely_fresh(stdout: &[u8]) -> bool {
     let mut artifacts = 0usize;
     for line in stdout.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
@@ -235,6 +238,7 @@ pub(crate) fn current_rustc_trace_wrapper() -> Result<Option<PathBuf>, OvenLegac
     Ok(matches!(stem, Some("incan" | "oven")).then_some(executable))
 }
 
+/// Return whether a publisher transaction contains at least one retained stable rustc invocation.
 pub(crate) fn outputs_have_rustc_trace(outputs: &[super::CargoInvocationOutput]) -> bool {
     outputs.iter().any(|output| {
         output.stdout.split(|byte| *byte == b'\n').any(|line| {
