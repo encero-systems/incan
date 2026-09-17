@@ -205,8 +205,15 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
         });
     }
     if let Some((index, _)) = used_invocations.iter().enumerate().find(|(_, used)| !**used) {
+        let invocation = &invocations[index];
+        let crate_name = argument_value(&invocation.arguments, "--crate-name").unwrap_or("<absent>");
+        let cargo_crate = invocation
+            .environment
+            .get("CARGO_CRATE_NAME")
+            .map(String::as_str)
+            .unwrap_or("<absent>");
         return Err(OvenLegacyCargoError::Plan(format!(
-            "stable rustc invocation {index} has no Cargo artifact"
+            "stable rustc invocation {index} for crate `{crate_name}` (Cargo crate `{cargo_crate}`) has no Cargo artifact"
         )));
     }
     let mut artifact_units = BTreeMap::new();
