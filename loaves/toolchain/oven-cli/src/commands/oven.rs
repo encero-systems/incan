@@ -46,9 +46,9 @@ use oven_cargo_compat::{
     OvenCompilerTestSuiteShardPayload, OvenCompilerTestSuiteShardReference, OvenCompilerTestSuiteToolchainDataPayload,
     OvenCompilerTestSuiteToolchainDataReference, OvenCompilerWorkspaceLibrary, OvenCompilerWorkspaceLibraryKey,
     OvenLegacyCargoCompilerSuiteResult, OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoInspectionSource,
-    OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind, OvenLegacyCargoSelectedUnitCapture,
-    legacy_cargo_inspection_sources, legacy_cargo_resolved_registry_sources, prepare_compiler_test_suite,
-    prepare_direct_rustc_plan, stage_locked_loaf_fixture,
+    OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind, legacy_cargo_inspection_sources,
+    legacy_cargo_resolved_registry_sources, prepare_compiler_test_suite, prepare_direct_rustc_plan,
+    stage_locked_loaf_fixture,
 };
 use oven_interop::{
     OvenInteropAdapter, OvenInteropAdapterStageRequest, OvenInteropCapabilitySelection, OvenInteropNativeBakeRequest,

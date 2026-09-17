@@ -7,14 +7,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use oven_rustc::rustc::{
-    OvenCompilerSupportRootIntentAuthority, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
-    OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDependency, OvenSelectedRustFacetDomain,
-    OvenSelectedRustFacetEnvironmentValue, OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph,
-    OvenSelectedRustFacetLinkedLibrary, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
-    OvenSelectedRustFacetPath, OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource,
-    OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetUnit,
-    OvenSelectedRustFacetUnitRole, ValidatedOvenSelectedRustFacetGraph, bind_compiler_support_root_intents,
-    selected_graph_unit_identity,
+    OvenCompilerSupportRootIntentAuthority, OvenRustcRegistrySourcePackage, OvenSelectedRustFacetCrateKind,
+    OvenSelectedRustFacetDependency, OvenSelectedRustFacetDomain, OvenSelectedRustFacetEnvironmentValue,
+    OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph, OvenSelectedRustFacetLinkedLibrary,
+    OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath,
+    OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind,
+    OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole,
+    ValidatedOvenSelectedRustFacetGraph, bind_compiler_support_root_intents, selected_graph_unit_identity,
 };
 use oven_store::OvenReceipt;
 use serde::Serialize;
@@ -854,6 +853,7 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
+    use oven_rustc::rustc::OvenRustcRegistrySource;
     use oven_rustc::rustc::{
         OvenCompilerSupportRootIntent, OvenCompilerSupportRootIntentAuthority, OvenSelectedRustFacetCfgSnapshot,
         OvenSelectedRustFacetIntent, OvenSelectedRustFacetPurpose, OvenSelectedRustFacetTargetSpec,
