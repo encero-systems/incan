@@ -1604,6 +1604,20 @@ mod tests {
         ));
         drop(held);
         exclusive.try_lock_exclusive()?;
+        drop(exclusive);
+
+        let descriptor_path = output
+            .path()
+            .join(&generation_relative)
+            .join("runtime-foundation")
+            .join(OVEN_RUNTIME_FOUNDATION_ASSET_FILENAME);
+        let mut tampered: OvenRuntimeFoundationAsset = serde_json::from_slice(&fs::read(&descriptor_path)?)?;
+        tampered.foundation_identity = digest_bytes(b"tampered foundation identity");
+        fs::write(&descriptor_path, serde_json::to_vec(&tampered)?)?;
+        assert!(
+            acquire_committed_release_runtime_foundation(output.path(), OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL,)
+                .is_err()
+        );
         Ok(())
     }
 
