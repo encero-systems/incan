@@ -30,7 +30,8 @@ venv/
 env/
 dist/
 build/
-!src/driver/build/
+# The driver's build pipeline is a source directory named `build`, not build output.
+!loaves/compiler/incan_driver/src/build/
 
 # Node.js / VS Code extension (editors/vscode)
 node_modules/
