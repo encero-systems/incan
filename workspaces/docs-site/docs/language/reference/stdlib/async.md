@@ -23,11 +23,11 @@ from std.async.time import sleep, sleep_ms, timeout, timeout_ms, timeout_join, t
 
 | Signature | Contract |
 | --- | --- |
-| `async sleep(seconds: float) -> None` | Suspends for `seconds`. Negative, non-finite, and not-a-number values are treated as zero. The wait is cancel-safe. |
+| `async sleep(seconds: float) -> None` | Suspends for `seconds`. Negative values, NaN, and either infinity are treated as zero. The wait is cancel-safe. |
 | `async sleep_ms(milliseconds: int) -> None` | Suspends for `milliseconds`. Negative values are treated as zero. The wait is cancel-safe. |
-| `async timeout[T with (Send, Static), TaskFuture with RuntimeFuture[T]](seconds: float, task: TaskFuture) -> Result[T, TimeoutError]` | Returns `Ok(value)` when `task` finishes before the deadline and `Err(TimeoutError())` when the deadline expires. Expiry or cancellation drops the supplied future. |
+| `async timeout[T with (Send, Static), TaskFuture with RuntimeFuture[T]](seconds: float, task: TaskFuture) -> Result[T, TimeoutError]` | Returns `Ok(value)` when `task` finishes before the deadline and `Err(TimeoutError())` when the deadline expires. Negative values, NaN, and either infinity are treated as zero. Expiry or cancellation drops the supplied future. |
 | `async timeout_ms[T with (Send, Static), TaskFuture with RuntimeFuture[T]](milliseconds: int, task: TaskFuture) -> Result[T, TimeoutError]` | Millisecond form of `timeout`. Negative durations are treated as zero. |
-| `async timeout_join[T with (Send, Static)](seconds: float, handle: JoinHandle[T]) -> TimeoutJoinOutcome[T]` | Waits for spawned work without aborting it at the deadline. A timeout returns the live handle. Cancelling this wait drops its owned handle and detaches the task. |
+| `async timeout_join[T with (Send, Static)](seconds: float, handle: JoinHandle[T]) -> TimeoutJoinOutcome[T]` | Waits for spawned work without aborting it at the deadline. Negative values, NaN, and either infinity are treated as zero. A timeout returns the live handle. Cancelling this wait drops its owned handle and detaches the task. |
 | `async timeout_join_ms[T with (Send, Static)](milliseconds: int, handle: JoinHandle[T]) -> TimeoutJoinOutcome[T]` | Millisecond form of `timeout_join`. Negative durations are treated as zero. |
 
 ### `Duration`
@@ -45,9 +45,11 @@ pub model Duration:
 | `Duration(secs: int, nanos: int)` | Direct field construction. It does not clamp or normalize either field. |
 | `Duration.from_secs(secs: int) -> Duration` | Returns zero for `secs <= 0`; otherwise returns `(secs, 0)` exactly. |
 | `Duration.from_millis(millis: int) -> Duration` | Returns zero for `millis <= 0`; otherwise returns `secs = millis // 1000` and `nanos = (millis % 1000) * 1_000_000`. |
-| `Duration.from_secs_f64(secs: float) -> Duration` | Returns zero for nonpositive input. Positive input is split into whole seconds and fractional nanoseconds using floating-point precision. |
+| `Duration.from_secs_f64(secs: float) -> Duration` | Accepts finite values whose whole-second portion is representable by `int`. Nonpositive supported inputs return zero; positive supported inputs are split into whole seconds and fractional nanoseconds using floating-point precision. Non-finite and out-of-range inputs are outside this constructor's contract and are not validated. |
 
 The integer constructors preserve the full positive `int` value without converting through `float`. Their results satisfy `secs >= 0` and `0 <= nanos < 1_000_000_000`.
+
+`from_secs_f64` does not use the timer functions' NaN and infinity clamping. Callers must supply a finite, representable value.
 
 ### `TimeoutError`
 
@@ -103,7 +105,7 @@ from std.async.race import RaceArm, arm, race, race_timeout
 | --- | --- |
 | `arm[T with Send, R with (Send, Static), TaskFuture with RuntimeFuture[T], OnWin with RuntimeRaceCallback[T, R]](awaitable: TaskFuture, on_win: OnWin) -> RaceArm[R]` | Packages one future and a callback. The callback receives the future's value only if this arm wins. |
 | `async race[R with (Send, Static)](*arms: RaceArm[R]) -> R` | Polls arms concurrently and returns the winning callback result. Losing arms are dropped. Ready ties use source order. At least one arm is required. |
-| `async race_timeout[T with (Send, Static), TaskFuture with RuntimeFuture[T]](seconds: float, task: TaskFuture) -> Option[T]` | Returns `Some(value)` before the deadline or `None` at the deadline. Expiry or cancellation drops `task`; spawn it first when it must continue. |
+| `async race_timeout[T with (Send, Static), TaskFuture with RuntimeFuture[T]](seconds: float, task: TaskFuture) -> Option[T]` | Returns `Some(value)` before the deadline or `None` at the deadline. Negative values, NaN, and either infinity are treated as zero. Expiry or cancellation drops `task`; spawn it first when it must continue. |
 
 `RaceArm[R]` is the packaged branch type consumed by `race`.
 
