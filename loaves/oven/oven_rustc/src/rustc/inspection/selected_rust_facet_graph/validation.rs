@@ -514,11 +514,6 @@ fn validate_selected_graph_public_environment_text(
     Ok(())
 }
 
-/// Put one selection into canonical order so equal selections digest equally.
-fn canonicalize_selected_graph_selection(selection: &mut OvenSelectedRustFacetSelection) {
-    selection.intent.features.sort();
-}
-
 /// Put one unit's unordered facts into canonical order before it contributes to an identity.
 fn canonicalize_selected_graph_unit(unit: &mut OvenSelectedRustFacetUnit) {
     unit.source_members.sort();
@@ -538,7 +533,6 @@ fn canonicalize_selected_graph_unit(unit: &mut OvenSelectedRustFacetUnit) {
 
 /// Put a whole graph into canonical order, so a producer's iteration order cannot reach an identity.
 pub(crate) fn canonicalize_selected_graph(graph: &mut OvenSelectedRustFacetGraph) {
-    canonicalize_selected_graph_selection(&mut graph.selection);
     graph.owners.sort_by(|left, right| {
         left.identity
             .cmp(&right.identity)
@@ -582,8 +576,6 @@ pub fn selected_graph_unit_identity(
     selection: &OvenSelectedRustFacetSelection,
     unit: &OvenSelectedRustFacetUnit,
 ) -> Result<String, OvenSelectedRustFacetGraphError> {
-    let mut selection = selection.clone();
-    canonicalize_selected_graph_selection(&mut selection);
     let mut unit = unit.clone();
     canonicalize_selected_graph_unit(&mut unit);
     let (compilation_target, target_spec) = match unit.domain {

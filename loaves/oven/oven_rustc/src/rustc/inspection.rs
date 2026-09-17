@@ -240,13 +240,11 @@ mod selected_rust_facet_graph_tests {
                 target: "x86_64-unknown-linux-gnu".to_string(),
                 toolchain: "rustc 1.85.0 (fixture)".to_string(),
                 profile: "dev".to_string(),
-                features: vec!["root-feature".to_string()],
             },
             host: "aarch64-apple-darwin".to_string(),
             host_cfg: cfg_snapshot("aarch64", "macos"),
             target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
-            root_default_features: true,
             toolchain_version: "1.85.0".to_string(),
             target_spec: OvenSelectedRustFacetTargetSpec {
                 source: OvenSelectedRustFacetPath {
@@ -932,7 +930,6 @@ mod selected_rust_facet_graph_tests {
         let mut reordered = graph(b"pub fn use_dependency() {}\n")?;
         reordered.owners.reverse();
         reordered.units.reverse();
-        reordered.selection.intent.features.reverse();
         for unit in &mut reordered.units {
             unit.features.reverse();
             unit.cfg.reverse();
@@ -978,11 +975,11 @@ mod selected_rust_facet_graph_tests {
         ));
 
         let mut duplicate_feature = graph(b"pub fn use_dependency() {}\n")?;
-        duplicate_feature
-            .selection
-            .intent
-            .features
-            .push("root-feature".to_string());
+        let root = duplicate_feature
+            .exposed_roots
+            .get_mut("fixture")
+            .ok_or("fixture graph lost root intent")?;
+        root.requested_features = vec!["root-feature".to_string(), "root-feature".to_string()];
         assert!(matches!(
             duplicate_feature.validated(),
             Err(OvenSelectedRustFacetGraphError::Invalid { .. })

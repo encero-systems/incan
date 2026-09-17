@@ -868,13 +868,11 @@ mod tests {
                 target: "x86_64-unknown-linux-gnu".to_string(),
                 toolchain: "rustc 1.85.0 (fixture)".to_string(),
                 profile: "debug".to_string(),
-                features: Vec::new(),
             },
             host: "x86_64-unknown-linux-gnu".to_string(),
             host_cfg: cfg_snapshot("x86_64", "linux"),
             target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
-            root_default_features: false,
             toolchain_version: "1.85.0".to_string(),
             target_spec: OvenSelectedRustFacetTargetSpec {
                 source: OvenSelectedRustFacetPath {

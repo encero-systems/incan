@@ -778,13 +778,11 @@ mod tests {
                 target: "x86_64-unknown-linux-gnu".to_string(),
                 toolchain: "rustc 1.85.0 (fixture)".to_string(),
                 profile: "debug".to_string(),
-                features: vec!["async".to_string(), "json".to_string(), "ordinal".to_string()],
             },
             host: "aarch64-apple-darwin".to_string(),
             host_cfg: cfg_snapshot("aarch64", "macos"),
             target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
-            root_default_features: true,
             toolchain_version: "1.85.0".to_string(),
             target_spec: OvenSelectedRustFacetTargetSpec {
                 source: OvenSelectedRustFacetPath {
@@ -905,7 +903,7 @@ mod tests {
                 target: selection.intent.target.clone(),
                 toolchain: selection.intent.toolchain.clone(),
                 profile: selection.intent.profile.clone(),
-                features: selection.intent.features.clone(),
+                features: Vec::new(),
             },
             dependency_search_paths: vec!["deps".to_string()],
             native_search_paths: Vec::new(),

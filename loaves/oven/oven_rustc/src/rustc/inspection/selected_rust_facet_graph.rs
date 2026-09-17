@@ -6,8 +6,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use oven_store::OvenBuildIntent;
-
 mod validation;
 
 pub use validation::*;
@@ -259,7 +257,7 @@ pub struct OvenSelectedRustFacetRoot {
     pub intent_owner: String,
 }
 
-/// Strict wire form of the existing target/toolchain/profile/root-feature build intent.
+/// Strict wire form of the target, toolchain, and profile selection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OvenSelectedRustFacetIntent {
@@ -269,19 +267,6 @@ pub struct OvenSelectedRustFacetIntent {
     pub toolchain: String,
     /// Named Oven profile.
     pub profile: String,
-    /// Deterministically ordered enabled root feature set.
-    pub features: Vec<String>,
-}
-
-impl From<&OvenBuildIntent> for OvenSelectedRustFacetIntent {
-    fn from(intent: &OvenBuildIntent) -> Self {
-        Self {
-            target: intent.target.clone(),
-            toolchain: intent.toolchain.clone(),
-            profile: intent.profile.clone(),
-            features: intent.features.clone(),
-        }
-    }
 }
 
 /// Exact target-spec bytes selected from one Store-owned toolchain closure.
@@ -313,7 +298,7 @@ pub struct OvenSelectedRustFacetCfgSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OvenSelectedRustFacetSelection {
-    /// Strict target/toolchain/profile/root-feature wire intent.
+    /// Strict target/toolchain/profile wire intent.
     pub intent: OvenSelectedRustFacetIntent,
     /// Exact build host triple; host and target remain distinct.
     pub host: String,
@@ -323,11 +308,6 @@ pub struct OvenSelectedRustFacetSelection {
     pub target_cfg: OvenSelectedRustFacetCfgSnapshot,
     /// Dependency-role activation purpose.
     pub purpose: OvenSelectedRustFacetPurpose,
-    /// Whether the publisher explicitly requested default features for its primary root.
-    ///
-    /// This is authored selection input. It is not inferred from any selected unit and does not contribute to a
-    /// physical unit identity.
-    pub root_default_features: bool,
     /// Semver-only compiler version required by rust-analyzer.
     pub toolchain_version: String,
     /// Exact target-spec file bound to the selected Store-owned toolchain closure.
@@ -432,7 +412,6 @@ impl OvenSelectedRustFacetGraph {
             )
         })?;
         validate_selected_graph_digest(&self.selection.target_spec.digest, "selection.target_spec.digest")?;
-        validate_selected_graph_sorted_strings(&self.selection.intent.features, "selection.intent.features")?;
         validate_selected_graph_cfg_snapshot(&self.selection.host_cfg, "selection.host_cfg")?;
         validate_selected_graph_cfg_snapshot(&self.selection.target_cfg, "selection.target_cfg")?;
 

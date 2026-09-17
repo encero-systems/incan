@@ -341,13 +341,11 @@ mod tests {
                 target: "x86_64-unknown-linux-gnu".to_string(),
                 toolchain: "rustc 1.85.0 (fixture)".to_string(),
                 profile: "debug".to_string(),
-                features: vec!["root-feature".to_string()],
             },
             host: "aarch64-apple-darwin".to_string(),
             host_cfg: cfg_snapshot("aarch64", "macos"),
             target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
-            root_default_features: true,
             toolchain_version: "1.85.0".to_string(),
             target_spec: OvenSelectedRustFacetTargetSpec {
                 source: OvenSelectedRustFacetPath {
@@ -440,17 +438,12 @@ mod tests {
         .validated()?)
     }
 
-    /// Build the fixture graph with the selection mutated, leaving every unit fact this unit compiles with intact.
-    ///
-    /// The unit keeps its own features, default-feature choice, cfg, source, environment and dependencies; only the
-    /// selection-global root feature set changes. Nothing in the `rustc` command for this unit depends on it.
+    /// Build the fixture graph with one root request mutated, leaving every unit fact this unit compiles with intact.
     fn graph_with_root_selection(
         root_features: &[&str],
         root_default_features: bool,
     ) -> Result<ValidatedOvenSelectedRustFacetGraph, Box<dyn std::error::Error>> {
-        let mut selection = selection();
-        selection.intent.features = root_features.iter().map(|feature| (*feature).to_string()).collect();
-        selection.root_default_features = root_default_features;
+        let selection = selection();
         let members = vec![source_member("src/lib.rs", b"pub fn marker() -> u8 { 7 }\n")];
         let owner = source_owner();
         let mut unit = OvenSelectedRustFacetUnit {
@@ -502,8 +495,8 @@ mod tests {
                 "fixture".to_string(),
                 crate::rustc::OvenSelectedRustFacetRoot {
                     unit: identity,
-                    requested_features: Vec::new(),
-                    default_features: true,
+                    requested_features: root_features.iter().map(|feature| (*feature).to_string()).collect(),
+                    default_features: root_default_features,
                     intent_owner: toolchain_owner(),
                 },
             )]),

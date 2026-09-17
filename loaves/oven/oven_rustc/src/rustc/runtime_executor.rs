@@ -711,13 +711,11 @@ pub(crate) mod tests {
                 target: host.to_string(),
                 toolchain: toolchain.to_string(),
                 profile: "debug".to_string(),
-                features: Vec::new(),
             },
             host: host.to_string(),
             host_cfg: cfg_snapshot("fixture-host", "fixture"),
             target_cfg: cfg_snapshot("fixture-target", "fixture"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
-            root_default_features: true,
             toolchain_version: "1.85.0".to_string(),
             target_spec: OvenSelectedRustFacetTargetSpec {
                 source: OvenSelectedRustFacetPath {
@@ -777,7 +775,7 @@ pub(crate) mod tests {
                 target: selection.intent.target.clone(),
                 toolchain: selection.intent.toolchain.clone(),
                 profile: selection.intent.profile.clone(),
-                features: selection.intent.features.clone(),
+                features: Vec::new(),
             },
             dependency_search_paths: vec!["deps".to_string()],
             native_search_paths: Vec::new(),
