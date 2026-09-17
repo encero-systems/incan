@@ -13,12 +13,16 @@ use std::time::Instant;
 
 use incan_driver::build::publication::stored_project_output_from_parts;
 use incan_driver::build::{OvenProjectOutputPayload, OvenStoredProjectOutput};
-use oven_cargo_compat::loaf_bake::{prepare_loaf_from_generated_project_with_selected_units, prepare_loaf_from_generated_project_with_selected_unit_bindings};
+use oven_cargo_compat::loaf_bake::{
+    prepare_loaf_from_generated_project_with_selected_unit_bindings,
+    prepare_loaf_from_generated_project_with_selected_units,
+};
 use oven_cargo_compat::{
-    OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, legacy_cargo_build_script_closure_digest,
-    encode_selected_graph_policy_request, finalize_compiler_support_selected_graph, legacy_cargo_foundation_projection,
-    legacy_cargo_generated_archive_bindings, legacy_cargo_generated_output_bindings,
-    runtime_foundation_from_compiled_loaf, runtime_foundation_inventories_from_policy_response,
+    OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, encode_selected_graph_policy_request,
+    finalize_compiler_support_selected_graph, legacy_cargo_build_script_closure_digest,
+    legacy_cargo_foundation_projection, legacy_cargo_generated_archive_bindings,
+    legacy_cargo_generated_output_bindings, runtime_foundation_from_compiled_loaf,
+    runtime_foundation_inventories_from_policy_response,
 };
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::loaf::{
@@ -39,13 +43,12 @@ use super::{
     CliError, CliResult, CompleteLoafEnvelopeReuseInput, DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES,
     DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES,
     DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES, DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_PHYSICAL_BYTES,
-    ExitCode, LoafTemporaryDirectory,
-    OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV, OVEN_LOAF_ENV, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
-    OvenCompilerSuiteBakeReport, OvenInspectionRegistrySource, OvenLegacyCargoDirectDependencyClosure,
-    OvenLegacyCargoInspectionSource, OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind,
-    OvenLoafBakeCommandOptions, OvenLoafBakeEntryReport, OvenLoafBakePhaseTiming, OvenLoafBakeReport,
-    OvenLoafBakerContext, OvenLoafEnvelope, OvenLoafEnvelopeArgument, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember,
-    OvenLoafFixtureAction, OvenOutputFormat, OvenStoreCommandOptions, OvenStoreLimits,
+    ExitCode, LoafTemporaryDirectory, OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV, OVEN_LOAF_ENV,
+    OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenCompilerSuiteBakeReport, OvenInspectionRegistrySource,
+    OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoInspectionSource, OvenLegacyCargoPrepareRequest,
+    OvenLegacyCargoPublicationKind, OvenLoafBakeCommandOptions, OvenLoafBakeEntryReport, OvenLoafBakePhaseTiming,
+    OvenLoafBakeReport, OvenLoafBakerContext, OvenLoafEnvelope, OvenLoafEnvelopeArgument, OvenLoafEnvelopeManifest,
+    OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenOutputFormat, OvenStoreCommandOptions, OvenStoreLimits,
     acquire_exclusive_loaf_generation_lock, announce_oven_progress, commit_loaf_generation, compiler_libtests_receipt,
     elapsed_detail, env, human_bytes, import_loaf_envelope_from_configured_mirrors,
     isolate_loaf_fixture_toolchain_data, legacy_cargo_inspection_sources, legacy_cargo_resolved_registry_sources,
