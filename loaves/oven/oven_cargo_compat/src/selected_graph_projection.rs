@@ -8,15 +8,36 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use oven_model::manifest::ProjectManifest;
+use oven_rustc::loaf::OvenLoaf;
 use oven_rustc::rustc::{
-    OvenCompilerSupportRootIntentAuthority, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
-    OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDependency, OvenSelectedRustFacetDomain,
-    OvenSelectedRustFacetEnvironmentValue, OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph,
-    OvenSelectedRustFacetLinkedLibrary, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
-    OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection,
-    OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember,
-    OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole,
-    ValidatedOvenSelectedRustFacetGraph, bind_compiler_support_root_intents, selected_graph_unit_identity,
+    OvenCompilerSupportRootIntentAuthority,
+    OvenRustcRegistrySource,
+    OvenRustcRegistrySourcePackage,
+    OvenSelectedRustFacetCrateKind,
+    OvenSelectedRustFacetDependency,
+    OvenSelectedRustFacetDomain,
+    OvenSelectedRustFacetEnvironmentValue,
+    OvenSelectedRustFacetGeneratedInput,
+    OvenSelectedRustFacetGraph,
+    OvenSelectedRustFacetLinkedLibrary,
+    OvenSelectedRustFacetOwner,
+    OvenSelectedRustFacetOwnerKind,
+    OvenSelectedRustFacetPath,
+    OvenSelectedRustFacetPurpose,
+    OvenSelectedRustFacetSelection,
+    OvenSelectedRustFacetSource,
+    OvenSelectedRustFacetSourceKind,
+    OvenSelectedRustFacetSourceMember,
+    OvenSelectedRustFacetTargetSpec,
+    OvenSelectedRustFacetUnit,
+    OvenSelectedRustFacetUnitRole,
+    ValidatedOvenSelectedRustFacetGraph,
+    bind_compiler_support_root_intents,
+    selected_graph_unit_identity,
+    OVEN_RUNTIME_FOUNDATION_SCHEMA_VERSION,
+    OvenRuntimeFoundation,
+    OvenRuntimeFoundationUnit,
+    OvenRuntimeFoundationUnitExecution,
 };
 use oven_store::OvenReceipt;
 use oven_store::{receipt_with_build_unit_input, receipt_with_compiler_support_root_intent};
@@ -116,6 +137,58 @@ pub struct OvenFinalizedCompilerSupportSelectedGraph {
     pub final_receipt: OvenReceipt,
     /// Rooted graph validated against both receipts.
     pub graph: ValidatedOvenSelectedRustFacetGraph,
+}
+
+/// Bind every selected immutable registry unit to the exact artifact in its compiled Loaf.
+pub fn runtime_foundation_from_compiled_loaf(
+    finalized: &OvenFinalizedCompilerSupportSelectedGraph,
+    loaf: &OvenLoaf,
+    compiled_plan_identity: &str,
+    artifact_owner: &str,
+) -> Result<OvenRuntimeFoundation, OvenLegacyCargoError> {
+    let graph = finalized.selected_graph.graph();
+    let mut units = Vec::with_capacity(graph.units.len());
+    for unit in &graph.units {
+        if unit.source.kind != OvenSelectedRustFacetSourceKind::Registry {
+            return Err(projection_error(
+                "runtime foundation unit",
+                "is not an immutable registry-backed prebuilt unit",
+            ));
+        }
+        let matches = loaf
+            .registry_leaves
+            .iter()
+            .filter(|leaf| {
+                leaf.package == unit.package
+                    && leaf.version == unit.package_version
+                    && leaf.crate_name == unit.crate_name
+                    && leaf.features == unit.features
+                    && format!("{}#{}@{}", leaf.source.registry, leaf.package, leaf.version) == unit.source.identity
+                    && leaf.source.digest == unit.source.digest
+            })
+            .collect::<Vec<_>>();
+        let [leaf] = matches.as_slice() else {
+            return Err(projection_error(
+                "runtime foundation unit",
+                "does not have exactly one matching compiled registry artifact",
+            ));
+        };
+        units.push(OvenRuntimeFoundationUnit {
+            selected_identity: unit.identity.clone(),
+            domain: unit.domain,
+            execution: OvenRuntimeFoundationUnitExecution::Prebuilt {
+                artifact: leaf.artifact.clone(),
+            },
+        });
+    }
+    Ok(OvenRuntimeFoundation {
+        schema_version: OVEN_RUNTIME_FOUNDATION_SCHEMA_VERSION,
+        compiler_closure_digest: compiled_plan_identity.to_string(),
+        artifact_owner: artifact_owner.to_string(),
+        artifacts: loaf.plan.clone(),
+        selected_graph: graph.clone(),
+        units,
+    })
 }
 
 /// Complete the capture-to-final-receipt transition for one compiler-support selected graph.
