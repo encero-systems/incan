@@ -65,7 +65,7 @@ use oven_rustc::rustc::{
     OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, OvenRustcArtifactExtern,
     OvenRustcArtifactManifest, OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
     OvenRustcSupportingArtifact, clear_inherited_cargo_environment, rerooted_artifact_staging_source,
-    rustc_host_target, rustc_identity, select_direct_rustc_plan_identity,
+    rustc_host_and_target_cfg_snapshots, rustc_host_target, rustc_identity, select_direct_rustc_plan_identity,
     validate_project_extension_payload_against_base,
 };
 use oven_store::process::{isolate_process_group, terminate_process_group};
@@ -1232,6 +1232,16 @@ pub fn prepare_direct_rustc_plan(
         None => read_legacy_cargo_metadata(&request.cargo, &cargo_manifest, &request.receipt.intent.features)?,
     };
     let mut selected_units = capture_legacy_cargo_selected_units(&selected_unit_graph, &metadata, &cargo_outputs)?;
+    let (host_cfg, target_cfg) = rustc_host_and_target_cfg_snapshots(&request.rustc, &request.receipt.intent.target)
+        .map_err(|error| OvenLegacyCargoError::Plan(error.to_string()))?;
+    selected_units.compiler = Some(OvenLegacyCargoSelectedCompilerContext {
+        host: rustc_host.clone(),
+        target: request.receipt.intent.target.clone(),
+        toolchain: request.receipt.intent.toolchain.clone(),
+        rustc_identity: rustc_identity.clone(),
+        host_cfg,
+        target_cfg,
+    });
     let resolved_direct_dependencies = resolve_direct_dependency_packages(&metadata, &direct_dependencies)?;
     let reported_artifact_files = publisher_output_artifact_paths(&cargo_outputs, &request.receipt.intent.profile)?;
     let (dependency_search_paths, externs, mut supporting_artifacts) = if reported_artifact_files.is_empty() {

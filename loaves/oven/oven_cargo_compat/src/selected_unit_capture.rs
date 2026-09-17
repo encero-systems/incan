@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use oven_rustc::rustc::OvenSelectedRustFacetCfgSnapshot;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -24,6 +25,20 @@ pub struct OvenLegacyCargoSelectedUnitCapture {
     pub roots: Vec<usize>,
     /// Every physical unit selected by Cargo, preserving graph order for dependency indices.
     pub units: Vec<OvenLegacyCargoSelectedUnit>,
+    /// Exact compiler selection and cfg observations; absent until the publisher probes its verified compiler.
+    pub compiler: Option<OvenLegacyCargoSelectedCompilerContext>,
+}
+
+/// Physical compiler facts captured once for the same host/target selection as the Cargo unit graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenLegacyCargoSelectedCompilerContext {
+    pub host: String,
+    pub target: String,
+    pub toolchain: String,
+    pub rustc_identity: String,
+    pub host_cfg: OvenSelectedRustFacetCfgSnapshot,
+    pub target_cfg: OvenSelectedRustFacetCfgSnapshot,
 }
 
 /// One Cargo-selected physical compilation unit before Oven owner and intent admission.
@@ -279,6 +294,7 @@ pub fn capture_legacy_cargo_selected_units(
     Ok(OvenLegacyCargoSelectedUnitCapture {
         roots: graph.roots.clone(),
         units,
+        compiler: None,
     })
 }
 
@@ -617,6 +633,7 @@ mod tests {
                 }),
                 registry_source: None,
             }],
+            compiler: None,
         };
         let staging = scratch.path().join("staging");
         fs::create_dir(&staging)?;
