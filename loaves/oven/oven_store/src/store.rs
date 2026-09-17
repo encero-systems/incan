@@ -2542,10 +2542,18 @@ struct AdmittedNativeReceipt {
     bytes_digest: String,
 }
 
+/// Return whether this artifact kind retains the publisher's complete receipt as store metadata.
+fn retains_native_receipt(kind: OvenArtifactKind) -> bool {
+    matches!(
+        kind,
+        OvenArtifactKind::DirectRustcPlan | OvenArtifactKind::ProjectOutput
+    )
+}
+
 /// Encode a newly published native entry's original receipt after `artifact_manifest` validates it. Borrowing the
 /// request avoids copying or rehashing its recipe; this metadata does not change the entry identity.
 fn encode_native_receipt(request: &OvenArtifactPublishRequest) -> Result<Option<Vec<u8>>, OvenStoreError> {
-    if request.kind != OvenArtifactKind::DirectRustcPlan {
+    if !retains_native_receipt(request.kind) {
         return Ok(None);
     }
     let bytes = serde_json::to_vec(&NativeReceiptWitness {
@@ -2577,13 +2585,13 @@ fn read_native_receipt_bytes(root: &Path, manifest: &OvenArtifactManifest) -> Re
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(source) => return Err(OvenStoreError::Io { path, source }),
     };
-    if manifest.kind != OvenArtifactKind::DirectRustcPlan
+    if !retains_native_receipt(manifest.kind)
         || !metadata.file_type().is_file()
         || metadata.len() > MAX_NATIVE_RECEIPT_BYTES
     {
         return Err(OvenStoreError::Integrity {
             identity: manifest.identity.clone(),
-            message: "native receipt must be bounded regular metadata on a DirectRustcPlan entry".to_string(),
+            message: "native receipt must be bounded regular metadata on a receipt-bearing entry".to_string(),
         });
     }
     let file = File::open(&path).map_err(|source| OvenStoreError::Io {
@@ -5962,6 +5970,67 @@ pub(crate) mod tests {
                 Some(&first.receipt)
             );
         }
+        Ok(())
+    }
+
+    /// A project output carries its publisher receipt through a verified store-to-store import.
+    #[test]
+    fn project_output_receipt_survives_verified_import_and_rejects_tampering() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let source_root = tempfile::tempdir()?;
+        let destination_root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let executable = project.path().join("engine");
+        fs::write(&executable, b"engine bytes")?;
+        let mut publication = request(project.path(), "project-output", b"project output descriptor")?;
+        publication.kind = OvenArtifactKind::ProjectOutput;
+        publication.materialized_files.push(OvenArtifactMaterializedFile {
+            source_path: executable,
+            relative_path: "bin/engine".to_string(),
+        });
+        let limits = OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000);
+        let source = OvenStore::new(source_root.path(), limits);
+        let published = source.publish(&publication)?;
+        let selected = source.select_payloads_for_execution(std::slice::from_ref(&published.identity))?;
+        let owner = selected.first().ok_or("project output owner missing")?;
+        assert_eq!(owner.original_native_receipt(), Some(&publication.receipt));
+        owner.verify_admitted_payload()?;
+
+        let import = OvenArtifactPublishRequest {
+            receipt: owner
+                .original_native_receipt()
+                .ok_or("project output publisher receipt missing")?
+                .clone(),
+            domain: published.domain.clone(),
+            kind: published.kind,
+            payload: owner.payload.clone(),
+            materialized_files: vec![OvenArtifactMaterializedFile {
+                source_path: owner.artifact_root.join("bin/engine"),
+                relative_path: "bin/engine".to_string(),
+            }],
+        };
+        let destination = OvenStore::new(destination_root.path(), limits);
+        let imported = destination.publish_verified_import(&import, owner.admitted_materialized_files())?;
+        assert_eq!(imported, published);
+        let imported_owners = destination.select_payloads_for_execution(std::slice::from_ref(&imported.identity))?;
+        let imported_owner = imported_owners.first().ok_or("imported project output owner missing")?;
+        assert_eq!(imported_owner.original_native_receipt(), Some(&publication.receipt));
+        imported_owner.verify_admitted_payload()?;
+
+        let witness = destination
+            .entry_root(&imported.identity)
+            .join(super::NATIVE_RECEIPT_FILE);
+        let mut tampered = fs::read(&witness)?;
+        let first = tampered.first_mut().ok_or("publisher receipt witness is empty")?;
+        *first = b'[';
+        replace_native_witness_fixture(&witness, &tampered)?;
+        assert!(
+            destination
+                .select_payloads_for_execution(std::slice::from_ref(&imported.identity))
+                .is_err(),
+            "a modified imported publisher receipt must be refused"
+        );
         Ok(())
     }
 

@@ -9,4 +9,9 @@ pub from rust_source import read_dependency_catalog
 pub from rust_activation import activate_unit, version_matches
 pub from rust_graph import propagate_features, GraphNode, GraphActivation, NodeDemand
 pub from invocation import decide_invocation
-pub from provider_intake import provider_intake_evidence, ProviderIntakeEvidence, SelectedBuildSlot
+pub from source_inventory import (
+    inert_build_script_warnings,
+    package_source_inventory,
+    InertBuildScriptWarning,
+    PackageSourceInventory,
+)
