@@ -139,7 +139,7 @@ def base_context() -> ActivationContext:
     )
 
 
-def test_context() -> ActivationContext:
+def testing_context() -> ActivationContext:
     value = base_context()
     return ActivationContext(
         host=value.host,
@@ -181,7 +181,12 @@ pub def test_resolved_identity_and_transitive_feature_union() -> None:
             catalogs,
             base_context(),
             "Cargo.toml",
-            [selected(root_node), selected(left), selected(right), selected(shared)],
+            [selected(root_node), selected(left), selected(right), selected_with_facts(
+                unit_id(shared),
+                shared,
+                ["alpha", "beta"],
+                true,
+            )],
             [root(root_node)],
             bindings,
             64,
@@ -241,7 +246,12 @@ pub def test_late_feature_activation_uses_final_fixed_point_in_any_root_order() 
     bridge = node("bridge")
     mid = node("mid")
     leaf = node("leaf")
-    units = [selected(plain_root), selected(feature_root), selected(bridge), selected(mid), selected(leaf)]
+    units = [selected(plain_root), selected(feature_root), selected(bridge), selected_with_facts(
+        unit_id(mid),
+        mid,
+        ["use-leaf"],
+        true,
+    ), selected(leaf)]
     bindings = [edge(plain_root, 0, "mid", mid), edge(feature_root, 0, "bridge", bridge), edge(bridge, 0, "mid", mid), edge(
         mid,
         0,
@@ -341,7 +351,7 @@ pub def test_build_script_dependency_rejects_a_physical_child_binding() -> None:
     ):
         Ok(_) => fail("an inert build dependency cannot bind a compiled child")
         Err(error) =>
-            assert "finally inactive declaration" in error.message()
+            assert "manifest declaration for raw selected edge alias" in error.message()
 
 
 pub def test_non_proc_macro_child_cannot_change_domain() -> None:
@@ -371,7 +381,15 @@ pub def test_test_purpose_stays_on_explicit_root() -> None:
     units = [selected(root_node, SelectedUnitRole.UnitTest), selected(child), selected(root_test)]
     bindings = [edge(root_node, 0, "child", child), edge(root_node, 1, "root-test", root_test)]
     result = require_ok(
-        propagate_features(catalogs_from(sources), test_context(), "Cargo.toml", units, [root(root_node)], bindings, 32),
+        propagate_features(
+            catalogs_from(sources),
+            testing_context(),
+            "Cargo.toml",
+            units,
+            [root(root_node)],
+            bindings,
+            32,
+        ),
     )
     assert root_test in result.nodes
     assert transitive_test not in result.nodes
@@ -391,7 +409,7 @@ pub def test_normal_and_test_roots_of_same_package_remain_distinct() -> None:
     result = require_ok(
         propagate_features(
             catalogs_from({"suite": "[dev-dependencies]\ntest-helper='1'\n", "test-helper": ""}),
-            test_context(),
+            testing_context(),
             "Cargo.toml",
             units,
             roots,
