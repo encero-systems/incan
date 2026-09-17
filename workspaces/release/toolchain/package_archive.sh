@@ -409,38 +409,14 @@ git show HEAD:Cargo.lock > "$package_dir/crates/Cargo.lock" \
 # under this repository's own `target/` tree -- is prepended in front of it. Resolve Cargo in a
 # way that specific trick cannot intercept, preferring the most explicit source available:
 #   1. `CARGO_BIN`, when the caller names a verified real Cargo directly.
-#   2. The first `cargo` on `PATH` whose directory is NOT inside this repository's own `target/`
-#      tree. A real, system-installed Cargo is never legitimately located there; only a guard or
-#      other build-owned artifact would be.
-#   3. `command -v cargo` outright, unchanged for every caller with no such guard (a real release
-#      build, local manual packaging) and as a last-resort fallback otherwise.
+#   2. The first `cargo` on `PATH` whose directory is NOT inside a repository `target/` tree. A real,
+#      system-installed Cargo is never legitimately located there; only a guard or build artifact would be.
 explicit_cargo_bin="${CARGO_BIN:-}"
-if [ -n "$explicit_cargo_bin" ]; then
-  cargo_bin="$explicit_cargo_bin"
-  [ -x "$cargo_bin" ] || fail "CARGO_BIN does not name an executable: $cargo_bin"
-else
-  cargo_bin=""
-  saved_ifs="$IFS"
-  IFS=':'
-  for path_entry in $PATH; do
-    case "$path_entry" in
-      */target/*) continue ;;
-    esac
-    if [ -x "$path_entry/cargo" ]; then
-      cargo_bin="$path_entry/cargo"
-      break
-    fi
-  done
-  IFS="$saved_ifs"
-  if [ -z "$cargo_bin" ]; then
-    fail "could not resolve Cargo outside the repository target guard; set CARGO_BIN to an exact executable"
-  fi
-fi
-# The resolved binary's own directory is the real Cargo home (`.cargo/bin/cargo`, whether reached
-# via `CARGO_BIN` or the `PATH` walk above), and `.cargo`/`.rustup` are always installed as
-# siblings under the same parent directory -- regardless of what `$HOME` is later set to at
-# runtime. Capture that real Cargo home now, before `$HOME` gets in the way of anything else that
-# needs it (the offline registry cache below).
+cargo_bin="$(workspaces/release/toolchain/resolve_release_cargo.sh "$explicit_cargo_bin")" \
+  || fail "could not resolve authoritative Cargo for release packaging"
+# Resolve the real Cargo home now, before the guarded `$HOME` can hide the offline registry cache.
+# A selected Cargo can be either a user shim or a toolchain executable, so its parent directories
+# alone are not authoritative for the registry location.
 #
 # This sibling derivation breaks for a package-manager rustup install: Homebrew's `rustup` formula
 # keeps its `cargo` shim under `<prefix>/opt/rustup/bin/`, so deriving two directories up lands on
@@ -462,11 +438,9 @@ else
 fi
 # A Cargo resolved outside the repository guard is commonly Rustup's shim. Ask its sibling Rustup for the active
 # toolchain's exact Cargo instead of selecting the first directory below `toolchains/`: filesystem order is not
-# toolchain authority. CI pins `RUSTUP_TOOLCHAIN`; ordinary local callers use Rustup's active override/default. A
-# caller-provided `CARGO_BIN` remains exact authority and a non-Rustup Cargo installation remains unchanged.
-cargo_bin="$(
-  workspaces/release/toolchain/resolve_release_cargo.sh "$cargo_bin" "$explicit_cargo_bin"
-)" || fail "could not resolve authoritative Cargo for release packaging"
+# toolchain authority. A caller that sets `RUSTUP_TOOLCHAIN` selects that exact toolchain; otherwise Rustup's active
+# override/default applies. The release workflow supplies the supported version explicitly. A caller-provided
+# `CARGO_BIN` remains exact authority and a non-Rustup Cargo installation remains unchanged.
 # `cargo metadata --offline` below resolves its registry cache from `$CARGO_HOME` (default
 # `$HOME/.cargo`), which is equally a victim of the guard's `$HOME` redirect: the offline cache
 # prewarmed into the real Cargo home would otherwise be invisible. `clear_inherited_cargo_environment`

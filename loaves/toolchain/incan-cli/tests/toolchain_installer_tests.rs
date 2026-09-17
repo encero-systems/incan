@@ -166,21 +166,30 @@ fn release_cargo_selector_preserves_explicit_and_uses_pinned_rustup_toolchain() 
 {
     let fixture = tempfile::tempdir()?;
     let bin = fixture.path().join("bin");
+    let guard_bin = fixture.path().join("target/guard");
     fs::create_dir_all(&bin)?;
+    fs::create_dir_all(&guard_bin)?;
     let cargo = bin.join("cargo");
     let pinned = bin.join("cargo-1.98.0");
+    let rustup = bin.join("rustup");
+    let guard_cargo = guard_bin.join("cargo");
     let log = fixture.path().join("rustup.log");
+    let guard_log = fixture.path().join("guard.log");
     fs::write(&cargo, "#!/bin/sh\nexit 0\n")?;
     fs::write(&pinned, "#!/bin/sh\nexit 0\n")?;
     fs::write(
-        bin.join("rustup"),
+        &guard_cargo,
+        format!("#!/bin/sh\nprintf invoked > '{}'\nexit 97\n", guard_log.display()),
+    )?;
+    fs::write(
+        &rustup,
         format!(
             "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf '%s\\n' '{}'\n",
             log.display(),
             pinned.display(),
         ),
     )?;
-    for path in [&cargo, &pinned, &bin.join("rustup")] {
+    for path in [&cargo, &pinned, &rustup, &guard_cargo] {
         let mut permissions = fs::metadata(path)?.permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(path, permissions)?;
@@ -188,7 +197,7 @@ fn release_cargo_selector_preserves_explicit_and_uses_pinned_rustup_toolchain() 
 
     let selected = Command::new(release_cargo_selector())
         .env("RUSTUP_TOOLCHAIN", "1.98.0")
-        .arg(&cargo)
+        .env("PATH", format!("{}:{}", guard_bin.display(), bin.display()))
         .arg("")
         .output()?;
     assert!(
@@ -198,22 +207,53 @@ fn release_cargo_selector_preserves_explicit_and_uses_pinned_rustup_toolchain() 
     );
     assert_eq!(String::from_utf8(selected.stdout)?, format!("{}\n", pinned.display()));
     assert_eq!(fs::read_to_string(&log)?, "which --toolchain 1.98.0 cargo\n");
+    assert!(!guard_log.exists(), "the repository target guard must never execute");
+
+    fs::remove_file(&log)?;
+    let active = Command::new(release_cargo_selector())
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env("PATH", &bin)
+        .arg("")
+        .output()?;
+    assert!(active.status.success());
+    assert_eq!(fs::read_to_string(&log)?, "which cargo\n");
 
     fs::remove_file(&log)?;
     let explicit = Command::new(release_cargo_selector())
         .env("RUSTUP_TOOLCHAIN", "other")
-        .arg(&cargo)
         .arg(&cargo)
         .output()?;
     assert!(explicit.status.success());
     assert_eq!(String::from_utf8(explicit.stdout)?, format!("{}\n", cargo.display()));
     assert!(!log.exists(), "explicit Cargo must not invoke ambient Rustup selection");
 
+    let system_bin = fixture.path().join("system-bin");
+    fs::create_dir_all(&system_bin)?;
+    let system_cargo = system_bin.join("cargo");
+    fs::write(&system_cargo, "#!/bin/sh\nexit 0\n")?;
+    let mut permissions = fs::metadata(&system_cargo)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&system_cargo, permissions)?;
+    let system = Command::new(release_cargo_selector())
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env("PATH", &system_bin)
+        .arg("")
+        .output()?;
+    assert!(system.status.success());
+    assert_eq!(
+        String::from_utf8(system.stdout)?,
+        format!("{}\n", system_cargo.display())
+    );
+
     let missing = Command::new(release_cargo_selector())
-        .arg(fixture.path().join("missing-cargo"))
+        .env("PATH", &guard_bin)
         .arg("")
         .output()?;
     assert!(!missing.status.success(), "a missing default Cargo must fail closed");
+    assert!(
+        !guard_log.exists(),
+        "a rejected guard must not be invoked while refusing"
+    );
     Ok(())
 }
 
@@ -249,7 +289,7 @@ fn production_archive_binds_the_exact_reported_release_policy_output() -> Result
     assert!(script.contains("INCAN_HOME=\"$release_policy_publisher_home\""));
     assert!(script.contains("explicit_cargo_bin=\"${CARGO_BIN:-}\""));
     assert!(script.contains("if [ -z \"$explicit_cargo_bin\" ]; then"));
-    assert!(script.contains("resolve_release_cargo.sh \"$cargo_bin\" \"$explicit_cargo_bin\""));
+    assert!(script.contains("resolve_release_cargo.sh \"$explicit_cargo_bin\""));
     assert!(!script.contains("cargo_bin=\"$(command -v cargo)\""));
     assert!(script.contains("--policy-engine-store \"$policy_engine_store\""));
     assert!(script.contains("--policy-engine-identity \"$policy_engine_identity\""));
@@ -1472,6 +1512,10 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
     assert!(
         release_workflow.contains("INCAN_SDK_PROVIDER_BUILDER_BIN: target/release/incan"),
         "cross-target release packaging must pass the host-runnable builder through the environment name consumed by package_archive.sh"
+    );
+    assert!(
+        release_workflow.contains("RUSTUP_TOOLCHAIN: 1.98.0"),
+        "release packaging must pin Cargo selection to the supported Rust release"
     );
     assert!(
         !release_workflow.contains("INCAN_STDLIB_ARTIFACT_BUILDER_BIN"),
