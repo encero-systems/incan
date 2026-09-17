@@ -15,6 +15,13 @@ use serde::{Deserialize, Serialize};
 /// Wire schema for one project-level Rust inspection authority.
 pub const OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION: u32 = 2;
 
+/// Wire schema for compiler-support root intent retained with one explicit publisher receipt.
+pub const OVEN_COMPILER_SUPPORT_ROOT_INTENT_SCHEMA_VERSION: u32 = 1;
+
+/// Receipt build-unit input key whose value is the canonical compiler-support root-intent digest.
+pub const OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT: &str = "compiler-support-root-intent";
+const OVEN_COMPILER_SUPPORT_ROOT_INTENT_DIGEST_DOMAIN: &str = "incan.oven.compiler-support-root-intent/1";
+
 mod selected_rust_facet_graph;
 
 pub use selected_rust_facet_graph::*;
@@ -142,6 +149,48 @@ pub struct OvenProjectInspectionAuthorityRef {
     pub build_unit_identity: String,
 }
 
+/// Authored compiler-release roots bound to one explicit publisher receipt.
+///
+/// This is deliberately separate from project inspection authority: compiler-support units are owned by the
+/// selected toolchain closure, whereas a project authority owns project dependency declarations. The publisher
+/// records this payload from its authored compiler-support input before Cargo exposes only effective features.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenCompilerSupportRootIntentAuthority {
+    /// Exact schema consumed by the physical selected-graph producer.
+    pub schema_version: u32,
+    /// Exact verified receipt that authorized the capture-only publisher transaction.
+    ///
+    /// The final authority receipt is deliberately distinct: it adds this payload's digest after Cargo capture has
+    /// produced physical unit identities. Capture artifacts are evidence for the final publisher, never artifacts
+    /// claimed by the final receipt.
+    pub capture_receipt_identity: String,
+    /// Complete compiler-support roots in their authored declaration form.
+    pub roots: Vec<OvenCompilerSupportRootIntent>,
+}
+
+/// One compiler-release declaration bound to its selected physical unit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenCompilerSupportRootIntent {
+    /// Rust-facing alias from the explicit compiler-support declaration.
+    pub alias: String,
+    /// Exact selected physical unit identity; it is never derived from the alias or crate name.
+    pub unit: String,
+    /// Sorted explicitly requested feature names from the declaration.
+    pub requested_features: Vec<String>,
+    /// Whether the declaration enabled Cargo default features.
+    pub default_features: bool,
+    /// Exact Toolchain owner identity that supplied this authored declaration.
+    pub intent_owner: String,
+    /// Exact physical owner that supplies the selected unit's source tree.
+    ///
+    /// A compiler declaration can select an immutable registry or staged third-party source, so this can differ
+    /// from `intent_owner`. The binder checks both identities rather than treating a declaration alias as source
+    /// provenance.
+    pub source_owner: String,
+}
+
 /// Source-current singular project authority with every bounded-store constituent leased in one batch.
 pub struct OvenLoadedProjectInspectionAuthority {
     source_owner: OvenStoreExecutionPayload,
@@ -197,6 +246,10 @@ pub fn bind_loaded_project_inspection_root_intents(
     bind_project_inspection_root_intents(graph, root_units, authority.identity(), &authority.payload)
 }
 
+/// Join raw aliases to the exact purpose-scoped project authority records before graph admission.
+///
+/// The caller has already retained the authority owner; this helper validates the payload, rejects any competing
+/// root map, and writes only its sealed requested/default feature values into the physical graph.
 fn bind_project_inspection_root_intents(
     mut graph: OvenSelectedRustFacetGraph,
     root_units: BTreeMap<String, String>,
@@ -258,6 +311,250 @@ fn bind_project_inspection_root_intents(
     })
 }
 
+/// Bind compiler-release roots across their verified capture and final authority receipts.
+///
+/// Cargo capture first runs under `capture_receipt` to learn exact physical unit identities. The publisher then
+/// constructs a fresh `final_receipt` from the same source and intent inputs plus this authority's digest, and only
+/// that final receipt may publish or consume the selected graph. This function never treats capture artifacts as
+/// final-receipt artifacts. It accepts no pre-populated roots and never derives feature intent from a unit's
+/// effective feature set.
+pub fn bind_compiler_support_root_intents(
+    graph: OvenSelectedRustFacetGraph,
+    authority: &OvenCompilerSupportRootIntentAuthority,
+    capture_receipt: &OvenReceipt,
+    final_receipt: &OvenReceipt,
+) -> Result<ValidatedOvenSelectedRustFacetGraph, OvenRustcError> {
+    bind_compiler_support_root_intents_for_receipts(graph, authority, capture_receipt, final_receipt)
+}
+
+fn bind_compiler_support_root_intents_for_receipts(
+    mut graph: OvenSelectedRustFacetGraph,
+    authority: &OvenCompilerSupportRootIntentAuthority,
+    capture_receipt: &OvenReceipt,
+    final_receipt: &OvenReceipt,
+) -> Result<ValidatedOvenSelectedRustFacetGraph, OvenRustcError> {
+    capture_receipt
+        .verify_identity()
+        .map_err(|error| OvenRustcError::InvalidInput {
+            field: "compiler release root intent capture receipt",
+            message: error.to_string(),
+        })?;
+    final_receipt
+        .verify_identity()
+        .map_err(|error| OvenRustcError::InvalidInput {
+            field: "compiler release root intent final receipt",
+            message: error.to_string(),
+        })?;
+    let digest = compiler_support_root_intent_digest(authority)?;
+    validate_compiler_support_root_intent_receipts(authority, capture_receipt, final_receipt, &digest)?;
+    if final_receipt
+        .sources
+        .build_unit_inputs
+        .get(OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT)
+        != Some(&digest)
+    {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler release root intent final receipt",
+            message: "does not retain the exact canonical compiler-support root-intent digest".to_string(),
+        });
+    }
+    if !graph.exposed_roots.is_empty() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust facet roots",
+            message: "must be empty before compiler-support intent is bound".to_string(),
+        });
+    }
+    if authority.roots.is_empty() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler support root intent authority",
+            message: "must retain at least one authored compiler-support root".to_string(),
+        });
+    }
+
+    for root in &authority.roots {
+        if graph.exposed_roots.contains_key(&root.alias) {
+            return Err(OvenRustcError::InvalidInput {
+                field: "compiler support root intent authority",
+                message: format!("declares duplicate alias `{}`", root.alias),
+            });
+        }
+        let unit = graph
+            .units
+            .iter()
+            .find(|unit| unit.identity == root.unit)
+            .ok_or_else(|| OvenRustcError::InvalidInput {
+                field: "compiler support root intent authority",
+                message: format!("alias `{}` names absent selected unit `{}`", root.alias, root.unit),
+            })?;
+        if unit.source.owner != root.source_owner {
+            return Err(OvenRustcError::InvalidInput {
+                field: "compiler release root intent source",
+                message: format!(
+                    "alias `{}` does not name source owned by its declared immutable source owner",
+                    root.alias
+                ),
+            });
+        }
+        if !graph
+            .owners
+            .iter()
+            .any(|owner| owner.identity == root.intent_owner && owner.kind == OvenSelectedRustFacetOwnerKind::Toolchain)
+        {
+            return Err(OvenRustcError::InvalidInput {
+                field: "compiler release root intent owner",
+                message: format!("alias `{}` names no selected Toolchain owner", root.alias),
+            });
+        }
+        if !graph.owners.iter().any(|owner| owner.identity == root.source_owner) {
+            return Err(OvenRustcError::InvalidInput {
+                field: "compiler release root intent source",
+                message: format!("alias `{}` names no selected source owner", root.alias),
+            });
+        }
+        graph.exposed_roots.insert(
+            root.alias.clone(),
+            OvenSelectedRustFacetRoot {
+                unit: root.unit.clone(),
+                requested_features: root.requested_features.clone(),
+                default_features: root.default_features,
+                intent_owner: root.intent_owner.clone(),
+            },
+        );
+    }
+    graph.validated().map_err(|error| OvenRustcError::InvalidInput {
+        field: "selected Rust facet graph",
+        message: format!("does not validate after compiler-support root intent binding: {error}"),
+    })
+}
+
+fn validate_compiler_support_root_intent_receipts(
+    authority: &OvenCompilerSupportRootIntentAuthority,
+    capture_receipt: &OvenReceipt,
+    final_receipt: &OvenReceipt,
+    digest: &str,
+) -> Result<(), OvenRustcError> {
+    if authority.capture_receipt_identity != capture_receipt.identity {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler release root intent capture receipt",
+            message: "does not match the authority's exact capture receipt identity".to_string(),
+        });
+    }
+    if capture_receipt.identity == final_receipt.identity {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler release root intent final receipt",
+            message: "must be distinct from the capture-only receipt".to_string(),
+        });
+    }
+    if capture_receipt.project != final_receipt.project
+        || capture_receipt.intent != final_receipt.intent
+        || capture_receipt.compatibility != final_receipt.compatibility
+        || capture_receipt.sources.cargo_manifest_digest != final_receipt.sources.cargo_manifest_digest
+        || capture_receipt.sources.cargo_lock_digest != final_receipt.sources.cargo_lock_digest
+        || capture_receipt.sources.incan_manifest_digest != final_receipt.sources.incan_manifest_digest
+        || capture_receipt.sources.supplemental_digests != final_receipt.sources.supplemental_digests
+    {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler release root intent final receipt",
+            message: "must retain the capture receipt's exact project, source, intent, and compatibility evidence"
+                .to_string(),
+        });
+    }
+    let mut expected_inputs = capture_receipt.sources.build_unit_inputs.clone();
+    if expected_inputs
+        .insert(
+            OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT.to_string(),
+            digest.to_string(),
+        )
+        .is_some()
+        || expected_inputs != final_receipt.sources.build_unit_inputs
+    {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler release root intent final receipt",
+            message: "must add only the canonical root-intent digest to capture build-unit inputs".to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Return the canonical digest that an explicit publisher must retain in its receipt build-unit inputs.
+///
+/// The digest covers every authored alias, selected unit binding, feature request, default-feature choice, and
+/// declaration owner and physical source owner. A later graph producer may therefore consume the typed record only
+/// with the exact admitted receipt that included it in its build-unit identity.
+pub fn compiler_support_root_intent_digest(
+    authority: &OvenCompilerSupportRootIntentAuthority,
+) -> Result<String, OvenRustcError> {
+    validate_compiler_support_root_intent_authority(authority)?;
+    serde_json::to_vec(&(OVEN_COMPILER_SUPPORT_ROOT_INTENT_DIGEST_DOMAIN, authority))
+        .map(|bytes| selected_graph_sha256(&bytes))
+        .map_err(|error| OvenRustcError::InvalidInput {
+            field: "compiler support root intent authority",
+            message: format!("cannot encode canonical digest input: {error}"),
+        })
+}
+
+fn validate_compiler_support_root_intent_authority(
+    authority: &OvenCompilerSupportRootIntentAuthority,
+) -> Result<(), OvenRustcError> {
+    if authority.schema_version != OVEN_COMPILER_SUPPORT_ROOT_INTENT_SCHEMA_VERSION {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler support root intent authority",
+            message: format!(
+                "uses schema {}; expected {}",
+                authority.schema_version, OVEN_COMPILER_SUPPORT_ROOT_INTENT_SCHEMA_VERSION
+            ),
+        });
+    }
+    if authority.roots.is_empty() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler support root intent authority",
+            message: "must retain at least one authored compiler-support root".to_string(),
+        });
+    }
+    if authority.capture_receipt_identity.trim().is_empty() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler support root intent authority",
+            message: "must retain its exact capture receipt identity".to_string(),
+        });
+    }
+    let mut prior_alias = None;
+    for root in &authority.roots {
+        if root.alias.trim().is_empty()
+            || root.unit.trim().is_empty()
+            || root.intent_owner.trim().is_empty()
+            || root.source_owner.trim().is_empty()
+        {
+            return Err(OvenRustcError::InvalidInput {
+                field: "compiler support root intent authority",
+                message: "must retain nonempty aliases, selected units, declaration owners, and source owners"
+                    .to_string(),
+            });
+        }
+        if prior_alias.as_ref().is_some_and(|prior: &String| prior >= &root.alias) {
+            return Err(OvenRustcError::InvalidInput {
+                field: "compiler support root intent authority",
+                message: "roots must be strictly sorted by alias".to_string(),
+            });
+        }
+        if root
+            .requested_features
+            .windows(2)
+            .any(|features| features[0] >= features[1])
+        {
+            return Err(OvenRustcError::InvalidInput {
+                field: "compiler support root intent authority",
+                message: format!("alias `{}` has noncanonical requested features", root.alias),
+            });
+        }
+        prior_alias = Some(&root.alias);
+    }
+    Ok(())
+}
+
+/// Return the only sealed registry record that may author one alias for the graph's selected purpose.
+///
+/// Test graphs consume their explicit envelope and never silently reuse a normal edge; path and Git test roots are
+/// not represented by this registry-only physical join.
 fn exact_project_inspection_root_dependency<'a>(
     authority: &'a OvenProjectInspectionAuthorityPayload,
     purpose: OvenSelectedRustFacetPurpose,
@@ -288,6 +585,10 @@ fn exact_project_inspection_root_dependency<'a>(
     }
 }
 
+/// Check that one raw selected unit names the complete source and owner sealed for its project registry root.
+///
+/// Cargo aliases are deliberately excluded from crate-target comparison: a renamed dependency retains its alias in
+/// the root map while package/version/source identity establishes the physical unit it selects.
 fn validate_project_inspection_root_unit(
     unit: &OvenSelectedRustFacetUnit,
     dependency: &OvenProjectInspectionRootDependency,
@@ -356,6 +657,7 @@ mod selected_rust_facet_graph_tests {
 
     use super::super::{OvenRustcError, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage};
     use super::*;
+    use oven_store::{OvenGeneratedProjectRequest, receipt_generated_project};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -369,6 +671,26 @@ mod selected_rust_facet_graph_tests {
 
     fn toolchain_owner_identity() -> String {
         selected_graph_sha256(b"toolchain inspection closure")
+    }
+
+    fn compiler_release_receipt(
+        root: &Path,
+        root_intent_digest: Option<String>,
+    ) -> Result<OvenReceipt, Box<dyn std::error::Error>> {
+        let mut request = OvenGeneratedProjectRequest::new(
+            root,
+            "compiler-release-fixture",
+            "0.1.0",
+            "x86_64-unknown-linux-gnu",
+            "rustc 1.85.0 (fixture)",
+            "dev",
+            Vec::new(),
+        )
+        .with_generated_source("generated-root", root.join("generated.rs"));
+        if let Some(digest) = root_intent_digest {
+            request = request.with_build_unit_input(OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT, digest);
+        }
+        Ok(receipt_generated_project(&request)?)
     }
 
     fn member(path: &str, bytes: &[u8]) -> OvenSelectedRustFacetSourceMember {
@@ -541,6 +863,50 @@ mod selected_rust_facet_graph_tests {
         })
     }
 
+    fn compiler_support_graph() -> Result<OvenSelectedRustFacetGraph, OvenSelectedRustFacetGraphError> {
+        let selection = selection();
+        let source_members = vec![member("library/core/src/lib.rs", b"#![no_std]\n")];
+        let mut unit = OvenSelectedRustFacetUnit {
+            identity: String::new(),
+            package: "rust-core".to_string(),
+            package_version: "1.85.0".to_string(),
+            crate_name: "core".to_string(),
+            crate_kind: OvenSelectedRustFacetCrateKind::Rlib,
+            role: OvenSelectedRustFacetUnitRole::CompilerSupport,
+            domain: OvenSelectedRustFacetDomain::Target,
+            edition: "2021".to_string(),
+            source: source(
+                OvenSelectedRustFacetSourceKind::Compiler,
+                "rust-src:library/core",
+                &toolchain_owner_identity(),
+                &source_members,
+            )?,
+            root_module: "library/core/src/lib.rs".to_string(),
+            source_members,
+            features: Vec::new(),
+            cfg: Vec::new(),
+            environment: BTreeMap::new(),
+            include_dirs: vec![OvenSelectedRustFacetPath {
+                owner: toolchain_owner_identity(),
+                path: ".".to_string(),
+            }],
+            exclude_dirs: Vec::new(),
+            dependencies: Vec::new(),
+            generated_inputs: Vec::new(),
+        };
+        unit.identity = selected_graph_unit_identity(&selection, &unit)?;
+        Ok(OvenSelectedRustFacetGraph {
+            schema_version: OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION,
+            selection,
+            owners: vec![OvenSelectedRustFacetOwner {
+                identity: toolchain_owner_identity(),
+                kind: OvenSelectedRustFacetOwnerKind::Toolchain,
+            }],
+            units: vec![unit],
+            exposed_roots: BTreeMap::new(),
+        })
+    }
+
     fn authority_for_registry_root(
         alias: &str,
         unit: &OvenSelectedRustFacetUnit,
@@ -687,6 +1053,139 @@ mod selected_rust_facet_graph_tests {
                 ..
             })
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn selected_graph_binds_compiler_support_intent_to_its_exact_receipt_and_toolchain() -> TestResult {
+        let receipt_root = tempfile::tempdir()?;
+        fs::write(receipt_root.path().join("generated.rs"), "pub fn fixture() {}\n")?;
+        let capture_receipt = compiler_release_receipt(receipt_root.path(), None)?;
+        let physical = compiler_support_graph()?;
+        let unit = physical.units.first().ok_or("fixture lost compiler support unit")?;
+        let authority = OvenCompilerSupportRootIntentAuthority {
+            schema_version: OVEN_COMPILER_SUPPORT_ROOT_INTENT_SCHEMA_VERSION,
+            capture_receipt_identity: capture_receipt.identity.clone(),
+            roots: vec![OvenCompilerSupportRootIntent {
+                alias: "core_support".to_string(),
+                unit: unit.identity.clone(),
+                requested_features: vec!["compiler-intrinsics".to_string()],
+                default_features: false,
+                intent_owner: toolchain_owner_identity(),
+                source_owner: toolchain_owner_identity(),
+            }],
+        };
+        let final_receipt = compiler_release_receipt(
+            receipt_root.path(),
+            Some(compiler_support_root_intent_digest(&authority)?),
+        )?;
+
+        let bound = bind_compiler_support_root_intents(physical.clone(), &authority, &capture_receipt, &final_receipt)?;
+        assert_eq!(
+            bound.graph().exposed_roots.get("core_support"),
+            Some(&OvenSelectedRustFacetRoot {
+                unit: unit.identity.clone(),
+                requested_features: vec!["compiler-intrinsics".to_string()],
+                default_features: false,
+                intent_owner: toolchain_owner_identity(),
+            })
+        );
+
+        let mut tampered_final_receipt = final_receipt.clone();
+        tampered_final_receipt.sources.build_unit_inputs.insert(
+            OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT.to_string(),
+            selected_graph_sha256(b"tampered"),
+        );
+        assert!(matches!(
+            bind_compiler_support_root_intents(physical.clone(), &authority, &capture_receipt, &tampered_final_receipt,),
+            Err(OvenRustcError::InvalidInput {
+                field: "compiler release root intent final receipt",
+                ..
+            })
+        ));
+
+        let mut tampered_capture_receipt = capture_receipt.clone();
+        tampered_capture_receipt.sources.build_unit_inputs.insert(
+            "unsealed-capture-change".to_string(),
+            selected_graph_sha256(b"tampered capture"),
+        );
+        assert!(matches!(
+            bind_compiler_support_root_intents(physical.clone(), &authority, &tampered_capture_receipt, &final_receipt,),
+            Err(OvenRustcError::InvalidInput {
+                field: "compiler release root intent capture receipt",
+                ..
+            })
+        ));
+
+        let mut changed_default = authority.clone();
+        changed_default.roots[0].default_features = true;
+        assert!(matches!(
+            bind_compiler_support_root_intents(physical.clone(), &changed_default, &capture_receipt, &final_receipt,),
+            Err(OvenRustcError::InvalidInput {
+                field: "compiler release root intent final receipt",
+                ..
+            })
+        ));
+
+        let mut wrong_owner = authority;
+        wrong_owner.roots[0].source_owner = selected_graph_sha256(b"other source owner");
+        let wrong_owner_final_receipt = compiler_release_receipt(
+            receipt_root.path(),
+            Some(compiler_support_root_intent_digest(&wrong_owner)?),
+        )?;
+        assert!(matches!(
+            bind_compiler_support_root_intents(physical, &wrong_owner, &capture_receipt, &wrong_owner_final_receipt,),
+            Err(OvenRustcError::InvalidInput {
+                field: "compiler release root intent source",
+                ..
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn compiler_release_root_keeps_declaration_and_registry_source_owners_distinct() -> TestResult {
+        let receipt_root = tempfile::tempdir()?;
+        fs::write(receipt_root.path().join("generated.rs"), "pub fn fixture() {}\n")?;
+        let capture_receipt = compiler_release_receipt(receipt_root.path(), None)?;
+        let mut physical = compiler_support_graph()?;
+        let source_owner = dependency_owner_identity();
+        physical.owners.push(OvenSelectedRustFacetOwner {
+            identity: source_owner.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::Constituent,
+        });
+        let selection = physical.selection.clone();
+        let unit_identity = {
+            let unit = physical.units.first_mut().ok_or("fixture lost compiler release root")?;
+            unit.role = OvenSelectedRustFacetUnitRole::Library;
+            unit.source.kind = OvenSelectedRustFacetSourceKind::Registry;
+            unit.source.identity = "registry:compiler-release-support@1.2.3".to_string();
+            unit.source.owner = source_owner.clone();
+            unit.include_dirs[0].owner = source_owner.clone();
+            unit.identity = selected_graph_unit_identity(&selection, unit)?;
+            unit.identity.clone()
+        };
+        let authority = OvenCompilerSupportRootIntentAuthority {
+            schema_version: OVEN_COMPILER_SUPPORT_ROOT_INTENT_SCHEMA_VERSION,
+            capture_receipt_identity: capture_receipt.identity.clone(),
+            roots: vec![OvenCompilerSupportRootIntent {
+                alias: "release_support".to_string(),
+                unit: unit_identity,
+                requested_features: Vec::new(),
+                default_features: true,
+                intent_owner: toolchain_owner_identity(),
+                source_owner,
+            }],
+        };
+        let final_receipt = compiler_release_receipt(
+            receipt_root.path(),
+            Some(compiler_support_root_intent_digest(&authority)?),
+        )?;
+        let bound = bind_compiler_support_root_intents(physical, &authority, &capture_receipt, &final_receipt)?;
+        assert_eq!(
+            bound.graph().exposed_roots["release_support"].intent_owner,
+            toolchain_owner_identity()
+        );
         Ok(())
     }
 
