@@ -57,6 +57,7 @@ struct CompiledUnitIdentityInput<'a> {
     root_module: &'a str,
     features: &'a [String],
     cfg: &'a [String],
+    sysroot_externs: &'a [String],
     environment: BTreeMap<&'a str, CompiledEnvironmentValue<'a>>,
     include_dirs: Vec<CompiledPath<'a>>,
     exclude_dirs: Vec<CompiledPath<'a>>,
@@ -263,6 +264,7 @@ fn compiled_unit_identity_input<'a>(
         root_module: &unit.root_module,
         features: &unit.features,
         cfg: &unit.cfg,
+        sysroot_externs: &unit.sysroot_externs,
         environment: unit
             .environment
             .iter()
@@ -480,6 +482,7 @@ mod tests {
             source_members: members,
             features: vec!["feature_a".to_string()],
             cfg: vec!["feature=\"feature_a\"".to_string()],
+            sysroot_externs: Vec::new(),
             environment,
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner: owner.clone(),
@@ -547,6 +550,7 @@ mod tests {
             source_members: members,
             features: vec!["feature_a".to_string()],
             cfg: vec!["feature=\"feature_a\"".to_string()],
+            sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner: owner.clone(),
@@ -689,6 +693,7 @@ mod tests {
             source_members: dependency_members,
             features: Vec::new(),
             cfg: Vec::new(),
+            sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner: dependency_owner.clone(),
@@ -726,6 +731,7 @@ mod tests {
             source_members: root_members,
             features: Vec::new(),
             cfg: Vec::new(),
+            sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner: root_owner.clone(),

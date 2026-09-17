@@ -169,6 +169,7 @@ pub fn project_legacy_cargo_selected_graph(
                 source_members: source_members(capture_unit, binding)?,
                 features: capture_unit.effective_features.clone(),
                 cfg: build_script_facts.cfg,
+                sysroot_externs: capture_unit.sysroot_externs.clone(),
                 environment: build_script_facts.environment,
                 include_dirs: binding.include_dirs.clone(),
                 exclude_dirs: binding.exclude_dirs.clone(),

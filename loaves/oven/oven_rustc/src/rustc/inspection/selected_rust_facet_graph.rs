@@ -11,7 +11,7 @@ mod validation;
 pub use validation::*;
 
 /// Wire schema for the portable Rust facet graph selected before physical rust-analyzer projection.
-pub const OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION: u32 = 5;
+pub const OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION: u32 = 6;
 const OVEN_SELECTED_RUST_FACET_GRAPH_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-graph/1";
 pub(crate) const OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-unit/1";
 
@@ -290,6 +290,11 @@ pub struct OvenSelectedRustFacetUnit {
     pub features: Vec<String>,
     /// Sorted complete cfg facts supplied to inspection; an explicitly checked empty set remains empty.
     pub cfg: Vec<String>,
+    /// Sorted compiler-sysroot externs observed in the exact Rustc invocation.
+    ///
+    /// These names have no filesystem path because the selected compiler owns them. Schema six admits only
+    /// `proc_macro`; every other bare extern must be captured as a normal selected artifact edge.
+    pub sysroot_externs: Vec<String>,
     /// Complete selected environment. Empty means the producer checked and selected no values.
     pub environment: BTreeMap<String, OvenSelectedRustFacetEnvironmentValue>,
     /// Sorted, nonempty source directories visible to rust-analyzer.
@@ -492,6 +497,12 @@ fn validate_selected_graph_linked_library(
                 return Err(selected_graph_invalid(
                     format!("{field}.target"),
                     "does not match the selected unit domain target",
+                ));
+            }
+            if *kind == OvenSelectedRustFacetLinkedLibraryKind::Framework && !target.contains("-apple-") {
+                return Err(selected_graph_invalid(
+                    format!("{field}.target"),
+                    "framework linkage requires an Apple target",
                 ));
             }
             let kind = validate_selected_graph_owner_reference(provider, owners, &format!("{field}.provider"))?;
@@ -756,6 +767,15 @@ impl OvenSelectedRustFacetGraph {
 
             validate_selected_graph_sorted_strings(&unit.features, &format!("{field}.features"))?;
             validate_selected_graph_sorted_strings(&unit.cfg, &format!("{field}.cfg"))?;
+            validate_selected_graph_sorted_strings(&unit.sysroot_externs, &format!("{field}.sysroot_externs"))?;
+            for sysroot_extern in &unit.sysroot_externs {
+                if sysroot_extern != "proc_macro" {
+                    return Err(selected_graph_invalid(
+                        format!("{field}.sysroot_externs"),
+                        format!("does not admit bare compiler extern `{sysroot_extern}`"),
+                    ));
+                }
+            }
             for (name, value) in &unit.environment {
                 validate_selected_graph_environment(
                     name,

@@ -24,7 +24,7 @@ from rust_graph import (
 from rust_source import read_dependency_catalog, RustDependencyCatalog
 from source_inventory import inert_build_script_warnings, package_source_inventory, PackageSourceInventory
 
-const SCHEMA: str = "incan.oven.rust-policy-exchange/4"
+const SCHEMA: str = "incan.oven.rust-policy-exchange/5"
 const OPERATION: str = "validate_selected_rust_graph"
 
 
@@ -133,10 +133,14 @@ def decode_units(value: JsonValue) -> Result[list[AdmittedSelectedUnit], Selecti
 
 def decode_closure(value: JsonValue, path: list[str]) -> Result[SelectedUnitClosure, SelectionError]:
     """Decode exact physical closure facts without interpreting Cargo directives or feature demand."""
-    exact_object(value, ["environment", "generated_inputs", "linked_libraries"], path)?
+    exact_object(value, ["environment", "generated_inputs", "linked_libraries", "sysroot_externs"], path)?
     environment = field(value, "environment", path)?
     generated = field(value, "generated_inputs", path)?
     linked = field(value, "linked_libraries", path)?
+    sysroot_externs = strings(field(value, "sysroot_externs", path)?, path + ["sysroot_externs"])?
+    for sysroot_extern in sysroot_externs:
+        if sysroot_extern != "proc_macro":
+            return Err(invalid(path + ["sysroot_externs"]))
     if not environment.is_object():
         return Err(invalid(path + ["environment"]))
     for name in environment.keys():
@@ -240,7 +244,12 @@ def decode_closure(value: JsonValue, path: list[str]) -> Result[SelectedUnitClos
                 nonempty(text_field(members[member_index], "digest", member_path)?, member_path + ["digest"])?
         else:
             return Err(invalid(item_path + ["input"]))
-    return Ok(SelectedUnitClosure(environment=environment, generated_inputs=generated, linked_libraries=linked))
+    return Ok(SelectedUnitClosure(
+        environment=environment,
+        generated_inputs=generated,
+        linked_libraries=linked,
+        sysroot_externs=sysroot_externs,
+    ))
 
 
 def decode_roots(value: JsonValue) -> Result[list[GraphRoot], SelectionError]:
@@ -520,7 +529,7 @@ def selected(
                     domain_name(unit.node.domain),
                 ), "purpose": JsonValue.string(purpose_name(purpose)), "role": JsonValue.string(role_name(unit.role)), "crate_kind": JsonValue.string(
                     crate_kind_name(unit.crate_kind),
-                ), "closure": JsonValue.object({"environment": unit.closure.environment, "generated_inputs": unit.closure.generated_inputs, "linked_libraries": unit.closure.linked_libraries}), "features": JsonValue.array([JsonValue.string(feature) for feature in unit.features])},
+                ), "closure": JsonValue.object({"environment": unit.closure.environment, "generated_inputs": unit.closure.generated_inputs, "linked_libraries": unit.closure.linked_libraries, "sysroot_externs": JsonValue.array([JsonValue.string(value) for value in unit.closure.sysroot_externs])}), "features": JsonValue.array([JsonValue.string(feature) for feature in unit.features])},
             ),
         )
     return JsonValue.object(

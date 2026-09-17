@@ -65,6 +65,7 @@ def empty_closure() -> SelectedUnitClosure:
         environment=JsonValue.object({}),
         generated_inputs=JsonValue.array([]),
         linked_libraries=JsonValue.array([]),
+        sysroot_externs=[],
     )
 
 

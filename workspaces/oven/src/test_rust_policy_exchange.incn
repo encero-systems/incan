@@ -9,15 +9,16 @@ from rust_policy_exchange import evaluate
 def request(
     role: str = "library",
     extra: str = "",
-    schema: str = "incan.oven.rust-policy-exchange/4",
+    schema: str = "incan.oven.rust-policy-exchange/5",
     operation: str = "validate_selected_rust_graph",
     intent_owner: str = "sha256:project-authority",
     malformed_closure: bool = false,
     sensitive_environment: bool = false,
+    unsupported_sysroot_extern: bool = false,
 ) -> str:
     """One exact selected leaf; the manifest digest is SHA-256 of empty bytes."""
     mut closure = JsonValue.object(
-        {"environment": JsonValue.object({}), "generated_inputs": JsonValue.array([]), "linked_libraries": JsonValue.array([])},
+        {"environment": JsonValue.object({}), "generated_inputs": JsonValue.array([]), "linked_libraries": JsonValue.array([]), "sysroot_externs": JsonValue.array([])},
     )
     if malformed_closure:
         closure = JsonValue.object({"environment": JsonValue.object({})})
@@ -27,7 +28,11 @@ def request(
                 {"DEP_TOKEN": JsonValue.object(
                     {"kind": JsonValue.string("sensitive_digest"), "hmac_sha256": JsonValue.string("sha256:token")},
                 )},
-            ), "generated_inputs": JsonValue.array([]), "linked_libraries": JsonValue.array([])},
+            ), "generated_inputs": JsonValue.array([]), "linked_libraries": JsonValue.array([]), "sysroot_externs": JsonValue.array([])},
+        )
+    elif unsupported_sysroot_extern:
+        closure = JsonValue.object(
+            {"environment": JsonValue.object({}), "generated_inputs": JsonValue.array([]), "linked_libraries": JsonValue.array([]), "sysroot_externs": JsonValue.array([JsonValue.string("std")])},
         )
     mut document: Dict[str, JsonValue] = {"schema": JsonValue.string(schema), "operation": JsonValue.string(operation), "graph_digest": JsonValue.string(
         "sha256:selected-graph",
@@ -138,6 +143,11 @@ pub def test_malformed_physical_closure_refuses() -> None:
     assert status(evaluate(request(malformed_closure=true))) == "refused"
 
 
+pub def test_unadmitted_bare_compiler_extern_refuses() -> None:
+    """Protects the captured compiler-only boundary from accepting arbitrary sysroot names."""
+    assert status(evaluate(request(unsupported_sysroot_extern=true))) == "refused"
+
+
 pub def test_unknown_top_level_field_refuses() -> None:
     """Protects strict refusal of unrecognized envelope fields."""
     assert status(evaluate(request(extra=",\"unexpected\":true"))) == "refused"
@@ -153,6 +163,7 @@ pub def test_unknown_schema_and_operation_refuse() -> None:
     assert status(evaluate(request(schema="incan.oven.rust-policy-exchange/1"))) == "refused"
     assert status(evaluate(request(schema="incan.oven.rust-policy-exchange/2"))) == "refused"
     assert status(evaluate(request(schema="incan.oven.rust-policy-exchange/3"))) == "refused"
+    assert status(evaluate(request(schema="incan.oven.rust-policy-exchange/4"))) == "refused"
     assert status(evaluate(request(operation="select_again"))) == "refused"
 
 

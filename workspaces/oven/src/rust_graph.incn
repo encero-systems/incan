@@ -96,6 +96,8 @@ pub model SelectedUnitClosure:
     pub environment: JsonValue
     pub generated_inputs: JsonValue
     pub linked_libraries: JsonValue
+    # Bare compiler/sysroot externs remain physical compiler inputs, not source-policy activation facts.
+    pub sysroot_externs: list[str]
 
 
 @derive(Clone)

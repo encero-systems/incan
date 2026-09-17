@@ -771,6 +771,7 @@ mod selected_rust_facet_graph_tests {
             source_members,
             features: Vec::new(),
             cfg: Vec::new(),
+            sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner: dependency_owner_identity(),
@@ -817,6 +818,7 @@ mod selected_rust_facet_graph_tests {
             source_members,
             features: vec!["root-feature".to_string()],
             cfg: vec!["feature=\"root-feature\"".to_string()],
+            sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner,
@@ -888,6 +890,7 @@ mod selected_rust_facet_graph_tests {
             source_members,
             features: Vec::new(),
             cfg: Vec::new(),
+            sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner: toolchain_owner_identity(),
@@ -2041,6 +2044,27 @@ mod selected_rust_facet_graph_tests {
     }
 
     #[test]
+    fn selected_graph_identity_binds_and_restricts_compiler_sysroot_externs() -> TestResult {
+        let first = graph(b"pub fn use_dependency() {}\n")?.validated()?;
+        let mut changed = graph(b"pub fn use_dependency() {}\n")?;
+        let root = unit_index(&changed, "fixture")?;
+        changed.units[root].sysroot_externs = vec!["proc_macro".to_string()];
+        reidentify_unit(&mut changed, root)?;
+        let changed = changed.validated()?;
+        assert_ne!(first.digest(), changed.digest());
+
+        let mut unsupported = graph(b"pub fn use_dependency() {}\n")?;
+        let root = unit_index(&unsupported, "fixture")?;
+        unsupported.units[root].sysroot_externs = vec!["std".to_string()];
+        reidentify_unit(&mut unsupported, root)?;
+        assert!(matches!(
+            unsupported.validated(),
+            Err(OvenSelectedRustFacetGraphError::Invalid { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn selected_graph_requires_receipt_bound_provider_facts_for_the_unit_domain() -> TestResult {
         let mut graph = graph(b"pub fn use_dependency() {}\n")?;
         let root = unit_index(&graph, "fixture")?;
@@ -2049,13 +2073,13 @@ mod selected_rust_facet_graph_tests {
             identity: provider.clone(),
             kind: OvenSelectedRustFacetOwnerKind::LinkedLibraryProvider,
         });
-        let members = vec![member("Fixture.framework/Fixture", b"fixture framework")];
+        let members = vec![member("libfixture.tbd", b"fixture system library")];
         graph.units[root].linked_libraries = vec![OvenSelectedRustFacetLinkedLibrary::Provider {
             name: "Fixture".to_string(),
-            kind: OvenSelectedRustFacetLinkedLibraryKind::Framework,
+            kind: OvenSelectedRustFacetLinkedLibraryKind::System,
             provider: provider.clone(),
             target: graph.selection.intent.target.clone(),
-            capability: "apple.framework.Fixture".to_string(),
+            capability: "fixture.system.Fixture".to_string(),
             receipt_identity: selected_graph_sha256(b"fixture receipt"),
             provenance: OvenSelectedRustFacetPath {
                 owner: provider.clone(),
@@ -2064,13 +2088,13 @@ mod selected_rust_facet_graph_tests {
             provenance_digest: selected_graph_sha256(b"fixture provenance"),
             search_root: OvenSelectedRustFacetPath {
                 owner: provider.clone(),
-                path: "frameworks".to_string(),
+                path: "providers".to_string(),
             },
             artifact: OvenSelectedRustFacetPath {
                 owner: provider,
-                path: "frameworks/Fixture.framework/Fixture".to_string(),
+                path: "providers/libfixture.tbd".to_string(),
             },
-            digest: selected_graph_sha256(b"fixture framework"),
+            digest: selected_graph_sha256(b"fixture system library"),
             members,
         }];
         reidentify_unit(&mut graph, root)?;
