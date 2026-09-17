@@ -28,6 +28,7 @@ from source_inventory import inert_build_script_warnings, package_source_invento
 
 const SCHEMA: str = "incan.oven.rust-policy-exchange/5"
 const OPERATION: str = "validate_selected_rust_graph"
+const SENSITIVE_DIGEST_PREFIX: str = "hmac-sha256:"
 
 
 model CatalogInput:
@@ -137,7 +138,30 @@ def decode_location(value: JsonValue, path: list[str]) -> Result[None, Selection
     """Require one nonempty owner-relative location without resolving it or discovering a root."""
     exact_object(value, ["owner", "path"], path)?
     nonempty(text_field(value, "owner", path)?, path + ["owner"])?
-    nonempty(text_field(value, "path", path)?, path + ["path"])?
+    portable_owner_path(text_field(value, "path", path)?, path + ["path"])?
+    return Ok(None)
+
+
+def portable_owner_path(value: str, path: list[str]) -> Result[None, SelectionError]:
+    """Reject delivery paths and traversal while allowing `.` to name the admitted owner root."""
+    nonempty(value, path)?
+    if value == ".":
+        return Ok(None)
+    if value.startswith("/") or "\\" in value or ":" in value:
+        return Err(invalid(path))
+    for part in value.split("/"):
+        if part in ["", ".", ".."]:
+            return Err(invalid(path))
+    return Ok(None)
+
+
+def keyed_sensitive_digest(value: str, path: list[str]) -> Result[None, SelectionError]:
+    """Require the opaque producer-keyed HMAC form so an unkeyed value digest cannot masquerade as redaction."""
+    if len(value) != len(SENSITIVE_DIGEST_PREFIX) + 64 or not value.startswith(SENSITIVE_DIGEST_PREFIX):
+        return Err(invalid(path))
+    for character in value[len(SENSITIVE_DIGEST_PREFIX):len(value)]:
+        if character not in "0123456789abcdef":
+            return Err(invalid(path))
     return Ok(None)
 
 
@@ -145,11 +169,12 @@ def decode_members(
     value: JsonValue,
     path: list[str],
     allow_empty: bool,
-) -> Result[None, SelectionError]:
+) -> Result[Dict[str, str], SelectionError]:
     """Decode one canonical member catalog, allowing an empty catalog only for an explicit generated output."""
     values = array(value, path)?
     if not allow_empty and len(values) == 0:
         return Err(invalid(path))
+    mut members: Dict[str, str] = Dict()
     mut previous: str = ""
     for index in range(len(values)):
         member_path = path + [str(index)]
@@ -160,7 +185,8 @@ def decode_members(
         if name <= previous:
             return Err(invalid(member_path + ["path"]))
         previous = name
-    return Ok(None)
+        members[name] = digest
+    return Ok(members)
 
 
 def generated_input_digest(members: JsonValue, path: list[str]) -> Result[str, SelectionError]:
@@ -198,7 +224,10 @@ def decode_environment(value: JsonValue, path: list[str]) -> Result[JsonValue, S
             decode_location(field(environment_value, "value", path + [name])?, path + [name, "value"])?
         elif kind == "sensitive_digest":
             exact_object(environment_value, ["kind", "hmac_sha256"], path + [name])?
-            nonempty(text_field(environment_value, "hmac_sha256", path + [name])?, path + [name, "hmac_sha256"])?
+            keyed_sensitive_digest(
+                text_field(environment_value, "hmac_sha256", path + [name])?,
+                path + [name, "hmac_sha256"],
+            )?
         else:
             return Err(invalid(path + [name, "kind"]))
     return Ok(value)
@@ -258,7 +287,7 @@ def decode_linked_libraries(value: JsonValue, path: list[str]) -> Result[JsonVal
             decode_location(artifact, item_path + ["artifact"])?
             declared_digest = nonempty(text_field(item, "digest", item_path)?, item_path + ["digest"])?
             members_value = field(item, "members", item_path)?
-            decode_members(members_value, item_path + ["members"], false)?
+            members = decode_members(members_value, item_path + ["members"], false)?
             artifact_path = text_field(artifact, "path", item_path + ["artifact"])?
             search_root_path = text_field(search_root, "path", item_path + ["search_root"])?
             mut prefix = ""
@@ -267,12 +296,7 @@ def decode_linked_libraries(value: JsonValue, path: list[str]) -> Result[JsonVal
             if not artifact_path.startswith(prefix):
                 return Err(invalid(item_path + ["artifact"]))
             member_path = artifact_path[len(prefix):len(artifact_path)]
-            mut artifact_digest: Option[str] = None
-            members = array(members_value, item_path + ["members"])?
-            for member in members:
-                if text_field(member, "path", item_path + ["members"])? == member_path:
-                    artifact_digest = Some(text_field(member, "digest", item_path + ["members"])?)
-            match artifact_digest:
+            match members.get(member_path):
                 Some(member_digest) =>
                     if member_digest != declared_digest:
                         return Err(invalid(item_path + ["members"]))
