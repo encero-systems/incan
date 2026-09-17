@@ -2609,17 +2609,155 @@ mod tests {
     use std::{fs, thread};
 
     use oven_model::manifest::{DependencySource, DependencySpec};
-    use oven_store::{OvenGeneratedProjectRequest, digest_bytes, digest_source_tree, receipt_generated_project};
+    use oven_store::test_support::{request as store_request, write_project as write_store_project};
+    use oven_store::{
+        OvenArtifactKind, OvenArtifactMaterializedFile, OvenGeneratedProjectRequest, OvenStore, OvenStoreLimits,
+        digest_bytes, digest_source_tree, receipt_generated_project,
+    };
 
     use super::{
-        CompatibleLoaf, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION, OvenLoaf,
-        OvenLoafCompatibility, OvenLoafEnvelope, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafError,
-        OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafSelection, acquire_exclusive_loaf_generation_lock,
-        acquire_loaf_generation_lock, closure_proof_path, committed_loaf_envelope_compatibility_identity,
-        committed_loaf_paths, digest_runtime_crate_source, loaf_envelope_specifications, loaf_from_loaf,
+        CompatibleLoaf, OVEN_LOAF_ENVELOPE_LOCK_FILE, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
+        OVEN_LOAF_SCHEMA_VERSION, OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenLoaf, OvenLoafCompatibility,
+        OvenLoafEnvelope, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafError, OvenLoafFixtureAction,
+        OvenLoafMemberRole, OvenLoafSelection, OvenReleaseStoreMember, acquire_committed_release_store_member,
+        acquire_exclusive_loaf_generation_lock, acquire_loaf_generation_lock, closure_proof_path,
+        committed_loaf_envelope_compatibility_identity, committed_loaf_paths, digest_runtime_crate_source,
+        generation_directory_path, loaf_envelope_specifications, loaf_from_loaf, prove_release_store_member_payload,
         registry_source_dependencies_supported_by_catalog, select_most_specific_compatible_loaf,
         validate_loaf_declared_file_set,
     };
+
+    #[cfg(unix)]
+    fn publish_release_store_fixture(
+        generation: &Path,
+        kind: OvenArtifactKind,
+        executable_count: usize,
+    ) -> Result<OvenReleaseStoreMember, Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let project = tempfile::tempdir()?;
+        write_store_project(project.path())?;
+        let sources = tempfile::tempdir()?;
+        let mut request = store_request(project.path(), "release-member", b"opaque release payload")?;
+        request.kind = kind;
+        for index in 0..executable_count {
+            let source = sources.path().join(format!("engine-{index}"));
+            fs::write(&source, b"#!/bin/sh\nexit 0\n")?;
+            fs::set_permissions(&source, fs::Permissions::from_mode(0o755))?;
+            request.materialized_files.push(OvenArtifactMaterializedFile {
+                source_path: source,
+                relative_path: format!("bin/engine-{index}"),
+            });
+        }
+        let store_relative_path = PathBuf::from("release-store");
+        let store = OvenStore::new(
+            generation.join(&store_relative_path),
+            OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000),
+        );
+        let manifest = store.publish(&request)?;
+        Ok(OvenReleaseStoreMember {
+            schema_version: OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION,
+            label: "engine".to_string(),
+            store_relative_path,
+            artifact_identity: manifest.identity,
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn release_store_member_proof_accepts_one_project_output_executable_and_holds_its_lease()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let generation = root.path().join("generation");
+        fs::create_dir_all(&generation)?;
+        let member = publish_release_store_fixture(&generation, OvenArtifactKind::ProjectOutput, 1)?;
+        let (payload, executable) = prove_release_store_member_payload(&generation, &member)?;
+        assert!(executable.is_file());
+        let lease = fs::File::open(
+            payload
+                .artifact_root
+                .parent()
+                .ok_or("materialized root has no entry")?
+                .join(".active.lock"),
+        )?;
+        assert!(matches!(lease.try_lock(), Err(fs::TryLockError::WouldBlock)));
+        drop(payload);
+        lease.try_lock()?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn committed_release_store_member_is_optional_and_runtime_acquires_the_real_payload()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let absent = tempfile::tempdir()?;
+        assert!(acquire_committed_release_store_member(absent.path(), "engine")?.is_none());
+
+        let root = tempfile::tempdir()?;
+        let generation_identity = digest_bytes(b"release generation");
+        let generation = root.path().join(generation_directory_path(&generation_identity));
+        fs::create_dir_all(&generation)?;
+        let member = publish_release_store_fixture(&generation, OvenArtifactKind::ProjectOutput, 1)?;
+        fs::write(root.path().join(OVEN_LOAF_ENVELOPE_LOCK_FILE), b"")?;
+        fs::write(
+            root.path().join("envelope.json"),
+            serde_json::to_vec(&OvenLoafEnvelopeManifest {
+                schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
+                envelope: "release".to_string(),
+                generation_identity,
+                evidence: BTreeMap::new(),
+                loafs: Vec::new(),
+                release_store_member: Some(member),
+            })?,
+        )?;
+        let held = acquire_committed_release_store_member(root.path(), "engine")?.ok_or("member not acquired")?;
+        assert!(held.executable.is_file());
+        assert_eq!(held.payload.manifest.kind, OvenArtifactKind::ProjectOutput);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn release_store_member_proof_refuses_wrong_kind_and_multiple_executables() -> Result<(), Box<dyn std::error::Error>>
+    {
+        for (kind, count) in [(OvenArtifactKind::Engine, 1), (OvenArtifactKind::ProjectOutput, 2)] {
+            let root = tempfile::tempdir()?;
+            let generation = root.path().join("generation");
+            fs::create_dir_all(&generation)?;
+            let member = publish_release_store_fixture(&generation, kind, count)?;
+            assert!(prove_release_store_member_payload(&generation, &member).is_err());
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn release_store_member_proof_refuses_tampered_bytes_and_store_symlink_escape()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir()?;
+        let generation = root.path().join("generation");
+        fs::create_dir_all(&generation)?;
+        let member = publish_release_store_fixture(&generation, OvenArtifactKind::ProjectOutput, 1)?;
+        let selected = PublishedOvenStore::new(generation.join(&member.store_relative_path))
+            .select_payloads_matching_for_execution(|candidate| candidate.identity == member.artifact_identity)?;
+        let executable = selected[0].artifact_root.join("bin/engine-0");
+        drop(selected);
+        fs::remove_file(&executable)?;
+        fs::write(&executable, b"tampered executable")?;
+        assert!(prove_release_store_member_payload(&generation, &member).is_err());
+
+        let outside = tempfile::tempdir()?;
+        let escaped = generation.join("escaped-store");
+        symlink(outside.path(), &escaped)?;
+        let escaped_member = OvenReleaseStoreMember {
+            store_relative_path: PathBuf::from("escaped-store"),
+            ..member
+        };
+        assert!(prove_release_store_member_payload(&generation, &escaped_member).is_err());
+        Ok(())
+    }
     use crate::rustc::{
         OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OvenRustcArtifactExtern, OvenRustcArtifactManifest,
         OvenRustcArtifactPlan, OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,

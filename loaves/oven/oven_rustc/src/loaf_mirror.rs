@@ -317,7 +317,10 @@ mod tests {
     use crate::rustc::{
         OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OvenRustcArtifactExtern, OvenRustcArtifactManifest,
     };
-    use oven_store::{OvenBuildIntent, digest_bytes};
+    use oven_store::test_support::{request as store_request, write_project as write_store_project};
+    use oven_store::{
+        OvenArtifactKind, OvenArtifactMaterializedFile, OvenBuildIntent, OvenStore, OvenStoreLimits, digest_bytes,
+    };
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -437,6 +440,43 @@ mod tests {
         ))
     }
 
+    #[cfg(unix)]
+    fn attach_release_store_member(
+        root: &Path,
+        manifest: &mut OvenLoafEnvelopeManifest,
+    ) -> Result<OvenReleaseStoreMember, Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let project = tempfile::tempdir()?;
+        write_store_project(project.path())?;
+        let source_root = tempfile::tempdir()?;
+        let executable = source_root.path().join("engine");
+        fs::write(&executable, b"#!/bin/sh\nexit 0\n")?;
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))?;
+        let mut request = store_request(project.path(), "release-member", b"opaque release payload")?;
+        request.kind = OvenArtifactKind::ProjectOutput;
+        request.materialized_files = vec![OvenArtifactMaterializedFile {
+            source_path: executable,
+            relative_path: "bin/engine".to_string(),
+        }];
+        let store_relative_path = PathBuf::from("release-store");
+        let generation = root.join(generation_directory(&manifest.generation_identity));
+        let store = OvenStore::new(
+            generation.join(&store_relative_path),
+            OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000),
+        );
+        let published = store.publish(&request)?;
+        let member = OvenReleaseStoreMember {
+            schema_version: 1,
+            label: "engine".to_string(),
+            store_relative_path,
+            artifact_identity: published.identity,
+        };
+        manifest.release_store_member = Some(member.clone());
+        fs::write(root.join("envelope.json"), serde_json::to_vec(manifest)?)?;
+        Ok(member)
+    }
+
     #[test]
     fn the_expected_generation_is_proven_and_committed() -> TestResult {
         let mirror = tempfile::tempdir()?;
@@ -469,6 +509,37 @@ mod tests {
             fs::read_dir(scratch.path())?.next().is_none(),
             "nothing is left in scratch after a commit"
         );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_real_release_store_member_is_proven_and_committed_from_a_mirror() -> TestResult {
+        let mirror = tempfile::tempdir()?;
+        let output = tempfile::tempdir()?;
+        let scratch = tempfile::tempdir_in(output.path())?;
+        let compatibility = evidence();
+        let mut manifest = write_envelope(mirror.path(), &compatibility)?;
+        let member = attach_release_store_member(mirror.path(), &mut manifest)?;
+        let expected_members = members();
+        let expectation = LoafEnvelopeExpectation {
+            schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
+            envelope: "release",
+            generation_identity: &manifest.generation_identity,
+            evidence: &compatibility,
+            members: &expected_members,
+            release_store_member: Some(&member),
+        };
+        import_loaf_envelope_from_mirrors(
+            output.path(),
+            scratch.path(),
+            &expectation,
+            &[mirror.path().to_path_buf()],
+        )
+        .map_err(|miss| miss.to_string())?;
+        let committed: OvenLoafEnvelopeManifest =
+            serde_json::from_slice(&fs::read(output.path().join("envelope.json"))?)?;
+        assert_eq!(committed.release_store_member, Some(member));
         Ok(())
     }
 
