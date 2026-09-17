@@ -7839,8 +7839,8 @@ def main() -> None:
                 "expected stdlib dependency in generated Cargo.toml, got:\n{cargo_toml}"
             );
             assert!(
-                cargo_toml.contains("\"web\""),
-                "expected provider stdlib feature in generated Cargo.toml, got:\n{cargo_toml}"
+                cargo_toml.contains("incan_std_web"),
+                "expected the web facet the provider requires in generated Cargo.toml, got:\n{cargo_toml}"
             );
         }
 
