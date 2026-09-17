@@ -26,6 +26,9 @@ pub struct OvenLegacyRustcInvocation {
     pub reason: String,
     /// Exact compiler executable invoked by Cargo, later checked against the publisher request.
     pub rustc: String,
+    /// Canonical working directory used to resolve rustc's relative source arguments.
+    #[serde(default)]
+    pub working_directory: String,
     /// Ordered rustc arguments, excluding the compiler executable itself.
     pub arguments: Vec<String>,
     /// Allowlisted Cargo compilation context needed to bind the invocation to a package and physical variant.
@@ -66,6 +69,12 @@ fn run_marked_rustc_trace_wrapper() -> Result<i32, ()> {
             ) || name.starts_with("CARGO_FEATURE_")
         })
         .collect();
+    let working_directory = env::current_dir()
+        .and_then(std::fs::canonicalize)
+        .map_err(|_| ())?
+        .into_os_string()
+        .into_string()
+        .map_err(|_| ())?;
     let status = Command::new(&rustc).args(&arguments).status().map_err(|_| ())?;
     let exit_code = status.code().unwrap_or(1);
     if !status.success()
@@ -81,6 +90,7 @@ fn run_marked_rustc_trace_wrapper() -> Result<i32, ()> {
     let record = OvenLegacyRustcInvocation {
         reason: "incan-rustc-invocation".to_string(),
         rustc: rustc.clone(),
+        working_directory,
         arguments: arguments.clone(),
         environment,
     };
@@ -272,6 +282,7 @@ mod tests {
         let mut maximum = serde_json::to_vec(&OvenLegacyRustcInvocation {
             reason: "incan-rustc-invocation".to_string(),
             rustc: "/verified/rustc".to_string(),
+            working_directory: "/fixture".to_string(),
             arguments: vec!["--crate-name".to_string(), "fixture".to_string()],
             environment: BTreeMap::new(),
         })?;
