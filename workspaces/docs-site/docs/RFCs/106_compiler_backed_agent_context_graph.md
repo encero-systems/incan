@@ -371,6 +371,12 @@ Task context packing must use the graph as its primary retrieval surface. A conf
 
 Embedding-based re-ranking may be offered, but it must be optional and local/remote execution must be policy-visible under RFC 080 when models are involved.
 
+### Investigation consumers
+
+RFC 126 proposes an Oven-owned investigation service that connects compiler context to native execution and retained captures. Its observations must reference the exact source snapshot and executable through verified mappings; they must not be promoted into timeless checked source facts. Durable declaration identity, compilation-specific location, executable identity, and capture/stop identity remain distinct. Missing mappings remain unavailable rather than being reconstructed from matching names or lines.
+
+The graph service remains the semantic-context producer. Read-only task-context operations do not implicitly grant launch, resume, expression-evaluation, rerun, or mutation authority. Runtime evidence may be linked through its owning record contract without merging the graph and investigation lifecycles. The public mapping and provenance seam must be settled through RFC 126's design gate before the investigation RFC reaches Planned.
+
 ### Formats
 
 Graph export must support JSONL for streaming ingestion and should support pretty JSON for debugging. Agent context packing should support a compact text format designed for LLM consumption. The compact format should avoid repeated fully qualified names, preserve local IDs, expose edge direction, include provenance, and be deterministic.
@@ -505,10 +511,10 @@ RFC 124 is the first such consumer: it names the semantic digest as the source i
 
 Every graph fact belongs to one of two layers, and only one of them carries identity.
 
-| Layer | Facts | Carries identity | Enters a digest |
-| --- | --- | --- | --- |
-| Logical | module, declaration, signature, visibility, reference, call | yes | yes |
-| Physical | file, byte span, line, on-disk path | no — provenance only | no |
+| Layer    | Facts                                                       | Carries identity     | Enters a digest |
+| -------- | ----------------------------------------------------------- | -------------------- | --------------- |
+| Logical  | module, declaration, signature, visibility, reference, call | yes                  | yes             |
+| Physical | file, byte span, line, on-disk path                         | no — provenance only | no              |
 
 This is a rule about anchoring, not a second graph. The schema already separates the layers — `CodegraphFileRecord` and `CodegraphModuleRecord` are distinct node kinds — and a view over the graph is a projection, never a parallel structure. Splitting into multiple graphs would reintroduce the identity-reconciliation problem that one compiler observing every language exists to avoid.
 
@@ -564,17 +570,17 @@ An implementation may follow every edge out of every public declaration instead.
 
 An implementation must satisfy all of the following. Each is stated at declaration granularity deliberately: an implementation that leaks positional data still moves the digest of the declaration actually edited, so an assertion at module or package granularity passes it.
 
-| Change | Edited declaration | Every other declaration |
-| --- | --- | --- |
-| add or remove a comment | unchanged | unchanged |
-| add or remove documentation | unchanged | unchanged |
-| reformat without changing code | unchanged | unchanged |
-| reorder declarations within a module | unchanged | unchanged |
-| move a declaration between files, module unchanged | unchanged | unchanged |
-| add a declaration | — | unchanged |
-| remove a declaration | — | unchanged |
-| change a declaration's body | changed | unchanged |
-| change a public signature | changed | unchanged |
+| Change                                             | Edited declaration | Every other declaration |
+| -------------------------------------------------- | ------------------ | ----------------------- |
+| add or remove a comment                            | unchanged          | unchanged               |
+| add or remove documentation                        | unchanged          | unchanged               |
+| reformat without changing code                     | unchanged          | unchanged               |
+| reorder declarations within a module               | unchanged          | unchanged               |
+| move a declaration between files, module unchanged | unchanged          | unchanged               |
+| add a declaration                                  | —                  | unchanged               |
+| remove a declaration                               | —                  | unchanged               |
+| change a declaration's body                        | changed            | unchanged               |
+| change a public signature                          | changed            | unchanged               |
 
 Two conditions are load-bearing when testing these, and an implementation that omits them is untested rather than passing. A fixture must retain a declaration positioned **after** the edit, because positional leakage only contaminates declarations traversed later. That trailing declaration must own a **nested scope**, because a declaration with no scope discriminant cannot detect traversal-order renumbering. A body-change fixture must additionally **introduce or remove a scope**, since an edit that leaves the scope count unchanged shifts no later index and cannot detect the leak at all.
 
@@ -704,14 +710,14 @@ The task-context ranker should start simple: exact identifiers, module/name/doc 
 - [x] Graph-schema version on every export (schema 7).
 - [x] Strict checked export and tolerant export.
 
-### One graph across Incan and Rust
+### Cross-language graph progress
 
 - [x] Namespace nodes over the module graph (#1513).
 - [x] Rust items a module reaches, recorded as reference and call records with `canonical_owner` (#1524).
 - [x] Reference language derived from resolved identity rather than syntax.
 - [x] `rust_item` and `uses_rust_item` retired.
 
-### Semantic digests
+### Semantic digest progress
 
 - [x] Per-declaration semantic digest excluding position, formatting, comments and documentation; documentation digest kept apart.
 - [x] Closure digests over codegraph edges and MIR-backed Rust body digests (#1504).

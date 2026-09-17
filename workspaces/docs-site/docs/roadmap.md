@@ -28,7 +28,7 @@ The completed releases below show how Incan reached its current compiler and pro
 
 - 0.6: backend cutover.
 - 0.7: broader feature reopening after the compiler architecture is no longer split between old and new semantic paths.
-- 0.8: freestanding target foundations.
+- 0.8: evidence-backed investigations across Rust and Incan, alongside freestanding and ownership foundations.
 - 0.9: kernel capability proof.
 - 1.0: stabilization and public contracts.
 
@@ -36,7 +36,7 @@ The completed releases below show how Incan reached its current compiler and pro
 
 The completed release lines are kept here as a compact history. Expand a release for its outcome and boundary; follow the release-note link for the complete change inventory. The active roadmap begins with 0.6 below.
 
-**Completed release history**
+### Completed release history
 
 ??? abstract "0.1 — The first published Incan release"
 
@@ -98,7 +98,7 @@ The completed release lines are kept here as a compact history. Expand a release
 
     [Test-drive Incan 0.5](release_notes/0_5.md#test-drive-05) · [Read the complete 0.5 release notes](release_notes/0_5.md)
 
-**Forward roadmap**
+### Forward roadmap
 
 ### 0.6 Release: backend cutover
 
@@ -138,9 +138,29 @@ Examples of deferred lanes:
 - trait/newtype language features not required by backend cutover.
 - broader editor and package lifecycle work.
 
+The investigation design gate [#1639](https://github.com/encero-systems/incan/issues/1639) is an explicit v0.7 exit criterion: RFC 126 must reach Planned with all design questions resolved, required owner-contract changes accepted, and focused native/runtime feasibility evidence recorded. Merging the Draft alone does not satisfy the gate. This is design closure for v0.8, not delivery of the complete debugger in v0.7.
+
+The gate should consume the source/context, action, and receipt foundations assigned to v0.6 and the metadata, advice, telemetry, secrets, and agent-facing work assigned to v0.7. Milestone placement is not proof of implementation. Only the bounded interfaces needed for investigation acceptance become prerequisites; the complete RFC 121 roadmap and optional providers must not become hidden blockers.
+
 0.7 should not absorb freestanding/kernel primitives by default. That work needs its own release lanes so feature reopening does not become the place where unsafe, layout, target, runtime, and kernel proof work all land at once.
 
-### 0.8 Release: freestanding foundations
+### 0.8 Release: evidence-backed investigations and runtime foundations
+
+Humans and agents should be able to investigate unexpected behavior, test competing explanations, and verify repairs across Oven-managed Rust and Incan projects, with inspectable evidence throughout. RFC 126 defines the proposed investigation contract; it remains Draft until the v0.7 design-closure gate is satisfied. Existing freestanding, ownership-planning, GPU, and deferred syntax work remains in scope according to its own issues and acceptance boundaries.
+
+The investigation programme is governed by [#1638](https://github.com/encero-systems/incan/issues/1638), with five outcome tracks:
+
+- [#1640](https://github.com/encero-systems/incan/issues/1640): native debugging across Rust, Incan, and mixed calls.
+- [#1641](https://github.com/encero-systems/incan/issues/1641): durable sessions, exact artifacts, captures, and human/agent control.
+- [#1642](https://github.com/encero-systems/incan/issues/1642): bounded experiments, counterexample reduction, and repair verification.
+- [#1643](https://github.com/encero-systems/incan/issues/1643): supported runtime captures and domain evidence.
+- [#1644](https://github.com/encero-systems/incan/issues/1644): editor/MCP integration and end-to-end conformance.
+
+Acceptance must demonstrate wrong-result investigation, hung or cancelled work, and reopening a captured failure on the agreed support matrix. The investigation must preserve the distinction between checked facts, advisory findings, proof assumptions, observations, and hypotheses. Full deterministic replay and arbitrary foreign-runtime support are separately qualified capabilities, not universal release promises.
+
+Proof-aware contracts ([#787](https://github.com/encero-systems/incan/issues/787)) and ownership-planner work ([#1611](https://github.com/encero-systems/incan/issues/1611)) retain their owners. GPU work ([#1041](https://github.com/encero-systems/incan/issues/1041)) retains its independent capability scope. The Rust-syntax proposal ([#1612](https://github.com/encero-systems/incan/issues/1612)) remains proposal/RFC refinement in 0.8 with planning for 0.9 or later; this programme does not accelerate its implementation.
+
+#### Freestanding foundations
 
 The 0.8 milestone defines the compiler, runtime, ABI, and package foundations needed for freestanding targets. It should make low-level targets possible without promising a production kernel or stabilizing every low-level surface.
 
@@ -168,7 +188,7 @@ Core tracking issues:
 - [#688](https://github.com/encero-systems/incan/issues/688): layout, repr, and calling-convention metadata v0.
 - [#689](https://github.com/encero-systems/incan/issues/689): panic strategy and allocator hooks for freestanding targets.
 
-0.8 is successful when Incan can compile a restricted freestanding artifact and report which runtime, allocator, panic, target, and ABI capabilities it requires.
+The freestanding lane is successful when Incan can compile a restricted freestanding artifact and report which runtime, allocator, panic, target, and ABI capabilities it requires. The overall release must also satisfy the investigation acceptance programme and the independently tracked commitments above.
 
 ### 0.9 Release: kernel capability proof
 
