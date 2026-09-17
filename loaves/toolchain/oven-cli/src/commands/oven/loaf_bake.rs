@@ -744,7 +744,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 compiled_loaf_identity: final_entry.result.loaf_identity.clone(),
                 compiled_plan_identity: final_entry.result.plan_identity.clone(),
                 toolchain_owner_identity: evidence.rustc_identity.clone(),
-                compiler_closure_identity,
+                compiler_closure_identity: compiler_closure_identity.clone(),
                 toolchain_root_relative_path: toolchain_relative,
                 toolchain_members,
             };
