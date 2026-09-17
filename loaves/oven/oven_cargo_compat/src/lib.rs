@@ -4280,6 +4280,70 @@ mod tests {
 
     use oven_model::compiler_identity::CompilerIdentity;
 
+    /// The ordinary compatibility publisher must retain an explicitly observed empty OUT_DIR through Store
+    /// publication, mirror import and acquisition. This is a production-boundary regression: the generated root uses
+    /// the same owner-relative spelling as stable capture, while the publication path is the one used before the
+    /// runtime-foundation asset is assembled.
+    #[test]
+    fn empty_generated_output_survives_publish_mirror_and_acquire() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let source = project.path().join("src/main.rs");
+        fs::create_dir_all(source.parent().ok_or("fixture source has no parent")?)?;
+        fs::write(
+            project.path().join("Cargo.toml"),
+            "[package]\nname = \"empty_generated_output\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        fs::write(&source, "fn main() {}\n")?;
+        let receipt = receipt_generated_project(&OvenGeneratedProjectRequest::new(
+            project.path(),
+            "empty_generated_output",
+            "0.1.0",
+            "fixture-target",
+            "fixture-rustc",
+            "debug",
+            Vec::new(),
+        ))?;
+
+        let staging = tempfile::tempdir()?;
+        let empty_digest = oven_rustc::rustc::selected_graph_generated_input_digest(&[])?;
+        let relative_root = format!(
+            "generated-outputs/{}",
+            empty_digest.strip_prefix("sha256:").unwrap_or(&empty_digest)
+        );
+        fs::create_dir_all(staging.path().join(&relative_root))?;
+        let materialized_files =
+            materialized_files_from_directory(staging.path(), "", "empty generated output publication fixture")?;
+
+        let mirror_root = tempfile::tempdir()?;
+        let mirror = OvenStore::new(
+            mirror_root.path(),
+            OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000),
+        );
+        let published = mirror.publish(&OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: "empty-generated-output".to_string(),
+            kind: OvenArtifactKind::DirectRustcPlan,
+            payload: b"fixture plan".to_vec(),
+            materialized_files,
+        })?;
+
+        let local_root = tempfile::tempdir()?;
+        let local = OvenStore::new(local_root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let imported = oven_store::store_mirror::import_matching_from_mirrors(
+            &local,
+            &[mirror_root.path().to_path_buf()],
+            Some(&receipt),
+            |manifest| manifest.identity == published.identity,
+        )?;
+        assert_eq!(imported.len(), 1);
+        let (acquired, _payload, _lease) = local.select_payload(&published.identity)?;
+        assert!(
+            acquired.materialized_root().join(&relative_root).is_dir(),
+            "the admitted empty generated-output root must survive cold publication, mirror import and acquisition"
+        );
+        Ok(())
+    }
+
     /// One registry unit resolved twice contributes its staged tree once, keeping every feature either asked for.
     ///
     /// The publisher refuses a manifest that declares one relative artifact path more than once, and a repeated
