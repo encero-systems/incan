@@ -249,7 +249,8 @@ pub fn project_and_bind_compiler_support_selected_graph(
 /// declaration policy from effective Cargo features or target names.
 pub fn compiler_support_root_intent_authority(
     capture: &OvenLegacyCargoSelectedUnitCapture,
-    projected: &OvenSelectedRustFacetGraph,
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+    projection_receipt: Option<&OvenReceipt>,
     manifest: &ProjectManifest,
     intent_owner: &str,
     capture_receipt: &OvenReceipt,
@@ -261,6 +262,9 @@ pub fn compiler_support_root_intent_authority(
         return Err(projection_error("compiler-support declaration owner", "is empty"));
     }
 
+    // Re-project from the exact sealed bindings here. Accepting a caller-supplied graph and positionally zipping its
+    // units to capture indices would let omission, reordering, or substitution choose another physical unit.
+    let projected = project_legacy_cargo_selected_graph(capture, sealed, projection_receipt)?;
     let selected_by_capture_index = capture
         .units
         .iter()
@@ -307,6 +311,19 @@ pub fn compiler_support_root_intent_authority(
                 &format!("alias `{alias}` binds a build-script or absent selected unit"),
             )
         })?;
+        let selected_package = declaration
+            .package
+            .as_deref()
+            .unwrap_or(declaration.crate_name.as_str());
+        if selected.package != selected_package {
+            return Err(projection_error(
+                "compiler-support declaration",
+                &format!(
+                    "alias `{alias}` declares package `{selected_package}` but the captured edge selects `{}`",
+                    selected.package
+                ),
+            ));
+        }
         let mut requested_features = declaration.features.clone();
         requested_features.sort();
         requested_features.dedup();
@@ -1356,33 +1373,29 @@ mod tests {
         capture.units.push(root);
         capture.roots = vec![1];
 
-        let mut projected = project_legacy_cargo_selected_graph(
-            &capture,
-            &{
-                let mut sealed = sealed(&capture)?;
-                let source_owner = sealed.units[&0].source.owner.clone();
-                let members = members();
-                sealed.units.insert(
-                    1,
-                    OvenLegacyCargoSelectedGraphUnitBinding {
-                        source: OvenSelectedRustFacetSource {
-                            kind: OvenSelectedRustFacetSourceKind::Generated,
-                            identity: "generated:compiler-root@1.0.0".to_string(),
-                            owner: source_owner,
-                            root: "generated/compiler-root".to_string(),
-                            digest: selected_graph_source_digest(&members)?,
-                        },
-                        source_members: members,
-                        registry_source: None,
-                        include_dirs: Vec::new(),
-                        exclude_dirs: Vec::new(),
+        let sealed = {
+            let mut sealed = sealed(&capture)?;
+            let source_owner = sealed.units[&0].source.owner.clone();
+            let members = members();
+            sealed.units.insert(
+                1,
+                OvenLegacyCargoSelectedGraphUnitBinding {
+                    source: OvenSelectedRustFacetSource {
+                        kind: OvenSelectedRustFacetSourceKind::Generated,
+                        identity: "generated:compiler-root@1.0.0".to_string(),
+                        owner: source_owner,
+                        root: "generated/compiler-root".to_string(),
+                        digest: selected_graph_source_digest(&members)?,
                     },
-                );
-                sealed
-            },
-            None,
-        )?;
-        projected.exposed_roots.clear();
+                    source_members: members,
+                    registry_source: None,
+                    include_dirs: Vec::new(),
+                    exclude_dirs: Vec::new(),
+                },
+            );
+            sealed
+        };
+        let projected = project_legacy_cargo_selected_graph(&capture, &sealed, None)?;
         let receipt_directory = tempdir()?;
         let receipt = receipt_generated_project(&fixture_receipt_request(
             receipt_directory.path(),
@@ -1394,7 +1407,8 @@ mod tests {
         )?;
         let authority = compiler_support_root_intent_authority(
             &capture,
-            &projected,
+            &sealed,
+            None,
             &manifest,
             projected.selection.target_spec.toolchain_owner(),
             &receipt,
@@ -1405,6 +1419,22 @@ mod tests {
         assert_eq!(authority.roots[0].requested_features, ["alloc", "derive"]);
         assert!(!authority.roots[0].default_features);
         assert_eq!(authority.roots[0].unit, projected.units[0].identity);
+
+        let wrong_package = ProjectManifest::from_str(
+            "[project]\nname = \"compiler-support-authority\"\nversion = \"1.0.0\"\n\n[rust-dependencies]\nrenamed_serde = { package = \"serde_json\", version = \"1\" }\n",
+            Path::new("loaf.toml"),
+        )?;
+        assert!(
+            compiler_support_root_intent_authority(
+                &capture,
+                &sealed,
+                None,
+                &wrong_package,
+                projected.selection.target_spec.toolchain_owner(),
+                &receipt,
+            )
+            .is_err()
+        );
         Ok(())
     }
 

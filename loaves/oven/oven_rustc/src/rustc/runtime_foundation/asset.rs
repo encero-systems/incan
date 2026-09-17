@@ -249,28 +249,42 @@ fn runtime_foundation_asset_owner_roots(
         .find(|owner| owner.kind == OvenSelectedRustFacetOwnerKind::Toolchain)
         .map(|owner| owner.identity.clone())
         .ok_or_else(|| runtime_foundation_invalid("runtime foundation owners", "has no Toolchain owner"))?;
-    let expected = BTreeSet::from([foundation_owner.to_string(), toolchain_owner.clone()]);
-    let actual = graph
-        .owners
-        .iter()
-        .map(|owner| owner.identity.clone())
-        .collect::<BTreeSet<_>>();
-    if actual != expected {
+    let mut owner_roots = Vec::with_capacity(graph.owners.len());
+    let mut identities = BTreeSet::new();
+    for owner in &graph.owners {
+        if !identities.insert(owner.identity.as_str()) {
+            return Err(runtime_foundation_invalid(
+                "runtime foundation owners",
+                "declare one owner identity more than once",
+            ));
+        }
+        let root = match owner.kind {
+            OvenSelectedRustFacetOwnerKind::Toolchain if owner.identity == toolchain_owner => toolchain_root.clone(),
+            OvenSelectedRustFacetOwnerKind::Constituent if owner.identity == foundation_owner => {
+                foundation_root.clone()
+            }
+            // Generated outputs are copied into descriptor-named directories below the sealed asset. Their separate
+            // identities preserve producer provenance while the asset root remains the sole physical publication.
+            OvenSelectedRustFacetOwnerKind::GeneratedOutput => foundation_root.clone(),
+            _ => {
+                return Err(runtime_foundation_invalid(
+                    "runtime foundation owners",
+                    "may name only its artifact constituent, generated outputs sealed inside that asset, and the separately held Toolchain owner",
+                ));
+            }
+        };
+        owner_roots.push(OvenSelectedRustFacetOwnerRoot {
+            identity: owner.identity.clone(),
+            root,
+        });
+    }
+    if !identities.contains(foundation_owner) || !identities.contains(toolchain_owner.as_str()) {
         return Err(runtime_foundation_invalid(
             "runtime foundation owners",
-            "a release asset may name only its sealed foundation owner and its separately held Toolchain owner",
+            "omit the artifact constituent or Toolchain owner",
         ));
     }
-    Ok(vec![
-        OvenSelectedRustFacetOwnerRoot {
-            identity: foundation_owner.to_string(),
-            root: foundation_root,
-        },
-        OvenSelectedRustFacetOwnerRoot {
-            identity: toolchain_owner,
-            root: toolchain_root,
-        },
-    ])
+    Ok(owner_roots)
 }
 
 /// One exact descriptor-derived regular-file and directory catalogue for a release foundation root.
