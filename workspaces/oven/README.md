@@ -31,7 +31,7 @@ Every wire field is required; an unknown or absent field is a refusal, not a def
 loaf.toml               project manifest: two scripts, two Rust dependencies (cfg-expr, semver)
 src/*.incn              the modules above, plus lib.incn
 src/test_*.incn         one test module per source module
-src/acceptance.incn     runs every test module's contracts as one program
+src/acceptance.incn     runs the ten local-intake contracts as one baked program
 src/plan_json_main.incn the sealed `core_engine` script: REQUEST RESPONSE file paths, strict UTF-8 exchange
 tests/fixtures/         manifests the intake tests read: a cycle, a collision, a plan missing its features, a Rust source tree
 ```
@@ -45,7 +45,12 @@ From the repository root, with a compiler built from this tree:
 ```bash
 incan check workspaces/oven/src/lib.incn
 incan test workspaces/oven
+incan test workspaces/oven/src/test_rust_graph.incn
+incan test workspaces/oven/src/test_rust_policy_exchange.incn
 incan oven bake --project workspaces/oven
 ```
 
-The bake produces both declared scripts. `core_engine` takes exactly two arguments, `REQUEST RESPONSE`, and performs one selection exchange between those files; `acceptance` runs every test module's contracts as one program rather than through the test runner.
+The bake produces both declared scripts. `core_engine` takes exactly two arguments, `REQUEST RESPONSE`, and performs one selection exchange between those files.
+The two focused test commands exercise the Rust graph policy and its strict host-exchange envelope directly. The baked
+`acceptance` script runs only the ten local-intake contracts imported by `src/acceptance.incn`; it is not an aggregate
+runner for every `test_*.incn` module.

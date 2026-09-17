@@ -54,6 +54,7 @@ def request(
 
 
 def status(response: JsonValue) -> str:
+    """Return the closed response status, or a sentinel when the response omits it."""
     match response.get("status"):
         None => return "missing"
         Some(value) =>
