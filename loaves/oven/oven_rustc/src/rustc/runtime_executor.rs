@@ -632,6 +632,7 @@ pub(crate) mod tests {
             exclude_dirs: Vec::new(),
             dependencies,
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         unit.identity = selected_graph_unit_identity(selection, &unit)?;
         Ok(unit)

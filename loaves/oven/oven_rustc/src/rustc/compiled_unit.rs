@@ -14,8 +14,8 @@ use serde::Serialize;
 use super::{
     OvenRustcError, OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDependency, OvenSelectedRustFacetDomain,
     OvenSelectedRustFacetEnvironmentValue, OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph,
-    OvenSelectedRustFacetPath, OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole,
-    ValidatedOvenSelectedRustFacetGraph, digest_bytes,
+    OvenSelectedRustFacetLinkedLibrary, OvenSelectedRustFacetLinkedLibraryKind, OvenSelectedRustFacetPath,
+    OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole, ValidatedOvenSelectedRustFacetGraph, digest_bytes,
 };
 
 /// Domain separator for a compiled unit identity.
@@ -61,6 +61,7 @@ struct CompiledUnitIdentityInput<'a> {
     include_dirs: Vec<CompiledPath<'a>>,
     exclude_dirs: Vec<CompiledPath<'a>>,
     generated_inputs: Vec<CompiledGeneratedInput<'a>>,
+    linked_libraries: Vec<CompiledLinkedLibrary<'a>>,
     dependencies: Vec<CompiledDependency<'a>>,
 }
 
@@ -87,6 +88,23 @@ struct CompiledGeneratedInput<'a> {
     name: &'a str,
     source: CompiledPath<'a>,
     digest: &'a str,
+    members: &'a [super::OvenSelectedRustFacetSourceMember],
+}
+
+#[derive(Serialize)]
+#[serde(tag = "input", rename_all = "snake_case")]
+enum CompiledLinkedLibrary<'a> {
+    Archive {
+        name: &'a str,
+        kind: OvenSelectedRustFacetLinkedLibraryKind,
+        artifact: CompiledPath<'a>,
+        digest: &'a str,
+    },
+    Provider {
+        name: &'a str,
+        kind: OvenSelectedRustFacetLinkedLibraryKind,
+        provider: &'a str,
+    },
 }
 
 #[derive(Serialize)]
@@ -248,6 +266,11 @@ fn compiled_unit_identity_input<'a>(
             .iter()
             .map(|input| compiled_generated_input(input, unit))
             .collect(),
+        linked_libraries: unit
+            .linked_libraries
+            .iter()
+            .map(|library| compiled_linked_library(library, unit))
+            .collect(),
         dependencies,
     }
 }
@@ -292,6 +315,32 @@ fn compiled_generated_input<'a>(
         name: &input.name,
         source: compiled_path(&input.source, unit),
         digest: &input.digest,
+        members: &input.members,
+    }
+}
+
+/// Project one admitted linked-library fact into the compiler-visible identity vocabulary.
+fn compiled_linked_library<'a>(
+    library: &'a OvenSelectedRustFacetLinkedLibrary,
+    unit: &'a OvenSelectedRustFacetUnit,
+) -> CompiledLinkedLibrary<'a> {
+    match library {
+        OvenSelectedRustFacetLinkedLibrary::Archive {
+            name,
+            kind,
+            artifact,
+            digest,
+        } => CompiledLinkedLibrary::Archive {
+            name,
+            kind: *kind,
+            artifact: compiled_path(artifact, unit),
+            digest,
+        },
+        OvenSelectedRustFacetLinkedLibrary::Provider { name, kind, provider } => CompiledLinkedLibrary::Provider {
+            name,
+            kind: *kind,
+            provider,
+        },
     }
 }
 
@@ -408,6 +457,7 @@ mod tests {
             exclude_dirs: Vec::new(),
             dependencies: Vec::new(),
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         unit.identity = selected_graph_unit_identity(&selection, &unit)?;
         let identity = unit.identity.clone();
@@ -474,6 +524,7 @@ mod tests {
             exclude_dirs: Vec::new(),
             dependencies: Vec::new(),
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         unit.identity = selected_graph_unit_identity(&selection, &unit)?;
         let identity = unit.identity.clone();
@@ -615,6 +666,7 @@ mod tests {
             exclude_dirs: Vec::new(),
             dependencies: Vec::new(),
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         dependency.identity = selected_graph_unit_identity(&selection, &dependency)?;
 
@@ -654,6 +706,7 @@ mod tests {
                 unit: dependency.identity.clone(),
             }],
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         root.identity = selected_graph_unit_identity(&selection, &root)?;
         let root_identity = root.identity.clone();

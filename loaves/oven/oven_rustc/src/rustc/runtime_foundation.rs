@@ -850,6 +850,7 @@ mod tests {
             exclude_dirs: Vec::new(),
             dependencies,
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         unit.identity = selected_graph_unit_identity(selection, &unit)?;
         Ok(unit)
@@ -971,6 +972,8 @@ mod tests {
             OvenSelectedRustFacetCrateKind::Rlib,
             Vec::new(),
         )?;
+        let generated_members = vec![source_member("private.rs", b"serde private.rs")];
+        let generated_digest = selected_graph_source_digest(&generated_members)?;
         bind_source_root(
             &selection,
             &mut serde,
@@ -981,7 +984,8 @@ mod tests {
                     owner: foundation_owner(),
                     path: "generated/serde/private.rs".to_string(),
                 },
-                digest: selected_graph_sha256(b"serde private.rs"),
+                digest: generated_digest,
+                members: generated_members,
             }],
         )?;
         let mut serde_derive = unit(

@@ -779,6 +779,7 @@ mod selected_rust_facet_graph_tests {
             exclude_dirs: Vec::new(),
             dependencies: Vec::new(),
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         unit.identity = selected_graph_unit_identity(selection, &unit)?;
         Ok(unit)
@@ -824,6 +825,7 @@ mod selected_rust_facet_graph_tests {
             exclude_dirs: Vec::new(),
             dependencies,
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         unit.identity = selected_graph_unit_identity(selection, &unit)?;
         Ok(unit)
@@ -894,6 +896,7 @@ mod selected_rust_facet_graph_tests {
             exclude_dirs: Vec::new(),
             dependencies: Vec::new(),
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         unit.identity = selected_graph_unit_identity(&selection, &unit)?;
         Ok(OvenSelectedRustFacetGraph {
@@ -1445,7 +1448,14 @@ mod selected_rust_facet_graph_tests {
             .iter()
             .find(|unit| unit["package"].as_str() == Some("dependency-package"))
             .ok_or("serialized graph lost its leaf unit")?;
-        for field in ["dependencies", "features", "cfg", "exclude_dirs", "generated_inputs"] {
+        for field in [
+            "dependencies",
+            "features",
+            "cfg",
+            "exclude_dirs",
+            "generated_inputs",
+            "linked_libraries",
+        ] {
             assert_eq!(leaf[field].as_array().map(Vec::len), Some(0));
         }
         assert_eq!(leaf["environment"].as_object().map(serde_json::Map::len), Some(0));
@@ -2006,6 +2016,27 @@ mod selected_rust_facet_graph_tests {
             .requested_features = vec!["root-feature".to_string()];
         let changed_intent = changed_intent.validated()?;
         assert_ne!(first.digest(), changed_intent.digest());
+        Ok(())
+    }
+
+    #[test]
+    fn selected_graph_identity_binds_linked_archive_bytes() -> TestResult {
+        let first = graph(b"pub fn use_dependency() {}\n")?.validated()?;
+        let mut changed = graph(b"pub fn use_dependency() {}\n")?;
+        let root = unit_index(&changed, "fixture")?;
+        let source_owner = changed.units[root].source.owner.clone();
+        changed.units[root].linked_libraries = vec![OvenSelectedRustFacetLinkedLibrary::Archive {
+            name: "fixture_link".to_string(),
+            kind: OvenSelectedRustFacetLinkedLibraryKind::Static,
+            artifact: OvenSelectedRustFacetPath {
+                owner: source_owner,
+                path: "linked/libfixture_link.a".to_string(),
+            },
+            digest: selected_graph_sha256(b"fixture link bytes"),
+        }];
+        reidentify_unit(&mut changed, root)?;
+        let changed = changed.validated()?;
+        assert_ne!(first.digest(), changed.digest());
         Ok(())
     }
 
