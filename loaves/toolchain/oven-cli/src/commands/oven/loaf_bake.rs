@@ -15,6 +15,7 @@ use incan_driver::build::publication::stored_project_output_from_parts;
 use incan_driver::build::{OvenProjectOutputPayload, OvenStoredProjectOutput};
 use oven_cargo_compat::loaf_bake::prepare_loaf_from_generated_project_with_selected_units;
 use oven_cargo_compat::{
+    OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, legacy_cargo_build_script_closure_digest,
     encode_selected_graph_policy_request, finalize_compiler_support_selected_graph, legacy_cargo_foundation_projection,
     legacy_cargo_generated_archive_bindings, legacy_cargo_generated_output_bindings,
     runtime_foundation_from_compiled_loaf, runtime_foundation_inventories_from_policy_response,
@@ -26,6 +27,7 @@ use oven_rustc::loaf::{
 };
 use oven_rustc::rustc::{OvenRuntimeFoundationAsset, publish_runtime_foundation_asset};
 use oven_store::process::{BoundedProcessLimits, BoundedProcessTermination, run_bounded_process};
+use oven_store::receipt_with_build_unit_input;
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, PublishedOvenStore,
 };
@@ -36,12 +38,13 @@ use super::{
     CliError, CliResult, CompleteLoafEnvelopeReuseInput, DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES,
     DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES,
     DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES, DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_PHYSICAL_BYTES,
-    ExitCode, LoafTemporaryDirectory, OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV, OVEN_LOAF_ENV,
-    OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenCompilerSuiteBakeReport, OvenInspectionRegistrySource,
-    OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoInspectionSource, OvenLegacyCargoPrepareRequest,
-    OvenLegacyCargoPublicationKind, OvenLoafBakeCommandOptions, OvenLoafBakeEntryReport, OvenLoafBakePhaseTiming,
-    OvenLoafBakeReport, OvenLoafBakerContext, OvenLoafEnvelope, OvenLoafEnvelopeArgument, OvenLoafEnvelopeManifest,
-    OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenOutputFormat, OvenStoreCommandOptions, OvenStoreLimits,
+    ExitCode, LoafTemporaryDirectory,
+    OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV, OVEN_LOAF_ENV, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
+    OvenCompilerSuiteBakeReport, OvenInspectionRegistrySource, OvenLegacyCargoDirectDependencyClosure,
+    OvenLegacyCargoInspectionSource, OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind,
+    OvenLoafBakeCommandOptions, OvenLoafBakeEntryReport, OvenLoafBakePhaseTiming, OvenLoafBakeReport,
+    OvenLoafBakerContext, OvenLoafEnvelope, OvenLoafEnvelopeArgument, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember,
+    OvenLoafFixtureAction, OvenOutputFormat, OvenStoreCommandOptions, OvenStoreLimits,
     acquire_exclusive_loaf_generation_lock, announce_oven_progress, commit_loaf_generation, compiler_libtests_receipt,
     elapsed_detail, env, human_bytes, import_loaf_envelope_from_configured_mirrors,
     isolate_loaf_fixture_toolchain_data, legacy_cargo_inspection_sources, legacy_cargo_resolved_registry_sources,
@@ -490,18 +493,32 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             "release envelope did not retain its runtime-foundation capture".to_string(),
         ));
     }
-    let finalized_release_graph = if let Some((receipt, capture, sources, manifest_source, loaf_identity, _, _)) =
+    let finalized_release_graph = if let Some((receipt, capture, sources, manifest_source, _loaf_identity, _, _)) =
         release_foundation_capture.as_ref()
     {
         let manifest = ProjectManifest::from_str(manifest_source, Path::new("incan.toml"))
             .map_err(|error| CliError::failure(format!("release foundation manifest is invalid: {error}")))?;
         let (_, generated) = legacy_cargo_generated_output_bindings(capture).map_err(oven_error)?;
         let linked = legacy_cargo_generated_archive_bindings(capture, &generated).map_err(oven_error)?;
+        let provisional = legacy_cargo_foundation_projection(
+            capture,
+            receipt,
+            sources,
+            &receipt.identity,
+            &evidence.rustc_identity,
+            &linked,
+        )
+        .map_err(oven_error)?;
+        let closure_digest =
+            legacy_cargo_build_script_closure_digest(capture, &provisional.build_scripts).map_err(oven_error)?;
+        let capture_receipt =
+            receipt_with_build_unit_input(receipt, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, closure_digest)
+                .map_err(oven_error)?;
         let projection = legacy_cargo_foundation_projection(
             capture,
             receipt,
             sources,
-            loaf_identity,
+            &capture_receipt.identity,
             &evidence.rustc_identity,
             &linked,
         )
@@ -611,7 +628,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             finalized,
             &loaf,
             &final_entry.result.plan_identity,
-            &final_entry.result.loaf_identity,
+            &finalized.capture_receipt.identity,
         )
         .map_err(oven_error)?;
         let asset = OvenRuntimeFoundationAsset::sealed(foundation, inventories).map_err(oven_error)?;
