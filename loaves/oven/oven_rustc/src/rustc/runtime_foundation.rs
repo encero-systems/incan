@@ -690,7 +690,7 @@ mod tests {
         OvenLoafAccounting, OvenLoafCompatibility, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember,
         OvenLoafMemberRole, OvenLoafProvenance, OvenReleaseRuntimeFoundationMember,
         acquire_committed_release_runtime_foundation, acquire_exclusive_loaf_generation_lock,
-        bind_release_runtime_foundation_evidence,
+        bind_release_runtime_foundation_evidence, validate_stored_loaf,
     };
     use crate::loaf_mirror::{LoafEnvelopeExpectation, LoafMemberExpectation, import_loaf_envelope_from_mirrors};
 
@@ -1514,18 +1514,19 @@ mod tests {
                 .ok_or("fixture generation identity is not canonical")?,
         );
         let generation = mirror.path().join(&generation_relative);
-        let compiled_root = generation.join("compiled.loaf");
+        let staged_compiled_root = generation.join(".compiled-loaf-staging");
         let foundation_source = tempfile::tempdir()?;
         let compiled_toolchain = tempfile::tempdir()?;
         let toolchain_root = generation.join("toolchain");
-        fs::create_dir_all(&compiled_root)?;
+        fs::create_dir_all(&staged_compiled_root)?;
         fs::create_dir_all(&toolchain_root)?;
         write_materialization_fixture(foundation_source.path(), &toolchain_root)?;
-        write_foundation_materialization_fixture(&compiled_root, compiled_toolchain.path())?;
+        write_foundation_materialization_fixture(&staged_compiled_root, compiled_toolchain.path())?;
 
         let asset = foundation_asset()?;
         let plan = asset.foundation.artifacts.clone();
-        let (payload_logical_bytes, payload_physical_bytes) = crate::loaf::loaf_directory_byte_counts(&compiled_root)?;
+        let (payload_logical_bytes, payload_physical_bytes) =
+            crate::loaf::loaf_directory_byte_counts(&staged_compiled_root)?;
         let loaf = OvenLoaf {
             schema_version: OVEN_LOAF_SCHEMA_VERSION,
             build_unit_identity: digest_bytes(b"runtime foundation build unit"),
@@ -1543,11 +1544,24 @@ mod tests {
             registry_leaves: plan.registry_leaves.clone(),
             plan: plan.clone(),
         };
-        let loaf_path = compiled_root.join("loaf.json");
+        let loaf_path = staged_compiled_root.join("loaf.json");
         let loaf_bytes = serde_json::to_vec(&loaf)?;
         fs::write(&loaf_path, &loaf_bytes)?;
         let loaf_identity = digest_bytes(&loaf_bytes);
         let plan_identity = digest_bytes(&serde_json::to_vec(&plan)?);
+        let compiled_relative = format!(
+            "{}.loaf",
+            loaf_identity
+                .strip_prefix("sha256:")
+                .ok_or("fixture Loaf identity is not canonical")?
+        );
+        let compiled_root = generation.join(&compiled_relative);
+        fs::rename(&staged_compiled_root, &compiled_root)?;
+        let (compiled_logical_bytes, compiled_physical_bytes) =
+            crate::loaf::loaf_directory_byte_counts(&compiled_root)?;
+        let validated = validate_stored_loaf(&compiled_root.join("loaf.json"), &loaf.build_unit_identity)?;
+        assert_eq!(validated.loaf_identity, loaf_identity);
+        assert_eq!(validated.plan_identity, plan_identity);
         let foundation_path = generation.join("runtime-foundation");
         let admitted = publish_runtime_foundation_asset(
             asset.clone(),
@@ -1565,9 +1579,9 @@ mod tests {
             build_unit_identity: loaf.build_unit_identity.clone(),
             loaf_identity: loaf_identity.clone(),
             plan_identity: plan_identity.clone(),
-            logical_bytes: 0,
-            physical_bytes: 0,
-            path: generation_relative.join("compiled.loaf/loaf.json"),
+            logical_bytes: compiled_logical_bytes,
+            physical_bytes: compiled_physical_bytes,
+            path: generation_relative.join(compiled_relative).join("loaf.json"),
         };
         let runtime_member = OvenReleaseRuntimeFoundationMember {
             schema_version: OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION,
