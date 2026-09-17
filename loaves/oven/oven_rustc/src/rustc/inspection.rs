@@ -835,6 +835,18 @@ mod selected_rust_facet_graph_tests {
             Err(OvenSelectedRustFacetGraphError::Missing { field }) if field == "selection.host_cfg"
         ));
 
+        let mut empty_values = serde_json::from_slice::<serde_json::Value>(&selected.to_json_bytes()?)?;
+        empty_values["selection"]["target_cfg"]["values"]["target_arch"] = serde_json::json!([]);
+        assert!(matches!(
+            OvenSelectedRustFacetGraph::decode_validated(&serde_json::to_vec(&empty_values)?),
+            Err(OvenSelectedRustFacetGraphError::Missing { field })
+                if field == "selection.target_cfg.values.target_arch"
+        ));
+
+        let mut empty_abi = serde_json::from_slice::<serde_json::Value>(&selected.to_json_bytes()?)?;
+        empty_abi["selection"]["target_cfg"]["values"]["target_abi"] = serde_json::json!([""]);
+        OvenSelectedRustFacetGraph::decode_validated(&serde_json::to_vec(&empty_abi)?)?;
+
         let mut unordered_flags = graph(b"pub fn use_dependency() {}\n")?;
         unordered_flags
             .selection

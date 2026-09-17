@@ -282,6 +282,9 @@ fn validate_selected_graph_cfg_atoms(values: &[String], field: &str) -> Result<(
 
 /// Require canonical cfg values while allowing Rustc's meaningful empty quoted values such as `target_abi=""`.
 fn validate_selected_graph_cfg_values(values: &[String], field: &str) -> Result<(), OvenSelectedRustFacetGraphError> {
+    if values.is_empty() {
+        return Err(selected_graph_missing(field));
+    }
     for value in values {
         if value.trim() != value || value.chars().any(char::is_control) {
             return Err(selected_graph_invalid(
