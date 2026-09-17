@@ -591,7 +591,7 @@ else
       --target "$target" \
       --format json > "$policy_bake_report" \
     || fail "could not explicitly bake the release policy project"
-  policy_output="$($repo_root/workspaces/release/toolchain/select_release_policy_output.sh "$policy_bake_report" "$target")" \
+  policy_output="$(workspaces/release/toolchain/select_release_policy_output.sh "$policy_bake_report" "$target")" \
     || fail "could not select the exact target-bound release core_engine ProjectOutput"
   policy_engine_store="${policy_output%%	*}"
   policy_engine_identity="${policy_output#*	}"
