@@ -908,14 +908,21 @@ mod tests {
         let checked = production_toolchain_semantic_fixture(&temp.path().join("checked-fixture"))?;
         let diamond = shared_provider_diamond_fixture(&temp.path().join("shared-provider-diamond"))?;
         assert_eq!(diamond.provider_plan.records().count(), 2);
-        assert_eq!(diamond.specs.len(), 1, "both provider branches must converge on one support root");
+        assert_eq!(
+            diamond.specs.len(),
+            1,
+            "both provider branches must converge on one support root"
+        );
 
         for (name, fixture) in [("checked", checked), ("shared-provider-diamond", diamond)] {
             let (cold_identities, cold) =
                 measure_provider_semantic_identity_pass(name, &fixture.provider_plan, &fixture.specs)?;
             let (warm_identities, warm) =
                 measure_provider_semantic_identity_pass(name, &fixture.provider_plan, &fixture.specs)?;
-            assert_eq!(cold_identities, warm_identities, "measurement passes must preserve identity results");
+            assert_eq!(
+                cold_identities, warm_identities,
+                "measurement passes must preserve identity results"
+            );
             assert_eq!(
                 cold_identities,
                 provider_semantic_identities(&fixture.provider_plan, &fixture.specs)?,
