@@ -38,6 +38,8 @@ const SUBSTITUTABLE_CRATE_TYPES: &[&str] = &["lib", "rlib"];
 /// One `rustc` invocation as Cargo issues it, reduced to the facts that identify the unit it compiles.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RustcUnitRequest {
+    /// The single positional Rust source input passed to rustc.
+    pub source: PathBuf,
     /// `--crate-name`, the identifier rustc will embed in the artifact.
     pub crate_name: String,
     /// `CARGO_PKG_NAME`, the package the unit belongs to.
@@ -102,6 +104,7 @@ impl RustcUnitRequest {
         E: Fn(&str) -> Option<OsString>,
     {
         let mut crate_name = None;
+        let mut source = None;
         let mut features = BTreeSet::new();
         let mut edition = None;
         let mut crate_types = BTreeSet::new();
@@ -185,6 +188,8 @@ impl RustcUnitRequest {
                             "extra-filename" => extra_filename = Some(setting.to_string()),
                             _ => {}
                         }
+                    } else if !arg.starts_with('-') && arg.ends_with(".rs") && source.is_none() {
+                        source = Some(PathBuf::from(arg));
                     }
                 }
             }
@@ -197,10 +202,15 @@ impl RustcUnitRequest {
                 .map_err(|_| RustcUnitRequestError::NotUtf8(name.to_string()))
         };
 
+        let crate_name = crate_name.ok_or(RustcUnitRequestError::Missing("--crate-name"))?;
+        let package = env_string("CARGO_PKG_NAME")?;
+        let version = env_string("CARGO_PKG_VERSION")?;
+        let source = source.ok_or(RustcUnitRequestError::Missing("Rust source input"))?;
         Ok(Self {
-            crate_name: crate_name.ok_or(RustcUnitRequestError::Missing("--crate-name"))?,
-            package: env_string("CARGO_PKG_NAME")?,
-            version: env_string("CARGO_PKG_VERSION")?,
+            source,
+            crate_name,
+            package,
+            version,
             features,
             edition,
             crate_types,
