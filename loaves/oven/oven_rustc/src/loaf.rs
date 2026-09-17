@@ -3248,6 +3248,15 @@ mod tests {
             "retained rustc did not execute: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+        let sysroot = std::process::Command::new(second.join("bin/rustc"))
+            .args(["--print", "sysroot"])
+            .output()?;
+        assert!(sysroot.status.success());
+        assert_eq!(
+            fs::canonicalize(String::from_utf8(sysroot.stdout)?.trim())?,
+            fs::canonicalize(&second)?,
+            "retained rustc must select the retained sysroot rather than an ambient installation"
+        );
         let source = second_parent.path().join("detached.rs");
         let executable = second_parent
             .path()
