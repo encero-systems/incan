@@ -1221,7 +1221,7 @@ mod tests {
             build_script: Some(super::super::OvenLegacyCargoBuildScriptFacts {
                 cfgs: Vec::new(),
                 environment: BTreeMap::from([("DEP_FIXTURE".to_string(), "/transient/out".to_string())]),
-                linked_libraries: vec!["static=fixture".to_string()],
+                linked_libraries: vec!["static=fixture".to_string(), "static=fixture".to_string()],
                 linked_paths: vec!["native=/transient/out".to_string()],
                 out_dir: PathBuf::from("/transient/out"),
                 output: None,
@@ -1238,34 +1238,47 @@ mod tests {
                     OvenLegacyCargoSelectedEnvironmentBinding {
                         observed_value: "/transient/out".to_string(),
                         value: OvenSelectedRustFacetEnvironmentValue::Text {
-                            value: "fixture-selected".to_string(),
+                            value: "/transient/out".to_string(),
                         },
                     },
                 )]),
                 linked_libraries: Some(OvenLegacyCargoSelectedLinkedLibraryBinding {
-                    observed_libraries: vec!["static=fixture".to_string()],
+                    observed_libraries: vec!["static=fixture".to_string(), "static=fixture".to_string()],
                     observed_paths: vec!["native=/transient/out".to_string()],
-                    libraries: vec![OvenSelectedRustFacetLinkedLibrary::Archive {
-                        name: "fixture".to_string(),
-                        kind: oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
-                        artifact: OvenSelectedRustFacetPath {
-                            owner: source_owner,
-                            path: "linked/libfixture.a".to_string(),
+                    libraries: vec![
+                        OvenSelectedRustFacetLinkedLibrary::Archive {
+                            name: "fixture".to_string(),
+                            kind: oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+                            artifact: OvenSelectedRustFacetPath {
+                                owner: source_owner.clone(),
+                                path: "linked/libfixture.a".to_string(),
+                            },
+                            digest: digest(b"fixture archive"),
                         },
-                        digest: digest(b"fixture archive"),
-                    }],
+                        OvenSelectedRustFacetLinkedLibrary::Archive {
+                            name: "fixture".to_string(),
+                            kind: oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+                            artifact: OvenSelectedRustFacetPath {
+                                owner: source_owner,
+                                path: "linked/libfixture.a".to_string(),
+                            },
+                            digest: digest(b"fixture archive"),
+                        },
+                    ],
                 }),
             },
         );
+        assert!(project_legacy_cargo_selected_graph(&capture, &sealed).is_err());
         bind_build_script_authority(&capture, &mut sealed)?;
         let graph = project_legacy_cargo_selected_graph(&capture, &sealed)?;
         assert_eq!(
             graph.units[0].environment["DEP_FIXTURE"],
             OvenSelectedRustFacetEnvironmentValue::Text {
-                value: "fixture-selected".to_string()
+                value: "/transient/out".to_string()
             }
         );
-        assert_eq!(graph.units[0].linked_libraries.len(), 1);
+        assert_eq!(graph.units[0].linked_libraries.len(), 2);
+        assert_eq!(graph.units[0].linked_libraries[0], graph.units[0].linked_libraries[1]);
         Ok(())
     }
 }
