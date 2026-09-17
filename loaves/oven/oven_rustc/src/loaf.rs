@@ -35,7 +35,7 @@ pub use native_candidates::OvenMaterializedLoafCandidate;
 /// Current wire format for one compiler-shipped Oven Loaf.
 pub const OVEN_LOAF_SCHEMA_VERSION: u32 = 13;
 /// Current wire format for the atomically committed Loaf-envelope manifest.
-pub const OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION: u32 = 4;
+pub const OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION: u32 = 5;
 /// Wire schema for an optional generic store member embedded beside one Loaf generation.
 pub const OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION: u32 = 1;
 /// Wire schema for a runtime foundation bound to one compiled release Loaf.
@@ -203,6 +203,114 @@ pub struct OvenLoafEnvelopeManifest {
     /// Optional physical runtime foundation bound to one compiled closure in this generation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_foundation: Option<OvenReleaseRuntimeFoundationMember>,
+    /// Optional rebuilt dependency closure committed atomically with its runtime foundation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_closure: Option<OvenReleaseRuntimeClosureMember>,
+}
+
+/// One release-owned runtime closure and its exact foundation/compiler bindings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenReleaseRuntimeClosureMember {
+    /// Reference schema version.
+    pub schema_version: u32,
+    /// Stable publisher-selected member label.
+    pub label: String,
+    /// Safe generation-relative root of the embedded immutable Store.
+    pub store_relative_path: PathBuf,
+    /// Exact Store artifact identity of the published closure.
+    pub artifact_identity: String,
+    /// Content identity of the runtime closure payload.
+    pub closure_identity: String,
+    /// Exact foundation identity rebuilt by this closure.
+    pub foundation_identity: String,
+    /// Exact retained compiler closure that produced the artifacts.
+    pub compiler_closure_identity: String,
+}
+
+/// Current release runtime-closure member schema.
+pub const OVEN_RELEASE_RUNTIME_CLOSURE_MEMBER_SCHEMA_VERSION: u32 = 1;
+
+/// Generation evidence key binding the typed runtime-closure descriptor.
+pub const OVEN_RUNTIME_CLOSURE_DESCRIPTOR_DIGEST_EVIDENCE: &str = "runtime_closure_descriptor_digest";
+
+/// Bind one runtime-closure descriptor into release generation evidence.
+pub fn bind_release_runtime_closure_evidence(
+    evidence: &mut BTreeMap<String, String>,
+    member: &OvenReleaseRuntimeClosureMember,
+) -> Result<(), OvenLoafError> {
+    let bytes = serde_json::to_vec(member).map_err(|error| OvenLoafError::Preparation {
+        message: format!("could not encode runtime-closure descriptor: {error}"),
+    })?;
+    evidence.insert(
+        OVEN_RUNTIME_CLOSURE_DESCRIPTOR_DIGEST_EVIDENCE.to_string(),
+        digest_bytes(&bytes),
+    );
+    Ok(())
+}
+
+/// Validate one runtime closure against the same generation's foundation and compatibility evidence.
+pub fn validate_release_runtime_closure_member(
+    manifest: &OvenLoafEnvelopeManifest,
+    member: &OvenReleaseRuntimeClosureMember,
+) -> Result<(), String> {
+    if member.schema_version != OVEN_RELEASE_RUNTIME_CLOSURE_MEMBER_SCHEMA_VERSION
+        || member.label.is_empty()
+        || !safe_generation_relative_path(&member.store_relative_path)
+        || !canonical_sha256_identity(&member.artifact_identity)
+        || !canonical_sha256_identity(&member.closure_identity)
+    {
+        return Err("runtime-closure member is unsafe or non-canonical".to_string());
+    }
+    let foundation = manifest
+        .runtime_foundation
+        .as_ref()
+        .ok_or_else(|| "runtime closure has no same-generation foundation".to_string())?;
+    if member.foundation_identity != foundation.foundation_identity
+        || member.compiler_closure_identity != foundation.compiler_closure_identity
+    {
+        return Err("runtime closure does not match its same-generation foundation/compiler".to_string());
+    }
+    let bytes = serde_json::to_vec(member).map_err(|error| error.to_string())?;
+    if manifest.evidence.get(OVEN_RUNTIME_CLOSURE_DESCRIPTOR_DIGEST_EVIDENCE) != Some(&digest_bytes(&bytes)) {
+        return Err("runtime-closure member is not bound into generation evidence".to_string());
+    }
+    Ok(())
+}
+
+/// Prove the exact runtime closure stored below a copied or committed generation.
+pub fn prove_release_runtime_closure_member(
+    generation: &Path,
+    manifest: &OvenLoafEnvelopeManifest,
+    member: &OvenReleaseRuntimeClosureMember,
+) -> Result<crate::rustc::OvenSelectedRuntimeClosure, OvenLoafError> {
+    validate_release_runtime_closure_member(manifest, member).map_err(|message| OvenLoafError::InvalidLoaf {
+        path: generation.to_path_buf(),
+        message,
+    })?;
+    let store_root = generation.join(&member.store_relative_path);
+    let mut selected = PublishedOvenStore::new(&store_root)
+        .select_payloads_matching_for_execution(|candidate| candidate.identity == member.artifact_identity)?;
+    if selected.len() != 1 {
+        return Err(OvenLoafError::InvalidLoaf {
+            path: store_root,
+            message: "runtime closure did not select exactly one declared Store artifact".to_string(),
+        });
+    }
+    let payload = selected.pop().ok_or_else(|| OvenLoafError::Preparation {
+        message: "runtime closure selection became empty".to_string(),
+    })?;
+    payload.verify_materialized_files()?;
+    crate::rustc::admit_declared_runtime_closure(
+        payload,
+        &member.closure_identity,
+        &member.foundation_identity,
+        &member.compiler_closure_identity,
+    )
+    .map_err(|error| OvenLoafError::InvalidLoaf {
+        path: store_root,
+        message: error.to_string(),
+    })
 }
 
 /// One release-owned runtime foundation and its exact compiled-Loaf/toolchain bindings.
@@ -963,6 +1071,17 @@ impl OvenToolchainLoaf {
             self.artifact_plan.dependency_search_paths.clone(),
         )
     }
+
+    /// Return the verified release-envelope root that owns this lock-held Loaf.
+    ///
+    /// Standalone test Loafs have no generation lock and therefore expose no envelope authority.
+    pub fn release_envelope_root(&self) -> Option<PathBuf> {
+        if self._generation_lock.is_none() {
+            return None;
+        }
+        let root = self.artifact_root.ancestors().nth(3)?.to_path_buf();
+        root.join("envelope.json").is_file().then_some(root)
+    }
 }
 
 /// Explicit runtime capability envelope for a compiler-owned Loaf.
@@ -1696,6 +1815,12 @@ fn committed_loaf_metadata_paths_with_role(
             }
         })?;
     }
+    if let Some(member) = manifest.runtime_closure.as_ref() {
+        validate_release_runtime_closure_member(&manifest, member).map_err(|message| OvenLoafError::InvalidLoaf {
+            path: manifest_path.clone(),
+            message,
+        })?;
+    }
     let generation_prefix = Path::new("generations").join(
         manifest
             .generation_identity
@@ -1791,6 +1916,12 @@ fn committed_loaf_envelope_manifest(
                 path: manifest_path.clone(),
                 message,
             }
+        })?;
+    }
+    if let Some(member) = manifest.runtime_closure.as_ref() {
+        validate_release_runtime_closure_member(&manifest, member).map_err(|message| OvenLoafError::InvalidLoaf {
+            path: manifest_path.clone(),
+            message,
         })?;
     }
     let generation_digest =
@@ -1897,6 +2028,8 @@ pub struct OvenHeldReleaseRuntimeFoundation {
     pub compiled_loaf: PathBuf,
     /// Exact retained compiler/sysroot closure used for runtime rebuilds.
     pub compiler: crate::rustc::OvenRuntimeCompilerClosure,
+    /// Exact rebuilt dependency closure admitted from this same held generation.
+    pub closure: Option<crate::rustc::OvenSelectedRuntimeClosure>,
     _generation_lock: OvenLoafGenerationLock,
 }
 
@@ -2048,6 +2181,45 @@ pub fn acquire_committed_release_runtime_foundation(
             path: loaf_root.join("envelope.json"),
             message: "runtime-foundation compiled Loaf binding disappeared".to_string(),
         })?;
+    let closure = if let Some(closure_member) = manifest.runtime_closure.as_ref() {
+        validate_release_runtime_closure_member(&manifest, closure_member).map_err(|message| {
+            OvenLoafError::InvalidLoaf {
+                path: loaf_root.join("envelope.json"),
+                message,
+            }
+        })?;
+        let store_root = loaf_root
+            .join(generation_directory_path(&manifest.generation_identity))
+            .join(&closure_member.store_relative_path);
+        let mut candidates =
+            PublishedOvenStore::new(&store_root).select_payloads_matching_for_execution(|candidate| {
+                candidate.identity == closure_member.artifact_identity
+            })?;
+        if candidates.len() != 1 {
+            return Err(OvenLoafError::InvalidLoaf {
+                path: store_root,
+                message: "runtime closure did not select exactly one declared Store artifact".to_string(),
+            });
+        }
+        let payload = candidates.pop().ok_or_else(|| OvenLoafError::Preparation {
+            message: "runtime closure selection became empty".to_string(),
+        })?;
+        payload.verify_materialized_files()?;
+        Some(
+            crate::rustc::admit_declared_runtime_closure(
+                payload,
+                &closure_member.closure_identity,
+                &closure_member.foundation_identity,
+                &closure_member.compiler_closure_identity,
+            )
+            .map_err(|error| OvenLoafError::InvalidLoaf {
+                path: loaf_root.join("envelope.json"),
+                message: error.to_string(),
+            })?,
+        )
+    } else {
+        None
+    };
     Ok(Some(OvenHeldReleaseRuntimeFoundation {
         label: member.label.clone(),
         asset,
@@ -2059,6 +2231,7 @@ pub fn acquire_committed_release_runtime_foundation(
                 .join("bin/rustc"),
             member.compiler_closure_identity.clone(),
         ),
+        closure,
         _generation_lock: generation_lock,
     }))
 }
@@ -3193,6 +3366,7 @@ mod tests {
             loafs: vec![compiled.clone()],
             release_store_member: None,
             runtime_foundation: None,
+            runtime_closure: None,
         };
         validate_release_runtime_foundation_member(&manifest, &member)?;
 
@@ -3218,6 +3392,53 @@ mod tests {
         let mut foundation_nested = aliased_roots;
         foundation_nested.foundation_relative_path = foundation_nested.toolchain_root_relative_path.join("foundation");
         assert!(validate_release_runtime_foundation_member(&manifest, &foundation_nested).is_err());
+        Ok(())
+    }
+
+    /// A closure descriptor is valid only beside the exact foundation and compiler closure it rebuilds.
+    #[test]
+    fn runtime_closure_member_binds_same_generation_foundation() -> Result<(), Box<dyn std::error::Error>> {
+        let foundation = OvenReleaseRuntimeFoundationMember {
+            schema_version: OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION,
+            label: "rust-policy-foundation".to_string(),
+            foundation_relative_path: PathBuf::from("runtime-foundation/foundation"),
+            foundation_identity: digest_bytes(b"foundation"),
+            compiled_loaf_identity: digest_bytes(b"loaf"),
+            compiled_plan_identity: digest_bytes(b"plan"),
+            toolchain_owner_identity: digest_bytes(b"toolchain-owner"),
+            compiler_closure_identity: digest_bytes(b"compiler-closure"),
+            toolchain_root_relative_path: PathBuf::from("runtime-foundation/toolchain"),
+            toolchain_members: Vec::new(),
+        };
+        let closure = OvenReleaseRuntimeClosureMember {
+            schema_version: OVEN_RELEASE_RUNTIME_CLOSURE_MEMBER_SCHEMA_VERSION,
+            label: "rust-policy-closure".to_string(),
+            store_relative_path: PathBuf::from("runtime-closures/store"),
+            artifact_identity: digest_bytes(b"artifact"),
+            closure_identity: digest_bytes(b"closure"),
+            foundation_identity: foundation.foundation_identity.clone(),
+            compiler_closure_identity: foundation.compiler_closure_identity.clone(),
+        };
+        let mut evidence = BTreeMap::new();
+        bind_release_runtime_closure_evidence(&mut evidence, &closure)?;
+        let manifest = OvenLoafEnvelopeManifest {
+            schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
+            envelope: "release".to_string(),
+            generation_identity: digest_bytes(b"generation"),
+            evidence,
+            loafs: Vec::new(),
+            release_store_member: None,
+            runtime_foundation: Some(foundation),
+            runtime_closure: Some(closure.clone()),
+        };
+        validate_release_runtime_closure_member(&manifest, &closure)?;
+
+        let mut substituted = closure.clone();
+        substituted.foundation_identity = digest_bytes(b"other-foundation");
+        assert!(validate_release_runtime_closure_member(&manifest, &substituted).is_err());
+        let mut missing_foundation = manifest;
+        missing_foundation.runtime_foundation = None;
+        assert!(validate_release_runtime_closure_member(&missing_foundation, &closure).is_err());
         Ok(())
     }
 
@@ -3310,6 +3531,7 @@ mod tests {
                 loafs: Vec::new(),
                 release_store_member: Some(member),
                 runtime_foundation: None,
+                runtime_closure: None,
             })?,
         )?;
         let held = acquire_committed_release_store_member(root.path(), "engine")?.ok_or("member not acquired")?;
@@ -3515,6 +3737,7 @@ mod tests {
                 }],
                 release_store_member: None,
                 runtime_foundation: None,
+                runtime_closure: None,
             })?,
         )?;
         assert_eq!(committed_loaf_paths(root.path())?, vec![root.path().join(&committed)]);
@@ -3579,6 +3802,7 @@ mod tests {
                         loafs: vec![member],
                         release_store_member: None,
                         runtime_foundation: None,
+                        runtime_closure: None,
                     })?,
                 )
             };

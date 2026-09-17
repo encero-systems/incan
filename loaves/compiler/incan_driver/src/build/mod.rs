@@ -107,6 +107,8 @@ pub struct OvenPreparedProject {
     pub provider_plan: Arc<ProviderPlan>,
     pub receipt: oven_store::OvenReceipt,
     pub plan_selection: OvenDirectRustcPlanSelection,
+    /// Same-generation policy foundation and rebuilt closure for a release ToolchainLoaf selection.
+    pub runtime_foundation: Option<oven_rustc::loaf::OvenHeldReleaseRuntimeFoundation>,
     pub materialization: OvenToolchainMaterialization,
     pub cargo_process_started: bool,
     pub rustc: PathBuf,

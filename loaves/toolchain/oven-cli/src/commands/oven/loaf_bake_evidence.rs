@@ -16,9 +16,10 @@ use super::{
     CliError, CliResult, INCAN_VERSION, Instant, LoafEnvelopeExpectation, LoafMemberExpectation, LoafMirrorMiss,
     OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLegacyCargoCompilerSuiteResult, OvenLoafEnvelope,
     OvenLoafEnvelopeManifest, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation,
-    OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember, OvenStore, OvenStoreInspection, OvenStoreLimits,
-    announce_oven_progress, bind_release_runtime_foundation_evidence, configured_mirrors, digest_bytes,
-    digest_runtime_crate_source, elapsed_detail, env, import_loaf_envelope_from_mirrors, loaf_directory_byte_counts,
+    OvenReleaseRuntimeClosureMember, OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember, OvenStore,
+    OvenStoreInspection, OvenStoreLimits, announce_oven_progress, bind_release_runtime_closure_evidence,
+    bind_release_runtime_foundation_evidence, configured_mirrors, digest_bytes, digest_runtime_crate_source,
+    elapsed_detail, env, import_loaf_envelope_from_mirrors, loaf_directory_byte_counts,
     loaf_envelope_inspection_packages, loaf_envelope_specifications, loaf_raw_disk_bytes, oven_error,
     retire_unreferenced_loaf_generations, rustc_identity, validate_stored_loaf_for_reuse,
 };
@@ -213,6 +214,7 @@ pub(crate) fn import_loaf_envelope_from_configured_mirrors(
     evidence: &OvenLoafEnvelopeEvidence,
     release_store_member: Option<&OvenReleaseStoreMember>,
     runtime_foundation: Option<&OvenReleaseRuntimeFoundationMember>,
+    runtime_closure: Option<&OvenReleaseRuntimeClosureMember>,
 ) -> CliResult<()> {
     if output.join("envelope.json").is_file() {
         return Ok(());
@@ -228,6 +230,7 @@ pub(crate) fn import_loaf_envelope_from_configured_mirrors(
         evidence,
         release_store_member,
         runtime_foundation,
+        runtime_closure,
         &mirrors,
     )
 }
@@ -240,12 +243,16 @@ pub(crate) fn import_loaf_envelope_from_mirror_roots(
     evidence: &OvenLoafEnvelopeEvidence,
     release_store_member: Option<&OvenReleaseStoreMember>,
     runtime_foundation: Option<&OvenReleaseRuntimeFoundationMember>,
+    runtime_closure: Option<&OvenReleaseRuntimeClosureMember>,
     mirrors: &[PathBuf],
 ) -> CliResult<()> {
     let mut compatibility_evidence =
         loaf_envelope_compatibility_map_with_release_member(evidence, release_store_member)?;
     if let Some(member) = runtime_foundation {
         bind_release_runtime_foundation_evidence(&mut compatibility_evidence, member).map_err(oven_error)?;
+    }
+    if let Some(member) = runtime_closure {
+        bind_release_runtime_closure_evidence(&mut compatibility_evidence, member).map_err(oven_error)?;
     }
     let generation_identity =
         loaf_generation_identity_with_release_member(envelope, &compatibility_evidence, release_store_member)?;
@@ -266,6 +273,7 @@ pub(crate) fn import_loaf_envelope_from_mirror_roots(
         members: &members,
         release_store_member,
         runtime_foundation,
+        runtime_closure,
     };
     let started = Instant::now();
     match import_loaf_envelope_from_mirrors(output, scratch, &expectation, mirrors) {
@@ -391,6 +399,7 @@ pub(crate) struct CompleteLoafEnvelopeReuseInput<'a> {
     pub(crate) evidence: &'a OvenLoafEnvelopeEvidence,
     pub(crate) release_store_member: Option<&'a OvenReleaseStoreMember>,
     pub(crate) runtime_foundation: Option<&'a OvenReleaseRuntimeFoundationMember>,
+    pub(crate) runtime_closure: Option<&'a OvenReleaseRuntimeClosureMember>,
     pub(crate) limits: OvenStoreLimits,
     pub(crate) started: Instant,
 }
@@ -406,6 +415,7 @@ pub(crate) fn reuse_complete_loaf_envelope(
         evidence,
         release_store_member,
         runtime_foundation,
+        runtime_closure,
         limits,
         started,
     } = input;
@@ -429,11 +439,15 @@ pub(crate) fn reuse_complete_loaf_envelope(
     if let Some(member) = runtime_foundation {
         bind_release_runtime_foundation_evidence(&mut expected_evidence, member).map_err(oven_error)?;
     }
+    if let Some(member) = runtime_closure {
+        bind_release_runtime_closure_evidence(&mut expected_evidence, member).map_err(oven_error)?;
+    }
     if manifest.schema_version != OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION
         || manifest.envelope != loaf_envelope_name(envelope)
         || manifest.evidence != expected_evidence
         || manifest.release_store_member.as_ref() != release_store_member
         || manifest.runtime_foundation.as_ref() != runtime_foundation
+        || manifest.runtime_closure.as_ref() != runtime_closure
     {
         return Ok(None);
     }

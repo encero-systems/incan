@@ -21,9 +21,10 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use crate::loaf::{
-    OvenLoaf, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafMemberRole, OvenReleaseRuntimeFoundationMember,
-    OvenReleaseStoreMember, commit_loaf_generation, prove_release_runtime_foundation_member,
-    prove_release_store_member_payload, validate_stored_loaf,
+    OvenLoaf, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafMemberRole, OvenReleaseRuntimeClosureMember,
+    OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember, commit_loaf_generation,
+    prove_release_runtime_closure_member, prove_release_runtime_foundation_member, prove_release_store_member_payload,
+    validate_stored_loaf,
 };
 use oven_store::digest_source_tree;
 
@@ -44,6 +45,8 @@ pub struct LoafEnvelopeExpectation<'a> {
     pub release_store_member: Option<&'a OvenReleaseStoreMember>,
     /// Optional exact runtime-foundation carrier the local publisher intends to bind into this generation.
     pub runtime_foundation: Option<&'a OvenReleaseRuntimeFoundationMember>,
+    /// Optional exact runtime closure committed beside the foundation.
+    pub runtime_closure: Option<&'a OvenReleaseRuntimeClosureMember>,
 }
 
 /// The checked specification one envelope member must carry.
@@ -157,6 +160,7 @@ fn manifest_matches(
         || manifest.loafs.len() != expectation.members.len()
         || manifest.release_store_member.as_ref() != expectation.release_store_member
         || manifest.runtime_foundation.as_ref() != expectation.runtime_foundation
+        || manifest.runtime_closure.as_ref() != expectation.runtime_closure
     {
         return false;
     }
@@ -212,6 +216,11 @@ fn stage_and_prove_generation(
     }
     if let Some(member) = &manifest.runtime_foundation {
         prove_release_runtime_foundation_member(staging, manifest, member)
+            .map(|_| ())
+            .map_err(|error| io::Error::other(error.to_string()))?;
+    }
+    if let Some(member) = &manifest.runtime_closure {
+        prove_release_runtime_closure_member(&staged_generation, manifest, member)
             .map(|_| ())
             .map_err(|error| io::Error::other(error.to_string()))?;
     }
@@ -422,6 +431,7 @@ mod tests {
             }],
             release_store_member: None,
             runtime_foundation: None,
+            runtime_closure: None,
         };
         fs::write(root.join("envelope.json"), serde_json::to_vec(&manifest)?)?;
         Ok(manifest)
@@ -446,6 +456,7 @@ mod tests {
                 members: &members,
                 release_store_member: None,
                 runtime_foundation: None,
+                runtime_closure: None,
             },
             mirrors,
         ))
@@ -541,6 +552,7 @@ mod tests {
             members: &expected_members,
             release_store_member: Some(&member),
             runtime_foundation: None,
+            runtime_closure: None,
         };
         import_loaf_envelope_from_mirrors(
             output.path(),
@@ -658,6 +670,7 @@ mod tests {
             members: &members,
             release_store_member: Some(&expected),
             runtime_foundation: None,
+            runtime_closure: None,
         };
         assert!(!manifest_matches(&swapped, &expectation, &generation));
         Ok(())
@@ -698,6 +711,7 @@ mod tests {
             members: &members,
             release_store_member: None,
             runtime_foundation: Some(&expected),
+            runtime_closure: None,
         };
         assert!(!manifest_matches(&manifest, &expectation, &generation));
         Ok(())

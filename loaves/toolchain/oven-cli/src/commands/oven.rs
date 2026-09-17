@@ -60,11 +60,11 @@ use oven_model::oven_interop::{LockedInteropTarget, ToolchainRequirement};
 use oven_rustc::loaf::{
     LoafTemporaryDirectory, OVEN_LOAF_ENV, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLoafEnvelope,
     OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation,
-    OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember, acquire_committed_loaf_generation,
-    acquire_exclusive_loaf_generation_lock, bind_release_runtime_foundation_evidence, commit_loaf_generation,
-    digest_runtime_crate_source, loaf_directory_byte_counts, loaf_envelope_inspection_packages,
-    loaf_envelope_specifications, loaf_raw_disk_bytes, retire_unreferenced_loaf_generations,
-    validate_stored_loaf_for_reuse,
+    OvenReleaseRuntimeClosureMember, OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember,
+    acquire_committed_loaf_generation, acquire_exclusive_loaf_generation_lock, bind_release_runtime_closure_evidence,
+    bind_release_runtime_foundation_evidence, commit_loaf_generation, digest_runtime_crate_source,
+    loaf_directory_byte_counts, loaf_envelope_inspection_packages, loaf_envelope_specifications, loaf_raw_disk_bytes,
+    retire_unreferenced_loaf_generations, validate_stored_loaf_for_reuse,
 };
 use oven_rustc::loaf_mirror::{
     LoafEnvelopeExpectation, LoafMemberExpectation, LoafMirrorMiss, import_loaf_envelope_from_mirrors,
@@ -3525,6 +3525,7 @@ mod tests {
                 evidence: &evidence,
                 release_store_member: Some(&member),
                 runtime_foundation: None,
+                runtime_closure: None,
                 limits,
                 started: Instant::now(),
             })?
@@ -3724,6 +3725,7 @@ mod tests {
             loafs: members,
             release_store_member,
             runtime_foundation: None,
+            runtime_closure: None,
         };
         fs::write(root.join("envelope.json"), serde_json::to_vec(&manifest)?)?;
         Ok(manifest)
@@ -3779,6 +3781,7 @@ mod tests {
             &evidence,
             None,
             None,
+            None,
             &[stale.path().to_path_buf()],
         )?;
         assert!(
@@ -3791,6 +3794,7 @@ mod tests {
             scratch.path(),
             OvenLoafEnvelope::Release,
             &evidence,
+            None,
             None,
             None,
             &[stale.path().to_path_buf(), mirror.path().to_path_buf()],
@@ -3810,6 +3814,7 @@ mod tests {
             evidence: &evidence,
             release_store_member: None,
             runtime_foundation: None,
+            runtime_closure: None,
             limits: OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
             started: Instant::now(),
         })?
@@ -3904,6 +3909,7 @@ mod tests {
             evidence: &output_churn_evidence,
             release_store_member: None,
             runtime_foundation: None,
+            runtime_closure: None,
             limits: OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
             started: Instant::now(),
         })?
@@ -3957,6 +3963,7 @@ mod tests {
                 evidence: &changed_runtime_evidence,
                 release_store_member: None,
                 runtime_foundation: None,
+                runtime_closure: None,
                 limits: OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
                 started: Instant::now(),
             })?
@@ -4006,6 +4013,7 @@ mod tests {
                 loafs: Vec::new(),
                 release_store_member: None,
                 runtime_foundation: None,
+                runtime_closure: None,
             })?,
         )?;
         let (receipt, _) = super::compiler_libtests_receipt(compiler_root.path(), &rustc, &[], Some(output.path()))?;
@@ -4210,6 +4218,7 @@ mod tests {
                     loafs: vec![member],
                     release_store_member: None,
                     runtime_foundation: None,
+                    runtime_closure: None,
                 })?,
             )?;
             Ok(())
@@ -4258,6 +4267,7 @@ mod tests {
             loafs: Vec::new(),
             release_store_member: None,
             runtime_foundation: None,
+            runtime_closure: None,
         };
 
         let result = commit_loaf_generation(
@@ -4301,6 +4311,7 @@ mod tests {
                     loafs: Vec::new(),
                     release_store_member: None,
                     runtime_foundation: None,
+                    runtime_closure: None,
                 };
                 barrier.wait();
                 let _lock = acquire_exclusive_loaf_generation_lock(&output).map_err(|error| error.to_string())?;

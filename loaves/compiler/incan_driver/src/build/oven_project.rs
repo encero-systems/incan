@@ -78,7 +78,8 @@ use oven_model::lock::CargoFeatureSelection;
 use oven_model::manifest::DependencySpec;
 use oven_rustc::loaf::{
     OVEN_DEPENDENCY_MISS_SUMMARY, OVEN_LOAF_ENV, OVEN_LOAF_MISS_GUIDANCE, OVEN_NESTED_DEPENDENCY_MISS_SUMMARY,
-    OVEN_NO_IMPLICIT_DEPENDENCY_BUILD, OvenToolchainLoaf, resolve_compiler_owned_loaf_for_registry_dependencies,
+    OVEN_NO_IMPLICIT_DEPENDENCY_BUILD, OvenToolchainLoaf, acquire_committed_release_runtime_foundation,
+    resolve_compiler_owned_loaf_for_registry_dependencies,
 };
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
 use oven_rustc::plan::composition::compose_selected_packaged_provider_plan;
@@ -624,6 +625,27 @@ pub fn prepare_oven_project(
         ],
         backend: Some(backend_receipt),
     };
+    let runtime_foundation = match &plan_selection {
+        OvenDirectRustcPlanSelection::ToolchainLoaf(native) => {
+            let root = native.release_envelope_root().ok_or_else(|| {
+                CliError::failure("selected ToolchainLoaf has no verified release-envelope authority".to_string())
+            })?;
+            let held = acquire_committed_release_runtime_foundation(&root, "rust-policy-foundation")
+                .map_err(oven_error)?
+                .ok_or_else(|| {
+                    CliError::failure(
+                        "selected ToolchainLoaf release has no admitted runtime dependency foundation".to_string(),
+                    )
+                })?;
+            if held.closure.is_none() {
+                return Err(CliError::failure(
+                    "selected ToolchainLoaf release has no admitted runtime dependency closure".to_string(),
+                ));
+            }
+            Some(held)
+        }
+        _ => None,
+    };
     Ok(OvenPreparedProject {
         generator,
         project_root,
@@ -631,6 +653,7 @@ pub fn prepare_oven_project(
         provider_plan,
         receipt,
         plan_selection,
+        runtime_foundation,
         materialization: plan_preparation.materialization,
         cargo_process_started: plan_preparation.cargo_process_started,
         rustc,

@@ -26,11 +26,15 @@ use oven_cargo_compat::{
 };
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::loaf::{
-    OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION, OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenLoaf,
+    OVEN_RELEASE_RUNTIME_CLOSURE_MEMBER_SCHEMA_VERSION, OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION,
+    OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenLoaf, OvenReleaseRuntimeClosureMember,
     OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember, OvenReleaseToolchainMember,
     stage_release_runtime_foundation_toolchain,
 };
-use oven_rustc::rustc::{OvenRuntimeFoundationAsset, publish_runtime_foundation_asset};
+use oven_rustc::rustc::{
+    OvenRuntimeCompilerClosure, OvenRuntimeFoundationAsset, execute_runtime_foundation_rebuild,
+    publish_runtime_closure, publish_runtime_foundation_asset,
+};
 use oven_store::process::{BoundedProcessLimits, BoundedProcessTermination, run_bounded_process};
 use oven_store::receipt_with_build_unit_input;
 use oven_store::store::{
@@ -184,6 +188,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             &evidence,
             release_store_member.as_ref(),
             None,
+            None,
         )?;
     }
     if envelope == OvenLoafEnvelope::CompilerSuite
@@ -194,6 +199,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             evidence: &evidence,
             release_store_member: release_store_member.as_ref(),
             runtime_foundation: None,
+            runtime_closure: None,
             limits,
             started,
         })?
@@ -629,7 +635,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             "release envelope did not produce admitted Rust policy inventories".to_string(),
         ));
     }
-    let runtime_foundation =
+    let (runtime_foundation, runtime_closure) =
         if let (Some(finalized), Some(inventories)) = (finalized_release_graph.as_ref(), release_policy_inventories) {
             let final_entry = pending
                 .iter()
@@ -681,7 +687,28 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 &staged_root.join(&foundation_relative),
             )
             .map_err(oven_error)?;
-            Some(OvenReleaseRuntimeFoundationMember {
+            let materialized = admitted.materialize_asset_for_publication().map_err(oven_error)?;
+            let compiler =
+                OvenRuntimeCompilerClosure::new(toolchain_root.join("bin/rustc"), compiler_closure_identity.clone());
+            let build = execute_runtime_foundation_rebuild(
+                materialized.foundation(),
+                materialized.materialized(),
+                &compiler,
+                &scratch.path().join("runtime-closure-build"),
+            )
+            .map_err(oven_error)?;
+            let closure_store_relative = PathBuf::from("runtime-closures/store");
+            let closure_store = OvenStore::new(staged_root.join(&closure_store_relative), limits);
+            let closure_manifest = publish_runtime_closure(
+                &closure_store,
+                &finalized.final_receipt,
+                materialized.foundation(),
+                &build,
+            )
+            .map_err(oven_error)?;
+            let closure_payload =
+                oven_rustc::rustc::runtime_closure_payload(materialized.foundation(), &build).map_err(oven_error)?;
+            let foundation_member = OvenReleaseRuntimeFoundationMember {
                 schema_version: OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION,
                 label: "rust-policy-foundation".to_string(),
                 foundation_relative_path: foundation_relative,
@@ -692,9 +719,19 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 compiler_closure_identity,
                 toolchain_root_relative_path: toolchain_relative,
                 toolchain_members,
-            })
+            };
+            let closure_member = OvenReleaseRuntimeClosureMember {
+                schema_version: OVEN_RELEASE_RUNTIME_CLOSURE_MEMBER_SCHEMA_VERSION,
+                label: "rust-policy-closure".to_string(),
+                store_relative_path: closure_store_relative,
+                artifact_identity: closure_manifest.identity,
+                closure_identity: closure_payload.identity().map_err(oven_error)?,
+                foundation_identity: foundation_member.foundation_identity.clone(),
+                compiler_closure_identity,
+            };
+            (Some(foundation_member), Some(closure_member))
         } else {
-            None
+            (None, None)
         };
     if envelope == OvenLoafEnvelope::Release {
         let publication_lock = acquire_exclusive_loaf_generation_lock(&options.output).map_err(oven_error)?;
@@ -705,6 +742,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             &evidence,
             release_store_member.as_ref(),
             runtime_foundation.as_ref(),
+            runtime_closure.as_ref(),
         )?;
         if let Some(report) = reuse_complete_loaf_envelope(CompleteLoafEnvelopeReuseInput {
             output: &options.output,
@@ -713,6 +751,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             evidence: &evidence,
             release_store_member: release_store_member.as_ref(),
             runtime_foundation: runtime_foundation.as_ref(),
+            runtime_closure: runtime_closure.as_ref(),
             limits,
             started,
         })? {
@@ -733,9 +772,15 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             loaf_directory_byte_counts(&staged_root.join(&member.foundation_relative_path)).map_err(oven_error)?;
         let toolchain =
             loaf_directory_byte_counts(&staged_root.join(&member.toolchain_root_relative_path)).map_err(oven_error)?;
+        let closure = runtime_closure
+            .as_ref()
+            .map(|member| loaf_directory_byte_counts(&staged_root.join(&member.store_relative_path)))
+            .transpose()
+            .map_err(oven_error)?
+            .unwrap_or((0, 0));
         (
-            foundation.0.saturating_add(toolchain.0),
-            foundation.1.saturating_add(toolchain.1),
+            foundation.0.saturating_add(toolchain.0).saturating_add(closure.0),
+            foundation.1.saturating_add(toolchain.1).saturating_add(closure.1),
         )
     } else {
         (0, 0)
@@ -765,6 +810,10 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         loaf_envelope_compatibility_map_with_release_member(&evidence, release_store_member.as_ref())?;
     if let Some(member) = runtime_foundation.as_ref() {
         oven_rustc::loaf::bind_release_runtime_foundation_evidence(&mut compatibility_evidence, member)
+            .map_err(oven_error)?;
+    }
+    if let Some(member) = runtime_closure.as_ref() {
+        oven_rustc::loaf::bind_release_runtime_closure_evidence(&mut compatibility_evidence, member)
             .map_err(oven_error)?;
     }
     let generation_identity =
@@ -803,6 +852,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             .collect(),
         release_store_member: release_store_member.clone(),
         runtime_foundation,
+        runtime_closure,
     };
     let publication_lock = acquire_exclusive_loaf_generation_lock(&options.output).map_err(oven_error)?;
     let replacement_high_water = oven_cargo_compat::conservative_directory_reservation(&options.output)

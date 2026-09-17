@@ -1685,6 +1685,7 @@ mod tests {
             loafs: vec![envelope_member],
             release_store_member: None,
             runtime_foundation: Some(runtime_member.clone()),
+            runtime_closure: None,
         };
         fs::write(mirror.path().join("envelope.json"), serde_json::to_vec(&manifest)?)?;
         drop(acquire_exclusive_loaf_generation_lock(mirror.path())?);
@@ -1709,6 +1710,7 @@ mod tests {
                 members: &expected_members,
                 release_store_member: None,
                 runtime_foundation: Some(&runtime_member),
+                runtime_closure: None,
             },
             &[mirror.path().to_path_buf()],
         )

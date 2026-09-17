@@ -19,8 +19,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    OvenRuntimeFoundationBuild, OvenRuntimeRebuildDependencyKind, OvenRustcError, OvenSelectedRustFacetDomain,
-    ValidatedOvenRuntimeFoundation,
+    OvenCallerOwnedRustcLibrary, OvenRuntimeFoundationBuild, OvenRuntimeFoundationUnitExecution,
+    OvenRuntimeRebuildDependencyKind, OvenRustcError, OvenSelectedRustFacetDomain, ValidatedOvenRuntimeFoundation,
 };
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactManifest, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore,
@@ -29,7 +29,7 @@ use oven_store::store::{
 use oven_store::{OvenReceipt, digest_bytes};
 
 /// Wire schema for one published Cargo-free runtime closure.
-pub const OVEN_RUNTIME_CLOSURE_SCHEMA_VERSION: u32 = 1;
+pub const OVEN_RUNTIME_CLOSURE_SCHEMA_VERSION: u32 = 2;
 
 /// Compatibility-domain prefix under which every runtime closure is published.
 const OVEN_RUNTIME_CLOSURE_DOMAIN_PREFIX: &str = "incan.oven.runtime-closure";
@@ -68,6 +68,18 @@ pub struct OvenRuntimeClosureUnit {
     pub dependencies: Vec<OvenRuntimeClosureDependency>,
 }
 
+/// One policy-authored public alias bound to an exact rebuilt unit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenRuntimeClosureRoot {
+    /// Rust-facing alias authored by Incan policy.
+    pub alias: String,
+    /// Exact selected physical unit identity named by the policy root.
+    pub selected_identity: String,
+    /// Exact compiled identity whose retained artifact satisfies the alias.
+    pub compiled_identity: String,
+}
+
 impl OvenRuntimeClosureUnit {
     /// Return the store-relative artifact path this unit occupies below its entry's artifact root.
     pub fn relative_path(&self) -> String {
@@ -91,6 +103,8 @@ pub struct OvenRuntimeClosurePayload {
     pub foundation_identity: String,
     /// Rebuilt units in the foundation's declared order.
     pub units: Vec<OvenRuntimeClosureUnit>,
+    /// Sorted public aliases copied from the validated Incan-selected graph.
+    pub roots: Vec<OvenRuntimeClosureRoot>,
 }
 
 /// The exact projection of a closure that decides its identity.
@@ -104,6 +118,7 @@ struct RuntimeClosureIdentityInput<'a> {
     schema_version: u32,
     compiler_closure_digest: &'a str,
     units: Vec<RuntimeClosureIdentityUnit<'a>>,
+    roots: &'a [OvenRuntimeClosureRoot],
 }
 
 /// One unit's compiler-input contribution to a closure identity.
@@ -137,6 +152,7 @@ impl OvenRuntimeClosurePayload {
                     dependencies: &unit.dependencies,
                 })
                 .collect(),
+            roots: &self.roots,
         };
         let bytes = serde_json::to_vec(&input).map_err(|error| OvenRustcError::InvalidInput {
             field: "runtime closure identity",
@@ -159,11 +175,12 @@ impl OvenRuntimeClosurePayload {
 }
 
 /// A published runtime closure bound to the store-owned paths of its retained entry.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct OvenSelectedRuntimeClosure {
     payload: OvenRuntimeClosurePayload,
     store_identity: String,
     artifacts: BTreeMap<String, PathBuf>,
+    _owner: OvenStoreExecutionPayload,
 }
 
 impl OvenSelectedRuntimeClosure {
@@ -181,6 +198,89 @@ impl OvenSelectedRuntimeClosure {
     pub fn artifact(&self, compiled_identity: &str) -> Option<&PathBuf> {
         self.artifacts.get(compiled_identity)
     }
+
+    /// Project policy-authored public roots into exact caller-owned direct-rustc libraries.
+    pub fn root_libraries(&self) -> Result<Vec<OvenCallerOwnedRustcLibrary>, OvenRustcError> {
+        let mut libraries = Vec::with_capacity(self.payload.roots.len());
+        for root in &self.payload.roots {
+            let unit = self
+                .payload
+                .units
+                .iter()
+                .find(|unit| {
+                    unit.selected_identity == root.selected_identity && unit.compiled_identity == root.compiled_identity
+                })
+                .ok_or_else(|| OvenRustcError::InvalidStoredPlan {
+                    identity: self.store_identity.clone(),
+                    message: format!("runtime root `{}` has no exact retained unit", root.alias),
+                })?;
+            let output = self
+                .artifact(&root.compiled_identity)
+                .ok_or_else(|| OvenRustcError::InvalidStoredPlan {
+                    identity: self.store_identity.clone(),
+                    message: format!("runtime root `{}` lost its exact artifact", root.alias),
+                })?;
+            libraries.push(OvenCallerOwnedRustcLibrary {
+                crate_name: root.alias.clone(),
+                output: output.clone(),
+                digest: unit.digest.clone(),
+                expose_extern: true,
+            });
+        }
+        Ok(libraries)
+    }
+}
+
+/// Admit a declared release member without performing a second content selection.
+///
+/// The envelope has already selected the Store identity under its held generation lock. This boundary decodes that
+/// exact payload, verifies its own identity and its foundation/compiler bindings, then resolves only declared unit
+/// paths below the leased Store entry.
+pub fn admit_declared_runtime_closure(
+    owner: OvenStoreExecutionPayload,
+    expected_closure_identity: &str,
+    expected_foundation_identity: &str,
+    expected_compiler_closure_identity: &str,
+) -> Result<OvenSelectedRuntimeClosure, OvenRustcError> {
+    if owner.manifest.kind != OvenArtifactKind::NativeRuntimeClosure {
+        return Err(OvenRustcError::InvalidStoredPlan {
+            identity: owner.manifest.identity.clone(),
+            message: "declared runtime closure has the wrong Store kind".to_string(),
+        });
+    }
+    let payload = serde_json::from_slice::<OvenRuntimeClosurePayload>(&owner.payload).map_err(|error| {
+        OvenRustcError::InvalidStoredPlan {
+            identity: owner.manifest.identity.clone(),
+            message: format!("runtime closure record cannot be decoded: {error}"),
+        }
+    })?;
+    if payload.schema_version != OVEN_RUNTIME_CLOSURE_SCHEMA_VERSION
+        || payload.identity()? != expected_closure_identity
+        || payload.foundation_identity != expected_foundation_identity
+        || payload.compiler_closure_digest != expected_compiler_closure_identity
+    {
+        return Err(OvenRustcError::InvalidStoredPlan {
+            identity: owner.manifest.identity.clone(),
+            message: "declared runtime closure does not match its envelope bindings".to_string(),
+        });
+    }
+    let mut artifacts = BTreeMap::new();
+    for unit in &payload.units {
+        let path = owner.artifact_root.join(unit.relative_path());
+        if !path.is_file() {
+            return Err(OvenRustcError::InvalidStoredPlan {
+                identity: owner.manifest.identity.clone(),
+                message: format!("runtime closure lost its retained output for {}", unit.crate_name),
+            });
+        }
+        artifacts.insert(unit.compiled_identity.clone(), path);
+    }
+    Ok(OvenSelectedRuntimeClosure {
+        payload,
+        store_identity: owner.manifest.identity.clone(),
+        artifacts,
+        _owner: owner,
+    })
 }
 
 /// Derive the content identity of one sealed runtime foundation.
@@ -231,11 +331,38 @@ pub fn runtime_closure_payload(
                 .collect(),
         })
         .collect();
+    let graph = foundation.selected_graph().graph();
+    let mut roots = Vec::with_capacity(graph.exposed_roots.len());
+    for (alias, root) in &graph.exposed_roots {
+        let Some(output) = build.output(&root.unit) else {
+            let policy = foundation
+                .unit_policy(&root.unit)
+                .ok_or_else(|| OvenRustcError::InvalidInput {
+                    field: "runtime closure roots",
+                    message: format!("policy root `{alias}` has no admitted execution policy"),
+                })?;
+            if !matches!(policy.execution, OvenRuntimeFoundationUnitExecution::Prebuilt { .. }) {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "runtime closure roots",
+                    message: format!(
+                        "policy root `{alias}` requires a rebuilt artifact that the closure did not produce"
+                    ),
+                });
+            }
+            continue;
+        };
+        roots.push(OvenRuntimeClosureRoot {
+            alias: alias.clone(),
+            selected_identity: root.unit.clone(),
+            compiled_identity: output.compiled_identity.as_str().to_string(),
+        });
+    }
     Ok(OvenRuntimeClosurePayload {
         schema_version: OVEN_RUNTIME_CLOSURE_SCHEMA_VERSION,
         compiler_closure_digest: foundation.compiler_closure_digest().to_string(),
         foundation_identity: runtime_foundation_identity(foundation)?,
         units,
+        roots,
     })
 }
 
@@ -283,7 +410,7 @@ pub fn publish_runtime_closure(
 /// The caller supplies an owner it already leased. Every path is derived from the payload's own compiled identities,
 /// so a file the closure does not name stays unreachable even if it exists below the same artifact root.
 pub fn admit_runtime_closure(
-    owner: &OvenStoreExecutionPayload,
+    owner: OvenStoreExecutionPayload,
     expected: &OvenRuntimeClosurePayload,
 ) -> Result<Option<OvenSelectedRuntimeClosure>, OvenRustcError> {
     // A different kind is not a candidate at all, so it is an absence.
@@ -328,6 +455,7 @@ pub fn admit_runtime_closure(
         payload,
         store_identity: owner.manifest.identity.clone(),
         artifacts,
+        _owner: owner,
     }))
 }
 
@@ -349,7 +477,7 @@ pub fn select_runtime_closure(
             field: "runtime closure selection",
             message: format!("cannot select a published runtime closure: {error}"),
         })?;
-    for owner in &owners {
+    for owner in owners {
         if let Some(selected) = admit_runtime_closure(owner, expected)? {
             return Ok(Some(selected));
         }
@@ -457,9 +585,14 @@ mod tests {
         assert_eq!(manifest.domain, expected.domain()?);
         let mut owners = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
         let owner = owners.pop().ok_or("published closure has no retained owner")?;
-        let selected = admit_runtime_closure(&owner, &expected)?.ok_or("published closure failed admission")?;
+        let selected = admit_runtime_closure(owner, &expected)?.ok_or("published closure failed admission")?;
         assert_eq!(selected.store_identity(), manifest.identity);
         assert_eq!(selected.payload().units.len(), 2);
+        assert_eq!(selected.payload().roots.len(), 1);
+        let root_libraries = selected.root_libraries()?;
+        assert_eq!(root_libraries.len(), 1);
+        assert_eq!(root_libraries[0].crate_name, selected.payload().roots[0].alias);
+        assert!(root_libraries[0].expose_extern);
         for unit in &selected.payload().units {
             let artifact = selected
                 .artifact(&unit.compiled_identity)
@@ -472,6 +605,35 @@ mod tests {
             );
             assert_eq!(digest_bytes(&std::fs::read(artifact)?), unit.digest);
         }
+        Ok(())
+    }
+
+    /// Public aliases refuse a selected-unit substitution even when the closure retains another valid artifact.
+    #[test]
+    fn policy_root_refuses_a_different_retained_unit() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = fixture()?;
+        let output_root = tempfile::tempdir()?;
+        let store_root = tempfile::tempdir()?;
+        let closure = OvenRuntimeCompilerClosure::new(&fixture.rustc, FIXTURE_CLOSURE);
+        let build = execute_runtime_foundation_rebuild(
+            &fixture.foundation,
+            &fixture.materialized,
+            &closure,
+            output_root.path(),
+        )?;
+        let intent = &fixture.foundation.selected_graph().graph().selection.intent;
+        let receipt = publication_receipt("fixture_project", "0.1.0", &intent.target, &intent.toolchain)?;
+        let store = OvenStore::new(
+            store_root.path(),
+            OvenStoreLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024),
+        );
+        let manifest = publish_runtime_closure(&store, &receipt, &fixture.foundation, &build)?;
+        let expected = runtime_closure_payload(&fixture.foundation, &build)?;
+        let mut owners = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
+        let owner = owners.pop().ok_or("published closure has no retained owner")?;
+        let mut selected = admit_runtime_closure(owner, &expected)?.ok_or("published closure failed admission")?;
+        selected.payload.roots[0].selected_identity = selected.payload.units[1].selected_identity.clone();
+        assert!(selected.root_libraries().is_err());
         Ok(())
     }
 

@@ -77,6 +77,12 @@ pub fn bake_oven_project(
     authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
 ) -> CliResult<oven_rustc::rustc::OvenDirectRustcBake> {
     let mut caller_owned_libraries = prepared.caller_owned_libraries.clone();
+    if let Some(held) = prepared.runtime_foundation.as_ref() {
+        let closure = held.closure.as_ref().ok_or_else(|| {
+            CliError::failure("selected runtime foundation lost its admitted dependency closure".to_string())
+        })?;
+        caller_owned_libraries.extend(closure.root_libraries().map_err(oven_rustc_error)?);
+    }
     let mut re_materialized_package_library_names = BTreeSet::new();
     let mut registry_authority = registry_leaf_authority_for_plan_selection(&prepared.plan_selection)?;
     let mut extra_dependency_search_paths = Vec::new();
