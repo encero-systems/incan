@@ -17,7 +17,7 @@ use oven_store::store::{
 };
 
 use super::{
-    CliError, CliResult, DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES,
+    CliError, CliResult, CompleteLoafEnvelopeReuseInput, DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES,
     DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES,
     DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES, DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES, DEFAULT_OVEN_MAX_PHYSICAL_BYTES,
     ExitCode, LoafTemporaryDirectory, OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV, OVEN_LOAF_ENV,
@@ -158,16 +158,16 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         release_store_member.as_ref(),
         None,
     )?;
-    if let Some(report) = reuse_complete_loaf_envelope(
-        &options.output,
-        scratch.path(),
+    if let Some(report) = reuse_complete_loaf_envelope(CompleteLoafEnvelopeReuseInput {
+        output: &options.output,
+        scratch: scratch.path(),
         envelope,
-        &evidence,
-        release_store_member.as_ref(),
-        None,
+        evidence: &evidence,
+        release_store_member: release_store_member.as_ref(),
+        runtime_foundation: None,
         limits,
         started,
-    )? {
+    })? {
         // Exact envelope validation and retirement require exclusive publication authority. Compiler-suite
         // completion then consumes the committed Loafs through a shared generation lease, so retaining the writer
         // lock across that transition would make this process wait on itself.

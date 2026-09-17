@@ -3517,16 +3517,16 @@ mod tests {
         )?;
         let scratch = tempfile::tempdir()?;
         assert!(
-            reuse_complete_loaf_envelope(
-                output.path(),
-                scratch.path(),
-                OvenLoafEnvelope::Release,
-                &evidence,
-                Some(&member),
-                None,
+            reuse_complete_loaf_envelope(CompleteLoafEnvelopeReuseInput {
+                output: output.path(),
+                scratch: scratch.path(),
+                envelope: OvenLoafEnvelope::Release,
+                evidence: &evidence,
+                release_store_member: Some(&member),
+                runtime_foundation: None,
                 limits,
-                Instant::now(),
-            )?
+                started: Instant::now(),
+            })?
             .is_some()
         );
         assert!(
@@ -3802,16 +3802,16 @@ mod tests {
             "nothing is left in scratch after a commit"
         );
 
-        let report = reuse_complete_loaf_envelope(
-            output.path(),
-            scratch.path(),
-            OvenLoafEnvelope::Release,
-            &evidence,
-            None,
-            None,
-            OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
-            Instant::now(),
-        )?
+        let report = reuse_complete_loaf_envelope(CompleteLoafEnvelopeReuseInput {
+            output: output.path(),
+            scratch: scratch.path(),
+            envelope: OvenLoafEnvelope::Release,
+            evidence: &evidence,
+            release_store_member: None,
+            runtime_foundation: None,
+            limits: OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+            started: Instant::now(),
+        })?
         .ok_or("the mirrored generation must be reused by the ordinary path")?;
         assert_eq!(report.action, "reused");
         assert_eq!(report.reused_count, manifest.loafs.len());
@@ -3896,16 +3896,16 @@ mod tests {
             None,
         )?;
 
-        let report = reuse_complete_loaf_envelope(
-            output.path(),
-            scratch.path(),
-            OvenLoafEnvelope::Release,
-            &output_churn_evidence,
-            None,
-            None,
-            OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
-            Instant::now(),
-        )?
+        let report = reuse_complete_loaf_envelope(CompleteLoafEnvelopeReuseInput {
+            output: output.path(),
+            scratch: scratch.path(),
+            envelope: OvenLoafEnvelope::Release,
+            evidence: &output_churn_evidence,
+            release_store_member: None,
+            runtime_foundation: None,
+            limits: OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+            started: Instant::now(),
+        })?
         .ok_or("matching release compatibility must reuse the committed envelope")?;
 
         assert_eq!(
@@ -3949,16 +3949,16 @@ mod tests {
             "a changed runtime source must not reuse stale compiled standard-library artifacts"
         );
         assert!(
-            reuse_complete_loaf_envelope(
-                output.path(),
-                scratch.path(),
-                OvenLoafEnvelope::Release,
-                &changed_runtime_evidence,
-                None,
-                None,
-                OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
-                Instant::now(),
-            )?
+            reuse_complete_loaf_envelope(CompleteLoafEnvelopeReuseInput {
+                output: output.path(),
+                scratch: scratch.path(),
+                envelope: OvenLoafEnvelope::Release,
+                evidence: &changed_runtime_evidence,
+                release_store_member: None,
+                runtime_foundation: None,
+                limits: OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+                started: Instant::now(),
+            })?
             .is_none(),
             "runtime-source drift must force the explicit baker path"
         );

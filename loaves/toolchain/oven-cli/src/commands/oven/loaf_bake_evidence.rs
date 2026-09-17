@@ -385,17 +385,32 @@ pub(crate) fn loaf_compiler_lock_path(compiler_root: &Path) -> CliResult<PathBuf
     .ok_or_else(|| CliError::failure("Loaf compiler root has no canonical Cargo.lock input".to_string()))
 }
 
+/// Inputs that bind exact committed-envelope reuse to its expected evidence and active store limits.
+pub(crate) struct CompleteLoafEnvelopeReuseInput<'a> {
+    pub(crate) output: &'a Path,
+    pub(crate) scratch: &'a Path,
+    pub(crate) envelope: OvenLoafEnvelope,
+    pub(crate) evidence: &'a OvenLoafEnvelopeEvidence,
+    pub(crate) release_store_member: Option<&'a OvenReleaseStoreMember>,
+    pub(crate) runtime_foundation: Option<&'a OvenReleaseRuntimeFoundationMember>,
+    pub(crate) limits: OvenStoreLimits,
+    pub(crate) started: Instant,
+}
+
 /// Validate and reuse one exact committed envelope without fixture probes or a Cargo process.
 pub(crate) fn reuse_complete_loaf_envelope(
-    output: &Path,
-    scratch: &Path,
-    envelope: OvenLoafEnvelope,
-    evidence: &OvenLoafEnvelopeEvidence,
-    release_store_member: Option<&OvenReleaseStoreMember>,
-    runtime_foundation: Option<&OvenReleaseRuntimeFoundationMember>,
-    limits: OvenStoreLimits,
-    started: Instant,
+    input: CompleteLoafEnvelopeReuseInput<'_>,
 ) -> CliResult<Option<OvenLoafBakeReport>> {
+    let CompleteLoafEnvelopeReuseInput {
+        output,
+        scratch,
+        envelope,
+        evidence,
+        release_store_member,
+        runtime_foundation,
+        limits,
+        started,
+    } = input;
     let manifest_path = output.join("envelope.json");
     if !manifest_path.is_file() {
         return Ok(None);
