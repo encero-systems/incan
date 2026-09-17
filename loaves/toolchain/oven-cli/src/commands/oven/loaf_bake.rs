@@ -15,8 +15,10 @@ use incan_driver::build::publication::stored_project_output_from_parts;
 use incan_driver::build::{OvenProjectOutputPayload, OvenStoredProjectOutput};
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::loaf::{
-    OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember,
+    OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION, OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenLoaf,
+    OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember,
 };
+use oven_rustc::rustc::{OvenRuntimeFoundationAsset, publish_runtime_foundation_asset};
 use oven_store::process::{BoundedProcessLimits, BoundedProcessTermination, run_bounded_process};
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, PublishedOvenStore,
@@ -45,8 +47,8 @@ use super::{
     loaf_generation_identity_with_release_member, loaf_raw_disk_bytes, open_store, oven_error, pin_loaf_fixture_rustc,
     prepare_compiler_test_suite, prepare_loaf_from_generated_project_with_selected_units, print_json, read_receipt,
     release_store_member_byte_counts, retire_unreferenced_loaf_generations, reuse_complete_loaf_envelope,
-    runtime_foundation_inventories_from_policy_response, stage_locked_loaf_fixture, write_receipt,
-    write_sealed_oven_inspection_source_authority,
+    runtime_foundation_from_compiled_loaf, runtime_foundation_inventories_from_policy_response,
+    stage_locked_loaf_fixture, write_receipt, write_sealed_oven_inspection_source_authority,
 };
 
 /// Bake or exactly reuse one complete compiler-owned Alpha Loaf envelope.
@@ -584,17 +586,113 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             "release envelope did not produce admitted Rust policy inventories".to_string(),
         ));
     }
+    let runtime_foundation = if let (Some(finalized), Some(inventories)) =
+        (finalized_release_graph.as_ref(), release_policy_inventories)
+    {
+        let final_entry = pending
+            .iter()
+            .find(|entry| entry.label == "stdlib" && entry.profile == "release")
+            .ok_or_else(|| CliError::failure("release stdlib result is absent"))?;
+        let loaf_name = final_entry
+            .result
+            .loaf_identity
+            .strip_prefix("sha256:")
+            .unwrap_or(&final_entry.result.loaf_identity);
+        let loaf_root = staged_root.join(format!("{loaf_name}.loaf"));
+        let loaf: OvenLoaf = serde_json::from_slice(
+            &fs::read(loaf_root.join("loaf.json"))
+                .map_err(|error| CliError::failure(format!("could not read final release Loaf: {error}")))?,
+        )
+        .map_err(|error| CliError::failure(format!("final release Loaf is invalid: {error}")))?;
+        let foundation = runtime_foundation_from_compiled_loaf(
+            finalized,
+            &loaf,
+            &final_entry.result.plan_identity,
+            &final_entry.result.loaf_identity,
+        )
+        .map_err(oven_error)?;
+        let asset = OvenRuntimeFoundationAsset::sealed(foundation, inventories).map_err(oven_error)?;
+        let toolchain_relative = PathBuf::from("runtime-foundations/rust-toolchain");
+        let toolchain_root = staged_root.join(&toolchain_relative);
+        fs::create_dir_all(&toolchain_root)
+            .map_err(|error| CliError::failure(format!("could not create retained Rust toolchain root: {error}")))?;
+        let foundation_relative = PathBuf::from("runtime-foundations/rust-policy-foundation");
+        let admitted = publish_runtime_foundation_asset(
+            asset,
+            &loaf_root,
+            &toolchain_root,
+            &staged_root.join(&foundation_relative),
+        )
+        .map_err(oven_error)?;
+        Some(OvenReleaseRuntimeFoundationMember {
+            schema_version: OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION,
+            label: "rust-policy-foundation".to_string(),
+            foundation_relative_path: foundation_relative,
+            foundation_identity: admitted.foundation_identity().to_string(),
+            compiled_loaf_identity: final_entry.result.loaf_identity.clone(),
+            compiled_plan_identity: final_entry.result.plan_identity.clone(),
+            toolchain_owner_identity: evidence.rustc_identity.clone(),
+            toolchain_root_relative_path: toolchain_relative,
+        })
+    } else {
+        None
+    };
+    if envelope == OvenLoafEnvelope::Release {
+        let publication_lock = acquire_exclusive_loaf_generation_lock(&options.output).map_err(oven_error)?;
+        import_loaf_envelope_from_configured_mirrors(
+            &options.output,
+            scratch.path(),
+            envelope,
+            &evidence,
+            release_store_member.as_ref(),
+            runtime_foundation.as_ref(),
+        )?;
+        if let Some(report) = reuse_complete_loaf_envelope(CompleteLoafEnvelopeReuseInput {
+            output: &options.output,
+            scratch: scratch.path(),
+            envelope,
+            evidence: &evidence,
+            release_store_member: release_store_member.as_ref(),
+            runtime_foundation: runtime_foundation.as_ref(),
+            limits,
+            started,
+        })? {
+            let report = finish_loaf_bake_after_publication(publication_lock, &options, envelope, report, started)?;
+            verify_committed_release_policy_output(
+                &options.output,
+                release_store_member.as_ref(),
+                options.policy_engine_target.as_deref(),
+            )?;
+            print_loaf_bake_report(&report, options.format)?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        drop(publication_lock);
+    }
 
+    let (foundation_logical_bytes, foundation_physical_bytes) = if let Some(member) = runtime_foundation.as_ref() {
+        let foundation =
+            loaf_directory_byte_counts(&staged_root.join(&member.foundation_relative_path)).map_err(oven_error)?;
+        let toolchain =
+            loaf_directory_byte_counts(&staged_root.join(&member.toolchain_root_relative_path)).map_err(oven_error)?;
+        (
+            foundation.0.saturating_add(toolchain.0),
+            foundation.1.saturating_add(toolchain.1),
+        )
+    } else {
+        (0, 0)
+    };
     let logical_bytes = pending
         .iter()
         .map(|entry| entry.result.logical_bytes)
         .sum::<u64>()
-        .saturating_add(release_member_logical_bytes);
+        .saturating_add(release_member_logical_bytes)
+        .saturating_add(foundation_logical_bytes);
     let physical_bytes = pending
         .iter()
         .map(|entry| entry.result.physical_bytes)
         .sum::<u64>()
-        .saturating_add(release_member_physical_bytes);
+        .saturating_add(release_member_physical_bytes)
+        .saturating_add(foundation_physical_bytes);
     if physical_bytes > max_physical_bytes {
         return Err(CliError::failure(format!(
             "Loaf envelope uses {physical_bytes} physical bytes, exceeding its {max_physical_bytes}-byte allowance"
@@ -604,7 +702,6 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     let prepared_count = pending.len();
     let envelope_publication_started = Instant::now();
     announce_oven_progress("PUBLISH", "Loaf envelope", Some(&format!("{prepared_count} Loaf(s)")));
-    let runtime_foundation: Option<OvenReleaseRuntimeFoundationMember> = None;
     let mut compatibility_evidence =
         loaf_envelope_compatibility_map_with_release_member(&evidence, release_store_member.as_ref())?;
     if let Some(member) = runtime_foundation.as_ref() {
