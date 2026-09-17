@@ -22064,6 +22064,158 @@ def run() -> int:
 }
 
 #[test]
+fn semantic_fact_store_owns_stable_nested_declaration_contexts_issue1629() -> Result<(), Box<dyn std::error::Error>> {
+    let module_path = vec!["stable_context".to_string()];
+    let info = typecheck_info_for_module(
+        r#"
+def left(value: int) -> int:
+  return value
+
+def right(value: int) -> int:
+  return value
+
+def sibling_blocks() -> int:
+  mut total = 0
+  for value in [1]:
+    total += value
+  for value in [2]:
+    total += value
+  return total
+"#,
+        module_path.clone(),
+        "stable nested declaration context export",
+    )?;
+
+    let facts = info.semantic_fact_store(&module_path);
+    let mut contexts = Vec::new();
+    for subject in facts.subjects() {
+        let Some(identity) = facts.symbol_identities_for(subject).next() else {
+            continue;
+        };
+        let Some(context) = facts.stable_declaration_contexts_for(subject).next() else {
+            continue;
+        };
+        if identity.declaration_name == "value" {
+            contexts.push((
+                identity.kind.clone(),
+                context.owner.declaration_name.clone(),
+                context.binding_ordinal,
+            ));
+        }
+    }
+    contexts.sort();
+    assert_eq!(
+        contexts,
+        vec![
+            (SemanticSourceTargetKind::Local, "sibling_blocks".to_string(), 0),
+            (SemanticSourceTargetKind::Local, "sibling_blocks".to_string(), 1),
+            (SemanticSourceTargetKind::Parameter, "left".to_string(), 0),
+            (SemanticSourceTargetKind::Parameter, "right".to_string(), 0),
+        ],
+        "the shared semantic projection must own stable owner and collision-local ordinal policy"
+    );
+    Ok(())
+}
+
+#[test]
+fn stable_nested_context_counts_unused_sibling_declarations_issue1629() -> Result<(), Box<dyn std::error::Error>> {
+    let module_path = vec!["stable_unused_context".to_string()];
+    let unused_info = typecheck_info_for_module(
+        r#"
+def sibling_blocks() -> int:
+  mut total = 0
+  for value in [1]:
+    total += 1
+  for value in [2]:
+    total += value
+  return total
+"#,
+        module_path.clone(),
+        "unused stable nested declaration context export",
+    )?;
+    let used_info = typecheck_info_for_module(
+        r#"
+def sibling_blocks() -> int:
+  mut total = 0
+  for value in [1]:
+    total += value
+  for value in [2]:
+    total += value
+  return total
+"#,
+        module_path.clone(),
+        "used stable nested declaration context export",
+    )?;
+
+    let unused_facts = unused_info.semantic_fact_store(&module_path);
+    let used_facts = used_info.semantic_fact_store(&module_path);
+    let value_ordinals = |facts: &incan_semantics_core::SemanticFactStore| {
+        facts
+            .subjects()
+            .filter_map(|subject| {
+                let identity = facts.symbol_identities_for(subject).next()?;
+                if identity.declaration_name != "value" {
+                    return None;
+                }
+                facts
+                    .stable_declaration_contexts_for(subject)
+                    .next()
+                    .map(|context| context.binding_ordinal)
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut unused_ordinals = value_ordinals(&unused_facts);
+    let mut used_ordinals = value_ordinals(&used_facts);
+    unused_ordinals.sort_unstable();
+    used_ordinals.sort_unstable();
+    assert_eq!(
+        unused_ordinals.len(),
+        1,
+        "only the used sibling should emit a reference fact"
+    );
+    assert_eq!(
+        unused_ordinals[0], 1,
+        "an unused earlier declaration must still reserve its collision-local ordinal"
+    );
+    assert_eq!(used_ordinals, vec![0, 1]);
+    assert_eq!(
+        unused_ordinals[0], used_ordinals[1],
+        "adding the first use must not rekey the later sibling"
+    );
+    Ok(())
+}
+
+#[test]
+fn captured_outer_binding_keeps_its_declaring_named_owner_issue1629() -> Result<(), Box<dyn std::error::Error>> {
+    let module_path = vec!["stable_capture_context".to_string()];
+    let info = typecheck_info_for_module(
+        r#"
+def build(value: int) -> int:
+  callback = () => value
+  return callback()
+"#,
+        module_path.clone(),
+        "captured outer stable declaration context export",
+    )?;
+    let facts = info.semantic_fact_store(&module_path);
+    let owners = facts
+        .subjects()
+        .filter_map(|subject| {
+            let identity = facts.symbol_identities_for(subject).next()?;
+            if identity.declaration_name != "value" {
+                return None;
+            }
+            facts
+                .stable_declaration_contexts_for(subject)
+                .next()
+                .map(|context| context.owner.declaration_name.clone())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(owners, vec!["build".to_string()]);
+    Ok(())
+}
+
+#[test]
 fn type_info_semantic_fact_store_preserves_imported_source_targets() -> Result<(), Box<dyn std::error::Error>> {
     let helper_source = r#"
 pub def helper() -> int:

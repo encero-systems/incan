@@ -221,25 +221,33 @@ pub(crate) fn compiler_suite_environment_with_vocab(
     Ok(environment)
 }
 
-/// Create short-lived scratch space for compiler-suite fixture tools.
+/// Create invocation-owned fixture scratch below an explicit caller root or the platform default.
 ///
-/// The v0.5 suite runs on Unix hosts. `/tmp` keeps rust-analyzer's nested Cargo lockfile paths below platform limits
-/// even when the caller's worktree or selected suite output has a long absolute path. The guard object remains live
-/// for the entire scheduler invocation, so children cannot observe a reclaimed directory.
-#[cfg(unix)]
+/// `INCAN_TEST_TMP_ROOT` lets storage-budgeted runs retain every fixture under their managed output domain. Unix
+/// defaults to `/tmp` because rust-analyzer's nested Cargo lockfile paths need a short prefix. The selected root must
+/// already exist and be absolute; a bad override refuses instead of silently writing outside the caller's boundary.
 pub(crate) fn compiler_suite_temporary_directory() -> CliResult<LoafTemporaryDirectory> {
-    LoafTemporaryDirectory::create(Path::new("/tmp"), ".incan-oven-suite-").map_err(|error| {
-        CliError::failure(format!(
-            "cannot create short compiler-suite temporary directory: {error}"
-        ))
-    })
+    compiler_suite_temporary_directory_with_root(env::var_os("INCAN_TEST_TMP_ROOT").as_deref())
 }
 
-/// Create invocation-owned scratch space on platforms outside the supported v0.5 compiler-suite hosts.
-#[cfg(not(unix))]
-pub(crate) fn compiler_suite_temporary_directory() -> CliResult<LoafTemporaryDirectory> {
-    LoafTemporaryDirectory::create(&env::temp_dir(), ".incan-oven-suite-")
-        .map_err(|error| CliError::failure(format!("cannot create compiler-suite temporary directory: {error}")))
+/// Allocate scratch from an explicit root without mutating process-wide environment during tests.
+fn compiler_suite_temporary_directory_with_root(root: Option<&std::ffi::OsStr>) -> CliResult<LoafTemporaryDirectory> {
+    let root = match root {
+        Some(root) => PathBuf::from(root),
+        #[cfg(unix)]
+        None => PathBuf::from("/tmp"),
+        #[cfg(not(unix))]
+        None => env::temp_dir(),
+    };
+    if !root.is_absolute() {
+        return Err(CliError::failure("INCAN_TEST_TMP_ROOT must be an absolute directory"));
+    }
+    LoafTemporaryDirectory::create(&root, ".incan-oven-suite-").map_err(|error| {
+        CliError::failure(format!(
+            "cannot create compiler-suite temporary directory below {}: {error}",
+            root.display()
+        ))
+    })
 }
 
 /// Execute prepared children and reclaim their scratch before returning either success or failure.
@@ -854,4 +862,37 @@ pub(crate) fn apply_compiler_suite_target_capabilities(
 /// Remove direct generated-Rust closure details while retaining the suite marker used by Cargo-free fixture paths.
 pub(crate) fn compiler_suite_remove_generated_rust_closure(environment: &mut BTreeMap<String, String>) {
     environment.retain(|key, _| !key.starts_with("INCAN_OVEN_COMPILER_SUITE_") || key == OVEN_COMPILER_SUITE_RUSTC_ENV);
+}
+
+#[cfg(test)]
+mod scratch_tests {
+    use super::compiler_suite_temporary_directory_with_root;
+
+    /// Explicit scratch stays below its owner and is reclaimed when the invocation finishes.
+    #[test]
+    fn compiler_suite_scratch_honors_explicit_root() -> Result<(), Box<dyn std::error::Error>> {
+        let owner = tempfile::tempdir()?;
+        let scratch = compiler_suite_temporary_directory_with_root(Some(owner.path().as_os_str()))?;
+        let path = scratch.path().to_path_buf();
+        assert_eq!(path.parent(), Some(owner.path()));
+        assert!(path.is_dir());
+        scratch.close()?;
+        assert!(!path.exists());
+        assert!(owner.path().is_dir());
+        Ok(())
+    }
+
+    /// Invalid explicit roots never fall back to a system temporary directory.
+    #[test]
+    fn compiler_suite_scratch_rejects_invalid_roots() -> Result<(), Box<dyn std::error::Error>> {
+        let owner = tempfile::tempdir()?;
+        for root in [
+            std::path::PathBuf::new(),
+            "relative".into(),
+            owner.path().join("absent"),
+        ] {
+            assert!(compiler_suite_temporary_directory_with_root(Some(root.as_os_str())).is_err());
+        }
+        Ok(())
+    }
 }
