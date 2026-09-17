@@ -15,6 +15,11 @@ def request(
     malformed_closure: bool = false,
     sensitive_environment: bool = false,
     unsupported_sysroot_extern: bool = false,
+    duplicate_sysroot_extern: bool = false,
+    unsorted_generated_members: bool = false,
+    inconsistent_generated_digest: bool = false,
+    invalid_provider_members: bool = false,
+    empty_generated_input: bool = false,
 ) -> str:
     """One exact selected leaf; the manifest digest is SHA-256 of empty bytes."""
     mut closure = JsonValue.object(
@@ -33,6 +38,42 @@ def request(
     elif unsupported_sysroot_extern:
         closure = JsonValue.object(
             {"environment": JsonValue.object({}), "generated_inputs": JsonValue.array([]), "linked_libraries": JsonValue.array([]), "sysroot_externs": JsonValue.array([JsonValue.string("std")])},
+        )
+    elif duplicate_sysroot_extern:
+        closure = JsonValue.object(
+            {"environment": JsonValue.object({}), "generated_inputs": JsonValue.array([]), "linked_libraries": JsonValue.array([]), "sysroot_externs": JsonValue.array([JsonValue.string("proc_macro"), JsonValue.string("proc_macro")])},
+        )
+    elif unsorted_generated_members:
+        closure = JsonValue.object(
+            {"environment": JsonValue.object({}), "generated_inputs": JsonValue.array([JsonValue.object(
+                {"name": JsonValue.string("generated"), "source": JsonValue.object({"owner": JsonValue.string("sha256:generated"), "path": JsonValue.string("out")}), "digest": JsonValue.string("sha256:declared"), "members": JsonValue.array([
+                    JsonValue.object({"path": JsonValue.string("z.rs"), "digest": JsonValue.string("sha256:z")}),
+                    JsonValue.object({"path": JsonValue.string("a.rs"), "digest": JsonValue.string("sha256:a")}),
+                ])},
+            )]), "linked_libraries": JsonValue.array([]), "sysroot_externs": JsonValue.array([])},
+        )
+    elif inconsistent_generated_digest:
+        closure = JsonValue.object(
+            {"environment": JsonValue.object({}), "generated_inputs": JsonValue.array([JsonValue.object(
+                {"name": JsonValue.string("generated"), "source": JsonValue.object({"owner": JsonValue.string("sha256:generated"), "path": JsonValue.string("out")}), "digest": JsonValue.string("sha256:not-the-member-catalog"), "members": JsonValue.array([
+                    JsonValue.object({"path": JsonValue.string("a.rs"), "digest": JsonValue.string("sha256:a")}),
+                ])},
+            )]), "linked_libraries": JsonValue.array([]), "sysroot_externs": JsonValue.array([])},
+        )
+    elif invalid_provider_members:
+        closure = JsonValue.object(
+            {"environment": JsonValue.object({}), "generated_inputs": JsonValue.array([]), "linked_libraries": JsonValue.array([JsonValue.object(
+                {"input": JsonValue.string("provider"), "name": JsonValue.string("Fixture"), "kind": JsonValue.string("system"), "provider": JsonValue.string("sha256:provider"), "target": JsonValue.string("x86_64-unknown-linux-gnu"), "capability": JsonValue.string("fixture.system"), "receipt_identity": JsonValue.string("sha256:receipt"), "provenance": JsonValue.object({"owner": JsonValue.string("sha256:provider"), "path": JsonValue.string("provenance.json")}), "provenance_digest": JsonValue.string("sha256:provenance"), "search_root": JsonValue.object({"owner": JsonValue.string("sha256:provider"), "path": JsonValue.string("providers")}), "artifact": JsonValue.object({"owner": JsonValue.string("sha256:provider"), "path": JsonValue.string("providers/libfixture.a")}), "digest": JsonValue.string("sha256:artifact"), "members": JsonValue.array([
+                    JsonValue.object({"path": JsonValue.string("z.a"), "digest": JsonValue.string("sha256:z")}),
+                    JsonValue.object({"path": JsonValue.string("libfixture.a"), "digest": JsonValue.string("sha256:artifact")}),
+                ])},
+            )]), "sysroot_externs": JsonValue.array([])},
+        )
+    elif empty_generated_input:
+        closure = JsonValue.object(
+            {"environment": JsonValue.object({}), "generated_inputs": JsonValue.array([JsonValue.object(
+                {"name": JsonValue.string("empty-generated"), "source": JsonValue.object({"owner": JsonValue.string("sha256:generated"), "path": JsonValue.string("out")}), "digest": JsonValue.string("sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"), "members": JsonValue.array([])},
+            )]), "linked_libraries": JsonValue.array([]), "sysroot_externs": JsonValue.array([])},
         )
     mut document: Dict[str, JsonValue] = {"schema": JsonValue.string(schema), "operation": JsonValue.string(operation), "graph_digest": JsonValue.string(
         "sha256:selected-graph",
@@ -146,6 +187,23 @@ pub def test_malformed_physical_closure_refuses() -> None:
 pub def test_unadmitted_bare_compiler_extern_refuses() -> None:
     """Protects the captured compiler-only boundary from accepting arbitrary sysroot names."""
     assert status(evaluate(request(unsupported_sysroot_extern=true))) == "refused"
+
+
+pub def test_noncanonical_sysroot_and_generated_closure_facts_refuse() -> None:
+    """Reject duplicate sysroot names, unsorted generated members and a generated digest detached from its members."""
+    assert status(evaluate(request(duplicate_sysroot_extern=true))) == "refused"
+    assert status(evaluate(request(unsorted_generated_members=true))) == "refused"
+    assert status(evaluate(request(inconsistent_generated_digest=true))) == "refused"
+
+
+pub def test_provider_member_catalog_must_be_canonical_and_bind_the_selected_artifact() -> None:
+    """Reject provider member catalogs that cannot prove the named selected artifact."""
+    assert status(evaluate(request(invalid_provider_members=true))) == "refused"
+
+
+pub def test_checked_empty_generated_tree_is_distinct_from_an_absent_generated_input() -> None:
+    """Accept the canonical explicit empty generated tree without inventing a placeholder source file."""
+    assert status(evaluate(request(empty_generated_input=true))) == "selected"
 
 
 pub def test_unknown_top_level_field_refuses() -> None:

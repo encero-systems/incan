@@ -166,7 +166,7 @@ pub enum OvenSelectedRustFacetLinkedLibrary {
         /// The boxed provider payload keeps the archive/provider enum compact without changing its flattened wire
         /// form.
         #[serde(flatten)]
-        details: Box<OvenSelectedRustFacetLinkedLibraryProvider>,
+        pub details: Box<OvenSelectedRustFacetLinkedLibraryProvider>,
     },
 }
 

@@ -2,6 +2,8 @@
 
 from rust::std::str import from_utf8
 from std.encoding.hex import hexlify, unhexlify
+from std.hash import sha256
+from std.collections import OrdinalKey
 from std.json import JsonValue, parse
 from intake import ManifestEvidence
 from manifest_errors import IntakeError
@@ -131,94 +133,106 @@ def decode_units(value: JsonValue) -> Result[list[AdmittedSelectedUnit], Selecti
     return Ok(units)
 
 
-def decode_closure(value: JsonValue, path: list[str]) -> Result[SelectedUnitClosure, SelectionError]:
-    """Decode exact physical closure facts without interpreting Cargo directives or feature demand."""
-    exact_object(value, ["environment", "generated_inputs", "linked_libraries", "sysroot_externs"], path)?
-    environment = field(value, "environment", path)?
-    generated = field(value, "generated_inputs", path)?
-    linked = field(value, "linked_libraries", path)?
-    sysroot_externs = strings(field(value, "sysroot_externs", path)?, path + ["sysroot_externs"])?
-    for sysroot_extern in sysroot_externs:
-        if sysroot_extern != "proc_macro":
-            return Err(invalid(path + ["sysroot_externs"]))
-    if not environment.is_object():
-        return Err(invalid(path + ["environment"]))
-    for name in environment.keys():
-        environment_value = field(environment, name, path + ["environment"])?
-        kind = text_field(environment_value, "kind", path + ["environment", name])?
+def decode_location(value: JsonValue, path: list[str]) -> Result[None, SelectionError]:
+    """Require one nonempty owner-relative location without resolving it or discovering a root."""
+    exact_object(value, ["owner", "path"], path)?
+    nonempty(text_field(value, "owner", path)?, path + ["owner"])?
+    nonempty(text_field(value, "path", path)?, path + ["path"])?
+    return Ok(None)
+
+
+def decode_members(
+    value: JsonValue,
+    path: list[str],
+    allow_empty: bool,
+) -> Result[Dict[str, str], SelectionError]:
+    """Decode one canonical member catalog, allowing an empty catalog only for an explicit generated output."""
+    values = array(value, path)?
+    if not allow_empty and len(values) == 0:
+        return Err(invalid(path))
+    mut members: Dict[str, str] = Dict()
+    mut previous: str = ""
+    for index in range(len(values)):
+        member_path = path + [str(index)]
+        item = values[index]
+        exact_object(item, ["path", "digest"], member_path)?
+        name = nonempty(text_field(item, "path", member_path)?, member_path + ["path"])?
+        digest = nonempty(text_field(item, "digest", member_path)?, member_path + ["digest"])?
+        if name <= previous:
+            return Err(invalid(member_path + ["path"]))
+        previous = name
+        members[name] = digest
+    return Ok(members)
+
+
+def generated_input_digest(members: Dict[str, str], path: list[str]) -> Result[str, SelectionError]:
+    """Hash an explicit generated tree, including the checked-empty tree, as the raw graph schema does."""
+    mut values: Dict[str, JsonValue] = Dict()
+    for name in members.keys():
+        values[name] = JsonValue.string(members[name])
+    match JsonValue.object(values).to_json():
+        Err(_) => return Err(invalid(path))
+        Ok(encoded) => return Ok("sha256:" + hexlify(sha256.digest(encoded.ordinal_bytes())))
+
+
+def decode_environment(value: JsonValue, path: list[str]) -> Result[JsonValue, SelectionError]:
+    """Validate typed environment facts while leaving their physical representation unchanged."""
+    if not value.is_object():
+        return Err(invalid(path))
+    for name in value.keys():
+        environment_value = field(value, name, path)?
+        kind = text_field(environment_value, "kind", path + [name])?
         if kind == "text":
-            exact_object(environment_value, ["kind", "value"], path + ["environment", name])?
-            text_field(environment_value, "value", path + ["environment", name])?
+            exact_object(environment_value, ["kind", "value"], path + [name])?
+            text_field(environment_value, "value", path + [name])?
         elif kind == "path":
-            exact_object(environment_value, ["kind", "value"], path + ["environment", name])?
-            location = field(environment_value, "value", path + ["environment", name])?
-            exact_object(location, ["owner", "path"], path + ["environment", name, "value"])?
-            nonempty(text_field(location, "owner", path + ["environment", name, "value"])?, path + ["environment", name, "value", "owner"])?
-            nonempty(text_field(location, "path", path + ["environment", name, "value"])?, path + ["environment", name, "value", "path"])?
+            exact_object(environment_value, ["kind", "value"], path + [name])?
+            decode_location(field(environment_value, "value", path + [name])?, path + [name, "value"])?
         elif kind == "sensitive_digest":
-            exact_object(environment_value, ["kind", "hmac_sha256"], path + ["environment", name])?
-            nonempty(text_field(environment_value, "hmac_sha256", path + ["environment", name])?, path + ["environment", name, "hmac_sha256"])?
+            exact_object(environment_value, ["kind", "hmac_sha256"], path + [name])?
+            nonempty(text_field(environment_value, "hmac_sha256", path + [name])?, path + [name, "hmac_sha256"])?
         else:
-            return Err(invalid(path + ["environment", name, "kind"]))
-    generated_values = array(generated, path + ["generated_inputs"])?
-    mut generated_names = Dict[str, bool]()
-    for index in range(len(generated_values)):
-        item = generated_values[index]
-        item_path = path + ["generated_inputs", str(index)]
+            return Err(invalid(path + [name, "kind"]))
+    return Ok(value)
+
+
+def decode_generated_inputs(value: JsonValue, path: list[str]) -> Result[JsonValue, SelectionError]:
+    """Validate sorted generated outputs and their complete, possibly empty, member-tree digests."""
+    values = array(value, path)?
+    mut previous: str = ""
+    for index in range(len(values)):
+        item_path = path + [str(index)]
+        item = values[index]
         exact_object(item, ["name", "source", "digest", "members"], item_path)?
         name = nonempty(text_field(item, "name", item_path)?, item_path + ["name"])?
-        if name in generated_names:
+        if name <= previous:
             return Err(invalid(item_path + ["name"]))
-        generated_names[name] = true
-        source = field(item, "source", item_path)?
-        exact_object(source, ["owner", "path"], item_path + ["source"])?
-        nonempty(text_field(source, "owner", item_path + ["source"])?, item_path + ["source", "owner"])?
-        nonempty(text_field(source, "path", item_path + ["source"])?, item_path + ["source", "path"])?
-        nonempty(text_field(item, "digest", item_path)?, item_path + ["digest"])?
-        members = array(field(item, "members", item_path)?, item_path + ["members"])?
-        if len(members) == 0:
-            return Err(invalid(item_path + ["members"]))
-        for member_index in range(len(members)):
-            member_path = item_path + ["members", str(member_index)]
-            exact_object(members[member_index], ["path", "digest"], member_path)?
-            nonempty(text_field(members[member_index], "path", member_path)?, member_path + ["path"])?
-            nonempty(text_field(members[member_index], "digest", member_path)?, member_path + ["digest"])?
-    linked_values = array(linked, path + ["linked_libraries"])?
-    for index in range(len(linked_values)):
-        item = linked_values[index]
-        item_path = path + ["linked_libraries", str(index)]
+        previous = name
+        decode_location(field(item, "source", item_path)?, item_path + ["source"])?
+        declared_digest = nonempty(text_field(item, "digest", item_path)?, item_path + ["digest"])?
+        members = decode_members(field(item, "members", item_path)?, item_path + ["members"], true)?
+        if generated_input_digest(members, item_path + ["members"])? != declared_digest:
+            return Err(invalid(item_path + ["digest"]))
+    return Ok(value)
+
+
+def decode_linked_libraries(value: JsonValue, path: list[str]) -> Result[JsonValue, SelectionError]:
+    """Validate linked inputs in declared order; duplicate link directives remain meaningful compiler facts."""
+    values = array(value, path)?
+    for index in range(len(values)):
+        item_path = path + [str(index)]
+        item = values[index]
         input = text_field(item, "input", item_path)?
         if input == "archive":
             exact_object(item, ["input", "name", "kind", "artifact", "digest"], item_path)?
             kind = text_field(item, "kind", item_path)?
             if kind != "static" and kind != "dynamic":
                 return Err(invalid(item_path + ["kind"]))
-            artifact = field(item, "artifact", item_path)?
-            exact_object(artifact, ["owner", "path"], item_path + ["artifact"])?
-            nonempty(text_field(artifact, "owner", item_path + ["artifact"])?, item_path + ["artifact", "owner"])?
-            nonempty(text_field(artifact, "path", item_path + ["artifact"])?, item_path + ["artifact", "path"])?
             nonempty(text_field(item, "name", item_path)?, item_path + ["name"])?
+            decode_location(field(item, "artifact", item_path)?, item_path + ["artifact"])?
             nonempty(text_field(item, "digest", item_path)?, item_path + ["digest"])?
         elif input == "provider":
-            exact_object(
-                item,
-                [
-                    "input",
-                    "name",
-                    "kind",
-                    "provider",
-                    "target",
-                    "capability",
-                    "receipt_identity",
-                    "provenance",
-                    "provenance_digest",
-                    "search_root",
-                    "artifact",
-                    "digest",
-                    "members",
-                ],
-                item_path,
-            )?
+            exact_object(item, ["input", "name", "kind", "provider", "target", "capability", "receipt_identity", "provenance", "provenance_digest", "search_root", "artifact", "digest", "members"], item_path)?
             kind = text_field(item, "kind", item_path)?
             if kind != "framework" and kind != "system":
                 return Err(invalid(item_path + ["kind"]))
@@ -227,27 +241,46 @@ def decode_closure(value: JsonValue, path: list[str]) -> Result[SelectedUnitClos
             nonempty(text_field(item, "target", item_path)?, item_path + ["target"])?
             nonempty(text_field(item, "capability", item_path)?, item_path + ["capability"])?
             nonempty(text_field(item, "receipt_identity", item_path)?, item_path + ["receipt_identity"])?
+            decode_location(field(item, "provenance", item_path)?, item_path + ["provenance"])?
             nonempty(text_field(item, "provenance_digest", item_path)?, item_path + ["provenance_digest"])?
-            nonempty(text_field(item, "digest", item_path)?, item_path + ["digest"])?
-            for location_name in ["provenance", "search_root", "artifact"]:
-                location = field(item, location_name, item_path)?
-                exact_object(location, ["owner", "path"], item_path + [location_name])?
-                nonempty(text_field(location, "owner", item_path + [location_name])?, item_path + [location_name, "owner"])?
-                nonempty(text_field(location, "path", item_path + [location_name])?, item_path + [location_name, "path"])?
-            members = array(field(item, "members", item_path)?, item_path + ["members"])?
-            if len(members) == 0:
-                return Err(invalid(item_path + ["members"]))
-            for member_index in range(len(members)):
-                member_path = item_path + ["members", str(member_index)]
-                exact_object(members[member_index], ["path", "digest"], member_path)?
-                nonempty(text_field(members[member_index], "path", member_path)?, member_path + ["path"])?
-                nonempty(text_field(members[member_index], "digest", member_path)?, member_path + ["digest"])?
+            search_root = field(item, "search_root", item_path)?
+            decode_location(search_root, item_path + ["search_root"])?
+            artifact = field(item, "artifact", item_path)?
+            decode_location(artifact, item_path + ["artifact"])?
+            declared_digest = nonempty(text_field(item, "digest", item_path)?, item_path + ["digest"])?
+            members = decode_members(field(item, "members", item_path)?, item_path + ["members"], false)?
+            artifact_path = text_field(artifact, "path", item_path + ["artifact"])?
+            search_root_path = text_field(search_root, "path", item_path + ["search_root"])?
+            prefix = "" if search_root_path == "." else search_root_path + "/"
+            if not artifact_path.startswith(prefix):
+                return Err(invalid(item_path + ["artifact"]))
+            member_path = artifact_path[len(prefix):len(artifact_path)]
+            match members.get(member_path):
+                Some(member_digest) =>
+                    if member_digest != declared_digest:
+                        return Err(invalid(item_path + ["members"]))
+                None => return Err(invalid(item_path + ["members"]))
         else:
             return Err(invalid(item_path + ["input"]))
+    return Ok(value)
+
+
+def decode_closure(value: JsonValue, path: list[str]) -> Result[SelectedUnitClosure, SelectionError]:
+    """Decode the exact physical closure without reordering links or interpreting Cargo activation demand."""
+    exact_object(value, ["environment", "generated_inputs", "linked_libraries", "sysroot_externs"], path)?
+    sysroot_externs = strings(field(value, "sysroot_externs", path)?, path + ["sysroot_externs"])?
+    mut previous: str = ""
+    for sysroot_extern in sysroot_externs:
+        if sysroot_extern != "proc_macro" or sysroot_extern <= previous:
+            return Err(invalid(path + ["sysroot_externs"]))
+        previous = sysroot_extern
+    environment = decode_environment(field(value, "environment", path)?, path + ["environment"])?
+    generated_inputs = decode_generated_inputs(field(value, "generated_inputs", path)?, path + ["generated_inputs"])?
+    linked_libraries = decode_linked_libraries(field(value, "linked_libraries", path)?, path + ["linked_libraries"])?
     return Ok(SelectedUnitClosure(
         environment=environment,
-        generated_inputs=generated,
-        linked_libraries=linked,
+        generated_inputs=generated_inputs,
+        linked_libraries=linked_libraries,
         sysroot_externs=sysroot_externs,
     ))
 
