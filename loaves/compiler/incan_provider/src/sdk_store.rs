@@ -68,16 +68,17 @@ pub fn sdk_provider_builder_executable(
     )))
 }
 
-/// Find the verified workspace Cargo.lock available to a development SDK provider build.
+/// Find the verified lock belonging to the SDK source layout.
 ///
-/// A standalone artifact crate otherwise resolves its own newest compatible versions, which can differ from the
-/// compiler workspace's verified offline cache. Installed SDK layouts need not contain a workspace lockfile, so they
-/// deliberately retain normal Cargo resolution.
+/// Installed SDK sources use their sibling support workspace's `crates/Cargo.lock`, ahead of any enclosing
+/// development checkout. Development sources use the nearest ancestor lock. The selected bytes participate in
+/// provider identity and are passed to every component build; a standalone layout without either lock retains
+/// ordinary Cargo resolution.
 pub fn sdk_provider_workspace_lock(stdlib_root: &Path) -> Option<PathBuf> {
-    stdlib_root
-        .ancestors()
-        .skip(1)
-        .map(|parent| parent.join("Cargo.lock"))
+    let installed_lock = stdlib_root.parent().map(|root| root.join("crates/Cargo.lock"));
+    installed_lock
+        .into_iter()
+        .chain(stdlib_root.ancestors().skip(1).map(|parent| parent.join("Cargo.lock")))
         .find(|path| path.is_file())
         .map(|path| fs::canonicalize(&path).unwrap_or(path))
 }
@@ -637,6 +638,24 @@ mod tests {
             Ok(path) => return Err(format!("missing sibling CLI unexpectedly resolved to {}", path.display()).into()),
         };
         assert!(error.message.contains("requires the incan CLI executable"));
+        Ok(())
+    }
+
+    #[test]
+    fn sdk_provider_build_prefers_packaged_support_lock_to_enclosing_checkout() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tmp = tempfile::tempdir()?;
+        let package = tmp.path().join("dist/toolchain");
+        let stdlib = package.join("stdlib");
+        fs::create_dir_all(&stdlib)?;
+        fs::create_dir_all(package.join("crates"))?;
+        fs::write(tmp.path().join("Cargo.lock"), "unrelated enclosing checkout")?;
+        let packaged_lock = package.join("crates/Cargo.lock");
+        fs::write(&packaged_lock, "verified packaged support lock")?;
+        assert_eq!(
+            sdk_provider_workspace_lock(&stdlib),
+            Some(fs::canonicalize(packaged_lock)?)
+        );
         Ok(())
     }
 
