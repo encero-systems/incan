@@ -511,7 +511,13 @@ fn validate_selected_graph_linked_library(
                 &format!("{field}.search_root"),
             )?;
             validate_selected_graph_provider_path(artifact, provider, owners, false, &format!("{field}.artifact"))?;
-            validate_selected_graph_provider_members(members, search_root, artifact, &format!("{field}.members"))?;
+            validate_selected_graph_provider_members(
+                members,
+                search_root,
+                artifact,
+                digest,
+                &format!("{field}.members"),
+            )?;
         }
     }
     Ok(())
@@ -540,6 +546,7 @@ fn validate_selected_graph_provider_members(
     members: &[OvenSelectedRustFacetSourceMember],
     search_root: &OvenSelectedRustFacetPath,
     artifact: &OvenSelectedRustFacetPath,
+    artifact_digest: &str,
     field: &str,
 ) -> Result<(), OvenSelectedRustFacetGraphError> {
     if members.is_empty() {
@@ -554,19 +561,22 @@ fn validate_selected_graph_provider_members(
         .path
         .strip_prefix(&prefix)
         .ok_or_else(|| selected_graph_invalid(field, "does not contain the declared artifact"))?;
-    let mut contains_artifact = false;
+    let mut artifact_digest_matches = false;
     for (index, member) in members.iter().enumerate() {
         validate_selected_graph_path(&member.path, &format!("{field}[{index}].path"), false)?;
         validate_selected_graph_digest(&member.digest, &format!("{field}[{index}].digest"))?;
-        if member.path == artifact_member {
-            contains_artifact = true;
+        if member.path == artifact_member && member.digest == artifact_digest {
+            artifact_digest_matches = true;
         }
     }
     if members.windows(2).any(|pair| pair[0].path >= pair[1].path) {
         return Err(selected_graph_invalid(field, "must be sorted and unique"));
     }
-    if !contains_artifact {
-        return Err(selected_graph_invalid(field, "does not include the declared artifact"));
+    if !artifact_digest_matches {
+        return Err(selected_graph_invalid(
+            field,
+            "does not include the declared artifact with its declared digest",
+        ));
     }
     Ok(())
 }
