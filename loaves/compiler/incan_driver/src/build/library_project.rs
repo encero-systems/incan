@@ -98,8 +98,8 @@ use incan_provider::vocab_extraction::{
     PendingDesugarerArtifact, collect_library_vocab_metadata, oven_vocab_direct_rustc_context_from_plan,
 };
 use incan_provider::{FeatureSelection, SDK_PROVIDER_BUILD_ENV};
+use oven_cargo_compat::provider_compilation_requirements_digest;
 use oven_model::lock::CargoFeatureSelection;
-use oven_rustc::legacy_cargo::provider_compilation_requirements_digest;
 use oven_rustc::loaf::{
     OVEN_DEPENDENCY_MISS_SUMMARY, OVEN_LOAF_MISS_GUIDANCE, OVEN_NO_IMPLICIT_DEPENDENCY_BUILD,
     OVEN_SOURCE_COMPILER_VOCAB_SUPPORT_BUILD_INPUT,
@@ -373,9 +373,8 @@ pub fn prepare_library_project(
     let mut oven_build_inputs = normal_oven
         .then(|| oven_build_unit_inputs(&provider_plan, &project_requirements, &resolved))
         .transpose()?;
-    let source_compiler_vocab_support = normal_oven
-        && manifest.vocab().is_some()
-        && oven_rustc::legacy_cargo::source_compiler_vocab_support_is_available();
+    let source_compiler_vocab_support =
+        normal_oven && manifest.vocab().is_some() && oven_cargo_compat::source_compiler_vocab_support_is_available();
     if source_compiler_vocab_support && let Some(build_inputs) = oven_build_inputs.as_mut() {
         // A source-built compiler seals this helper at the explicit publisher boundary. Keep that closure in a
         // distinct build unit so a v0.5.0 plan without it can neither shadow nor become ambiguous with the

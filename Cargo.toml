@@ -27,6 +27,7 @@ members = [
     "loaves/oven/oven_rustc",
     "loaves/oven/oven_interop",
     "loaves/oven/oven_registry",
+    "loaves/oven/oven_cargo_compat",
     "loaves/oven/oven_store",
     "loaves/stdlib/derive/incan_derive",
     "loaves/stdlib/derive/incan_web_macros",
@@ -98,6 +99,7 @@ oven_model = { path = "loaves/oven/oven_model", version = "0.6.0-dev.5" }
 oven_rustc = { path = "loaves/oven/oven_rustc", version = "0.6.0-dev.5" }
 oven_interop = { path = "loaves/oven/oven_interop", version = "0.6.0-dev.5" }
 oven_registry = { path = "loaves/oven/oven_registry", version = "0.6.0-dev.5" }
+oven_cargo_compat = { path = "loaves/oven/oven_cargo_compat", version = "0.6.0-dev.5" }
 oven_store = { path = "loaves/oven/oven_store", version = "0.6.0-dev.5" }
 
 # The named, receipt-bound compatibility profile used only by Oven's explicit compiler-suite publisher. Normal

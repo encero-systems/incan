@@ -21,8 +21,8 @@ use super::generator::ProjectGenerator;
 #[cfg(test)]
 use super::generator::{RunProfile, cargo_config_identity};
 #[cfg(test)]
-use oven_rustc::legacy_cargo::cargo_process::cargo_command;
-use oven_rustc::legacy_cargo::cargo_process::{configure_cargo_target, sanitize_cargo_environment};
+use oven_cargo_compat::cargo_process::cargo_command;
+use oven_cargo_compat::cargo_process::{configure_cargo_target, sanitize_cargo_environment};
 #[cfg(test)]
 use sha2::{Digest, Sha256};
 

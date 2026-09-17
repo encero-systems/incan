@@ -29,9 +29,9 @@ use incan_provider::FeatureSelection;
 use incan_provider::compiled_sdk::CompiledSdkModules;
 use incan_provider::dependency_resolver::ResolvedDependencies;
 use incan_provider::dependency_resolver::resolve_reachable_dependencies;
+use oven_cargo_compat::direct_rustc_compile_environment;
 use oven_model::lock::CargoFeatureSelection;
 use oven_model::manifest::DependencySpec;
-use oven_rustc::legacy_cargo::direct_rustc_compile_environment;
 use oven_rustc::loaf::{OVEN_LOAF_MISS_GUIDANCE, OVEN_NO_IMPLICIT_DEPENDENCY_BUILD};
 use oven_rustc::native_test::{OvenNativeTestRequest, run_native_test_batch};
 use oven_rustc::rustc::{

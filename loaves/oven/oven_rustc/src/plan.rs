@@ -12,8 +12,8 @@ pub mod selection;
 
 use std::path::{Path, PathBuf};
 
-use crate::legacy_cargo::OvenProjectExtensionPayload;
 use crate::loaf::OvenToolchainLoaf;
+use crate::native_contract::OvenProjectExtensionPayload;
 use crate::rustc::{
     OvenRegistryLeafAuthority, OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcError,
     OvenRustcSupportingArtifact, trusted_artifact_plan_for_source_evidence,

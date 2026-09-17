@@ -27,7 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # it; until then its crates inherit the workspace version. `incan_vocab` is the vocabulary registration contract that
 # companion crates compile against, versioned on its own since before the rings existed.
 RING_LINES: dict[str, tuple[str, ...]] = {
-    "oven": ("oven_model", "oven_store", "oven_rustc", "oven_interop", "oven_registry"),
+    "oven": ("oven_model", "oven_store", "oven_rustc", "oven_interop", "oven_registry", "oven_cargo_compat"),
     "stdlib": ("incan_std_core", "incan_std_data", "incan_std_async", "incan_std_web", "incan_std_testing", "incan_derive", "incan_web_macros"),
     "vocab contract": ("incan_vocab",),
 }

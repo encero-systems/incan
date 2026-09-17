@@ -25,8 +25,8 @@ use incan_provider::ProviderPlan;
 #[cfg(test)]
 #[cfg(test)]
 use incan_provider::requirements::dependency_specs_match;
+use oven_cargo_compat::{OVEN_PROVIDER_COMPILATION_KEY, OvenCompilerMacroDependency};
 use oven_model::manifest::{DependencySource, DependencySpec};
-use oven_rustc::legacy_cargo::{OVEN_PROVIDER_COMPILATION_KEY, OvenCompilerMacroDependency};
 use oven_rustc::plan::selection::SelectedPackagedProviderPlans;
 use oven_rustc::rustc::{OvenRustcArtifactManifest, OvenRustcArtifactPlan, trusted_artifact_plan_for_source_evidence};
 use oven_store::store::OvenStore;
@@ -496,8 +496,8 @@ mod tests {
     };
     use incan_frontend::library_manifest_index::{LibraryArtifactKind, LibraryArtifactMetadata, LibraryManifestIndex};
     use incan_provider::ProviderPlan;
+    use oven_cargo_compat::OVEN_PROVIDER_COMPILATION_KEY;
     use oven_model::manifest::{DependencySource, DependencySpec};
-    use oven_rustc::legacy_cargo::OVEN_PROVIDER_COMPILATION_KEY;
     use oven_rustc::plan::composition::provider_compilation_artifacts;
     use oven_rustc::rustc::{
         OvenRustcArtifactManifest, OvenRustcArtifactPlan, trusted_artifact_plan_for_source_evidence,
