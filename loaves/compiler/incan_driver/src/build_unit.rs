@@ -190,12 +190,8 @@ mod tests {
         let checked = session.identities(&first_plan, &[])?;
 
         let mut changed_manifest = LibraryManifest::new("checked_provider", "1.0.0");
-        changed_manifest.contract_metadata.provider.semantic_source_digest =
-            Some(format!("sha256:{}", "b".repeat(64)));
-        let changed_plan = ProviderPlan::for_in_memory_sdk_manifest(
-            LibraryManifestIndex::default(),
-            changed_manifest,
-        );
+        changed_manifest.contract_metadata.provider.semantic_source_digest = Some(format!("sha256:{}", "b".repeat(64)));
+        let changed_plan = ProviderPlan::for_in_memory_sdk_manifest(LibraryManifestIndex::default(), changed_manifest);
         assert!(
             oven_native_provider_records_with_checked_identities(&changed_plan, &[], &checked).is_err(),
             "native provider records must reject identities retained from a changed checked manifest"

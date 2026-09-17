@@ -243,6 +243,7 @@ impl CheckedProviderSemanticIdentities {
     }
 }
 
+/// Revalidate provider bytes and recursive support content before deriving a reusable context identity.
 fn checked_provider_semantic_context(
     provider_plan: &ProviderPlan,
     sdk_path_dependencies: &[DependencySpec],
@@ -1390,7 +1391,10 @@ mod tests {
 
         let first = session.identities(&fixture.provider_plan, &fixture.specs)?;
         let repeated = session.identities(&fixture.provider_plan, &fixture.specs)?;
-        assert!(Arc::ptr_eq(&first, &repeated), "an unchanged checked context must reuse one result");
+        assert!(
+            Arc::ptr_eq(&first, &repeated),
+            "an unchanged checked context must reuse one result"
+        );
         assert_eq!(session.entry_count()?, 1);
         assert_eq!(
             first.for_context(&fixture.provider_plan, &fixture.specs)?,
@@ -1416,7 +1420,10 @@ mod tests {
             &fixture.specs,
             &first,
         )?;
-        assert_eq!(cached_lock, uncached_lock, "the session-aware lock seam must preserve exact lock state");
+        assert_eq!(
+            cached_lock, uncached_lock,
+            "the session-aware lock seam must preserve exact lock state"
+        );
         Ok(())
     }
 
@@ -1438,7 +1445,11 @@ mod tests {
             changed.for_context(&fixture.provider_plan, &fixture.specs)?,
             "changed support content must produce a distinct semantic result"
         );
-        assert_eq!(session.entry_count()?, 2, "the changed checked context must not reuse the earlier entry");
+        assert_eq!(
+            session.entry_count()?,
+            2,
+            "the changed checked context must not reuse the earlier entry"
+        );
         Ok(())
     }
 
@@ -1470,7 +1481,10 @@ mod tests {
             .features
             .insert("changed-dependency-feature".to_string());
         changed_record.manifest = Some(Arc::new(changed_manifest));
-        changed_record.identity.feature_projection.insert("checked-feature".to_string());
+        changed_record
+            .identity
+            .feature_projection
+            .insert("checked-feature".to_string());
         let changed_plan = ProviderPlan::new(
             incan_frontend::library_manifest_index::LibraryManifestIndex::default(),
             vec![changed_record],
@@ -1513,7 +1527,10 @@ mod tests {
             let session = ProviderSemanticIdentitySession::default();
             let checked = session.identities(&fixture.provider_plan, &fixture.specs)?;
             fs::write(
-                temp.path().join(name).join("sdk/components/support-provider").join(relative),
+                temp.path()
+                    .join(name)
+                    .join("sdk/components/support-provider")
+                    .join(relative),
                 content,
             )?;
             assert!(
@@ -1531,7 +1548,10 @@ mod tests {
                 "{name} tampering must invalidate a retained checked bundle"
             );
             let error = session.identities(&fixture.provider_plan, &fixture.specs);
-            assert!(error.is_err(), "{name} tampering must be refused by the existing session");
+            assert!(
+                error.is_err(),
+                "{name} tampering must be refused by the existing session"
+            );
 
             let fresh = ProviderSemanticIdentitySession::default();
             assert!(
