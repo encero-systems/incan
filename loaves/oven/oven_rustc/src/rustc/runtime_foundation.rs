@@ -1671,6 +1671,7 @@ mod tests {
             compiled_loaf_identity: loaf_identity,
             compiled_plan_identity: plan_identity,
             toolchain_owner_identity: toolchain_owner(),
+            compiler_closure_identity: asset.foundation.compiler_closure_digest().to_string(),
             toolchain_root_relative_path: "toolchain".into(),
             toolchain_members,
         };
@@ -1717,7 +1718,16 @@ mod tests {
             acquire_committed_release_runtime_foundation(output.path(), OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL)?
                 .ok_or("runtime foundation was not acquired")?;
         assert_eq!(held.asset.foundation_identity(), asset.foundation_identity);
+        assert_eq!(
+            held.compiler.identity(),
+            held.asset.foundation().compiler_closure_digest()
+        );
+        let exclusive = fs::File::open(output.path().join(OVEN_LOAF_ENVELOPE_LOCK_FILE))?;
+        assert!(matches!(exclusive.try_lock(), Err(fs::TryLockError::WouldBlock)));
         drop(held);
+        exclusive.try_lock()?;
+        drop(exclusive);
+
         fs::write(
             output.path().join(&generation_relative).join("toolchain/bin/rustc"),
             b"tampered",
@@ -1726,11 +1736,6 @@ mod tests {
             acquire_committed_release_runtime_foundation(output.path(), OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL)
                 .is_err()
         );
-        let exclusive = fs::File::open(output.path().join(OVEN_LOAF_ENVELOPE_LOCK_FILE))?;
-        assert!(matches!(exclusive.try_lock(), Err(fs::TryLockError::WouldBlock)));
-        drop(held);
-        exclusive.try_lock()?;
-        drop(exclusive);
 
         let descriptor_path = output
             .path()

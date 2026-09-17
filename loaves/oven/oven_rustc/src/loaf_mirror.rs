@@ -676,6 +676,7 @@ mod tests {
             compiled_loaf_identity: compiled.loaf_identity.clone(),
             compiled_plan_identity: compiled.plan_identity.clone(),
             toolchain_owner_identity: digest_bytes(b"toolchain owner"),
+            compiler_closure_identity: digest_bytes(b"compiler-closure"),
             toolchain_root_relative_path: PathBuf::from("runtime-foundation/toolchain"),
             toolchain_members: vec![OvenReleaseToolchainMember {
                 relative_path: PathBuf::from("bin/rustc"),

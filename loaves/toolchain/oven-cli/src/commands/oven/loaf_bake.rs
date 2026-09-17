@@ -646,17 +646,9 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                     .map_err(|error| CliError::failure(format!("could not read final release Loaf: {error}")))?,
             )
             .map_err(|error| CliError::failure(format!("final release Loaf is invalid: {error}")))?;
-            let foundation = runtime_foundation_from_compiled_loaf(
-                finalized,
-                &loaf,
-                &final_entry.result.plan_identity,
-                &finalized.capture_receipt.identity,
-            )
-            .map_err(oven_error)?;
-            let asset = OvenRuntimeFoundationAsset::sealed(foundation, inventories).map_err(oven_error)?;
             let toolchain_relative = PathBuf::from("runtime-foundations/rust-toolchain");
             let toolchain_root = staged_root.join(&toolchain_relative);
-            let mut toolchain_members = stage_release_runtime_foundation_toolchain(
+            let (compiler_closure_identity, mut toolchain_members) = stage_release_runtime_foundation_toolchain(
                 &options.rustc,
                 &finalized.graph.graph().selection.intent.target,
                 &toolchain_root,
@@ -673,6 +665,14 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 digest: oven_store::digest_bytes(&selection_bytes),
             });
             toolchain_members.sort();
+            let foundation = runtime_foundation_from_compiled_loaf(
+                finalized,
+                &loaf,
+                &compiler_closure_identity,
+                &finalized.capture_receipt.identity,
+            )
+            .map_err(oven_error)?;
+            let asset = OvenRuntimeFoundationAsset::sealed(foundation, inventories).map_err(oven_error)?;
             let foundation_relative = PathBuf::from("runtime-foundations/rust-policy-foundation");
             let admitted = publish_runtime_foundation_asset(
                 asset,
@@ -689,6 +689,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 compiled_loaf_identity: final_entry.result.loaf_identity.clone(),
                 compiled_plan_identity: final_entry.result.plan_identity.clone(),
                 toolchain_owner_identity: evidence.rustc_identity.clone(),
+                compiler_closure_identity,
                 toolchain_root_relative_path: toolchain_relative,
                 toolchain_members,
             })

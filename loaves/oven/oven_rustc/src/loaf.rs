@@ -225,6 +225,8 @@ pub struct OvenReleaseRuntimeFoundationMember {
     pub compiled_plan_identity: String,
     /// Exact Toolchain owner identity declared by the selected physical graph.
     pub toolchain_owner_identity: String,
+    /// Exact bounded rustc/sysroot closure digest used by runtime rebuild execution.
+    pub compiler_closure_identity: String,
     /// Safe generation-relative directory holding that Toolchain owner's physical members.
     pub toolchain_root_relative_path: PathBuf,
     /// Exact compiler-owned regular files retained below `toolchain_root_relative_path`.
@@ -246,7 +248,7 @@ pub fn stage_release_runtime_foundation_toolchain(
     rustc: &Path,
     target: &str,
     destination: &Path,
-) -> Result<Vec<OvenReleaseToolchainMember>, OvenLoafError> {
+) -> Result<(String, Vec<OvenReleaseToolchainMember>), OvenLoafError> {
     if destination.exists() {
         return Err(OvenLoafError::Preparation {
             message: format!(
@@ -265,6 +267,7 @@ pub fn stage_release_runtime_foundation_toolchain(
                 message: error.to_string(),
             }
         })?;
+    let closure_digest = evidence.closure_digest.clone();
     let mut retained = Vec::with_capacity(evidence.members.len());
     for member in evidence.members {
         let relative_path = PathBuf::from(member.relative_path);
@@ -291,7 +294,7 @@ pub fn stage_release_runtime_foundation_toolchain(
         });
     }
     retained.sort();
-    Ok(retained)
+    Ok((closure_digest, retained))
 }
 
 /// Return the canonical descriptor digest publishers include in release compatibility evidence.
@@ -342,6 +345,7 @@ pub fn validate_release_runtime_foundation_member(
         || !canonical_sha256_identity(&member.compiled_loaf_identity)
         || !canonical_sha256_identity(&member.compiled_plan_identity)
         || !canonical_sha256_identity(&member.toolchain_owner_identity)
+        || !canonical_sha256_identity(&member.compiler_closure_identity)
         || !safe_generation_relative_path(&member.foundation_relative_path)
         || !safe_generation_relative_path(&member.toolchain_root_relative_path)
         || member.toolchain_members.is_empty()
@@ -477,6 +481,7 @@ pub fn prove_release_runtime_foundation_member(
             message: error.to_string(),
         })?;
     if materialized.foundation_identity() != member.foundation_identity
+        || materialized.foundation().compiler_closure_digest() != member.compiler_closure_identity
         || materialized.foundation().artifact_owner() == member.toolchain_owner_identity
         || !materialized
             .foundation()
@@ -2052,7 +2057,7 @@ pub fn acquire_committed_release_runtime_foundation(
                 .join(generation_directory_path(&manifest.generation_identity))
                 .join(&member.toolchain_root_relative_path)
                 .join("bin/rustc"),
-            member.toolchain_owner_identity.clone(),
+            member.compiler_closure_identity.clone(),
         ),
         _generation_lock: generation_lock,
     }))
@@ -3170,6 +3175,7 @@ mod tests {
             compiled_loaf_identity: compiled.loaf_identity.clone(),
             compiled_plan_identity: compiled.plan_identity.clone(),
             toolchain_owner_identity: digest_bytes(b"toolchain-owner"),
+            compiler_closure_identity: digest_bytes(b"compiler-closure"),
             toolchain_root_relative_path: PathBuf::from("runtime-foundation/toolchain"),
             toolchain_members: vec![OvenReleaseToolchainMember {
                 relative_path: PathBuf::from("bin/rustc"),
