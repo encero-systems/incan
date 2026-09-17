@@ -112,10 +112,10 @@ _incan_link_debug_to_cargo_bin:
 		echo "\033[32m✓ Linked ~/.cargo/bin/incan-lsp -> $(TARGET_DIR)/debug/incan-lsp\033[0m"; \
 	fi
 
-.PHONY: build  ## build - Debug build (compiler + LSP); links ~/.cargo/bin/incan + incan-lsp locally
+.PHONY: build  ## build - Debug build (compiler, LSP, oven); links ~/.cargo/bin/incan + incan-lsp locally
 build:
 	@echo "\033[1mBuilding (debug)...\033[0m"
-	@cargo build -p incan-cli -p incan-lsp
+	@cargo build -p incan-cli -p incan-lsp -p oven-cli
 	@$(MAKE) _incan_link_debug_to_cargo_bin
 
 .PHONY: build-fast  ## build - Debug build (compiler only); links ~/.cargo/bin/incan locally

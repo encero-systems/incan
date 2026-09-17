@@ -55,7 +55,7 @@ jobs:
           make fetch-locked-cargo-sources
           make fetch-oven-loaf-sources
       - name: Build the compiler used by the baker and suite
-        run: CARGO_BUILD_JOBS=2 cargo build --locked -p incan-cli -p incan-lsp --bins
+        run: CARGO_BUILD_JOBS=2 cargo build --locked -p incan-cli -p incan-lsp -p oven-cli --bins
       - name: Build the release compiler used by normal-command benchmarks
         if: ${{ matrix.benchmark }}
         run: CARGO_BUILD_JOBS=2 cargo build --locked --release -p incan-cli --bin incan

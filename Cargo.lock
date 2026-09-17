@@ -1445,6 +1445,7 @@ dependencies = [
  "incan_vocab",
  "libc",
  "md-5",
+ "oven-cli",
  "oven_model",
  "oven_rustc",
  "oven_store",
@@ -2276,6 +2277,27 @@ name = "oorandom"
 version = "11.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
+
+[[package]]
+name = "oven-cli"
+version = "0.6.0-dev.5"
+dependencies = [
+ "clap",
+ "incan_driver",
+ "incan_frontend",
+ "incan_lang",
+ "incan_oven_facet",
+ "incan_provider",
+ "oven_model",
+ "oven_rustc",
+ "oven_store",
+ "rust_inspect",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "oven_model"

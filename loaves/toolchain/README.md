@@ -8,6 +8,6 @@ Thin binaries only. May depend on every ring. Nothing depends on it. This is the
 | --- | --- |
 | `incan-cli/` | The `incan` command: clap surface, terminal rendering, exit codes. |
 | `incan-lsp/` | Language server over the driver. |
-| `oven-cli/` | The `oven` command surface from RFC 118. Layout skeleton until RFC 118 lands; `incan oven …` stays in `incan-cli` (#1481, cut 3). |
+| `oven-cli/` | The `oven` binary and the `oven`, `lock` and `tools` handlers as a library `incan` mounts under its own spellings; depends on the driver and the frontend until RFC 118 authors `oven` against the Oven API. |
 
 The ring rules live in *Repository layout* in `workspaces/docs-site/docs/contributing/explanation/architecture.md`; the migration is #1478's history.
