@@ -1154,7 +1154,6 @@ mod tests {
     /// Re-root the compiler-visible fixture below an ordinary package root without changing its source bytes.
     fn selected_graph_with_compiler_root() -> Result<ValidatedOvenSelectedRustFacetGraph, Box<dyn std::error::Error>> {
         let mut graph = selected_graph()?.graph().clone();
-        graph.selection.intent.target = "aarch64-apple-darwin".to_string();
         let selection = graph.selection.clone();
         let unit = graph.units.first_mut().ok_or("fixture has no selected unit")?;
         let members = vec![OvenSelectedRustFacetSourceMember {
@@ -1330,7 +1329,9 @@ mod tests {
 
     #[test]
     fn materializes_provider_only_from_declared_provider_owner() -> Result<(), Box<dyn std::error::Error>> {
-        use oven_model::oven_interop::{OvenInteropExecutionProvenance, OvenInteropExecutionReceipt};
+        use oven_model::oven_interop::{
+            OvenInteropExecutionProvenance, OvenInteropExecutionReceipt, interop_execution_receipt_identity,
+        };
 
         let root = tempfile::tempdir()?;
         let provider = selected_graph_sha256(b"linked provider");
@@ -1340,17 +1341,19 @@ mod tests {
         fs::create_dir_all(framework.parent().ok_or("framework has no parent")?)?;
         fs::create_dir_all(provenance.parent().ok_or("provenance has no parent")?)?;
         fs::write(&framework, b"framework")?;
-        let receipt_identity = selected_graph_sha256(b"provider receipt");
+        let mut receipt = OvenInteropExecutionReceipt {
+            schema_version: OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION,
+            locked_target_identity: selected_graph_sha256(b"locked target"),
+            target: "aarch64-apple-darwin".to_string(),
+            toolchain: None,
+            sdk: None,
+            identity: String::new(),
+        };
+        receipt.identity = interop_execution_receipt_identity(&receipt)?;
+        let receipt_identity = receipt.identity.clone();
         let held = OvenInteropExecutionProvenance {
             schema_version: OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION,
-            receipt: OvenInteropExecutionReceipt {
-                schema_version: OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION,
-                locked_target_identity: selected_graph_sha256(b"locked target"),
-                target: "x86_64-unknown-linux-gnu".to_string(),
-                toolchain: None,
-                sdk: None,
-                identity: receipt_identity.clone(),
-            },
+            receipt,
             archives: Vec::new(),
             bundles: Vec::new(),
             system_capabilities: vec!["apple.framework.Security".to_string()],
@@ -1368,6 +1371,7 @@ mod tests {
             },
         ];
         let mut graph = selected_graph()?.graph().clone();
+        graph.selection.intent.target = "aarch64-apple-darwin".to_string();
         graph.owners.push(OvenSelectedRustFacetOwner {
             identity: provider.clone(),
             kind: OvenSelectedRustFacetOwnerKind::LinkedLibraryProvider,
@@ -1415,13 +1419,36 @@ mod tests {
                 && actual_root == &fs::canonicalize(&provider_root)?
                 && actual_artifact == &fs::canonicalize(&framework)?
         ));
-        let mut unheld = unit;
+        let mut unheld = unit.clone();
         if let crate::rustc::OvenSelectedRustFacetLinkedLibrary::Provider { capability, .. } =
             &mut unheld.linked_libraries[0]
         {
             *capability = "apple.framework.Unheld".to_string();
         }
         assert!(materialize_linked_libraries(&graph, &owner_roots, &unheld).is_err());
+
+        let mut tampered = held;
+        tampered.receipt.locked_target_identity = selected_graph_sha256(b"substituted locked target");
+        let tampered_bytes = serde_json::to_vec_pretty(&tampered)?;
+        fs::write(&provenance, &tampered_bytes)?;
+        let mut tampered_unit = unit;
+        if let crate::rustc::OvenSelectedRustFacetLinkedLibrary::Provider {
+            provenance_digest,
+            members,
+            ..
+        } = &mut tampered_unit.linked_libraries[0]
+        {
+            *provenance_digest = selected_graph_sha256(&tampered_bytes);
+            let provenance_member = members
+                .iter_mut()
+                .find(|member| member.path == "provenance/interop-execution.json")
+                .ok_or("provider fixture has no provenance member")?;
+            provenance_member.digest = selected_graph_sha256(&tampered_bytes);
+        }
+        let Err(error) = materialize_linked_libraries(&graph, &owner_roots, &tampered_unit) else {
+            return Err("provider with a self-asserted receipt identity materialized".into());
+        };
+        assert!(error.to_string().contains("does not match canonical identity"));
         assert!(
             validate_provider_target(
                 crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Framework,
