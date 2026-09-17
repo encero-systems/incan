@@ -13,7 +13,7 @@ mod validation;
 pub use validation::*;
 
 /// Wire schema for the portable Rust facet graph selected before physical rust-analyzer projection.
-pub const OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION: u32 = 1;
+pub const OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION: u32 = 2;
 const OVEN_SELECTED_RUST_FACET_GRAPH_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-graph/1";
 pub(crate) const OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-unit/1";
 
@@ -275,6 +275,21 @@ pub struct OvenSelectedRustFacetTargetSpec {
     pub digest: String,
 }
 
+/// Complete canonical cfg facts reported by the sealed Rust compiler for one compilation target.
+///
+/// The snapshot is evidence from `rustc --print cfg`, not a target database projection. It deliberately keeps
+/// bare cfg flags and quoted key/value facts separate, matching Rust's own output and the Incan policy exchange.
+/// Both collections must already be canonical when a graph is admitted so a producer cannot make equivalent cfg
+/// evidence hash differently by changing iteration order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenSelectedRustFacetCfgSnapshot {
+    /// Sorted, duplicate-free bare cfg flags reported by Rustc.
+    pub flags: Vec<String>,
+    /// Sorted cfg values grouped under their sorted keys.
+    pub values: BTreeMap<String, Vec<String>>,
+}
+
 /// Complete selection context shared by every unit in one graph.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -283,6 +298,10 @@ pub struct OvenSelectedRustFacetSelection {
     pub intent: OvenSelectedRustFacetIntent,
     /// Exact build host triple; host and target remain distinct.
     pub host: String,
+    /// Complete cfg facts reported by the retained compiler for the build host.
+    pub host_cfg: OvenSelectedRustFacetCfgSnapshot,
+    /// Complete cfg facts reported by the retained compiler for the selected target.
+    pub target_cfg: OvenSelectedRustFacetCfgSnapshot,
     /// Dependency-role activation purpose.
     pub purpose: OvenSelectedRustFacetPurpose,
     /// Whether the selected root activation includes default features.
@@ -363,7 +382,7 @@ impl OvenSelectedRustFacetGraph {
             });
         }
         let graph = serde_json::from_slice::<Self>(bytes)
-            .map_err(|error| selected_graph_invalid("graph", format!("cannot decode v1 payload: {error}")))?;
+            .map_err(|error| selected_graph_invalid("graph", format!("cannot decode payload: {error}")))?;
         graph.validated()
     }
 
@@ -392,6 +411,8 @@ impl OvenSelectedRustFacetGraph {
         })?;
         validate_selected_graph_digest(&self.selection.target_spec.digest, "selection.target_spec.digest")?;
         validate_selected_graph_sorted_strings(&self.selection.intent.features, "selection.intent.features")?;
+        validate_selected_graph_cfg_snapshot(&self.selection.host_cfg, "selection.host_cfg")?;
+        validate_selected_graph_cfg_snapshot(&self.selection.target_cfg, "selection.target_cfg")?;
 
         if self.owners.is_empty() {
             return Err(selected_graph_missing("owners"));

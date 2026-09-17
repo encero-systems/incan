@@ -7,12 +7,12 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::{
-    OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN, OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDependency,
-    OvenSelectedRustFacetDomain, OvenSelectedRustFacetEnvironmentValue, OvenSelectedRustFacetGeneratedInput,
-    OvenSelectedRustFacetGraph, OvenSelectedRustFacetGraphError, OvenSelectedRustFacetOwnerKind,
-    OvenSelectedRustFacetPath, OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource,
-    OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec,
-    OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole,
+    OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN, OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetCrateKind,
+    OvenSelectedRustFacetDependency, OvenSelectedRustFacetDomain, OvenSelectedRustFacetEnvironmentValue,
+    OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph, OvenSelectedRustFacetGraphError,
+    OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath, OvenSelectedRustFacetSelection,
+    OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember,
+    OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole,
 };
 
 /// Build the refusal for a required selected-graph field that was absent or empty.
@@ -225,6 +225,70 @@ pub(crate) fn validate_selected_graph_sorted_strings(
 ) -> Result<(), OvenSelectedRustFacetGraphError> {
     for value in values {
         validate_selected_graph_text(value, field)?;
+    }
+    if values.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(selected_graph_invalid(field, "must be sorted and unique"));
+    }
+    Ok(())
+}
+
+/// Require one complete compiler cfg snapshot to use the sole graph wire spelling.
+///
+/// A snapshot comes from the explicit publisher-side compiler probe. Sorting it here would conceal a producer that
+/// failed to preserve canonical evidence, so graph admission refuses noncanonical flags and values instead.
+pub fn validate_selected_graph_cfg_snapshot(
+    snapshot: &OvenSelectedRustFacetCfgSnapshot,
+    field: &str,
+) -> Result<(), OvenSelectedRustFacetGraphError> {
+    if snapshot.flags.is_empty() && snapshot.values.is_empty() {
+        return Err(selected_graph_missing(field));
+    }
+    validate_selected_graph_cfg_atoms(&snapshot.flags, &format!("{field}.flags"))?;
+    for (key, values) in &snapshot.values {
+        validate_selected_graph_cfg_atom(key, &format!("{field}.values key"))?;
+        if snapshot.flags.binary_search(key).is_ok() {
+            return Err(selected_graph_invalid(
+                format!("{field}.values"),
+                format!("key `{key}` is also recorded as a bare flag"),
+            ));
+        }
+        validate_selected_graph_cfg_values(values, &format!("{field}.values.{key}"))?;
+    }
+    Ok(())
+}
+
+/// Require a cfg flag or key to use Rustc's portable identifier vocabulary.
+fn validate_selected_graph_cfg_atom(value: &str, field: &str) -> Result<(), OvenSelectedRustFacetGraphError> {
+    validate_selected_graph_text(value, field)?;
+    if !value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_') {
+        return Err(selected_graph_invalid(
+            field,
+            "must use Rustc cfg identifier vocabulary",
+        ));
+    }
+    Ok(())
+}
+
+/// Require a canonical ordered sequence of cfg keys or flags.
+fn validate_selected_graph_cfg_atoms(values: &[String], field: &str) -> Result<(), OvenSelectedRustFacetGraphError> {
+    for value in values {
+        validate_selected_graph_cfg_atom(value, field)?;
+    }
+    if values.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(selected_graph_invalid(field, "must be sorted and unique"));
+    }
+    Ok(())
+}
+
+/// Require canonical cfg values while allowing Rustc's meaningful empty quoted values such as `target_abi=""`.
+fn validate_selected_graph_cfg_values(values: &[String], field: &str) -> Result<(), OvenSelectedRustFacetGraphError> {
+    for value in values {
+        if value.trim() != value || value.chars().any(char::is_control) {
+            return Err(selected_graph_invalid(
+                field,
+                "contains leading, trailing, or control whitespace",
+            ));
+        }
     }
     if values.windows(2).any(|pair| pair[0] >= pair[1]) {
         return Err(selected_graph_invalid(field, "must be sorted and unique"));

@@ -182,6 +182,7 @@ impl OvenLoadedProjectInspectionAuthority {
 
 #[cfg(test)]
 mod selected_rust_facet_graph_tests {
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::Path;
 
@@ -223,6 +224,16 @@ mod selected_rust_facet_graph_tests {
         })
     }
 
+    fn cfg_snapshot(architecture: &str, operating_system: &str) -> OvenSelectedRustFacetCfgSnapshot {
+        OvenSelectedRustFacetCfgSnapshot {
+            flags: vec!["unix".to_string()],
+            values: BTreeMap::from([
+                ("target_arch".to_string(), vec![architecture.to_string()]),
+                ("target_os".to_string(), vec![operating_system.to_string()]),
+            ]),
+        }
+    }
+
     fn selection() -> OvenSelectedRustFacetSelection {
         OvenSelectedRustFacetSelection {
             intent: OvenSelectedRustFacetIntent {
@@ -232,6 +243,8 @@ mod selected_rust_facet_graph_tests {
                 features: vec!["root-feature".to_string()],
             },
             host: "aarch64-apple-darwin".to_string(),
+            host_cfg: cfg_snapshot("aarch64", "macos"),
+            target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
             default_features: true,
             toolchain_version: "1.85.0".to_string(),
@@ -796,6 +809,72 @@ mod selected_rust_facet_graph_tests {
             OvenSelectedRustFacetGraph::decode_validated(&future),
             Err(OvenSelectedRustFacetGraphError::UnsupportedSchema { .. })
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn selected_graph_requires_complete_canonical_cfg_snapshots() -> TestResult {
+        let selected = graph(b"pub fn use_dependency() {}\n")?.validated()?;
+        let mut missing = serde_json::from_slice::<serde_json::Value>(&selected.to_json_bytes()?)?;
+        let selection = missing["selection"]
+            .as_object_mut()
+            .ok_or("serialized graph lost selection")?;
+        selection.remove("host_cfg");
+        assert!(matches!(
+            OvenSelectedRustFacetGraph::decode_validated(&serde_json::to_vec(&missing)?),
+            Err(OvenSelectedRustFacetGraphError::Invalid { .. })
+        ));
+
+        let mut empty = graph(b"pub fn use_dependency() {}\n")?;
+        empty.selection.host_cfg = OvenSelectedRustFacetCfgSnapshot {
+            flags: Vec::new(),
+            values: BTreeMap::new(),
+        };
+        assert!(matches!(
+            empty.validated(),
+            Err(OvenSelectedRustFacetGraphError::Missing { field }) if field == "selection.host_cfg"
+        ));
+
+        let mut unordered_flags = graph(b"pub fn use_dependency() {}\n")?;
+        unordered_flags
+            .selection
+            .host_cfg
+            .flags
+            .push("debug_assertions".to_string());
+        assert!(matches!(
+            unordered_flags.validated(),
+            Err(OvenSelectedRustFacetGraphError::Invalid { field, .. }) if field == "selection.host_cfg.flags"
+        ));
+
+        let mut unordered_values = graph(b"pub fn use_dependency() {}\n")?;
+        let target_arch = unordered_values
+            .selection
+            .target_cfg
+            .values
+            .get_mut("target_arch")
+            .ok_or("fixture snapshot lost target architecture")?;
+        target_arch.push("aarch64".to_string());
+        assert!(matches!(
+            unordered_values.validated(),
+            Err(OvenSelectedRustFacetGraphError::Invalid { field, .. }) if field == "selection.target_cfg.values.target_arch"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn selected_graph_digest_binds_host_and_target_cfg_snapshots() -> TestResult {
+        let first = graph(b"pub fn use_dependency() {}\n")?.validated()?;
+        let mut changed = graph(b"pub fn use_dependency() {}\n")?;
+        let target_os = changed
+            .selection
+            .target_cfg
+            .values
+            .get_mut("target_os")
+            .ok_or("fixture snapshot lost target operating system")?;
+        target_os.clear();
+        target_os.push("macos".to_string());
+        let changed = changed.validated()?;
+        assert_ne!(first.digest(), changed.digest());
         Ok(())
     }
 
