@@ -22,8 +22,8 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::loaf::{
     OvenLoaf, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafMemberRole, OvenReleaseRuntimeFoundationMember,
-    OvenReleaseStoreMember, OvenReleaseToolchainMember, commit_loaf_generation,
-    prove_release_runtime_foundation_member, prove_release_store_member_payload, validate_stored_loaf,
+    OvenReleaseStoreMember, commit_loaf_generation, prove_release_runtime_foundation_member,
+    prove_release_store_member_payload, validate_stored_loaf,
 };
 use oven_store::digest_source_tree;
 
@@ -319,6 +319,7 @@ fn copy_tree(source: &Path, destination: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use crate::loaf::OvenReleaseToolchainMember;
     use std::collections::BTreeMap;
 
     use super::*;

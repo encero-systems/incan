@@ -23,8 +23,8 @@ use oven_store::{OvenProviderHooks, OvenReceipt, digest_bytes};
 use crate::{
     OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoError, OvenLegacyCargoInspectionPackage,
     OvenLegacyCargoInspectionSource, OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind,
-    canonicalize_supporting_artifacts, copy_regular_directory_tree, direct_rustc_compile_environment,
-    materialized_files_from_directory, prepare_direct_rustc_plan,
+    OvenLegacyCargoSelectedUnitCapture, canonicalize_supporting_artifacts, copy_regular_directory_tree,
+    direct_rustc_compile_environment, materialized_files_from_directory, prepare_direct_rustc_plan,
 };
 
 pub mod vocab_support;
