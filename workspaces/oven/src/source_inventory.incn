@@ -114,12 +114,12 @@ pub def inert_build_script_warnings(inventories: list[PackageSourceInventory]) -
     for inventory in inventories:
         if not inventory.build_unit_present:
             continue
-        if not warning_exists(&warnings, inventory.owner, inventory.package_root):
+        if not warning_exists(warnings, inventory.owner, inventory.package_root):
             warnings.append(InertBuildScriptWarning(owner=inventory.owner, package_root=inventory.package_root))
     return warnings
 
 
-def warning_exists(warnings: &list[InertBuildScriptWarning], owner: str, package_root: str) -> bool:
+def warning_exists(warnings: list[InertBuildScriptWarning], owner: str, package_root: str) -> bool:
     """Keep warning cardinality keyed by the selected package's full retained identity."""
     for warning in warnings:
         if warning.owner == owner and warning.package_root == package_root:
