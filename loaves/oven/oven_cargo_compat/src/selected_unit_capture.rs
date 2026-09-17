@@ -282,6 +282,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
     for (unit, item) in capture.units.iter_mut().zip(&matched) {
         unit.cfg = rustc_non_feature_cfgs(&item.invocation.arguments);
     }
+    capture.rustc_invocations_observed = true;
     Ok(capture)
 }
 
@@ -399,6 +400,8 @@ pub struct OvenLegacyCargoSelectedUnitCapture {
     pub roots: Vec<usize>,
     /// Every physical unit selected by Cargo, preserving graph order for dependency indices.
     pub units: Vec<OvenLegacyCargoSelectedUnit>,
+    /// Whether every unit was joined bijectively to a successful invocation from the stable rustc trace protocol.
+    pub rustc_invocations_observed: bool,
     /// Exact compiler selection and cfg observations; absent until the publisher probes its verified compiler.
     pub compiler: Option<OvenLegacyCargoSelectedCompilerContext>,
 }
@@ -671,6 +674,7 @@ pub fn capture_legacy_cargo_selected_units(
     Ok(OvenLegacyCargoSelectedUnitCapture {
         roots: graph.roots.clone(),
         units,
+        rustc_invocations_observed: false,
         compiler: None,
     })
 }
@@ -1011,6 +1015,7 @@ mod tests {
                 }),
                 registry_source: None,
             }],
+            rustc_invocations_observed: false,
             compiler: None,
         };
         let staging = scratch.path().join("staging");
@@ -1084,6 +1089,7 @@ mod tests {
             Path::new(&rustc),
         )?;
         assert_eq!(capture.roots, [1]);
+        assert!(capture.rustc_invocations_observed);
         assert_eq!(capture.units[0].cfg, ["target_has_atomic=\"ptr\""]);
         assert_eq!(capture.units[1].dependencies[0].unit_index, 0);
         assert_eq!(
