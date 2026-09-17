@@ -517,7 +517,7 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 		command -v jq >/dev/null 2>&1; \
 		cargo_bin="$$(rustup which --toolchain "$(INCAN_TEST_PUBLISHER_TOOLCHAIN)" cargo)"; \
 		rustc_bin="$$(rustup which --toolchain "$(INCAN_TEST_LOAF_TOOLCHAIN)" rustc)"; \
-		target="$$($$rustc_bin -vV | sed -n 's/^host: //p')"; \
+		target="$$("$$rustc_bin" -vV | sed -n 's/^host: //p')"; \
 		test -n "$$target"; \
 		mkdir -p "$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)"; \
 		policy_home="$$(mktemp -d "$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)/invocation.XXXXXX")"; \
