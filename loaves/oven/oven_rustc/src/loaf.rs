@@ -1489,6 +1489,80 @@ pub struct OvenHeldReleaseStoreMember {
     _generation_lock: OvenLoafGenerationLock,
 }
 
+/// Select and prove one generic executable store member below a held envelope generation.
+///
+/// This is the single physical validation path used by both mirror admission and runtime acquisition. It assigns no
+/// Incan meaning to the payload.
+pub(crate) fn prove_release_store_member_payload(
+    generation: &Path,
+    member: &OvenReleaseStoreMember,
+) -> Result<(OvenStoreExecutionPayload, PathBuf), OvenLoafError> {
+    if member.schema_version != OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION
+        || !safe_generation_relative_path(&member.store_relative_path)
+    {
+        return Err(OvenLoafError::InvalidLoaf {
+            path: generation.to_path_buf(),
+            message: "release store member has an invalid descriptor".to_string(),
+        });
+    }
+    let canonical_generation = fs::canonicalize(generation).map_err(|source| OvenLoafError::Io {
+        path: generation.to_path_buf(),
+        source,
+    })?;
+    let store_root = generation.join(&member.store_relative_path);
+    let canonical_store_root = fs::canonicalize(&store_root).map_err(|source| OvenLoafError::Io {
+        path: store_root.clone(),
+        source,
+    })?;
+    if !canonical_store_root.starts_with(&canonical_generation) {
+        return Err(OvenLoafError::InvalidLoaf {
+            path: store_root,
+            message: "release store member resolves outside its held generation".to_string(),
+        });
+    }
+    let mut selected = PublishedOvenStore::new(&canonical_store_root)
+        .select_payloads_matching_for_execution(|candidate| candidate.identity == member.artifact_identity)?;
+    if selected.len() != 1 {
+        return Err(OvenLoafError::InvalidLoaf {
+            path: canonical_store_root,
+            message: "release store member did not select exactly one declared artifact".to_string(),
+        });
+    }
+    let payload = selected.pop().ok_or_else(|| OvenLoafError::Preparation {
+        message: "release store selection became empty".to_string(),
+    })?;
+    payload.verify_materialized_files()?;
+    if payload.manifest.kind != OvenArtifactKind::ProjectOutput {
+        return Err(OvenLoafError::InvalidLoaf {
+            path: canonical_store_root,
+            message: "release store member must retain a ProjectOutput artifact".to_string(),
+        });
+    }
+    let executables = payload
+        .admitted_materialized_files()
+        .iter()
+        .filter(|file| file.executable)
+        .collect::<Vec<_>>();
+    if executables.len() != 1 {
+        return Err(OvenLoafError::InvalidLoaf {
+            path: canonical_store_root,
+            message: "release store member must retain exactly one executable materialized file".to_string(),
+        });
+    }
+    let executable = payload.artifact_root.join(&executables[0].relative_path);
+    let canonical_executable = fs::canonicalize(&executable).map_err(|source| OvenLoafError::Io {
+        path: executable,
+        source,
+    })?;
+    if !canonical_executable.starts_with(&canonical_store_root) {
+        return Err(OvenLoafError::InvalidLoaf {
+            path: canonical_executable,
+            message: "release store executable resolves outside its embedded store".to_string(),
+        });
+    }
+    Ok((payload, canonical_executable))
+}
+
 /// Acquire and verify one labelled optional release store member under the committed generation lock.
 ///
 /// The generic carrier verifies only the exact store identity, ProjectOutput kind, and singular executable file. It
@@ -1505,47 +1579,18 @@ pub fn acquire_committed_release_store_member(
     let Some(member) = manifest.release_store_member.as_ref() else {
         return Ok(None);
     };
-    if member.schema_version != OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION || member.label != label {
+    if member.label != label {
         return Ok(None);
     }
     let generation = generation_directory_path(&manifest.generation_identity);
-    let store_root = loaf_root.join(&generation).join(&member.store_relative_path);
-    if !safe_generation_relative_path(&member.store_relative_path) {
-        return Err(OvenLoafError::InvalidLoaf {
-            path: manifest_path,
-            message: "release store member has an unsafe store-relative path".to_string(),
-        });
-    }
-    let mut selected = PublishedOvenStore::new(&store_root)
-        .select_payloads_matching_for_execution(|candidate| candidate.identity == member.artifact_identity)?;
-    if selected.len() != 1 {
-        return Err(OvenLoafError::InvalidLoaf {
-            path: store_root,
-            message: "release store member did not select exactly one declared artifact".to_string(),
-        });
-    }
-    let payload = selected.pop().ok_or_else(|| OvenLoafError::Preparation {
-        message: "release store selection became empty".to_string(),
-    })?;
-    payload.verify_materialized_files()?;
-    if payload.manifest.kind != OvenArtifactKind::ProjectOutput {
-        return Err(OvenLoafError::InvalidLoaf {
-            path: store_root,
-            message: "release store member must retain a ProjectOutput artifact".to_string(),
-        });
-    }
-    let executables = payload
-        .admitted_materialized_files()
-        .iter()
-        .filter(|file| file.executable)
-        .collect::<Vec<_>>();
-    if executables.len() != 1 {
-        return Err(OvenLoafError::InvalidLoaf {
-            path: store_root,
-            message: "release store member must retain exactly one executable materialized file".to_string(),
-        });
-    }
-    let executable = payload.artifact_root.join(&executables[0].relative_path);
+    let (payload, executable) =
+        prove_release_store_member_payload(&loaf_root.join(generation), member).map_err(|error| match error {
+            OvenLoafError::InvalidLoaf { message, .. } => OvenLoafError::InvalidLoaf {
+                path: manifest_path.clone(),
+                message,
+            },
+            other => other,
+        })?;
     Ok(Some(OvenHeldReleaseStoreMember {
         label: member.label.clone(),
         executable,

@@ -21,10 +21,10 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use crate::loaf::{
-    OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenLoaf, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember,
-    OvenLoafMemberRole, OvenReleaseStoreMember, commit_loaf_generation, validate_stored_loaf,
+    OvenLoaf, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafMemberRole, OvenReleaseStoreMember,
+    commit_loaf_generation, prove_release_store_member_payload, validate_stored_loaf,
 };
-use oven_store::{OvenArtifactKind, PublishedOvenStore, digest_source_tree};
+use oven_store::digest_source_tree;
 
 /// The exact generation a local bake would commit, used to decide whether a mirror's envelope is the same one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +39,8 @@ pub struct LoafEnvelopeExpectation<'a> {
     pub evidence: &'a BTreeMap<String, String>,
     /// Checked member list, in envelope order.
     pub members: &'a [LoafMemberExpectation],
+    /// Optional exact generic store member the local publisher intends to bind into this generation.
+    pub release_store_member: Option<&'a OvenReleaseStoreMember>,
 }
 
 /// The checked specification one envelope member must carry.
@@ -150,6 +152,7 @@ fn manifest_matches(
         || manifest.generation_identity != expectation.generation_identity
         || &manifest.evidence != expectation.evidence
         || manifest.loafs.len() != expectation.members.len()
+        || manifest.release_store_member.as_ref() != expectation.release_store_member
     {
         return false;
     }
@@ -208,47 +211,9 @@ fn stage_and_prove_generation(
 
 /// Prove the copied embedded store entry before its generation becomes the committed envelope authority.
 fn prove_release_store_member(generation: &Path, member: &OvenReleaseStoreMember) -> io::Result<()> {
-    if member.schema_version != OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION
-        || member.store_relative_path.as_os_str().is_empty()
-        || member.store_relative_path.is_absolute()
-        || !member
-            .store_relative_path
-            .components()
-            .all(|component| matches!(component, Component::Normal(_)))
-    {
-        return Err(io::Error::other(
-            "mirror release store member has an invalid descriptor",
-        ));
-    }
-    let store_root = generation.join(&member.store_relative_path);
-    let selected = PublishedOvenStore::new(&store_root)
-        .select_payloads_matching_for_execution(|candidate| candidate.identity == member.artifact_identity)
-        .map_err(|error| io::Error::other(error.to_string()))?;
-    if selected.len() != 1 {
-        return Err(io::Error::other(
-            "mirror release store member did not select exactly one artifact",
-        ));
-    }
-    let payload = selected
-        .into_iter()
-        .next()
-        .ok_or_else(|| io::Error::other("mirror release store selection vanished"))?;
-    payload
-        .verify_materialized_files()
-        .map_err(|error| io::Error::other(error.to_string()))?;
-    if payload.manifest.kind != OvenArtifactKind::ProjectOutput
-        || payload
-            .admitted_materialized_files()
-            .iter()
-            .filter(|file| file.executable)
-            .count()
-            != 1
-    {
-        return Err(io::Error::other(
-            "mirror release store member has no singular executable ProjectOutput",
-        ));
-    }
-    Ok(())
+    prove_release_store_member_payload(generation, member)
+        .map(|_| ())
+        .map_err(|error| io::Error::other(error.to_string()))
 }
 
 /// Every check a copied member must pass before it may be committed.
@@ -466,6 +431,7 @@ mod tests {
                 generation_identity: &generation_identity,
                 evidence,
                 members: &members,
+                release_store_member: None,
             },
             mirrors,
         ))
@@ -580,6 +546,36 @@ mod tests {
             "got {miss:?}"
         );
         assert!(!output.path().join("generations").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn a_different_release_store_member_cannot_match_the_expected_generation() -> TestResult {
+        let mirror = tempfile::tempdir()?;
+        let manifest = write_envelope(mirror.path(), &evidence())?;
+        let generation = generation_directory(&manifest.generation_identity);
+        let expected = OvenReleaseStoreMember {
+            schema_version: 1,
+            label: "engine".to_string(),
+            store_relative_path: PathBuf::from("release-store"),
+            artifact_identity: digest_bytes(b"expected engine"),
+        };
+        let mut swapped = manifest.clone();
+        swapped.release_store_member = Some(OvenReleaseStoreMember {
+            artifact_identity: digest_bytes(b"swapped engine"),
+            ..expected.clone()
+        });
+        let members = members();
+        let compatibility = evidence();
+        let expectation = LoafEnvelopeExpectation {
+            schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
+            envelope: "release",
+            generation_identity: &manifest.generation_identity,
+            evidence: &compatibility,
+            members: &members,
+            release_store_member: Some(&expected),
+        };
+        assert!(!manifest_matches(&swapped, &expectation, &generation));
         Ok(())
     }
 

@@ -15,9 +15,9 @@ use serde::{Deserialize, Serialize};
 use super::{
     CliError, CliResult, INCAN_VERSION, Instant, LoafEnvelopeExpectation, LoafMemberExpectation, LoafMirrorMiss,
     OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLegacyCargoCompilerSuiteResult, OvenLoafEnvelope,
-    OvenLoafEnvelopeManifest, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation, OvenStoreInspection,
-    OvenStoreLimits, announce_oven_progress, configured_mirrors, digest_bytes, digest_runtime_crate_source,
-    elapsed_detail, env, import_loaf_envelope_from_mirrors, loaf_directory_byte_counts,
+    OvenLoafEnvelopeManifest, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation, OvenReleaseStoreMember,
+    OvenStoreInspection, OvenStoreLimits, announce_oven_progress, configured_mirrors, digest_bytes,
+    digest_runtime_crate_source, elapsed_detail, env, import_loaf_envelope_from_mirrors, loaf_directory_byte_counts,
     loaf_envelope_inspection_packages, loaf_envelope_specifications, loaf_raw_disk_bytes, oven_error,
     retire_unreferenced_loaf_generations, rustc_identity, validate_stored_loaf_for_reuse,
 };
@@ -138,10 +138,25 @@ pub(crate) fn loaf_generation_identity(
     envelope: OvenLoafEnvelope,
     evidence: &BTreeMap<String, String>,
 ) -> CliResult<String> {
-    Ok(digest_bytes(
-        &serde_json::to_vec(&(loaf_envelope_name(envelope), evidence))
-            .map_err(|error| CliError::failure(format!("could not encode Loaf generation identity: {error}")))?,
-    ))
+    loaf_generation_identity_with_release_member(envelope, evidence, None)
+}
+
+/// Return a generation identity that also binds any exact generic release-store member descriptor.
+///
+/// Release packaging must call this form when it publishes a member; otherwise a swapped descriptor could retain
+/// the identity of a generation computed only from compatibility evidence.
+pub(crate) fn loaf_generation_identity_with_release_member(
+    envelope: OvenLoafEnvelope,
+    evidence: &BTreeMap<String, String>,
+    release_store_member: Option<&OvenReleaseStoreMember>,
+) -> CliResult<String> {
+    let encoded = match release_store_member {
+        Some(member) => serde_json::to_vec(&(loaf_envelope_name(envelope), evidence, member)),
+        None => serde_json::to_vec(&(loaf_envelope_name(envelope), evidence)),
+    };
+    Ok(digest_bytes(&encoded.map_err(|error| {
+        CliError::failure(format!("could not encode Loaf generation identity: {error}"))
+    })?))
 }
 
 /// Return the wire spelling of one checked fixture action.
@@ -198,6 +213,7 @@ pub(crate) fn import_loaf_envelope_from_mirror_roots(
         generation_identity: &generation_identity,
         evidence: &compatibility_evidence,
         members: &members,
+        release_store_member: None,
     };
     let started = Instant::now();
     match import_loaf_envelope_from_mirrors(output, scratch, &expectation, mirrors) {

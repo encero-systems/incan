@@ -60,8 +60,8 @@ use oven_model::oven_interop::{LockedInteropTarget, ToolchainRequirement};
 use oven_rustc::loaf::{
     LoafTemporaryDirectory, OVEN_LOAF_ENV, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLoafEnvelope,
     OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation,
-    acquire_committed_loaf_generation, acquire_exclusive_loaf_generation_lock, commit_loaf_generation,
-    digest_runtime_crate_source, loaf_directory_byte_counts, loaf_envelope_inspection_packages,
+    OvenReleaseStoreMember, acquire_committed_loaf_generation, acquire_exclusive_loaf_generation_lock,
+    commit_loaf_generation, digest_runtime_crate_source, loaf_directory_byte_counts, loaf_envelope_inspection_packages,
     loaf_envelope_specifications, loaf_raw_disk_bytes, retire_unreferenced_loaf_generations,
     validate_stored_loaf_for_reuse,
 };
