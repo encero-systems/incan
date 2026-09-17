@@ -314,19 +314,33 @@ pub fn selected_graph_source_digest(
     if members.is_empty() {
         return Err(selected_graph_missing("source_members"));
     }
+    selected_graph_member_inventory_digest(members, "source_members")
+}
+
+/// Digest one declared generated-output inventory, including an explicitly checked empty directory.
+///
+/// An empty vector is distinct from an absent generated input: it proves the build script produced a directory with
+/// no regular members. Ordinary authored source continues to require at least one member.
+pub fn selected_graph_generated_input_digest(
+    members: &[OvenSelectedRustFacetSourceMember],
+) -> Result<String, OvenSelectedRustFacetGraphError> {
+    selected_graph_member_inventory_digest(members, "generated_input.members")
+}
+
+fn selected_graph_member_inventory_digest(
+    members: &[OvenSelectedRustFacetSourceMember],
+    field: &str,
+) -> Result<String, OvenSelectedRustFacetGraphError> {
     let mut records = BTreeMap::new();
     for (index, member) in members.iter().enumerate() {
-        validate_selected_graph_path(&member.path, &format!("source_members[{index}].path"), false)?;
-        validate_selected_graph_digest(&member.digest, &format!("source_members[{index}].digest"))?;
+        validate_selected_graph_path(&member.path, &format!("{field}[{index}].path"), false)?;
+        validate_selected_graph_digest(&member.digest, &format!("{field}[{index}].digest"))?;
         if records.insert(member.path.as_str(), member.digest.as_str()).is_some() {
-            return Err(selected_graph_invalid(
-                "source_members",
-                "repeat a portable source path",
-            ));
+            return Err(selected_graph_invalid(field, "repeat a portable source path"));
         }
     }
     let bytes = serde_json::to_vec(&records)
-        .map_err(|error| selected_graph_invalid("source_members", format!("cannot encode: {error}")))?;
+        .map_err(|error| selected_graph_invalid(field, format!("cannot encode: {error}")))?;
     Ok(selected_graph_sha256(&bytes))
 }
 

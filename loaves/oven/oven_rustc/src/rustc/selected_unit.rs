@@ -521,7 +521,7 @@ fn materialize_generated_input(
             .into_iter()
             .map(|(path, digest)| OvenSelectedRustFacetSourceMember { path, digest })
             .collect::<Vec<_>>();
-        super::selected_graph_source_digest(&members).map_err(|error| OvenRustcError::InvalidInput {
+        super::selected_graph_generated_input_digest(&members).map_err(|error| OvenRustcError::InvalidInput {
             field: "selected Rust generated input",
             message: error.to_string(),
         })?

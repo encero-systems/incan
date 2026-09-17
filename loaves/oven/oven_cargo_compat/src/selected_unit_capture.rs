@@ -9,15 +9,17 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use oven_rustc::rustc::OvenSelectedRustFacetCfgSnapshot;
 use oven_rustc::rustc::substitution::RustcUnitRequest;
+use oven_rustc::rustc::{
+    OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetSourceMember, selected_graph_generated_input_digest,
+};
 use serde::{Deserialize, Serialize};
 
 use super::{
     CargoBuildScriptExecuted, CargoCompilerArtifact, CargoInvocationOutput, CargoMetadata, CargoUnitGraph,
     CargoUnitGraphDependency, CargoUnitGraphTarget, CargoUnitGraphUnit, OvenLegacyCargoError,
     OvenLegacyCargoInspectionSource, OvenLegacyCargoInspectionSourceMember, OvenLegacyRustcInvocation,
-    OvenRustcSupportingArtifact, canonical_directory, copy_regular_directory_tree, digest_bytes, digest_source_tree,
+    OvenRustcSupportingArtifact, canonical_directory, copy_regular_directory_tree, digest_bytes,
     materialized_files_from_directory, regular_file_bytes,
 };
 
@@ -1151,10 +1153,10 @@ fn retain_generated_output(
     artifacts: &mut BTreeMap<String, String>,
 ) -> Result<(), OvenLegacyCargoError> {
     let source = canonical_directory(&build_script.out_dir, "Cargo build-script OUT_DIR")?;
-    let source_digest = digest_source_tree(&source).map_err(|error| {
+    let source_members = generated_output_members(&source)?;
+    let source_digest = selected_graph_generated_input_digest(&source_members).map_err(|error| {
         OvenLegacyCargoError::Plan(format!(
-            "could not digest Cargo build-script OUT_DIR for `{}`: {error}",
-            package
+            "could not digest Cargo build-script OUT_DIR for `{package}`: {error}"
         ))
     })?;
     let identity = source_digest.strip_prefix("sha256:").unwrap_or(&source_digest);
@@ -1163,10 +1165,10 @@ fn retain_generated_output(
     if !destination.exists() {
         copy_regular_directory_tree(&source, &destination, "Cargo build-script OUT_DIR")?;
     }
-    let digest = digest_source_tree(&destination).map_err(|error| {
+    let retained_members = generated_output_members(&destination)?;
+    let digest = selected_graph_generated_input_digest(&retained_members).map_err(|error| {
         OvenLegacyCargoError::Plan(format!(
-            "could not digest retained Cargo build-script OUT_DIR for `{}`: {error}",
-            package
+            "could not digest retained Cargo build-script OUT_DIR for `{package}`: {error}"
         ))
     })?;
     if digest != source_digest {
@@ -1202,6 +1204,19 @@ fn retain_generated_output(
         members,
     });
     Ok(())
+}
+
+/// Inventory a checked build-script output directory, including an explicitly empty directory.
+fn generated_output_members(root: &Path) -> Result<Vec<OvenSelectedRustFacetSourceMember>, OvenLegacyCargoError> {
+    materialized_files_from_directory(root, "", "Cargo build-script OUT_DIR")?
+        .into_iter()
+        .map(|file| {
+            Ok(OvenSelectedRustFacetSourceMember {
+                path: file.relative_path,
+                digest: digest_bytes(&regular_file_bytes(&file.source_path)?),
+            })
+        })
+        .collect()
 }
 
 /// Join registry-backed selected units to the publisher's exact staged source catalogs.
@@ -1496,6 +1511,23 @@ mod tests {
         );
         assert_eq!(artifacts.len(), 2);
         assert!(staging.join(&retained.relative_root).join("generated.rs").is_file());
+
+        let empty = scratch.path().join("empty-out");
+        fs::create_dir(&empty)?;
+        let mut empty_facts = OvenLegacyCargoBuildScriptFacts {
+            cfgs: Vec::new(),
+            environment: BTreeMap::new(),
+            linked_libraries: Vec::new(),
+            linked_paths: Vec::new(),
+            out_dir: empty,
+            output: None,
+        };
+        let mut empty_artifacts = BTreeMap::new();
+        retain_generated_output(&mut empty_facts, "empty-fixture", &staging, &mut empty_artifacts)?;
+        let empty_output = empty_facts.output.ok_or("empty output was treated as absent")?;
+        assert!(empty_output.members.is_empty());
+        assert!(empty_artifacts.is_empty());
+        assert!(staging.join(empty_output.relative_root).is_dir());
         Ok(())
     }
 
