@@ -26,11 +26,13 @@ use incan_codegraph::{
     CodegraphProviderProjection, CodegraphProviderProvenance, CodegraphRecord, CodegraphReferenceRecord,
     CodegraphRegistryRecord, CodegraphRegistryReexportProjection, CodegraphSdkComponentProjection,
     CodegraphSdkProjection, CodegraphSemanticContext, CodegraphSourceSpan, CodegraphStableDeclarationId,
-    CodegraphSymbolOrigin,
+    CodegraphStableDeclarationLocation, CodegraphSymbolOrigin,
 };
 use incan_lang::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
 use incan_semantics_core::namespace::{enclosing_namespace, is_namespace_root};
-use incan_semantics_core::stable_identity::{DeclarationNesting, DeclarationSignature, StableDeclarationId};
+use incan_semantics_core::stable_identity::{
+    DeclarationSignature, StableDeclarationContext, StableDeclarationId, StableDeclarationLocation,
+};
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SemanticModuleSnapshot, SymbolOrigin};
 use serde_json::{Value, json};
 
@@ -274,9 +276,7 @@ fn directory_modules_diagnostics_and_info(
                 ) {
                     Ok(analysis) => {
                         for (path, snapshot) in analysis.semantic_snapshots() {
-                            semantic_snapshots_by_path
-                                .entry(path.clone())
-                                .or_insert_with(|| snapshot.clone());
+                            retain_root_analysis(&mut semantic_snapshots_by_path, file, path, snapshot.clone());
                         }
                         let package_name = package_identity(&project_root)?
                             .and_then(|package| package.name)
@@ -345,6 +345,15 @@ fn directory_modules_diagnostics_and_info(
             },
         },
     ))
+}
+
+/// Retain each file's own analysis over any copy first encountered as another root's dependency.
+fn retain_root_analysis<T>(analyses: &mut BTreeMap<PathBuf, T>, root: &Path, path: &Path, analysis: T) {
+    if path == root {
+        analyses.insert(path.to_path_buf(), analysis);
+    } else {
+        analyses.entry(path.to_path_buf()).or_insert(analysis);
+    }
 }
 
 /// Run typechecking and keep reusable semantic artifacts when the checked graph succeeds.
@@ -794,6 +803,8 @@ struct CodegraphBuilder {
     /// Populated only where the modules actually lowered. A declaration with no entry exports an identity whose
     /// `signature` is `None`, which a consumer must read as unproven rather than as a key.
     signatures_by_identity: BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts>,
+    /// Checked owner and collision-local ordinal for nested declarations.
+    stable_contexts_by_identity: BTreeMap<CanonicalSymbolId, (CanonicalSymbolId, u32)>,
     registry_metadata_by_path: BTreeMap<PathBuf, CheckedRegistryMetadataModule>,
     capabilities_by_path: BTreeMap<PathBuf, Vec<CapabilityDeclarationInfo>>,
     c_abi_by_path: BTreeMap<PathBuf, CAbiInteropArtifacts>,
@@ -828,6 +839,7 @@ impl CodegraphBuilder {
             records: Vec::new(),
             diagnostics: Vec::new(),
             signatures_by_identity: BTreeMap::new(),
+            stable_contexts_by_identity: BTreeMap::new(),
             file_ids: BTreeMap::new(),
             module_ids: BTreeSet::new(),
             namespace_ids: BTreeSet::new(),
@@ -857,16 +869,46 @@ impl CodegraphBuilder {
     /// Project one checked identity into its exported edit-stable form, carrying a signature when one was proved.
     fn stable_identity_for(&self, canonical: Option<&CanonicalSymbolId>) -> Option<CodegraphStableDeclarationId> {
         let canonical = canonical?;
+        let context = self
+            .stable_contexts_by_identity
+            .get(canonical)
+            .and_then(|(owner, binding_ordinal)| {
+                let owner = StableDeclarationId::from_canonical(
+                    owner,
+                    self.signatures_by_identity
+                        .get(owner)
+                        .map(|facts| facts.signature.clone()),
+                    None,
+                )?;
+                Some(StableDeclarationContext {
+                    owner,
+                    binding_ordinal: *binding_ordinal,
+                })
+            });
         Some(codegraph_stable_identity(
             canonical,
             self.signatures_by_identity
                 .get(canonical)
                 .map(|facts| facts.signature.clone()),
-        ))
+            context,
+        )?)
     }
 
     /// Attach session-owned semantic facts for checked body target population.
     fn set_semantic_snapshots(&mut self, semantic_snapshots_by_path: BTreeMap<PathBuf, SemanticModuleSnapshot>) {
+        self.stable_contexts_by_identity.clear();
+        for snapshot in semantic_snapshots_by_path.values() {
+            for subject in snapshot.facts.subjects() {
+                let Some(identity) = snapshot.facts.symbol_identities_for(subject).next() else {
+                    continue;
+                };
+                let Some(context) = snapshot.facts.stable_declaration_contexts_for(subject).next() else {
+                    continue;
+                };
+                self.stable_contexts_by_identity
+                    .insert(identity.clone(), (context.owner.clone(), context.binding_ordinal));
+            }
+        }
         self.semantic_snapshots_by_path = semantic_snapshots_by_path;
     }
 
@@ -2631,8 +2673,14 @@ fn lowered_declaration_facts(
 fn codegraph_stable_identity(
     identity: &CanonicalSymbolId,
     signature: Option<DeclarationSignature>,
-) -> CodegraphStableDeclarationId {
-    let stable = StableDeclarationId::from_canonical(identity, signature);
+    context: Option<StableDeclarationContext>,
+) -> Option<CodegraphStableDeclarationId> {
+    let stable = StableDeclarationId::from_canonical(identity, signature, context)?;
+    Some(codegraph_stable_identity_from_semantic(&stable))
+}
+
+/// Convert the compiler-owned stable identity into the storage-neutral codegraph shape.
+fn codegraph_stable_identity_from_semantic(stable: &StableDeclarationId) -> CodegraphStableDeclarationId {
     CodegraphStableDeclarationId {
         namespace: match stable.namespace {
             incan_semantics_core::SymbolNamespace::OrdinaryLexical => "ordinary_lexical",
@@ -2651,7 +2699,15 @@ fn codegraph_stable_identity(
         },
         declaration_name: stable.declaration_name.clone(),
         declaration_kind: stable.kind.as_str().to_string(),
-        nested: matches!(stable.nesting, DeclarationNesting::Nested),
+        location: match &stable.location {
+            StableDeclarationLocation::ModuleLevel => CodegraphStableDeclarationLocation::ModuleLevel,
+            StableDeclarationLocation::Nested { owner, binding_ordinal } => {
+                CodegraphStableDeclarationLocation::Nested {
+                    owner: Box::new(codegraph_stable_identity_from_semantic(owner)),
+                    binding_ordinal: *binding_ordinal,
+                }
+            }
+        },
         signature: stable
             .signature
             .as_ref()
@@ -3637,6 +3693,19 @@ mod tests {
     use incan_lang::lang::c_abi::ScalarTypeId;
     use std::path::PathBuf;
 
+    #[test]
+    fn own_root_analysis_replaces_an_earlier_dependency_snapshot() {
+        let provider = Path::new("src/provider.incn");
+        let consumer = Path::new("src/consumer.incn");
+        let mut analyses = BTreeMap::new();
+
+        retain_root_analysis(&mut analyses, consumer, provider, "dependency-context");
+        retain_root_analysis(&mut analyses, provider, provider, "provider-root-context");
+        retain_root_analysis(&mut analyses, consumer, provider, "later-dependency-context");
+
+        assert_eq!(analyses.get(provider), Some(&"provider-root-context"));
+    }
+
     /// Execution requirements and inspection consume one checked consumer snapshot, including aliases and nested
     /// owners.
     #[test]
@@ -4022,7 +4091,7 @@ pub def pick(value: int, fallback: int) -> int:
                 derived
                     .into_iter()
                     .filter(|(identity, _)| identity.declaration_name == "pick")
-                    .map(|(identity, facts)| codegraph_stable_identity(&identity, Some(facts.signature)))
+                    .filter_map(|(identity, facts)| codegraph_stable_identity(&identity, Some(facts.signature), None))
                     .collect::<Vec<_>>(),
             )
         })
@@ -4038,9 +4107,10 @@ pub def pick(value: int, fallback: int) -> int:
             "the two overloads must export distinct signatures: {signatures:?}"
         );
         assert!(
-            signatures
-                .iter()
-                .all(|identity| identity.declaration_name == "pick" && !identity.nested),
+            signatures.iter().all(|identity| {
+                identity.declaration_name == "pick"
+                    && matches!(identity.location, CodegraphStableDeclarationLocation::ModuleLevel)
+            }),
             "both are module-level declarations named `pick`: {signatures:?}"
         );
         Ok(())

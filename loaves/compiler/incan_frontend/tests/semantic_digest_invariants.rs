@@ -62,7 +62,9 @@ fn digest_declarations(source: &str) -> Result<BTreeMap<String, String>, String>
         let signature = body.map(|body| {
             DeclarationSignature::from_callable_types(body.params.iter().map(|param| &param.ty), &body.return_type)
         });
-        let identity = StableDeclarationId::from_canonical(canonical, signature);
+        let identity = StableDeclarationId::from_canonical(canonical, signature, None).ok_or_else(|| {
+            format!("top-level declaration unexpectedly required nested identity context: {canonical:?}")
+        })?;
         // Digest the declaration record and its body together, both from checked values.
         let declaration_digest = semantic_digest(&(declaration.kind, &declaration.name, declaration.visibility))
             .map_err(|error| error.to_string())?;

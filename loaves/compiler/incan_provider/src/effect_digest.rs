@@ -169,7 +169,11 @@ fn module_meaning(path: &Path, source: &str) -> Result<BTreeMap<String, String>,
             body.params.iter().map(|param| &param.ty),
             &body.return_type,
         ));
-        let identity = StableDeclarationId::from_canonical(canonical, signature);
+        let identity = StableDeclarationId::from_canonical(canonical, signature, None).ok_or_else(|| {
+            fail(format!(
+                "provider body unexpectedly required nested identity context: {canonical:?}"
+            ))
+        })?;
         // The docstring is removed before digesting because a documentation edit cannot change what the compiler
         // emits for a body, and the whole point of this digest is to stop such an edit costing a rebuild.
         let digest =
