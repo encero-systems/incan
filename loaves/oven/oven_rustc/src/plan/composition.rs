@@ -969,6 +969,7 @@ mod tests {
                 kind: OvenArtifactKind::DirectRustcPlan,
                 payload: serde_json::to_vec(&manifest)?,
                 materialized_files: files,
+                materialized_directories: Vec::new(),
             })?;
             // Each original contributor is admitted independently through the real selected-store reader.
             let selected = select_packaged_direct_rustc_execution_plan(&store, &receipt, &stored.identity)?

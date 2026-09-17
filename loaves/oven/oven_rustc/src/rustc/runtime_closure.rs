@@ -414,6 +414,7 @@ pub fn publish_runtime_closure(
             kind: OvenArtifactKind::NativeRuntimeClosure,
             payload: encoded,
             materialized_files,
+            materialized_directories: Vec::new(),
         })
         .map_err(|error| OvenRustcError::InvalidInput {
             field: "runtime closure",
@@ -795,6 +796,7 @@ mod tests {
             kind: OvenArtifactKind::NativeRuntimeClosure,
             payload: br#"{"schema_version":9999}"#.to_vec(),
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
 
         let error = select_runtime_closure(&store, &expected)

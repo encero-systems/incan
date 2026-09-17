@@ -297,6 +297,7 @@ pub fn retain_direct_rustc_compiler(
         kind: OvenArtifactKind::NativeCompilerClosure,
         payload: encoded,
         materialized_files,
+        materialized_directories: Vec::new(),
     }) {
         Ok(manifest) => manifest,
         Err(error) => {

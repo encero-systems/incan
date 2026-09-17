@@ -5507,6 +5507,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&artifacts)?,
             materialized_files: materialized,
+            materialized_directories: Vec::new(),
         })?;
         let owner = store
             .select_payloads_for_execution(&[published.identity])?
@@ -8517,6 +8518,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&empty_manifest(&first_receipt))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         assert_eq!(
             select_direct_rustc_plan_identity(&store, &second_receipt)?,
@@ -8569,6 +8571,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&empty_manifest(&second_receipt))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let project_identity = "sha256:project";
         let source_authority_digest = "sha256:source";
@@ -8597,6 +8600,7 @@ fi
             kind: OvenArtifactKind::ProjectInspectionAuthority,
             payload: serde_json::to_vec(&authority_payload)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
 
         let (selected_manifest, _, _, _) = store.select_payload_for_execution(&direct_plan.identity)?;
@@ -8675,6 +8679,7 @@ fi
                 source_path: evidence,
                 relative_path: "authority/future-evidence.txt".to_string(),
             }],
+            materialized_directories: Vec::new(),
         })?;
         let (entry, lease) = store.select(&authority.identity)?;
         drop(lease);
@@ -8736,6 +8741,7 @@ fi
                 kind: OvenArtifactKind::ProjectInspectionAuthority,
                 payload: encoded_payload.clone(),
                 materialized_files: Vec::new(),
+                materialized_directories: Vec::new(),
             })
         };
         let requested = publish("requested-project-inspection-authority")?;
@@ -8817,6 +8823,7 @@ fi
                 source_path: evidence,
                 relative_path: "authority/evidence.txt".to_string(),
             }],
+            materialized_directories: Vec::new(),
         })?;
         let authority_ref = OvenProjectInspectionAuthorityRef {
             identity: authority.identity.clone(),
@@ -8873,6 +8880,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&legacy)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let replacement = store.publish(&OvenArtifactPublishRequest {
             receipt: receipt.clone(),
@@ -8880,6 +8888,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&current)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
 
         assert_eq!(
@@ -9869,6 +9878,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         assert_eq!(select_direct_rustc_plan_identity(&store, &receipt)?, stored.identity);
 
@@ -9901,6 +9911,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&plan)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         };
         assert!(matches!(
             bounded.publish(&replacement),
@@ -9931,6 +9942,7 @@ fi
                 kind: OvenArtifactKind::DirectRustcPlan,
                 payload: serde_json::to_vec(&plan)?,
                 materialized_files: Vec::new(),
+                materialized_directories: Vec::new(),
             })?;
         }
 
@@ -9977,6 +9989,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&plan)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
 
         let bake = bake_stored_direct_rustc_run(&OvenStoredDirectRustcRunRequest {
@@ -10002,6 +10015,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&plan)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         };
         assert!(matches!(
             bounded.publish(&replacement),

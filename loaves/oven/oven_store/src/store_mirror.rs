@@ -23,8 +23,8 @@ use std::path::PathBuf;
 
 use super::OvenReceipt;
 use super::store::{
-    OvenArtifactKind, OvenArtifactManifest, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore,
-    OvenStoreError, PublishedOvenStore,
+    OvenArtifactKind, OvenArtifactManifest, OvenArtifactMaterializedDirectory, OvenArtifactMaterializedFile,
+    OvenArtifactPublishRequest, OvenStore, OvenStoreError, PublishedOvenStore,
 };
 
 /// Environment variable listing mirror roots, separated the way `PATH` is on the host.
@@ -108,6 +108,14 @@ where
                     relative_path: file.relative_path.clone(),
                 })
                 .collect();
+            let materialized_directories = manifest
+                .materialized_directories
+                .iter()
+                .map(|directory| OvenArtifactMaterializedDirectory {
+                    source_path: artifact_root.join(&directory.relative_path),
+                    relative_path: directory.relative_path.clone(),
+                })
+                .collect();
             let published = store.publish_verified_import(
                 &OvenArtifactPublishRequest {
                     receipt,
@@ -115,6 +123,7 @@ where
                     kind: manifest.kind,
                     payload,
                     materialized_files,
+                    materialized_directories,
                 },
                 &admitted,
             )?;

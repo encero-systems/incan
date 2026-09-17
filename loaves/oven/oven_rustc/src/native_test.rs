@@ -1763,6 +1763,7 @@ mod tests {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&plan)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let bake = bake_stored_direct_rustc_test(&OvenStoredDirectRustcTestRequest {
             store: &store,

@@ -623,6 +623,7 @@ pub fn bake_interop_native_plan(request: OvenInteropNativeBakeRequest<'_>) -> Re
             kind: OvenArtifactKind::DirectRustcPlan,
             payload,
             materialized_files,
+            materialized_directories: Vec::new(),
         })
         .map_err(|error| format!("could not publish final Oven interop direct-Rustc plan: {error}"))?;
     Ok(OvenInteropNativeBake {
@@ -2025,6 +2026,7 @@ mod tests {
                 source_path: runtime,
                 relative_path: "runtime/runtime.bin".to_string(),
             }],
+            materialized_directories: Vec::new(),
         })?;
 
         let archive_path = project.path().join("libfixture.a");
@@ -2142,6 +2144,7 @@ mod tests {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
 
         let bundled = project.path().join("libfixture_runtime.so");
@@ -2257,6 +2260,7 @@ mod tests {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let runtime = project.path().join("libfixture_runtime.dylib");
         fs::write(&runtime, b"fixture iOS simulator runtime")?;
@@ -2513,6 +2517,7 @@ fn main() {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let target = LockedInteropTarget {
             target: base_receipt.intent.target.clone(),
@@ -2659,6 +2664,7 @@ fn main() {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let shim_source = "#include <Accelerate/Accelerate.h>\nfloat incan_accelerate_sum(const float *values, size_t value_count) { float output = 0.0f; vDSP_sve(values, 1, &output, value_count); return output; }\n";
         let target = LockedInteropTarget {
@@ -2915,6 +2921,7 @@ fn main() {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let target = LockedInteropTarget {
             target: base_receipt.intent.target.clone(),
@@ -3111,6 +3118,7 @@ fn main() {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let target = LockedInteropTarget {
             target: base_receipt.intent.target.clone(),
@@ -3316,6 +3324,7 @@ fn main() {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let target = LockedInteropTarget {
             target: base_receipt.intent.target.clone(),
@@ -3618,6 +3627,7 @@ fn main() {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let target = LockedInteropTarget {
             target: base_receipt.intent.target.clone(),
@@ -3891,6 +3901,7 @@ fn main() {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let target = LockedInteropTarget {
             target: "aarch64-apple-ios-sim".to_string(),
@@ -4195,6 +4206,7 @@ Java_dev_incan_interop_probe_MainActivity_nativeProbe(JNIEnv *environment, jclas
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&base_plan(base_receipt.intent.clone()))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let mut target = LockedInteropTarget {
             target: "aarch64-linux-android".to_string(),

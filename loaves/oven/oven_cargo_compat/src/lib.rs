@@ -74,7 +74,8 @@ use oven_rustc::rustc::{
 };
 use oven_store::process::{isolate_process_group, terminate_process_group};
 use oven_store::store::{
-    OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreError,
+    OvenArtifactKind, OvenArtifactMaterializedDirectory, OvenArtifactMaterializedFile, OvenArtifactPublishRequest,
+    OvenStore, OvenStoreError,
 };
 use oven_store::{DEFAULT_OVEN_PUBLISHER_STAGING_FLOOR_BYTES, digest_bytes, digest_source_tree};
 use oven_store::{
@@ -1515,6 +1516,7 @@ pub fn prepare_direct_rustc_plan(
         kind,
         payload,
         materialized_files,
+        materialized_directories: Vec::new(),
     };
     let transient_reservation_bytes = conservative_directory_reservation(&staging)?;
     request
@@ -1821,6 +1823,7 @@ pub fn prepare_compiler_test_suite(
             kind: OvenArtifactKind::CompilerTestSuiteFoundation,
             payload: foundation_payload,
             materialized_files: foundation.materialized_files,
+            materialized_directories: Vec::new(),
         };
         let manifest = request.store.manifest_for_publication(&foundation_request)?;
         foundation_references.push(OvenCompilerTestSuiteFoundationReference {
@@ -1848,6 +1851,7 @@ pub fn prepare_compiler_test_suite(
             kind: OvenArtifactKind::CompilerTestSuiteShard,
             payload,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         };
         let manifest = request.store.manifest_for_publication(&shard_request)?;
         shard_references.push(OvenCompilerTestSuiteShardReference {
@@ -1957,6 +1961,7 @@ pub fn prepare_compiler_test_suite(
         kind: OvenArtifactKind::CompilerTestSuite,
         payload: payload_bytes,
         materialized_files: index_materialized_files,
+        materialized_directories: Vec::new(),
     };
     let mut batch = Vec::with_capacity(
         foundation_requests
@@ -4339,6 +4344,10 @@ mod tests {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: b"fixture plan".to_vec(),
             materialized_files,
+            materialized_directories: vec![OvenArtifactMaterializedDirectory {
+                source_path: staging.path().join(&relative_root),
+                relative_path: format!("foundation/{relative_root}"),
+            }],
         })?;
 
         let local_root = tempfile::tempdir()?;
@@ -4358,6 +4367,11 @@ mod tests {
                 .join(&relative_root)
                 .is_dir(),
             "the admitted empty generated-output root must survive cold publication, mirror import and acquisition"
+        );
+        fs::remove_dir(acquired.materialized_root().join("foundation").join(&relative_root))?;
+        assert!(
+            acquired.verify_admitted_payload().is_err(),
+            "removing a declared empty generated-output root must invalidate the admitted entry"
         );
         Ok(())
     }
@@ -7135,6 +7149,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::CompilerTestSuite,
             payload: serde_json::to_vec(&schema_eight)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         assert_eq!(select_compiler_test_suite_identity(&store, &receipt)?, None);
 
@@ -7166,6 +7181,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::CompilerTestSuite,
             payload: serde_json::to_vec(&schema_nine)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         assert_eq!(select_compiler_test_suite_identity(&store, &receipt)?, None);
 
@@ -7202,6 +7218,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::CompilerTestSuite,
             payload: serde_json::to_vec(&schema_fifteen)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         assert_eq!(
             select_compiler_test_suite_identity(&store, &receipt)?,
@@ -7304,6 +7321,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::CompilerTestSuite,
             payload: serde_json::to_vec(&suite)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         fs::write(
             compiler_root.path().join("src/lib.rs"),
@@ -7463,6 +7481,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::ProjectPayload,
             payload: serde_json::to_vec(&stale_payload)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
 
         assert_eq!(
@@ -7484,6 +7503,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::ProjectPayload,
             payload: serde_json::to_vec(&complete_plan_drift)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let mut extension_paths_drift = payload(OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION);
         let _ = extension_paths_drift.extension_paths.pop();
@@ -7493,6 +7513,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::ProjectPayload,
             payload: serde_json::to_vec(&extension_paths_drift)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         assert_eq!(
             select_existing_project_extension_identity(&store, &receipt, &base)?,
@@ -7506,6 +7527,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::ProjectPayload,
             payload: serde_json::to_vec(&payload(OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         assert_eq!(
             select_existing_project_extension_identity(&store, &receipt, &base)?,
@@ -7565,6 +7587,7 @@ version = "1.0.0"
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&plan)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let fixture = tempfile::tempdir()?;
         let cargo_marker = fixture.path().join("unexpected-cargo-invocation");
