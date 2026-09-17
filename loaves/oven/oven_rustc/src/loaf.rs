@@ -2051,6 +2051,8 @@ pub struct OvenHeldReleaseRuntimeFoundation {
     pub compiler: crate::rustc::OvenRuntimeCompilerClosure,
     /// Exact rebuilt dependency closure admitted from this same held generation.
     pub closure: Option<crate::rustc::OvenSelectedRuntimeClosure>,
+    /// Canonical release-envelope root that owns every held member.
+    pub release_root: PathBuf,
     _generation_lock: OvenLoafGenerationLock,
 }
 
@@ -2253,6 +2255,10 @@ pub fn acquire_committed_release_runtime_foundation(
             member.compiler_closure_identity.clone(),
         ),
         closure,
+        release_root: fs::canonicalize(loaf_root).map_err(|source| OvenLoafError::Io {
+            path: loaf_root.to_path_buf(),
+            source,
+        })?,
         _generation_lock: generation_lock,
     }))
 }

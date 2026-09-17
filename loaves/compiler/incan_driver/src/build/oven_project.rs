@@ -91,6 +91,16 @@ use oven_rustc::rustc::{
 use oven_store::store::OvenStore;
 use oven_store::{OvenGeneratedProjectRequest, receipt_generated_project, write_receipt};
 
+/// Compare one already held release authority with the actually selected ToolchainLoaf root.
+///
+/// Both paths must identify the same canonical envelope. Compiler identity alone is insufficient because two
+/// releases can use the same rustc while carrying different compiled Loafs or policy closures.
+fn held_release_matches_selected_root(held_root: &Path, selected_root: &Path) -> CliResult<bool> {
+    let selected = fs::canonicalize(selected_root)
+        .map_err(|error| CliError::failure(format!("selected release envelope root is unreadable: {error}")))?;
+    Ok(held_root == selected)
+}
+
 /// Analyze, generate, receipt, and select the direct-Rustc plan for one normal Oven executable command.
 #[allow(clippy::too_many_arguments)]
 pub fn prepare_oven_project(
@@ -696,7 +706,9 @@ pub fn prepare_oven_project(
                         .map(|workspace| workspace.manifest_dir().to_path_buf()),
                 });
             };
-            let held = if let Some(held) = active_runtime_foundation.take() {
+            let held = if let Some(held) = active_runtime_foundation.take()
+                && held_release_matches_selected_root(&held.release_root, &root)?
+            {
                 held
             } else {
                 acquire_committed_release_runtime_foundation(&root, "rust-policy-foundation")
@@ -1135,6 +1147,17 @@ mod tests {
     use oven_interop::OVEN_INTEROP_EXECUTION_RECEIPT_INPUT;
     use oven_store::store::OvenStore;
     use oven_store::{OvenGeneratedProjectRequest, receipt_generated_project};
+
+    #[test]
+    fn retained_runtime_authority_matches_only_the_selected_release_root() -> Result<(), Box<dyn std::error::Error>> {
+        let installed = tempfile::tempdir()?;
+        let selected = tempfile::tempdir()?;
+        let installed_root = installed.path().canonicalize()?;
+
+        assert!(held_release_matches_selected_root(&installed_root, installed.path())?);
+        assert!(!held_release_matches_selected_root(&installed_root, selected.path())?);
+        Ok(())
+    }
 
     #[test]
     fn loaf_enables_the_complete_stdlib_runtime_envelope() {

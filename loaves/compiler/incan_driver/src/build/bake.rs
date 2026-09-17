@@ -77,19 +77,6 @@ pub fn bake_oven_project(
     authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
 ) -> CliResult<oven_rustc::rustc::OvenDirectRustcBake> {
     let mut caller_owned_libraries = prepared.caller_owned_libraries.clone();
-    let mut runtime_closure_search_paths = BTreeSet::new();
-    if let Some(held) = prepared.runtime_foundation.as_ref() {
-        let closure = held.closure.as_ref().ok_or_else(|| {
-            CliError::failure("selected runtime foundation lost its admitted dependency closure".to_string())
-        })?;
-        let libraries = closure.root_libraries().map_err(oven_rustc_error)?;
-        runtime_closure_search_paths.extend(
-            libraries
-                .iter()
-                .filter_map(|library| library.output.parent().map(Path::to_path_buf)),
-        );
-        caller_owned_libraries.extend(libraries);
-    }
     let mut re_materialized_package_library_names = BTreeSet::new();
     let mut registry_authority = registry_leaf_authority_for_plan_selection(&prepared.plan_selection)?;
     let mut extra_dependency_search_paths = Vec::new();
@@ -140,26 +127,21 @@ pub fn bake_oven_project(
         .plan_selection
         .source_artifact_plan("generated-root")
         .map_err(oven_rustc_error)?;
-    if let Some(closure) = prepared
-        .runtime_foundation
-        .as_ref()
-        .and_then(|held| held.closure.as_ref())
-    {
-        let aliases = closure.root_aliases().collect::<BTreeSet<_>>();
-        artifact_plan
-            .externs
-            .retain(|(alias, _)| !aliases.contains(alias.as_str()));
-    }
     if !re_materialized_package_library_names.is_empty() {
         replace_selected_package_library_externs(&mut artifact_plan, &re_materialized_package_library_names);
     }
     artifact_plan.compile_environment =
         direct_rustc_compile_environment(prepared.generator.output_dir(), &prepared.generator.crate_root_path())
             .map_err(|error| CliError::failure(error.to_string()))?;
+    if let Some(held) = prepared.runtime_foundation.as_ref() {
+        let closure = held.closure.as_ref().ok_or_else(|| {
+            CliError::failure("selected runtime foundation lost its admitted dependency closure".to_string())
+        })?;
+        closure
+            .compose_artifact_plan(&mut artifact_plan)
+            .map_err(oven_rustc_error)?;
+    }
     attach_caller_owned_rustc_libraries(&mut artifact_plan, &caller_owned_libraries).map_err(oven_rustc_error)?;
-    artifact_plan
-        .dependency_search_paths
-        .sort_by_key(|path| !runtime_closure_search_paths.contains(path));
     // Loading a re-materialized caller-owned library's own metadata (for example a query-engine provider linked
     // above) can require Rustc to locate that library's own further dependencies purely through
     // `-L dependency=...` search, the same way `rematerialize_caller_owned_provider_graph` already extends that

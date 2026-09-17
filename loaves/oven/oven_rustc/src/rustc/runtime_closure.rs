@@ -20,7 +20,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     OvenCallerOwnedRustcLibrary, OvenRuntimeFoundationBuild, OvenRuntimeFoundationUnitExecution,
-    OvenRuntimeRebuildDependencyKind, OvenRustcError, OvenSelectedRustFacetDomain, ValidatedOvenRuntimeFoundation,
+    OvenRuntimeRebuildDependencyKind, OvenRustcArtifactPlan, OvenRustcError, OvenSelectedRustFacetDomain,
+    ValidatedOvenRuntimeFoundation, attach_caller_owned_rustc_libraries,
 };
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactManifest, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore,
@@ -244,6 +245,25 @@ impl OvenSelectedRuntimeClosure {
     /// Iterate the exact public aliases authored by the selected Incan graph.
     pub fn root_aliases(&self) -> impl Iterator<Item = &str> {
         self.payload.roots.iter().map(|root| root.alias.as_str())
+    }
+
+    /// Compose this admitted closure into a final direct-rustc plan.
+    ///
+    /// Only Incan-authored root aliases replace an existing base extern. Every retained non-root unit contributes
+    /// search-path and reuse evidence without becoming a public alias, and closure directories precede older base
+    /// search paths so rustc cannot resolve a stale same-named transitive artifact first.
+    pub fn compose_artifact_plan(&self, plan: &mut OvenRustcArtifactPlan) -> Result<(), OvenRustcError> {
+        let aliases = self.root_aliases().collect::<std::collections::BTreeSet<_>>();
+        plan.externs.retain(|(alias, _)| !aliases.contains(alias.as_str()));
+        let libraries = self.root_libraries()?;
+        let search_paths = libraries
+            .iter()
+            .filter_map(|library| library.output.parent().map(PathBuf::from))
+            .collect::<std::collections::BTreeSet<_>>();
+        attach_caller_owned_rustc_libraries(plan, &libraries)?;
+        plan.dependency_search_paths
+            .sort_by_key(|path| !search_paths.contains(path));
+        Ok(())
     }
 }
 
@@ -613,6 +633,22 @@ mod tests {
             .find(|library| library.expose_extern)
             .ok_or("closure has no public root library")?;
         assert_eq!(public.crate_name, selected.payload().roots[0].alias);
+        let stale = output_root.path().join("libstale.rlib");
+        std::fs::write(&stale, b"stale")?;
+        let mut plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
+            dependency_search_paths: vec![output_root.path().to_path_buf()],
+            native_search_paths: Vec::new(),
+            externs: vec![(selected.payload().roots[0].alias.clone(), stale)],
+            compile_environment: BTreeMap::new(),
+            caller_owned_library_digests: BTreeMap::new(),
+        };
+        selected.compose_artifact_plan(&mut plan)?;
+        assert_eq!(plan.externs.len(), 1);
+        assert_eq!(plan.externs[0].0, selected.payload().roots[0].alias);
+        assert_ne!(plan.externs[0].1, output_root.path().join("libstale.rlib"));
+        assert_eq!(plan.caller_owned_library_digests.len(), selected.payload().units.len());
+        assert_ne!(plan.dependency_search_paths[0], output_root.path());
         for unit in &selected.payload().units {
             let artifact = selected
                 .artifact(&unit.compiled_identity)
