@@ -1316,6 +1316,7 @@ mod tests {
         let mut first_consumer_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
         let mut second_consumer_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
         let mut optimized_pair_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut preliminary_prewarm_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
         let mut uncached_total_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
         let mut optimized_total_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
 
@@ -1328,7 +1329,9 @@ mod tests {
             // Populate only the preliminary map before comparing the two final-projection shapes. The baseline still
             // performs two complete public API requests, matching the former library preparation path.
             let semantic_dependencies = semantic_toolchain_dependencies(&specs)?;
+            let prewarm_started = Instant::now();
             let _ = provider_dependency_semantic_digests(&provider_plan, &semantic_dependencies)?;
+            let prewarm_elapsed = prewarm_started.elapsed();
             let (uncached_first, uncached_elapsed, optimized) = if repeat % 2 == 0 {
                 let (uncached, elapsed) = measure_uncached_identity_pair(&provider_plan, &specs)?;
                 let optimized = measure_session_identity_pair(&provider_plan, &specs)?;
@@ -1351,12 +1354,14 @@ mod tests {
             first_consumer_samples.push(first_consumer_elapsed.as_micros());
             second_consumer_samples.push(second_consumer_elapsed.as_micros());
             optimized_pair_samples.push(optimized_elapsed.as_micros());
+            preliminary_prewarm_samples.push(prewarm_elapsed.as_micros());
             uncached_total_samples.push((admission_elapsed + uncached_elapsed).as_micros());
             optimized_total_samples.push((admission_elapsed + optimized_elapsed).as_micros());
             eprintln!(
-                "provider-semantic-reuse repeat={} admission_us={} warm_uncached_pair_us={} session_identity_us={} first_consumer_validation_us={} second_consumer_validation_us={} warm_optimized_pair_us={} uncached_total_us={} optimized_total_us={}",
+                "provider-semantic-reuse repeat={} admission_us={} preliminary_prewarm_us={} warm_uncached_pair_us={} session_identity_us={} first_consumer_validation_us={} second_consumer_validation_us={} warm_optimized_pair_us={} admission_plus_warm_uncached_us={} admission_plus_warm_optimized_us={}",
                 repeat + 1,
                 admission_elapsed.as_micros(),
+                prewarm_elapsed.as_micros(),
                 uncached_elapsed.as_micros(),
                 session_elapsed.as_micros(),
                 first_consumer_elapsed.as_micros(),
@@ -1368,16 +1373,17 @@ mod tests {
         }
 
         eprintln!(
-            "provider-semantic-reuse-summary repeats={} {} {} {} {} {} {} {} {}",
+            "provider-semantic-reuse-summary repeats={} {} {} {} {} {} {} {} {} {}",
             REPRESENTATIVE_MEASUREMENT_REPEATS,
             measurement_distribution("admission", admission_samples)?,
+            measurement_distribution("preliminary_prewarm", preliminary_prewarm_samples)?,
             measurement_distribution("warm_uncached_pair", uncached_pair_samples)?,
             measurement_distribution("session_identity", session_identity_samples)?,
             measurement_distribution("first_consumer_validation", first_consumer_samples)?,
             measurement_distribution("second_consumer_validation", second_consumer_samples)?,
             measurement_distribution("warm_optimized_pair", optimized_pair_samples)?,
-            measurement_distribution("uncached_total", uncached_total_samples)?,
-            measurement_distribution("optimized_total", optimized_total_samples)?,
+            measurement_distribution("admission_plus_warm_uncached", uncached_total_samples)?,
+            measurement_distribution("admission_plus_warm_optimized", optimized_total_samples)?,
         );
         Ok(())
     }
