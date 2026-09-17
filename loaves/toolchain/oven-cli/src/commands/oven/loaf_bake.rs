@@ -423,6 +423,8 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                     inspection_sources.to_vec(),
                     specification.manifest.to_string(),
                     prepared.preparation.loaf_identity.clone(),
+                    generated_project.clone(),
+                    inspection_packages.clone(),
                 ))
                 .is_some()
             {
@@ -482,7 +484,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             "release envelope did not retain its runtime-foundation capture".to_string(),
         ));
     }
-    let _finalized_release_graph = if let Some((receipt, capture, sources, manifest_source, loaf_identity)) =
+    let finalized_release_graph = if let Some((receipt, capture, sources, manifest_source, loaf_identity, _, _)) =
         release_foundation_capture.as_ref()
     {
         let manifest = ProjectManifest::from_str(manifest_source, Path::new("incan.toml"))
@@ -512,6 +514,57 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     } else {
         None
     };
+    if let (
+        Some(finalized),
+        Some((_, expected_capture, sources, _, capture_loaf_identity, generated_project, inspection_packages)),
+    ) = (finalized_release_graph.as_ref(), release_foundation_capture.as_ref())
+    {
+        let final_prepared = prepare_loaf_from_generated_project_with_selected_units(
+            &staged_root,
+            &OvenLoafBakerContext {
+                compiler: &incan_oven_facet::compiler_identity(),
+                provider_hooks: incan_oven_facet::provider_hooks(),
+                compiler_root: &options.compiler_root,
+                compiler_support_target: &compiler_support_target,
+                capacity_roots: [&options.output, scratch.path()],
+                transient_limit: max_physical_bytes,
+                cargo: &options.cargo,
+                rustc: &options.rustc,
+                inspection_packages,
+                inspection_sources: sources,
+                retain_complete_registry_leaves: true,
+                retain_checked_direct_dependencies: true,
+                limits,
+            },
+            finalized.final_receipt.clone(),
+            generated_project,
+        )
+        .map_err(oven_error)?;
+        if final_prepared.selected_units.as_ref() != Some(expected_capture) {
+            return Err(CliError::failure(
+                "final receipt changed the captured physical Rust selection".to_string(),
+            ));
+        }
+        let final_entry = pending
+            .iter_mut()
+            .find(|entry| entry.label == "stdlib" && entry.profile == "release")
+            .ok_or_else(|| CliError::failure("release stdlib result is absent"))?;
+        let capture_loaf = staged_root.join(format!(
+            "{}.loaf",
+            capture_loaf_identity
+                .strip_prefix("sha256:")
+                .unwrap_or(capture_loaf_identity)
+        ));
+        final_entry.result = final_prepared.preparation;
+        if capture_loaf.is_dir() {
+            fs::remove_dir_all(&capture_loaf).map_err(|error| {
+                CliError::failure(format!(
+                    "could not retire capture-only Loaf {}: {error}",
+                    capture_loaf.display()
+                ))
+            })?;
+        }
+    }
 
     let logical_bytes = pending
         .iter()
