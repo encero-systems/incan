@@ -195,11 +195,10 @@ pub const COMPILER_STDLIB_ROOT: &str = "loaves/stdlib";
 /// excluded and nothing tells you. This list is the other shape. It answers "what can reach a compiled component"
 /// and everything it omits is omitted for a stated reason, each of which is one of exactly two:
 ///
-/// - **Covered by meaning.** `loaves/compiler/incan_frontend`, `loaves/kernel/incan_syntax` and
-///   `loaves/kernel/incan_vocab` are run, not hashed: the digest lexes, parses, checks and lowers all 104
-///   standard-library sources with this compiler, so a change to any of them that alters what the compiler understands
-///   moves the digest, and one that does not, does not. That is a stronger answer than hashing their source, not a
-///   weaker one.
+/// - **Covered by meaning.** `loaves/compiler/incan_frontend` and `loaves/kernel/incan_syntax` are run, not hashed: the
+///   digest lexes, parses, checks and lowers all 104 standard-library sources with this compiler, so a change to any of
+///   them that alters what the compiler understands moves the digest, and one that does not, does not. That is a
+///   stronger answer than hashing their source, not a weaker one.
 /// - **Cannot reach a component.** The toolchain ring (`loaves/toolchain`), the driver's orchestration and inspection
 ///   (`loaves/compiler/incan_driver` outside its `backend`), the Oven ring, `loaves/kernel/incan_codegraph`,
 ///   `loaves/compiler/rust_inspect` and every `tests/` root are the compiler's own tooling. They decide *when*
@@ -211,6 +210,10 @@ pub const COMPILER_STDLIB_ROOT: &str = "loaves/stdlib";
 /// [`incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION`], which the inventory validates on every cache hit and which
 /// is folded into the store identity beside this digest. Publication changes bump that constant; they do not rely on a
 /// source hash noticing them.
+///
+/// The authored interop vocab companion and its `incan_vocab` dependency are published code too: changes to their
+/// registration/desugarer implementation need not alter the ordinary Incan HIR digest. Both therefore contribute Rust
+/// tokens and their owning manifests contribute publication configuration.
 ///
 /// Lowering and emission are the transitional entries. They change generated Rust without moving any HIR, so until
 /// direct-HIR lands their source is folded: `loaves/compiler/incan_ir` and `loaves/compiler/incan_emit` since the
@@ -227,6 +230,8 @@ pub const COMPILER_RUST_EFFECT_ROOTS: &[(&str, &str)] = &[
     ("lang", "loaves/kernel/incan_lang"),
     ("derive", "loaves/stdlib/derive/incan_derive"),
     ("web-macros", "loaves/stdlib/derive/incan_web_macros"),
+    ("interop-vocab", "loaves/stdlib/interop/vocab_companion"),
+    ("vocab-contract", "loaves/kernel/incan_vocab"),
     ("semantics-core", "loaves/kernel/incan_semantics_core"),
     ("semantics-stdlib", "loaves/compiler/incan_semantics_stdlib"),
     ("transitional-lowering", "loaves/compiler/incan_ir/src"),
