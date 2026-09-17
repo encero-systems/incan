@@ -357,6 +357,56 @@ The exact relationship between durable declarations, compilation-specific locati
 - **Require universal replay or complete verification for debugging.** This conflates independently valuable capabilities and excludes useful investigations where replay or verification is unavailable.
 - **Let each client own a separate session model.** This creates races, stale handles, and inconsistent evidence during human/agent handover.
 
+## Prior art
+
+This proposal combines lessons from interactive debuggers, runtime recordings, repeatable tests, and tools for AI applications. The comparisons below identify specific documented behavior and the design lesson drawn from it. They are not claims that another ecosystem lacks every capability described here, nor commitments to adopt a particular implementation.
+
+### Rust: make ordinary debugging worth the effort
+
+The [Rust debugging survey results](https://blog.rust-lang.org/2026/09/07/rust-debugging-survey-2026-results/) report setup friction, poor value representations, and stepping problems, including async code. They also document mixed-language debugging and the use of debugger visualizers. These are reports from survey respondents, not a universal assessment of every Rust debugger.
+
+**Lesson for this RFC:** readable values, trustworthy source mappings, and an easy path from a failing test to its executable are core acceptance concerns. A durable investigation model does not compensate for a debugger that cannot show a collection’s contents. Rust and mixed projects therefore belong in the acceptance corpus alongside Incan.
+
+### Python: enter the failure and inspect it directly
+
+Python’s [`pdb`](https://docs.python.org/3/library/pdb.html) supports source stepping, frame inspection, interactive evaluation, and post-mortem debugging. Its `breakpoint()` entry point illustrates a short path from authored code to inspection.
+
+**Lesson for this RFC:** preserve that immediacy when starting from a failure or source location. For native execution, Oven also binds the source and executable explicitly. Evaluation remains separately authorized because executing an expression is different from reading a retained value; an investigation must also survive the interactive session.
+
+### Java Flight Recorder: keep useful runtime history
+
+[Java Flight Recorder](https://docs.oracle.com/en/java/javase/25/troubleshoot/troubleshoot-performance-issues-using-jfr.html) provides recordings for investigating runtime behavior such as I/O, synchronization, and garbage collection. Its documentation explains that recording settings and event thresholds affect both overhead and what appears in the recording.
+
+**Lesson for this RFC:** runtime evidence should remain inspectable after the event, with its capture policy attached. An absent event in a thresholded or partial recording is not proof that the operation never occurred. This motivates explicit coverage, overhead, and loss reporting, rather than treating a recording as a complete execution history.
+
+### DAP and Mojo: reuse debugger infrastructure and expose capabilities
+
+The [Debug Adapter Protocol](https://microsoft.github.io/debug-adapter-protocol/overview) separates editor interfaces from concrete debugger implementations and exchanges capability information. [Mojo’s debugging tools](https://mojolang.org/docs/tools/debugging/) demonstrate a newer language using LLDB, a language plugin, and VS Code integration rather than inventing an entire debugger stack.
+
+**Lesson for this RFC:** existing debugger engines and editor adapters can supply native control and inspection. Oven retains project, artifact, and investigation authority; a DAP session does not define the lifetime of an investigation. Advertised capabilities need the profile acceptance obligations defined here. This comparison does not select an engine or settle the support matrix.
+
+### rr: distinguish replay from another attempt
+
+[rr](https://rr-project.org/) records executions and supports deterministic replay and reverse debugging within its supported environment. Its documentation also makes platform and execution constraints explicit.
+
+**Lesson for this RFC:** revisiting the same recorded execution is materially different from rerunning the same inputs. Preserve that distinction in the evidence model. Historical inspection remains useful without replay, and an execution-replay claim must identify the recording mechanism and its boundaries. Receipts or saved logs alone do not establish that guarantee.
+
+### Hypothesis: make the failing case easier to understand
+
+The Python testing library Hypothesis [shrinks generated failing examples](https://hypothesis.readthedocs.io/en/latest/glossary.html) and [checks failure reproduction](https://hypothesis.readthedocs.io/en/latest/explanation/test-case-count.html). Its [flaky-failure guidance](https://hypothesis.readthedocs.io/en/latest/tutorial/flaky.html) explains why dependence on uncontrolled state can undermine reproduction and shrinking. The library’s name is distinct from this RFC’s hypothesis records.
+
+**Lesson for this RFC:** reduction is an experiment with a failure predicate, controlled inputs, and recorded outcomes. A smaller fixture is valuable evidence, but does not by itself establish the root cause or global minimality. Reduction is a separately advertised capability that composes with the existing test runner.
+
+### BAML: put inspectable test cases beside AI behavior
+
+BAML provides [named tests with arguments and assertions](https://docs.boundaryml.com/ref/baml/test), with execution through its [editor playground and CLI](https://docs.boundaryml.com/guide/baml-basics/testing-functions). Its [prompt review](https://docs.boundaryml.com/guide/baml-basics/multi-modal) exposes how inputs become model requests. This is a concrete lesson from a language focused on AI application development, rather than a claim about all “AI-first” languages.
+
+**Lesson for this RFC:** make the experiment’s inputs, action, and result inspectable in the normal development flow. For an agent investigator, extend that experience to bounded operations and evidence another client can reopen. Repeating a model request is still a new execution unless a supported replay mechanism establishes otherwise; structured output alone is not causal evidence.
+
+### What this RFC brings together
+
+The proposed contribution is the shared contract connecting these activities: a question leads to experiments over identified executions, observations retain provenance, explanations remain distinguishable from facts, and verification links a claimed resolution to reviewable evidence. Existing tools demonstrate valuable parts of that experience. RFC 126 makes their composition an explicit Oven responsibility across Rust, Incan, and human and agent clients, without claiming that debugging, recording, or experimental testing are new ideas.
+
 ## Drawbacks
 
 Native debugger and runtime integrations create a platform/version support matrix that requires ongoing conformance testing. Capturing values and execution events costs CPU, memory, storage, and sometimes changes timing. Sensitive data can enter raw captures even when typed views redact it. Durable investigations also require retention policy and artifact availability. These costs must be measured and exposed rather than hidden behind a seamless interface.
