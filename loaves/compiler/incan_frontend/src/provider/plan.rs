@@ -1741,10 +1741,13 @@ type SdkManifestFileStamp = (PathBuf, u64, Option<SystemTime>);
 /// inventory *records* for a provider, which cannot notice the generated Rust behind that digest changing, and its
 /// own integrity test caught it. The key here is what the file system reports about the file that was read.
 struct SdkManifestMemoEntry {
+    /// Checked semantic manifest parsed from the retained transport.
     manifest: Arc<LibraryManifest>,
+    /// Stable digest of the recursively key-sorted validated transport.
     canonical_digest: String,
 }
 
+/// Return the process-local cache for stamped, checked SDK provider manifests.
 fn sdk_manifest_memo() -> &'static Mutex<HashMap<SdkManifestFileStamp, SdkManifestMemoEntry>> {
     static MEMO: OnceLock<Mutex<HashMap<SdkManifestFileStamp, SdkManifestMemoEntry>>> = OnceLock::new();
     MEMO.get_or_init(|| Mutex::new(HashMap::new()))
@@ -1794,6 +1797,7 @@ fn read_sdk_provider_manifest(
 
 /// Normalize validated JSON into a compact, recursively key-sorted representation for stable hashing.
 fn canonical_json_wire(wire: &str) -> Result<String, crate::library_manifest::LibraryManifestError> {
+    /// Recursively sort JSON object keys while preserving array order and scalar values.
     fn canonicalize(value: serde_json::Value) -> serde_json::Value {
         match value {
             serde_json::Value::Array(values) => {
