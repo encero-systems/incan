@@ -145,14 +145,24 @@ pub fn collect_modules_detailed_with_session(
     path: PathBuf,
     session: &CompilationSession,
 ) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
+    collect_modules_detailed_with_session_at_path(path, session, vec!["main".to_string()])
+}
+
+/// Collect one source graph while preserving the caller-proven logical identity of its entry module.
+///
+/// Directory-wide tooling may analyze every source file as a temporary graph root. Such a file still owns its
+/// source-root-relative module identity; treating each temporary root as `main` would mint different canonical
+/// identities depending on traversal order.
+pub fn collect_modules_detailed_with_session_at_path(
+    path: PathBuf,
+    session: &CompilationSession,
+    path_segments: Vec<String>,
+) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
+    let module_name = path_segments.join("_");
     collect_modules_detailed_from_seeds(
         path.clone(),
         session,
-        vec![(
-            path.to_string_lossy().to_string(),
-            "main".to_string(),
-            vec!["main".to_string()],
-        )],
+        vec![(path.to_string_lossy().to_string(), module_name, path_segments)],
     )
 }
 

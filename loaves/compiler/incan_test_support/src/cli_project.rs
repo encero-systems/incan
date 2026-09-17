@@ -417,7 +417,7 @@ pub fn parse_jsonl_stdout(output: &Output) -> Result<Vec<serde_json::Value>, Box
 pub fn assert_codegraph_record_contract(records: &[serde_json::Value]) {
     assert!(!records.is_empty(), "codegraph export should include a header record");
     assert_eq!(records[0]["record"], serde_json::json!("header"));
-    assert_eq!(records[0]["schema_version"], serde_json::json!(7));
+    assert_eq!(records[0]["schema_version"], serde_json::json!(8));
     assert_eq!(records[0]["languages"], serde_json::json!(["incan"]));
     assert!(
         records[0]["degraded"].is_boolean(),

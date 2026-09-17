@@ -997,6 +997,33 @@ impl SymbolTable {
         })
     }
 
+    /// Iterate source-owned nested declarations with their compiler-minted canonical identities.
+    ///
+    /// Unlike [`Self::local_declaration_identities`], this inventory includes declarations whose lexical scopes have
+    /// already closed. Requiring the symbol site to equal the identity's declaration site excludes aliases and
+    /// compiler-generated refinements, which carry another declaration's identity at a different binding site.
+    pub fn nested_declaration_identities(&self) -> impl Iterator<Item = (Span, &CanonicalSymbolId)> + '_ {
+        self.symbols.iter().enumerate().filter_map(|(id, symbol)| {
+            if symbol.scope == 0 || symbol.span == Span::default() || self.dependency_interface_symbol_ids.contains(&id)
+            {
+                return None;
+            }
+            let identity = self.identities.get(&id)?;
+            let identity_span = HirSourceSpan::new(symbol.span.start, symbol.span.end);
+            if identity.declaration_span != identity_span {
+                return None;
+            }
+            let owned_here = match (&identity.origin, self.package_identity.as_deref()) {
+                (SymbolOrigin::Module(path), None) => path == &self.module_path,
+                (SymbolOrigin::Package { library, module_path }, Some(package)) => {
+                    library == package && module_path == &self.module_path
+                }
+                _ => false,
+            };
+            owned_here.then_some((symbol.span, identity))
+        })
+    }
+
     /// Mint the canonical identity of one module-level declaration owned by the current module.
     ///
     /// The table is the single minting authority for RFC 120 identities, so sites that record declaration facts
