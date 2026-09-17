@@ -1384,6 +1384,14 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         !release_workflow.contains("dtolnay/rust-toolchain@stable"),
         "a release rebuild must not drift with Rust's floating stable channel"
     );
+    assert!(
+        release_workflow.contains("INCAN_SDK_PROVIDER_BUILDER_BIN: target/release/incan"),
+        "cross-target release packaging must pass the host-runnable builder through the environment name consumed by package_archive.sh"
+    );
+    assert!(
+        !release_workflow.contains("INCAN_STDLIB_ARTIFACT_BUILDER_BIN"),
+        "the release workflow must not retain the obsolete builder environment name that package_archive.sh ignores"
+    );
     let platform_gate = workflow
         .find("oven-platform-smoke:")
         .and_then(|start| {
