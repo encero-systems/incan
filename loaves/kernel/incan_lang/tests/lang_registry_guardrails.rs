@@ -444,7 +444,17 @@ fn repo_root() -> PathBuf {
     root.to_path_buf()
 }
 
+/// Collect the production Rust sources beneath one ring directory.
+///
+/// A `tests` directory or a `tests.rs` module is test code and stays outside the guard, as it was when the roots
+/// were the root crate's `src/frontend`, `src/backend` and `src/lsp`. A root that does not exist is a broken guard,
+/// not an empty one, so the walk refuses it instead of quietly scanning nothing.
 fn collect_rs_files(root: &Path) -> Vec<PathBuf> {
+    assert!(
+        root.is_dir(),
+        "guardrail scan root {} does not exist; the compiler layers moved and this test did not follow",
+        root.display()
+    );
     let mut files = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -453,9 +463,12 @@ fn collect_rs_files(root: &Path) -> Vec<PathBuf> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
+            let name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
             if path.is_dir() {
-                stack.push(path);
-            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                if name != "tests" {
+                    stack.push(path);
+                }
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") && name != "tests.rs" {
                 files.push(path);
             }
         }
@@ -489,12 +502,16 @@ fn find_string_literals(paths: &[PathBuf], literals: &[&str]) -> Vec<String> {
     hits
 }
 
+/// The compiler layers the guard covers: the typechecker, lowering and emission rings, the driver's transitional
+/// backend, and the language server — what `src/frontend`, `src/backend` and `src/lsp` were before the rings.
 fn compiler_layer_rs_files() -> Vec<PathBuf> {
     let root = repo_root();
     let targets = [
-        root.join("src/frontend"),
-        root.join("src/backend"),
-        root.join("src/lsp"),
+        root.join("loaves/compiler/incan_frontend/src"),
+        root.join("loaves/compiler/incan_ir/src"),
+        root.join("loaves/compiler/incan_emit/src"),
+        root.join("loaves/compiler/incan_driver/src/backend"),
+        root.join("loaves/toolchain/incan-lsp/src"),
     ];
     let mut files = Vec::new();
     for dir in &targets {

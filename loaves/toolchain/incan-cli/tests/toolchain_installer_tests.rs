@@ -1416,8 +1416,8 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         "focused Oven tests must not pay the cold-link cost of unused test debug information"
     );
     assert!(
-        !focused_target.contains("--features lsp"),
-        "focused Oven tests must not compile the unrelated LSP feature graph"
+        !focused_target.contains("--features"),
+        "focused Oven tests select no Cargo features; the toolchain ring has none to select"
     );
     assert!(
         makefile.contains(

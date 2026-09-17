@@ -1076,6 +1076,31 @@ impl ProviderPlan {
             .collect()
     }
 
+    /// Return the implementation facets this compilation links for `provider`.
+    ///
+    /// These are the facets its own module use selects, unless the provider is one a compiled project dependency
+    /// privately implements against (see [`Self::library_projected_sdk_roots`]): that library's artifact was built
+    /// on facets its `.incnlib` does not name, the consumer links the artifact, and the facet is one runtime crate
+    /// per component, so every facet of such a provider is linked. The lock, the build report, the codegraph and
+    /// the requirements collector all read this one decision.
+    pub fn linked_implementation_facets<'a>(&'a self, provider: &'a ProviderRecord) -> Vec<&'a ImplementationFacet> {
+        if self
+            .library_projected_sdk_roots()
+            .contains(&provider.identity.stable_key())
+        {
+            return provider.implementation_facets.iter().collect();
+        }
+        self.selected_implementation_facets(provider)
+    }
+
+    /// Return the private backend requirements of the facets this compilation links for `provider`.
+    pub fn linked_backend_requirements(&self, provider: &ProviderRecord) -> BTreeSet<BackendImplementationRequirement> {
+        self.linked_implementation_facets(provider)
+            .into_iter()
+            .flat_map(|facet| facet.backend_requirements.iter().cloned())
+            .collect()
+    }
+
     /// Reject any enabled provider whose artifact is unavailable before compilation starts.
     pub fn validate_compilation_ready(&self) -> Result<(), ProviderPlanError> {
         if let Some(provider) = self

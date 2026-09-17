@@ -22,8 +22,7 @@ fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::e
         )
         .env("INCAN_SOURCE_ROOT", &source_root)
         .env("INCAN_STDLIB", &stdlib_root)
-        .env("INCAN_STDLIB_DIR", &stdlib_root)
-        .env("INCAN_TOOLCHAIN_CRATES_DIR", source_root.join("crates"));
+        .env("INCAN_STDLIB_DIR", &stdlib_root);
     if stored_suite {
         // The stored compiler-suite runner supplies the direct-rustc closure below. Keep this producer step limited
         // to checked/generated library source so the test body never asks its normal-command child to run Cargo.

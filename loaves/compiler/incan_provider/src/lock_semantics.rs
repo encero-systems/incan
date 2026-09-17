@@ -118,12 +118,12 @@ pub fn semantic_lock_state(
             namespace_claims: provider.namespace_claims.clone(),
             used_modules: provider_plan.used_modules(provider),
             implementation_facets: provider_plan
-                .selected_implementation_facets(provider)
+                .linked_implementation_facets(provider)
                 .into_iter()
                 .map(|facet| facet.id.clone())
                 .collect(),
             backend_requirements: provider_plan
-                .selected_backend_requirements(provider)
+                .linked_backend_requirements(provider)
                 .iter()
                 .map(backend_requirement_name)
                 .collect(),

@@ -2071,7 +2071,7 @@ mod tests {
                 "aarch64-apple-darwin",
                 "rustc 1.96.0",
                 "debug",
-                vec!["lsp".to_string()],
+                Vec::new(),
             )
         };
 

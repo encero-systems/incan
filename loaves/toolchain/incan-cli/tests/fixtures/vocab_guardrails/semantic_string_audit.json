@@ -169,12 +169,6 @@
       "expected_fingerprint": "0x115079626d32282e"
     },
     {
-      "path": "loaves/compiler/incan_driver/src/lock/preheat.rs",
-      "category": "lock dependency preheat environment flag",
-      "expected_count": 1,
-      "expected_fingerprint": "0xbd292725401e28e3"
-    },
-    {
       "path": "loaves/compiler/incan_driver/src/lock/rust_inspect.rs",
       "category": "Oven Loaf environment flag for rust-inspect preparation",
       "expected_count": 1,

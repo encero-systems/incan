@@ -67,7 +67,7 @@ pub fn oven_native_provider_records(
             .map(|module| module.join("."))
             .collect::<Vec<_>>();
         let facets = provider_plan
-            .selected_implementation_facets(provider)
+            .linked_implementation_facets(provider)
             .into_iter()
             .map(|facet| facet.id.as_str())
             .collect::<Vec<_>>();

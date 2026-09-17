@@ -11,11 +11,12 @@ name = "incan_driver"
 path = "src/lib.rs"
 
 [features]
-# Mirrors the root crate's defaults, so `cargo test -p incan_driver` sees the stdlib semantics packs and the CLI-gated
-# build pipeline; the root selects features explicitly and never relies on these.
+# The defaults the toolchain ring selects, so `cargo test -p incan_driver` sees the stdlib semantics packs and the
+# argument derives the CLI's tests exercise; the binaries select features explicitly and never rely on these.
 default = ["cli", "rust_inspect", "std_testing", "std_async", "std_decorators"]
-# The build pipeline, the report types' argument derives and the compatibility corpus's checked collection; part of
-# the defaults because the root's are, so `cargo test -p incan_driver` runs what the root ran.
+# The `clap::ValueEnum` derives on the driver's report and test-runner enums, for the binary that parses arguments,
+# plus the build pipeline and the generator's managed-cache lease, which the root crate gated the same way and
+# which have not yet been cut loose from it (#1479). The compatibility corpus's checked collection needs none of it.
 cli = ["dep:clap"]
 rust_inspect = ["incan_frontend/rust_inspect", "incan_ir/rust_inspect", "incan_emit/rust_inspect", "incan_provider/rust_inspect", "rust_inspect/inspector"]
 std_testing = ["incan_frontend/std_testing", "incan_ir/std_testing", "incan_emit/std_testing", "incan_provider/std_testing"]
@@ -30,7 +31,6 @@ hex = "0.4.3"
 incan_codegraph = { workspace = true }
 incan_lang = { workspace = true }
 incan_emit = { workspace = true }
-incan_format = { workspace = true }
 incan_frontend = { workspace = true }
 incan_ir = { workspace = true }
 incan_oven_facet = { workspace = true }

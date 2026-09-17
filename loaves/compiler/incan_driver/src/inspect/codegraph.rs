@@ -668,12 +668,12 @@ fn codegraph_semantic_context(
             used_modules: provider_plan.used_modules(provider).into_iter().collect(),
             active_features: provider.identity.feature_projection.iter().cloned().collect(),
             implementation_facets: provider_plan
-                .selected_implementation_facets(provider)
+                .linked_implementation_facets(provider)
                 .into_iter()
                 .map(|facet| facet.id.clone())
                 .collect(),
             backend_requirements: provider_plan
-                .selected_backend_requirements(provider)
+                .linked_backend_requirements(provider)
                 .iter()
                 .map(codegraph_backend_requirement)
                 .collect(),

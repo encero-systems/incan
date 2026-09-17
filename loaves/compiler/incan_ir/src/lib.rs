@@ -19,6 +19,8 @@
 //! 3. The IR can be validated independently
 //! 4. Potential future backends (LLVM, WASM, etc.) can target IR instead of AST
 
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
 mod borrow_inference;
 mod visit;
 

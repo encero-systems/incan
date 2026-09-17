@@ -3,6 +3,8 @@
 //! `oven.lock`. The provider *contract* — the plan the typechecker reads — is `incan_frontend::provider` and is
 //! re-exported here, so `incan_provider::ProviderPlan` is one name for one type.
 
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
 pub use incan_frontend::provider::*;
 
 pub mod compiled_sdk;

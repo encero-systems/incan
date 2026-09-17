@@ -2,11 +2,9 @@
 //! collection metrics the tests read.
 //!
 //! A lock is resolved once per command and consumed by build, run, test and the LSP alike; the submodules own the
-//! work (`resolution`, `workspace`, `registry_sources`, `rust_inspect`, `preheat`, `test_inputs`) and this module owns
+//! work (`resolution`, `workspace`, `registry_sources`, `rust_inspect`, `test_inputs`) and this module owns
 //! the shapes they exchange, so a request built by one command is the same request another resolves.
 
-#[cfg(test)]
-pub mod preheat;
 #[cfg(feature = "rust_inspect")]
 pub mod registry_sources;
 pub mod resolution;
@@ -48,18 +46,6 @@ use oven_model::workspace::WorkspaceGraph;
 use oven_rustc::loaf::OvenToolchainLoaf;
 #[cfg(feature = "rust_inspect")]
 use oven_rustc::rustc::OvenLoadedProjectInspectionAuthority;
-
-#[cfg(test)]
-#[allow(dead_code)]
-pub const LOCK_DEPENDENCY_PREHEAT_STALE_LOCK_SECS: u64 = 30 * 60;
-
-#[cfg(test)]
-#[allow(dead_code)]
-pub const LIBRARY_DEPENDENCY_PREHEAT_FINGERPRINT_FILE: &str = ".incan_library_dependency_preheat_fingerprint";
-
-#[cfg(test)]
-#[allow(dead_code)]
-pub const LIBRARY_DEPENDENCY_PREHEAT_LOCK_FILE: &str = ".incan_library_dependency_preheat.lock";
 
 #[cfg(any(test, feature = "test_support"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -139,45 +125,6 @@ pub fn record_project_lock_provider_plan_projection() {
     update_project_lock_collection_metrics(|metrics| {
         metrics.provider_plan_projections += 1;
     });
-}
-
-/// Inputs needed to preheat generated-library dependencies into the real generated-library Cargo target domain.
-#[cfg(test)]
-#[allow(dead_code)]
-pub struct GeneratedLibraryDependencyPreheatRequest<'a> {
-    /// Generated project directory used by both dependency preheat and the real Cargo build.
-    pub cargo_working_dir: &'a Path,
-    /// Dependency-only generated lock workspace directory.
-    pub lock_dir: &'a Path,
-    /// Cargo package name to use for the dependency-only generated lock workspace.
-    pub project_name: &'a str,
-    /// Rust edition to write into the dependency-only generated lock workspace.
-    pub rust_edition: Option<String>,
-    /// Resolved Rust dependencies that define the generated lock workspace.
-    pub resolved: &'a ResolvedDependencies,
-    /// Stdlib/provider requirements that define generated helper dependencies.
-    pub project_requirements: &'a ProjectRequirements,
-    /// Cargo feature selection used by the generated library build.
-    pub cargo_features: &'a CargoFeatureSelection,
-    /// Cargo policy flags used by the generated library build.
-    pub cargo_policy: &'a CargoPolicy,
-    /// Cargo target directory shared with the real generated library build.
-    pub target_dir: &'a Path,
-    /// Embedded Cargo.lock payload from `oven.lock`.
-    pub cargo_lock_payload: &'a str,
-    /// Exact canonical root authorizing Cargo-owned projection for the generated dependency workspace.
-    pub cargo_lock_projection_root: Option<&'a str>,
-}
-
-/// Dependency graph and Cargo policy shared by generated lock-workspace preheat consumers.
-#[cfg(test)]
-#[allow(dead_code)]
-pub struct DependencyPreheatContext<'a> {
-    project_name: &'a str,
-    rust_edition: Option<&'a str>,
-    resolved: &'a ResolvedDependencies,
-    project_requirements: &'a ProjectRequirements,
-    cargo_policy_flags: &'a [String],
 }
 
 /// Resolve the canonical dependency context and lock payload for a project build.
@@ -438,21 +385,6 @@ pub struct WorkspaceLockCollection {
 pub struct TestLockInputs {
     inline_imports: Vec<InlineRustImport>,
     project_requirement_modules: Vec<ParsedModule>,
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-pub struct LockDependencyPreheatGuard {
-    path: PathBuf,
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-impl Drop for LockDependencyPreheatGuard {
-    /// Remove the cooperative dependency-preheat lock file when the writer exits.
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
 }
 
 /// Cargo projection text held in an Oven-native lock.

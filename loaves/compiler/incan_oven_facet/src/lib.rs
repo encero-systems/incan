@@ -4,6 +4,8 @@
 //! The only crate in the compiler ring that depends on the Oven ring's bakers as well as on the provider loaders;
 //! the binaries hand its two values to every Oven request.
 
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};

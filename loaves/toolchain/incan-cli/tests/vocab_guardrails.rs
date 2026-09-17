@@ -83,12 +83,9 @@ fn no_new_stringly_vocab_checks_in_rust_sources() {
     let spellings = tier_a_spellings();
     let mut offenders: Vec<(PathBuf, usize, String)> = Vec::new();
 
-    let targets = [root.join("src"), root.join("crates"), root.join("loaves")];
-    for dir in targets {
-        if dir.exists() {
-            scan_dir(&root, &dir, &spellings, &mut offenders);
-        }
-    }
+    let loaves = root.join("loaves");
+    assert!(loaves.is_dir(), "every crate lives under {}", loaves.display());
+    scan_dir(&root, &loaves, &spellings, &mut offenders);
 
     if !offenders.is_empty() {
         let mut msg = String::new();

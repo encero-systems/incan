@@ -83,6 +83,8 @@ pub const fn parse_semantic_version(bytes: &[u8]) -> Option<SemanticVersion> {
             component += 1;
             digits = 0;
         } else if byte.is_ascii_digit() {
+            // `u64::from` is not callable in a `const fn` on the pinned toolchain; widening one digit byte cannot lose
+            // anything, so `as` is the honest spelling here.
             components[component] = components[component] * 10 + (byte - b'0') as u64;
             digits += 1;
         } else {

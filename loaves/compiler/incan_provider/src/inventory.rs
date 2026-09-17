@@ -245,11 +245,6 @@ fn extend_requirements_with_selected_sdk_providers(
             }
         }
     }
-    // A compiled project dependency links its SDK providers' runtime facets, but its `.incnlib` does not say which
-    // facets its own code reached. The consumer links that library's artifact, so it has to carry every facet of a
-    // provider it reaches only that way: the facet is one runtime crate per component, and a direct-Rustc consumer
-    // must receive it from the selected plan rather than re-materialize it from compiler source.
-    let library_projected_providers = provider_plan.library_projected_sdk_roots();
     for provider in provider_plan.active_records() {
         if matches!(provider.authority, crate::NamespaceAuthority::SdkReserved)
             && !sdk_providers.contains(&provider.identity.stable_key())
@@ -259,15 +254,10 @@ fn extend_requirements_with_selected_sdk_providers(
         let Some(artifact) = provider.artifact.as_ref() else {
             continue;
         };
-        let linked_backend_requirements = if library_projected_providers.contains(&provider.identity.stable_key()) {
-            provider
-                .implementation_facets
-                .iter()
-                .flat_map(|facet| facet.backend_requirements.iter().cloned())
-                .collect::<BTreeSet<_>>()
-        } else {
-            provider_plan.selected_backend_requirements(provider)
-        };
+        // The plan decides which facets a provider links for this compilation (its own module use, or every facet of
+        // a provider reached only through a compiled library); the lock, the build report and the codegraph read the
+        // same answer.
+        let linked_backend_requirements = provider_plan.linked_backend_requirements(provider);
         let mut provider_dependency = artifact.to_dependency_spec();
         if matches!(provider.authority, crate::NamespaceAuthority::SdkReserved) {
             // Checked private SDK edges freeze an exact feature projection and never inherit the provider crate's

@@ -29,7 +29,6 @@ pub mod lock;
 pub mod oven;
 pub mod provider_inspect;
 pub mod representation_inspect;
-mod shadow_support;
 pub mod stdlib_loader;
 pub mod tools;
 pub mod workspace;
@@ -44,8 +43,6 @@ pub use diagnostics::{
     DiagnosticOutputFormat, check_path, check_path_with_features, check_path_with_selections, explain_diagnostic,
 };
 pub use format::format_files;
-pub use incan_driver::modules::collect_modules;
-pub use incan_driver::project::read_source;
 pub(crate) use incan_provider::sdk_store::sdk_provider_store_identity_for_compiler_root;
 pub use init::init_project;
 pub use interop_plan::{InteropPlanInspectionFormat, inspect_interop_plan};
@@ -61,7 +58,6 @@ pub use oven::{
 };
 pub use provider_inspect::{ProviderInspectionFormat, inspect_features, inspect_providers};
 pub use representation_inspect::{RepresentationInspectionFormat, inspect_representation};
-pub use shadow_support::compare_source_observable;
 pub use tools::{
     ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat, tools_doctor, tools_metadata_api,
     tools_metadata_model,

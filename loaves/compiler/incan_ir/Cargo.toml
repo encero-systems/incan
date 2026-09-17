@@ -14,7 +14,7 @@ path = "src/lib.rs"
 # Mirrors the root crate's defaults without `cli`, so `cargo test -p incan_ir` sees the stdlib semantics packs; the
 # root selects features explicitly and never relies on these.
 default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
-rust_inspect = ["incan_frontend/rust_inspect", "rust_inspect/inspector"]
+rust_inspect = ["incan_frontend/rust_inspect"]
 std_testing = ["incan_frontend/std_testing"]
 std_async = ["incan_frontend/std_async"]
 std_decorators = ["incan_frontend/std_decorators"]
@@ -23,10 +23,7 @@ std_decorators = ["incan_frontend/std_decorators"]
 incan_lang = { workspace = true }
 incan_frontend = { workspace = true }
 incan_semantics_core = { workspace = true }
-incan_syntax = { workspace = true }
 incan_vocab = { workspace = true }
-oven_model = { workspace = true }
-rust_inspect = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

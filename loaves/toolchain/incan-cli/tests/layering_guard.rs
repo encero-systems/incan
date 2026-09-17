@@ -1,7 +1,7 @@
 //! Layering guardrails to prevent the compiler from depending on the runtime stdlib.
 //!
-//! The compiler — the root `incan` crate and every crate under `loaves/compiler` and `loaves/kernel` — may only use
-//! a standard library facet (`incan_std_core` and the others) as a **dev-dependency** (for parity tests). This test
+//! The compiler — every crate under `loaves/compiler`, `loaves/kernel` and `loaves/toolchain` — may only use a
+//! standard library facet (`incan_std_core` and the others) as a **dev-dependency** (for parity tests). This test
 //! scans those manifests and fails if a facet appears in `[dependencies]`. The facets themselves are pinned two ways:
 //! the registry's facet facts must agree with `sdk-components.toml` and the crates on disk, and the compiler ring must
 //! spell no runtime crate the catalog does not know — the retired `incan_stdlib` included.
@@ -75,9 +75,10 @@ fn compiler_does_not_depend_on_stdlib_in_main_dependencies() -> Result<(), Box<d
     Ok(())
 }
 
-/// Every source file of the compiler, kernel and toolchain rings plus the root crate, for spelling scans.
+/// Every source file of the compiler, kernel and toolchain rings, for spelling scans.
 ///
 /// A package's `tests/` directory is skipped: the roots there spell whatever they assert about, this guard included.
+/// A ring that is not on disk is a broken guard, not an empty one.
 fn compiler_ring_sources() -> Vec<PathBuf> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -97,8 +98,10 @@ fn compiler_ring_sources() -> Vec<PathBuf> {
     }
     let root = repo_root();
     let mut sources = Vec::new();
-    for ring in ["src", "loaves/compiler", "loaves/kernel", "loaves/toolchain"] {
-        walk(&root.join(ring), &mut sources);
+    for ring in ["loaves/compiler", "loaves/kernel", "loaves/toolchain"] {
+        let ring_root = root.join(ring);
+        assert!(ring_root.is_dir(), "ring directory {} is missing", ring_root.display());
+        walk(&ring_root, &mut sources);
     }
     sources.sort();
     sources
@@ -109,7 +112,8 @@ fn the_registry_facets_are_the_catalog_components_with_a_rust_crate() -> Result<
     let stdlib_root = repo_root().join("loaves/stdlib");
     let catalog = SdkSourceCatalog::read_from_path(&stdlib_root.join(SDK_SOURCE_CATALOG_FILE))?;
 
-    // ---- A component has a facet exactly when a `rust/` crate sits in its directory, named by LAYOUT's rule ----
+    // ---- A component has a facet exactly when a `rust/` crate sits in its directory, named `incan_std_<component>`
+    // ----
     for component in catalog.components.values() {
         let manifest = component.project_root.join("rust/Cargo.toml");
         match facets::for_component(&component.id) {
@@ -219,12 +223,14 @@ fn std_collections_namespace_links_the_data_facet_without_extra_crates() -> Resu
 }
 
 #[test]
-fn std_collections_source_has_no_rust_backed_dispatch_markers_when_present() {
+fn std_collections_source_has_no_rust_backed_dispatch_markers() -> Result<(), Box<dyn std::error::Error>> {
     let source_path = repo_root().join("loaves/stdlib/data/src/collections.incn");
-    let Ok(source) = std::fs::read_to_string(&source_path) else {
-        // The stdlib-source worker owns this file. This guard starts checking it once their slice is integrated.
-        return;
-    };
+    let source = std::fs::read_to_string(&source_path).map_err(|error| {
+        format!(
+            "{}: the data component's collections source is missing: {error}",
+            source_path.display()
+        )
+    })?;
 
     for forbidden in ["rust.module", "@rust.extern"] {
         assert!(
@@ -232,14 +238,18 @@ fn std_collections_source_has_no_rust_backed_dispatch_markers_when_present() {
             "`{forbidden}` is not allowed in pure-Incan std.collections"
         );
     }
+    Ok(())
 }
 
 #[test]
 fn std_encoding_source_stays_incan_authored_without_rust_externs() -> Result<(), Box<dyn std::error::Error>> {
     let source_root = repo_root().join("loaves/stdlib/codecs/src/encoding");
-    let Ok(entries) = std::fs::read_dir(source_root) else {
-        return Ok(());
-    };
+    let entries = std::fs::read_dir(&source_root).map_err(|error| {
+        format!(
+            "{}: the codecs component's encoding sources are missing: {error}",
+            source_root.display()
+        )
+    })?;
 
     for entry in entries {
         let entry = entry?;

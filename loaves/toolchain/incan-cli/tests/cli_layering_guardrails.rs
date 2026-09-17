@@ -37,14 +37,21 @@ struct Baseline {
     files: Vec<BaselineFile>,
 }
 
-/// Collect the distinct `incan_frontend::*` and `incan_driver::backend::*` modules one source file names.
+/// Collect the distinct compiler-layer modules one source file names.
 ///
 /// Matching is textual and deliberately coarse: it keys on `<layer>::<module>` rather than on resolved item paths,
 /// because the concern is which compiler areas the CLI reaches into at all, not how many times or through which item.
-/// A coarser key also keeps the baseline readable and its diffs meaningful. The two layers are spelled as the ring
-/// crates the CLI links: the frontend crate, and the backend the driver crate carries.
+/// A coarser key also keeps the baseline readable and its diffs meaningful. The layers are spelled as the ring
+/// crates the CLI links: the frontend crate, the lowering and emission crates, and the backend the driver crate
+/// carries — a reach-in spelled through `incan_ir::` or `incan_emit::` is the same reach-in that used to read
+/// `crate::backend::`.
 fn compiler_modules_named_by(source: &str) -> BTreeSet<String> {
-    const LAYERS: [&str; 2] = ["incan_frontend::", "incan_driver::backend::"];
+    const LAYERS: [&str; 4] = [
+        "incan_frontend::",
+        "incan_ir::",
+        "incan_emit::",
+        "incan_driver::backend::",
+    ];
     // The root crate re-exported these three at its top level as the toolchain's sanctioned entry points into the
     // frontend (`incan::compiler_stack`, `incan::library_manifest`, `incan::provider`); spelled through the ring
     // crate they are the same doors, not reach-ins past them.

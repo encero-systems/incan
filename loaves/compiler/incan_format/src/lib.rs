@@ -12,6 +12,8 @@
 //! The formatter operates on the parsed AST, so it **requires valid syntax**. Files with lexer or parser errors cannot
 //! be formatted.
 
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
 mod comments;
 mod config;
 mod formatter;

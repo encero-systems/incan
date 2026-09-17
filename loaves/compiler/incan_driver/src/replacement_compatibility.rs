@@ -2038,18 +2038,8 @@ fn release_baseline_manifest() -> Result<BaselineManifest, RegistryValidationErr
 fn collect_checked_registry_package(
     source: &Path,
 ) -> Result<incan_frontend::registry_metadata::CheckedRegistryMetadataPackage, RegistryValidationError> {
-    #[cfg(feature = "cli")]
-    {
-        crate::metadata_packages::collect_registry_metadata_package(source)
-            .map_err(|error| RegistryValidationError::from_messages(vec![error.to_string()]))
-    }
-    #[cfg(not(feature = "cli"))]
-    {
-        let _ = source;
-        Err(RegistryValidationError::from_messages(vec![
-            "checked public-capability collection requires the compiler CLI feature".to_string(),
-        ]))
-    }
+    crate::metadata_packages::collect_registry_metadata_package(source)
+        .map_err(|error| RegistryValidationError::from_messages(vec![error.to_string()]))
 }
 
 /// Locate the checkout whose code and test anchors the registry is allowed to inspect at runtime.
