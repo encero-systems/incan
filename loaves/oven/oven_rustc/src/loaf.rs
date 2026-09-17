@@ -2236,6 +2236,46 @@ pub fn acquire_committed_release_runtime_foundation(
     }))
 }
 
+/// Return exact typed runtime members from an already committed release generation.
+///
+/// This is an explicit-publisher reuse probe. It validates the envelope and both descriptors but acquires no
+/// execution paths; normal consumers use [`acquire_committed_release_runtime_foundation`] and retain its locks.
+pub fn committed_release_runtime_members(
+    loaf_root: &Path,
+) -> Result<Option<(OvenReleaseRuntimeFoundationMember, OvenReleaseRuntimeClosureMember)>, OvenLoafError> {
+    if !loaf_root.join("envelope.json").is_file() {
+        return Ok(None);
+    }
+    let manifest_path = loaf_root.join("envelope.json");
+    let bytes = fs::read(&manifest_path).map_err(|source| OvenLoafError::Io {
+        path: manifest_path.clone(),
+        source,
+    })?;
+    let manifest: OvenLoafEnvelopeManifest =
+        serde_json::from_slice(&bytes).map_err(|error| OvenLoafError::InvalidLoaf {
+            path: manifest_path.clone(),
+            message: format!("invalid committed envelope manifest: {error}"),
+        })?;
+    if manifest.schema_version != OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION || manifest.envelope != "release" {
+        return Ok(None);
+    }
+    let (Some(foundation), Some(closure)) = (manifest.runtime_foundation.as_ref(), manifest.runtime_closure.as_ref())
+    else {
+        return Ok(None);
+    };
+    validate_release_runtime_foundation_member(&manifest, foundation).map_err(|message| {
+        OvenLoafError::InvalidLoaf {
+            path: manifest_path.clone(),
+            message,
+        }
+    })?;
+    validate_release_runtime_closure_member(&manifest, closure).map_err(|message| OvenLoafError::InvalidLoaf {
+        path: manifest_path,
+        message,
+    })?;
+    Ok(Some((foundation.clone(), closure.clone())))
+}
+
 /// Construct the committed generation path named by one canonical envelope identity.
 fn generation_directory_path(generation_identity: &str) -> PathBuf {
     Path::new("generations").join(
