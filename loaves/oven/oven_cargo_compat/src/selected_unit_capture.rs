@@ -1189,7 +1189,7 @@ mod tests {
                 .build_script
                 .as_ref()
                 .map(|facts| facts.cfgs.as_slice()),
-            Some(["sealed"].as_slice())
+            Some(["sealed".to_string()].as_slice())
         );
         Ok(())
     }
