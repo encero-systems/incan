@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oven_model::manifest::ProjectManifest;
 use oven_rustc::rustc::{
     OvenCompilerSupportRootIntentAuthority, OvenRustcRegistrySourcePackage, OvenSelectedRustFacetCrateKind,
     OvenSelectedRustFacetDependency, OvenSelectedRustFacetDomain, OvenSelectedRustFacetEnvironmentValue,
@@ -239,6 +240,97 @@ pub fn project_and_bind_compiler_support_selected_graph(
     let graph = project_legacy_cargo_selected_graph(capture, sealed, Some(final_receipt))?;
     bind_compiler_support_root_intents(graph, authority, capture_receipt, final_receipt)
         .map_err(|error| projection_error("compiler-support selected graph", &error.to_string()))
+}
+
+/// Bind authored compiler-support declarations to the exact physical units reached from captured Cargo roots.
+///
+/// The manifest owns aliases and requested/default feature intent. The stable capture owns physical edges, and the
+/// rootless projected graph owns selected identities and source owners. This join deliberately does not recover
+/// declaration policy from effective Cargo features or target names.
+pub fn compiler_support_root_intent_authority(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    projected: &OvenSelectedRustFacetGraph,
+    manifest: &ProjectManifest,
+    intent_owner: &str,
+    capture_receipt: &OvenReceipt,
+) -> Result<OvenCompilerSupportRootIntentAuthority, OvenLegacyCargoError> {
+    capture_receipt
+        .verify_identity()
+        .map_err(|error| projection_error("compiler-support capture receipt", &error.to_string()))?;
+    if intent_owner.trim().is_empty() {
+        return Err(projection_error("compiler-support declaration owner", "is empty"));
+    }
+
+    let selected_by_capture_index = capture
+        .units
+        .iter()
+        .enumerate()
+        .filter(|(_, unit)| !is_build_script_unit(unit))
+        .zip(projected.units.iter())
+        .map(|((index, _), unit)| (index, unit))
+        .collect::<BTreeMap<_, _>>();
+    if selected_by_capture_index.len() != projected.units.len() {
+        return Err(projection_error(
+            "compiler-support selected units",
+            "do not correspond exhaustively to the physical capture",
+        ));
+    }
+
+    let mut roots = Vec::new();
+    for (alias, declaration) in manifest.rust_dependencies() {
+        if declaration.optional {
+            continue;
+        }
+        let mut matches = Vec::new();
+        for root_index in &capture.roots {
+            let root = capture
+                .units
+                .get(*root_index)
+                .ok_or_else(|| projection_error("compiler-support capture root", "names an absent physical unit"))?;
+            for dependency in &root.dependencies {
+                if dependency.extern_crate_name.as_deref() == Some(alias.as_str()) {
+                    matches.push(dependency.unit_index);
+                }
+            }
+        }
+        matches.sort_unstable();
+        matches.dedup();
+        if matches.len() != 1 {
+            return Err(projection_error(
+                "compiler-support declaration",
+                &format!("alias `{alias}` does not bind exactly one captured physical unit"),
+            ));
+        }
+        let selected = selected_by_capture_index.get(&matches[0]).ok_or_else(|| {
+            projection_error(
+                "compiler-support declaration",
+                &format!("alias `{alias}` binds a build-script or absent selected unit"),
+            )
+        })?;
+        let mut requested_features = declaration.features.clone();
+        requested_features.sort();
+        requested_features.dedup();
+        roots.push(oven_rustc::rustc::OvenCompilerSupportRootIntent {
+            alias: alias.clone(),
+            unit: selected.identity.clone(),
+            requested_features,
+            default_features: declaration.default_features,
+            intent_owner: intent_owner.to_string(),
+            source_owner: selected.source.owner.clone(),
+        });
+    }
+    roots.sort_by(|left, right| left.alias.cmp(&right.alias));
+    if roots.is_empty() {
+        return Err(projection_error(
+            "compiler-support declarations",
+            "contain no required Rust dependency roots",
+        ));
+    }
+    Ok(OvenCompilerSupportRootIntentAuthority {
+        schema_version: oven_rustc::rustc::OVEN_COMPILER_SUPPORT_ROOT_INTENT_SCHEMA_VERSION,
+        capture_receipt_identity: capture_receipt.identity.clone(),
+        roots,
+    })
 }
 
 /// Reject a capture whose compiler facts differ from the sealed selection snapshots.
@@ -1241,6 +1333,78 @@ mod tests {
             Vec::<String>::new()
         );
         assert_eq!(bound.graph().units[0].features, ["derive"]);
+        Ok(())
+    }
+
+    #[test]
+    fn compiler_support_authority_uses_authored_alias_and_feature_intent() -> Result<(), Box<dyn std::error::Error>> {
+        let mut capture = capture()?;
+        let dependency = capture.units[0].clone();
+        let mut root = dependency.clone();
+        root.package_id = "path+file:///fixture#compiler-root@1.0.0".to_string();
+        root.package = "compiler-root".to_string();
+        root.package_version = "1.0.0".to_string();
+        root.package_source = None;
+        root.target_name = "compiler_root".to_string();
+        root.root_module = "src/lib.rs".to_string();
+        root.registry_source = None;
+        root.dependencies = vec![super::super::OvenLegacyCargoSelectedDependency {
+            unit_index: 0,
+            extern_crate_name: Some("renamed_serde".to_string()),
+            build_script: None,
+        }];
+        capture.units.push(root);
+        capture.roots = vec![1];
+
+        let mut projected = project_legacy_cargo_selected_graph(
+            &capture,
+            &{
+                let mut sealed = sealed(&capture)?;
+                let source_owner = sealed.units[&0].source.owner.clone();
+                let members = members();
+                sealed.units.insert(
+                    1,
+                    OvenLegacyCargoSelectedGraphUnitBinding {
+                        source: OvenSelectedRustFacetSource {
+                            kind: OvenSelectedRustFacetSourceKind::Generated,
+                            identity: "generated:compiler-root@1.0.0".to_string(),
+                            owner: source_owner,
+                            root: "generated/compiler-root".to_string(),
+                            digest: selected_graph_source_digest(&members)?,
+                        },
+                        source_members: members,
+                        registry_source: None,
+                        include_dirs: Vec::new(),
+                        exclude_dirs: Vec::new(),
+                    },
+                );
+                sealed
+            },
+            None,
+        )?;
+        projected.exposed_roots.clear();
+        let receipt_directory = tempdir()?;
+        let receipt = receipt_generated_project(&fixture_receipt_request(
+            receipt_directory.path(),
+            "compiler-support-authority",
+        )?)?;
+        let manifest = ProjectManifest::from_str(
+            "[project]\nname = \"compiler-support-authority\"\nversion = \"1.0.0\"\n\n[rust-dependencies]\nrenamed_serde = { package = \"serde\", version = \"1\", features = [\"derive\", \"alloc\"], default-features = false }\n",
+            Path::new("loaf.toml"),
+        )?;
+        let authority = compiler_support_root_intent_authority(
+            &capture,
+            &projected,
+            &manifest,
+            projected.selection.target_spec.toolchain_owner(),
+            &receipt,
+        )?;
+
+        assert_eq!(authority.roots.len(), 1);
+        assert_eq!(authority.roots[0].alias, "renamed_serde");
+        assert_eq!(authority.roots[0].requested_features, ["alloc", "derive"]);
+        assert!(!authority.roots[0].default_features);
+        assert_eq!(authority.roots[0].unit, projected.units[0].identity);
         Ok(())
     }
 
