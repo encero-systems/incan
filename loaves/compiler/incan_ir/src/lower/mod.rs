@@ -1473,6 +1473,27 @@ impl AstLowering {
         s
     }
 
+    /// Register one trait declaration and the source ownership of its default bodies together.
+    ///
+    /// A trait default is lowered in an adopter while retaining its defining AST spans. The declaration and its
+    /// imported-source marker therefore form one lowering fact: replacing or aliasing one without the other can make
+    /// a local default consume foreign span-keyed semantic facts, or vice versa.
+    fn register_trait_decl(&mut self, name: String, decl: ast::TraitDecl, imported: bool) {
+        self.trait_decls.insert(name.clone(), decl);
+        self.imported_trait_decls.insert(name, imported);
+    }
+
+    /// Register one trait declaration only when no binding already owns its visible name.
+    ///
+    /// This keeps the declaration and provenance maps synchronized for import aliases while preserving a direct
+    /// source binding that has already claimed that spelling.
+    fn register_trait_decl_if_absent(&mut self, name: String, decl: ast::TraitDecl, imported: bool) {
+        if self.trait_decls.contains_key(&name) {
+            return;
+        }
+        self.register_trait_decl(name, decl, imported);
+    }
+
     /// Seed trait declarations from imported source modules so RFC 024 default methods can be expanded into adopter
     /// impls.
     pub fn seed_dependency_trait_decls(
@@ -1501,10 +1522,7 @@ impl AstLowering {
                     false,
                 )?;
                 for module_key in &module_keys {
-                    self.trait_decls
-                        .insert(format!("{module_key}.{}", tr.name), trait_decl.clone());
-                    self.imported_trait_decls
-                        .insert(format!("{module_key}.{}", tr.name), true);
+                    self.register_trait_decl(format!("{module_key}.{}", tr.name), trait_decl.clone(), true);
                 }
             }
         }
@@ -2119,8 +2137,7 @@ impl AstLowering {
                 self.trait_methods.insert(t.name.clone(), method_names);
                 let mut trait_decl = t.clone();
                 trait_decl.methods = trait_methods;
-                self.trait_decls.insert(t.name.clone(), trait_decl);
-                self.imported_trait_decls.insert(t.name.clone(), false);
+                self.register_trait_decl(t.name.clone(), trait_decl, false);
                 let aliases = Self::method_alias_rebindings(&t.method_aliases);
                 if !aliases.is_empty() {
                     self.type_method_rebindings.insert(t.name.clone(), aliases);
@@ -3651,6 +3668,7 @@ impl AstLowering {
     /// Add alias-qualified dependency trait declarations so default methods can expand for imported derive aliases.
     fn alias_imported_dependency_trait_decls(&mut self) {
         let existing = self.trait_decls.clone();
+        let existing_provenance = self.imported_trait_decls.clone();
         for (alias, path) in self.import_aliases.clone() {
             let mut canonical_path = incan_frontend::module::canonicalize_source_module_segments(&path);
             if canonical_path
@@ -3660,12 +3678,12 @@ impl AstLowering {
                 canonical_path[0] = stdlib::INCAN_STD_NAMESPACE.to_string();
             }
             let module_key = canonical_path.join(".");
-            if let Some(decl) = existing
-                .get(&module_key)
-                .filter(|decl| Self::trait_decl_has_lowerable_defaults(decl))
+            if let (Some(decl), Some(imported)) =
+                (existing.get(&module_key), existing_provenance.get(&module_key).copied())
+                && imported
+                && Self::trait_decl_has_lowerable_defaults(decl)
             {
-                self.trait_decls.entry(alias.clone()).or_insert_with(|| decl.clone());
-                self.imported_trait_decls.entry(alias.clone()).or_insert(true);
+                self.register_trait_decl_if_absent(alias.clone(), decl.clone(), imported);
             }
             let prefix = format!("{module_key}.");
             for (qualified, decl) in &existing {
@@ -3675,12 +3693,13 @@ impl AstLowering {
                 if !Self::trait_decl_has_lowerable_defaults(decl) {
                     continue;
                 }
-                self.trait_decls
-                    .entry(format!("{alias}.{trait_name}"))
-                    .or_insert_with(|| decl.clone());
-                self.imported_trait_decls
-                    .entry(format!("{alias}.{trait_name}"))
-                    .or_insert(true);
+                let Some(imported) = existing_provenance.get(qualified).copied() else {
+                    continue;
+                };
+                if !imported {
+                    continue;
+                }
+                self.register_trait_decl_if_absent(format!("{alias}.{trait_name}"), decl.clone(), imported);
             }
         }
     }
@@ -3757,8 +3776,7 @@ impl AstLowering {
                 self.trait_default_type_paths
                     .entry(local_name.clone())
                     .or_insert(default_type_paths);
-                self.trait_decls.entry(local_name.clone()).or_insert(trait_decl);
-                self.imported_trait_decls.entry(local_name).or_insert(true);
+                self.register_trait_decl_if_absent(local_name, trait_decl, true);
             }
         }
         Ok(())
@@ -3969,6 +3987,123 @@ mod tests {
         let _ = checker.check_program(&ast);
         let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
         lowering.lower_program(&ast)
+    }
+
+    /// An imported trait's short name may be shadowed by a local trait, but that local default body must still consume
+    /// its own checked expression facts when it is expanded into an adopter.
+    ///
+    /// The companion dependency alias proves that non-stdlib source traits carry the same imported provenance through
+    /// alias registration. Before #1592 this relationship was inferred from stdlib-only type-path metadata, which left
+    /// aliases unmarked and could leave a replaced same-name declaration marked imported.
+    #[test]
+    fn local_trait_shadow_and_nonstdlib_alias_keep_default_fact_provenance() -> Result<(), String> {
+        let dependency_source = r#"
+trait Same:
+  def value(self) -> Option[int]:
+    return None
+"#;
+        let local_source = r#"
+trait Same:
+  def value(self) -> Option[int]:
+    return None
+
+model Consumer with Same:
+  value: int
+"#;
+        let dependency_tokens =
+            lexer::lex(dependency_source).map_err(|errors| format!("dependency lexer failed: {errors:?}"))?;
+        let dependency =
+            parser::parse(&dependency_tokens).map_err(|errors| format!("dependency parser failed: {errors:?}"))?;
+        let local_tokens = lexer::lex(local_source).map_err(|errors| format!("local lexer failed: {errors:?}"))?;
+        let local = parser::parse(&local_tokens).map_err(|errors| format!("local parser failed: {errors:?}"))?;
+        let local_trait = local
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.node {
+                ast::Declaration::Trait(trait_decl) if trait_decl.name == "Same" => Some(trait_decl),
+                _ => None,
+            })
+            .ok_or("local Same trait missing")?;
+        let default_method = local_trait.methods.first().ok_or("local default method missing")?;
+        let default_body = default_method.node.body.as_ref().ok_or("local default body missing")?;
+        let ast::Statement::Return(Some(default_expr)) =
+            &default_body.first().ok_or("local default return missing")?.node
+        else {
+            return Err("expected local default return expression".to_string());
+        };
+
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&local)
+            .map_err(|errors| format!("local typecheck failed: {errors:?}"))?;
+        let mut type_info = checker.type_info().clone();
+        type_info.record_expr_type(
+            default_expr.span,
+            ResolvedType::Generic("Option".to_string(), vec![ResolvedType::Int]),
+        );
+
+        let mut lowering = AstLowering::new_with_type_info(type_info);
+        lowering
+            .seed_dependency_trait_decls(&[(
+                "vendor.protocol",
+                &dependency,
+                Some(vec!["vendor".to_string(), "protocol".to_string()]),
+            )])
+            .map_err(|errors| format!("dependency trait seeding failed: {errors:?}"))?;
+        lowering.import_aliases.insert(
+            "protocol".to_string(),
+            vec!["vendor".to_string(), "protocol".to_string()],
+        );
+        lowering.alias_imported_dependency_trait_decls();
+        if lowering.imported_trait_decls.get("protocol.Same") != Some(&true) {
+            return Err("non-stdlib trait alias lost imported default provenance".to_string());
+        }
+
+        let imported_same = lowering
+            .trait_decls
+            .get("vendor.protocol.Same")
+            .cloned()
+            .ok_or("seeded dependency trait missing")?;
+        lowering.register_trait_decl("Same".to_string(), imported_same, true);
+        if lowering.imported_trait_decls.get("Same") != Some(&true) {
+            return Err("same-name imported trait was not registered as imported".to_string());
+        }
+
+        let ir = lowering
+            .lower_program(&local)
+            .map_err(|errors| format!("local lowering failed: {errors:?}"))?;
+        if lowering.imported_trait_decls.get("Same") != Some(&false) {
+            return Err("local Same trait did not replace imported default provenance".to_string());
+        }
+        let default_impl = ir
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.kind {
+                IrDeclKind::Impl(implementation)
+                    if implementation.target_type == "Consumer"
+                        && implementation.trait_name.as_deref() == Some("Same") =>
+                {
+                    Some(implementation)
+                }
+                _ => None,
+            })
+            .ok_or("Consumer implementation of Same missing")?;
+        let lowered_default = default_impl
+            .methods
+            .iter()
+            .find(|method| method.name == "value")
+            .ok_or("expanded local default method missing")?;
+        let Some(IrStmtKind::Return(Some(value))) = lowered_default.body.first().map(|statement| &statement.kind)
+        else {
+            return Err("expanded local default return missing".to_string());
+        };
+        if value.ty != IrType::Option(Box::new(IrType::Int)) {
+            return Err(format!(
+                "local default lost its checked Option[int] fact: {:?}",
+                value.ty
+            ));
+        }
+        Ok(())
     }
 
     #[test]

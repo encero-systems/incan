@@ -1192,8 +1192,7 @@ impl AstLowering {
         // An imported trait default body keeps the defining module's AST spans while it is expanded into an adopter.
         // Expression facts are keyed only by span, so an adopter-local fact at the same offsets is not
         // authority for that body. Keep declaration identities and all non-expression semantic artifacts
-        // active; only this ambiguous span map is excluded while the default's defining substitutions are
-        // active.
+        // active; only this ambiguous span map is excluded while the imported default is active.
         if !self.active_imported_trait_defaults.last().copied().unwrap_or(false)
             && let Some(info) = &self.type_info
             && let Some(res_ty) = info.expr_type(expr.span)
