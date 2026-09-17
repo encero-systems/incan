@@ -11,7 +11,8 @@ stdlib/testing/
   loaf.toml        the component is one Loaf; a `[rust.source]` table names its Rust facet's root (RFC 119)
   src/             Incan source: the `.incn` modules for the roots above
   rust/            the `incan_std_testing` facet: the Rust half of this component, declared by `[rust.source]` in `loaf.toml`
-  tests/           reserved for the component's own tests; empty today
 ```
+
+Component-level tests are reserved under `loaves/stdlib/testing/tests/`; the directory is empty today.
 
 Rust and Incan live in the same directory because the component is the unit of versioning, ownership, testing, and runtime-dependency attribution. A project importing `std.testing` should pull this component's runtime crates and nothing else.
