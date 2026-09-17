@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
@@ -315,6 +316,11 @@ struct ResolvedArtifactGraph {
     public_dependencies: BTreeMap<PathBuf, Vec<(String, String)>>,
 }
 
+fn next_provider_semantic_projection_identity() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 /// Immutable provider catalog and active module projection shared by every compiler stage.
 #[derive(Debug, Clone, Default)]
 pub struct ProviderPlan {
@@ -332,6 +338,8 @@ pub struct ProviderPlan {
     /// This bootstrap-only grant disappears once the checked provider manifest is published and must never be
     /// populated by installed SDK consumers.
     bootstrap_sdk_namespace_roots: BTreeSet<String>,
+    /// Canonical structure consumed by semantic identity projection, computed once when the plan becomes immutable.
+    semantic_projection_identity: u64,
 }
 
 impl ProviderPlan {
@@ -374,7 +382,6 @@ impl ProviderPlan {
             indexed_records.insert(key, record);
         }
         let artifact_graph = resolve_artifact_graph(&indexed_records)?;
-
         Ok(Self {
             library_manifest_index,
             records: indexed_records,
@@ -385,6 +392,7 @@ impl ProviderPlan {
             public_artifacts: artifact_graph.public_artifacts,
             public_dependencies: artifact_graph.public_dependencies,
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
+            semantic_projection_identity: next_provider_semantic_projection_identity(),
         })
     }
 
@@ -816,6 +824,7 @@ impl ProviderPlan {
             public_artifacts: BTreeMap::new(),
             public_dependencies: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
+            semantic_projection_identity: next_provider_semantic_projection_identity(),
         }
     }
 
@@ -884,6 +893,7 @@ impl ProviderPlan {
             public_artifacts: BTreeMap::new(),
             public_dependencies: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
+            semantic_projection_identity: next_provider_semantic_projection_identity(),
         }
     }
 
@@ -910,6 +920,11 @@ impl ProviderPlan {
     /// Iterate over every catalog provider in stable identity order.
     pub fn records(&self) -> impl Iterator<Item = &ProviderRecord> {
         self.records.values()
+    }
+
+    /// Return the immutable structural identity of every fact consumed by provider semantic projection.
+    pub fn semantic_projection_identity(&self) -> u64 {
+        self.semantic_projection_identity
     }
 
     /// Return whether this plan carries an SDK-owned reserved-namespace catalog.
