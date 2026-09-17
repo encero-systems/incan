@@ -126,10 +126,11 @@ pub fn finalize_compiler_support_selected_graph(
     capture: &OvenLegacyCargoSelectedUnitCapture,
     sealed: &OvenLegacyCargoSelectedGraphProjection,
     manifest: &ProjectManifest,
+    active_optional_dependencies: &BTreeSet<String>,
     intent_owner: &str,
     base_receipt: &OvenReceipt,
 ) -> Result<OvenFinalizedCompilerSupportSelectedGraph, OvenLegacyCargoError> {
-    let (capture, sealed) = compiler_support_capture(capture, sealed, manifest)?;
+    let (capture, sealed) = compiler_support_capture(capture, sealed, manifest, active_optional_dependencies)?;
     if base_receipt
         .sources
         .build_unit_inputs
@@ -152,6 +153,7 @@ pub fn finalize_compiler_support_selected_graph(
         &sealed,
         Some(&capture_receipt),
         manifest,
+        active_optional_dependencies,
         intent_owner,
         &capture_receipt,
     )?;
@@ -178,6 +180,7 @@ fn compiler_support_capture(
     capture: &OvenLegacyCargoSelectedUnitCapture,
     sealed: &OvenLegacyCargoSelectedGraphProjection,
     manifest: &ProjectManifest,
+    active_optional_dependencies: &BTreeSet<String>,
 ) -> Result<
     (
         OvenLegacyCargoSelectedUnitCapture,
@@ -200,8 +203,17 @@ fn compiler_support_capture(
                 }
             }
         }
-        if declaration.optional && matches.is_empty() {
-            continue;
+        if declaration.optional {
+            let active = active_optional_dependencies.contains(alias);
+            if !active && matches.is_empty() {
+                continue;
+            }
+            if !active {
+                return Err(projection_error(
+                    "compiler-support declaration",
+                    &format!("optional alias `{alias}` was selected without authored activation"),
+                ));
+            }
         }
         if matches.len() != 1 {
             return Err(projection_error(
@@ -582,6 +594,7 @@ pub fn compiler_support_root_intent_authority(
     sealed: &OvenLegacyCargoSelectedGraphProjection,
     projection_receipt: Option<&OvenReceipt>,
     manifest: &ProjectManifest,
+    active_optional_dependencies: &BTreeSet<String>,
     intent_owner: &str,
     capture_receipt: &OvenReceipt,
 ) -> Result<OvenCompilerSupportRootIntentAuthority, OvenLegacyCargoError> {
@@ -637,8 +650,17 @@ pub fn compiler_support_root_intent_authority(
         // An optional declaration that has no physical root edge was not activated by the authored project feature
         // selection. A present edge is explicit activation evidence and must become a root; effective crate features
         // are never used to make this choice.
-        if declaration.optional && matches.is_empty() {
-            continue;
+        if declaration.optional {
+            let active = active_optional_dependencies.contains(alias);
+            if !active && matches.is_empty() {
+                continue;
+            }
+            if !active {
+                return Err(projection_error(
+                    "compiler-support declaration",
+                    &format!("optional alias `{alias}` was selected without authored activation"),
+                ));
+            }
         }
         if matches.len() != 1 {
             return Err(projection_error(
@@ -1755,6 +1777,7 @@ mod tests {
             &sealed,
             None,
             &manifest,
+            &BTreeSet::new(),
             projected.selection.target_spec.toolchain_owner(),
             &receipt,
         )?;
@@ -1769,6 +1792,7 @@ mod tests {
             &capture,
             &sealed,
             &manifest,
+            &BTreeSet::new(),
             projected.selection.target_spec.toolchain_owner(),
             &receipt,
         )?;
@@ -1790,6 +1814,7 @@ mod tests {
                 &capture,
                 &sealed,
                 &manifest,
+                &BTreeSet::new(),
                 projected.selection.target_spec.toolchain_owner(),
                 &stale_base,
             )
@@ -1806,6 +1831,7 @@ mod tests {
                 &sealed,
                 None,
                 &wrong_package,
+                &BTreeSet::new(),
                 projected.selection.target_spec.toolchain_owner(),
                 &receipt,
             )
