@@ -63,6 +63,14 @@ make docs-build
 
 Use the release packager from the repository root after building the target `incan` and `incan-lsp` binaries and the host-runnable SDK provider builder:
 
+Ensure `jq` is available. Before a local package run, populate the Cargo registry cache while network access is available:
+
+```bash
+workspaces/release/toolchain/fetch_release_support_workspace_sources.sh
+```
+
+Then package the target:
+
 ```bash
 TARGET="aarch64-apple-darwin"
 INCAN_BIN="target/${TARGET}/release/incan" \
@@ -72,11 +80,11 @@ RUSTUP_TOOLCHAIN="1.98.0" \
 workspaces/release/toolchain/package_archive.sh "${TARGET}" --out-dir dist
 ```
 
-The release workflow prewarms the support workspace's registry sources before this offline packaging step. The packager derives and verifies the reduced support workspace lock, ships it as `crates/Cargo.lock`, and retains the SDK provider seed's shared lock. An installed compiler selects the sibling `crates/Cargo.lock` ahead of any enclosing checkout lock, so SDK component identity and rebuilding continue to use the dependency closure shipped with that toolchain.
+The release workflow prewarms the support workspace's registry sources before packaging. The packager resolves and verifies the reduced support workspace lock with Cargo's offline mode, ships it as `crates/Cargo.lock`, and retains the SDK provider seed's shared lock. Other compiler and SDK preparation subprocesses are not covered by that offline flag. An installed compiler selects the sibling `crates/Cargo.lock` ahead of any enclosing checkout lock, so SDK component identity and rebuilding continue to use the dependency closure shipped with that toolchain.
 
 `CARGO_BIN` is the highest-precedence Cargo selection when a caller supplies an exact executable. Otherwise the packager skips Cargo executables under a `target/` directory and selects the first remaining Cargo on `PATH`. When that executable has a sibling Rustup, `RUSTUP_TOOLCHAIN` selects an exact toolchain; without it, Rustup's active override or default applies. A Cargo installation without a sibling Rustup is used directly. The release workflow sets `RUSTUP_TOOLCHAIN=1.98.0`; local packaging follows the same rule only when the caller sets that variable.
 
-Production packaging publishes the release envelope in two phases. It first publishes the ordinary release Loaf family into the package-local `share/incan/oven/loafs` authority. The staged `incan` then bakes `workspaces/oven` against that package-local family and emits a structured report. The packager selects the exact release `core_engine` output for `TARGET` from that report and republishes the envelope with that store member and target bound into its generation identity. This establishes the archive's physical authority and retained engine member; it does not by itself claim that normal compiler execution has adopted the live policy adapter.
+Expect two publication phases. The command first publishes the ordinary release Loaf family under the staged package, then bakes the release policy project against that package-local family. It selects the exact `core_engine` output for `TARGET` from the structured bake report and republishes the envelope with that member. A failure in either phase stops archive creation.
 
 ## Measure SDK preparation in hosted CI
 
