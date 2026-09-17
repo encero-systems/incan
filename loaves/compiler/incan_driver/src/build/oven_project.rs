@@ -468,7 +468,7 @@ pub fn prepare_oven_project(
         &project_name,
         &project_version,
         rustc_target,
-        rustc_toolchain,
+        &rustc_toolchain,
         profile,
         cargo_features.cargo_features.clone(),
     )
