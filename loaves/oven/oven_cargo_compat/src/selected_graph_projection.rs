@@ -38,10 +38,13 @@ use oven_rustc::rustc::{
     OvenRuntimeFoundation,
     OvenRuntimeFoundationUnit,
     OvenRuntimeFoundationUnitExecution,
+    OvenRuntimeFoundationPackageSource,
+    OvenRuntimeFoundationSourceInventory,
+    selected_graph_sha256,
 };
 use oven_store::OvenReceipt;
 use oven_store::{receipt_with_build_unit_input, receipt_with_compiler_support_root_intent};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{
     OvenLegacyCargoBuildScriptToolProbe, OvenLegacyCargoError, OvenLegacyCargoInspectionSource,
@@ -189,6 +192,129 @@ pub fn runtime_foundation_from_compiled_loaf(
         selected_graph: graph.clone(),
         units,
     })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PolicyManifestInventory {
+    path: String,
+    bytes_hex: String,
+    sha256_hex: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PolicySourceInventory {
+    owner: String,
+    package_root: String,
+    manifest: PolicyManifestInventory,
+    members: Vec<String>,
+    build_unit_present: bool,
+    effective_features: Vec<String>,
+}
+
+/// Join selected policy inventories to every physical unit sharing the exact retained source.
+pub fn runtime_foundation_inventories_from_policy_response(
+    selected: &ValidatedOvenSelectedRustFacetGraph,
+    response: &serde_json::Value,
+) -> Result<Vec<OvenRuntimeFoundationSourceInventory>, OvenLegacyCargoError> {
+    if response.get("schema").and_then(serde_json::Value::as_str) != Some("incan.oven.rust-policy-exchange/5")
+        || response.get("operation").and_then(serde_json::Value::as_str) != Some("validate_selected_rust_graph")
+        || response.get("status").and_then(serde_json::Value::as_str) != Some("selected")
+        || response.get("graph_digest").and_then(serde_json::Value::as_str) != Some(selected.digest())
+    {
+        return Err(projection_error(
+            "Rust policy response",
+            "does not select the exact requested graph",
+        ));
+    }
+    let encoded = response
+        .get("inventories")
+        .cloned()
+        .ok_or_else(|| projection_error("Rust policy inventories", "are absent"))?;
+    let records: Vec<PolicySourceInventory> = serde_json::from_value(encoded)
+        .map_err(|error| projection_error("Rust policy inventories", &error.to_string()))?;
+    let mut catalogs = BTreeMap::new();
+    for record in records {
+        let bytes = hex::decode(&record.manifest.bytes_hex)
+            .map_err(|_| projection_error("Rust policy manifest", "contains invalid byte hex"))?;
+        let digest = selected_graph_sha256(&bytes);
+        if digest.strip_prefix("sha256:") != Some(record.manifest.sha256_hex.as_str()) {
+            return Err(projection_error(
+                "Rust policy manifest",
+                "bytes do not match its declared digest",
+            ));
+        }
+        if catalogs
+            .insert(
+                (record.owner, record.package_root),
+                (
+                    record.manifest.path,
+                    digest,
+                    record.members,
+                    record.build_unit_present,
+                    record.effective_features,
+                ),
+            )
+            .is_some()
+        {
+            return Err(projection_error(
+                "Rust policy inventory",
+                "duplicates one retained source",
+            ));
+        }
+    }
+    let mut used = BTreeSet::new();
+    let mut inventories = Vec::with_capacity(selected.graph().units.len());
+    for unit in &selected.graph().units {
+        let key = (unit.source.owner.clone(), unit.source.root.clone());
+        let (manifest_path, manifest_digest, member_paths, _, effective_features) = catalogs
+            .get(&key)
+            .ok_or_else(|| projection_error("Rust policy inventories", "omit one selected source"))?;
+        if effective_features != &unit.features {
+            return Err(projection_error(
+                "Rust policy inventory",
+                "features differ from selected physical evidence",
+            ));
+        }
+        let manifest = unit
+            .source_members
+            .iter()
+            .find(|member| member.path == *manifest_path && member.digest == *manifest_digest)
+            .ok_or_else(|| projection_error("Rust policy manifest", "does not match selected source evidence"))?;
+        let members = unit
+            .source_members
+            .iter()
+            .filter(|member| member.path != *manifest_path)
+            .cloned()
+            .collect::<Vec<_>>();
+        if members.iter().map(|member| &member.path).collect::<Vec<_>>() != member_paths.iter().collect::<Vec<_>>() {
+            return Err(projection_error(
+                "Rust policy inventory",
+                "does not exhaust selected source members",
+            ));
+        }
+        inventories.push(OvenRuntimeFoundationSourceInventory {
+            selected_identity: unit.identity.clone(),
+            package: OvenRuntimeFoundationPackageSource {
+                root: OvenSelectedRustFacetPath {
+                    owner: unit.source.owner.clone(),
+                    path: unit.source.root.clone(),
+                },
+                manifest: manifest.clone(),
+                members,
+            },
+            build_unit_present: catalogs[&key].3,
+        });
+        used.insert(key);
+    }
+    if used.len() != catalogs.len() {
+        return Err(projection_error(
+            "Rust policy inventories",
+            "contain an unselected source",
+        ));
+    }
+    Ok(inventories)
 }
 
 /// Complete the capture-to-final-receipt transition for one compiler-support selected graph.
@@ -1804,10 +1930,16 @@ mod tests {
     }
 
     fn members() -> Vec<OvenSelectedRustFacetSourceMember> {
-        vec![OvenSelectedRustFacetSourceMember {
-            path: "src/lib.rs".to_string(),
-            digest: digest(b"pub fn fixture() {}\n"),
-        }]
+        vec![
+            OvenSelectedRustFacetSourceMember {
+                path: "Cargo.toml".to_string(),
+                digest: digest(b"[package]\nname='serde'\nversion='1.0.0'\n"),
+            },
+            OvenSelectedRustFacetSourceMember {
+                path: "src/lib.rs".to_string(),
+                digest: digest(b"pub fn fixture() {}\n"),
+            },
+        ]
     }
 
     fn selection() -> OvenSelectedRustFacetSelection {
@@ -2324,6 +2456,33 @@ mod tests {
             finalized.graph.graph().exposed_roots["renamed_serde"].unit,
             finalized.graph.graph().units[0].identity
         );
+        let selected_unit = &finalized.graph.graph().units[0];
+        let manifest_bytes = b"[package]\nname='serde'\nversion='1.0.0'\n";
+        let response = serde_json::json!({
+            "schema": "incan.oven.rust-policy-exchange/5",
+            "operation": "validate_selected_rust_graph",
+            "status": "selected",
+            "graph_digest": finalized.graph.digest(),
+            "inventories": [{
+                "owner": selected_unit.source.owner,
+                "package_root": selected_unit.source.root,
+                "manifest": {
+                    "path": "Cargo.toml",
+                    "bytes_hex": hex::encode(manifest_bytes),
+                    "sha256_hex": digest(manifest_bytes).trim_start_matches("sha256:"),
+                },
+                "members": ["src/lib.rs"],
+                "build_unit_present": false,
+                "effective_features": selected_unit.features,
+            }],
+        });
+        let inventories = runtime_foundation_inventories_from_policy_response(&finalized.graph, &response)?;
+        assert_eq!(inventories.len(), 1);
+        assert_eq!(inventories[0].selected_identity, selected_unit.identity);
+        assert_eq!(inventories[0].package.manifest.path, "Cargo.toml");
+        let mut tampered = response;
+        tampered["inventories"][0]["manifest"]["bytes_hex"] = serde_json::json!("00");
+        assert!(runtime_foundation_inventories_from_policy_response(&finalized.graph, &tampered).is_err());
         let stale_base = receipt_with_build_unit_input(
             &receipt,
             OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT,
