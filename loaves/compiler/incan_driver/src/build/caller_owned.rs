@@ -18,12 +18,12 @@ use incan_frontend::library_manifest_index::{
     LibraryArtifactKind, LibraryArtifactMetadata, LibraryManifestIndexEntry, load_provider_dependency_artifact,
 };
 use incan_provider::ProviderPlan;
-use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
-use oven_model::oven_interop::locked_oven_interop_targets;
-use oven_rustc::interop::{
+use oven_interop::{
     default_interop_execution_receipt_path, interop_execution_build_unit_inputs, load_interop_execution_receipt,
     validate_interop_execution_receipt,
 };
+use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
+use oven_model::oven_interop::locked_oven_interop_targets;
 use oven_rustc::rustc::{OvenCallerOwnedRustcLibrary, OvenRustcArtifactManifest, OvenRustcArtifactPlan};
 use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project, write_receipt};
 
@@ -735,13 +735,13 @@ mod tests {
 
     use incan_frontend::library_manifest::{LibraryManifest, ProviderDependencyKind, ProviderDependencyMetadata};
     use incan_frontend::library_manifest_index::{LibraryArtifactKind, LibraryArtifactMetadata};
-    use oven_model::lock::{CargoFeatureSelection, IncanLock, LockedOvenState, SemanticLockState};
-    use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
-    use oven_model::oven_interop::locked_oven_interop_targets;
-    use oven_rustc::interop::{
+    use oven_interop::{
         OvenInteropCapabilitySelection, default_interop_execution_receipt_path, interop_execution_build_unit_inputs,
         receipt_interop_execution, write_interop_execution_receipt,
     };
+    use oven_model::lock::{CargoFeatureSelection, IncanLock, LockedOvenState, SemanticLockState};
+    use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
+    use oven_model::oven_interop::locked_oven_interop_targets;
     use oven_rustc::rustc::{OvenCallerOwnedRustcLibrary, OvenRustcArtifactPlan};
     use oven_store::{OvenGeneratedProjectRequest, receipt_generated_project};
 

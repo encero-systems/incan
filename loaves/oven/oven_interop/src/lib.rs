@@ -1,4 +1,5 @@
-//! Receipt-bound Oven interop execution inputs.
+//! Receipt-bound Oven interop execution inputs: native linkage, carriers and interop bundles, compiled through
+//! direct rustc and sealed into receipts.
 //!
 //! Portable `[interop.c]` lock data describes what a package requires. This module records the separately
 //! selected compiler and SDK facts that authorize a native bake. It intentionally contains no ambient discovery,
@@ -16,12 +17,15 @@ use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::loaf::LoafTemporaryDirectory;
-use crate::rustc::{OvenRustcArtifactManifest, OvenRustcSupportingArtifact, select_direct_rustc_plan_for_execution};
 use oven_model::oven_interop::{
     InteropArtifactKind, InteropArtifactOrigin, InteropShimLanguage, InteropTargetPlatform, LockedInteropInput,
     LockedInteropTarget, ToolchainRequirement, ios_target_kind, is_interop_native_library_name,
     locked_interop_target_identity,
+};
+pub use oven_model::oven_interop::{OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, OVEN_INTEROP_PLAN_SCHEMA_INPUT};
+use oven_rustc::loaf::LoafTemporaryDirectory;
+use oven_rustc::rustc::{
+    OvenRustcArtifactManifest, OvenRustcSupportingArtifact, select_direct_rustc_plan_for_execution,
 };
 use oven_store::process::{isolate_process_group, terminate_process_group};
 use oven_store::store::{OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore};
@@ -31,18 +35,11 @@ use oven_store::{OvenBuildIntent, OvenReceipt, digest_bytes, receipt_with_build_
 pub const OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION: u32 = 1;
 /// Compatibility version for the stored native-archive provenance bound to one direct-Rustc plan.
 pub const OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION: u32 = 3;
-/// Receipt input key which makes the immutable final-plan contract explicit.
-///
-/// A change to the materialized interop plan must select a new immutable plan rather than treating an older
-/// receipt-compatible entry as reusable. Normal commands reconstruct this same input from the selected receipt.
-pub const OVEN_INTEROP_PLAN_SCHEMA_INPUT: &str = "oven-interop-plan-schema";
 /// Current immutable final-plan materialization contract.
 ///
 /// Version 5 records native directories beneath the loader-safe immutable store layout. A plan baked before the
 /// current directory encoding can embed a split ELF `RUNPATH`, so it must not be reused.
 const OVEN_INTEROP_PLAN_SCHEMA: &str = "5";
-/// Receipt input key that binds a normal consumer to one selected native-execution contract.
-pub const OVEN_INTEROP_EXECUTION_RECEIPT_INPUT: &str = "oven-interop-execution-receipt";
 /// Store-owned directory containing static archives baked from declared interop shims or artifacts.
 pub const OVEN_INTEROP_NATIVE_DIRECTORY: &str = "interop-native";
 /// Store-owned directory containing locked bundled runtime files for direct execution or a target packager.
@@ -711,7 +708,7 @@ pub fn bake_interop_native_plan(request: OvenInteropNativeBakeRequest<'_>) -> Re
 
 /// Complete, receipt-bound interop-plan evidence selected for a warm reuse.
 struct ValidatedInteropPlan {
-    artifacts: Vec<crate::rustc::OvenRustcMaterializedArtifact>,
+    artifacts: Vec<oven_rustc::rustc::OvenRustcMaterializedArtifact>,
     provenance: OvenInteropExecutionProvenance,
 }
 
@@ -1777,19 +1774,19 @@ mod tests {
         receipt_interop_execution, stage_interop_adapter, validate_interop_execution_receipt,
         write_interop_execution_receipt,
     };
-    #[cfg(target_os = "macos")]
-    use crate::rustc::select_direct_rustc_plan_for_execution;
-    use crate::rustc::{
-        OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OvenRustcArtifactManifest, OvenRustcSupportingArtifact,
-    };
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    use crate::rustc::{
-        OvenStoredDirectRustcRunRequest, bake_stored_direct_rustc_run, resolve_active_rustc, rustc_host_target,
-        rustc_identity,
-    };
     use oven_model::oven_interop::{
         InteropArtifactKind, InteropArtifactOrigin, InteropTargetPlatform, LockedInteropArtifact, LockedInteropInput,
         LockedInteropShim, LockedInteropTarget, ToolchainRequirement,
+    };
+    #[cfg(target_os = "macos")]
+    use oven_rustc::rustc::select_direct_rustc_plan_for_execution;
+    use oven_rustc::rustc::{
+        OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OvenRustcArtifactManifest, OvenRustcSupportingArtifact,
+    };
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    use oven_rustc::rustc::{
+        OvenStoredDirectRustcRunRequest, bake_stored_direct_rustc_run, resolve_active_rustc, rustc_host_target,
+        rustc_identity,
     };
     use oven_store::store::{
         OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreLimits,

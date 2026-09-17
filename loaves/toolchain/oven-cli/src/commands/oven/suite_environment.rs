@@ -471,8 +471,8 @@ pub(crate) fn bake_compiler_suite_warning_check_artifacts(
 /// no Cargo-produced binary is retained or executed from the immutable Oven entry.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn bake_planned_compiler_suite_binaries(
-    targets: &[oven_rustc::legacy_cargo::OvenCompilerTestSuiteTarget],
-    closure: &oven_rustc::legacy_cargo::OvenCompilerTestSuiteArtifactClosure,
+    targets: &[oven_cargo_compat::OvenCompilerTestSuiteTarget],
+    closure: &oven_cargo_compat::OvenCompilerTestSuiteArtifactClosure,
     intent: &OvenBuildIntent,
     receipt: &OvenReceipt,
     artifact_root: &Path,
@@ -699,8 +699,8 @@ pub(crate) fn prepare_compiler_suite_fixture_cargo_proxy(
 /// the complete shared artifact closure serially before the bounded parallel execution phase starts.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare_compiler_suite_child<'a>(
-    target: &'a oven_rustc::legacy_cargo::OvenCompilerTestSuiteTarget,
-    closure: &'a oven_rustc::legacy_cargo::OvenCompilerTestSuiteArtifactClosure,
+    target: &'a oven_cargo_compat::OvenCompilerTestSuiteTarget,
+    closure: &'a oven_cargo_compat::OvenCompilerTestSuiteArtifactClosure,
     intent: &'a OvenBuildIntent,
     artifact_root: &'a Path,
     rustc: &Path,
@@ -794,7 +794,7 @@ pub(crate) fn compiler_suite_uses_indexed_foundations(schema_version: u32) -> bo
 
 /// Apply the package-qualified process capabilities owned by the compiler-suite registry.
 pub(crate) fn apply_compiler_suite_target_capabilities(
-    target: &oven_rustc::legacy_cargo::OvenCompilerTestSuiteTarget,
+    target: &oven_cargo_compat::OvenCompilerTestSuiteTarget,
     environment: &mut BTreeMap<String, String>,
     fixture_cargo: Option<&CompilerSuiteFixtureCargoProxy>,
 ) -> CliResult<()> {

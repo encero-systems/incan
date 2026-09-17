@@ -44,7 +44,8 @@ impl OvenCompilerSuiteTargetCapabilities {
             source_relative_path != "loaves/toolchain/incan-cli/tests/toolchain_installer_tests.rs";
         // The ring libraries' and the command lines' unit tests inspect Rust through Cargo metadata exactly as they
         // did when the root library carried them; the authority followed the tests to the packages that own them
-        // (the compiler-suite fixture tests went with the `oven` command family into `oven-cli`).
+        // (the compiler-suite fixture tests went with the `oven` command family into `oven-cli`, the baker's own
+        // tests with `legacy_cargo` into `oven_cargo_compat`).
         let cargo_fixture = matches!(
             (package_name, target_kind, source_relative_path),
             ("rust_inspect", "lib", "loaves/compiler/rust_inspect/src/lib.rs")
@@ -52,6 +53,7 @@ impl OvenCompilerSuiteTargetCapabilities {
                 | ("incan_emit", "lib", "loaves/compiler/incan_emit/src/lib.rs")
                 | ("incan_driver", "lib", "loaves/compiler/incan_driver/src/lib.rs")
                 | ("oven_rustc", "lib", "loaves/oven/oven_rustc/src/lib.rs")
+                | ("oven_cargo_compat", "lib", "loaves/oven/oven_cargo_compat/src/lib.rs")
                 | ("incan-cli", "lib", "loaves/toolchain/incan-cli/src/lib.rs")
                 | ("oven-cli", "lib", "loaves/toolchain/oven-cli/src/lib.rs")
                 | (
@@ -88,6 +90,10 @@ impl OvenCompilerSuiteTargetCapabilities {
                 "incan-cli",
                 "test",
                 "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/cli_interop_target_tests.rs"
             ) | (
                 "incan-cli",
                 "test",

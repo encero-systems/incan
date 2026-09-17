@@ -37,6 +37,8 @@ incan_syntax = { workspace = true }
 incan_vocab = { workspace = true }
 oven_model = { workspace = true }
 oven_rustc = { workspace = true }
+oven_cargo_compat = { workspace = true }
+oven_interop = { workspace = true }
 oven_store = { workspace = true }
 oven-cli = { workspace = true }
 rust_inspect = { workspace = true, optional = true }

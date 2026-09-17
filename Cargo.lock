@@ -1446,6 +1446,8 @@ dependencies = [
  "libc",
  "md-5",
  "oven-cli",
+ "oven_cargo_compat",
+ "oven_interop",
  "oven_model",
  "oven_rustc",
  "oven_store",
@@ -1523,6 +1525,8 @@ dependencies = [
  "incan_semantics_core",
  "incan_test_support",
  "incan_vocab",
+ "oven_cargo_compat",
+ "oven_interop",
  "oven_model",
  "oven_rustc",
  "oven_store",
@@ -1641,6 +1645,7 @@ dependencies = [
  "incan_frontend",
  "incan_lang",
  "incan_provider",
+ "oven_cargo_compat",
  "oven_model",
  "oven_rustc",
  "oven_store",
@@ -1657,6 +1662,7 @@ dependencies = [
  "incan_semantics_core",
  "incan_test_support",
  "incan_vocab",
+ "oven_cargo_compat",
  "oven_model",
  "oven_rustc",
  "oven_store",
@@ -2288,6 +2294,8 @@ dependencies = [
  "incan_lang",
  "incan_oven_facet",
  "incan_provider",
+ "oven_cargo_compat",
+ "oven_interop",
  "oven_model",
  "oven_rustc",
  "oven_store",
@@ -2297,6 +2305,41 @@ dependencies = [
  "tempfile",
  "toml",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "oven_cargo_compat"
+version = "0.6.0-dev.5"
+dependencies = [
+ "hex",
+ "oven_model",
+ "oven_rustc",
+ "oven_store",
+ "rustix 1.1.4",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "oven_interop"
+version = "0.6.0-dev.5"
+dependencies = [
+ "hex",
+ "oven_model",
+ "oven_rustc",
+ "oven_store",
+ "rustix 1.1.4",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]
@@ -2314,6 +2357,10 @@ dependencies = [
  "toml",
  "toml_edit",
 ]
+
+[[package]]
+name = "oven_registry"
+version = "0.6.0-dev.5"
 
 [[package]]
 name = "oven_rustc"

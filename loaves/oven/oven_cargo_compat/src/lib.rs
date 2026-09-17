@@ -7,6 +7,7 @@
 
 mod cargo_json;
 pub mod cargo_process;
+pub mod loaf_bake;
 
 // Cargo's own JSON shapes live beside this file rather than inside it. They are deserialization targets with no
 // publisher behavior, and every path stays where callers expect it through this re-export, so this is a move.
@@ -41,9 +42,24 @@ use oven_store::OvenProviderHooks;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use serde::{Deserialize, Serialize};
+// The wire contract the native route reads is declared in `oven_rustc::native_contract`; this crate produces
+// it and re-exports it so callers keep one spelling for the baker and its output.
+pub use oven_rustc::native_contract::{
+    OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION,
+    OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1,
+    OVEN_COMPILER_TEST_SUITE_TOOLCHAIN_DATA_SCHEMA_VERSION, OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION,
+    OVEN_PROVIDER_COMPILATION_KEY, OvenCompilerTestSuiteArtifactClosure, OvenCompilerTestSuiteFoundationPayload,
+    OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload, OvenCompilerTestSuiteShardPayload,
+    OvenCompilerTestSuiteShardReference, OvenCompilerTestSuiteTarget, OvenCompilerTestSuiteTargetKey,
+    OvenCompilerTestSuiteToolchainDataPayload, OvenCompilerTestSuiteToolchainDataReference,
+    OvenCompilerTestSuiteToolchainLoafGenerationReference, OvenCompilerWorkspaceLibrary,
+    OvenCompilerWorkspaceLibraryKey, OvenLegacyCargoInspectionPackage, OvenLegacyCargoInspectionSource,
+    OvenProjectExtensionPayload, OvenProjectRegistrySourceDependency,
+};
 
-use crate::rustc::{
+use serde::Serialize;
+
+use oven_rustc::rustc::{
     OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, OvenRustcArtifactExtern,
     OvenRustcArtifactManifest, OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
     OvenRustcSupportingArtifact, clear_inherited_cargo_environment, rerooted_artifact_staging_source,
@@ -61,32 +77,6 @@ use oven_store::{
 
 /// Wire format retained as an immutable supporting artifact alongside every `legacy_cargo`-prepared closure.
 pub const OVEN_LEGACY_CARGO_PROVENANCE_SCHEMA_VERSION: u32 = 2;
-/// Wire schema for a receipt-bound project extension Loaf.
-///
-/// Version 9 binds every direct registry dependency alias to its exact locked package, registry, and checksum. This
-/// preserves source authority when one project intentionally selects multiple compatible versions or renamed aliases of
-/// a package instead of asking a normal command to infer identity from a semver-compatible source catalog. Version 10
-/// records the generated root's registry packages so recomposition reproduces substitution regimes. Version 11 re-roots
-/// retained extension artifacts that collide with the base execution closure into `extension-deps`, so plans composed
-/// under the older digest-stamping rule must rebake. Version 12 salts extension crate identities (`-C
-/// metadata=incan-extension`) so shared interior units coexist with the sealed base's twins as distinct crates; plans
-/// built with unsalted identities must rebake.
-pub const OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION: u32 = 12;
-/// Wire schema for one independently admitted compiler-suite target shard.
-///
-/// Version 2 adds the direct-Rustc workspace library/proc-macro materialization DAG. Consumers of schema-10 suite
-/// indexes continue to require version 1, so an older executor can never silently omit those `--extern` edges.
-pub const OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION: u32 = 2;
-pub const OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1: u32 = 1;
-/// Wire schema for the immutable compiler-suite index.
-///
-/// Version 15 records a digest-verified source footprint for every independently admitted root. Consumers use that
-/// receipt-bound evidence to distribute roots without a mutable timing profile or a test-name scheduling table.
-pub const OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION: u32 = 15;
-/// Wire schema for one independently admitted compiler-suite dependency foundation.
-pub const OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION: u32 = 1;
-/// Wire schema for one independently admitted compiler-Loaf data partition.
-pub const OVEN_COMPILER_TEST_SUITE_TOOLCHAIN_DATA_SCHEMA_VERSION: u32 = 1;
 /// Reserve payload and manifest headroom when splitting a closure by the logical domain policy.
 ///
 /// The publisher still asks the store to make the authoritative admission decision. This small deterministic margin
@@ -150,19 +140,6 @@ pub enum OvenLegacyCargoDirectDependencyClosure {
     CheckedDeclared,
 }
 
-/// One registry package whose source may be inspected while compiling a checked Incan fixture.
-///
-/// The hidden baker resolves this selector against its locked Cargo graph. Compiled provider/runtime artifacts remain
-/// part of the direct-Rustc closure, but their source trees are not copied into a Loaf unless this explicit surface
-/// reaches them.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-pub struct OvenLegacyCargoInspectionPackage {
-    /// Cargo package name, after applying an Incan dependency's optional `package` rename.
-    pub package: String,
-    /// Cargo-compatible version requirement declared by the checked Incan manifest.
-    pub version_requirement: String,
-}
-
 /// A compiler-owned macro dependency required by an already checked provider compilation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OvenCompilerMacroDependency {
@@ -180,9 +157,6 @@ pub struct OvenCompilerMacroDependency {
     /// Checked runtime lock content that owns the macro's private dependency closure.
     pub runtime_lock_digest: String,
 }
-
-/// Source-evidence projection reserved for rebuilding checked providers rather than the consumer root.
-pub const OVEN_PROVIDER_COMPILATION_KEY: &str = "provider-compilation";
 
 /// Hash only macro dependency content; provider bodies, publication labels and physical roots do not enter reuse.
 pub fn provider_compilation_requirements_digest(
@@ -414,50 +388,6 @@ pub struct OvenLegacyCargoBaseLoaf<'a> {
     pub artifact_root: &'a Path,
 }
 
-/// Immutable payload retained by a receipt-bound project extension Loaf.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OvenProjectExtensionPayload {
-    /// Version of this extension wire contract.
-    pub schema_version: u32,
-    /// Content address of the exact compiler-shipped base Loaf that supplies the selected release cohort.
-    pub base_loaf_identity: String,
-    /// Compatibility identity that must still authorize the project receipt when the extension is consumed.
-    pub base_build_unit_identity: String,
-    /// Raw publisher-derived direct-Rustc plan retained as immutable provenance.
-    ///
-    /// This is never executed by a normal command. It records the project publisher's original closure before its
-    /// compiler-owned runtime, overlapping registry, and vocabulary inputs are canonicalized against the exact base.
-    pub publisher_plan: OvenRustcArtifactManifest,
-    /// Complete direct-Rustc execution contract after release-cohort canonicalization and base composition.
-    pub complete_plan: OvenRustcArtifactManifest,
-    /// Exact root registry dependency identities selected by the explicit baker, sorted by their Rust-facing aliases.
-    #[serde(default)]
-    pub registry_source_dependencies: Vec<OvenProjectRegistrySourceDependency>,
-    /// Exact dev-only root registry dependency identities selected by the same canonical publisher lock.
-    ///
-    /// These remain separate from normal roots so an inspection consumer can validate the complete test surface
-    /// without pretending a dev-only crate belongs to a normal generated executable.
-    #[serde(default)]
-    pub dev_registry_source_dependencies: Vec<OvenProjectRegistrySourceDependency>,
-    /// Sorted paths physically retained below this extension's immutable artifact root.
-    pub extension_paths: Vec<String>,
-}
-
-/// Portable source-authority identity for one direct registry dependency declared by a generated project.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OvenProjectRegistrySourceDependency {
-    /// Rust-facing dependency alias from the generated root manifest.
-    pub alias: String,
-    /// Cargo package name selected by the root resolve edge.
-    pub package: String,
-    /// Exact locked package version.
-    pub version: String,
-    /// Exact Cargo registry identity.
-    pub registry: String,
-    /// Registry archive checksum sealed into the project Loaf.
-    pub checksum: String,
-}
-
 /// Outcome from a successful explicit `legacy_cargo` publication.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OvenLegacyCargoPrepareResult {
@@ -482,313 +412,16 @@ pub struct OvenLegacyCargoPrepareResult {
     pub reclaimed_store_entries: Vec<String>,
 }
 
-/// One workspace test root that Oven must execute through a caller-owned Rustc or Rustdoc shard.
-///
-/// This is publisher planning evidence only: it names a receipt-authorized source root and its resolved direct
-/// dependency inputs, never a Cargo-linked executable retained for normal execution.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OvenCompilerTestSuiteTarget {
-    /// Cargo package declared by the regular manifest owning this source root.
-    ///
-    /// Target names are only package-local (`tests/smoke.rs` may exist in more than one workspace member), so this
-    /// identity is retained with the direct-rustc plan for future independent Oven shard admission.
-    #[serde(default)]
-    pub package_name: String,
-    /// Cargo target name retained for deterministic reporting.
-    pub target_name: String,
-    /// Cargo target kind such as `lib`, `bin`, `test`, or `proc-macro`.
-    pub target_kind: String,
-    /// Oven-owned execution mode derived from Cargo's publisher-only unit mode.
-    pub runner: String,
-    /// Safe compiler-root-relative Rust source path.
-    pub source_relative_path: String,
-    /// Receipt supplemental-digest key that authorizes this exact source root.
-    pub source_evidence_key: String,
-    /// Rust identifier passed through `--crate-name`.
-    pub crate_name: String,
-    /// Rust edition resolved for this target by Cargo's publisher-only unit graph.
-    pub edition: String,
-    /// Resolved target feature set passed as explicit `--cfg feature=...` arguments.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub features: Vec<String>,
-    /// Deterministic package compile environment after inherited Cargo state is cleared.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub compile_environment: BTreeMap<String, String>,
-    /// Workspace binary targets whose caller-owned direct-rustc outputs are injected as `CARGO_BIN_EXE_*` values
-    /// while this target is compiled and executed. These are execution inputs, never Cargo-linked executables.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub binary_dependencies: Vec<String>,
-    /// Workspace libraries and procedural macros that Oven must materialize as caller-owned direct-Rustc inputs
-    /// before compiling this root. Third-party externs remain below in immutable selected foundations.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub workspace_library_dependencies: Vec<OvenCompilerWorkspaceLibraryKey>,
-    /// Exact direct dependency artifacts selected from the immutable suite closure.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub externs: Vec<OvenRustcArtifactExtern>,
-}
-
-/// Stable identity of one receipt-bound compiler-suite root.
-///
-/// Target names alone are package-local Cargo labels. A future immutable suite index therefore uses this complete
-/// key when it refers to independently admitted Oven shards; the current direct planner also uses it to reject only
-/// truly duplicate roots.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct OvenCompilerTestSuiteTargetKey {
-    /// Package owning the target source.
-    pub package_name: String,
-    /// Cargo target name.
-    pub target_name: String,
-    /// Target kind such as `lib`, `bin`, `test`, or `proc-macro`.
-    pub target_kind: String,
-    /// Oven-owned runner selected for this target.
-    pub runner: String,
-    /// Receipt-authorized source path below the compiler root.
-    pub source_relative_path: String,
-}
-
-/// Stable identity of one workspace library or procedural macro in the direct-Rustc materialization DAG.
-///
-/// This deliberately distinguishes package-local crate names and resolved feature sets. The source path is receipt
-/// authorized, while the eventual caller-owned output remains outside the immutable store.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct OvenCompilerWorkspaceLibraryKey {
-    /// Workspace package owning the source.
-    pub package_name: String,
-    /// Rust crate name passed to direct-Rustc `--extern`.
-    pub crate_name: String,
-    /// Cargo target kind (`lib` or `proc-macro`).
-    pub target_kind: String,
-    /// Compiler-root-relative source path.
-    pub source_relative_path: String,
-    /// Resolved Cargo feature set for this exact compilation unit.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub features: Vec<String>,
-}
-
-/// One workspace library or procedural macro Oven must bake before a compiler-suite root.
-///
-/// The immutable suite index retains this compact source/extern plan; the resulting artifact is caller-owned under
-/// the suite output directory and is never copied back into the Oven store as a Cargo-shaped target tree.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OvenCompilerWorkspaceLibrary {
-    /// Stable direct-Rustc DAG identity for this source unit.
-    pub key: OvenCompilerWorkspaceLibraryKey,
-    /// Receipt supplemental digest that authorizes this source content.
-    pub source_evidence_key: String,
-    /// Rust edition selected by the publisher-only unit graph.
-    pub edition: String,
-    /// Compiler package environment reconstructed after Cargo state has been cleared.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub compile_environment: BTreeMap<String, String>,
-    /// Immutable third-party foundation externs required by this workspace source.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub externs: Vec<OvenRustcArtifactExtern>,
-    /// Other workspace libraries or procedural macros that must be materialized first.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub dependencies: Vec<OvenCompilerWorkspaceLibraryKey>,
-}
-
-impl OvenCompilerTestSuiteTarget {
-    /// Return the complete target identity used for duplicate detection and future shard-index membership.
-    #[must_use]
-    pub fn key(&self) -> OvenCompilerTestSuiteTargetKey {
-        OvenCompilerTestSuiteTargetKey {
-            package_name: self.package_name.clone(),
-            target_name: self.target_name.clone(),
-            target_kind: self.target_kind.clone(),
-            runner: self.runner.clone(),
-            source_relative_path: self.source_relative_path.clone(),
-        }
-    }
-}
-
-/// Immutable payload retained by one separately admitted compiler-suite shard.
-///
-/// A shard owns only the closure needed for one receipt-bound direct-rustc target plus any caller-owned workspace
-/// binaries that target declares through `CARGO_BIN_EXE_*`. The index remains small and refers to the store identity;
-/// the shard, not the index, owns the potentially large dependency materialization.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OvenCompilerTestSuiteShardPayload {
-    /// Shard wire-schema version.
-    pub schema_version: u32,
-    /// The one direct Rustc or Rustdoc root executed from this shard.
-    pub target: OvenCompilerTestSuiteTarget,
-    /// Direct-rustc binary plans required only by this target.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub binary_targets: Vec<OvenCompilerTestSuiteTarget>,
-    /// Schema-11 direct-Rustc workspace-library/proc-macro DAG required by the selected roots.
-    ///
-    /// Schema-10 entries leave this empty. A future publisher must include every key referenced by a root before a
-    /// consumer is permitted to materialize the suite.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub workspace_libraries: Vec<OvenCompilerWorkspaceLibrary>,
-    /// Immutable compiler dependency foundations required to materialize this root without a Cargo target.
-    ///
-    /// Schema 10 uses these exact identities to compose the target closure from multiple independently bounded
-    /// domains. Schema 9 retains this as empty so older payloads remain unambiguous and refuse the new execution
-    /// shape until the index itself advertises schema 10.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub foundation_references: Vec<OvenCompilerTestSuiteFoundationReference>,
-    /// Exact immutable direct-rustc dependency closure for this target and its binary plans.
-    pub artifact_closure: OvenCompilerTestSuiteArtifactClosure,
-}
-
-impl OvenCompilerTestSuiteShardPayload {
-    /// Return the stable root key an immutable suite index must use to identify this shard.
-    #[must_use]
-    pub fn target_key(&self) -> OvenCompilerTestSuiteTargetKey {
-        self.target.key()
-    }
-}
-
-/// One immutable compiler-suite shard selected by an index.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OvenCompilerTestSuiteShardReference {
-    /// Content-addressed Oven store identity of the separately admitted shard artifact.
-    pub identity: String,
-    /// Complete root identity expected inside that shard payload.
-    pub target: OvenCompilerTestSuiteTargetKey,
-    /// Digest-verified byte length of the exact receipt-authorized target source.
-    ///
-    /// A source path may occur in more than one resolved unit, so each immutable shard reference records its own
-    /// footprint even when another reference names the same path. Schema-15 consumers use this only to balance
-    /// independent replay work; it does not authorize a source or replace the receipt digest check before Rustc.
-    #[serde(default)]
-    pub source_bytes: u64,
-}
-
-/// One immutable compiler dependency foundation selected by a schema-10 root shard.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct OvenCompilerTestSuiteFoundationReference {
-    /// Content-addressed Oven store identity of the individually admitted foundation artifact.
-    pub identity: String,
-    /// Stable publisher label used to reject reordered or substituted foundation sets.
-    pub label: String,
-}
-
-/// Immutable payload for one policy-addressable part of a compiler test dependency closure.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OvenCompilerTestSuiteFoundationPayload {
-    /// Foundation wire-schema version.
-    pub schema_version: u32,
-    /// Stable deterministic partition label, such as `foundation-0000`.
-    pub label: String,
-    /// The exact fragment of the direct-rustc closure materialized by this foundation.
-    pub artifact_closure: OvenCompilerTestSuiteArtifactClosure,
-}
-
 /// Publisher-private foundation payload and its exact staged files, ready for separately bounded admission.
 struct OvenCompilerTestSuiteFoundationPlan {
     payload: OvenCompilerTestSuiteFoundationPayload,
     materialized_files: Vec<OvenArtifactMaterializedFile>,
 }
 
-/// One immutable compiler-Loaf partition selected by a schema-13 suite before any child starts.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct OvenCompilerTestSuiteToolchainDataReference {
-    /// Content-addressed Oven store identity of the independently bounded partition.
-    pub identity: String,
-    /// Stable publisher label used to reject reordered or substituted partitions.
-    pub label: String,
-}
-
-/// Immutable payload for one policy-addressable compiler-Loaf data partition.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OvenCompilerTestSuiteToolchainDataPayload {
-    /// Toolchain-data wire-schema version.
-    pub schema_version: u32,
-    /// Stable deterministic partition label.
-    pub label: String,
-}
-
 /// Publisher-private Loaf partition and its exact staged files, ready for separately bounded admission.
 #[cfg(test)]
 struct OvenCompilerTestSuiteToolchainDataPlan {
     materialized_files: Vec<OvenArtifactMaterializedFile>,
-}
-
-/// Shared immutable artifact closure used by all direct Rustc and Rustdoc compiler-suite targets.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OvenCompilerTestSuiteArtifactClosure {
-    /// Store-relative directories passed as `-L dependency` for each target shard.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub dependency_search_paths: Vec<String>,
-    /// Store-relative directories passed as `-L native` for each target shard.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub native_search_paths: Vec<String>,
-    /// Complete verified artifact set shared by the target plans.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub supporting_artifacts: Vec<OvenRustcSupportingArtifact>,
-}
-
-impl OvenCompilerTestSuiteArtifactClosure {
-    /// Reconstitute the exact manifest for one native target without duplicating the complete closure in the payload.
-    #[must_use]
-    pub fn manifest_for_target(
-        &self,
-        target: &OvenCompilerTestSuiteTarget,
-        intent: OvenBuildIntent,
-    ) -> OvenRustcArtifactManifest {
-        let selected = target
-            .externs
-            .iter()
-            .map(|artifact| artifact.relative_path.as_str())
-            .collect::<BTreeSet<_>>();
-        let supporting_artifacts = self
-            .supporting_artifacts
-            .iter()
-            .filter(|artifact| !selected.contains(artifact.relative_path.as_str()))
-            .cloned()
-            .collect();
-        OvenRustcArtifactManifest {
-            schema_version: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
-            intent,
-            dependency_search_paths: self.dependency_search_paths.clone(),
-            native_search_paths: self.native_search_paths.clone(),
-            externs: target.externs.clone(),
-            entrypoint_dependency_search_paths: Default::default(),
-            entrypoint_externs: BTreeMap::new(),
-            registry_leaves: Vec::new(),
-            registry_sources: Vec::new(),
-            compile_environment: target.compile_environment.clone(),
-            vocab_auxiliary_targets: Vec::new(),
-            supporting_artifacts,
-        }
-    }
-
-    /// Reconstitute the immutable third-party inputs for one direct-Rustc workspace-library step.
-    #[must_use]
-    pub fn manifest_for_workspace_library(
-        &self,
-        library: &OvenCompilerWorkspaceLibrary,
-        intent: OvenBuildIntent,
-    ) -> OvenRustcArtifactManifest {
-        let selected = library
-            .externs
-            .iter()
-            .map(|artifact| artifact.relative_path.as_str())
-            .collect::<BTreeSet<_>>();
-        let supporting_artifacts = self
-            .supporting_artifacts
-            .iter()
-            .filter(|artifact| !selected.contains(artifact.relative_path.as_str()))
-            .cloned()
-            .collect();
-        OvenRustcArtifactManifest {
-            schema_version: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
-            intent,
-            dependency_search_paths: self.dependency_search_paths.clone(),
-            native_search_paths: self.native_search_paths.clone(),
-            externs: library.externs.clone(),
-            entrypoint_dependency_search_paths: Default::default(),
-            entrypoint_externs: BTreeMap::new(),
-            registry_leaves: Vec::new(),
-            registry_sources: Vec::new(),
-            compile_environment: library.compile_environment.clone(),
-            vocab_auxiliary_targets: Vec::new(),
-            supporting_artifacts,
-        }
-    }
 }
 
 /// Split one publisher-verified compiler closure into deterministic foundation entries.
@@ -939,7 +572,7 @@ fn compiler_suite_toolchain_data_plans_from_loaf_root(
             message: format!("{} is not a directory", loafs.display()),
         });
     }
-    let committed = crate::loaf::acquire_committed_loaf_generation(loafs)
+    let committed = oven_rustc::loaf::acquire_committed_loaf_generation(loafs)
         .map_err(|error| OvenLegacyCargoError::InvalidInput {
             field: "compiler Loaf data",
             message: error.to_string(),
@@ -982,14 +615,13 @@ fn compiler_suite_toolchain_data_plans_from_loaf_root(
                 message: format!("{} must contain a regular loaf.json", loaf_directory.display()),
             });
         }
-        let loaf =
-            serde_json::from_slice::<crate::loaf::OvenLoaf>(&regular_file_bytes(loaf_manifest)?).map_err(|error| {
-                OvenLegacyCargoError::InvalidInput {
-                    field: "compiler Loaf data",
-                    message: format!("{} is not a valid sealed Loaf: {error}", loaf_manifest.display()),
-                }
-            })?;
-        crate::loaf::validate_stored_loaf(loaf_manifest, &loaf.build_unit_identity).map_err(|error| {
+        let loaf = serde_json::from_slice::<oven_rustc::loaf::OvenLoaf>(&regular_file_bytes(loaf_manifest)?).map_err(
+            |error| OvenLegacyCargoError::InvalidInput {
+                field: "compiler Loaf data",
+                message: format!("{} is not a valid sealed Loaf: {error}", loaf_manifest.display()),
+            },
+        )?;
+        oven_rustc::loaf::validate_stored_loaf(loaf_manifest, &loaf.build_unit_identity).map_err(|error| {
             OvenLegacyCargoError::InvalidInput {
                 field: "compiler Loaf data",
                 message: error.to_string(),
@@ -1078,7 +710,7 @@ fn compiler_suite_toolchain_loaf_generation_reference(
     loaf_root: &Path,
     expected_runtime_inputs: &BTreeMap<String, String>,
 ) -> Result<OvenCompilerTestSuiteToolchainLoafGenerationReference, OvenLegacyCargoError> {
-    let committed = crate::loaf::acquire_committed_loaf_generation(loaf_root)
+    let committed = oven_rustc::loaf::acquire_committed_loaf_generation(loaf_root)
         .map_err(|error| OvenLegacyCargoError::InvalidInput {
             field: "compiler Loaf data",
             message: error.to_string(),
@@ -1090,14 +722,13 @@ fn compiler_suite_toolchain_loaf_generation_reference(
         ));
     }
     for loaf_manifest in committed.paths() {
-        let loaf =
-            serde_json::from_slice::<crate::loaf::OvenLoaf>(&regular_file_bytes(loaf_manifest)?).map_err(|error| {
-                OvenLegacyCargoError::InvalidInput {
-                    field: "compiler Loaf data",
-                    message: format!("{} is not a valid sealed Loaf: {error}", loaf_manifest.display()),
-                }
-            })?;
-        crate::loaf::validate_stored_loaf(loaf_manifest, &loaf.build_unit_identity).map_err(|error| {
+        let loaf = serde_json::from_slice::<oven_rustc::loaf::OvenLoaf>(&regular_file_bytes(loaf_manifest)?).map_err(
+            |error| OvenLegacyCargoError::InvalidInput {
+                field: "compiler Loaf data",
+                message: format!("{} is not a valid sealed Loaf: {error}", loaf_manifest.display()),
+            },
+        )?;
+        oven_rustc::loaf::validate_stored_loaf(loaf_manifest, &loaf.build_unit_identity).map_err(|error| {
             OvenLegacyCargoError::InvalidInput {
                 field: "compiler Loaf data",
                 message: error.to_string(),
@@ -1139,7 +770,7 @@ fn compiler_suite_staged_runtime_inputs(
     for crate_name in oven_model::toolchain_layout::SDK_RUNTIME_CRATES {
         let input_name = format!("runtime-source-{}", crate_name.replace('_', "-"));
         let source_root = runtime_root.join("crates").join(crate_name);
-        let digest = crate::loaf::digest_runtime_crate_source(&source_root).map_err(|message| {
+        let digest = oven_rustc::loaf::digest_runtime_crate_source(&source_root).map_err(|message| {
             OvenLegacyCargoError::InvalidInput {
                 field: "compiler-suite SDK runtime closure",
                 message,
@@ -1159,7 +790,7 @@ fn compiler_suite_staged_runtime_inputs(
 /// selection. The named baker must regenerate the Loaf with the sealed SDK inventory instead.
 fn validate_compiler_suite_loaf_runtime_inputs(
     loaf_name: &str,
-    loaf: &crate::loaf::OvenLoaf,
+    loaf: &oven_rustc::loaf::OvenLoaf,
     expected_runtime_inputs: &BTreeMap<String, String>,
 ) -> Result<(), OvenLegacyCargoError> {
     if loaf.compatibility.runtime_inputs == *expected_runtime_inputs {
@@ -1219,91 +850,6 @@ fn compiler_suite_foundation_closure(
             .collect(),
         supporting_artifacts,
     }
-}
-
-/// Wire payload for the stored full compiler test suite and the CLI fixture it invokes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OvenCompilerTestSuitePayload {
-    /// Payload schema for the stored compiler-suite runtime.
-    pub schema_version: u32,
-    /// Receipt-bound native workspace target plan. Schema 8 executes caller-owned direct-rustc and direct-Rustdoc
-    /// shards instead of retaining Cargo-linked test executables, and carries any installed compiler Loaf data
-    /// required by their fixture commands.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub test_targets: Vec<OvenCompilerTestSuiteTarget>,
-    /// Schema-9 immutable index entries for independently admitted compiler-suite target shards.
-    ///
-    /// Schema 8 leaves this empty while it retains one transitional shared closure. Schema 9 will require these
-    /// references and must not carry that closure alongside them.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub shard_references: Vec<OvenCompilerTestSuiteShardReference>,
-    /// Schema-10 dependency foundations selected transitively through individual root shards.
-    ///
-    /// The index retains the complete related set as receipt-bound execution authority so the scheduler can acquire
-    /// every lease before its first child. Individual shards repeat only the foundations they require.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub foundation_references: Vec<OvenCompilerTestSuiteFoundationReference>,
-    /// Schema-13 Loaf data partitions required by stored-suite fixture children.
-    ///
-    /// These are separate from direct-rustc foundations because children consume them as compiler data rather than
-    /// `--extern` artifacts. Each partition is selected and lease-held before the first child starts.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub toolchain_data_references: Vec<OvenCompilerTestSuiteToolchainDataReference>,
-    /// Schema-14 reference to the compiler-owned standard-library Loaf generation consumed directly by suite
-    /// children.  Unlike schema-13 partitions, this is a lease-held reference to the installed release-family
-    /// envelope rather than a second full copy in the receipt-bound compiler-suite store.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub toolchain_loaf_generation: Option<OvenCompilerTestSuiteToolchainLoafGenerationReference>,
-    /// Receipt-bound workspace binary plans required by test-root `CARGO_BIN_EXE_*` inputs. The main `incan` CLI
-    /// remains the separately named `cli_target` below because it is also the stored-suite fixture command.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub binary_targets: Vec<OvenCompilerTestSuiteTarget>,
-    /// Shared direct-rustc closure for every native workspace target plan.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub test_artifact_closure: Option<OvenCompilerTestSuiteArtifactClosure>,
-    /// Direct-rustc closure for the scheduler's separately baked compiler CLI.
-    ///
-    /// Schema 8 derives this from `test_artifact_closure`. Schema 9 keeps it separate so that the index does not
-    /// retain one shared test-root closure alongside independently admitted target shards.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cli_artifact_closure: Option<OvenCompilerTestSuiteArtifactClosure>,
-    /// Schema-11 foundations required to materialize the compiler CLI without retaining a Cargo-built workspace
-    /// library in the suite index.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub cli_foundation_references: Vec<OvenCompilerTestSuiteFoundationReference>,
-    /// Direct-rustc compiler CLI plan materialized in the caller output for integration-test children.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cli_target: Option<OvenCompilerTestSuiteTarget>,
-    /// Schema-11 caller-owned workspace libraries/proc macros required before baking `cli_target`.
-    ///
-    /// Their outputs live only beneath the current command's output directory, while third-party externs remain in
-    /// the separately validated CLI artifact closure. Schema 10 leaves this empty and does not accept a CLI target
-    /// that declares workspace-library edges.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub cli_workspace_libraries: Vec<OvenCompilerWorkspaceLibrary>,
-    /// Store-relative SDK provider inventory selected by compiler-suite fixture children.
-    pub sdk_inventory_relative_path: String,
-    /// Digest of the immutable SDK provider inventory.
-    pub sdk_inventory_digest: String,
-    /// Optional store-relative root of compiler-owned Loaf data copied from the publisher's installed package.
-    ///
-    /// A direct-rustc child is baked below caller-owned output, so it cannot infer the parent package layout from its
-    /// own executable path. The suite owns this copied data rather than depending on an ambient archive location.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub toolchain_data_relative_root: Option<String>,
-    /// Complete direct-rustc closure used by compiler tests that validate generated Rust without Cargo.
-    ///
-    /// Schemas through 11 retain this closure from a small publisher Cargo target. Schema 12 deliberately leaves it
-    /// empty: the executor rebuilds the receipt-authorized standard library facets from an indexed shard,
-    /// avoiding a second concurrently retained Cargo target.
-    pub warning_check_artifacts: OvenRustcArtifactManifest,
-}
-
-/// One exact compiler-owned Loaf generation retained externally while a compiler-suite invocation runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OvenCompilerTestSuiteToolchainLoafGenerationReference {
-    /// Content identity of the atomically committed compiler-suite Loaf generation.
-    pub generation_identity: String,
 }
 
 /// Successful explicit publication of a compiler libtest runtime pair.
@@ -1399,7 +945,7 @@ fn select_existing_direct_rustc_plan_identity(
                 }
                 Ok(Some(plan_identity))
             }
-            Err(crate::rustc::OvenRustcError::PlanSelection { message, .. })
+            Err(oven_rustc::rustc::OvenRustcError::PlanSelection { message, .. })
                 if message == "no compatible stored direct-rustc plan is available" =>
             {
                 Ok(None)
@@ -1767,7 +1313,7 @@ pub fn prepare_direct_rustc_plan(
         }
         let compiler_root = source_compiler_vocab_support_root()?;
         let compiler_support_target = staging.join("compiler-vocab-target");
-        crate::loaf::bake_source_compiler_vocab_support(crate::loaf::OvenSourceCompilerVocabSupportRequest {
+        crate::loaf_bake::bake_source_compiler_vocab_support(oven_rustc::loaf::OvenSourceCompilerVocabSupportRequest {
             plan: &mut plan,
             loaf_staging: &staging,
             compiler_root: &compiler_root,
@@ -2628,25 +2174,6 @@ fn inspection_package_closure_ids(
     Ok(selected)
 }
 
-/// Typed source handoff used only by children of the explicit `legacy_cargo` baker.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OvenLegacyCargoInspectionSource {
-    /// Cargo package name selected by the frozen publisher resolution.
-    pub package: String,
-    /// Exact Cargo package version selected by the frozen publisher resolution.
-    pub version: String,
-    /// Canonical registry source identifier from Cargo metadata.
-    pub registry: String,
-    /// Registry checksum recorded in the publisher's locked dependency graph.
-    pub checksum: String,
-    /// Features selected for this package by the resolved publisher graph.
-    pub features: Vec<String>,
-    /// Exact registry source root visible only inside the named baker boundary.
-    pub source_root: PathBuf,
-    /// Digest of the complete regular-file source tree beneath `source_root`.
-    pub source_digest: String,
-}
-
 /// Path to the publisher-authored source authority inherited by a cold baker fixture child.
 pub const OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV: &str = "INCAN_OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY";
 
@@ -3362,7 +2889,7 @@ fn run_legacy_cargo_invocation(
     // checkout onto the exact virtual form so every toolchain agrees; on a src-less toolchain the prefix never
     // matches and the flag is inert.
     if let Some(toolchain_root) = rustc.parent().and_then(Path::parent)
-        && let Some(commit) = rustc_commit_hash(&rustc)
+        && let Some(commit) = oven_rustc::rustc::rustc_commit_hash(&rustc)
     {
         remap_flags.push(format!(
             "--remap-path-prefix={}=/rustc/{commit}",
@@ -4759,11 +4286,11 @@ mod tests {
         stage_registry_source_directory, stage_self_contained_sdk_provider_tree, validate_compiler_suite_unit_graph,
         validate_generated_registry_lock, validate_release_cohort_registry_lock,
     };
-    use crate::loaf::{
+    use oven_rustc::loaf::{
         OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION, OvenLoaf, OvenLoafEnvelopeManifest,
         OvenLoafEnvelopeMember, OvenLoafMemberRole,
     };
-    use crate::rustc::{
+    use oven_rustc::rustc::{
         OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, OvenRustcArtifactExtern,
         OvenRustcArtifactManifest, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
         OvenRustcSupportingArtifact, rustc_host_target, rustc_identity,
@@ -8121,7 +7648,7 @@ version = "1.0.0"
         )?;
         fs::write(helper.join("src/lib.rs"), "pub fn marker() {}\n")?;
 
-        let cargo = crate::legacy_cargo::cargo_process::resolved_cargo_executable()?;
+        let cargo = crate::cargo_process::resolved_cargo_executable()?;
         let manifest = project.join("Cargo.toml");
         let staging = fixture.path().join("staging");
         let initial_sources = explicit_project_bake_inspection_sources(&cargo, &manifest, &[], &[], &staging, None)?;

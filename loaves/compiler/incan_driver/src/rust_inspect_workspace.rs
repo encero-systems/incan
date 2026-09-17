@@ -429,8 +429,8 @@ fn run_rust_inspect_out_dirs_prewarm_command(
     target_dir: &Path,
     mode: RustInspectPrewarmCargoMode,
 ) -> CliResult<std::process::Output> {
-    let mut command = oven_rustc::legacy_cargo::cargo_process::cargo_command();
-    oven_rustc::legacy_cargo::cargo_process::configure_cargo_target(&mut command, target_dir);
+    let mut command = oven_cargo_compat::cargo_process::cargo_command();
+    oven_cargo_compat::cargo_process::configure_cargo_target(&mut command, target_dir);
     command.arg("check");
     command.arg("--manifest-path");
     command.arg(manifest_dir.join("Cargo.toml"));

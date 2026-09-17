@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use crate::legacy_cargo::OVEN_PROVIDER_COMPILATION_KEY;
+use crate::native_contract::OVEN_PROVIDER_COMPILATION_KEY;
 use crate::rustc::{
     OvenRegistryLeafAuthority, OvenRustcArtifactExtern, OvenRustcArtifactManifest, OvenRustcArtifactPlan,
     OvenRustcRegistryLeaf, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact, OvenTrustedRustcArtifactRoot,

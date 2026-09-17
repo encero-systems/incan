@@ -68,14 +68,14 @@ use incan_provider::compiled_sdk::CompiledSdkModules;
 use incan_provider::dependency_resolver::resolve_reachable_dependencies;
 use incan_provider::inventory::extend_requirements_with_provider_plan;
 use incan_provider::requirements::{collect_project_requirements, merge_project_requirement_dependencies};
-use oven_model::lock::CargoFeatureSelection;
-use oven_model::manifest::DependencySpec;
-use oven_rustc::legacy_cargo::cargo_process::resolved_cargo_executable;
-use oven_rustc::legacy_cargo::{
+use oven_cargo_compat::cargo_process::resolved_cargo_executable;
+use oven_cargo_compat::{
     OvenCompilerMacroDependency, OvenLegacyCargoBaseLoaf, OvenLegacyCargoDirectDependencyClosure,
     OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind, direct_rustc_reusable_project_plan_environment,
     prepare_direct_rustc_plan, provider_compilation_requirements_digest,
 };
+use oven_model::lock::CargoFeatureSelection;
+use oven_model::manifest::DependencySpec;
 use oven_rustc::loaf::{
     OVEN_DEPENDENCY_MISS_SUMMARY, OVEN_LOAF_ENV, OVEN_LOAF_MISS_GUIDANCE, OVEN_NESTED_DEPENDENCY_MISS_SUMMARY,
     OVEN_NO_IMPLICIT_DEPENDENCY_BUILD, OvenToolchainLoaf, resolve_compiler_owned_loaf_for_registry_dependencies,
@@ -1014,7 +1014,7 @@ mod tests {
     use std::fs;
 
     use crate::build::OvenBakeProjectTarget;
-    use oven_rustc::interop::OVEN_INTEROP_EXECUTION_RECEIPT_INPUT;
+    use oven_interop::OVEN_INTEROP_EXECUTION_RECEIPT_INPUT;
     use oven_store::store::OvenStore;
     use oven_store::{OvenGeneratedProjectRequest, receipt_generated_project};
 

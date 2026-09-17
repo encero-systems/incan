@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use oven_rustc::legacy_cargo::OvenCompilerTestSuiteShardReference;
+use oven_cargo_compat::OvenCompilerTestSuiteShardReference;
 
 /// The runner name a receipt-bound native libtest root carries; the only kind of root a slice applies to.
 const NATIVE_LIBTEST_RUNNER: &str = "rustc-test";
@@ -208,7 +208,7 @@ pub(crate) fn measured_case_millis_from_report(report_path: &Path) -> BTreeMap<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oven_rustc::legacy_cargo::OvenCompilerTestSuiteTargetKey;
+    use oven_cargo_compat::OvenCompilerTestSuiteTargetKey;
 
     fn reference(path: &str, source_bytes: u64) -> OvenCompilerTestSuiteShardReference {
         OvenCompilerTestSuiteShardReference {

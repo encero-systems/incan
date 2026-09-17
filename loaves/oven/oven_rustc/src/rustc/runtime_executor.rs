@@ -456,7 +456,7 @@ fn compile_rebuild_unit(
     // unit compiles differently depending on which components are installed. On a toolchain without the component
     // the prefix never matches and the flag is inert.
     if let Some(toolchain_root) = closure.rustc().parent().and_then(Path::parent)
-        && let Some(commit) = crate::legacy_cargo::rustc_commit_hash(closure.rustc())
+        && let Some(commit) = crate::rustc::rustc_commit_hash(closure.rustc())
     {
         command.arg(format!(
             "--remap-path-prefix={}=/rustc/{commit}",

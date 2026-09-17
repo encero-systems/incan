@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{
-    CargoChecksumLock, CargoCompilerArtifact, CargoInvocationOutput, CargoMetadata, Command, InspectionPackageScope,
+    CargoChecksumLock, CargoCompilerArtifact, CargoInvocationOutput, CargoMetadata, InspectionPackageScope,
     OvenBuildIntent, OvenLegacyCargoError, OvenLegacyCargoInspectionPackage, OvenRustcArtifactExtern,
     OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact,
     PendingRegistryLeaf, canonical_directory, compiler_artifact_platform, copy_regular_directory_tree, digest_bytes,
@@ -80,20 +80,6 @@ pub fn stage_registry_source(
         relative_root,
         digest,
     })
-}
-
-/// Return the exact commit hash reported by `rustc -vV`, used to remap installed `rust-src` checkouts onto the
-/// virtual `/rustc/<commit>` prefix a source-less toolchain embeds in standard-library debug spans.
-pub fn rustc_commit_hash(rustc: &Path) -> Option<String> {
-    let output = Command::new(rustc).arg("-vV").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    stdout
-        .lines()
-        .find_map(|line| line.strip_prefix("commit-hash: "))
-        .map(|hash| hash.trim().to_string())
 }
 
 /// Copy one registry package into private baker state without Cargo's mutable package-local target cache.

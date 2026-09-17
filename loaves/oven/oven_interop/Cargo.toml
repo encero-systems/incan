@@ -1,0 +1,26 @@
+[package]
+name = "oven_interop"
+version = "0.6.0-dev.5"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Oven's native interop: receipt-bound shim compilation, carriers and interop bundles over direct rustc"
+
+[lib]
+name = "oven_interop"
+path = "src/lib.rs"
+
+[dependencies]
+hex = "0.4.3"
+oven_model = { workspace = true }
+oven_rustc = { workspace = true }
+oven_store = { workspace = true }
+rustix = { version = "1.1.4", features = ["fs"] }
+semver = "1.0.27"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10.9"
+tempfile = "3"
+
+[dev-dependencies]
+oven_store = { workspace = true, features = ["test_support"] }

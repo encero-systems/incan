@@ -359,8 +359,8 @@ pub(crate) fn compiler_suite_libtest_threads(logical_cores: usize, root_workers:
 /// still held by the caller. No Cargo-linked test executable is copied or run from the immutable entry.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_planned_compiler_suite_children(
-    targets: &[oven_rustc::legacy_cargo::OvenCompilerTestSuiteTarget],
-    closure: &oven_rustc::legacy_cargo::OvenCompilerTestSuiteArtifactClosure,
+    targets: &[oven_cargo_compat::OvenCompilerTestSuiteTarget],
+    closure: &oven_cargo_compat::OvenCompilerTestSuiteArtifactClosure,
     intent: &OvenBuildIntent,
     receipt: &OvenReceipt,
     artifact_root: &Path,
@@ -518,7 +518,7 @@ pub(crate) fn run_planned_compiler_suite_children(
 /// Resolve a target-plan source only beneath the current receipt-authorized compiler root.
 pub(crate) fn compiler_suite_target_source(
     compiler_root: &Path,
-    target: &oven_rustc::legacy_cargo::OvenCompilerTestSuiteTarget,
+    target: &oven_cargo_compat::OvenCompilerTestSuiteTarget,
 ) -> CliResult<PathBuf> {
     compiler_suite_source_path(
         compiler_root,
@@ -596,7 +596,7 @@ pub(crate) fn compiler_suite_source_path(
 pub(crate) fn compiler_suite_target_working_directory(
     compiler_root: &Path,
     source: &Path,
-    target: &oven_rustc::legacy_cargo::OvenCompilerTestSuiteTarget,
+    target: &oven_cargo_compat::OvenCompilerTestSuiteTarget,
 ) -> CliResult<PathBuf> {
     let compiler_root = fs::canonicalize(compiler_root).map_err(|error| {
         CliError::failure(format!(
@@ -640,7 +640,7 @@ pub(crate) fn compiler_suite_target_working_directory(
 /// Keep caller-owned test shard paths deterministic and safely inside the selected output directory.
 pub(crate) fn compiler_suite_target_output_name(
     index: usize,
-    target: &oven_rustc::legacy_cargo::OvenCompilerTestSuiteTarget,
+    target: &oven_cargo_compat::OvenCompilerTestSuiteTarget,
 ) -> String {
     format!(
         "{index:04}-{}-{}-{}",
@@ -656,7 +656,7 @@ pub(crate) fn compiler_suite_target_output_name(
 /// targets are not: each root receives a distinct location so its nested normal commands cannot race a sibling.
 pub(crate) fn compiler_suite_child_state_root(
     output_directory: &Path,
-    target: &oven_rustc::legacy_cargo::OvenCompilerTestSuiteTarget,
+    target: &oven_cargo_compat::OvenCompilerTestSuiteTarget,
 ) -> PathBuf {
     output_directory
         .join("children")
