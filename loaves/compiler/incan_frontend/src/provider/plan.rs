@@ -1792,6 +1792,7 @@ fn read_sdk_provider_manifest(
     Ok(manifest)
 }
 
+/// Normalize validated JSON into a compact, recursively key-sorted representation for stable hashing.
 fn canonical_json_wire(wire: &str) -> Result<String, crate::library_manifest::LibraryManifestError> {
     fn canonicalize(value: serde_json::Value) -> serde_json::Value {
         match value {

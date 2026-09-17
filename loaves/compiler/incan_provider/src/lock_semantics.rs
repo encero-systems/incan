@@ -403,6 +403,7 @@ fn semantic_toolchain_dependencies(
 }
 
 /// Precompute path-independent identities for every locally available physical provider digest.
+#[cfg(test)]
 fn provider_dependency_semantic_digests(
     provider_plan: &ProviderPlan,
     semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
@@ -432,6 +433,7 @@ struct ProviderSemanticDigestCounters {
 }
 
 /// Run the preliminary physical-to-semantic map while optionally counting its actual digest/cache path.
+#[cfg(test)]
 fn provider_dependency_semantic_digests_observed(
     provider_plan: &ProviderPlan,
     semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
@@ -1314,6 +1316,8 @@ mod tests {
         let mut first_consumer_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
         let mut second_consumer_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
         let mut optimized_pair_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut uncached_total_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut optimized_total_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
 
         for repeat in 0..REPRESENTATIVE_MEASUREMENT_REPEATS {
             let (provider_plan, specs, admission_elapsed) = load_verified_sdk_measurement_inputs(&inventory_path)?;
@@ -1347,8 +1351,10 @@ mod tests {
             first_consumer_samples.push(first_consumer_elapsed.as_micros());
             second_consumer_samples.push(second_consumer_elapsed.as_micros());
             optimized_pair_samples.push(optimized_elapsed.as_micros());
+            uncached_total_samples.push((admission_elapsed + uncached_elapsed).as_micros());
+            optimized_total_samples.push((admission_elapsed + optimized_elapsed).as_micros());
             eprintln!(
-                "provider-semantic-reuse repeat={} admission_us={} uncached_pair_us={} session_identity_us={} first_consumer_validation_us={} second_consumer_validation_us={} optimized_pair_us={}",
+                "provider-semantic-reuse repeat={} admission_us={} warm_uncached_pair_us={} session_identity_us={} first_consumer_validation_us={} second_consumer_validation_us={} warm_optimized_pair_us={} uncached_total_us={} optimized_total_us={}",
                 repeat + 1,
                 admission_elapsed.as_micros(),
                 uncached_elapsed.as_micros(),
@@ -1356,18 +1362,22 @@ mod tests {
                 first_consumer_elapsed.as_micros(),
                 second_consumer_elapsed.as_micros(),
                 optimized_elapsed.as_micros(),
+                (admission_elapsed + uncached_elapsed).as_micros(),
+                (admission_elapsed + optimized_elapsed).as_micros(),
             );
         }
 
         eprintln!(
-            "provider-semantic-reuse-summary repeats={} {} {} {} {} {} {}",
+            "provider-semantic-reuse-summary repeats={} {} {} {} {} {} {} {} {}",
             REPRESENTATIVE_MEASUREMENT_REPEATS,
             measurement_distribution("admission", admission_samples)?,
-            measurement_distribution("uncached_pair", uncached_pair_samples)?,
+            measurement_distribution("warm_uncached_pair", uncached_pair_samples)?,
             measurement_distribution("session_identity", session_identity_samples)?,
             measurement_distribution("first_consumer_validation", first_consumer_samples)?,
             measurement_distribution("second_consumer_validation", second_consumer_samples)?,
-            measurement_distribution("optimized_pair", optimized_pair_samples)?,
+            measurement_distribution("warm_optimized_pair", optimized_pair_samples)?,
+            measurement_distribution("uncached_total", uncached_total_samples)?,
+            measurement_distribution("optimized_total", optimized_total_samples)?,
         );
         Ok(())
     }
