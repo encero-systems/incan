@@ -375,7 +375,7 @@ Embedding-based re-ranking may be offered, but it must be optional and local/rem
 
 RFC 126 proposes an Oven-owned investigation service that connects compiler context to native execution and retained captures. Its observations must reference the exact source snapshot and executable through verified mappings; they must not be promoted into timeless checked source facts. Durable declaration identity, compilation-specific location, executable identity, and capture/stop identity remain distinct. Missing mappings remain unavailable rather than being reconstructed from matching names or lines.
 
-The graph service remains the semantic-context producer. Read-only task-context operations do not implicitly grant launch, resume, expression-evaluation, rerun, or mutation authority. Runtime evidence may be linked through its owning record contract without merging the graph and investigation lifecycles. The public mapping and provenance seam must be settled through RFC 126's design gate before the investigation RFC reaches Planned.
+The graph service remains the semantic-context producer. Read-only task-context operations do not implicitly grant launch, resume, expression-evaluation, rerun, or mutation authority. Runtime evidence may be linked through its owning record contract without merging the graph and investigation lifecycles. The public mapping and provenance contract must preserve these identity and authority boundaries when compiler context is consumed by RFC 126 investigations.
 
 ### Formats
 

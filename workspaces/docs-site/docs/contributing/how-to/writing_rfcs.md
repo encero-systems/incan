@@ -40,7 +40,7 @@ Write an RFC when the *user-facing meaning* of the language changes, for example
     - migration/compatibility
     - inspectability: metadata, diagnostics, provenance, generated output, or command surface
     - acceptance criteria (“done when…”)
-    - implementation plan + touchpoints (frontend/backend/stdlib/tooling/tests)
+    - layers affected (what is touched, not implementation task steps)
 
 4. **Open a PR**
     - Keep `Status` as `Draft` during proposal review.

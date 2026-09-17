@@ -12,7 +12,7 @@
     - RFC 097 (Rust-hosted Incan caller)
     - RFC 109 (receiver chain combinators)
 - **Issue:** [#1295](https://github.com/encero-systems/incan/issues/1295)
-- **RFC PR:** [#1296](https://github.com/encero-systems/incan/pull/1296)
+- **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —
 

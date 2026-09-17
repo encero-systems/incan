@@ -69,6 +69,8 @@ gh issue comment <NNN> --repo dannys-code-corner/incan --body \
 
 ### File changes
 
+When an implementation PR exists, record its link in `RFC PR` and retain other implementation PR links. If work has started without an implementation PR, leave `RFC PR` as `—` until one is opened. Never use a proposal or documentation-only PR for this field.
+
 After the `## Layers affected` section, add two new sections: `## Implementation Plan` and `## Progress Checklist`.
 
 **`## Implementation Plan`** — concrete phases, not internal file paths. Model after the RFC's "Layers affected" section, but task-oriented. Example shape:

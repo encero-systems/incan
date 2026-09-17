@@ -100,7 +100,7 @@ The completed release lines are kept here as a compact history. Expand a release
 
 ### Forward roadmap
 
-### 0.6 Release: backend cutover
+#### 0.6 Release: backend cutover
 
 The 0.6 milestone removes the Rust-source backend from the normal compiler path. The replacement backend should preserve supported behavior, report compatibility/migration details, and retire generated Rust as the semantic handoff.
 
@@ -123,7 +123,7 @@ Core tracking issues:
 
 [Read the 0.6 development release note](release_notes/0_6.md) · [Browse the 0.6 delivery map](project/v0_6_delivery.md)
 
-### 0.7 Release: feature reopening
+#### 0.7 Release: feature reopening
 
 The 0.7 milestone is the broader feature reopening lane after the backend replacement is complete. This is where deferred language, package, registry, lifecycle, interop, docs-generation, editor, and product-surface work can resume.
 
@@ -144,7 +144,7 @@ The gate should consume the source/context, action, and receipt foundations assi
 
 0.7 should not absorb freestanding/kernel primitives by default. That work needs its own release lanes so feature reopening does not become the place where unsafe, layout, target, runtime, and kernel proof work all land at once.
 
-### 0.8 Release: evidence-backed investigations and runtime foundations
+#### 0.8 Release: evidence-backed investigations and runtime foundations
 
 Humans and agents should be able to investigate unexpected behavior, test competing explanations, and verify repairs across Oven-managed Rust and Incan projects, with inspectable evidence throughout. RFC 126 defines the proposed investigation contract; it remains Draft until the v0.7 design-closure gate is satisfied. Existing freestanding, ownership-planning, GPU, and deferred syntax work remains in scope according to its own issues and acceptance boundaries.
 
@@ -160,9 +160,9 @@ Acceptance must demonstrate wrong-result investigation, hung or cancelled work, 
 
 Proof-aware contracts ([#787](https://github.com/encero-systems/incan/issues/787)) and ownership-planner work ([#1611](https://github.com/encero-systems/incan/issues/1611)) retain their owners. GPU work ([#1041](https://github.com/encero-systems/incan/issues/1041)) retains its independent capability scope. The Rust-syntax proposal ([#1612](https://github.com/encero-systems/incan/issues/1612)) remains proposal/RFC refinement in 0.8 with planning for 0.9 or later; this programme does not accelerate its implementation.
 
-#### Freestanding foundations
+##### Freestanding foundations
 
-The 0.8 milestone defines the compiler, runtime, ABI, and package foundations needed for freestanding targets. It should make low-level targets possible without promising a production kernel or stabilizing every low-level surface.
+The freestanding lane defines the compiler, runtime, ABI, and package foundations needed for freestanding targets. It should make low-level targets possible without promising a production kernel or stabilizing every low-level surface.
 
 The release should answer how Incan code can compile without assuming hosted `std`, a process environment, filesystem access, threads, default allocator availability, or ordinary hosted panic behavior.
 
@@ -190,7 +190,7 @@ Core tracking issues:
 
 The freestanding lane is successful when Incan can compile a restricted freestanding artifact and report which runtime, allocator, panic, target, and ABI capabilities it requires. The overall release must also satisfy the investigation acceptance programme and the independently tracked commitments above.
 
-### 0.9 Release: kernel capability proof
+#### 0.9 Release: kernel capability proof
 
 The 0.9 milestone is the vertical proof that the freestanding foundations work under real low-level pressure. It should boot a tiny Incan-authored kernel under an emulator, not ship a production operating system.
 
@@ -211,7 +211,7 @@ Core tracking issues:
 
 0.9 is successful when Incan can build and boot a tiny freestanding kernel under QEMU with Incan-authored init logic and a concrete low-level capability proof.
 
-### 1.0 Release: stabilization and public contracts
+#### 1.0 Release: stabilization and public contracts
 
 The 1.0 milestone consolidates the post-cutover compiler architecture, ABI/package direction, tooling contracts, stdlib maturity, ecosystem workflows, freestanding lessons, and documentation into a coherent public surface.
 

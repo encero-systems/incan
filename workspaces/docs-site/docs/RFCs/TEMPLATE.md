@@ -22,7 +22,7 @@ RFC NNN: \<short descriptive title\>
 - **Author(s):** \<name (@handle)\>
 - **Related:** \<RFC links, if any\>
 - **Issue:** \<link to issue\>
-- **RFC PR:** \<link to PR\>
+- **RFC PR:** —  <!-- Implementation PR(s) only; never the proposal or a documentation-only PR. -->
 - **Written against:** \<version\>  <!-- The Incan version that was current when this RFC was written. Describes the language baseline the RFC assumes, not when it will ship. Example: `v0.1` means the RFC was drafted when Incan was at v0.1. This field never changes after the RFC is accepted. -->
 - **Shipped in:** —  <!-- Set to the first Incan release that includes this feature, once implementation is complete. Leave as `—` while the RFC is in Draft or Planned status. This is NOT a planning field — do not set it to a future version speculatively. -->
 

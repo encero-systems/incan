@@ -12,7 +12,7 @@
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
 - **Issue:** [#663](https://github.com/encero-systems/incan/issues/663)
-- **RFC PR:** -
+- **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
 - **Shipped in:** —
 
