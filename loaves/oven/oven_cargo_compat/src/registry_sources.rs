@@ -104,7 +104,7 @@ pub fn stage_registry_source_directory(
             "could not digest staged registry package `{package}` {version}: {error}"
         ))
     })?;
-    let members = materialized_files_from_directory(&staged_root, "", "staged registry package source")?
+    let mut members = materialized_files_from_directory(&staged_root, "", "staged registry package source")?
         .into_iter()
         .map(|file| {
             let path = file.relative_path.strip_prefix('/').ok_or_else(|| {
@@ -116,6 +116,8 @@ pub fn stage_registry_source_directory(
             })
         })
         .collect::<Result<Vec<_>, OvenLegacyCargoError>>()?;
+    // Directory traversal order differs from complete relative-path order (for example src.rs versus src/lib.rs).
+    members.sort_by(|left, right| left.path.cmp(&right.path));
     if members.is_empty()
         || members.windows(2).any(|pair| pair[0].path >= pair[1].path)
         || !members.iter().any(|member| member.path == "Cargo.toml")
@@ -513,6 +515,10 @@ mod tests {
             "[package]\nname = \"fixture\"\nversion = \"1.0.0\"\n",
         )?;
         fs::write(source.path().join("src/lib.rs"), "pub fn marker() {}\n")?;
+        fs::write(
+            source.path().join("src.rs"),
+            "// file sorts before the src directory contents\n",
+        )?;
 
         let (_, _, members) = stage_registry_source_directory(
             staging.path(),
@@ -525,12 +531,13 @@ mod tests {
 
         assert_eq!(
             members.iter().map(|member| member.path.as_str()).collect::<Vec<_>>(),
-            ["Cargo.toml", "src/lib.rs"],
+            ["Cargo.toml", "src.rs", "src/lib.rs"],
         );
         assert_eq!(
             members.iter().map(|member| member.digest.as_str()).collect::<Vec<_>>(),
             [
                 digest_bytes(b"[package]\nname = \"fixture\"\nversion = \"1.0.0\"\n"),
+                digest_bytes(b"// file sorts before the src directory contents\n"),
                 digest_bytes(b"pub fn marker() {}\n"),
             ],
         );
