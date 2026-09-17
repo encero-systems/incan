@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -39,7 +40,7 @@ use super::{
     loaf_envelope_compatibility_map_with_release_member, loaf_envelope_evidence, loaf_envelope_inspection_packages,
     loaf_envelope_name, loaf_envelope_specifications, loaf_fixture_action_name, loaf_fixture_probe_is_expected_miss,
     loaf_generation_identity_with_release_member, loaf_raw_disk_bytes, open_store, oven_error, pin_loaf_fixture_rustc,
-    prepare_compiler_test_suite, prepare_loaf_from_generated_project, print_json, read_receipt,
+    prepare_compiler_test_suite, prepare_loaf_from_generated_project_with_selected_units, print_json, read_receipt,
     release_store_member_byte_counts, retire_unreferenced_loaf_generations, reuse_complete_loaf_envelope,
     stage_locked_loaf_fixture, write_receipt, write_sealed_oven_inspection_source_authority,
 };
@@ -217,6 +218,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     let (release_member_logical_bytes, release_member_physical_bytes) =
         release_store_member_byte_counts(&staged_root, release_store_member.as_ref(), limits)?;
     let mut pending = Vec::new();
+    let mut release_foundation_capture = None;
     let envelope_inspection_packages = loaf_envelope_inspection_packages(envelope).map_err(CliError::failure)?;
     // A cold first bake cannot consume a Loaf that does not exist yet. Resolve its Rust inspection sources once at
     // this already explicit Cargo boundary, then hand the typed locked authority to every no-Cargo fixture child.
@@ -382,7 +384,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         }
         stage_locked_loaf_fixture(&options.cargo, &generated_project, &compiler_lock).map_err(oven_error)?;
         let receipt = read_receipt(&receipt_path)?;
-        let result = prepare_loaf_from_generated_project(
+        let prepared = prepare_loaf_from_generated_project_with_selected_units(
             &staged_root,
             &OvenLoafBakerContext {
                 compiler: &incan_oven_facet::compiler_identity(),
@@ -399,10 +401,28 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 retain_checked_direct_dependencies: specification.retain_checked_direct_dependencies,
                 limits,
             },
-            receipt,
+            receipt.clone(),
             &generated_project,
         )
         .map_err(oven_error)?;
+        if envelope == OvenLoafEnvelope::Release
+            && specification.label == "stdlib"
+            && specification.profile == "release"
+        {
+            let selected_units = prepared
+                .selected_units
+                .clone()
+                .ok_or_else(|| CliError::failure("release stdlib publisher produced no exact selected-unit capture"))?;
+            if release_foundation_capture
+                .replace((receipt.clone(), selected_units))
+                .is_some()
+            {
+                return Err(CliError::failure(
+                    "release envelope produced more than one runtime-foundation capture".to_string(),
+                ));
+            }
+        }
+        let result = prepared.preparation;
         let observed_transient = oven_cargo_compat::conservative_directory_reservation(&options.output)
             .and_then(|owned| {
                 oven_cargo_compat::conservative_directory_reservation(scratch.path())
@@ -448,6 +468,11 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         });
     }
     phase_timing.fixture_preparation_elapsed_ms = fixture_preparation_started.elapsed().as_millis();
+    if envelope == OvenLoafEnvelope::Release && release_foundation_capture.is_none() {
+        return Err(CliError::failure(
+            "release envelope did not retain its runtime-foundation capture".to_string(),
+        ));
+    }
 
     let logical_bytes = pending
         .iter()
@@ -681,6 +706,11 @@ fn run_release_rust_policy(
     })?;
     let request_path = exchange_root.join("request.json");
     let response_path = exchange_root.join("response.json");
+    if response_path.exists() {
+        return Err(CliError::failure(
+            "private Rust policy exchange already contains a response".to_string(),
+        ));
+    }
     let encoded = serde_json::to_vec(request)
         .map_err(|error| CliError::failure(format!("could not encode Rust policy request: {error}")))?;
     if encoded.len() as u64 > POLICY_EXCHANGE_MAX_BYTES {
@@ -708,15 +738,33 @@ fn run_release_rust_policy(
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
-    let metadata = fs::metadata(&response_path)
+    let metadata = fs::symlink_metadata(&response_path)
         .map_err(|error| CliError::failure(format!("Rust policy engine wrote no response: {error}")))?;
-    if !metadata.is_file() || metadata.len() > POLICY_EXCHANGE_MAX_BYTES {
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > POLICY_EXCHANGE_MAX_BYTES {
         return Err(CliError::failure(
             "Rust policy response is not a bounded regular file".to_string(),
         ));
     }
-    let response = fs::read(&response_path)
+    let file = fs::File::open(&response_path)
+        .map_err(|error| CliError::failure(format!("could not open Rust policy response: {error}")))?;
+    if !file
+        .metadata()
+        .map_err(|error| CliError::failure(format!("could not inspect Rust policy response: {error}")))?
+        .is_file()
+    {
+        return Err(CliError::failure(
+            "Rust policy response changed physical type".to_string(),
+        ));
+    }
+    let mut response = Vec::new();
+    file.take(POLICY_EXCHANGE_MAX_BYTES + 1)
+        .read_to_end(&mut response)
         .map_err(|error| CliError::failure(format!("could not read Rust policy response: {error}")))?;
+    if response.len() as u64 > POLICY_EXCHANGE_MAX_BYTES {
+        return Err(CliError::failure(
+            "Rust policy response exceeds its bounded allowance".to_string(),
+        ));
+    }
     serde_json::from_slice(&response)
         .map_err(|error| CliError::failure(format!("Rust policy response is invalid JSON: {error}")))
 }

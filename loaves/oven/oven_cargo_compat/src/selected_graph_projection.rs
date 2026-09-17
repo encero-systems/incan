@@ -150,7 +150,17 @@ pub fn runtime_foundation_from_compiled_loaf(
     artifact_owner: &str,
 ) -> Result<OvenRuntimeFoundation, OvenLegacyCargoError> {
     let graph = finalized.selected_graph.graph();
+    if loaf.plan.intent.target != graph.selection.intent.target
+        || loaf.plan.intent.toolchain != graph.selection.intent.toolchain
+        || loaf.plan.intent.profile != graph.selection.intent.profile
+    {
+        return Err(projection_error(
+            "runtime foundation compiled Loaf",
+            "target, toolchain or profile differs from the selected graph",
+        ));
+    }
     let mut units = Vec::with_capacity(graph.units.len());
+    let mut selected_artifacts = BTreeMap::new();
     for unit in &graph.units {
         if unit.source.kind != OvenSelectedRustFacetSourceKind::Registry {
             return Err(projection_error(
@@ -176,6 +186,15 @@ pub fn runtime_foundation_from_compiled_loaf(
                 "does not have exactly one matching compiled registry artifact",
             ));
         };
+        if let Some((domain, crate_kind)) =
+            selected_artifacts.insert(leaf.artifact.relative_path.clone(), (unit.domain, unit.crate_kind))
+            && (domain != unit.domain || crate_kind != unit.crate_kind)
+        {
+            return Err(projection_error(
+                "runtime foundation compiled artifact",
+                "cannot distinguish selected domain or crate kind",
+            ));
+        }
         units.push(OvenRuntimeFoundationUnit {
             selected_identity: unit.identity.clone(),
             domain: unit.domain,
