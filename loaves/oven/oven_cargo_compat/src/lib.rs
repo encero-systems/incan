@@ -2905,7 +2905,13 @@ fn run_legacy_cargo_invocation(
     let stdout_path = target.join(format!("{capture_stem}.stdout"));
     let stderr_path = target.join(format!("{capture_stem}.stderr"));
     let rustc_trace_path = target.join(format!("{capture_stem}.rustc.jsonl"));
-    let rustc_wrapper = current_rustc_trace_wrapper()?;
+    // A unit-graph query describes compilation without executing rustc. Only the later compilation invocation
+    // can supply the physical trace; requiring one here rejects the compiler-suite publisher before it builds.
+    let rustc_wrapper = if unit_graph {
+        None
+    } else {
+        current_rustc_trace_wrapper()?
+    };
     if rustc_wrapper.is_some() {
         match fs::remove_file(&rustc_trace_path) {
             Ok(()) => {}
