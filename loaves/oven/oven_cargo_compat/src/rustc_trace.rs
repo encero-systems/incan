@@ -130,24 +130,52 @@ pub(crate) fn append_rustc_trace(stdout: &mut Vec<u8>, trace: &Path) -> Result<(
     let mut reader = BufReader::new(file);
     let mut line = Vec::new();
     let mut records = 0usize;
+    let mut total_read = 0u64;
     loop {
         line.clear();
-        let read = reader
-            .read_until(b'\n', &mut line)
-            .map_err(|source| OvenLegacyCargoError::Io {
+        let mut terminated = false;
+        loop {
+            let available = reader.fill_buf().map_err(|source| OvenLegacyCargoError::Io {
                 path: trace.to_path_buf(),
                 source,
             })?;
-        if read == 0 {
+            if available.is_empty() {
+                break;
+            }
+            let consumed = available
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(available.len(), |position| position + 1);
+            let payload = if available.get(consumed - 1) == Some(&b'\n') {
+                &available[..consumed - 1]
+            } else {
+                &available[..consumed]
+            };
+            total_read = total_read.saturating_add(consumed as u64);
+            if total_read > MAX_RUSTC_TRACE_BYTES {
+                return Err(OvenLegacyCargoError::Plan(
+                    "stable rustc invocation trace exceeds its byte limit".to_string(),
+                ));
+            }
+            if line.len().saturating_add(payload.len()) > MAX_RUSTC_TRACE_RECORD_BYTES {
+                return Err(OvenLegacyCargoError::Plan(
+                    "stable rustc invocation trace record exceeds its byte limit".to_string(),
+                ));
+            }
+            line.extend_from_slice(payload);
+            terminated = consumed > payload.len();
+            reader.consume(consumed);
+            if terminated {
+                break;
+            }
+        }
+        if line.is_empty() && !terminated {
             break;
         }
-        if line.len() > MAX_RUSTC_TRACE_RECORD_BYTES {
+        if !terminated {
             return Err(OvenLegacyCargoError::Plan(
-                "stable rustc invocation trace record exceeds its byte limit".to_string(),
+                "stable rustc invocation trace ends with an incomplete record".to_string(),
             ));
-        }
-        if line.last() == Some(&b'\n') {
-            line.pop();
         }
         if line.is_empty() {
             continue;

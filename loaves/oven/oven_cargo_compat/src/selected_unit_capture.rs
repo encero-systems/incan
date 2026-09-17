@@ -161,7 +161,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
         let artifact = item.artifact;
         let crate_types = argument_values(&invocation.arguments, "--crate-type");
         let mode = if artifact.profile.test { "test" } else { "build" }.to_string();
-        let dependencies = extern_arguments(&invocation.arguments)
+        let dependencies = extern_arguments(&invocation.arguments)?
             .into_iter()
             .map(|(alias, path)| {
                 let child = artifact_units.get(&path).ok_or_else(|| {
@@ -298,13 +298,19 @@ fn argument_values(arguments: &[String], name: &str) -> Vec<String> {
         .collect()
 }
 
-fn extern_arguments(arguments: &[String]) -> Vec<(String, String)> {
+fn extern_arguments(arguments: &[String]) -> Result<Vec<(String, String)>, OvenLegacyCargoError> {
     argument_values(arguments, "--extern")
         .into_iter()
-        .filter_map(|value| {
-            value
-                .split_once('=')
-                .map(|(alias, path)| (alias.to_string(), path.to_string()))
+        .map(|value| {
+            let (alias, path) = value.split_once('=').ok_or_else(|| {
+                OvenLegacyCargoError::Plan(format!("rustc extern `{value}` has no exact artifact path"))
+            })?;
+            if alias.is_empty() || path.is_empty() {
+                return Err(OvenLegacyCargoError::Plan(format!(
+                    "rustc extern `{value}` has an empty alias or artifact path"
+                )));
+            }
+            Ok((alias.to_string(), path.to_string()))
         })
         .collect()
 }
@@ -1060,5 +1066,12 @@ mod tests {
         assert_eq!(capture.units[0].platform, None);
         assert_eq!(capture.units[1].platform.as_deref(), Some("wasm32-unknown-unknown"));
         Ok(())
+    }
+
+    #[test]
+    fn stable_trace_refuses_externs_without_exact_paths() {
+        let arguments = vec!["--extern".to_string(), "dependency".to_string()];
+        let error = extern_arguments(&arguments).expect_err("name-only extern must fail closed");
+        assert!(error.to_string().contains("no exact artifact path"));
     }
 }
