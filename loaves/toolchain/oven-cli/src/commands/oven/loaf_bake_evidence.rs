@@ -154,14 +154,6 @@ pub(crate) fn loaf_envelope_compatibility_map_with_release_member(
     Ok(compatibility)
 }
 
-/// Return the content identity of the generation one envelope name and evidence map would commit.
-pub(crate) fn loaf_generation_identity(
-    envelope: OvenLoafEnvelope,
-    evidence: &BTreeMap<String, String>,
-) -> CliResult<String> {
-    loaf_generation_identity_with_release_member(envelope, evidence, None)
-}
-
 /// Return a generation identity that also binds any exact generic release-store member descriptor.
 ///
 /// Release packaging must call this form when it publishes a member; otherwise a swapped descriptor could retain

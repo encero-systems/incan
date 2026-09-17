@@ -3318,7 +3318,7 @@ mod tests {
         compiler_suite_uses_indexed_foundations, compiler_suite_workspace_library_dependency_closure,
         default_rustup_home, import_loaf_envelope_from_mirror_roots, interop_bake_terminal_message,
         loaf_envelope_compatibility_map, loaf_envelope_compatibility_map_with_release_member,
-        loaf_envelope_default_limits, loaf_envelope_evidence, loaf_fixture_action_name, loaf_generation_identity,
+        loaf_envelope_default_limits, loaf_envelope_evidence, loaf_fixture_action_name,
         loaf_generation_identity_with_release_member, native_test_failure_summary, oven_import,
         oven_publish_direct_rustc_plan, oven_run, oven_test, parse_named_path, prepare_compiler_suite_child,
         reuse_complete_loaf_envelope, run_compiler_suite_children_with_leases_retained,
@@ -3350,7 +3350,11 @@ mod tests {
             store_relative_path: PathBuf::from("project-outputs/rust-policy-engine/oven/store/v2"),
             artifact_identity: "sha256:engine".to_string(),
         };
-        let ordinary = loaf_generation_identity(OvenLoafEnvelope::Release, &evidence)?;
+        let ordinary = digest_bytes(&serde_json::to_vec(&("release", &evidence))?);
+        assert_eq!(
+            ordinary,
+            loaf_generation_identity_with_release_member(OvenLoafEnvelope::Release, &evidence, None)?
+        );
         let embedded =
             loaf_generation_identity_with_release_member(OvenLoafEnvelope::Release, &evidence, Some(&member))?;
         assert_ne!(ordinary, embedded);
@@ -3719,7 +3723,8 @@ mod tests {
             &rustc,
         )?;
         let compatibility = loaf_envelope_compatibility_map(&evidence);
-        let generation_identity = loaf_generation_identity(OvenLoafEnvelope::Release, &compatibility)?;
+        let generation_identity =
+            loaf_generation_identity_with_release_member(OvenLoafEnvelope::Release, &compatibility, None)?;
         let manifest = write_synthetic_release_envelope(mirror.path(), &generation_identity, &compatibility, None)?;
 
         // A mirror that names a different generation for the same evidence is refused: the identity is derived,
