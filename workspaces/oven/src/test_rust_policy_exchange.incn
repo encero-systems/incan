@@ -18,7 +18,8 @@ def request(
     duplicate_sysroot_extern: bool = false,
     unsorted_generated_members: bool = false,
     inconsistent_generated_digest: bool = false,
-    invalid_provider_members: bool = false,
+    unsorted_provider_members: bool = false,
+    provider_missing_artifact_member: bool = false,
     empty_generated_input: bool = false,
 ) -> str:
     """One exact selected leaf; the manifest digest is SHA-256 of empty bytes."""
@@ -60,12 +61,21 @@ def request(
                 ])},
             )]), "linked_libraries": JsonValue.array([]), "sysroot_externs": JsonValue.array([])},
         )
-    elif invalid_provider_members:
+    elif unsorted_provider_members:
         closure = JsonValue.object(
             {"environment": JsonValue.object({}), "generated_inputs": JsonValue.array([]), "linked_libraries": JsonValue.array([JsonValue.object(
                 {"input": JsonValue.string("provider"), "name": JsonValue.string("Fixture"), "kind": JsonValue.string("system"), "provider": JsonValue.string("sha256:provider"), "target": JsonValue.string("x86_64-unknown-linux-gnu"), "capability": JsonValue.string("fixture.system"), "receipt_identity": JsonValue.string("sha256:receipt"), "provenance": JsonValue.object({"owner": JsonValue.string("sha256:provider"), "path": JsonValue.string("provenance.json")}), "provenance_digest": JsonValue.string("sha256:provenance"), "search_root": JsonValue.object({"owner": JsonValue.string("sha256:provider"), "path": JsonValue.string("providers")}), "artifact": JsonValue.object({"owner": JsonValue.string("sha256:provider"), "path": JsonValue.string("providers/libfixture.a")}), "digest": JsonValue.string("sha256:artifact"), "members": JsonValue.array([
                     JsonValue.object({"path": JsonValue.string("z.a"), "digest": JsonValue.string("sha256:z")}),
                     JsonValue.object({"path": JsonValue.string("libfixture.a"), "digest": JsonValue.string("sha256:artifact")}),
+                ])},
+            )]), "sysroot_externs": JsonValue.array([])},
+        )
+    elif provider_missing_artifact_member:
+        closure = JsonValue.object(
+            {"environment": JsonValue.object({}), "generated_inputs": JsonValue.array([]), "linked_libraries": JsonValue.array([JsonValue.object(
+                {"input": JsonValue.string("provider"), "name": JsonValue.string("Fixture"), "kind": JsonValue.string("system"), "provider": JsonValue.string("sha256:provider"), "target": JsonValue.string("x86_64-unknown-linux-gnu"), "capability": JsonValue.string("fixture.system"), "receipt_identity": JsonValue.string("sha256:receipt"), "provenance": JsonValue.object({"owner": JsonValue.string("sha256:provider"), "path": JsonValue.string("provenance.json")}), "provenance_digest": JsonValue.string("sha256:provenance"), "search_root": JsonValue.object({"owner": JsonValue.string("sha256:provider"), "path": JsonValue.string("providers")}), "artifact": JsonValue.object({"owner": JsonValue.string("sha256:provider"), "path": JsonValue.string("providers/libfixture.a")}), "digest": JsonValue.string("sha256:artifact"), "members": JsonValue.array([
+                    JsonValue.object({"path": JsonValue.string("a.a"), "digest": JsonValue.string("sha256:a")}),
+                    JsonValue.object({"path": JsonValue.string("z.a"), "digest": JsonValue.string("sha256:z")}),
                 ])},
             )]), "sysroot_externs": JsonValue.array([])},
         )
@@ -197,8 +207,9 @@ pub def test_noncanonical_sysroot_and_generated_closure_facts_refuse() -> None:
 
 
 pub def test_provider_member_catalog_must_be_canonical_and_bind_the_selected_artifact() -> None:
-    """Reject provider member catalogs that cannot prove the named selected artifact."""
-    assert status(evaluate(request(invalid_provider_members=true))) == "refused"
+    """Reject unsorted provider members and a canonical catalog that omits the named selected artifact."""
+    assert status(evaluate(request(unsorted_provider_members=true))) == "refused"
+    assert status(evaluate(request(provider_missing_artifact_member=true))) == "refused"
 
 
 pub def test_checked_empty_generated_tree_is_distinct_from_an_absent_generated_input() -> None:
