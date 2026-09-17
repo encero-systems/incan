@@ -175,7 +175,6 @@ impl OvenRuntimeClosurePayload {
 }
 
 /// A published runtime closure bound to the store-owned paths of its retained entry.
-#[derive(Debug)]
 pub struct OvenSelectedRuntimeClosure {
     payload: OvenRuntimeClosurePayload,
     store_identity: String,
