@@ -1602,7 +1602,7 @@ mod selected_rust_facet_graph_tests {
             .graph()
             .owners
             .iter()
-            .find(|owner| &owner.identity == target_owner)
+            .find(|owner| owner.identity == target_owner)
             .ok_or("validated graph lost target-spec owner")?;
         assert_eq!(owner.kind, OvenSelectedRustFacetOwnerKind::Toolchain);
 
