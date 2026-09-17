@@ -18,6 +18,7 @@ use oven_rustc::rustc::{
     selected_graph_unit_identity,
 };
 use oven_store::OvenReceipt;
+use oven_store::{receipt_with_build_unit_input, receipt_with_compiler_support_root_intent};
 use serde::Serialize;
 
 use super::{
@@ -104,6 +105,71 @@ pub struct OvenLegacyCargoSelectedGraphProjection {
     pub generated: BTreeMap<(usize, usize), OvenLegacyCargoSelectedGeneratedBinding>,
     /// Environment and linked-library closures keyed by the same consuming build-script edge.
     pub build_scripts: BTreeMap<(usize, usize), OvenLegacyCargoSelectedBuildScriptBinding>,
+}
+
+/// Final receipt and selected graph produced by one physical capture and one authored compiler-support declaration.
+pub struct OvenFinalizedCompilerSupportSelectedGraph {
+    /// Receipt retaining the physical build-script closure before authored roots are attached.
+    pub capture_receipt: OvenReceipt,
+    /// Distinct final receipt binding the exact compiler-support root authority.
+    pub final_receipt: OvenReceipt,
+    /// Rooted graph validated against both receipts.
+    pub graph: ValidatedOvenSelectedRustFacetGraph,
+}
+
+/// Complete the capture-to-final-receipt transition for one compiler-support selected graph.
+///
+/// The base receipt authorizes the initial stable Cargo observation. This function binds the observed build-script
+/// closure, projects exact physical identities, joins authored root intent, derives the distinct final receipt, and
+/// admits the rooted graph. Final artifacts must be published only under `final_receipt`.
+pub fn finalize_compiler_support_selected_graph(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+    manifest: &ProjectManifest,
+    intent_owner: &str,
+    base_receipt: &OvenReceipt,
+) -> Result<OvenFinalizedCompilerSupportSelectedGraph, OvenLegacyCargoError> {
+    if base_receipt
+        .sources
+        .build_unit_inputs
+        .contains_key(OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT)
+    {
+        return Err(projection_error(
+            "compiler-support base receipt",
+            "already carries a selected build-script closure",
+        ));
+    }
+    let closure_digest = legacy_cargo_build_script_closure_digest(capture, &sealed.build_scripts)?;
+    let capture_receipt = receipt_with_build_unit_input(
+        base_receipt,
+        OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT,
+        closure_digest,
+    )
+    .map_err(|error| projection_error("compiler-support capture receipt", &error.to_string()))?;
+    let authority = compiler_support_root_intent_authority(
+        capture,
+        sealed,
+        Some(&capture_receipt),
+        manifest,
+        intent_owner,
+        &capture_receipt,
+    )?;
+    let authority_digest = oven_rustc::rustc::compiler_support_root_intent_digest(&authority)
+        .map_err(|error| projection_error("compiler-support root intent", &error.to_string()))?;
+    let final_receipt = receipt_with_compiler_support_root_intent(&capture_receipt, authority_digest)
+        .map_err(|error| projection_error("compiler-support final receipt", &error.to_string()))?;
+    let graph = project_and_bind_compiler_support_selected_graph(
+        capture,
+        sealed,
+        &authority,
+        &capture_receipt,
+        &final_receipt,
+    )?;
+    Ok(OvenFinalizedCompilerSupportSelectedGraph {
+        capture_receipt,
+        final_receipt,
+        graph,
+    })
 }
 
 /// Bind a verified stable-compiler capture to a built-in target description without inventing target-spec JSON.
