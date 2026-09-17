@@ -138,6 +138,8 @@ pub struct AstLowering {
     pub active_trait_default_function_paths: Vec<HashMap<String, Vec<String>>>,
     /// Active defining-module type paths while lowering one expanded trait default body.
     pub active_trait_default_type_paths: Vec<HashMap<String, Vec<String>>>,
+    /// Whether the current expanded default body came from an imported source module.
+    pub active_imported_trait_defaults: Vec<bool>,
     /// Concrete trait arguments active while expanding a source default method into an adopter impl.
     ///
     /// Trait defaults are lowered in the adopter's context rather than emitted as Rust trait defaults because Incan
@@ -631,6 +633,7 @@ impl AstLowering {
             trait_default_type_paths: HashMap::new(),
             active_trait_default_function_paths: Vec::new(),
             active_trait_default_type_paths: Vec::new(),
+            active_imported_trait_defaults: Vec::new(),
             active_trait_type_substitutions: Vec::new(),
             active_callable_type_params: Vec::new(),
             iterator_adopter_names: HashSet::new(),
