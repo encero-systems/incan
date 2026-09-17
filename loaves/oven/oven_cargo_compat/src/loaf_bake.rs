@@ -206,32 +206,19 @@ pub fn prepare_loaf_from_generated_project_with_selected_unit_bindings(
 /// Bind every exported registry artifact to exactly one authenticated selected physical unit.
 fn bind_registry_leaf_selected_unit_identities(
     leaves: &mut [OvenRustcRegistryLeaf],
-    selected_units: &OvenLegacyCargoSelectedUnitCapture,
+    _selected_units: &OvenLegacyCargoSelectedUnitCapture,
     bindings: &BTreeMap<String, String>,
 ) -> Result<(), OvenLoafError> {
     let mut used = BTreeSet::new();
     for leaf in leaves {
-        let matched = selected_units
-            .units
-            .iter()
-            .filter(|unit| {
-                unit.package == leaf.package
-                    && unit.package_version == leaf.version
-                    && unit.target_name.replace('-', "_") == leaf.crate_name
-                    && unit.effective_features == leaf.features
-            })
-            .collect::<Vec<_>>();
-        let [unit] = matched.as_slice() else {
-            return Err(OvenLoafError::Preparation {
-                message: "registry artifact does not bind exactly one captured physical unit".to_string(),
-            });
-        };
-        let capture_identity =
-            super::legacy_cargo_selected_unit_capture_identity(unit).map_err(|error| OvenLoafError::Preparation {
-                message: error.to_string(),
+        let capture_identity = leaf
+            .selected_unit_identity
+            .as_ref()
+            .ok_or_else(|| OvenLoafError::Preparation {
+                message: "registry artifact lacks its traced physical-unit identity".to_string(),
             })?;
         let selected_identity = bindings
-            .get(&capture_identity)
+            .get(capture_identity)
             .ok_or_else(|| OvenLoafError::Preparation {
                 message: "registry artifact has no authenticated selected-unit binding".to_string(),
             })?;
@@ -674,6 +661,7 @@ mod tests {
             target_kinds: vec!["lib".to_string()],
             crate_types: vec!["lib".to_string()],
             source_path: PathBuf::from("/sealed/blake2/src/lib.rs"),
+            artifact_paths: Vec::new(),
             root_module: "src/lib.rs".to_string(),
             edition: "2021".to_string(),
             mode: "build".to_string(),
@@ -721,7 +709,9 @@ mod tests {
             compiler: None,
         };
         let mut bindings = BTreeMap::from([(capture_identity, "sha256:selected-unit".to_string())]);
-        let mut leaves = vec![registry_leaf()];
+        let mut leaf = registry_leaf();
+        leaf.selected_unit_identity = Some(capture_identity.clone());
+        let mut leaves = vec![leaf.clone()];
 
         bind_registry_leaf_selected_unit_identities(&mut leaves, &capture, &bindings)?;
         assert_eq!(
@@ -729,24 +719,26 @@ mod tests {
             Some("sha256:selected-unit")
         );
 
-        let mut missing = vec![registry_leaf()];
+        let mut missing = vec![leaf.clone()];
         assert!(bind_registry_leaf_selected_unit_identities(&mut missing, &capture, &BTreeMap::new()).is_err());
 
         let mut variant = unit;
         variant.cfg.push("target_feature=\"neon\"".to_string());
-        let ambiguous = OvenLegacyCargoSelectedUnitCapture {
+        let variant_identity = legacy_cargo_selected_unit_capture_identity(&variant)?;
+        let variants = OvenLegacyCargoSelectedUnitCapture {
             units: vec![capture.units[0].clone(), variant],
             ..capture
         };
-        let mut ambiguous_leaf = vec![registry_leaf()];
-        assert!(bind_registry_leaf_selected_unit_identities(&mut ambiguous_leaf, &ambiguous, &bindings).is_err());
+        let mut variant_only = vec![leaf.clone()];
+        let variant_bindings = BTreeMap::from([(variant_identity, "sha256:wrong-variant".to_string())]);
+        assert!(bind_registry_leaf_selected_unit_identities(&mut variant_only, &variants, &variant_bindings).is_err());
 
         bindings.insert(
             "sha256:uncompiled-capture".to_string(),
             "sha256:uncompiled-unit".to_string(),
         );
-        let mut extra = vec![registry_leaf()];
-        assert!(bind_registry_leaf_selected_unit_identities(&mut extra, &ambiguous, &bindings).is_err());
+        let mut extra = vec![leaf];
+        assert!(bind_registry_leaf_selected_unit_identities(&mut extra, &variants, &bindings).is_err());
         Ok(())
     }
     fn runtime_receipt(

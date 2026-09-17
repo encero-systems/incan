@@ -415,6 +415,9 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
         false,
     )?;
     for (unit, item) in capture.units.iter_mut().zip(&matched) {
+        unit.artifact_paths = item.aliases.iter().chain(&item.emitted).cloned().collect();
+        unit.artifact_paths.sort();
+        unit.artifact_paths.dedup();
         unit.cfg = rustc_non_feature_cfgs(&item.invocation.arguments);
         unit.sysroot_externs = extern_arguments(&item.invocation.arguments)?.sysroot;
         unit.target_is_explicit = Some(argument_value(&item.invocation.arguments, "--target").is_some());
@@ -918,6 +921,9 @@ pub struct OvenLegacyCargoSelectedUnit {
     pub target_kinds: Vec<String>,
     pub crate_types: Vec<String>,
     pub source_path: PathBuf,
+    /// Exact Cargo aliases and rustc-emitted outputs joined to this traced invocation.
+    #[serde(default)]
+    pub artifact_paths: Vec<PathBuf>,
     /// Package-root-relative crate root derived from Cargo metadata and the selected target record.
     pub root_module: String,
     pub edition: String,
@@ -1187,6 +1193,7 @@ fn capture_legacy_cargo_selected_units_inner(
             target_kinds: unit.target.kind.clone(),
             crate_types: unit.target.crate_types.clone(),
             source_path: unit.target.src_path.clone(),
+            artifact_paths: Vec::new(),
             root_module,
             edition: unit.target.edition.clone(),
             mode: unit.mode.clone(),
@@ -1564,6 +1571,7 @@ mod tests {
                 target_kinds: vec!["custom-build".to_string()],
                 crate_types: vec!["bin".to_string()],
                 source_path: PathBuf::from("/fixture/build.rs"),
+                artifact_paths: Vec::new(),
                 root_module: "build.rs".to_string(),
                 edition: "2024".to_string(),
                 mode: "run-custom-build".to_string(),

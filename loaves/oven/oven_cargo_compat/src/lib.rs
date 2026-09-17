@@ -1273,6 +1273,7 @@ pub fn prepare_direct_rustc_plan(
             rustc_host: &rustc_host,
             externs: &externs,
             supporting_artifacts: &supporting_artifacts,
+            selected_units: selected_units.as_ref(),
             inspection_packages: request.inspection_packages.as_deref(),
         })?;
     supporting_artifacts.extend(registry_source_artifacts);
@@ -2217,6 +2218,7 @@ pub const OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV: &str = "INCAN_OVEN_LEGACY_
 
 /// Registry leaf evidence collected before its immutable source tree is staged.
 struct PendingRegistryLeaf {
+    selected_unit_identity: Option<String>,
     package: String,
     version: String,
     crate_name: String,

@@ -293,6 +293,7 @@ pub struct PublisherRegistryLeafCatalogRequest<'a> {
     pub rustc_host: &'a str,
     pub externs: &'a [OvenRustcArtifactExtern],
     pub supporting_artifacts: &'a [OvenRustcSupportingArtifact],
+    pub selected_units: Option<&'a super::OvenLegacyCargoSelectedUnitCapture>,
     pub inspection_packages: Option<&'a [OvenLegacyCargoInspectionPackage]>,
 }
 
@@ -309,6 +310,7 @@ pub fn publisher_registry_leaf_catalog(
         rustc_host,
         externs,
         supporting_artifacts,
+        selected_units,
         inspection_packages,
     } = request;
     let mut retained = BTreeMap::<String, String>::new();
@@ -355,6 +357,35 @@ pub fn publisher_registry_leaf_catalog(
             else {
                 continue;
             };
+            let selected_unit_identity = selected_units
+                .map(|selected_units| {
+                    let reported_paths = artifact
+                        .filenames
+                        .iter()
+                        .filter_map(|path| fs::canonicalize(path).ok())
+                        .collect::<BTreeSet<_>>();
+                    let selected = selected_units
+                        .units
+                        .iter()
+                        .filter(|unit| {
+                            unit.package_id == artifact.package_id
+                                && unit.target_name == artifact.target.name
+                                && unit.artifact_paths.iter().any(|path| {
+                                    fs::canonicalize(path)
+                                        .ok()
+                                        .is_some_and(|path| reported_paths.contains(&path))
+                                })
+                        })
+                        .collect::<Vec<_>>();
+                    let [selected] = selected.as_slice() else {
+                        return Err(OvenLegacyCargoError::Plan(format!(
+                            "registry artifact `{}` {} does not bind exactly one traced rustc output",
+                            package.name, package.version
+                        )));
+                    };
+                    super::legacy_cargo_selected_unit_capture_identity(selected)
+                })
+                .transpose()?;
             let mut artifacts = artifact
                 .filenames
                 .into_iter()
@@ -409,6 +440,7 @@ pub fn publisher_registry_leaf_catalog(
                 })?
                 .to_path_buf();
             let leaf = PendingRegistryLeaf {
+                selected_unit_identity,
                 package: package.name.clone(),
                 version: package.version.clone(),
                 crate_name: crate_name.clone(),
@@ -484,7 +516,7 @@ pub fn publisher_registry_leaf_catalog(
             &mut source_artifacts,
         )?;
         sealed.push(OvenRustcRegistryLeaf {
-            selected_unit_identity: None,
+            selected_unit_identity: leaf.selected_unit_identity,
             package: leaf.package,
             version: leaf.version,
             crate_name: leaf.crate_name,
