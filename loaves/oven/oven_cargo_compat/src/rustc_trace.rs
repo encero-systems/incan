@@ -6,6 +6,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
 
 use serde::{Deserialize, Serialize};
 
@@ -78,33 +79,13 @@ fn run_marked_rustc_trace_wrapper() -> Result<i32, ()> {
         .into_os_string()
         .into_string()
         .map_err(|_| ())?;
-    let stdin_source = if arguments.iter().any(|argument| argument == "-") {
-        let mut bytes = Vec::new();
-        std::io::stdin()
-            .take(MAX_RUSTC_TRACE_RECORD_BYTES as u64 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| ())?;
-        if bytes.len() > MAX_RUSTC_TRACE_RECORD_BYTES {
-            return Err(());
-        }
-        Some(bytes)
+    let stdin_source = if rustc_positional_source(&arguments) == Some("-") {
+        Some(read_bounded_rustc_stdin(std::io::stdin())?)
     } else {
         None
     };
     let stdin_digest = stdin_source.as_deref().map(super::digest_bytes);
-    let mut command = Command::new(&rustc);
-    command.args(&arguments);
-    let status = if let Some(bytes) = stdin_source {
-        let mut child = command.stdin(Stdio::piped()).spawn().map_err(|_| ())?;
-        let write_result = child.stdin.take().ok_or(())?.write_all(&bytes);
-        let status = child.wait().map_err(|_| ())?;
-        if write_result.is_err() && status.success() {
-            return Err(());
-        }
-        status
-    } else {
-        command.status().map_err(|_| ())?
-    };
+    let status = run_traced_rustc(&rustc, &arguments, stdin_source)?;
     let exit_code = status.code().unwrap_or(1);
     if !status.success()
         || arguments
@@ -145,6 +126,99 @@ fn run_marked_rustc_trace_wrapper() -> Result<i32, ()> {
         return Err(());
     }
     Ok(exit_code)
+}
+
+/// Read one compiler stdin source without allocating beyond the per-record capture limit.
+fn read_bounded_rustc_stdin(mut source: impl Read) -> Result<Vec<u8>, ()> {
+    let mut bytes = Vec::new();
+    source
+        .by_ref()
+        .take(MAX_RUSTC_TRACE_RECORD_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ())?;
+    (bytes.len() <= MAX_RUSTC_TRACE_RECORD_BYTES).then_some(bytes).ok_or(())
+}
+
+/// Run rustc while delivering captured stdin concurrently so an early exit always closes the pipe writer.
+fn run_traced_rustc(
+    rustc: &str,
+    arguments: &[String],
+    stdin_source: Option<Vec<u8>>,
+) -> Result<std::process::ExitStatus, ()> {
+    let mut command = Command::new(rustc);
+    command.args(arguments);
+    let Some(bytes) = stdin_source else {
+        return command.status().map_err(|_| ());
+    };
+    let mut child = command.stdin(Stdio::piped()).spawn().map_err(|_| ())?;
+    let mut stdin = child.stdin.take().ok_or(())?;
+    let writer = thread::spawn(move || stdin.write_all(&bytes));
+    let status = child.wait();
+    let write_result = writer.join().map_err(|_| ())?;
+    let status = status.map_err(|_| ())?;
+    if write_result.is_err() && status.success() {
+        return Err(());
+    }
+    Ok(status)
+}
+
+/// Return the single positional rustc source after excluding values consumed by known value-taking options.
+pub(crate) fn rustc_positional_source(arguments: &[String]) -> Option<&str> {
+    let mut source = None;
+    let mut index = 0;
+    while index < arguments.len() {
+        let argument = arguments[index].as_str();
+        if rustc_option_takes_separate_value(argument) {
+            index = index.saturating_add(2);
+            continue;
+        }
+        if argument.starts_with('-') && argument != "-" {
+            index += 1;
+            continue;
+        }
+        if source.replace(argument).is_some() {
+            return None;
+        }
+        index += 1;
+    }
+    source
+}
+
+/// Value-taking options accepted in captured Cargo/rustc invocations.
+fn rustc_option_takes_separate_value(argument: &str) -> bool {
+    matches!(
+        argument,
+        "--allow"
+            | "--cap-lints"
+            | "--cfg"
+            | "--check-cfg"
+            | "--codegen"
+            | "--color"
+            | "--crate-name"
+            | "--crate-type"
+            | "--deny"
+            | "--diagnostic-width"
+            | "--edition"
+            | "--emit"
+            | "--error-format"
+            | "--extern"
+            | "--forbid"
+            | "--json"
+            | "--out-dir"
+            | "--print"
+            | "--remap-path-prefix"
+            | "--sysroot"
+            | "--target"
+            | "--warn"
+            | "-A"
+            | "-C"
+            | "-D"
+            | "-F"
+            | "-L"
+            | "-W"
+            | "-l"
+            | "-o"
+    )
 }
 
 /// Validate a bounded wrapper trace and append its records to the matching Cargo JSON stream.
@@ -299,6 +373,8 @@ pub(crate) fn outputs_have_rustc_trace(outputs: &[super::CargoInvocationOutput])
 #[cfg(test)]
 mod tests {
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     use super::*;
 
@@ -338,5 +414,59 @@ mod tests {
         assert!(cargo_output_is_entirely_fresh(fresh));
         assert!(!cargo_output_is_entirely_fresh(rebuilt));
         assert!(!cargo_output_is_entirely_fresh(b"not-json\n"));
+    }
+
+    #[test]
+    fn positional_stdin_is_distinct_from_an_option_value() {
+        let rustix = vec![
+            "--crate-type=rlib".to_string(),
+            "--emit=metadata".to_string(),
+            "--target".to_string(),
+            "fixture-target".to_string(),
+            "-o".to_string(),
+            "probe.rmeta".to_string(),
+            "-".to_string(),
+        ];
+        assert_eq!(rustc_positional_source(&rustix), Some("-"));
+
+        let option_value = vec!["--extern".to_string(), "-".to_string(), "src/lib.rs".to_string()];
+        assert_eq!(rustc_positional_source(&option_value), Some("src/lib.rs"));
+    }
+
+    #[test]
+    fn bounded_stdin_refuses_the_first_byte_beyond_the_limit() {
+        let exact = vec![b'x'; MAX_RUSTC_TRACE_RECORD_BYTES];
+        assert_eq!(read_bounded_rustc_stdin(exact.as_slice()), Ok(exact));
+        let oversized = vec![b'x'; MAX_RUSTC_TRACE_RECORD_BYTES + 1];
+        assert!(read_bounded_rustc_stdin(oversized.as_slice()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn traced_rustc_forwards_exact_stdin_and_joins_an_early_exit() -> Result<(), Box<dyn std::error::Error>> {
+        let scratch = tempfile::tempdir()?;
+        let received = scratch.path().join("received.rs");
+        let reader = scratch.path().join("reader.sh");
+        fs::write(&reader, format!("#!/bin/sh\ncat > '{}'\n", received.display()))?;
+        fs::set_permissions(&reader, fs::Permissions::from_mode(0o755))?;
+        let source = b"pub fn exact() {}\n".to_vec();
+        let status = run_traced_rustc(
+            reader.to_str().ok_or("reader path is not UTF-8")?,
+            &[],
+            Some(source.clone()),
+        )?;
+        assert!(status.success());
+        assert_eq!(fs::read(received)?, source);
+
+        let failure = scratch.path().join("failure.sh");
+        fs::write(&failure, "#!/bin/sh\nexit 23\n")?;
+        fs::set_permissions(&failure, fs::Permissions::from_mode(0o755))?;
+        let status = run_traced_rustc(
+            failure.to_str().ok_or("failure path is not UTF-8")?,
+            &[],
+            Some(vec![b'x'; MAX_RUSTC_TRACE_RECORD_BYTES]),
+        )?;
+        assert_eq!(status.code(), Some(23));
+        Ok(())
     }
 }
