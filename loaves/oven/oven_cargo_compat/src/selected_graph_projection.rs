@@ -647,9 +647,8 @@ pub fn compiler_support_root_intent_authority(
         }
         matches.sort_unstable();
         matches.dedup();
-        // An optional declaration that has no physical root edge was not activated by the authored project feature
-        // selection. A present edge is explicit activation evidence and must become a root; effective crate features
-        // are never used to make this choice.
+        // Authored activation chooses optional roots. Physical edges must agree with that choice; their presence
+        // never supplies missing feature intent.
         if declaration.optional {
             let active = active_optional_dependencies.contains(alias);
             if !active && matches.is_empty() {
