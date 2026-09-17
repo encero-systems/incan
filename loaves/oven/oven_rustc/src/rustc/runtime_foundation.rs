@@ -823,6 +823,7 @@ mod tests {
             }
         };
         let mut unit = OvenSelectedRustFacetUnit {
+            sysroot_externs: Vec::new(),
             identity: String::new(),
             package: package.to_string(),
             package_version: "1.0.0".to_string(),

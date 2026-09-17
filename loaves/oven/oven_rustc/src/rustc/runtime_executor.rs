@@ -753,6 +753,7 @@ pub(crate) mod tests {
             _ => selected_graph_sha256(crate_name.as_bytes()),
         };
         let mut unit = OvenSelectedRustFacetUnit {
+            sysroot_externs: Vec::new(),
             identity: String::new(),
             package: crate_name.to_string(),
             package_version: package_version.to_string(),

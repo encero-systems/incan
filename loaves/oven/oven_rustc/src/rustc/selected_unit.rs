@@ -1096,6 +1096,7 @@ mod tests {
         }];
         let owner = source_owner();
         let mut unit = OvenSelectedRustFacetUnit {
+            sysroot_externs: Vec::new(),
             identity: String::new(),
             package: "fixture".to_string(),
             package_version: "1.0.0".to_string(),
