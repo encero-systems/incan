@@ -207,6 +207,12 @@ fn validate_projection_compiler(
         .compiler
         .as_ref()
         .ok_or_else(|| projection_error("selected compiler capture", "is absent"))?;
+    if !capture.rustc_invocations_observed {
+        return Err(projection_error(
+            "selected compiler capture",
+            "has no bijectively matched stable rustc invocation trace",
+        ));
+    }
     if compiler.host != sealed.selection.host
         || compiler.target != sealed.selection.intent.target
         || compiler.toolchain != sealed.selection.intent.toolchain
@@ -298,12 +304,6 @@ fn projected_build_script_facts(
         .get(consumer)
         .ok_or_else(|| projection_error("selected unit", "is absent"))?;
     let mut cfg = unit.cfg.clone();
-    if cfg.is_empty() {
-        return Err(projection_error(
-            "selected Cargo unit cfg",
-            "is absent; raw graph projection requires the exact stable rustc trace rather than an inferred empty set",
-        ));
-    }
     let mut generated = Vec::new();
     for dependency in &unit.dependencies {
         let Some(build_unit) = capture.units.get(dependency.unit_index) else {
@@ -525,6 +525,7 @@ mod tests {
         let source_members = members();
         Ok(OvenLegacyCargoSelectedUnitCapture {
             roots: vec![0],
+            rustc_invocations_observed: true,
             compiler: Some(super::super::OvenLegacyCargoSelectedCompilerContext {
                 host: "x86_64-unknown-linux-gnu".to_string(),
                 target: "x86_64-unknown-linux-gnu".to_string(),
@@ -552,6 +553,7 @@ mod tests {
                 edition: "2021".to_string(),
                 mode: "build".to_string(),
                 platform: Some("x86_64-unknown-linux-gnu".to_string()),
+                cfg: vec!["target_has_atomic=\"8\"".to_string()],
                 effective_features: vec!["derive".to_string()],
                 dependencies: Vec::new(),
                 build_script: None,
@@ -644,6 +646,14 @@ mod tests {
     }
 
     #[test]
+    fn projection_refuses_generic_capture_without_a_stable_trace() -> Result<(), Box<dyn std::error::Error>> {
+        let mut capture = capture()?;
+        capture.rustc_invocations_observed = false;
+        assert!(project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn compiler_support_projection_binds_only_the_sealed_root_authority() -> Result<(), Box<dyn std::error::Error>> {
         let capture = capture()?;
         let sealed = sealed(&capture)?;
@@ -714,6 +724,7 @@ mod tests {
             edition: "2021".to_string(),
             mode: "run-custom-build".to_string(),
             platform: Some("x86_64-unknown-linux-gnu".to_string()),
+            cfg: Vec::new(),
             effective_features: Vec::new(),
             dependencies: Vec::new(),
             build_script: Some(super::super::OvenLegacyCargoBuildScriptFacts {
@@ -752,7 +763,7 @@ mod tests {
         );
 
         let graph = project_legacy_cargo_selected_graph(&capture, &sealed)?;
-        assert_eq!(graph.units[0].cfg, ["has_bindings"]);
+        assert_eq!(graph.units[0].cfg, ["has_bindings", "target_has_atomic=\"8\""]);
         assert_eq!(graph.units[0].generated_inputs.len(), 1);
         assert_eq!(graph.units[0].generated_inputs[0].name, "bindings");
         Ok(())
@@ -780,6 +791,7 @@ mod tests {
             edition: "2021".to_string(),
             mode: "run-custom-build".to_string(),
             platform: Some("x86_64-unknown-linux-gnu".to_string()),
+            cfg: Vec::new(),
             effective_features: Vec::new(),
             dependencies: Vec::new(),
             build_script: Some(super::super::OvenLegacyCargoBuildScriptFacts {
