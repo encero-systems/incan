@@ -1231,7 +1231,7 @@ pub fn prepare_direct_rustc_plan(
         Some(metadata) => metadata,
         None => read_legacy_cargo_metadata(&request.cargo, &cargo_manifest, &request.receipt.intent.features)?,
     };
-    let selected_units = capture_legacy_cargo_selected_units(&selected_unit_graph, &metadata, &cargo_outputs)?;
+    let mut selected_units = capture_legacy_cargo_selected_units(&selected_unit_graph, &metadata, &cargo_outputs)?;
     let resolved_direct_dependencies = resolve_direct_dependency_packages(&metadata, &direct_dependencies)?;
     let reported_artifact_files = publisher_output_artifact_paths(&cargo_outputs, &request.receipt.intent.profile)?;
     let (dependency_search_paths, externs, mut supporting_artifacts) = if reported_artifact_files.is_empty() {
@@ -1254,6 +1254,10 @@ pub fn prepare_direct_rustc_plan(
             &cargo_outputs,
         )?
     };
+    supporting_artifacts.extend(retain_legacy_cargo_selected_generated_outputs(
+        &mut selected_units,
+        &staging,
+    )?);
     let provider_entrypoints = provider_compilation_externs(
         request.provider_compilations,
         &consumer_direct_dependencies,

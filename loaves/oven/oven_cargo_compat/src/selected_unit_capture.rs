@@ -5,13 +5,15 @@
 //! before constructing a selected Rust facet graph.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use super::{
     CargoBuildScriptExecuted, CargoInvocationOutput, CargoMetadata, CargoUnitGraph, OvenLegacyCargoError,
-    OvenLegacyCargoInspectionSource, OvenLegacyCargoInspectionSourceMember,
+    OvenLegacyCargoInspectionSource, OvenLegacyCargoInspectionSourceMember, OvenRustcSupportingArtifact,
+    canonical_directory, copy_regular_directory_tree, digest_bytes, digest_source_tree,
+    materialized_files_from_directory, regular_file_bytes,
 };
 
 /// Publisher-only physical facts for one Cargo selected-unit graph.
@@ -76,6 +78,17 @@ pub struct OvenLegacyCargoBuildScriptFacts {
     pub linked_libraries: Vec<String>,
     pub linked_paths: Vec<String>,
     pub out_dir: PathBuf,
+    /// Retained output tree; `None` means the publisher has not yet copied and inventoried the declared directory.
+    pub output: Option<OvenLegacyCargoSelectedGeneratedOutput>,
+}
+
+/// Exact retained generated-output tree for one executed compatibility build script.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenLegacyCargoSelectedGeneratedOutput {
+    pub relative_root: String,
+    pub digest: String,
+    pub members: Vec<OvenLegacyCargoInspectionSourceMember>,
 }
 
 /// Capture Cargo's physical unit selection and structured build-script results without deriving semantic intent.
@@ -224,6 +237,7 @@ pub fn capture_legacy_cargo_selected_units(
                     linked_libraries: record.linked_libs.clone(),
                     linked_paths: record.linked_paths.clone(),
                     out_dir: record.out_dir.clone(),
+                    output: None,
                 })
             })
             .transpose()?;
@@ -266,6 +280,74 @@ pub fn capture_legacy_cargo_selected_units(
         roots: graph.roots.clone(),
         units,
     })
+}
+
+/// Copy every declared build-script output directory into publisher staging and retain its exact member inventory.
+pub fn retain_legacy_cargo_selected_generated_outputs(
+    capture: &mut OvenLegacyCargoSelectedUnitCapture,
+    staging: &Path,
+) -> Result<Vec<OvenRustcSupportingArtifact>, OvenLegacyCargoError> {
+    let mut artifacts = BTreeMap::new();
+    for unit in &mut capture.units {
+        let Some(build_script) = unit.build_script.as_mut() else {
+            continue;
+        };
+        let source = canonical_directory(&build_script.out_dir, "Cargo build-script OUT_DIR")?;
+        let source_digest = digest_source_tree(&source).map_err(|error| {
+            OvenLegacyCargoError::Plan(format!(
+                "could not digest Cargo build-script OUT_DIR for `{}`: {error}",
+                unit.package
+            ))
+        })?;
+        let identity = source_digest.strip_prefix("sha256:").unwrap_or(&source_digest);
+        let relative_root = format!("generated-outputs/{identity}");
+        let destination = staging.join(&relative_root);
+        if !destination.exists() {
+            copy_regular_directory_tree(&source, &destination, "Cargo build-script OUT_DIR")?;
+        }
+        let digest = digest_source_tree(&destination).map_err(|error| {
+            OvenLegacyCargoError::Plan(format!(
+                "could not digest retained Cargo build-script OUT_DIR for `{}`: {error}",
+                unit.package
+            ))
+        })?;
+        if digest != source_digest {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "Cargo build-script OUT_DIR for `{}` changed while it was retained",
+                unit.package
+            )));
+        }
+        let files = materialized_files_from_directory(&destination, &relative_root, "Cargo build-script OUT_DIR")?;
+        let mut members = Vec::with_capacity(files.len());
+        for file in files {
+            let path = file
+                .relative_path
+                .strip_prefix(&format!("{relative_root}/"))
+                .ok_or_else(|| OvenLegacyCargoError::Plan("generated output lost its retained root".to_string()))?
+                .to_string();
+            let file_digest = digest_bytes(&regular_file_bytes(&file.source_path)?);
+            members.push(OvenLegacyCargoInspectionSourceMember {
+                path,
+                digest: file_digest.clone(),
+            });
+            if let Some(previous) = artifacts.insert(file.relative_path.clone(), file_digest.clone())
+                && previous != file_digest
+            {
+                return Err(OvenLegacyCargoError::Plan(
+                    "generated output path has conflicting retained bytes".to_string(),
+                ));
+            }
+        }
+        build_script.output = Some(OvenLegacyCargoSelectedGeneratedOutput {
+            relative_root,
+            digest,
+            members,
+        });
+    }
+    Ok(artifacts
+        .into_iter()
+        .map(|(relative_path, digest)| OvenRustcSupportingArtifact { relative_path, digest })
+        .collect())
 }
 
 /// Join registry-backed selected units to the publisher's exact staged source catalogs.
@@ -319,6 +401,7 @@ pub fn bind_legacy_cargo_selected_registry_sources(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn capture_preserves_unit_edges_and_structured_build_script_facts() -> Result<(), Box<dyn std::error::Error>> {
@@ -497,6 +580,62 @@ mod tests {
         let error = capture_legacy_cargo_selected_units(&ambiguous, &metadata, &[output])
             .expect_err("multiple physical build-script units must remain ambiguous");
         assert!(error.to_string().contains("multiple run-custom-build units"));
+        Ok(())
+    }
+
+    #[test]
+    fn retained_generated_output_proves_exact_copied_members() -> Result<(), Box<dyn std::error::Error>> {
+        let scratch = tempfile::tempdir()?;
+        let output = scratch.path().join("out");
+        fs::create_dir_all(output.join("nested"))?;
+        fs::write(output.join("generated.rs"), b"pub const GENERATED: bool = true;\n")?;
+        fs::write(output.join("nested/data.bin"), b"sealed")?;
+        let mut capture = OvenLegacyCargoSelectedUnitCapture {
+            roots: vec![0],
+            units: vec![OvenLegacyCargoSelectedUnit {
+                package_id: "fixture 1.0.0".to_string(),
+                package: "fixture".to_string(),
+                package_version: "1.0.0".to_string(),
+                package_source: None,
+                target_name: "build-script-build".to_string(),
+                target_kinds: vec!["custom-build".to_string()],
+                crate_types: vec!["bin".to_string()],
+                source_path: PathBuf::from("/fixture/build.rs"),
+                root_module: "build.rs".to_string(),
+                edition: "2024".to_string(),
+                mode: "run-custom-build".to_string(),
+                platform: None,
+                effective_features: Vec::new(),
+                dependencies: Vec::new(),
+                build_script: Some(OvenLegacyCargoBuildScriptFacts {
+                    cfgs: Vec::new(),
+                    environment: BTreeMap::new(),
+                    linked_libraries: Vec::new(),
+                    linked_paths: Vec::new(),
+                    out_dir: output,
+                    output: None,
+                }),
+                registry_source: None,
+            }],
+        };
+        let staging = scratch.path().join("staging");
+        fs::create_dir(&staging)?;
+        let artifacts = retain_legacy_cargo_selected_generated_outputs(&mut capture, &staging)?;
+        let retained = capture.units[0]
+            .build_script
+            .as_ref()
+            .and_then(|facts| facts.output.as_ref())
+            .ok_or("missing retained output")?;
+        assert_eq!(
+            retained
+                .members
+                .iter()
+                .map(|member| member.path.as_str())
+                .collect::<Vec<_>>(),
+            ["generated.rs", "nested/data.bin"]
+        );
+        assert_eq!(artifacts.len(), 2);
+        assert!(staging.join(&retained.relative_root).join("generated.rs").is_file());
         Ok(())
     }
 }
