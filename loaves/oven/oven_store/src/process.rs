@@ -490,6 +490,7 @@ mod tests {
     const SHORT_TIMEOUT: Duration = Duration::from_secs(1);
 
     #[test]
+    /// Preserve separate stdout and stderr from a successful bounded command.
     fn captures_both_streams_without_refusal() -> Result<(), Box<dyn Error>> {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "printf stdout; printf stderr >&2"]);
@@ -512,6 +513,7 @@ mod tests {
     }
 
     #[test]
+    /// Refuse oversized stdout while retaining only the configured diagnostic prefix.
     fn stdout_limit_refuses_and_retains_only_the_configured_prefix() -> Result<(), Box<dyn Error>> {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "printf 123456"]);
@@ -532,6 +534,7 @@ mod tests {
     }
 
     #[test]
+    /// Refuse oversized stderr independently of the stdout limit.
     fn stderr_limit_refuses_and_retains_only_the_configured_prefix() -> Result<(), Box<dyn Error>> {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "printf 123456 >&2"]);
@@ -552,6 +555,7 @@ mod tests {
     }
 
     #[test]
+    /// Stop and reap a running command after the caller requests cancellation.
     fn cancellation_refuses_a_running_child() -> Result<(), Box<dyn Error>> {
         let cancellation = Arc::new(AtomicBool::new(false));
         let cancellation_for_thread = Arc::clone(&cancellation);
@@ -578,6 +582,7 @@ mod tests {
     }
 
     #[test]
+    /// Prove an already cancelled request cannot launch command side effects.
     fn pre_cancelled_request_does_not_spawn_the_command() -> Result<(), Box<dyn Error>> {
         let directory = tempdir()?;
         let marker = directory.path().join("command-started");
@@ -605,6 +610,7 @@ mod tests {
     }
 
     #[test]
+    /// Verify timeout also terminates a descendant in the owned process group.
     fn timeout_reaps_a_descendant_in_the_isolated_group() -> Result<(), Box<dyn Error>> {
         let directory = tempdir()?;
         let descendant_pid = directory.path().join("descendant-pid");
@@ -633,6 +639,7 @@ mod tests {
     }
 
     #[test]
+    /// Keep the timeout active while inherited pipes remain open after direct-child exit.
     fn timeout_survives_direct_child_exit_while_a_quiet_descendant_holds_the_pipes() -> Result<(), Box<dyn Error>> {
         let directory = tempdir()?;
         let descendant_pid = directory.path().join("descendant-pid");
@@ -659,6 +666,7 @@ mod tests {
     }
 
     #[test]
+    /// Prevent successful completion from leaving a background descendant alive.
     fn completion_reaps_a_descendant_that_closed_all_inherited_pipes() -> Result<(), Box<dyn Error>> {
         let directory = tempdir()?;
         let descendant_pid = directory.path().join("descendant-pid");
@@ -688,6 +696,7 @@ mod tests {
     }
 
     #[test]
+    /// Enforce the output cap while a descendant writes after the direct child exits.
     fn output_limit_survives_direct_child_exit_while_a_descendant_floods_stdout() -> Result<(), Box<dyn Error>> {
         let directory = tempdir()?;
         let descendant_pid = directory.path().join("descendant-pid");
@@ -728,6 +737,7 @@ mod unsupported_platform_tests {
     use super::{BoundedProcessLimits, run_bounded_process};
 
     #[test]
+    /// Refuse unsupported hosts before attempting to launch even an invalid executable.
     fn bounded_execution_is_refused_before_command_spawn() -> Result<(), Box<dyn Error>> {
         let mut command = Command::new("command-that-must-not-spawn");
         let error = match run_bounded_process(
