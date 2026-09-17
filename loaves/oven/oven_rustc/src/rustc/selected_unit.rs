@@ -593,6 +593,7 @@ fn materialize_linked_libraries(
                         message: format!("target `{target}` does not match unit target `{expected_target}`"),
                     });
                 }
+                validate_provider_target(*kind, target)?;
                 let provenance_path = resolve_file(
                     owners,
                     provenance,
@@ -661,6 +662,17 @@ fn validate_framework_artifact(search_root: &Path, artifact: &Path, name: &str) 
                 "{} is not the exact `{name}.framework/{name}` artifact",
                 artifact.display()
             ),
+        });
+    }
+    Ok(())
+}
+
+/// Refuse framework linkage outside an Apple target instead of passing a meaningless framework flag to its linker.
+fn validate_provider_target(kind: OvenSelectedRustFacetLinkedLibraryKind, target: &str) -> Result<(), OvenRustcError> {
+    if kind == OvenSelectedRustFacetLinkedLibraryKind::Framework && target.split('-').nth(1) != Some("apple") {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust linked framework",
+            message: format!("framework linkage is unsupported for non-Apple target `{target}`"),
         });
     }
     Ok(())
@@ -1048,7 +1060,7 @@ mod tests {
     fn selection() -> OvenSelectedRustFacetSelection {
         OvenSelectedRustFacetSelection {
             intent: super::super::OvenSelectedRustFacetIntent {
-                target: "x86_64-unknown-linux-gnu".to_string(),
+                target: "aarch64-apple-darwin".to_string(),
                 toolchain: "rustc 1.85.0 (fixture)".to_string(),
                 profile: "debug".to_string(),
             },
@@ -1136,6 +1148,7 @@ mod tests {
     /// Re-root the compiler-visible fixture below an ordinary package root without changing its source bytes.
     fn selected_graph_with_compiler_root() -> Result<ValidatedOvenSelectedRustFacetGraph, Box<dyn std::error::Error>> {
         let mut graph = selected_graph()?.graph().clone();
+        graph.selection.intent.target = "aarch64-apple-darwin".to_string();
         let selection = graph.selection.clone();
         let unit = graph.units.first_mut().ok_or("fixture has no selected unit")?;
         let members = vec![OvenSelectedRustFacetSourceMember {
@@ -1358,7 +1371,7 @@ mod tests {
             name: "Security".to_string(),
             kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Framework,
             provider: provider.clone(),
-            target: "x86_64-unknown-linux-gnu".to_string(),
+            target: "aarch64-apple-darwin".to_string(),
             capability: "apple.framework.Security".to_string(),
             receipt_identity: receipt_identity.clone(),
             provenance: OvenSelectedRustFacetPath {
@@ -1403,6 +1416,13 @@ mod tests {
             *capability = "apple.framework.Unheld".to_string();
         }
         assert!(materialize_linked_libraries(&graph, &owner_roots, &unheld).is_err());
+        assert!(
+            validate_provider_target(
+                crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Framework,
+                "x86_64-unknown-linux-gnu",
+            )
+            .is_err()
+        );
         Ok(())
     }
 
