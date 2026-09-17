@@ -84,7 +84,11 @@ fn copy_stdlib_tree(source: &Path, destination: &Path) -> std::io::Result<()> {
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let source_path = entry.path();
-        let destination_path = destination.join(entry.file_name());
+        let file_name = entry.file_name();
+        if matches!(file_name.to_str(), Some("target" | ".incan" | ".git")) {
+            continue;
+        }
+        let destination_path = destination.join(file_name);
         if entry.file_type()?.is_dir() {
             copy_stdlib_tree(&source_path, &destination_path)?;
         } else {
@@ -327,7 +331,10 @@ fn issue_1592_std_io_is_invariant_to_collection_comment() -> TestResult {
         let source_path = stdlib_root.join("system/src/io.incn");
         let source = fs::read_to_string(&source_path)?;
         let context = source_path.display().to_string();
-        let generated = generate_rust(&source, &context)?;
+        let generated = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
+            generate_rust(&source, &context).map_err(|error| error.to_string())
+        })
+        .map_err(err_box)?;
         fs::write(output_path, generated)?;
         return Ok(());
     }
