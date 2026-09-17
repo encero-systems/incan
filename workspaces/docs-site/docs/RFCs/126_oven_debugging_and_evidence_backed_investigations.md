@@ -171,7 +171,7 @@ RFC 120 and RFC 106 supply source identity semantics; RFC 124 supplies compiled-
 Identity relationships form a graph rather than a mandatory chain:
 
 ```mermaid
-flowchart LR
+flowchart TB
     S[Source snapshot] -->|compiler mapping| L[Compilation location]
     D[Declaration identity] -->|when established| L
     L -->|debug mapping| N[Native location]
