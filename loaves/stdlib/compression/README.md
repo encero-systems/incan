@@ -11,7 +11,8 @@ stdlib/compression/
   loaf.toml        the component is one Loaf (RFC 117)
   src/             Incan source: the `.incn` modules for the roots above
   rust/src/        reserved for an `incan_std_compression` facet; this component has no Rust of its own today
-  tests/           reserved for the component's own tests; empty today
 ```
+
+Component-level tests are reserved under `loaves/stdlib/compression/tests/`; the directory is empty today.
 
 Rust and Incan live in the same directory because the component is the unit of versioning, ownership, testing, and runtime-dependency attribution. A project importing `std.compression` should pull this component's runtime crates and nothing else.

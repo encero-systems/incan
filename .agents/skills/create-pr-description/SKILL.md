@@ -91,7 +91,7 @@ This PR fixes RFC 042 trait supertrait assignability and generic upcast compatib
 
 **Infrastructure improvements:**
 - Enhanced project root resolution in `build.rs` and `common.rs` to handle cases where the manifest is not found, defaulting to inferred project root
-- Added logic to resolve imports from the project source root when in non-source directories (e.g., `tests/`, `examples/`)
+- Added logic to resolve imports from the project source root when in non-source directories (for example, `loaves/compiler/incan_driver/tests/`)
 - Improved source root detection with manifest-based configuration support
 
 ## Type of change
