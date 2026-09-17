@@ -32,7 +32,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
     let mut artifact_records = BTreeMap::<Vec<PathBuf>, CargoCompilerArtifact>::new();
     let mut invocations = Vec::new();
     let mut build_scripts = Vec::new();
-    let mut build_script_records = BTreeMap::<String, CargoBuildScriptExecuted>::new();
+    let mut build_script_records = BTreeMap::<(String, PathBuf), CargoBuildScriptExecuted>::new();
     for output in outputs {
         for line in output
             .stdout
@@ -77,7 +77,8 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
                     let record = serde_json::from_value::<CargoBuildScriptExecuted>(value).map_err(|error| {
                         OvenLegacyCargoError::Plan(format!("invalid Cargo build-script execution record: {error}"))
                     })?;
-                    match build_script_records.get(&record.package_id) {
+                    let key = (record.package_id.clone(), record.out_dir.clone());
+                    match build_script_records.get(&key) {
                         Some(previous) if previous == &record => continue,
                         Some(_) => {
                             return Err(OvenLegacyCargoError::Plan(format!(
@@ -86,7 +87,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
                             )));
                         }
                         None => {
-                            build_script_records.insert(record.package_id.clone(), record.clone());
+                            build_script_records.insert(key, record.clone());
                             build_scripts.push(record);
                         }
                     }
@@ -204,18 +205,68 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
             aliases: artifact.filenames.clone(),
         });
     }
-    if let Some((index, _)) = used_invocations.iter().enumerate().find(|(_, used)| !**used) {
-        let invocation = &invocations[index];
-        let crate_name = argument_value(&invocation.arguments, "--crate-name").unwrap_or("<absent>");
-        let cargo_crate = invocation
+    let mut build_script_tool_probes = Vec::new();
+    for (index, invocation) in invocations
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !used_invocations[*index])
+    {
+        let Some(probe_digest) = build_script_tool_probe_digest(invocation) else {
+            let crate_name = argument_value(&invocation.arguments, "--crate-name").unwrap_or("<absent>");
+            let cargo_crate = invocation
+                .environment
+                .get("CARGO_CRATE_NAME")
+                .map(String::as_str)
+                .unwrap_or("<absent>");
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "stable rustc invocation {index} for crate `{crate_name}` (Cargo crate `{cargo_crate}`) has no Cargo artifact or bounded build-script tool-probe identity"
+            )));
+        };
+        let probe_package = packages
+            .iter()
+            .filter(|(_, package)| {
+                invocation.environment.get("CARGO_PKG_NAME") == Some(&package.name)
+                    && invocation.environment.get("CARGO_PKG_VERSION") == Some(&package.version)
+                    && package.manifest_path.parent().is_some_and(|parent| {
+                        invocation
+                            .environment
+                            .get("CARGO_MANIFEST_DIR")
+                            .is_some_and(|manifest| manifest == parent.to_string_lossy().as_ref())
+                    })
+            })
+            .map(|(identity, _)| *identity)
+            .collect::<Vec<_>>();
+        let [probe_package] = probe_package.as_slice() else {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "stable rustc build-script tool probe {index} does not name one exact Cargo metadata package"
+            )));
+        };
+        let out_dir = invocation
             .environment
-            .get("CARGO_CRATE_NAME")
-            .map(String::as_str)
-            .unwrap_or("<absent>");
-        return Err(OvenLegacyCargoError::Plan(format!(
-            "stable rustc invocation {index} for crate `{crate_name}` (Cargo crate `{cargo_crate}`) has no Cargo artifact"
-        )));
+            .get("OUT_DIR")
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                OvenLegacyCargoError::Plan(format!("stable rustc build-script tool probe {index} lost OUT_DIR"))
+            })?;
+        if !build_script_records.contains_key(&((*probe_package).to_string(), out_dir.clone())) {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "stable rustc build-script tool probe {index} has no exact Cargo build-script OUT_DIR record"
+            )));
+        }
+        let domain = invocation.environment.get("TARGET").cloned().ok_or_else(|| {
+            OvenLegacyCargoError::Plan(format!(
+                "stable rustc build-script tool probe {index} has no target domain"
+            ))
+        })?;
+        build_script_tool_probes.push(OvenLegacyCargoBuildScriptToolProbe {
+            package_id: (*probe_package).to_string(),
+            out_dir,
+            domain,
+            digest: probe_digest,
+        });
     }
+    build_script_tool_probes.sort();
+    build_script_tool_probes.dedup();
     let mut artifact_units = BTreeMap::new();
     for (index, item) in matched.iter().enumerate() {
         for filename in &item.aliases {
@@ -285,21 +336,8 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
             dependencies,
         });
     }
+    let mut build_script_edges = BTreeMap::<(usize, usize), CargoBuildScriptExecuted>::new();
     for record in &build_scripts {
-        let custom = units
-            .iter()
-            .enumerate()
-            .filter(|(_, unit)| {
-                unit.pkg_id == record.package_id && unit.target.kind.iter().any(|kind| kind == "custom-build")
-            })
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
-        let [custom] = custom.as_slice() else {
-            return Err(OvenLegacyCargoError::Plan(format!(
-                "build-script facts for `{}` cannot bind to one exact compiled custom-build unit",
-                record.package_id
-            )));
-        };
         let out_dir = record.out_dir.to_string_lossy();
         let mut bound = false;
         for (index, item) in matched.iter().enumerate() {
@@ -310,10 +348,33 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
                     .get("OUT_DIR")
                     .is_some_and(|value| value == out_dir.as_ref())
             {
+                let custom = units
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, unit)| {
+                        unit.pkg_id == record.package_id
+                            && unit.target.kind.iter().any(|kind| kind == "custom-build")
+                            && unit.features == units[index].features
+                            && unit.platform.as_deref() == Some(rustc_host)
+                    })
+                    .map(|(custom, _)| custom)
+                    .collect::<Vec<_>>();
+                let [custom] = custom.as_slice() else {
+                    return Err(OvenLegacyCargoError::Plan(format!(
+                        "build-script facts for `{}` cannot bind consumer {index} to one exact host custom-build unit",
+                        record.package_id
+                    )));
+                };
                 units[index].dependencies.push(CargoUnitGraphDependency {
                     index: *custom,
                     extern_crate_name: None,
                 });
+                if build_script_edges.insert((index, *custom), record.clone()).is_some() {
+                    return Err(OvenLegacyCargoError::Plan(format!(
+                        "consumer {index} repeats build-script facts for `{}`",
+                        record.package_id
+                    )));
+                }
                 bound = true;
             }
         }
@@ -324,7 +385,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
             )));
         }
     }
-    let mut capture = capture_legacy_cargo_selected_units(
+    let mut capture = capture_legacy_cargo_selected_units_inner(
         &CargoUnitGraph {
             version: 1,
             units,
@@ -332,12 +393,151 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
         },
         metadata,
         outputs,
+        false,
     )?;
     for (unit, item) in capture.units.iter_mut().zip(&matched) {
         unit.cfg = rustc_non_feature_cfgs(&item.invocation.arguments);
     }
+    for ((consumer, build_unit), record) in build_script_edges {
+        let dependency = capture
+            .units
+            .get_mut(consumer)
+            .and_then(|unit| {
+                unit.dependencies
+                    .iter_mut()
+                    .find(|dependency| dependency.unit_index == build_unit && dependency.extern_crate_name.is_none())
+            })
+            .ok_or_else(|| {
+                OvenLegacyCargoError::Plan(format!(
+                    "build-script edge {consumer}->{build_unit} disappeared during selected-unit capture"
+                ))
+            })?;
+        dependency.build_script = Some(build_script_facts(&record)?);
+    }
     capture.rustc_invocations_observed = true;
+    capture.build_script_tool_probes = build_script_tool_probes;
     Ok(capture)
+}
+
+/// Convert one exact Cargo execution record into edge-scoped inert build-script facts.
+fn build_script_facts(
+    record: &CargoBuildScriptExecuted,
+) -> Result<OvenLegacyCargoBuildScriptFacts, OvenLegacyCargoError> {
+    let mut cfgs = record.cfgs.clone();
+    cfgs.sort();
+    cfgs.dedup();
+    let mut environment = BTreeMap::new();
+    for (name, value) in &record.env {
+        if environment.insert(name.clone(), value.clone()).is_some() {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "Cargo build-script facts repeat environment key `{name}` for `{}`",
+                record.package_id
+            )));
+        }
+    }
+    Ok(OvenLegacyCargoBuildScriptFacts {
+        cfgs,
+        environment,
+        linked_libraries: record.linked_libs.clone(),
+        linked_paths: record.linked_paths.clone(),
+        out_dir: record.out_dir.clone(),
+        output: None,
+    })
+}
+
+/// Recognize a compiler probe launched by a build script through Cargo's configured wrapper.
+///
+/// These invocations deliberately have no Cargo artifact: the build script consumes only success and deletes the
+/// temporary metadata. The retained digest still binds the exact probe into physical capture evidence.
+fn build_script_tool_probe_digest(invocation: &OvenLegacyRustcInvocation) -> Option<String> {
+    if invocation.environment.contains_key("CARGO_CRATE_NAME")
+        || invocation.environment.contains_key("CARGO_PRIMARY_PACKAGE")
+    {
+        return None;
+    }
+    let manifest_dir = invocation.environment.get("CARGO_MANIFEST_DIR").map(Path::new)?;
+    let out_root = invocation.environment.get("OUT_DIR").map(Path::new)?;
+    invocation.environment.get("CARGO_PKG_NAME")?;
+    invocation.environment.get("CARGO_PKG_VERSION")?;
+    let emits = comma_separated_argument_values(&invocation.arguments, "--emit");
+    if emits.is_empty()
+        || emits
+            .iter()
+            .any(|emit| !matches!(emit.as_str(), "dep-info" | "metadata"))
+    {
+        return None;
+    }
+    let out_dir = argument_value(&invocation.arguments, "--out-dir").map(Path::new)?;
+    if !lexically_beneath(out_dir, out_root) {
+        return None;
+    }
+    let sources = invocation
+        .arguments
+        .iter()
+        .filter(|argument| !argument.starts_with('-') && argument.ends_with(".rs"))
+        .collect::<Vec<_>>();
+    let [source] = sources.as_slice() else {
+        return None;
+    };
+    let source = Path::new(source);
+    let resolved_source = if source.is_absolute() {
+        source.to_path_buf()
+    } else {
+        Path::new(&invocation.working_directory).join(source)
+    };
+    if !lexically_beneath(&resolved_source, manifest_dir) {
+        return None;
+    }
+    let canonical_manifest = std::fs::canonicalize(manifest_dir).ok()?;
+    let canonical_source = std::fs::canonicalize(&resolved_source).ok()?;
+    if !canonical_source.starts_with(&canonical_manifest) || !canonical_source.is_file() {
+        return None;
+    }
+    let source_relative = canonical_source.strip_prefix(&canonical_manifest).ok()?;
+    let out_relative = out_dir.strip_prefix(out_root).ok()?;
+    let normalized_arguments = invocation
+        .arguments
+        .iter()
+        .map(|argument| {
+            if argument == source.to_string_lossy().as_ref() {
+                format!("<package>/{}", source_relative.to_string_lossy())
+            } else if argument == out_dir.to_string_lossy().as_ref() {
+                format!("<out>/{}", out_relative.to_string_lossy())
+            } else {
+                argument.clone()
+            }
+        })
+        .collect::<Vec<_>>();
+    let semantic_environment = invocation
+        .environment
+        .iter()
+        .filter(|(name, _)| !matches!(name.as_str(), "CARGO_MANIFEST_DIR" | "OUT_DIR"))
+        .collect::<BTreeMap<_, _>>();
+    let source_digest = digest_bytes(&regular_file_bytes(&canonical_source).ok()?);
+    let encoded = serde_json::to_vec(&serde_json::json!({
+        "arguments": normalized_arguments,
+        "environment": semantic_environment,
+        "source_digest": source_digest,
+    }))
+    .ok()?;
+    Some(digest_bytes(&encoded))
+}
+
+/// Check lexical containment while rejecting parent traversal and mismatched absolute roots.
+fn lexically_beneath(path: &Path, root: &Path) -> bool {
+    use std::path::Component;
+
+    if path.is_absolute() != root.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+        || root
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return false;
+    }
+    path.starts_with(root)
 }
 
 /// Derive and verify every direct rustc output that backs Cargo's reported artifact aliases.
@@ -550,8 +750,21 @@ pub struct OvenLegacyCargoSelectedUnitCapture {
     pub units: Vec<OvenLegacyCargoSelectedUnit>,
     /// Whether every unit was joined bijectively to a successful invocation from the stable rustc trace protocol.
     pub rustc_invocations_observed: bool,
+    /// Successful non-linking build-script probes bound to their exact package, OUT_DIR and target domain.
+    #[serde(default)]
+    pub build_script_tool_probes: Vec<OvenLegacyCargoBuildScriptToolProbe>,
     /// Exact compiler selection and cfg observations; absent until the publisher probes its verified compiler.
     pub compiler: Option<OvenLegacyCargoSelectedCompilerContext>,
+}
+
+/// One successful transient compiler probe launched by a build script through Cargo's configured wrapper.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenLegacyCargoBuildScriptToolProbe {
+    pub package_id: String,
+    pub out_dir: PathBuf,
+    pub domain: String,
+    pub digest: String,
 }
 
 /// Physical compiler facts captured once for the same host/target selection as the Cargo unit graph.
@@ -609,6 +822,9 @@ pub struct OvenLegacyCargoSelectedRegistrySource {
 pub struct OvenLegacyCargoSelectedDependency {
     pub unit_index: usize,
     pub extern_crate_name: Option<String>,
+    /// Exact execution facts when this edge consumes one run-custom-build unit.
+    #[serde(default)]
+    pub build_script: Option<OvenLegacyCargoBuildScriptFacts>,
 }
 
 /// Structured cfg, environment, native-link and output-directory facts emitted by one executed build script.
@@ -638,6 +854,16 @@ pub fn capture_legacy_cargo_selected_units(
     graph: &CargoUnitGraph,
     metadata: &CargoMetadata,
     outputs: &[CargoInvocationOutput],
+) -> Result<OvenLegacyCargoSelectedUnitCapture, OvenLegacyCargoError> {
+    capture_legacy_cargo_selected_units_inner(graph, metadata, outputs, true)
+}
+
+/// Capture units while allowing the traced publisher to attach variant-specific build-script facts to edges later.
+fn capture_legacy_cargo_selected_units_inner(
+    graph: &CargoUnitGraph,
+    metadata: &CargoMetadata,
+    outputs: &[CargoInvocationOutput],
+    attach_package_build_script_facts: bool,
 ) -> Result<OvenLegacyCargoSelectedUnitCapture, OvenLegacyCargoError> {
     if graph.version != 1 || graph.roots.is_empty() {
         return Err(OvenLegacyCargoError::Plan(
@@ -681,13 +907,15 @@ pub fn capture_legacy_cargo_selected_units(
             }
         }
     }
-    if let Some(package_id) = build_script_records.keys().find(|package_id| {
-        !graph.units.iter().any(|unit| {
-            &unit.pkg_id == *package_id
-                && unit.mode == "run-custom-build"
-                && unit.target.kind.iter().any(|kind| kind == "custom-build")
+    if attach_package_build_script_facts
+        && let Some(package_id) = build_script_records.keys().find(|package_id| {
+            !graph.units.iter().any(|unit| {
+                &unit.pkg_id == *package_id
+                    && unit.mode == "run-custom-build"
+                    && unit.target.kind.iter().any(|kind| kind == "custom-build")
+            })
         })
-    }) {
+    {
         return Err(OvenLegacyCargoError::Plan(format!(
             "Cargo emitted build-script facts without a selected run-custom-build unit for `{package_id}`"
         )));
@@ -696,6 +924,9 @@ pub fn capture_legacy_cargo_selected_units(
     for (index, unit) in graph.units.iter().enumerate().filter(|(_, unit)| {
         unit.mode == "run-custom-build" && unit.target.kind.iter().any(|kind| kind == "custom-build")
     }) {
+        if !attach_package_build_script_facts {
+            continue;
+        }
         if build_script_units.insert(unit.pkg_id.as_str(), index).is_some() {
             return Err(OvenLegacyCargoError::Plan(format!(
                 "Cargo selected multiple run-custom-build units for `{}` without per-record unit identity",
@@ -720,6 +951,9 @@ pub fn capture_legacy_cargo_selected_units(
         }
     }
     for (package_id, records) in &build_script_records {
+        if !attach_package_build_script_facts {
+            break;
+        }
         if records.len() != 1 {
             return Err(OvenLegacyCargoError::Plan(format!(
                 "Cargo emitted multiple build-script records for `{package_id}` without per-record unit identity"
@@ -796,6 +1030,7 @@ pub fn capture_legacy_cargo_selected_units(
                 Ok(OvenLegacyCargoSelectedDependency {
                     unit_index: dependency.index,
                     extern_crate_name: dependency.extern_crate_name.clone(),
+                    build_script: None,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -823,6 +1058,7 @@ pub fn capture_legacy_cargo_selected_units(
         roots: graph.roots.clone(),
         units,
         rustc_invocations_observed: false,
+        build_script_tool_probes: Vec::new(),
         compiler: None,
     })
 }
@@ -834,65 +1070,80 @@ pub fn retain_legacy_cargo_selected_generated_outputs(
 ) -> Result<Vec<OvenRustcSupportingArtifact>, OvenLegacyCargoError> {
     let mut artifacts = BTreeMap::new();
     for unit in &mut capture.units {
-        let Some(build_script) = unit.build_script.as_mut() else {
-            continue;
-        };
-        let source = canonical_directory(&build_script.out_dir, "Cargo build-script OUT_DIR")?;
-        let source_digest = digest_source_tree(&source).map_err(|error| {
-            OvenLegacyCargoError::Plan(format!(
-                "could not digest Cargo build-script OUT_DIR for `{}`: {error}",
-                unit.package
-            ))
-        })?;
-        let identity = source_digest.strip_prefix("sha256:").unwrap_or(&source_digest);
-        let relative_root = format!("generated-outputs/{identity}");
-        let destination = staging.join(&relative_root);
-        if !destination.exists() {
-            copy_regular_directory_tree(&source, &destination, "Cargo build-script OUT_DIR")?;
+        if let Some(build_script) = unit.build_script.as_mut() {
+            retain_generated_output(build_script, &unit.package, staging, &mut artifacts)?;
         }
-        let digest = digest_source_tree(&destination).map_err(|error| {
-            OvenLegacyCargoError::Plan(format!(
-                "could not digest retained Cargo build-script OUT_DIR for `{}`: {error}",
-                unit.package
-            ))
-        })?;
-        if digest != source_digest {
-            return Err(OvenLegacyCargoError::Plan(format!(
-                "Cargo build-script OUT_DIR for `{}` changed while it was retained",
-                unit.package
-            )));
-        }
-        let files = materialized_files_from_directory(&destination, &relative_root, "Cargo build-script OUT_DIR")?;
-        let mut members = Vec::with_capacity(files.len());
-        for file in files {
-            let path = file
-                .relative_path
-                .strip_prefix(&format!("{relative_root}/"))
-                .ok_or_else(|| OvenLegacyCargoError::Plan("generated output lost its retained root".to_string()))?
-                .to_string();
-            let file_digest = digest_bytes(&regular_file_bytes(&file.source_path)?);
-            members.push(OvenLegacyCargoInspectionSourceMember {
-                path,
-                digest: file_digest.clone(),
-            });
-            if let Some(previous) = artifacts.insert(file.relative_path.clone(), file_digest.clone())
-                && previous != file_digest
-            {
-                return Err(OvenLegacyCargoError::Plan(
-                    "generated output path has conflicting retained bytes".to_string(),
-                ));
+        for dependency in &mut unit.dependencies {
+            if let Some(build_script) = dependency.build_script.as_mut() {
+                retain_generated_output(build_script, &unit.package, staging, &mut artifacts)?;
             }
         }
-        build_script.output = Some(OvenLegacyCargoSelectedGeneratedOutput {
-            relative_root,
-            digest,
-            members,
-        });
     }
     Ok(artifacts
         .into_iter()
         .map(|(relative_path, digest)| OvenRustcSupportingArtifact { relative_path, digest })
         .collect())
+}
+
+/// Retain one exact edge- or unit-scoped build-script output tree.
+fn retain_generated_output(
+    build_script: &mut OvenLegacyCargoBuildScriptFacts,
+    package: &str,
+    staging: &Path,
+    artifacts: &mut BTreeMap<String, String>,
+) -> Result<(), OvenLegacyCargoError> {
+    let source = canonical_directory(&build_script.out_dir, "Cargo build-script OUT_DIR")?;
+    let source_digest = digest_source_tree(&source).map_err(|error| {
+        OvenLegacyCargoError::Plan(format!(
+            "could not digest Cargo build-script OUT_DIR for `{}`: {error}",
+            package
+        ))
+    })?;
+    let identity = source_digest.strip_prefix("sha256:").unwrap_or(&source_digest);
+    let relative_root = format!("generated-outputs/{identity}");
+    let destination = staging.join(&relative_root);
+    if !destination.exists() {
+        copy_regular_directory_tree(&source, &destination, "Cargo build-script OUT_DIR")?;
+    }
+    let digest = digest_source_tree(&destination).map_err(|error| {
+        OvenLegacyCargoError::Plan(format!(
+            "could not digest retained Cargo build-script OUT_DIR for `{}`: {error}",
+            package
+        ))
+    })?;
+    if digest != source_digest {
+        return Err(OvenLegacyCargoError::Plan(format!(
+            "Cargo build-script OUT_DIR for `{}` changed while it was retained",
+            package
+        )));
+    }
+    let files = materialized_files_from_directory(&destination, &relative_root, "Cargo build-script OUT_DIR")?;
+    let mut members = Vec::with_capacity(files.len());
+    for file in files {
+        let path = file
+            .relative_path
+            .strip_prefix(&format!("{relative_root}/"))
+            .ok_or_else(|| OvenLegacyCargoError::Plan("generated output lost its retained root".to_string()))?
+            .to_string();
+        let file_digest = digest_bytes(&regular_file_bytes(&file.source_path)?);
+        members.push(OvenLegacyCargoInspectionSourceMember {
+            path,
+            digest: file_digest.clone(),
+        });
+        if let Some(previous) = artifacts.insert(file.relative_path.clone(), file_digest.clone())
+            && previous != file_digest
+        {
+            return Err(OvenLegacyCargoError::Plan(
+                "generated output path has conflicting retained bytes".to_string(),
+            ));
+        }
+    }
+    build_script.output = Some(OvenLegacyCargoSelectedGeneratedOutput {
+        relative_root,
+        digest,
+        members,
+    });
+    Ok(())
 }
 
 /// Join registry-backed selected units to the publisher's exact staged source catalogs.
@@ -1164,6 +1415,7 @@ mod tests {
                 registry_source: None,
             }],
             rustc_invocations_observed: false,
+            build_script_tool_probes: Vec::new(),
             compiler: None,
         };
         let staging = scratch.path().join("staging");
@@ -1377,6 +1629,54 @@ mod tests {
     }
 
     #[test]
+    fn stable_trace_classifies_only_bounded_non_linking_build_script_probes() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let scratch = tempfile::tempdir()?;
+        let source = scratch.path().join("src/probe/span.rs");
+        let out_root = scratch.path().join("target/build/probe-package/out");
+        fs::create_dir_all(source.parent().ok_or("probe source has no parent")?)?;
+        fs::create_dir_all(out_root.join("probe"))?;
+        fs::write(&source, b"pub fn probe() {}\n")?;
+        let invocation = OvenLegacyRustcInvocation {
+            reason: "incan-rustc-invocation".to_string(),
+            rustc: "/verified/rustc".to_string(),
+            working_directory: scratch.path().to_string_lossy().to_string(),
+            arguments: vec![
+                "--cfg=build_script_probe".to_string(),
+                "--crate-name=probe_package".to_string(),
+                "--crate-type=lib".to_string(),
+                "--emit=dep-info,metadata".to_string(),
+                "--out-dir".to_string(),
+                out_root.join("probe").to_string_lossy().to_string(),
+                "src/probe/span.rs".to_string(),
+            ],
+            environment: BTreeMap::from([
+                (
+                    "CARGO_MANIFEST_DIR".to_string(),
+                    scratch.path().to_string_lossy().to_string(),
+                ),
+                ("CARGO_PKG_NAME".to_string(), "probe-package".to_string()),
+                ("CARGO_PKG_VERSION".to_string(), "1.0.0".to_string()),
+                ("OUT_DIR".to_string(), out_root.to_string_lossy().to_string()),
+            ]),
+        };
+        assert!(build_script_tool_probe_digest(&invocation).is_some());
+
+        let mut linking = invocation.clone();
+        linking.arguments[3] = "--emit=link,metadata".to_string();
+        assert!(build_script_tool_probe_digest(&linking).is_none());
+        let mut cargo_unit = invocation.clone();
+        cargo_unit
+            .environment
+            .insert("CARGO_CRATE_NAME".to_string(), "probe_package".to_string());
+        assert!(build_script_tool_probe_digest(&cargo_unit).is_none());
+        let mut escaped = invocation;
+        escaped.arguments[5] = scratch.path().join("outside").to_string_lossy().to_string();
+        assert!(build_script_tool_probe_digest(&escaped).is_none());
+        Ok(())
+    }
+
+    #[test]
     fn stable_trace_coalesces_warm_build_script_records() -> Result<(), Box<dyn std::error::Error>> {
         let scratch = tempfile::tempdir()?;
         let rustc = scratch.path().join("rustc");
@@ -1457,7 +1757,7 @@ mod tests {
         assert_eq!(capture.units.len(), 2);
         assert_eq!(capture.units[1].dependencies.len(), 1);
         assert_eq!(capture.units[1].dependencies[0].unit_index, 0);
-        let facts = capture.units[0]
+        let facts = capture.units[1].dependencies[0]
             .build_script
             .as_ref()
             .ok_or("missing warm build-script facts")?;
