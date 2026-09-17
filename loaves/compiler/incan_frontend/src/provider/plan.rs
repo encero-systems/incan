@@ -945,6 +945,23 @@ impl ProviderPlan {
     /// also expose source-owned trait defaults whose checked signatures name a private SDK provider without a direct
     /// consumer import, so their frozen private implementation edges are compiler projection roots as well.
     pub fn sdk_link_roots(&self) -> Vec<&ProviderRecord> {
+        let mut selected = self
+            .used_sdk_records()
+            .map(|provider| provider.identity.stable_key())
+            .collect::<BTreeSet<_>>();
+        selected.extend(self.library_projected_sdk_roots());
+        self.active_sdk_records()
+            .filter(|provider| selected.contains(&provider.identity.stable_key()))
+            .collect()
+    }
+
+    /// Return the stable keys of active SDK providers that compiled project dependencies privately implement against.
+    ///
+    /// A compiled library's `.incnlib` records the SDK providers its own generated code was built on. The consumer
+    /// links that library's artifact, so it inherits those providers as link roots even when none of its own modules
+    /// reaches them; which of a provider's facets the library used is not recorded, so a consumer that only reaches a
+    /// provider this way has to treat the whole provider as linked (see the requirements collector).
+    pub fn library_projected_sdk_roots(&self) -> BTreeSet<String> {
         let provider_by_dependency_key = self
             .active_sdk_records()
             .filter_map(|provider| {
@@ -954,8 +971,7 @@ impl ProviderPlan {
                     .map(|artifact| (artifact.dependency_key.as_str(), provider.identity.stable_key()))
             })
             .collect::<BTreeMap<_, _>>();
-        let compiler_projection_roots = self
-            .active_records()
+        self.active_records()
             .filter(|provider| matches!(provider.authority, NamespaceAuthority::ProjectDependency { .. }))
             .filter_map(|provider| provider.manifest.as_deref())
             .flat_map(|manifest| &manifest.contract_metadata.provider.provider_dependencies)
@@ -965,14 +981,6 @@ impl ProviderPlan {
                     .get(dependency.dependency_key.as_str())
                     .cloned()
             })
-            .collect::<BTreeSet<_>>();
-        let mut selected = self
-            .used_sdk_records()
-            .map(|provider| provider.identity.stable_key())
-            .collect::<BTreeSet<_>>();
-        selected.extend(compiler_projection_roots.iter().cloned());
-        self.active_sdk_records()
-            .filter(|provider| selected.contains(&provider.identity.stable_key()))
             .collect()
     }
 

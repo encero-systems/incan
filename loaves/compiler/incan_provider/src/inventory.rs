@@ -245,6 +245,11 @@ fn extend_requirements_with_selected_sdk_providers(
             }
         }
     }
+    // A compiled project dependency links its SDK providers' runtime facets, but its `.incnlib` does not say which
+    // facets its own code reached. The consumer links that library's artifact, so it has to carry every facet of a
+    // provider it reaches only that way: the facet is one runtime crate per component, and a direct-Rustc consumer
+    // must receive it from the selected plan rather than re-materialize it from compiler source.
+    let library_projected_providers = provider_plan.library_projected_sdk_roots();
     for provider in provider_plan.active_records() {
         if matches!(provider.authority, crate::NamespaceAuthority::SdkReserved)
             && !sdk_providers.contains(&provider.identity.stable_key())
@@ -253,6 +258,15 @@ fn extend_requirements_with_selected_sdk_providers(
         }
         let Some(artifact) = provider.artifact.as_ref() else {
             continue;
+        };
+        let linked_backend_requirements = if library_projected_providers.contains(&provider.identity.stable_key()) {
+            provider
+                .implementation_facets
+                .iter()
+                .flat_map(|facet| facet.backend_requirements.iter().cloned())
+                .collect::<BTreeSet<_>>()
+        } else {
+            provider_plan.selected_backend_requirements(provider)
         };
         let mut provider_dependency = artifact.to_dependency_spec();
         if matches!(provider.authority, crate::NamespaceAuthority::SdkReserved) {
@@ -265,15 +279,18 @@ fn extend_requirements_with_selected_sdk_providers(
             provider_dependency,
             format!("compiled provider `{}`", provider.identity.name),
         )?;
-        for requirement in provider_plan.selected_backend_requirements(provider) {
+        for requirement in &linked_backend_requirements {
             if let BackendImplementationRequirement::CargoDependency { dependency } = requirement {
-                let dependency_spec = provider_cargo_dependency_spec(&dependency);
+                let dependency_spec = provider_cargo_dependency_spec(dependency);
                 if matches!(dependency.source, ProviderCargoDependencySource::Toolchain { .. }) {
                     merge_sdk_path_dependency(
                         &mut requirements.sdk_path_dependencies,
                         dependency_spec.clone(),
                         format!("compiled provider `{}` toolchain dependency", provider.identity.name),
                     )?;
+                }
+                if stdlib::facets::is_facet(&dependency_spec.crate_name) {
+                    requirements.stdlib_facets.push(dependency_spec.crate_name.clone());
                 }
                 merge_requirement_dependency(
                     &mut requirements.dependencies,
@@ -282,7 +299,7 @@ fn extend_requirements_with_selected_sdk_providers(
                 )?;
             }
         }
-        for requirement in provider_plan.selected_backend_requirements(provider) {
+        for requirement in linked_backend_requirements {
             let BackendImplementationRequirement::CargoFeature { crate_name, feature } = requirement else {
                 continue;
             };
@@ -740,6 +757,188 @@ mod tests {
         assert!(rich_link.default_features);
         assert_eq!(alternate_link.features, ["alternate"]);
         assert!(!alternate_link.default_features);
+        Ok(())
+    }
+
+    #[test]
+    fn a_compiled_library_links_every_facet_of_the_providers_it_privately_implements_against()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use incan_frontend::library_manifest::{
+            ProviderDependencyKind, ProviderDependencyMetadata, ProviderImplementationFacet, digest_provider_artifact,
+        };
+        use incan_frontend::provider::ImplementationFacet;
+
+        let workspace = tempfile::tempdir()?;
+        let runtime = workspace.path().join("crates/facet_runtime");
+        fs::create_dir_all(runtime.join("src"))?;
+        fs::write(
+            runtime.join("Cargo.toml"),
+            "[package]\nname = \"facet_runtime\"\nversion = \"1.0.0\"\n",
+        )?;
+        fs::write(runtime.join("src/lib.rs"), "pub fn marker() {}\n")?;
+        let dependency = ProviderCargoDependency {
+            crate_name: "facet_runtime".to_string(),
+            package: None,
+            version: None,
+            features: BTreeSet::new(),
+            default_features: true,
+            source: ProviderCargoDependencySource::Toolchain {
+                relative_path: "crates/facet_runtime".to_string(),
+            },
+        };
+        let provider_root = workspace.path().join("provider");
+        fs::create_dir_all(provider_root.join("src"))?;
+        fs::write(provider_root.join("src/lib.rs"), "pub fn provider() {}\n")?;
+        fs::write(
+            provider_root.join("Cargo.toml"),
+            "[package]\nname = \"facet_provider\"\nversion = \"1.0.0\"\n",
+        )?;
+        let mut provider_manifest = LibraryManifest::new("facet_provider", "1.0.0");
+        provider_manifest
+            .contract_metadata
+            .provider
+            .implementation_facets
+            .push(ProviderImplementationFacet {
+                id: "rich".to_string(),
+                required_modules: BTreeSet::from([vec!["rich".to_string()]]),
+                required_features: BTreeSet::new(),
+                cargo_features: Default::default(),
+                cargo_dependencies: vec![dependency.clone()],
+            });
+        let provider_manifest_path = provider_root.join("facet_provider.incnlib");
+        provider_manifest.write_to_path(&provider_manifest_path)?;
+        let provider_digest = digest_provider_artifact(&provider_root)?;
+        let provider = crate::ProviderRecord {
+            identity: crate::ProviderIdentity {
+                name: "facet_provider".to_string(),
+                version: "1.0.0".to_string(),
+                digest: provider_digest.clone(),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: crate::ProviderProvenance::Sdk {
+                sdk_identity: "incan@1.0.0".to_string(),
+                component_id: "facet-provider".to_string(),
+                inventory_path: None,
+            },
+            authority: crate::NamespaceAuthority::SdkReserved,
+            namespace_claims: BTreeSet::from([
+                vec!["std".to_string(), "plain".to_string()],
+                vec!["std".to_string(), "rich".to_string()],
+            ]),
+            available: true,
+            enabled: true,
+            manifest: Some(Arc::new(provider_manifest)),
+            artifact: Some(LibraryArtifactMetadata::from_manifest_path(
+                "facet_provider",
+                "facet_provider",
+                provider_manifest_path,
+                provider_root.clone(),
+            )),
+            implementation_facets: vec![ImplementationFacet {
+                id: "rich".to_string(),
+                required_modules: BTreeSet::from([vec!["rich".to_string()]]),
+                required_features: BTreeSet::new(),
+                backend_requirements: vec![BackendImplementationRequirement::CargoDependency { dependency }],
+            }],
+        };
+
+        // A compiled library that was built against the provider's `rich` facet records only the private edge to
+        // the provider; which facet its code reached is not in its manifest.
+        let library_root = workspace.path().join("library");
+        fs::create_dir_all(library_root.join("src"))?;
+        fs::write(library_root.join("src/lib.rs"), "pub fn library() {}\n")?;
+        fs::write(
+            library_root.join("Cargo.toml"),
+            "[package]\nname = \"sealed_library\"\nversion = \"0.1.0\"\n",
+        )?;
+        let mut library_manifest = LibraryManifest::new("sealed_library", "0.1.0");
+        library_manifest
+            .contract_metadata
+            .provider
+            .provider_dependencies
+            .push(ProviderDependencyMetadata {
+                kind: ProviderDependencyKind::PrivateImplementation,
+                dependency_key: "facet_provider".to_string(),
+                provider_name: "facet_provider".to_string(),
+                provider_version: "1.0.0".to_string(),
+                artifact_digest: provider_digest,
+                relative_artifact_path: "../provider".to_string(),
+                requested_features: BTreeSet::new(),
+                default_features: false,
+                optional: false,
+            });
+        let library_manifest_path = library_root.join("sealed_library.incnlib");
+        library_manifest.write_to_path(&library_manifest_path)?;
+        let library = crate::ProviderRecord {
+            identity: crate::ProviderIdentity {
+                name: "sealed_library".to_string(),
+                version: "0.1.0".to_string(),
+                digest: digest_provider_artifact(&library_root)?,
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: crate::ProviderProvenance::ProjectDependency {
+                dependency_key: "sealed_library".to_string(),
+                manifest_path: workspace.path().join("loaf.toml"),
+            },
+            authority: crate::NamespaceAuthority::ProjectDependency {
+                dependency_key: "sealed_library".to_string(),
+            },
+            namespace_claims: BTreeSet::new(),
+            available: true,
+            enabled: true,
+            manifest: Some(Arc::new(library_manifest)),
+            artifact: Some(LibraryArtifactMetadata::from_manifest_path(
+                "sealed_library",
+                "sealed_library",
+                library_manifest_path,
+                library_root,
+            )),
+            implementation_facets: Vec::new(),
+        };
+
+        // The consumer reaches only `std.plain`; on its own that selects no facet and links no runtime crate.
+        let alone = ProviderPlan::new(
+            Default::default(),
+            vec![provider.clone()],
+            [vec!["std".to_string(), "plain".to_string()]],
+        )?;
+        let mut alone_requirements = ProjectRequirements::default();
+        extend_requirements_with_provider_plan(&mut alone_requirements, &alone)?;
+        assert!(
+            !alone_requirements
+                .dependencies
+                .iter()
+                .any(|spec| spec.crate_name == "facet_runtime")
+        );
+
+        // With the compiled library in the graph, the consumer links the library's artifact and therefore every
+        // facet of the provider that artifact was built against.
+        let with_library = ProviderPlan::new(
+            Default::default(),
+            vec![provider, library],
+            [vec!["std".to_string(), "plain".to_string()]],
+        )?;
+        assert!(
+            with_library
+                .library_projected_sdk_roots()
+                .iter()
+                .any(|key| key.starts_with("facet_provider@")),
+            "the library's private edge must project the provider as a link root"
+        );
+        let mut requirements = ProjectRequirements::default();
+        extend_requirements_with_provider_plan(&mut requirements, &with_library)?;
+        assert!(
+            requirements
+                .dependencies
+                .iter()
+                .any(|spec| spec.crate_name == "facet_runtime"),
+            "the facet's runtime crate must be linked through the library, got {:?}",
+            requirements
+                .dependencies
+                .iter()
+                .map(|spec| spec.crate_name.as_str())
+                .collect::<Vec<_>>()
+        );
         Ok(())
     }
 
