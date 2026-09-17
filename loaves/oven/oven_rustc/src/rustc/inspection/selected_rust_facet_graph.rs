@@ -163,31 +163,44 @@ pub enum OvenSelectedRustFacetLinkedLibrary {
     },
     /// A framework or system capability supplied by an explicitly selected provider.
     Provider {
-        /// Linker-visible library or framework name.
-        name: String,
-        /// Framework or system linkage selected from the provider contract.
-        kind: OvenSelectedRustFacetLinkedLibraryKind,
-        /// Exact retained provider identity.
-        provider: String,
-        /// Exact target selected by the provider receipt for this link input.
-        target: String,
-        /// Provider-declared capability that authorizes this named link input.
-        capability: String,
-        /// Identity of the provider execution receipt that selected this capability.
-        receipt_identity: String,
-        /// Receipt-bound provenance record under the provider owner.
-        provenance: OvenSelectedRustFacetPath,
-        /// Digest of the exact provider provenance record.
-        provenance_digest: String,
-        /// Provider-owned search root used to resolve this declared input.
-        search_root: OvenSelectedRustFacetPath,
-        /// Exact selected library or framework entry under the provider owner.
-        artifact: OvenSelectedRustFacetPath,
-        /// Digest of the selected library or framework entry bytes.
-        digest: String,
-        /// Complete provider-owned member catalog relative to `search_root`.
-        members: Vec<OvenSelectedRustFacetSourceMember>,
+        /// The boxed provider payload keeps the archive/provider enum compact without changing its flattened wire
+        /// form.
+        #[serde(flatten)]
+        details: Box<OvenSelectedRustFacetLinkedLibraryProvider>,
     },
+}
+
+/// Receipt-bound details for one framework or system link provider.
+///
+/// This remains flattened into the `input = "provider"` selected-graph wire object. Boxing only changes Rust's
+/// in-memory representation; it does not add a nested JSON layer or relax any provider admission requirement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenSelectedRustFacetLinkedLibraryProvider {
+    /// Linker-visible library or framework name.
+    pub name: String,
+    /// Framework or system linkage selected from the provider contract.
+    pub kind: OvenSelectedRustFacetLinkedLibraryKind,
+    /// Exact retained provider identity.
+    pub provider: String,
+    /// Exact target selected by the provider receipt for this link input.
+    pub target: String,
+    /// Provider-declared capability that authorizes this named link input.
+    pub capability: String,
+    /// Identity of the provider execution receipt that selected this capability.
+    pub receipt_identity: String,
+    /// Receipt-bound provenance record under the provider owner.
+    pub provenance: OvenSelectedRustFacetPath,
+    /// Digest of the exact provider provenance record.
+    pub provenance_digest: String,
+    /// Provider-owned search root used to resolve this declared input.
+    pub search_root: OvenSelectedRustFacetPath,
+    /// Exact selected library or framework entry under the provider owner.
+    pub artifact: OvenSelectedRustFacetPath,
+    /// Digest of the selected library or framework entry bytes.
+    pub digest: String,
+    /// Complete provider-owned member catalog relative to `search_root`.
+    pub members: Vec<OvenSelectedRustFacetSourceMember>,
 }
 
 /// Exact dependency alias and selected child unit.
@@ -511,20 +524,21 @@ fn validate_selected_graph_linked_library(
             referenced_owners.insert(artifact.owner.clone());
             validate_selected_graph_digest(digest, &format!("{field}.digest"))?;
         }
-        OvenSelectedRustFacetLinkedLibrary::Provider {
-            name,
-            kind,
-            provider,
-            target,
-            capability,
-            receipt_identity,
-            provenance,
-            provenance_digest,
-            search_root,
-            artifact,
-            digest,
-            members,
-        } => {
+        OvenSelectedRustFacetLinkedLibrary::Provider { details } => {
+            let OvenSelectedRustFacetLinkedLibraryProvider {
+                name,
+                kind,
+                provider,
+                target,
+                capability,
+                receipt_identity,
+                provenance,
+                provenance_digest,
+                search_root,
+                artifact,
+                digest,
+                members,
+            } = details.as_ref();
             if !matches!(
                 kind,
                 OvenSelectedRustFacetLinkedLibraryKind::Framework | OvenSelectedRustFacetLinkedLibraryKind::System

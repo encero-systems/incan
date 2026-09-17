@@ -2120,36 +2120,38 @@ mod selected_rust_facet_graph_tests {
         });
         let members = vec![member("libfixture.tbd", b"fixture system library")];
         graph.units[root].linked_libraries = vec![OvenSelectedRustFacetLinkedLibrary::Provider {
-            name: "Fixture".to_string(),
-            kind: OvenSelectedRustFacetLinkedLibraryKind::System,
-            provider: provider.clone(),
-            target: graph.selection.intent.target.clone(),
-            capability: "fixture.system.Fixture".to_string(),
-            receipt_identity: selected_graph_sha256(b"fixture receipt"),
-            provenance: OvenSelectedRustFacetPath {
-                owner: provider.clone(),
-                path: "provenance/interop-execution.json".to_string(),
-            },
-            provenance_digest: selected_graph_sha256(b"fixture provenance"),
-            search_root: OvenSelectedRustFacetPath {
-                owner: provider.clone(),
-                path: "providers".to_string(),
-            },
-            artifact: OvenSelectedRustFacetPath {
-                owner: provider,
-                path: "providers/libfixture.tbd".to_string(),
-            },
-            digest: selected_graph_sha256(b"fixture system library"),
-            members,
+            details: Box::new(OvenSelectedRustFacetLinkedLibraryProvider {
+                name: "Fixture".to_string(),
+                kind: OvenSelectedRustFacetLinkedLibraryKind::System,
+                provider: provider.clone(),
+                target: graph.selection.intent.target.clone(),
+                capability: "fixture.system.Fixture".to_string(),
+                receipt_identity: selected_graph_sha256(b"fixture receipt"),
+                provenance: OvenSelectedRustFacetPath {
+                    owner: provider.clone(),
+                    path: "provenance/interop-execution.json".to_string(),
+                },
+                provenance_digest: selected_graph_sha256(b"fixture provenance"),
+                search_root: OvenSelectedRustFacetPath {
+                    owner: provider.clone(),
+                    path: "providers".to_string(),
+                },
+                artifact: OvenSelectedRustFacetPath {
+                    owner: provider,
+                    path: "providers/libfixture.tbd".to_string(),
+                },
+                digest: selected_graph_sha256(b"fixture system library"),
+                members,
+            }),
         }];
         reidentify_unit(&mut graph, root)?;
         graph.clone().validated()?;
 
-        let OvenSelectedRustFacetLinkedLibrary::Provider { target, .. } = &mut graph.units[root].linked_libraries[0]
+        let OvenSelectedRustFacetLinkedLibrary::Provider { details } = &mut graph.units[root].linked_libraries[0]
         else {
             return Err("fixture lost its provider link".into());
         };
-        *target = graph.selection.host.clone();
+        details.target = graph.selection.host.clone();
         reidentify_unit(&mut graph, root)?;
         assert_eq!(
             refusal_field(graph, "provider target")?,

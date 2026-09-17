@@ -601,20 +601,21 @@ fn materialize_linked_libraries(
                 artifact: resolve_file(owners, artifact, digest, "selected Rust linked archive")?,
                 digest: digest.clone(),
             }),
-            OvenSelectedRustFacetLinkedLibrary::Provider {
-                name,
-                kind,
-                provider,
-                target,
-                capability,
-                receipt_identity,
-                provenance,
-                provenance_digest,
-                search_root,
-                artifact,
-                digest,
-                members,
-            } => {
+            OvenSelectedRustFacetLinkedLibrary::Provider { details } => {
+                let crate::rustc::OvenSelectedRustFacetLinkedLibraryProvider {
+                    name,
+                    kind,
+                    provider,
+                    target,
+                    capability,
+                    receipt_identity,
+                    provenance,
+                    provenance_digest,
+                    search_root,
+                    artifact,
+                    digest,
+                    members,
+                } = details.as_ref();
                 let declared = graph
                     .owners
                     .iter()
@@ -1444,27 +1445,29 @@ mod tests {
         });
         let unit = graph.units.first_mut().ok_or("fixture has no selected unit")?;
         unit.linked_libraries = vec![crate::rustc::OvenSelectedRustFacetLinkedLibrary::Provider {
-            name: "Security".to_string(),
-            kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Framework,
-            provider: provider.clone(),
-            target: "aarch64-apple-darwin".to_string(),
-            capability: "apple.framework.Security".to_string(),
-            receipt_identity: receipt_identity.clone(),
-            provenance: OvenSelectedRustFacetPath {
-                owner: provider.clone(),
-                path: "provenance/interop-execution.json".to_string(),
-            },
-            provenance_digest: selected_graph_sha256(&provenance_bytes),
-            search_root: OvenSelectedRustFacetPath {
-                owner: provider.clone(),
-                path: ".".to_string(),
-            },
-            artifact: OvenSelectedRustFacetPath {
-                owner: provider.clone(),
-                path: "Security.framework/Security".to_string(),
-            },
-            digest: selected_graph_sha256(b"framework"),
-            members,
+            details: Box::new(crate::rustc::OvenSelectedRustFacetLinkedLibraryProvider {
+                name: "Security".to_string(),
+                kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Framework,
+                provider: provider.clone(),
+                target: "aarch64-apple-darwin".to_string(),
+                capability: "apple.framework.Security".to_string(),
+                receipt_identity: receipt_identity.clone(),
+                provenance: OvenSelectedRustFacetPath {
+                    owner: provider.clone(),
+                    path: "provenance/interop-execution.json".to_string(),
+                },
+                provenance_digest: selected_graph_sha256(&provenance_bytes),
+                search_root: OvenSelectedRustFacetPath {
+                    owner: provider.clone(),
+                    path: ".".to_string(),
+                },
+                artifact: OvenSelectedRustFacetPath {
+                    owner: provider.clone(),
+                    path: "Security.framework/Security".to_string(),
+                },
+                digest: selected_graph_sha256(b"framework"),
+                members,
+            }),
         }];
         let unit = unit.clone();
         let mut owner_roots = roots(root.path())?
@@ -1486,10 +1489,9 @@ mod tests {
                 && actual_artifact == &fs::canonicalize(&framework)?
         ));
         let mut unheld = unit.clone();
-        if let crate::rustc::OvenSelectedRustFacetLinkedLibrary::Provider { capability, .. } =
-            &mut unheld.linked_libraries[0]
+        if let crate::rustc::OvenSelectedRustFacetLinkedLibrary::Provider { details } = &mut unheld.linked_libraries[0]
         {
-            *capability = "apple.framework.Unheld".to_string();
+            details.capability = "apple.framework.Unheld".to_string();
         }
         assert!(materialize_linked_libraries(&graph, &owner_roots, &unheld).is_err());
 
