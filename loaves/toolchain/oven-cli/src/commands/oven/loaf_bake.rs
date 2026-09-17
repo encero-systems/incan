@@ -7,14 +7,18 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 use std::time::Instant;
 
 use incan_driver::build::publication::stored_project_output_from_parts;
 use incan_driver::build::{OvenProjectOutputPayload, OvenStoredProjectOutput};
 use oven_rustc::loaf::{OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenReleaseStoreMember};
+use oven_store::process::{BoundedProcessLimits, BoundedProcessTermination, run_bounded_process};
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, PublishedOvenStore,
 };
+
+const POLICY_EXCHANGE_MAX_BYTES: u64 = 16 * 1024 * 1024;
 
 use super::{
     CliError, CliResult, CompleteLoafEnvelopeReuseInput, DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES,
@@ -647,6 +651,60 @@ pub(crate) fn import_release_policy_output(
     let payload = serde_json::from_slice(&payload_bytes)
         .map_err(|error| CliError::failure(format!("embedded policy-engine payload is invalid: {error}")))?;
     stored_project_output_from_parts(manifest, artifact_root, payload, lease)
+}
+
+/// Execute the exact admitted policy engine with one bounded file exchange.
+fn run_release_rust_policy(
+    policy: &OvenStoredProjectOutput,
+    exchange_root: &Path,
+    request: &serde_json::Value,
+) -> CliResult<serde_json::Value> {
+    fs::create_dir_all(exchange_root).map_err(|error| {
+        CliError::failure(format!(
+            "could not create private Rust policy exchange directory {}: {error}",
+            exchange_root.display()
+        ))
+    })?;
+    let request_path = exchange_root.join("request.json");
+    let response_path = exchange_root.join("response.json");
+    let encoded = serde_json::to_vec(request)
+        .map_err(|error| CliError::failure(format!("could not encode Rust policy request: {error}")))?;
+    if encoded.len() as u64 > POLICY_EXCHANGE_MAX_BYTES {
+        return Err(CliError::failure(
+            "Rust policy request exceeds its bounded exchange allowance",
+        ));
+    }
+    fs::write(&request_path, encoded)
+        .map_err(|error| CliError::failure(format!("could not write Rust policy request: {error}")))?;
+    let mut command = Command::new(&policy.native_output);
+    command.arg(&request_path).arg(&response_path);
+    let output = run_bounded_process(
+        &mut command,
+        BoundedProcessLimits {
+            stdout_bytes: 1024 * 1024,
+            stderr_bytes: 1024 * 1024,
+            timeout: Some(Duration::from_secs(60)),
+        },
+        None,
+    )
+    .map_err(|error| CliError::failure(format!("could not execute admitted Rust policy engine: {error}")))?;
+    if output.termination != BoundedProcessTermination::Completed || !output.status.success() {
+        return Err(CliError::failure(format!(
+            "admitted Rust policy engine refused or failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let metadata = fs::metadata(&response_path)
+        .map_err(|error| CliError::failure(format!("Rust policy engine wrote no response: {error}")))?;
+    if !metadata.is_file() || metadata.len() > POLICY_EXCHANGE_MAX_BYTES {
+        return Err(CliError::failure(
+            "Rust policy response is not a bounded regular file".to_string(),
+        ));
+    }
+    let response = fs::read(&response_path)
+        .map_err(|error| CliError::failure(format!("could not read Rust policy response: {error}")))?;
+    serde_json::from_slice(&response)
+        .map_err(|error| CliError::failure(format!("Rust policy response is invalid JSON: {error}")))
 }
 
 /// Accept the optional publisher input only as one complete release-only pair.
