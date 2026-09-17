@@ -4311,6 +4311,7 @@ mod tests {
             empty_digest.strip_prefix("sha256:").unwrap_or(&empty_digest)
         );
         fs::create_dir_all(staging.path().join(&relative_root))?;
+        fs::write(staging.path().join("foundation.json"), b"{}")?;
         let materialized_files =
             materialized_files_from_directory(staging.path(), "", "empty generated output publication fixture")?;
 
