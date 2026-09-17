@@ -1127,7 +1127,7 @@ mod tests {
                     owner: toolchain_owner(),
                     path: "target-spec.json".to_string(),
                 },
-                digest: selected_graph_sha256(b"target spec"),
+                digest: selected_graph_sha256(br#"{"arch":"x86_64","os":"linux","llvm-target":"x86_64-unknown-linux-gnu","target-pointer-width":"64"}"#),
             },
         }
     }
@@ -1235,7 +1235,10 @@ mod tests {
         fs::write(source.join("src/lib.rs"), b"pub fn marker() -> u8 { 7 }\n")?;
         let toolchain = root.join("toolchain");
         fs::create_dir_all(&toolchain)?;
-        fs::write(toolchain.join("target-spec.json"), b"target spec")?;
+        fs::write(
+            toolchain.join("target-spec.json"),
+            br#"{"arch":"x86_64","os":"linux","llvm-target":"x86_64-unknown-linux-gnu","target-pointer-width":"64"}"#,
+        )?;
         Ok(vec![
             OvenSelectedRustFacetOwnerRoot {
                 identity: source_owner(),

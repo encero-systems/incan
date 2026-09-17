@@ -1692,7 +1692,7 @@ mod selected_rust_facet_graph_tests {
             rustc_identity: selected.selection.intent.toolchain.clone(),
             target_cfg_digest: cfg_digest,
         };
-        let dependency = unit_index(&selected, "dependency_crate")?;
+        let dependency = unit_index(&selected, "dependency-package")?;
         reidentify_unit(&mut selected, dependency)?;
         let root = unit_index(&selected, "fixture")?;
         reidentify_unit(&mut selected, root)?;

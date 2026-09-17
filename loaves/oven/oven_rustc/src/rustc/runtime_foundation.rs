@@ -788,7 +788,7 @@ mod tests {
                     owner: toolchain_owner(),
                     path: "target-spec.json".to_string(),
                 },
-                digest: selected_graph_sha256(b"target spec"),
+                digest: selected_graph_sha256(br#"{"arch":"x86_64","os":"linux","llvm-target":"x86_64-unknown-linux-gnu","target-pointer-width":"64"}"#),
             },
         }
     }
@@ -1201,7 +1201,11 @@ mod tests {
         write_fixture_file(foundation_root, "generated/serde/private.rs", b"serde private.rs")?;
         write_fixture_file(foundation_root, "deps/libserde.rlib", b"serde rlib")?;
         write_fixture_file(foundation_root, "deps/libserde_derive.dylib", b"serde derive dylib")?;
-        write_fixture_file(toolchain_root, "target-spec.json", b"target spec")?;
+        write_fixture_file(
+            toolchain_root,
+            "target-spec.json",
+            br#"{"arch":"x86_64","os":"linux","llvm-target":"x86_64-unknown-linux-gnu","target-pointer-width":"64"}"#,
+        )?;
         write_fixture_file(
             toolchain_root,
             "compiler/incan_lang/Cargo.toml",
