@@ -15,14 +15,15 @@ use super::{
     OvenRustcError, OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDependency, OvenSelectedRustFacetDomain,
     OvenSelectedRustFacetEnvironmentValue, OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph,
     OvenSelectedRustFacetLinkedLibrary, OvenSelectedRustFacetLinkedLibraryKind, OvenSelectedRustFacetPath,
-    OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole, ValidatedOvenSelectedRustFacetGraph, digest_bytes,
+    OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole,
+    ValidatedOvenSelectedRustFacetGraph, digest_bytes,
 };
 
 /// Domain separator for a compiled unit identity.
 ///
 /// Version 2 drops the selection-global root feature set from the identity. The two schemes name different things,
 /// so the separator moves with them rather than letting a v1 identity be mistaken for a v2 one.
-pub const OVEN_COMPILED_RUST_UNIT_IDENTITY_DOMAIN: &str = "incan.oven.compiled-rust-unit/2";
+pub const OVEN_COMPILED_RUST_UNIT_IDENTITY_DOMAIN: &str = "incan.oven.compiled-rust-unit/3";
 
 /// Content address of one direct-Rustc compilation unit.
 ///
@@ -46,7 +47,7 @@ struct CompiledUnitIdentityInput<'a> {
     profile: &'a str,
     purpose: super::OvenSelectedRustFacetPurpose,
     compilation_target: &'a str,
-    target_spec_digest: Option<&'a str>,
+    target_spec: Option<&'a OvenSelectedRustFacetTargetSpec>,
     crate_name: &'a str,
     crate_kind: OvenSelectedRustFacetCrateKind,
     role: OvenSelectedRustFacetUnitRole,
@@ -239,11 +240,11 @@ fn compiled_unit_identity_input<'a>(
     compiler_closure_digest: &'a str,
     dependencies: Vec<CompiledDependency<'a>>,
 ) -> CompiledUnitIdentityInput<'a> {
-    let (compilation_target, target_spec_digest) = match unit.domain {
+    let (compilation_target, target_spec) = match unit.domain {
         OvenSelectedRustFacetDomain::Host => (graph.selection.host.as_str(), None),
         OvenSelectedRustFacetDomain::Target => (
             graph.selection.intent.target.as_str(),
-            Some(graph.selection.target_spec.digest.as_str()),
+            Some(&graph.selection.target_spec),
         ),
     };
     CompiledUnitIdentityInput {
@@ -253,7 +254,7 @@ fn compiled_unit_identity_input<'a>(
         profile: &graph.selection.intent.profile,
         purpose: graph.selection.purpose,
         compilation_target,
-        target_spec_digest,
+        target_spec,
         crate_name: &unit.crate_name,
         crate_kind: unit.crate_kind,
         role: unit.role,
@@ -429,7 +430,7 @@ mod tests {
             target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
             toolchain_version: "1.85.0".to_string(),
-            target_spec: OvenSelectedRustFacetTargetSpec {
+            target_spec: OvenSelectedRustFacetTargetSpec::Custom {
                 source: OvenSelectedRustFacetPath {
                     owner: toolchain_owner(),
                     path: "target-spec.json".to_string(),

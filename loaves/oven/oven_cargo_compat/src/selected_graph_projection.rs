@@ -7,13 +7,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use oven_rustc::rustc::{
-    OvenCompilerSupportRootIntentAuthority, OvenRustcRegistrySourcePackage, OvenSelectedRustFacetCrateKind,
-    OvenSelectedRustFacetDependency, OvenSelectedRustFacetDomain, OvenSelectedRustFacetEnvironmentValue,
-    OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph, OvenSelectedRustFacetLinkedLibrary,
-    OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath,
-    OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind,
-    OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole,
-    ValidatedOvenSelectedRustFacetGraph, bind_compiler_support_root_intents, selected_graph_unit_identity,
+    OvenCompilerSupportRootIntentAuthority, OvenRustcRegistrySourcePackage,
+    OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDependency, OvenSelectedRustFacetDomain,
+    OvenSelectedRustFacetEnvironmentValue, OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph,
+    OvenSelectedRustFacetLinkedLibrary, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
+    OvenSelectedRustFacetPath, OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource,
+    OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec,
+    OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole, ValidatedOvenSelectedRustFacetGraph,
+    bind_compiler_support_root_intents, selected_graph_unit_identity,
 };
 use oven_store::OvenReceipt;
 use serde::Serialize;
@@ -104,13 +105,32 @@ pub struct OvenLegacyCargoSelectedGraphProjection {
     pub build_scripts: BTreeMap<(usize, usize), OvenLegacyCargoSelectedBuildScriptBinding>,
 }
 
-/// Identify only the execution node whose Cargo build script produced reusable compiler facts.
+/// Bind a verified stable-compiler capture to a built-in target description without inventing target-spec JSON.
 ///
-/// Cargo also compiles the `custom-build` binary itself. That ordinary build unit remains a physical compiler unit;
-/// only the `run-custom-build` execution node supplies generated output, cfg, environment, link directives, or
-/// probes to a consumer edge.
-fn is_build_script_unit(unit: &OvenLegacyCargoSelectedUnit) -> bool {
-    unit.mode == "run-custom-build" && unit.target_kinds.iter().any(|kind| kind == "custom-build")
+/// The caller supplies the Store-owned Toolchain closure identity. The returned descriptor repeats only facts that
+/// the stable capture already proved from the selected compiler, and binds its canonical target cfg snapshot.
+pub fn legacy_cargo_builtin_target_spec(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    toolchain_owner: impl Into<String>,
+) -> Result<OvenSelectedRustFacetTargetSpec, OvenLegacyCargoError> {
+    let compiler = capture
+        .compiler
+        .as_ref()
+        .ok_or_else(|| projection_error("selected compiler capture", "is absent"))?;
+    if compiler.toolchain != compiler.rustc_identity {
+        return Err(projection_error(
+            "selected compiler capture",
+            "toolchain intent does not match the verified rustc identity",
+        ));
+    }
+    let target_cfg = serde_json::to_vec(&compiler.target_cfg)
+        .map_err(|error| projection_error("selected target cfg", &error.to_string()))?;
+    Ok(OvenSelectedRustFacetTargetSpec::BuiltIn {
+        toolchain_owner: toolchain_owner.into(),
+        target: compiler.target.clone(),
+        rustc_identity: compiler.rustc_identity.clone(),
+        target_cfg_digest: oven_rustc::rustc::selected_graph_sha256(&target_cfg),
+    })
 }
 
 /// Project one exact physical Cargo capture into a rootless selected Rust graph.
@@ -920,7 +940,7 @@ mod tests {
             target_cfg: fixture_cfg_snapshot(),
             purpose: OvenSelectedRustFacetPurpose::Normal,
             toolchain_version: "1.98.0".to_string(),
-            target_spec: OvenSelectedRustFacetTargetSpec {
+            target_spec: OvenSelectedRustFacetTargetSpec::Custom {
                 source: OvenSelectedRustFacetPath {
                     owner: toolchain_owner,
                     path: "target-specs/x86_64-unknown-linux-gnu.json".to_string(),
@@ -984,7 +1004,7 @@ mod tests {
         capture: &OvenLegacyCargoSelectedUnitCapture,
     ) -> Result<OvenLegacyCargoSelectedGraphProjection, OvenLegacyCargoError> {
         let source_owner = digest(b"registry source owner");
-        let toolchain_owner = selection().target_spec.source.owner;
+        let toolchain_owner = selection().target_spec.toolchain_owner().to_string();
         let source_members = members();
         let source_digest = selected_graph_source_digest(&source_members)
             .map_err(|error| projection_error("fixture source digest", &error.to_string()))?;
@@ -1061,6 +1081,30 @@ mod tests {
         assert!(graph.exposed_roots.is_empty());
         assert_eq!(graph.units[0].role, OvenSelectedRustFacetUnitRole::Library);
         assert_eq!(graph.units[0].features, ["derive"]);
+        Ok(())
+    }
+
+    #[test]
+    fn built_in_target_spec_binds_the_verified_compiler_and_cfg_snapshot() -> Result<(), Box<dyn std::error::Error>> {
+        let capture = capture()?;
+        let owner = digest(b"toolchain owner");
+        let descriptor = legacy_cargo_builtin_target_spec(&capture, owner.clone())?;
+        let OvenSelectedRustFacetTargetSpec::BuiltIn {
+            toolchain_owner,
+            target,
+            rustc_identity,
+            target_cfg_digest,
+        } = descriptor
+        else {
+            return Err(std::io::Error::other("built-in capture produced a custom target spec").into());
+        };
+        assert_eq!(toolchain_owner, owner);
+        assert_eq!(target, "x86_64-unknown-linux-gnu");
+        assert_eq!(rustc_identity, "rustc 1.98.0 (fixture)");
+        assert_eq!(
+            target_cfg_digest,
+            oven_rustc::rustc::selected_graph_sha256(&serde_json::to_vec(&capture.compiler.unwrap().target_cfg)?)
+        );
         Ok(())
     }
 
@@ -1161,7 +1205,7 @@ mod tests {
             unit: raw.units[0].identity.clone(),
             requested_features: Vec::new(),
             default_features: true,
-            intent_owner: sealed.selection.target_spec.source.owner.clone(),
+            intent_owner: sealed.selection.target_spec.toolchain_owner().to_string(),
             source_owner: raw.units[0].source.owner.clone(),
         };
         let authority = OvenCompilerSupportRootIntentAuthority {
@@ -1216,7 +1260,7 @@ mod tests {
             edition: "2021".to_string(),
             mode: "run-custom-build".to_string(),
             platform: Some("x86_64-unknown-linux-gnu".to_string()),
-            target_is_explicit: Some(true),
+            target_is_explicit: Some(false),
             cfg: Vec::new(),
             effective_features: Vec::new(),
             dependencies: Vec::new(),
@@ -1312,7 +1356,7 @@ mod tests {
             edition: "2021".to_string(),
             mode: "run-custom-build".to_string(),
             platform: Some("x86_64-unknown-linux-gnu".to_string()),
-            target_is_explicit: Some(true),
+            target_is_explicit: Some(false),
             cfg: Vec::new(),
             effective_features: Vec::new(),
             dependencies: Vec::new(),

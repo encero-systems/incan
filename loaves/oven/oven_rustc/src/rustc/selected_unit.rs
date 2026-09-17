@@ -124,15 +124,17 @@ pub struct OvenMaterializedRustFacetUnit {
 /// A physically admitted selected graph and its source-unit projection.
 #[derive(Debug, Clone)]
 pub struct OvenMaterializedRustFacetGraph {
-    target_spec: PathBuf,
+    target_spec: Option<PathBuf>,
     units: BTreeMap<String, OvenMaterializedRustFacetUnit>,
     supplemental_source_roots: BTreeMap<(String, String), PathBuf>,
 }
 
 impl OvenMaterializedRustFacetGraph {
-    /// Return the compiler-selected target-spec JSON after digest verification.
-    pub fn target_spec(&self) -> &Path {
-        &self.target_spec
+    /// Return the exact custom target-spec JSON after digest verification.
+    ///
+    /// Built-in targets return `None`: the selected compiler owns those targets directly and no JSON file exists.
+    pub fn custom_target_spec(&self) -> Option<&Path> {
+        self.target_spec.as_deref()
     }
 
     /// Look up one selected source unit by its source-selection identity.
@@ -200,12 +202,12 @@ pub fn materialize_selected_rust_facet_graph_with_supplemental_source_members(
             ))
         })
         .collect::<Result<BTreeMap<_, _>, OvenRustcError>>()?;
-    let target_spec = resolve_file(
-        &owners,
-        &graph.selection.target_spec.source,
-        &graph.selection.target_spec.digest,
-        "selected Rust target spec",
-    )?;
+    let target_spec = match &graph.selection.target_spec {
+        super::OvenSelectedRustFacetTargetSpec::BuiltIn { .. } => None,
+        super::OvenSelectedRustFacetTargetSpec::Custom { source, digest } => {
+            Some(resolve_file(&owners, source, digest, "selected Rust target spec")?)
+        }
+    };
     let compiled_identities = compiled_rust_unit_identities(selected, compiler_closure_digest)?;
     let mut verified_source_trees = BTreeSet::new();
     let compiler_source_roots = graph
@@ -1078,7 +1080,7 @@ mod tests {
             target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
             toolchain_version: "1.85.0".to_string(),
-            target_spec: OvenSelectedRustFacetTargetSpec {
+            target_spec: OvenSelectedRustFacetTargetSpec::Custom {
                 source: OvenSelectedRustFacetPath {
                     owner: toolchain_owner(),
                     path: "target-spec.json".to_string(),
@@ -1209,7 +1211,11 @@ mod tests {
         let root = tempfile::tempdir()?;
         let selected = selected_graph()?;
         let materialized = materialize_selected_rust_facet_graph(&selected, COMPILER_CLOSURE, &roots(root.path())?)?;
-        assert!(materialized.target_spec().ends_with("target-spec.json"));
+        assert!(
+            materialized
+                .custom_target_spec()
+                .is_some_and(|path| path.ends_with("target-spec.json"))
+        );
         let unit = materialized
             .units()
             .next()

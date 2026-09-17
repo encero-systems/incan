@@ -13,7 +13,7 @@ pub use validation::*;
 /// Wire schema for the portable Rust facet graph selected before physical rust-analyzer projection.
 pub const OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION: u32 = 6;
 const OVEN_SELECTED_RUST_FACET_GRAPH_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-graph/1";
-pub(crate) const OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-unit/1";
+pub(crate) const OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-unit/2";
 
 /// Command purpose whose dependency roles and feature activation produced a selected Rust graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -340,14 +340,60 @@ pub struct OvenSelectedRustFacetIntent {
     pub profile: String,
 }
 
-/// Exact target-spec bytes selected from one Store-owned toolchain closure.
+/// Toolchain-owned target description selected for one Rust compilation target.
+///
+/// Built-in targets have no target-spec JSON file to retain. They instead bind the exact verified compiler identity,
+/// target triple and canonical cfg snapshot. Custom targets retain their actual JSON bytes beneath the same Toolchain
+/// owner. Consumers must never synthesize a custom target-spec file for a built-in target.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OvenSelectedRustFacetTargetSpec {
-    /// Toolchain-owner-relative target-spec JSON file, matching the inspection-toolchain payload's recorded path.
-    pub source: OvenSelectedRustFacetPath,
-    /// Digest of the exact target-spec JSON bytes recorded by that same toolchain payload.
-    pub digest: String,
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum OvenSelectedRustFacetTargetSpec {
+    /// A target built into the exact retained Rust compiler.
+    BuiltIn {
+        /// Toolchain closure that owns the verified compiler.
+        toolchain_owner: String,
+        /// Exact built-in target triple passed to that compiler.
+        target: String,
+        /// Exact compiler release identity captured at the compatibility publisher boundary.
+        rustc_identity: String,
+        /// Canonical digest of the cfg snapshot reported by that compiler for `target`.
+        target_cfg_digest: String,
+    },
+    /// A custom target described by exact retained JSON bytes.
+    Custom {
+        /// Toolchain-owner-relative target-spec JSON file.
+        source: OvenSelectedRustFacetPath,
+        /// Digest of the exact target-spec JSON bytes.
+        digest: String,
+    },
+}
+
+impl OvenSelectedRustFacetTargetSpec {
+    /// Return the Toolchain owner that supplies this built-in compiler or custom target-spec file.
+    #[must_use]
+    pub fn toolchain_owner(&self) -> &str {
+        match self {
+            Self::BuiltIn { toolchain_owner, .. } => toolchain_owner,
+            Self::Custom { source, .. } => &source.owner,
+        }
+    }
+
+    /// Return the retained JSON source for a custom target; built-in targets have no source file.
+    #[must_use]
+    pub fn custom_source(&self) -> Option<&OvenSelectedRustFacetPath> {
+        match self {
+            Self::BuiltIn { .. } => None,
+            Self::Custom { source, .. } => Some(source),
+        }
+    }
+
+    /// Return the mutable retained JSON source for a custom target; built-in targets have no source file.
+    pub fn custom_source_mut(&mut self) -> Option<&mut OvenSelectedRustFacetPath> {
+        match self {
+            Self::BuiltIn { .. } => None,
+            Self::Custom { source, .. } => Some(source),
+        }
+    }
 }
 
 /// Complete canonical cfg facts reported by the sealed Rust compiler for one compilation target.
@@ -381,7 +427,7 @@ pub struct OvenSelectedRustFacetSelection {
     pub purpose: OvenSelectedRustFacetPurpose,
     /// Semver-only compiler version required by rust-analyzer.
     pub toolchain_version: String,
-    /// Exact target-spec file bound to the selected Store-owned toolchain closure.
+    /// Exact built-in or custom target description bound to the selected Store-owned toolchain closure.
     pub target_spec: OvenSelectedRustFacetTargetSpec,
 }
 
@@ -638,7 +684,6 @@ impl OvenSelectedRustFacetGraph {
                 format!("is not semantic version evidence: {error}"),
             )
         })?;
-        validate_selected_graph_digest(&self.selection.target_spec.digest, "selection.target_spec.digest")?;
         validate_selected_graph_cfg_snapshot(&self.selection.host_cfg, "selection.host_cfg")?;
         validate_selected_graph_cfg_snapshot(&self.selection.target_cfg, "selection.target_cfg")?;
 
@@ -664,19 +709,54 @@ impl OvenSelectedRustFacetGraph {
             ));
         }
         let mut referenced_owners = BTreeSet::new();
-        let target_spec_kind = validate_selected_graph_path_reference(
-            &self.selection.target_spec.source,
-            &owners,
-            "selection.target_spec.source",
-            false,
-        )?;
-        if target_spec_kind != OvenSelectedRustFacetOwnerKind::Toolchain {
-            return Err(selected_graph_invalid(
-                "selection.target_spec.source.owner",
-                "must reference a Toolchain owner",
-            ));
+        match &self.selection.target_spec {
+            OvenSelectedRustFacetTargetSpec::BuiltIn {
+                toolchain_owner,
+                target,
+                rustc_identity,
+                target_cfg_digest,
+            } => {
+                validate_selected_graph_digest(toolchain_owner, "selection.target_spec.toolchain_owner")?;
+                validate_selected_graph_text(target, "selection.target_spec.target")?;
+                validate_selected_graph_text(rustc_identity, "selection.target_spec.rustc_identity")?;
+                validate_selected_graph_digest(target_cfg_digest, "selection.target_spec.target_cfg_digest")?;
+                if owners.get(toolchain_owner) != Some(&OvenSelectedRustFacetOwnerKind::Toolchain) {
+                    return Err(selected_graph_invalid(
+                        "selection.target_spec.toolchain_owner",
+                        "must reference the graph's Toolchain owner",
+                    ));
+                }
+                if target != &self.selection.intent.target || rustc_identity != &self.selection.intent.toolchain {
+                    return Err(selected_graph_invalid(
+                        "selection.target_spec",
+                        "does not match the selected target and verified compiler identity",
+                    ));
+                }
+                let cfg_digest = selected_graph_sha256(
+                    &serde_json::to_vec(&self.selection.target_cfg)
+                        .map_err(|error| selected_graph_invalid("selection.target_cfg", error.to_string()))?,
+                );
+                if target_cfg_digest != &cfg_digest {
+                    return Err(selected_graph_invalid(
+                        "selection.target_spec.target_cfg_digest",
+                        "does not bind the canonical selected target cfg snapshot",
+                    ));
+                }
+                referenced_owners.insert(toolchain_owner.clone());
+            }
+            OvenSelectedRustFacetTargetSpec::Custom { source, digest } => {
+                validate_selected_graph_digest(digest, "selection.target_spec.digest")?;
+                let target_spec_kind =
+                    validate_selected_graph_path_reference(source, &owners, "selection.target_spec.source", false)?;
+                if target_spec_kind != OvenSelectedRustFacetOwnerKind::Toolchain {
+                    return Err(selected_graph_invalid(
+                        "selection.target_spec.source.owner",
+                        "must reference a Toolchain owner",
+                    ));
+                }
+                referenced_owners.insert(source.owner.clone());
+            }
         }
-        referenced_owners.insert(self.selection.target_spec.source.owner.clone());
 
         if self.units.is_empty() {
             return Err(selected_graph_missing("units"));

@@ -584,7 +584,7 @@ pub fn selected_graph_unit_identity(
     };
     let input = OvenSelectedRustFacetUnitIdentityInput {
         toolchain: &selection.intent.toolchain,
-        toolchain_owner: &selection.target_spec.source.owner,
+        toolchain_owner: selection.target_spec.toolchain_owner(),
         toolchain_version: &selection.toolchain_version,
         profile: &selection.intent.profile,
         compilation_target,

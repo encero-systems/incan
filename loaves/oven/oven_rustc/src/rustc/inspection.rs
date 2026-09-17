@@ -738,7 +738,7 @@ mod selected_rust_facet_graph_tests {
             target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
             toolchain_version: "1.85.0".to_string(),
-            target_spec: OvenSelectedRustFacetTargetSpec {
+            target_spec: OvenSelectedRustFacetTargetSpec::Custom {
                 source: OvenSelectedRustFacetPath {
                     owner: toolchain_owner_identity(),
                     path: "target-specs/x86_64-unknown-linux-gnu.json".to_string(),
@@ -1597,7 +1597,7 @@ mod selected_rust_facet_graph_tests {
     #[test]
     fn selected_graph_binds_target_spec_to_a_toolchain_owner() -> TestResult {
         let selected = graph(b"pub fn use_dependency() {}\n")?.validated()?;
-        let target_owner = &selected.graph().selection.target_spec.source.owner;
+        let target_owner = selected.graph().selection.target_spec.toolchain_owner();
         let owner = selected
             .graph()
             .owners
@@ -1607,7 +1607,12 @@ mod selected_rust_facet_graph_tests {
         assert_eq!(owner.kind, OvenSelectedRustFacetOwnerKind::Toolchain);
 
         let mut wrong_target_spec_owner = graph(b"pub fn use_dependency() {}\n")?;
-        wrong_target_spec_owner.selection.target_spec.source.owner = dependency_owner_identity();
+        wrong_target_spec_owner
+            .selection
+            .target_spec
+            .custom_source_mut()
+            .ok_or("fixture target spec is not custom")?
+            .owner = dependency_owner_identity();
         assert!(matches!(
             wrong_target_spec_owner.validated(),
             Err(OvenSelectedRustFacetGraphError::Invalid { field, .. })
@@ -1638,7 +1643,12 @@ mod selected_rust_facet_graph_tests {
         ));
 
         let mut missing_owner = graph(b"pub fn use_dependency() {}\n")?;
-        missing_owner.selection.target_spec.source.owner = selected_graph_sha256(b"absent toolchain owner");
+        missing_owner
+            .selection
+            .target_spec
+            .custom_source_mut()
+            .ok_or("fixture target spec is not custom")?
+            .owner = selected_graph_sha256(b"absent toolchain owner");
         assert!(matches!(
             missing_owner.validated(),
             Err(OvenSelectedRustFacetGraphError::Missing { .. })
@@ -1669,6 +1679,29 @@ mod selected_rust_facet_graph_tests {
             registry_from_toolchain.validated(),
             Err(OvenSelectedRustFacetGraphError::Invalid { field, .. }) if field.ends_with(".source.owner")
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn selected_graph_binds_a_builtin_target_to_the_verified_compiler_and_cfg() -> TestResult {
+        let mut selected = graph(b"pub fn use_dependency() {}\n")?;
+        let cfg_digest = selected_graph_sha256(&serde_json::to_vec(&selected.selection.target_cfg)?);
+        selected.selection.target_spec = OvenSelectedRustFacetTargetSpec::BuiltIn {
+            toolchain_owner: toolchain_owner_identity(),
+            target: selected.selection.intent.target.clone(),
+            rustc_identity: selected.selection.intent.toolchain.clone(),
+            target_cfg_digest: cfg_digest,
+        };
+        selected.validated()?;
+
+        let mut changed_cfg = graph(b"pub fn use_dependency() {}\n")?;
+        changed_cfg.selection.target_spec = OvenSelectedRustFacetTargetSpec::BuiltIn {
+            toolchain_owner: toolchain_owner_identity(),
+            target: changed_cfg.selection.intent.target.clone(),
+            rustc_identity: changed_cfg.selection.intent.toolchain.clone(),
+            target_cfg_digest: selected_graph_sha256(b"unrelated cfg"),
+        };
+        assert!(changed_cfg.validated().is_err());
         Ok(())
     }
 
@@ -1911,7 +1944,12 @@ mod selected_rust_facet_graph_tests {
         ));
 
         let mut owner_root_target_spec = graph(b"pub fn use_dependency() {}\n")?;
-        owner_root_target_spec.selection.target_spec.source.path = ".".to_string();
+        owner_root_target_spec
+            .selection
+            .target_spec
+            .custom_source_mut()
+            .ok_or("fixture target spec is not custom")?
+            .path = ".".to_string();
         assert!(matches!(
             owner_root_target_spec.validated(),
             Err(OvenSelectedRustFacetGraphError::Invalid { .. })
@@ -2407,7 +2445,12 @@ mod selected_rust_facet_graph_tests {
         let mut graph = path_source_graph("path:fixture", b"pub fn fixture() {}\n")?;
         graph.selection.host = "x86_64-pc-windows-msvc".to_string();
         graph.selection.intent.target = "x86_64-pc-windows-msvc".to_string();
-        graph.selection.target_spec.source.path = "target-specs/x86_64-pc-windows-msvc.json".to_string();
+        graph
+            .selection
+            .target_spec
+            .custom_source_mut()
+            .expect("fixture target spec is custom")
+            .path = "target-specs/x86_64-pc-windows-msvc.json".to_string();
         for (name, value) in environment {
             graph.units[0].environment.insert((*name).to_string(), value.clone());
         }

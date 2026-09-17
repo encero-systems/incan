@@ -868,7 +868,7 @@ pub(crate) mod tests {
             target_cfg: cfg_snapshot("fixture-target", "fixture"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
             toolchain_version: "1.85.0".to_string(),
-            target_spec: OvenSelectedRustFacetTargetSpec {
+            target_spec: OvenSelectedRustFacetTargetSpec::Custom {
                 source: OvenSelectedRustFacetPath {
                     owner: toolchain_owner(),
                     path: "target-spec.json".to_string(),
