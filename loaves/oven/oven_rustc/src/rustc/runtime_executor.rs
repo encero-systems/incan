@@ -664,6 +664,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// A verified sysroot input stays pathless so rustc resolves it from its own toolchain.
     #[test]
     fn sysroot_extern_arguments_preserve_exact_bare_form() {
         let mut command = Command::new("rustc");
