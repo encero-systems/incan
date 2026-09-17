@@ -359,24 +359,7 @@ pub fn publisher_registry_leaf_catalog(
             };
             let selected_unit_identity = selected_units
                 .map(|selected_units| {
-                    let reported_paths = artifact
-                        .filenames
-                        .iter()
-                        .filter_map(|path| fs::canonicalize(path).ok())
-                        .collect::<BTreeSet<_>>();
-                    let selected = selected_units
-                        .units
-                        .iter()
-                        .filter(|unit| {
-                            unit.package_id == artifact.package_id
-                                && unit.target_name == artifact.target.name
-                                && unit.artifact_paths.iter().any(|path| {
-                                    fs::canonicalize(path)
-                                        .ok()
-                                        .is_some_and(|path| reported_paths.contains(&path))
-                                })
-                        })
-                        .collect::<Vec<_>>();
+                    let selected = traced_units_for_registry_artifact(selected_units, &artifact);
                     let [selected] = selected.as_slice() else {
                         return Err(OvenLegacyCargoError::Plan(format!(
                             "registry artifact `{}` {} does not bind exactly one traced rustc output",
@@ -530,11 +513,118 @@ pub fn publisher_registry_leaf_catalog(
     Ok((sealed, source_artifacts))
 }
 
+/// Find physical units whose exact traced output set intersects one Cargo artifact record.
+fn traced_units_for_registry_artifact<'a>(
+    selected_units: &'a super::OvenLegacyCargoSelectedUnitCapture,
+    artifact: &CargoCompilerArtifact,
+) -> Vec<&'a super::OvenLegacyCargoSelectedUnit> {
+    let reported_paths = artifact
+        .filenames
+        .iter()
+        .filter_map(|path| fs::canonicalize(path).ok())
+        .collect::<BTreeSet<_>>();
+    selected_units
+        .units
+        .iter()
+        .filter(|unit| {
+            unit.package_id == artifact.package_id
+                && unit.target_name == artifact.target.name
+                && unit.artifact_paths.iter().any(|path| {
+                    fs::canonicalize(path)
+                        .ok()
+                        .is_some_and(|path| reported_paths.contains(&path))
+                })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::PathBuf;
 
-    use super::{digest_bytes, stage_registry_source_directory};
+    use super::{
+        CargoCompilerArtifact, CargoCompilerArtifactProfile, CargoCompilerArtifactTarget, digest_bytes,
+        stage_registry_source_directory, traced_units_for_registry_artifact,
+    };
+    use crate::{OvenLegacyCargoSelectedUnit, OvenLegacyCargoSelectedUnitCapture};
+
+    fn selected_unit(package_id: &str, output: PathBuf, platform: &str, cfg: &str) -> OvenLegacyCargoSelectedUnit {
+        OvenLegacyCargoSelectedUnit {
+            package_id: package_id.to_string(),
+            package: "fixture".to_string(),
+            package_version: "1.0.0".to_string(),
+            package_source: Some("registry+https://example.invalid/index".to_string()),
+            target_name: "fixture".to_string(),
+            target_kinds: vec!["lib".to_string()],
+            crate_types: vec!["lib".to_string()],
+            source_path: PathBuf::from("/sealed/fixture/src/lib.rs"),
+            artifact_paths: vec![output],
+            root_module: "src/lib.rs".to_string(),
+            edition: "2021".to_string(),
+            mode: "build".to_string(),
+            platform: Some(platform.to_string()),
+            target_is_explicit: Some(true),
+            cfg: vec![cfg.to_string()],
+            effective_features: vec!["std".to_string()],
+            dependencies: Vec::new(),
+            sysroot_externs: Vec::new(),
+            build_script: None,
+            registry_source: None,
+        }
+    }
+
+    #[test]
+    fn registry_artifact_joins_only_its_exact_traced_output() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let host_output = root.path().join("host/libfixture.rlib");
+        let target_output = root.path().join("target/libfixture.rlib");
+        fs::create_dir_all(host_output.parent().ok_or("host output has no parent")?)?;
+        fs::create_dir_all(target_output.parent().ok_or("target output has no parent")?)?;
+        fs::write(&host_output, b"host")?;
+        fs::write(&target_output, b"target")?;
+        let package_id = "registry+https://example.invalid/index#fixture@1.0.0";
+        let capture = OvenLegacyCargoSelectedUnitCapture {
+            roots: vec![0, 1],
+            units: vec![
+                selected_unit(package_id, host_output.clone(), "aarch64-apple-darwin", "host"),
+                selected_unit(package_id, target_output.clone(), "wasm32-unknown-unknown", "target"),
+            ],
+            rustc_invocations_observed: true,
+            build_script_tool_probes: Vec::new(),
+            compiler: None,
+        };
+        let artifact = |filenames| CargoCompilerArtifact {
+            reason: "compiler-artifact".to_string(),
+            package_id: package_id.to_string(),
+            target: CargoCompilerArtifactTarget {
+                name: "fixture".to_string(),
+                kind: vec!["lib".to_string()],
+                crate_types: vec!["lib".to_string()],
+                src_path: PathBuf::from("/sealed/fixture/src/lib.rs"),
+            },
+            features: vec!["std".to_string()],
+            filenames,
+            profile: CargoCompilerArtifactProfile::default(),
+        };
+
+        assert_eq!(
+            traced_units_for_registry_artifact(&capture, &artifact(vec![target_output])).len(),
+            1
+        );
+        assert!(
+            traced_units_for_registry_artifact(&capture, &artifact(vec![root.path().join("wrong.rlib")])).is_empty()
+        );
+        assert_eq!(
+            traced_units_for_registry_artifact(
+                &capture,
+                &artifact(vec![host_output, root.path().join("target/libfixture.rlib")])
+            )
+            .len(),
+            2
+        );
+        Ok(())
+    }
 
     #[test]
     fn staged_registry_source_retains_sorted_cargo_toml_and_member_digests() -> Result<(), Box<dyn std::error::Error>> {
