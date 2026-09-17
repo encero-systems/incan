@@ -13,6 +13,12 @@ use std::time::Instant;
 
 use incan_driver::build::publication::stored_project_output_from_parts;
 use incan_driver::build::{OvenProjectOutputPayload, OvenStoredProjectOutput};
+use oven_cargo_compat::loaf_bake::prepare_loaf_from_generated_project_with_selected_units;
+use oven_cargo_compat::{
+    encode_selected_graph_policy_request, finalize_compiler_support_selected_graph, legacy_cargo_foundation_projection,
+    legacy_cargo_generated_archive_bindings, legacy_cargo_generated_output_bindings,
+    runtime_foundation_from_compiled_loaf, runtime_foundation_inventories_from_policy_response,
+};
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::loaf::{
     OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION, OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenLoaf,
@@ -37,18 +43,15 @@ use super::{
     OvenLoafBakeReport, OvenLoafBakerContext, OvenLoafEnvelope, OvenLoafEnvelopeArgument, OvenLoafEnvelopeManifest,
     OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenOutputFormat, OvenStoreCommandOptions, OvenStoreLimits,
     acquire_exclusive_loaf_generation_lock, announce_oven_progress, commit_loaf_generation, compiler_libtests_receipt,
-    elapsed_detail, encode_selected_graph_policy_request, env, finalize_compiler_support_selected_graph, human_bytes,
-    import_loaf_envelope_from_configured_mirrors, isolate_loaf_fixture_toolchain_data,
-    legacy_cargo_foundation_projection, legacy_cargo_generated_archive_bindings,
-    legacy_cargo_generated_output_bindings, legacy_cargo_inspection_sources, legacy_cargo_resolved_registry_sources,
+    elapsed_detail, env, human_bytes, import_loaf_envelope_from_configured_mirrors,
+    isolate_loaf_fixture_toolchain_data, legacy_cargo_inspection_sources, legacy_cargo_resolved_registry_sources,
     loaf_compiler_lock_path, loaf_compiler_manifest_path, loaf_directory_byte_counts,
     loaf_envelope_compatibility_map_with_release_member, loaf_envelope_evidence, loaf_envelope_inspection_packages,
     loaf_envelope_name, loaf_envelope_specifications, loaf_fixture_action_name, loaf_fixture_probe_is_expected_miss,
     loaf_generation_identity_with_release_member, loaf_raw_disk_bytes, open_store, oven_error, pin_loaf_fixture_rustc,
-    prepare_compiler_test_suite, prepare_loaf_from_generated_project_with_selected_units, print_json, read_receipt,
-    release_store_member_byte_counts, retire_unreferenced_loaf_generations, reuse_complete_loaf_envelope,
-    runtime_foundation_from_compiled_loaf, runtime_foundation_inventories_from_policy_response,
-    stage_locked_loaf_fixture, write_receipt, write_sealed_oven_inspection_source_authority,
+    prepare_compiler_test_suite, print_json, read_receipt, release_store_member_byte_counts,
+    retire_unreferenced_loaf_generations, reuse_complete_loaf_envelope, stage_locked_loaf_fixture, write_receipt,
+    write_sealed_oven_inspection_source_authority,
 };
 
 /// Bake or exactly reuse one complete compiler-owned Alpha Loaf envelope.
