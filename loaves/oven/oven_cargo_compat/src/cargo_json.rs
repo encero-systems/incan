@@ -25,7 +25,7 @@ pub(crate) struct CargoBuildScriptExecuted {
 }
 
 /// Minimal Cargo JSON message shape used to map publisher-built dependency artifacts back to unit-graph edges.
-#[derive(Clone, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct CargoCompilerArtifact {
     pub(crate) reason: String,
     pub(crate) package_id: String,
@@ -38,14 +38,14 @@ pub(crate) struct CargoCompilerArtifact {
     pub(crate) profile: CargoCompilerArtifactProfile,
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Deserialize)]
 pub(crate) struct CargoCompilerArtifactProfile {
     #[serde(default)]
     pub(crate) test: bool,
 }
 
 /// Target identity emitted by Cargo's stable JSON message stream.
-#[derive(Clone, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct CargoCompilerArtifactTarget {
     pub(crate) name: String,
     #[serde(default)]

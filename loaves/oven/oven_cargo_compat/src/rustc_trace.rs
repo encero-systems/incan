@@ -104,6 +104,9 @@ pub(crate) fn append_rustc_trace(stdout: &mut Vec<u8>, trace: &Path) -> Result<(
     let file = match File::open(trace) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if cargo_output_is_entirely_fresh(stdout) {
+                return Ok(());
+            }
             return Err(OvenLegacyCargoError::Plan(
                 "stable Cargo compilation emitted no rustc invocation trace".to_string(),
             ));
@@ -195,6 +198,23 @@ pub(crate) fn append_rustc_trace(stdout: &mut Vec<u8>, trace: &Path) -> Result<(
     Ok(())
 }
 
+fn cargo_output_is_entirely_fresh(stdout: &[u8]) -> bool {
+    let mut artifacts = 0usize;
+    for line in stdout.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) else {
+            continue;
+        };
+        if value.get("reason").and_then(serde_json::Value::as_str) != Some("compiler-artifact") {
+            continue;
+        }
+        artifacts += 1;
+        if value.get("fresh").and_then(serde_json::Value::as_bool) != Some(true) {
+            return false;
+        }
+    }
+    artifacts > 0
+}
+
 /// Return the exact current CLI only when it is one of the two binaries that dispatch the trace-wrapper protocol.
 pub(crate) fn current_rustc_trace_wrapper() -> Result<Option<PathBuf>, OvenLegacyCargoError> {
     let executable = env::current_exe().map_err(|source| OvenLegacyCargoError::Io {
@@ -239,8 +259,32 @@ mod tests {
         fs::write(&trace, b"{malformed}\n")?;
         assert!(append_rustc_trace(&mut Vec::new(), &trace).is_err());
 
+        let mut maximum = serde_json::to_vec(&OvenLegacyRustcInvocation {
+            reason: "incan-rustc-invocation".to_string(),
+            rustc: "/verified/rustc".to_string(),
+            arguments: vec!["--crate-name".to_string(), "fixture".to_string()],
+            environment: BTreeMap::new(),
+        })?;
+        maximum.resize(MAX_RUSTC_TRACE_RECORD_BYTES, b' ');
+        maximum.push(b'\n');
+        fs::write(&trace, &maximum)?;
+        let mut stdout = Vec::new();
+        append_rustc_trace(&mut stdout, &trace)?;
+        assert_eq!(stdout, maximum);
+
         fs::write(&trace, vec![b'x'; MAX_RUSTC_TRACE_RECORD_BYTES + 1])?;
         assert!(append_rustc_trace(&mut Vec::new(), &trace).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn absent_trace_is_allowed_only_for_explicitly_fresh_artifacts() {
+        let fresh = br#"{"reason":"compiler-artifact","fresh":true}
+"#;
+        let rebuilt = br#"{"reason":"compiler-artifact","fresh":false}
+"#;
+        assert!(cargo_output_is_entirely_fresh(fresh));
+        assert!(!cargo_output_is_entirely_fresh(rebuilt));
+        assert!(!cargo_output_is_entirely_fresh(b"not-json\n"));
     }
 }

@@ -25,6 +25,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
     expected_rustc: &Path,
 ) -> Result<OvenLegacyCargoSelectedUnitCapture, OvenLegacyCargoError> {
     let mut artifacts = Vec::new();
+    let mut artifact_records = BTreeMap::<Vec<PathBuf>, CargoCompilerArtifact>::new();
     let mut invocations = Vec::new();
     let mut build_scripts = Vec::new();
     for output in outputs {
@@ -38,9 +39,26 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
             };
             match value.get("reason").and_then(serde_json::Value::as_str) {
                 Some("compiler-artifact") => {
-                    artifacts.push(serde_json::from_value::<CargoCompilerArtifact>(value).map_err(|error| {
+                    let artifact = serde_json::from_value::<CargoCompilerArtifact>(value.clone()).map_err(|error| {
                         OvenLegacyCargoError::Plan(format!("invalid Cargo compiler-artifact record: {error}"))
-                    })?)
+                    })?;
+                    if artifact.filenames.is_empty() {
+                        return Err(OvenLegacyCargoError::Plan(
+                            "Cargo compiler artifact has no physical filenames".to_string(),
+                        ));
+                    }
+                    match artifact_records.get(&artifact.filenames) {
+                        Some(previous) if previous == &artifact => continue,
+                        Some(_) => {
+                            return Err(OvenLegacyCargoError::Plan(
+                                "Cargo reused physical artifact filenames for conflicting records".to_string(),
+                            ));
+                        }
+                        None => {
+                            artifact_records.insert(artifact.filenames.clone(), artifact.clone());
+                            artifacts.push(artifact);
+                        }
+                    }
                 }
                 Some("incan-rustc-invocation") => invocations.push(
                     serde_json::from_value::<OvenLegacyRustcInvocation>(value).map_err(|error| {
@@ -983,6 +1001,11 @@ mod tests {
         let records = [
             serde_json::json!({
                 "reason": "compiler-artifact", "package_id": "dep 2.0.0",
+                "target": {"name": "dep", "kind": ["lib"], "crate_types": ["lib"], "src_path": "/fixture/dep/src/lib.rs"},
+                "features": [], "filenames": ["/target/libdep-sealed.rlib"], "profile": {"test": false}
+            }),
+            serde_json::json!({
+                "reason": "compiler-artifact", "package_id": "dep 2.0.0", "fresh": true,
                 "target": {"name": "dep", "kind": ["lib"], "crate_types": ["lib"], "src_path": "/fixture/dep/src/lib.rs"},
                 "features": [], "filenames": ["/target/libdep-sealed.rlib"], "profile": {"test": false}
             }),
