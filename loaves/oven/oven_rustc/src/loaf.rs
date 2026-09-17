@@ -3065,6 +3065,7 @@ fn read_loaf(loaf_path: &Path) -> Result<OvenLoaf, OvenLoafError> {
 
 #[cfg(test)]
 mod tests {
+    use super::{OvenReleaseToolchainMember, stage_release_runtime_foundation_toolchain};
 
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};

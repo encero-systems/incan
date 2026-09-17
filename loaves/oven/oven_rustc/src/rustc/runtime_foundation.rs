@@ -1671,7 +1671,7 @@ mod tests {
             compiled_loaf_identity: loaf_identity,
             compiled_plan_identity: plan_identity,
             toolchain_owner_identity: toolchain_owner(),
-            compiler_closure_identity: asset.foundation.compiler_closure_digest().to_string(),
+            compiler_closure_identity: asset.foundation.compiler_closure_digest.clone(),
             toolchain_root_relative_path: "toolchain".into(),
             toolchain_members,
         };
