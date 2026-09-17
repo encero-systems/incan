@@ -24,7 +24,7 @@ from rust_graph import (
 from rust_source import read_dependency_catalog, RustDependencyCatalog
 from source_inventory import inert_build_script_warnings, package_source_inventory, PackageSourceInventory
 
-const SCHEMA: str = "incan.oven.rust-policy-exchange/3"
+const SCHEMA: str = "incan.oven.rust-policy-exchange/4"
 const OPERATION: str = "validate_selected_rust_graph"
 
 
@@ -196,12 +196,48 @@ def decode_closure(value: JsonValue, path: list[str]) -> Result[SelectedUnitClos
             nonempty(text_field(item, "name", item_path)?, item_path + ["name"])?
             nonempty(text_field(item, "digest", item_path)?, item_path + ["digest"])?
         elif input == "provider":
-            exact_object(item, ["input", "name", "kind", "provider"], item_path)?
+            exact_object(
+                item,
+                [
+                    "input",
+                    "name",
+                    "kind",
+                    "provider",
+                    "target",
+                    "capability",
+                    "receipt_identity",
+                    "provenance",
+                    "provenance_digest",
+                    "search_root",
+                    "artifact",
+                    "digest",
+                    "members",
+                ],
+                item_path,
+            )?
             kind = text_field(item, "kind", item_path)?
             if kind != "framework" and kind != "system":
                 return Err(invalid(item_path + ["kind"]))
             nonempty(text_field(item, "name", item_path)?, item_path + ["name"])?
             nonempty(text_field(item, "provider", item_path)?, item_path + ["provider"])?
+            nonempty(text_field(item, "target", item_path)?, item_path + ["target"])?
+            nonempty(text_field(item, "capability", item_path)?, item_path + ["capability"])?
+            nonempty(text_field(item, "receipt_identity", item_path)?, item_path + ["receipt_identity"])?
+            nonempty(text_field(item, "provenance_digest", item_path)?, item_path + ["provenance_digest"])?
+            nonempty(text_field(item, "digest", item_path)?, item_path + ["digest"])?
+            for location_name in ["provenance", "search_root", "artifact"]:
+                location = field(item, location_name, item_path)?
+                exact_object(location, ["owner", "path"], item_path + [location_name])?
+                nonempty(text_field(location, "owner", item_path + [location_name])?, item_path + [location_name, "owner"])?
+                nonempty(text_field(location, "path", item_path + [location_name])?, item_path + [location_name, "path"])?
+            members = array(field(item, "members", item_path)?, item_path + ["members"])?
+            if len(members) == 0:
+                return Err(invalid(item_path + ["members"]))
+            for member_index in range(len(members)):
+                member_path = item_path + ["members", str(member_index)]
+                exact_object(members[member_index], ["path", "digest"], member_path)?
+                nonempty(text_field(members[member_index], "path", member_path)?, member_path + ["path"])?
+                nonempty(text_field(members[member_index], "digest", member_path)?, member_path + ["digest"])?
         else:
             return Err(invalid(item_path + ["input"]))
     return Ok(SelectedUnitClosure(environment=environment, generated_inputs=generated, linked_libraries=linked))

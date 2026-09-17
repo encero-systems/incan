@@ -11,7 +11,7 @@ mod validation;
 pub use validation::*;
 
 /// Wire schema for the portable Rust facet graph selected before physical rust-analyzer projection.
-pub const OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION: u32 = 4;
+pub const OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION: u32 = 5;
 const OVEN_SELECTED_RUST_FACET_GRAPH_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-graph/1";
 pub(crate) const OVEN_SELECTED_RUST_FACET_UNIT_DIGEST_DOMAIN: &str = "incan.oven.selected-rust-facet-unit/1";
 
@@ -169,6 +169,24 @@ pub enum OvenSelectedRustFacetLinkedLibrary {
         kind: OvenSelectedRustFacetLinkedLibraryKind,
         /// Exact retained provider identity.
         provider: String,
+        /// Exact target selected by the provider receipt for this link input.
+        target: String,
+        /// Provider-declared capability that authorizes this named link input.
+        capability: String,
+        /// Identity of the provider execution receipt that selected this capability.
+        receipt_identity: String,
+        /// Receipt-bound provenance record under the provider owner.
+        provenance: OvenSelectedRustFacetPath,
+        /// Digest of the exact provider provenance record.
+        provenance_digest: String,
+        /// Provider-owned search root used to resolve this declared input.
+        search_root: OvenSelectedRustFacetPath,
+        /// Exact selected library or framework entry under the provider owner.
+        artifact: OvenSelectedRustFacetPath,
+        /// Digest of the selected library or framework entry bytes.
+        digest: String,
+        /// Complete provider-owned member catalog relative to `search_root`.
+        members: Vec<OvenSelectedRustFacetSourceMember>,
     },
 }
 
@@ -418,6 +436,7 @@ fn validate_selected_graph_linked_library(
     link: &OvenSelectedRustFacetLinkedLibrary,
     owners: &BTreeMap<&str, OvenSelectedRustFacetOwnerKind>,
     referenced_owners: &mut BTreeSet<String>,
+    expected_target: &str,
     field: &str,
 ) -> Result<(), OvenSelectedRustFacetGraphError> {
     match link {
@@ -441,7 +460,20 @@ fn validate_selected_graph_linked_library(
             referenced_owners.insert(artifact.owner.clone());
             validate_selected_graph_digest(digest, &format!("{field}.digest"))?;
         }
-        OvenSelectedRustFacetLinkedLibrary::Provider { name, kind, provider } => {
+        OvenSelectedRustFacetLinkedLibrary::Provider {
+            name,
+            kind,
+            provider,
+            target,
+            capability,
+            receipt_identity,
+            provenance,
+            provenance_digest,
+            search_root,
+            artifact,
+            digest,
+            members,
+        } => {
             if !matches!(
                 kind,
                 OvenSelectedRustFacetLinkedLibraryKind::Framework | OvenSelectedRustFacetLinkedLibraryKind::System
@@ -452,6 +484,16 @@ fn validate_selected_graph_linked_library(
                 ));
             }
             validate_selected_graph_alias(name, &format!("{field}.name"))?;
+            validate_selected_graph_text(capability, &format!("{field}.capability"))?;
+            validate_selected_graph_digest(receipt_identity, &format!("{field}.receipt_identity"))?;
+            validate_selected_graph_digest(provenance_digest, &format!("{field}.provenance_digest"))?;
+            validate_selected_graph_digest(digest, &format!("{field}.digest"))?;
+            if target != expected_target {
+                return Err(selected_graph_invalid(
+                    format!("{field}.target"),
+                    "does not match the selected unit domain target",
+                ));
+            }
             let kind = validate_selected_graph_owner_reference(provider, owners, &format!("{field}.provider"))?;
             if kind != OvenSelectedRustFacetOwnerKind::LinkedLibraryProvider {
                 return Err(selected_graph_invalid(
@@ -460,7 +502,71 @@ fn validate_selected_graph_linked_library(
                 ));
             }
             referenced_owners.insert(provider.clone());
+            validate_selected_graph_provider_path(provenance, provider, owners, false, &format!("{field}.provenance"))?;
+            validate_selected_graph_provider_path(
+                search_root,
+                provider,
+                owners,
+                true,
+                &format!("{field}.search_root"),
+            )?;
+            validate_selected_graph_provider_path(artifact, provider, owners, false, &format!("{field}.artifact"))?;
+            validate_selected_graph_provider_members(members, search_root, artifact, &format!("{field}.members"))?;
         }
+    }
+    Ok(())
+}
+
+/// Require every executable provider coordinate to stay beneath the same retained provider owner.
+fn validate_selected_graph_provider_path(
+    path: &OvenSelectedRustFacetPath,
+    provider: &str,
+    owners: &BTreeMap<&str, OvenSelectedRustFacetOwnerKind>,
+    allow_owner_root: bool,
+    field: &str,
+) -> Result<(), OvenSelectedRustFacetGraphError> {
+    if path.owner != provider {
+        return Err(selected_graph_invalid(
+            field,
+            "must be owned by its linked-library provider",
+        ));
+    }
+    validate_selected_graph_path_reference(path, owners, field, allow_owner_root)?;
+    Ok(())
+}
+
+/// Require the retained provider tree to include the exact artifact without hiding unrecorded members.
+fn validate_selected_graph_provider_members(
+    members: &[OvenSelectedRustFacetSourceMember],
+    search_root: &OvenSelectedRustFacetPath,
+    artifact: &OvenSelectedRustFacetPath,
+    field: &str,
+) -> Result<(), OvenSelectedRustFacetGraphError> {
+    if members.is_empty() {
+        return Err(selected_graph_missing(field));
+    }
+    let prefix = if search_root.path == "." {
+        String::new()
+    } else {
+        format!("{}/", search_root.path)
+    };
+    let artifact_member = artifact
+        .path
+        .strip_prefix(&prefix)
+        .ok_or_else(|| selected_graph_invalid(field, "does not contain the declared artifact"))?;
+    let mut contains_artifact = false;
+    for (index, member) in members.iter().enumerate() {
+        validate_selected_graph_path(&member.path, &format!("{field}[{index}].path"), false)?;
+        validate_selected_graph_digest(&member.digest, &format!("{field}[{index}].digest"))?;
+        if member.path == artifact_member {
+            contains_artifact = true;
+        }
+    }
+    if members.windows(2).any(|pair| pair[0].path >= pair[1].path) {
+        return Err(selected_graph_invalid(field, "must be sorted and unique"));
+    }
+    if !contains_artifact {
+        return Err(selected_graph_invalid(field, "does not include the declared artifact"));
     }
     Ok(())
 }
@@ -741,10 +847,15 @@ impl OvenSelectedRustFacetGraph {
                 ));
             }
             for (link_index, link) in unit.linked_libraries.iter().enumerate() {
+                let expected_target = match unit.domain {
+                    OvenSelectedRustFacetDomain::Host => self.selection.host.as_str(),
+                    OvenSelectedRustFacetDomain::Target => self.selection.intent.target.as_str(),
+                };
                 validate_selected_graph_linked_library(
                     link,
                     &owners,
                     &mut referenced_owners,
+                    expected_target,
                     &format!("{field}.linked_libraries[{link_index}]"),
                 )?;
             }

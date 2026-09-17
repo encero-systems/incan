@@ -9,7 +9,7 @@ from rust_policy_exchange import evaluate
 def request(
     role: str = "library",
     extra: str = "",
-    schema: str = "incan.oven.rust-policy-exchange/3",
+    schema: str = "incan.oven.rust-policy-exchange/4",
     operation: str = "validate_selected_rust_graph",
     intent_owner: str = "sha256:project-authority",
     malformed_closure: bool = false,
@@ -152,6 +152,7 @@ pub def test_unknown_schema_and_operation_refuse() -> None:
     """Protects strict refusal of unsupported schema and operation values."""
     assert status(evaluate(request(schema="incan.oven.rust-policy-exchange/1"))) == "refused"
     assert status(evaluate(request(schema="incan.oven.rust-policy-exchange/2"))) == "refused"
+    assert status(evaluate(request(schema="incan.oven.rust-policy-exchange/3"))) == "refused"
     assert status(evaluate(request(operation="select_again"))) == "refused"
 
 

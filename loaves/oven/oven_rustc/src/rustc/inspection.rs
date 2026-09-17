@@ -2041,6 +2041,55 @@ mod selected_rust_facet_graph_tests {
     }
 
     #[test]
+    fn selected_graph_requires_receipt_bound_provider_facts_for_the_unit_domain() -> TestResult {
+        let mut graph = graph(b"pub fn use_dependency() {}\n")?;
+        let root = unit_index(&graph, "fixture")?;
+        let provider = selected_graph_sha256(b"fixture provider");
+        graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: provider.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::LinkedLibraryProvider,
+        });
+        let members = vec![member("Fixture.framework/Fixture", b"fixture framework")];
+        graph.units[root].linked_libraries = vec![OvenSelectedRustFacetLinkedLibrary::Provider {
+            name: "Fixture".to_string(),
+            kind: OvenSelectedRustFacetLinkedLibraryKind::Framework,
+            provider: provider.clone(),
+            target: graph.selection.intent.target.clone(),
+            capability: "apple.framework.Fixture".to_string(),
+            receipt_identity: selected_graph_sha256(b"fixture receipt"),
+            provenance: OvenSelectedRustFacetPath {
+                owner: provider.clone(),
+                path: "provenance/interop-execution.json".to_string(),
+            },
+            provenance_digest: selected_graph_sha256(b"fixture provenance"),
+            search_root: OvenSelectedRustFacetPath {
+                owner: provider.clone(),
+                path: "frameworks".to_string(),
+            },
+            artifact: OvenSelectedRustFacetPath {
+                owner: provider,
+                path: "frameworks/Fixture.framework/Fixture".to_string(),
+            },
+            digest: selected_graph_sha256(b"fixture framework"),
+            members,
+        }];
+        reidentify_unit(&mut graph, root)?;
+        graph.clone().validated()?;
+
+        let provider_link = graph.units[root].linked_libraries[0].clone();
+        graph.units[root].linked_libraries = vec![OvenSelectedRustFacetLinkedLibrary::Provider {
+            target: graph.selection.host.clone(),
+            ..provider_link
+        }];
+        reidentify_unit(&mut graph, root)?;
+        assert_eq!(
+            refusal_field(graph, "provider target")?,
+            "units[0].linked_libraries[0].target"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn selected_graph_refuses_missing_units_owners_digests_and_root_references() -> TestResult {
         let baseline = graph(b"pub fn use_dependency() {}\n")?;
         let root = unit_index(&baseline, "fixture")?;

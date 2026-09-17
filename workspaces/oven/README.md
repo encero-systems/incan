@@ -21,7 +21,7 @@ The host and this project exchange JSON documents. The schemas this source curre
 | `incan.oven.selection/1`, `/2` | `plan_json.incn` | one native plan selection; `/2` requires the request's `build_unit_identity` and exact-unit evidence per candidate |
 | `incan.oven.source-unit-batch/1`, `/2`, `/3` | `plan_json.incn`, `source_unit.incn` | one selection serving a batch of source units; `/3` adds compiler-runtime needs and grants |
 | `incan.oven.native-compilation/2` | `native_compilation.incn` | one direct-`rustc` invocation to validate |
-| `incan.oven.rust-policy-exchange/3` | `rust_policy_exchange.incn` | validate one authenticated selected-Rust-graph projection, including authority-bound root intent and typed environment, generated-member and linked-library closure evidence; return exhaustive activations, derived default-feature demands, source inventories and inert-script warnings |
+| `incan.oven.rust-policy-exchange/4` | `rust_policy_exchange.incn` | validate one authenticated selected-Rust-graph projection, including authority-bound root intent and typed environment, generated-member and linked-library closure evidence; return exhaustive activations, derived default-feature demands, source inventories and inert-script warnings |
 
 Every wire field is required; an unknown or absent field is a refusal, not a default.
 
