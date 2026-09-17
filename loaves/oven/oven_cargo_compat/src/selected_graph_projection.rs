@@ -5,6 +5,7 @@
 //! rootless graph. The caller must bind roots with an admitted project or compiler-support authority afterwards.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::rustc::{
@@ -517,6 +518,101 @@ pub fn legacy_cargo_generated_output_bindings(
         }
     }
     Ok((owners.into_values().collect(), bindings))
+}
+
+/// Bind Cargo static/dynamic link directives to exact retained build-script output members.
+///
+/// System and framework directives require a separately admitted provider and are refused here. Archive selection is
+/// exact by platform filename and must resolve to one retained output member; raw search paths never authorize a
+/// filesystem lookup.
+pub fn legacy_cargo_generated_archive_bindings(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    generated: &BTreeMap<(usize, usize), OvenLegacyCargoSelectedGeneratedBinding>,
+) -> Result<BTreeMap<(usize, usize), OvenLegacyCargoSelectedLinkedLibraryBinding>, OvenLegacyCargoError> {
+    let mut bindings = BTreeMap::new();
+    for (consumer, unit) in capture.units.iter().enumerate() {
+        for dependency in &unit.dependencies {
+            let Some(build_unit) = capture.units.get(dependency.unit_index) else {
+                return Err(projection_error(
+                    "selected linked library",
+                    "names an absent build-script unit",
+                ));
+            };
+            if !is_build_script_unit(build_unit) {
+                continue;
+            }
+            let facts = dependency
+                .build_script
+                .as_ref()
+                .or(build_unit.build_script.as_ref())
+                .ok_or_else(|| projection_error("selected linked library", "has no retained build-script facts"))?;
+            if facts.linked_libraries.is_empty() && facts.linked_paths.is_empty() {
+                continue;
+            }
+            let edge = (consumer, dependency.unit_index);
+            let output = facts.output.as_ref().ok_or_else(|| {
+                projection_error("selected linked library", "has no retained generated output inventory")
+            })?;
+            let generated = generated.get(&edge).ok_or_else(|| {
+                projection_error("selected linked library", "has no exact generated-output owner binding")
+            })?;
+            let mut libraries = Vec::new();
+            for directive in &facts.linked_libraries {
+                let (kind, name, suffixes) = if let Some(name) = directive.strip_prefix("static=") {
+                    (
+                        oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+                        name,
+                        [format!("lib{name}.a"), format!("{name}.lib")],
+                    )
+                } else if let Some(name) = directive.strip_prefix("dylib=") {
+                    (
+                        oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Dynamic,
+                        name,
+                        [format!("lib{name}.so"), format!("lib{name}.dylib")],
+                    )
+                } else {
+                    return Err(projection_error(
+                        "selected linked library",
+                        "requires a separately admitted system or framework provider",
+                    ));
+                };
+                let candidates = output
+                    .members
+                    .iter()
+                    .filter(|member| {
+                        Path::new(&member.path)
+                            .file_name()
+                            .and_then(|file| file.to_str())
+                            .is_some_and(|file| suffixes.iter().any(|expected| file == expected))
+                    })
+                    .collect::<Vec<_>>();
+                let [member] = candidates.as_slice() else {
+                    return Err(projection_error(
+                        "selected linked library",
+                        "does not name exactly one retained build-script output member",
+                    ));
+                };
+                libraries.push(OvenSelectedRustFacetLinkedLibrary::Archive {
+                    name: name.to_string(),
+                    kind,
+                    artifact: OvenSelectedRustFacetPath {
+                        owner: generated.source.owner.clone(),
+                        path: format!("{}/{}", output.relative_root, member.path),
+                    },
+                    digest: member.digest.clone(),
+                });
+            }
+            bindings.insert(
+                edge,
+                OvenLegacyCargoSelectedLinkedLibraryBinding {
+                    observed_libraries: facts.linked_libraries.clone(),
+                    observed_paths: facts.linked_paths.clone(),
+                    libraries,
+                },
+            );
+        }
+    }
+    Ok(bindings)
 }
 
 /// Assemble the portable projection facts already owned by the explicit release publisher.
