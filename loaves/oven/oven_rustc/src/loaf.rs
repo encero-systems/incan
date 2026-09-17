@@ -2257,6 +2257,18 @@ pub fn acquire_committed_release_runtime_foundation(
     }))
 }
 
+/// Acquire the runtime foundation from the active installed release envelope.
+///
+/// This gives a normal consumer a compiler-free bootstrap: the retained compiler and selected target come from the
+/// authenticated release generation rather than PATH. Absence remains distinct so non-release selection paths can
+/// keep their existing ambient-compiler route.
+pub fn acquire_active_release_runtime_foundation(
+    label: &str,
+) -> Result<Option<OvenHeldReleaseRuntimeFoundation>, OvenLoafError> {
+    let root = oven_model::toolchain_layout::resolve_toolchain_data_path(Path::new(TOOLCHAIN_LOAF_RELATIVE_ROOT));
+    acquire_committed_release_runtime_foundation(&root, label)
+}
+
 /// Return exact typed runtime members from an already committed release generation.
 ///
 /// This is an explicit-publisher reuse probe. It validates the envelope and both descriptors but acquires no

@@ -78,8 +78,8 @@ use oven_model::lock::CargoFeatureSelection;
 use oven_model::manifest::DependencySpec;
 use oven_rustc::loaf::{
     OVEN_DEPENDENCY_MISS_SUMMARY, OVEN_LOAF_ENV, OVEN_LOAF_MISS_GUIDANCE, OVEN_NESTED_DEPENDENCY_MISS_SUMMARY,
-    OVEN_NO_IMPLICIT_DEPENDENCY_BUILD, OvenToolchainLoaf, acquire_committed_release_runtime_foundation,
-    resolve_compiler_owned_loaf_for_registry_dependencies,
+    OVEN_NO_IMPLICIT_DEPENDENCY_BUILD, OvenToolchainLoaf, acquire_active_release_runtime_foundation,
+    acquire_committed_release_runtime_foundation, resolve_compiler_owned_loaf_for_registry_dependencies,
 };
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
 use oven_rustc::plan::composition::compose_selected_packaged_provider_plan;
@@ -295,15 +295,58 @@ pub fn prepare_oven_project(
     record_timing(&mut prepare_timings, "prepare_lock_policy", lap);
     lap = Instant::now();
     let mut oven_build_inputs = oven_build_unit_inputs(&provider_plan, &project_requirements, &resolved)?;
-    let mut rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
+    let mut active_runtime_foundation = if loaf_codegen_mode() {
+        None
+    } else {
+        acquire_active_release_runtime_foundation("rust-policy-foundation")
+            .map_err(|error| CliError::failure(error.to_string()))?
+    };
+    let mut rustc = if let Some(held) = active_runtime_foundation.as_ref() {
+        held.compiler.rustc().to_path_buf()
+    } else {
+        resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?
+    };
     let rustc_target = authority_context
         .as_ref()
         .and_then(|context| context.requested_target.clone())
         .map_or_else(
-            || rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string())),
+            || {
+                active_runtime_foundation.as_ref().map_or_else(
+                    || rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string())),
+                    |held| {
+                        Ok(held
+                            .asset
+                            .foundation()
+                            .selected_graph()
+                            .graph()
+                            .selection
+                            .intent
+                            .target
+                            .clone())
+                    },
+                )
+            },
             Ok,
         )?;
-    let rustc_toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
+    let rustc_toolchain = active_runtime_foundation.as_ref().map_or_else(
+        || rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string())),
+        |held| {
+            Ok(held
+                .asset
+                .foundation()
+                .selected_graph()
+                .graph()
+                .selection
+                .intent
+                .toolchain
+                .clone())
+        },
+    )?;
+    if active_runtime_foundation.is_some() && rustc_identity(&rustc).map_err(oven_rustc_error)? != rustc_toolchain {
+        return Err(CliError::failure(
+            "active runtime dependency closure retained a compiler with the wrong toolchain identity".to_string(),
+        ));
+    }
     if oven_plan_mode != OvenProjectPlanMode::InteropBootstrap {
         append_oven_interop_execution_build_inputs(&mut oven_build_inputs, manifest.as_ref(), &rustc_target)?;
     }
@@ -627,7 +670,10 @@ pub fn prepare_oven_project(
     };
     let runtime_foundation = match &plan_selection {
         OvenDirectRustcPlanSelection::ToolchainLoaf(native) => {
-            let Some(root) = native.release_envelope_root().map_err(|error| CliError::failure(error.to_string()))? else {
+            let Some(root) = native
+                .release_envelope_root()
+                .map_err(|error| CliError::failure(error.to_string()))?
+            else {
                 return Ok(OvenPreparedProject {
                     generator,
                     project_root,
@@ -650,13 +696,17 @@ pub fn prepare_oven_project(
                         .map(|workspace| workspace.manifest_dir().to_path_buf()),
                 });
             };
-            let held = acquire_committed_release_runtime_foundation(&root, "rust-policy-foundation")
-                .map_err(|error| CliError::failure(error.to_string()))?
-                .ok_or_else(|| {
-                    CliError::failure(
-                        "selected ToolchainLoaf release has no admitted runtime dependency foundation".to_string(),
-                    )
-                })?;
+            let held = if let Some(held) = active_runtime_foundation.take() {
+                held
+            } else {
+                acquire_committed_release_runtime_foundation(&root, "rust-policy-foundation")
+                    .map_err(|error| CliError::failure(error.to_string()))?
+                    .ok_or_else(|| {
+                        CliError::failure(
+                            "selected ToolchainLoaf release has no admitted runtime dependency foundation".to_string(),
+                        )
+                    })?
+            };
             if held.closure.is_none() {
                 return Err(CliError::failure(
                     "selected ToolchainLoaf release has no admitted runtime dependency closure".to_string(),
@@ -671,7 +721,19 @@ pub fn prepare_oven_project(
             rustc = held.compiler.rustc().to_path_buf();
             Some(held)
         }
-        _ => None,
+        _ => {
+            if active_runtime_foundation.is_some() {
+                let ambient = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
+                let ambient_identity = rustc_identity(&ambient).map_err(oven_rustc_error)?;
+                if ambient_identity != rustc_toolchain {
+                    return Err(CliError::failure(
+                        "selected non-release plan requires the ambient compiler matching its build intent".to_string(),
+                    ));
+                }
+                rustc = ambient;
+            }
+            None
+        }
     };
     Ok(OvenPreparedProject {
         generator,
