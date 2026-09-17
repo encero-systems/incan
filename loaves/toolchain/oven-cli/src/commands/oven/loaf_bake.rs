@@ -653,59 +653,79 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 .map_err(|error| CliError::failure(format!("could not read final release Loaf: {error}")))?,
         )
         .map_err(|error| CliError::failure(format!("final release Loaf is invalid: {error}")))?;
-        let toolchain_relative = PathBuf::from("runtime-foundations/rust-toolchain");
-        let toolchain_root = staged_root.join(&toolchain_relative);
-        let (compiler_closure_identity, mut toolchain_members) = stage_release_runtime_foundation_toolchain(
-            &options.rustc,
-            &finalized.graph.graph().selection.intent.target,
-            &toolchain_root,
-        )
-        .map_err(oven_error)?;
-        let retained_selection = PathBuf::from("selection.json");
-        let selection_bytes = serde_json::to_vec(&finalized.graph.graph().selection)
-            .map_err(|error| CliError::failure(format!("could not encode retained Rust selection: {error}")))?;
-        fs::write(toolchain_root.join(&retained_selection), &selection_bytes).map_err(|error| {
-            CliError::failure(format!("could not retain the selected Rust target evidence: {error}"))
-        })?;
-        toolchain_members.push(OvenReleaseToolchainMember {
-            relative_path: retained_selection,
-            digest: oven_store::digest_bytes(&selection_bytes),
-        });
-        toolchain_members.sort();
-        let foundation = runtime_foundation_from_compiled_loaf(
-            finalized,
-            &loaf,
-            &compiler_closure_identity,
-            &finalized.capture_receipt.identity,
-        )
-        .map_err(oven_error)?;
-        let asset = OvenRuntimeFoundationAsset::sealed(foundation, inventories).map_err(oven_error)?;
-        let foundation_relative = PathBuf::from("runtime-foundations/rust-policy-foundation");
-        let admitted = publish_runtime_foundation_asset(
-            asset,
-            &loaf_root,
-            &toolchain_root,
-            &staged_root.join(&foundation_relative),
-        )
-        .map_err(oven_error)?;
-        let foundation_member = OvenReleaseRuntimeFoundationMember {
-            schema_version: OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION,
-            label: "rust-policy-foundation".to_string(),
-            foundation_relative_path: foundation_relative,
-            foundation_identity: admitted.foundation_identity().to_string(),
-            compiled_loaf_identity: final_entry.result.loaf_identity.clone(),
-            compiled_plan_identity: final_entry.result.plan_identity.clone(),
-            toolchain_owner_identity: evidence.rustc_identity.clone(),
-            compiler_closure_identity,
-            toolchain_root_relative_path: toolchain_relative,
-            toolchain_members,
-        };
-        if let Some((committed_foundation, committed_closure)) =
-            committed_release_runtime_members(&options.output).map_err(oven_error)?
-            && committed_foundation == foundation_member
-        {
-            (Some(foundation_member), Some(committed_closure))
+        let committed = committed_release_runtime_members(&options.output).map_err(oven_error)?;
+        let reusable = if let Some((foundation_member, closure_member)) = committed {
+            let candidate_foundation = runtime_foundation_from_compiled_loaf(
+                finalized,
+                &loaf,
+                &foundation_member.compiler_closure_identity,
+                &finalized.capture_receipt.identity,
+            )
+            .map_err(oven_error)?;
+            let candidate_asset = OvenRuntimeFoundationAsset::sealed(candidate_foundation, inventories.clone())
+                .map_err(oven_error)?
+                .validated()
+                .map_err(oven_error)?;
+            let exact = foundation_member.foundation_identity == candidate_asset.foundation_identity()
+                && foundation_member.compiled_loaf_identity == final_entry.result.loaf_identity
+                && foundation_member.compiled_plan_identity == final_entry.result.plan_identity
+                && foundation_member.toolchain_owner_identity == evidence.rustc_identity
+                && closure_member.foundation_identity == foundation_member.foundation_identity
+                && closure_member.compiler_closure_identity == foundation_member.compiler_closure_identity;
+            exact.then_some((foundation_member, closure_member))
         } else {
+            None
+        };
+        if let Some((foundation_member, closure_member)) = reusable {
+            (Some(foundation_member), Some(closure_member))
+        } else {
+            let toolchain_relative = PathBuf::from("runtime-foundations/rust-toolchain");
+            let toolchain_root = staged_root.join(&toolchain_relative);
+            let (compiler_closure_identity, mut toolchain_members) = stage_release_runtime_foundation_toolchain(
+                &options.rustc,
+                &finalized.graph.graph().selection.intent.target,
+                &toolchain_root,
+            )
+            .map_err(oven_error)?;
+            let retained_selection = PathBuf::from("selection.json");
+            let selection_bytes = serde_json::to_vec(&finalized.graph.graph().selection)
+                .map_err(|error| CliError::failure(format!("could not encode retained Rust selection: {error}")))?;
+            fs::write(toolchain_root.join(&retained_selection), &selection_bytes).map_err(|error| {
+                CliError::failure(format!("could not retain the selected Rust target evidence: {error}"))
+            })?;
+            toolchain_members.push(OvenReleaseToolchainMember {
+                relative_path: retained_selection,
+                digest: oven_store::digest_bytes(&selection_bytes),
+            });
+            toolchain_members.sort();
+            let foundation = runtime_foundation_from_compiled_loaf(
+                finalized,
+                &loaf,
+                &compiler_closure_identity,
+                &finalized.capture_receipt.identity,
+            )
+            .map_err(oven_error)?;
+            let asset = OvenRuntimeFoundationAsset::sealed(foundation, inventories).map_err(oven_error)?;
+            let foundation_relative = PathBuf::from("runtime-foundations/rust-policy-foundation");
+            let admitted = publish_runtime_foundation_asset(
+                asset,
+                &loaf_root,
+                &toolchain_root,
+                &staged_root.join(&foundation_relative),
+            )
+            .map_err(oven_error)?;
+            let foundation_member = OvenReleaseRuntimeFoundationMember {
+                schema_version: OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION,
+                label: "rust-policy-foundation".to_string(),
+                foundation_relative_path: foundation_relative,
+                foundation_identity: admitted.foundation_identity().to_string(),
+                compiled_loaf_identity: final_entry.result.loaf_identity.clone(),
+                compiled_plan_identity: final_entry.result.plan_identity.clone(),
+                toolchain_owner_identity: evidence.rustc_identity.clone(),
+                compiler_closure_identity,
+                toolchain_root_relative_path: toolchain_relative,
+                toolchain_members,
+            };
             let materialized = admitted.materialize_asset_for_publication().map_err(oven_error)?;
             let compiler =
                 OvenRuntimeCompilerClosure::new(toolchain_root.join("bin/rustc"), compiler_closure_identity.clone());

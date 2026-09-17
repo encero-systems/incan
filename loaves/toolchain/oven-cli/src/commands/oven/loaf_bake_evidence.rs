@@ -515,18 +515,34 @@ pub(crate) fn reuse_complete_loaf_envelope(
     } else {
         (0, 0)
     };
+    let (closure_logical_bytes, closure_physical_bytes) = if let Some(member) = runtime_closure {
+        oven_rustc::loaf::prove_release_runtime_closure_member(&member_generation, &manifest, member)
+            .map_err(oven_error)?;
+        let closure = member_generation.join(&member.store_relative_path);
+        let (logical, physical) = loaf_directory_byte_counts(&closure).map_err(oven_error)?;
+        if logical > limits.max_domain_logical_bytes || physical > limits.max_domain_physical_bytes {
+            return Err(CliError::failure(
+                "stored runtime closure exceeds the active compatibility-domain allowance".to_string(),
+            ));
+        }
+        (logical, physical)
+    } else {
+        (0, 0)
+    };
     let logical_bytes = reports
         .iter()
         .map(|entry| entry.result.logical_bytes)
         .sum::<u64>()
         .saturating_add(member_logical_bytes)
-        .saturating_add(foundation_logical_bytes);
+        .saturating_add(foundation_logical_bytes)
+        .saturating_add(closure_logical_bytes);
     let physical_bytes = reports
         .iter()
         .map(|entry| entry.result.physical_bytes)
         .sum::<u64>()
         .saturating_add(member_physical_bytes)
-        .saturating_add(foundation_physical_bytes);
+        .saturating_add(foundation_physical_bytes)
+        .saturating_add(closure_physical_bytes);
     if physical_bytes > limits.max_physical_bytes {
         return Err(CliError::failure(format!(
             "stored Loaf envelope uses {physical_bytes} physical bytes, exceeding its {}-byte allowance",
