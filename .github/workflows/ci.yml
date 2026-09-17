@@ -217,7 +217,7 @@ jobs:
           make fetch-oven-loaf-sources
           make fetch-release-support-workspace-sources
       - name: Build the compiler
-        run: CARGO_BUILD_JOBS=2 cargo build --locked -p incan-cli -p incan-lsp --bins
+        run: CARGO_BUILD_JOBS=2 cargo build --locked -p incan-cli -p incan-lsp -p oven-cli --bins
       - uses: ./.github/actions/restore-sdk-provider-store
       # macOS retains its own compiler and SDK because the Linux handoff cannot supply a macOS toolchain.
       - name: Prewarm platform SDK providers

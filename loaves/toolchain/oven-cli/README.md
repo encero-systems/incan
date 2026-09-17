@@ -2,14 +2,20 @@
 
 Ring: **toolchain**
 
-The `oven` binary: the command surface from RFC 118, authored against the Oven API rather than by moving `incan oven`'s handlers.
+The `oven` binary and the library both binaries mount: the explicit Oven receipt, bounded-store and native direct-rustc workflow (`oven bake`, `import`, `interop`, `plan`, `store`, `test`, `run`, and the repository's own compiler-suite tooling), lock generation (`lock`), and the toolchain inspection helpers (`tools`). `incan` mounts every one of them under `incan oven …`, `incan lock` and `incan tools`, so scripts, CI and tests keep their spellings; the `oven` binary exposes the Oven-owned families at its root and leaves `tools` — a semantic product, `incan`'s by RFC 118's ownership table — to `incan`.
 
 ## Sources
 
-None yet. `incan oven …`, `incan lock` and `incan tools` stay in `incan-cli`: `tools` is a semantic product RFC 118's ownership table gives to `incan`, `lock` is a wrapper over the driver's lock resolution (which this crate may not import), and `oven.rs` is mostly this repository's test-harness tooling, none of it in RFC 118's `oven` surface. The package is authored when RFC 118 lands; the decision is recorded on #1481 (cut 3).
+- `loaves/toolchain/oven-cli/src/cli.rs` — the clap types of the three families, shared by both binaries
+- `loaves/toolchain/oven-cli/src/commands/oven.rs`, `loaves/toolchain/oven-cli/src/commands/oven/` — the Oven workflow handlers
+- `loaves/toolchain/oven-cli/src/commands/lock.rs` — `lock`
+- `loaves/toolchain/oven-cli/src/commands/tools.rs` — `tools doctor`, `tools metadata`, `inspect registry`
+- `loaves/toolchain/oven-cli/src/main.rs` — the `oven` binary
 
-## May depend on
+## Depends on
 
-`oven`, plus `compiler/incan_oven_facet` for the Incan provider wiring
+`oven` (`oven_model`, `oven_store`, `oven_rustc`), `compiler/incan_oven_facet`, and — the RFC 118 backlog — `incan_driver` (the bake and interop of an Incan project, the store defaults, lock resolution) and `incan_frontend` (`tools`). The layout's dependency line for this package is `oven` plus the facet; the two compiler-ring edges are the handlers' existing reaches, moved as they were, and RFC 118 authors the canonical `oven` against the Oven API in v0.7 so they can go. `cli_layering_guardrails` records the frontend reaches and lets them only shrink.
 
-This directory is a layout skeleton. It holds no code yet; `src/` is a placeholder for the conventional crate root.
+## Distribution
+
+Built by `make build` and CI; not shipped in the release archives until RFC 118's command-surface split lands.

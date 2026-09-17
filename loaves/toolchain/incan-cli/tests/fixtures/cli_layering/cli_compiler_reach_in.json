@@ -33,16 +33,6 @@
       ]
     },
     {
-      "path": "loaves/toolchain/incan-cli/src/commands/tools.rs",
-      "reaches": [
-        "incan_frontend::api_metadata",
-        "incan_frontend::contract_metadata",
-        "incan_frontend::feature_metadata",
-        "incan_frontend::library_manifest_index",
-        "incan_frontend::registry_metadata"
-      ]
-    },
-    {
       "path": "loaves/toolchain/incan-cli/src/lib.rs",
       "reaches": [
         "incan_driver::backend::selection"
@@ -59,6 +49,16 @@
         "incan_frontend::parser",
         "incan_frontend::testing_markers",
         "incan_frontend::vocab_desugar_pass"
+      ]
+    },
+    {
+      "path": "loaves/toolchain/oven-cli/src/commands/tools.rs",
+      "reaches": [
+        "incan_frontend::api_metadata",
+        "incan_frontend::contract_metadata",
+        "incan_frontend::feature_metadata",
+        "incan_frontend::library_manifest_index",
+        "incan_frontend::registry_metadata"
       ]
     }
   ]
