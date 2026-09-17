@@ -44,9 +44,9 @@ use crate::build::{
     BackendSelectionOptions, BuildCommandOptions, CompletedOutputPolicy, LibraryInspectionConstituent,
     OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION, OvenBakeProjectTarget, OvenPackagedLibraryLoafManifest,
     OvenPackagedLibraryLoafProfile, OvenPreparedLibrary, OvenPreparedProject, OvenProjectBakeAuthorityContext,
-    OvenProjectBakeProfileReport, OvenProjectBakeReport, OvenProjectOutputBakeRequest, OvenProjectPlanMode,
-    OvenStoredProjectOutput, PendingOvenProjectOutput, PreparedLibraryProject, library_publication,
-    oven_bake_executable_output_dir, oven_bake_project_target_identity,
+    OvenProjectBakeOutputReport, OvenProjectBakeProfileReport, OvenProjectBakeReport, OvenProjectOutputBakeRequest,
+    OvenProjectPlanMode, OvenStoredProjectOutput, PendingOvenProjectOutput, PreparedLibraryProject,
+    library_publication, oven_bake_executable_output_dir, oven_bake_project_target_identity,
 };
 use crate::build_report::artifact_report;
 use crate::cargo_policy::{CargoPolicy, enforce_project_toolchain_constraint};
@@ -923,6 +923,10 @@ pub fn bake_oven_project_targets(
         // The inspection authority names the debug test dependency envelope's exact plan. Retain that selection until
         // every output Loaf is visible: otherwise a later output admission can prune the now-unleased constituent and
         // leave a source-current authority that points at a missing closure.
+        let outputs = published_outputs
+            .iter()
+            .map(OvenProjectBakeOutputReport::from)
+            .collect();
         let _complete_publication_set = (test_dependency_envelope, inspection_authority, published_outputs);
         #[cfg(feature = "rust_inspect")]
         for manifest_dir in rust_inspect_manifest_dirs {
@@ -933,6 +937,7 @@ pub fn bake_oven_project_targets(
             generated_sources,
             store: store.root().to_path_buf(),
             profiles,
+            outputs,
         })
     })();
     match publication {

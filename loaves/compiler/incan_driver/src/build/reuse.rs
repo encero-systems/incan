@@ -21,8 +21,8 @@ use crate::build::source_authority::{
 use crate::build::{
     MemoizedPackagedProviderAuthority, OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION, OVEN_PROJECT_OUTPUT_ARTIFACT_PATH,
     OvenBakeProjectTarget, OvenPackagedLibraryLoafManifest, OvenPackagedLibraryLoafProfile,
-    OvenProjectBakeAuthorityContext, OvenProjectBakeProfileReport, OvenProjectBakeReport, OvenStoredProjectOutput,
-    ProjectSourceAuthorityDigester, library_publication,
+    OvenProjectBakeAuthorityContext, OvenProjectBakeOutputReport, OvenProjectBakeProfileReport, OvenProjectBakeReport,
+    OvenStoredProjectOutput, ProjectSourceAuthorityDigester, library_publication,
 };
 use crate::error::{CliError, CliResult};
 use incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path;
@@ -364,11 +364,16 @@ pub fn try_reuse_baked_project(
             action: "reused",
         });
     }
+    let outputs = selected_outputs
+        .iter()
+        .map(|(_, output, _, _)| OvenProjectBakeOutputReport::from(output))
+        .collect();
     let report = OvenProjectBakeReport {
         project: project_root.to_path_buf(),
         generated_sources,
         store: store.root().to_path_buf(),
         profiles,
+        outputs,
     };
     let library_outputs = selected_outputs
         .iter()
