@@ -1189,9 +1189,10 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
         "the named publisher Cargo and direct-rustc consumer toolchains must remain separate"
     );
     assert!(
-        makefile.contains("suite_tmp=\"$$(mktemp -d \"/tmp/incan-oven-suite.XXXXXX\")\"")
-            && makefile.contains("root_tmp=\"$$(mktemp -d \"/tmp/incan-oven-root.XXXXXX\")\""),
-        "Oven suite and one-root diagnostics must own short Unix scratch paths instead of inheriting a deep worktree TMPDIR"
+        makefile.contains("INCAN_TEST_TMP_ROOT ?= /tmp")
+            && makefile.contains("suite_tmp=\"$$(mktemp -d \"$(INCAN_TEST_TMP_ROOT)/incan-oven-suite.XXXXXX\")\"")
+            && makefile.contains("root_tmp=\"$$(mktemp -d \"$(INCAN_TEST_TMP_ROOT)/incan-oven-root.XXXXXX\")\""),
+        "Oven suite and one-root diagnostics must use the managed scratch root, defaulting to short Unix paths"
     );
     let partition_target = makefile
         .split_once(".PHONY: test-oven-partition")
