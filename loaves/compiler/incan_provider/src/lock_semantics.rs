@@ -1164,6 +1164,37 @@ mod tests {
         ))
     }
 
+    /// Measure the former library-shaped pair of complete semantic identity requests.
+    fn measure_uncached_identity_pair(
+        provider_plan: &ProviderPlan,
+        specs: &[DependencySpec],
+    ) -> Result<(BTreeMap<String, String>, Duration), String> {
+        let started = Instant::now();
+        let first = provider_semantic_identities(provider_plan, specs)?;
+        let second = provider_semantic_identities(provider_plan, specs)?;
+        assert_eq!(first, second);
+        Ok((first, started.elapsed()))
+    }
+
+    /// Measure one session projection plus the two checked consumer validations that replace the former pair.
+    fn measure_session_identity_pair(
+        provider_plan: &ProviderPlan,
+        specs: &[DependencySpec],
+    ) -> Result<(BTreeMap<String, String>, Duration, Duration, Duration), String> {
+        let session = ProviderSemanticIdentitySession::default();
+        let session_started = Instant::now();
+        let checked = session.identities(provider_plan, specs)?;
+        let session_elapsed = session_started.elapsed();
+        let first_consumer_started = Instant::now();
+        let first = checked.for_context(provider_plan, specs)?.clone();
+        let first_consumer_elapsed = first_consumer_started.elapsed();
+        let second_consumer_started = Instant::now();
+        let second = checked.for_context(provider_plan, specs)?;
+        let second_consumer_elapsed = second_consumer_started.elapsed();
+        assert_eq!(&first, second);
+        Ok((first, session_elapsed, first_consumer_elapsed, second_consumer_elapsed))
+    }
+
     #[test]
     #[ignore = "serial #1633 representative SDK measurement; requires an explicit verified inventory"]
     fn measures_current_verified_sdk_provider_semantics_issue1633() -> TestResult {
@@ -1239,6 +1270,85 @@ mod tests {
             expected_identities.as_ref(),
             Some(&production_identities),
             "representative instrumentation must preserve the production result"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "serial #1633 before/after measurement; requires an explicit verified inventory"]
+    fn measures_verified_sdk_session_reuse_issue1633() -> TestResult {
+        let inventory_path = env::var_os(REPRESENTATIVE_SDK_INVENTORY_ENV)
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| format!("set {REPRESENTATIVE_SDK_INVENTORY_ENV} to the verified SDK inventory path"))?;
+        if !inventory_path.is_file() {
+            return Err(format!(
+                "{REPRESENTATIVE_SDK_INVENTORY_ENV} points to missing inventory {}",
+                inventory_path.display()
+            )
+            .into());
+        }
+
+        let mut admission_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut uncached_pair_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut session_identity_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut first_consumer_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut second_consumer_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut optimized_pair_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+
+        for repeat in 0..REPRESENTATIVE_MEASUREMENT_REPEATS {
+            let (provider_plan, specs, admission_elapsed) = load_verified_sdk_measurement_inputs(&inventory_path)?;
+            if provider_plan.records().count() < 2 {
+                return Err("representative reuse measurement requires multiple admitted providers".into());
+            }
+
+            // Populate only the preliminary map before comparing the two final-projection shapes. The baseline still
+            // performs two complete public API requests, matching the former library preparation path.
+            let semantic_dependencies = semantic_toolchain_dependencies(&specs)?;
+            let _ = provider_dependency_semantic_digests(&provider_plan, &semantic_dependencies)?;
+            let (uncached_first, uncached_elapsed, optimized) = if repeat % 2 == 0 {
+                let (uncached, elapsed) = measure_uncached_identity_pair(&provider_plan, &specs)?;
+                let optimized = measure_session_identity_pair(&provider_plan, &specs)?;
+                (uncached, elapsed, optimized)
+            } else {
+                let optimized = measure_session_identity_pair(&provider_plan, &specs)?;
+                let (uncached, elapsed) = measure_uncached_identity_pair(&provider_plan, &specs)?;
+                (uncached, elapsed, optimized)
+            };
+            let (optimized_identities, session_elapsed, first_consumer_elapsed, second_consumer_elapsed) = optimized;
+            assert_eq!(
+                optimized_identities, uncached_first,
+                "optimized and uncached identities must be exact peers"
+            );
+
+            let optimized_elapsed = session_elapsed + first_consumer_elapsed + second_consumer_elapsed;
+            admission_samples.push(admission_elapsed.as_micros());
+            uncached_pair_samples.push(uncached_elapsed.as_micros());
+            session_identity_samples.push(session_elapsed.as_micros());
+            first_consumer_samples.push(first_consumer_elapsed.as_micros());
+            second_consumer_samples.push(second_consumer_elapsed.as_micros());
+            optimized_pair_samples.push(optimized_elapsed.as_micros());
+            eprintln!(
+                "provider-semantic-reuse repeat={} admission_us={} uncached_pair_us={} session_identity_us={} first_consumer_validation_us={} second_consumer_validation_us={} optimized_pair_us={}",
+                repeat + 1,
+                admission_elapsed.as_micros(),
+                uncached_elapsed.as_micros(),
+                session_elapsed.as_micros(),
+                first_consumer_elapsed.as_micros(),
+                second_consumer_elapsed.as_micros(),
+                optimized_elapsed.as_micros(),
+            );
+        }
+
+        eprintln!(
+            "provider-semantic-reuse-summary repeats={} {} {} {} {} {} {}",
+            REPRESENTATIVE_MEASUREMENT_REPEATS,
+            measurement_distribution("admission", admission_samples)?,
+            measurement_distribution("uncached_pair", uncached_pair_samples)?,
+            measurement_distribution("session_identity", session_identity_samples)?,
+            measurement_distribution("first_consumer_validation", first_consumer_samples)?,
+            measurement_distribution("second_consumer_validation", second_consumer_samples)?,
+            measurement_distribution("optimized_pair", optimized_pair_samples)?,
         );
         Ok(())
     }
