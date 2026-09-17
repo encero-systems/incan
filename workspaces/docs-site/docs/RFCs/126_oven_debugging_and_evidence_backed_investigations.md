@@ -21,22 +21,46 @@
 
 ## Summary
 
-This RFC proposes an Oven-owned debugging and investigation capability for humans and agents working on Rust, Incan, and mixed projects. Its north star is that humans and agents can investigate unexpected behavior, test competing explanations, and verify repairs across Oven-managed Rust and Incan projects, with inspectable evidence throughout. Compiler services supply checked meaning, runtime integrations supply supported observations, and Oven coordinates the exact artifacts and bounded execution used to test a hypothesis. Editor and MCP clients consume the same service contracts.
+This RFC proposes an Oven-owned architecture through which humans and agents conduct durable, evidence-backed investigations of Rust, Incan, and mixed program executions. Its north star is that humans and agents can investigate unexpected behavior, test competing explanations, and verify repairs across Oven-managed Rust and Incan projects, with inspectable evidence throughout. Compiler services supply checked meaning, runtime integrations supply supported observations, and Oven coordinates the exact artifacts and bounded execution used to test a hypothesis. Native debugging supplies interactive execution control and observation within that architecture; editor and MCP clients consume the same service contracts.
 
 ## Core model
 
 1. **An investigation is durable.** A failure, question, or counterexample opens a record connecting the relevant source snapshot, builds, experiments, observations, and verification outcomes.
 2. **Meaning and execution have different owners.** Compiler services own language semantics; Oven owns project selection, artifact lifecycle, execution coordination, and investigation sessions.
 3. **Rust and Incan are first-class.** Pure Rust, pure Incan, and mixed execution are required acceptance cases. Capabilities can differ, but those differences must be explicit.
-4. **Explanations are tested.** A hypothesis states supporting evidence, competing explanations, and an observation that could contradict it. An experiment records what was controlled and what remained uncontrolled.
+4. **Explanations are tested.** A hypothesis records known supporting and contradicting evidence, competing explanations, and observations that could distinguish them; missing evidence remains explicit. An experiment records what was controlled and what remained uncontrolled.
 5. **Evidence retains its kind.** Checked facts, advisory findings, proof results, observed values, and agent inferences remain distinct even when presented together.
-6. **Clients share state.** CLI, editor, and MCP consumers use one session model, with explicit execution-control ownership and immutable captured observations.
+6. **Clients share state.** CLI, editor, and MCP consumers use one investigation and session contract, with explicit execution-control ownership, immutable captures, and versioned interpretations.
 7. **Recording is bounded.** Time, retained bytes, events, inspected values, and external-operation budgets are inspectable. Missing or truncated evidence is never silently treated as absence.
 8. **Investigation ends with reviewable evidence.** A repair links back to the original reproduction and its verification, without implying general correctness from one passing run.
 
+### Entities and relationships
+
+An investigation is the durable context connecting a question or failure to hypotheses, experiments, evidence, and verification. It is not a live debugger session. These relationships describe a shared semantic model, not a required order of work or a storage ownership tree. An investigation may begin with a crash capture, an exploratory run, or a question; none requires a hypothesis in advance.
+
+```mermaid
+flowchart TD
+    I[Investigation] -->|references| H[Hypotheses]
+    I -->|references| E[Experiments]
+    I -->|references| D[Evidence]
+    I -->|references| V[Verification]
+    H -->|supported or contradicted by| D
+    H -->|tested by| E
+    E -->|references| X[Executions]
+    V -->|references| X
+    S[Live session] -->|controls or observes| X
+    X -->|produces| C[Stops and captures]
+    C -->|interpreted as| O[Observations]
+    O -->|referenced as| D
+```
+
+An investigation may reference zero or more records of each kind while it develops. An experiment describes an intended test or exploratory purpose and may reference multiple executions, or none if it has not run. An execution is one actual program run, which may produce multiple stops and captures. A rerun creates a new execution identity. A live session is a mutable control/observation relationship around an execution; it owns session revisions, the control lease, and ephemeral handles, not the lifetime of the investigation. A multi-process experiment must identify its constituent executions rather than collapse them into one ambiguous run.
+
+A capture retains selected execution material; an observation interprets captured material or an identified live stop. Evidence includes observations and references to independently owned compiler facts, advice, proof outcomes, receipts, and investigator inferences. Verification links a claimed repair to the original failure, changed artifacts, and execution/test evidence. Evidence and executions may be referenced from more than one investigation, experiment, or verification record. Such references do not transfer authority or imply duplicated execution. Historical inspection requires no live session.
+
 ## Motivation
 
-A native debugger can stop a process without giving a developer a reliable path from an unexpected result to a justified explanation. Source and executable mismatches, unreadable values, missing async relationships, transient failure state, and repeated manual reproduction all break that path. Agents face the same problems and additionally pay for unstructured output and a tool round trip for every small inspection operation.
+A native debugger can stop a process without giving a developer a reliable path from an unexpected result to a reviewable, evidence-backed investigation. Source and executable mismatches, unreadable values, missing async relationships, transient failure state, and repeated manual reproduction all break that path. Agents face the same problems and additionally pay for unstructured output and a tool round trip for every small inspection operation.
 
 The surrounding RFCs already establish much of the required vocabulary. RFC 106 supplies compiler-backed context; RFC 105 supplies deterministic advisory findings; RFC 111 supplies obligations, assumptions, and counterexamples; RFC 104 supplies execution-bound receipts and honest replay classifications. What is missing is the workflow that connects those facts to an actual native execution, permits bounded experiments, and preserves the result for independent inspection.
 
@@ -95,13 +119,44 @@ Oven must own workspace and target selection, artifact acquisition and retention
 
 Each session must expose a versioned capability description identifying target, architecture, toolchain, debugger engine, language integrations, runtime integrations, optimization/debug profile, and supported operations. Unsupported combinations must be rejected or explicitly degraded before an operation claims success. Pure Rust use must not require authored Incan application code or Incan-specific proof metadata.
 
+### Capability profiles and conformance
+
+The architecture defines investigations, hypotheses, experiments, executions, evidence, and verification even when a provider implements only some operations. Every participating provider must preserve identities, evidence kinds, availability, budgets, and authority boundaries. Service-level capability discovery must also work without a live session, including for historical-only consumers. Capability conformance must identify the profile and version, supported language/target/runtime combinations, limits, and executable acceptance evidence. A partial profile must list the unmet obligations; it must not claim full conformance. Supporting one profile does not imply that the entire architecture is implemented.
+
+The following profiles describe semantic obligations, not fixed protocol identifiers or an implementation sequence:
+
+| Profile                  | Required guarantees                                                                                                                                                                                                                                                              |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Investigation records    | Durable identities and relationships for the shared model; reopening persisted records and decoded evidence; provenance, versioned interpretations, availability, and bounded retrieval.                                                                                         |
+| Native debugging         | Exact executable/source binding; supported launch or attach; stop/resume; useful authored-source breakpoint and stepping mappings; frames and bounded values; shared control, stale-handle refusal, and retained observations tied to execution. Requires investigation records. |
+| Mixed-language debugging | Native debugging across Rust/Incan calls in both directions, with frame-language semantics and explicit boundary mappings. Requires native debugging.                                                                                                                            |
+| Bounded experiments      | Purpose or hypothesis links, reproducible recipes, controlled/uncontrolled inputs, budgets, cancellation and reconciliation, comparison evidence, and repair-verification links. Requires investigation records and an execution provider.                                       |
+| Counterexample reduction | Bounded experiments with an explicit failure predicate, recorded transformations, validation outcomes, and honest nondeterminism/minimality limits.                                                                                                                              |
+| Runtime observation      | Identified runtime tasks/events/waits and declared coverage, causal limits, sampling, loss, and capture overhead. Requires investigation records.                                                                                                                                |
+| Expression evaluation    | Frame-language semantics, separately authorized target execution, declared expression support and effects, and evidence of outcomes. Requires an execution provider and investigation records.                                                                                   |
+| Historical inspection    | Inspect and decode retained capture material without live execution, with artifact availability, decoder identity, integrity, and completeness checks. Requires investigation records.                                                                                           |
+| Execution replay         | A supported execution-recording mechanism, explicit nondeterminism and boundary coverage, replay identities, and authority checks. Requires historical inspection and an execution provider.                                                                                     |
+| Evidence correlation     | Provenance-bearing links to the advertised telemetry, receipt, proof, or advisory services without changing their semantics or implying complete coverage. Requires investigation records.                                                                                       |
+
+An execution provider may use the test runner or typed actions without exposing interactive debugging. A declared native debugging profile must nevertheless demonstrate meaningful source stops, stepping, frames, and selected values on representative programs for each claimed configuration. Reporting all mappings or values as unavailable is not sufficient. A profile must specify its required cases and admissible limitations; capability discovery cannot weaken those obligations on a per-request basis.
+
+The shared investigation model must support recording hypotheses, experiments, and verification even when automation for a particular activity is unavailable. A consumer must distinguish the ability to record or inspect a result from the ability to execute, reduce, evaluate, or replay it.
+
 ### Investigation and evidence records
 
-An investigation must have an identity and schema version. It must reference its initiating failure or question, source snapshot, selected execution configuration, immutable executable payload identity, and relevant debug/source artifacts. It may link RFC 106 context, RFC 105 findings, RFC 111 obligations and assumptions, RFC 104 receipts, and RFC 093 telemetry without changing their owning semantics.
+An investigation must have an identity and schema version. It must reference its initiating failure or question and the available evidence. Source snapshots, execution configurations, executable payload identities, and debug/source artifacts belong to the relevant execution/evidence records; an investigation may span multiple builds and may exist before any executable is selected. Unknown associations must remain explicit. It may link RFC 106 context, RFC 105 findings, RFC 111 obligations and assumptions, RFC 104 receipts, and RFC 093 telemetry without changing their owning semantics.
 
-An experiment must record its hypothesis or purpose, reproduction recipe, controlled inputs, uncontrolled dependencies, stop/capture conditions, budgets, execution mode, and outcome. A recipe must identify the test or action, arguments, fixture references, working-directory mapping, relevant environment inputs, and seed when applicable. Secrets must be represented through authorized references or redaction markers rather than copied into recipes by default.
+An experiment must reference its hypotheses, if any, and record its purpose, reproduction recipe, controlled inputs, uncontrolled dependencies, stop/capture conditions, budgets, execution mode, and outcome. A recipe must identify the test or action, arguments, fixture references, working-directory mapping, relevant environment inputs, and seed when applicable. Secrets must be represented through authorized references or redaction markers rather than copied into recipes by default.
 
-Evidence records must distinguish compiler-established facts, deterministic advisory findings, proof outcomes with assumptions, runtime observations, and investigator inferences. Each observation must name its producing execution and capture or stop. Confidence in a hypothesis must not overwrite the certainty or provenance of its underlying evidence. Observation of one path must not imply completeness over all paths.
+Evidence records must distinguish compiler-established facts, deterministic advisory findings, proof outcomes with assumptions, runtime observations, and investigator inferences. Each observation must name its producing execution and capture or stop. An assessment of a hypothesis must not overwrite the certainty or provenance of its underlying evidence. Observation of one path must not imply completeness over all paths.
+
+### Hypotheses and interpretation history
+
+A hypothesis must have an identity, a statement, and versioned references to supporting evidence, contradicting evidence, competing hypotheses, and discriminating experiments or observations where known. An exploratory experiment need not invent a hypothesis. One observation may support several explanations and must not silently establish any of them as the cause.
+
+Hypothesis assessments must record their author or producing service, rationale, evidence references, and revision. An open assessment means evaluation remains pending; supported means cited evidence favors the statement under recorded assumptions; weakened means cited evidence reduces that support; contradicted means cited evidence conflicts with the statement under recorded assumptions; unresolved means the available evidence does not distinguish the relevant alternatives. These are investigation assessments, not truth certificates or a mandatory linear progression. The default contract must not assign numeric confidence. An extension using probabilities must identify its probabilistic model and assumptions rather than present an arbitrary score as calibrated certainty.
+
+Captured bytes, events, and retained state must be immutable. Each decoded observation must identify its capture or live stop, decoder/schema version, relevant type/debug metadata, and decoding limits. Live observations intended for later inspection must retain their decoded result and disclose whether the underlying material was captured. A later correction or reinterpretation must create a new observation referencing the previous one and its reason; it must not overwrite the original. Inferences remain separate from observations. A corrected interpretation must not silently rewrite hypotheses or verification conclusions that cited the earlier interpretation; consumers must expose the correction relationship when presenting those references.
 
 ### Source, artifact, and value identity
 
@@ -109,33 +164,58 @@ Sessions must bind executable payloads and debug artifacts to their producer and
 
 RFC 120 and RFC 106 supply source identity semantics; RFC 124 supplies compiled-unit and payload identity semantics. Cross-build comparisons must use accepted identity mappings and retain both build identities. Where durable declaration identity or a mapping is unavailable, the comparison must report that limit rather than match by name or line number and call it exact.
 
+Identity relationships form a graph rather than a mandatory chain:
+
+```mermaid
+flowchart LR
+    S[Source snapshot] -->|compiler mapping| L[Compilation location]
+    D[Declaration identity] -->|when established| L
+    L -->|debug mapping| N[Native location]
+    S -->|build provenance| U[Compiled unit]
+    N -->|artifact mapping| U
+    U -->|composition provenance| P[Executable payload]
+    P -->|executed as| X[Execution]
+    X -->|produces| C[Capture or stop]
+    C -->|interpreted as| O[Observation]
+```
+
+The arrows denote asserted relationships, not mandatory paths or universal one-to-one correspondences. Each asserted edge must identify its producer, evidence, mapping semantics, and applicable artifact/source revisions under the owning identity contract. Exact identity and correspondence across edits must remain distinct; missing, ambiguous, or invalidated mappings must not be bridged heuristically and called exact. Exact source-snapshot/executable correspondence can support debugging without durable declaration correspondence across edits. Cross-build claims require the additional mappings appropriate to those claims.
+
 Debug artifacts and retained captures must have explicit leases, pins, or another accepted retention relationship to the Oven store. Export must enumerate missing dependencies and capture limits. Reopening must verify retained payload identities; an investigation file must not silently resolve to a newer executable.
 
 ### Native debugging fidelity
 
-For supported development profiles, breakpoints and stepping must resolve to authored executable source operations. Unbound or relocated breakpoints must expose their actual status and location. Native frames, reconstructed inline frames, and runtime-derived logical async frames must remain distinguishable.
+For supported development profiles, source-level breakpoints and stepping must resolve through compiler-established mappings to authored executable locations. An authored executable location is a source span associated with executable behavior by the language service, not a promise of one machine instruction or one stop per source expression. The service must expose ambiguity, relocation, coalescing, and unavailable mappings rather than synthesize execution structure unsupported by the executable. Unbound breakpoints must report that status. These limits do not waive the native profile’s required source-level acceptance cases. Native frames, reconstructed inline frames, and runtime-derived logical async frames must remain distinguishable.
 
-Values must report their source type and availability. Optimized-out, inaccessible, unsupported, redacted, and omitted-for-budget values must not be rendered as ordinary null or empty values. Value expansion must be bounded and paginated where necessary, handle cycles, and avoid silently invoking arbitrary application formatting code. Target memory reads that may have effects, including device memory, must not be treated as passive inspection by default.
+Values must report their source type and availability. Availability must distinguish available, optimized out, inaccessible, unsupported decoding, redacted, omitted for budget, not captured, not applicable, and lost or corrupt capture material. Unknown causes must remain unknown. These states must not be rendered as ordinary null or empty values. Availability of a requested value is separate from capture completeness and integrity: a valid partial capture may omit the value, while a corrupt capture cannot establish the value’s absence. Providers must preserve these shared meanings even if they add more specific reasons. Value expansion must be bounded and paginated where necessary, handle cycles, and avoid silently invoking arbitrary application formatting code. Target memory reads that may have effects, including device memory, must not be treated as passive inspection by default.
 
 The development profile should prioritize predictable stepping and inspectable locals. Optimized profiles must state their weaker guarantees. Transformations such as inlining, tail-recursion lowering, and ownership planning should be explainable through compiler facts; tools must not fabricate physical frames or recoverability to resemble the original source.
 
 ### Session lifecycle and shared control
 
-A live session must distinguish launching, running, stopped, exited, detached, cancelled, and failed states, or an equivalent explicit state model. State-changing requests must include an expected session revision or equivalent concurrency guard. At most one client may own execution control at a time; other authorized clients may inspect retained state. Handover must be explicit, and conflicting requests must fail without silently changing the process.
+A live session must distinguish launching, running, stopped, exited, detached, cancelled, and failed states, or an equivalent explicit state model. State-changing requests must include an expected session revision or equivalent concurrency guard. At most one client may own execution control at a time; other authorized clients may inspect retained state. Handover must be explicit, and conflicting requests must fail without silently changing the process. Execution-control ownership serializes authorized process-control operations; the lease itself grants no inspection, evaluation, rerun, input-change, external-operation, source-edit, or contract-edit authority. Each operation must independently satisfy its applicable authority requirements.
 
-Live value handles must be scoped to a stop generation and become invalid after resume, restart, or termination. Retained captures are immutable observations with separate identities. Long-running operations must expose operation identity, progress, cancellation, and a bounded wait surface. Retrying a request must not duplicate a launch or external effect; the service must provide deduplication or report an uncertain outcome requiring reconciliation.
+Live value handles must be scoped to a stop generation and become invalid after resume, restart, or termination. Retained captures and their decoded observations have separate identities and the interpretation-history guarantees above. Long-running operations must expose operation identity, progress, cancellation, and a bounded wait surface. Retrying a request must not duplicate a launch or external effect; the service must provide deduplication or report an uncertain outcome requiring reconciliation.
 
 Launch, attach, detach, terminate, and client-disconnect behavior must be explicit. A disconnect must not silently kill an attached process. Capture failure must not be reported as successful capture, and process cleanup must report failures rather than claim containment that the host cannot provide.
 
+### Operation outcomes and reconciliation
+
+An operation result must preserve separate facts about request progress, execution occurrence, cancellation, and observed experimental conditions. Request progress must distinguish submission, acceptance or rejection, active work, terminal state, and unknown state where applicable; these are separate from knowledge about effects. Request acceptance or transport acknowledgement must not imply that execution occurred or that its intended effect completed. Execution occurrence must distinguish definitely not executed, may have executed, and definitely executed, with evidence for the asserted knowledge. Multi-step operations must report these facts for the relevant constituent actions rather than hide partial execution behind one success/failure value.
+
+Cancellation must distinguish not requested, requested, acknowledged, confirmed stopped, and unknown where applicable. A cancellation acknowledgement is not proof of process termination or effect rollback. Experiment observations must separately identify a condition observed, a condition not reached within the observed interval, process exit, budget exhaustion, or unavailable observation, retaining capture limits and stop reasons.
+
+A timeout may leave execution occurrence and cancellation uncertain while the requested condition remains unobserved. The service must retain an operation identity and a reconciliation mechanism for such outcomes. A retry must reuse deduplication identity or reconcile the prior operation before repeating an effect; a client must not infer that retrying is safe merely because its previous request timed out. RFC 104 authority and receipt semantics continue to apply to constituent external operations.
+
 ### Experiments, evaluation, and replay
 
-The service must separate passive inspection, expression evaluation that executes target code, resume, restart, rerun with changed inputs, and replay. Execution authority must be checked independently from the ability to read a capture. An expression evaluator must use the selected frame's language, disclose supported constructs, and reject unsupported evaluation rather than reinterpret an expression in another language.
+The service must separate passive inspection, expression evaluation that executes target code, resume, restart, rerun with changed inputs, and replay. Passive inspection must not intentionally execute target code or invoke an effectful target/provider operation. Decoding retained bytes may be passive wherever the decoder runs; a formatter, synthetic child, property accessor, or runtime helper that executes target code is evaluation regardless of which provider invokes it. Unknown effects must not be classified as passive. Host-side decoding remains subject to resource budgets and capture-access authority. Execution authority must be checked independently from the ability to read a capture. An expression evaluator must use the selected frame's language, disclose supported constructs, and reject unsupported evaluation rather than reinterpret an expression in another language.
 
 A bounded experiment should combine resume, stop-condition evaluation, and selected capture into one client operation. It must identify why it stopped, including condition met, process exit, timeout, cancellation, budget exhaustion, or provider failure. A failure to reach a condition within a budget is inconclusive, not evidence that the condition is impossible.
 
-Historical inspection reads recorded evidence. Replay reproduces execution using a declared supported recording mechanism. A rerun performs another execution and may repeat side effects. Replaying against changed code is a new experiment, not the original recorded execution. Operation replayability must reuse RFC 104 classifications; whole-session replay support must additionally identify unrecorded nondeterminism and foreign/runtime boundaries. Receipts alone must not establish replay support.
+Historical inspection reads recorded evidence. Replay here refers to program execution, not replaying debugger protocol requests. Replay reproduces execution using a declared supported recording mechanism. A rerun performs another execution and may repeat side effects. Replaying against changed code is a new experiment, not the original recorded execution. Operation replayability must reuse RFC 104 classifications; execution replay support must additionally identify unrecorded nondeterminism and foreign/runtime boundaries. Receipts alone must not establish replay support.
 
-Counterexample reduction must preserve an explicit failure predicate and record the attempted transformations and validation outcomes. The result may be a smaller reproducer; it must not claim global minimality without evidence. A reduction with uncontrolled nondeterminism must expose that limitation. Verification must rerun the original reproduction against the repaired artifact and retain independent regression results; it must not silently weaken the asserted contract to declare success.
+When counterexample reduction is supported, it must preserve an explicit failure predicate and record the attempted transformations and validation outcomes. The result may be a smaller reproducer; it must not claim global minimality without evidence. A reduction with uncontrolled nondeterminism must expose that limitation. Verification must rerun the original reproduction against the repaired artifact and retain independent regression results; it must not silently weaken the asserted contract to declare success.
 
 ### Capture, telemetry, and domain integration
 
@@ -161,9 +241,9 @@ A response must expose its budget, omissions, freshness, and continuation mechan
 
 The supported target/debugger/runtime matrix, measurable latency and overhead budgets, and explicit exclusions must be documented. Conformance must be demonstrated with executable evidence.
 
-The acceptance corpus must cover pure Rust, pure Incan, and mixed execution in both call directions. It must include: an incorrect result investigated through competing hypotheses and reduced input; a hung or cancelled operation with supported runtime evidence; and a failure reopened from another run using matching artifacts. Each applicable case must connect the observation to a repair and original-reproduction/regression verification.
+Architecture conformance must exercise the shared investigation model across pure Rust, pure Incan, and mixed execution in both call directions. The end-to-end corpus must include an incorrect result investigated through competing hypotheses and bounded experiments, repair verification against the original reproduction, and retained evidence reopened by another client. Each provider must pass the cases for its claimed profiles and configurations; native debugging conformance alone is not a claim of complete investigation-architecture conformance. Reduction cases must demonstrate preserved failure predicates when reduction is claimed. Runtime observation cases must demonstrate hung or cancelled work and the supported task/wait evidence. Historical inspection and execution replay require distinct cases proving their respective guarantees.
 
-Negative cases must include stale source, missing symbols, optimized-out state, stale handles, concurrent control requests, cancellation, duplicate requests, redaction, unsupported runtimes, unavailable replay, and truncated captures. Editor and MCP consumers must demonstrate consistent evidence. Debugging tests must drive real native artifacts and debugger sessions; metadata snapshots alone are insufficient.
+Negative cases must include stale source, missing symbols, optimized-out state, stale handles, concurrent control requests, cancellation, duplicate requests, redaction, unsupported runtimes, unavailable replay, and truncated captures. Editor and MCP consumers must demonstrate consistent evidence. Debugging tests must drive real native artifacts and debugger sessions; metadata snapshots alone are insufficient. Record and client conformance must also exercise investigations that begin without hypotheses, evidence shared across investigations, corrected decoding, absent cross-edit identity mappings, and uncertain execution/cancellation outcomes. Unsupported capabilities must remain discoverable and must not prevent inspection of already retained evidence.
 
 Measure diagnosis and repair correctness, unsupported causal claims, setup steps, tool calls, token/output volume, elapsed investigation time, capture overhead, and retained size against a shell/log baseline on fixed seeded tasks. Acceptance thresholds and repeated-run methodology must be explicit. Deterministic replay, foreign-runtime coverage, and freestanding debugging must each declare their supported capabilities and limits.
 
@@ -202,7 +282,7 @@ Evidence can be accurate while a diagnosis remains wrong. A reproduction can pas
 
 ## Implementation architecture
 
-Non-normatively, use an Oven investigation service over existing operational APIs, with native-debugger providers, compiler-owned semantic adapters, runtime observation providers, and immutable evidence storage. CLI, editor/DAP, and MCP adapters should remain consumers. Checked declaration metadata can describe domain inspectors without making a generic plugin ABI a prerequisite. Implementation language and crate boundaries remain governed by existing authoring and Oven ownership rules; this RFC grants no new authored-Rust exception.
+Non-normatively, an Oven investigation service connects durable records and bounded experiments to existing execution APIs and evidence storage. Native-debugger providers supply interactive execution control and observations; runtime providers and typed actions contribute their supported evidence. Compiler-owned semantic services establish meaning and identity mappings. These services compose without making the debugger session the owner of the investigation or introducing a second test runner. CLI, editor/DAP, and MCP adapters should remain consumers. Checked declaration metadata can describe domain inspectors without making a generic plugin ABI a prerequisite. Implementation language and crate boundaries remain governed by existing authoring and Oven ownership rules; this RFC grants no new authored-Rust exception.
 
 ## Layers affected
 
@@ -216,10 +296,10 @@ Non-normatively, use an Oven investigation service over existing operational API
 
 ## Unresolved questions
 
-- **D1 — Native support matrix:** Which debugger engines, operating systems, architectures, development/optimized profiles, and attach/post-mortem modes form the supported matrix, and what executable proof establishes each?
-- **D2 — Identity and retention:** What accepted mapping joins durable declarations, compilation locations, native debug information, payload identities, and exported capture retention across source edits?
-- **D3 — Service schemas and control:** What exact versioned records, state transitions, concurrency guards, retry semantics, and CLI/editor/MCP operations implement the lifecycle contract?
-- **D4 — Evaluation and capture:** Which passive value decoders and expression subset are supported, how is target-code execution authorized, and what sensitivity rules govern raw captures?
+- **D1 — Profiles and support matrix:** What versioned profile definitions and required source/frame/value cases establish conformance, and which debugger engines, operating systems, architectures, development/optimized profiles, and attach/post-mortem modes satisfy them?
+- **D2 — Identity and retention:** What owner-defined edge semantics and evidence establish the identity graph, distinguish exact-build debugging from cross-edit correspondence, and bind exported captures to retained artifacts?
+- **D3 — Service schemas and control:** What exact versioned records and reference cardinalities, hypothesis assessments, interpretation revisions, orthogonal operation outcomes, concurrency guards, reconciliation semantics, and CLI/editor/MCP operations express the shared contract?
+- **D4 — Evaluation and capture:** Which passive value decoders and expression subset are supported, how are effects and independent authorities checked, and what availability, completeness, integrity, and sensitivity rules govern captures?
 - **D5 — Runtime history and replay:** Which runtime integrations support task/wait capture, which historical and replay mechanisms preserve the required evidence, and how are unsupported boundaries reported?
 - **D6 — Experiments and reduction:** What recipe, fixture, failure-predicate, comparison, and reduction contracts compose with the test runner and typed actions?
 - **D7 — Quantitative acceptance:** Which seeded corpus, baseline, repeated-run methodology, and latency/overhead/storage/diagnosis thresholds define conformance?
