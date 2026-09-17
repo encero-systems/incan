@@ -1582,14 +1582,10 @@ mod tests {
             .cloned()
             .ok_or("fixture manifest is missing")?;
         changed_manifest.contract_metadata.provider.semantic_source_digest = Some(format!("sha256:{}", "b".repeat(64)));
-        changed_manifest
-            .contract_metadata
-            .provider
-            .public_features
-            .insert(
-                "checked-feature".to_string(),
-                incan_frontend::library_manifest::ProviderFeatureMetadata::default(),
-            );
+        changed_manifest.contract_metadata.provider.public_features.insert(
+            "checked-feature".to_string(),
+            incan_frontend::library_manifest::ProviderFeatureMetadata::default(),
+        );
         changed_manifest
             .contract_metadata
             .provider
