@@ -202,14 +202,12 @@ def validate_root_intents(
                 if selected.is_some():
                     return Err(invalid(["roots", str(root_index), "unit"]))
                 selected = Some(unit)
-        if selected.is_none():
-            return Err(invalid(["roots", str(root_index), "unit"]))
-        if let Some(selected_unit) = selected:
-            catalog = catalog_for(catalogs, selected_unit.node.package)?
-            if catalog.intent_owner != root.intent_owner:
-                return Err(invalid(["roots", str(root_index), "intent_owner"]))
-        else:
-            return Err(invalid(["roots", str(root_index), "unit"]))
+        match selected:
+            Some(selected_unit) =>
+                catalog = catalog_for(catalogs, selected_unit.node.package)?
+                if catalog.intent_owner != root.intent_owner:
+                    return Err(invalid(["roots", str(root_index), "intent_owner"]))
+            None => return Err(invalid(["roots", str(root_index), "unit"]))
     return Ok(None)
 
 
