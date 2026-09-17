@@ -26,22 +26,26 @@ from std.testing import fail, fail_t
 
 
 def require_ok[T](result: Result[T, IntakeError]) -> T:
+    """Unwrap fixture setup while preserving a policy diagnostic as a test failure."""
     match result:
         Ok(value) => return value
         Err(error) => return fail_t[T](error.message())
 
 
 def linux() -> TargetConfiguration:
+    """Return the stable host and target configuration used by graph fixtures."""
     snapshot = CfgSnapshot(flags=["unix"], values={"target_arch": ["x86_64"], "target_os": ["linux"]})
     return TargetConfiguration(triple="x86_64-unknown-linux-gnu", cfg=Some(snapshot))
 
 
 def node(package: str, domain: DependencyDomain = DependencyDomain.Target) -> GraphNode:
+    """Build one selected package/domain fixture with an ordinary path source identity."""
     identity = SelectedPackageIdentity(package=package, version="1.0.0", source=f"path:{package}")
     return GraphNode(package=identity, domain=domain)
 
 
 def exact_node(package: str, version: str, source: str) -> GraphNode:
+    """Build a fixture with an explicit package version and source for manifest-identity checks."""
     return GraphNode(
         package=SelectedPackageIdentity(package=package, version=version, source=source),
         domain=DependencyDomain.Target,
@@ -49,10 +53,12 @@ def exact_node(package: str, version: str, source: str) -> GraphNode:
 
 
 def unit_id(value: GraphNode) -> str:
+    """Derive the fixture physical-unit identifier from the selected package and domain."""
     return f"unit::{package_key(value.package)}::{str(value.domain)}"
 
 
 def selected(value: GraphNode, role: SelectedUnitRole = SelectedUnitRole.Library) -> AdmittedSelectedUnit:
+    """Build a selected physical unit whose role determines its authenticated crate kind."""
     mut kind = SelectedCrateKind.Rlib
     if role == SelectedUnitRole.ProcMacro:
         kind = SelectedCrateKind.ProcMacro
@@ -73,6 +79,7 @@ def selected_as(
     value: GraphNode,
     role: SelectedUnitRole = SelectedUnitRole.Library,
 ) -> AdmittedSelectedUnit:
+    """Build a selected unit with a caller-chosen physical ID for same-package reachability cases."""
     mut kind = SelectedCrateKind.Rlib
     if role == SelectedUnitRole.ProcMacro:
         kind = SelectedCrateKind.ProcMacro
@@ -95,7 +102,7 @@ def selected_with_facts(
     default_features: bool,
     role: SelectedUnitRole = SelectedUnitRole.Library,
 ) -> AdmittedSelectedUnit:
-    """Build one physical fixture whose authenticated activation facts may differ from policy."""
+    """Build a selected unit carrying host-authenticated feature facts for fixed-point reconciliation."""
     unit = selected_as(identity, value, role)
     return AdmittedSelectedUnit(
         identity=unit.identity,
@@ -108,18 +115,22 @@ def selected_with_facts(
 
 
 def root(value: GraphNode) -> GraphRoot:
+    """Build one admitted physical root from the fixture unit identity."""
     return GraphRoot(unit=unit_id(value))
 
 
-def edge(parent: GraphNode, slot: int, alias: str, child: GraphNode) -> AdmittedSelectedEdge:
+def edge(parent: GraphNode, alias: str, child: GraphNode) -> AdmittedSelectedEdge:
+    """Build a raw edge fixture; aliases, not synthetic slot numbers, bind manifest declarations."""
     return AdmittedSelectedEdge(parent_unit=unit_id(parent), alias=alias, child_unit=unit_id(child))
 
 
-def physical_edge(parent: str, slot: int, alias: str, child: str) -> AdmittedSelectedEdge:
+def physical_edge(parent: str, alias: str, child: str) -> AdmittedSelectedEdge:
+    """Build a raw edge from explicit physical IDs to distinguish unit reachability from package coalescing."""
     return AdmittedSelectedEdge(parent_unit=parent, alias=alias, child_unit=child)
 
 
 def catalogs_from(sources: Dict[str, str]) -> Dict[str, RustDependencyCatalog]:
+    """Parse fixture manifests into the package catalog keyed by selected package identity."""
     mut parsed: Dict[str, RustDependencyCatalog] = {}
     for identity in sources.keys():
         key = package_key(node(identity).package)
@@ -128,6 +139,7 @@ def catalogs_from(sources: Dict[str, str]) -> Dict[str, RustDependencyCatalog]:
 
 
 def base_context() -> ActivationContext:
+    """Return a normal target-domain activation context for ordinary dependency propagation."""
     return ActivationContext(
         host=linux(),
         target=linux(),
@@ -140,6 +152,7 @@ def base_context() -> ActivationContext:
 
 
 def testing_context() -> ActivationContext:
+    """Return the explicit test-root context without changing transitive dependency purpose."""
     value = base_context()
     return ActivationContext(
         host=value.host,
@@ -153,6 +166,7 @@ def testing_context() -> ActivationContext:
 
 
 def features_for(result: GraphActivation, wanted: GraphNode) -> list[str]:
+    """Return settled features for one reached policy node or fail the fixture clearly."""
     for index in range(len(result.nodes)):
         if result.nodes[index] == wanted:
             return result.activations[index].effective_features
@@ -170,10 +184,7 @@ pub def test_resolved_identity_and_transitive_feature_union() -> None:
     catalogs[package_key(shared.package)] = require_ok(
         read_dependency_catalog("[features]\nalpha=[]\nbeta=[]\n", "Cargo.toml"),
     )
-    bindings = [edge(root_node, 0, "left", left), edge(root_node, 1, "right", right), edge(left, 0, "shared", shared), edge(
-        right,
-        0,
-        "shared",
+    bindings = [edge(root_node, "left", left), edge(root_node, "right", right), edge(left, "shared", shared), edge(right, "shared",
         shared,
     )]
     result = require_ok(
@@ -203,6 +214,7 @@ pub def test_resolved_identity_and_transitive_feature_union() -> None:
 
 
 pub def test_host_parent_propagates_normal_dependencies_in_host_domain() -> None:
+    """Protects ordinary host-domain dependency reachability."""
     sources = {"macro": "[dependencies]\nhelper='1'\n", "helper": ""}
     parent = node("macro", DependencyDomain.Host)
     child = node("helper", DependencyDomain.Host)
@@ -213,7 +225,7 @@ pub def test_host_parent_propagates_normal_dependencies_in_host_domain() -> None
             "Cargo.toml",
             [selected(parent), selected(child)],
             [root(parent)],
-            [edge(parent, 0, "helper", child)],
+            [edge(parent, "helper", child)],
             16,
         ),
     )
@@ -221,6 +233,7 @@ pub def test_host_parent_propagates_normal_dependencies_in_host_domain() -> None
 
 
 pub def test_proc_macro_binding_moves_target_edge_to_host_domain() -> None:
+    """Protects the proc-macro host-domain transition selected by the raw unit role."""
     sources = {"root": "[dependencies]\nderive='1'\n", "derive": ""}
     parent = node("root")
     child = node("derive", DependencyDomain.Host)
@@ -231,7 +244,7 @@ pub def test_proc_macro_binding_moves_target_edge_to_host_domain() -> None:
             "Cargo.toml",
             [selected(parent), selected(child, SelectedUnitRole.ProcMacro)],
             [root(parent)],
-            [edge(parent, 0, "derive", child)],
+            [edge(parent, "derive", child)],
             16,
         ),
     )
@@ -252,10 +265,7 @@ pub def test_late_feature_activation_uses_final_fixed_point_in_any_root_order() 
         ["use-leaf"],
         true,
     ), selected(leaf)]
-    bindings = [edge(plain_root, 0, "mid", mid), edge(feature_root, 0, "bridge", bridge), edge(bridge, 0, "mid", mid), edge(
-        mid,
-        0,
-        "leaf",
+    bindings = [edge(plain_root, "mid", mid), edge(feature_root, "bridge", bridge), edge(bridge, "mid", mid), edge(mid, "leaf",
         leaf,
     )]
     first = require_ok(
@@ -287,6 +297,7 @@ pub def test_late_feature_activation_uses_final_fixed_point_in_any_root_order() 
 
 
 pub def test_missing_catalog_refuses_instead_of_becoming_a_leaf() -> None:
+    """Protects fail-closed refusal when a selected package lacks catalog evidence."""
     root_node = node("root")
     missing = node("missing")
     match propagate_features(
@@ -295,7 +306,7 @@ pub def test_missing_catalog_refuses_instead_of_becoming_a_leaf() -> None:
         "Cargo.toml",
         [selected(root_node), selected(missing)],
         [root(root_node)],
-        [edge(root_node, 0, "missing", missing)],
+        [edge(root_node, "missing", missing)],
         16,
     ):
         Ok(_) => fail("a selected package without its exact catalog must refuse")
@@ -304,6 +315,7 @@ pub def test_missing_catalog_refuses_instead_of_becoming_a_leaf() -> None:
 
 
 pub def test_missing_resolved_slot_binding_refuses() -> None:
+    """Protects refusal when an active manifest declaration lacks a physical child binding."""
     root_node = node("root")
     match propagate_features(
         catalogs_from({"root": "[dependencies]\nchild='1'\n"}),
@@ -320,6 +332,7 @@ pub def test_missing_resolved_slot_binding_refuses() -> None:
 
 
 pub def test_build_script_dependencies_remain_inventory_only() -> None:
+    """Protects the invariant that build dependencies stay inert inventory."""
     root_node = node("root")
     source = "[target.'cfg(feature = \"provider\")'.build-dependencies]\ncodegen='1'\n"
     result = require_ok(
@@ -337,6 +350,7 @@ pub def test_build_script_dependencies_remain_inventory_only() -> None:
 
 
 pub def test_build_script_dependency_rejects_a_physical_child_binding() -> None:
+    """Protects refusal when an inert build declaration is presented as a compiled edge."""
     root_node = node("root")
     codegen = node("codegen", DependencyDomain.Host)
     sources = {"root": "[build-dependencies]\ncodegen='1'\n", "codegen": ""}
@@ -346,7 +360,7 @@ pub def test_build_script_dependency_rejects_a_physical_child_binding() -> None:
         "Cargo.toml",
         [selected(root_node), selected(codegen)],
         [root(root_node)],
-        [edge(root_node, 0, "codegen", codegen)],
+        [edge(root_node, "codegen", codegen)],
         16,
     ):
         Ok(_) => fail("an inert build dependency cannot bind a compiled child")
@@ -355,6 +369,7 @@ pub def test_build_script_dependency_rejects_a_physical_child_binding() -> None:
 
 
 pub def test_non_proc_macro_child_cannot_change_domain() -> None:
+    """Protects the selected child domain from ordinary manifest-edge reinterpretation."""
     parent = node("root")
     child = node("child", DependencyDomain.Host)
     sources = {"root": "[dependencies]\nchild='1'\n", "child": ""}
@@ -364,7 +379,7 @@ pub def test_non_proc_macro_child_cannot_change_domain() -> None:
         "Cargo.toml",
         [selected(parent), selected(child)],
         [root(parent)],
-        [edge(parent, 0, "child", child)],
+        [edge(parent, "child", child)],
         16,
     ):
         Ok(_) => fail("an ordinary target dependency cannot become a host unit")
@@ -373,13 +388,14 @@ pub def test_non_proc_macro_child_cannot_change_domain() -> None:
 
 
 pub def test_test_purpose_stays_on_explicit_root() -> None:
+    """Protects the rule that test purpose does not activate transitive development edges."""
     sources = {"root": "[dependencies]\nchild='1'\n[dev-dependencies]\nroot-test='1'\n", "child": "[dev-dependencies]\ntransitive-test='1'\n", "root-test": "", "transitive-test": ""}
     root_node = node("root")
     child = node("child")
     root_test = node("root-test")
     transitive_test = node("transitive-test")
     units = [selected(root_node, SelectedUnitRole.UnitTest), selected(child), selected(root_test)]
-    bindings = [edge(root_node, 0, "child", child), edge(root_node, 1, "root-test", root_test)]
+    bindings = [edge(root_node, "child", child), edge(root_node, "root-test", root_test)]
     result = require_ok(
         propagate_features(
             catalogs_from(sources),
@@ -396,6 +412,7 @@ pub def test_test_purpose_stays_on_explicit_root() -> None:
 
 
 pub def test_normal_and_test_roots_of_same_package_remain_distinct() -> None:
+    """Protects separate normal and explicit-test policy nodes for one package."""
     package = node("suite")
     helper = node("test-helper")
     normal_id = "sha256:suite-normal"
@@ -413,7 +430,7 @@ pub def test_normal_and_test_roots_of_same_package_remain_distinct() -> None:
             "Cargo.toml",
             units,
             roots,
-            [physical_edge(test_id, 0, "test-helper", helper_id)],
+            [physical_edge(test_id, "test-helper", helper_id)],
             16,
         ),
     )
@@ -437,6 +454,7 @@ pub def test_normal_and_test_roots_of_same_package_remain_distinct() -> None:
 
 
 pub def test_selected_package_name_and_version_must_match_manifest_slot() -> None:
+    """Protects manifest slot identity checks against selected name and version drift."""
     parent = node("root")
     wrong = exact_node("different", "2.0.0", "registry:different@2.0.0")
     catalogs = catalogs_from({"root": "[dependencies]\nchild={version='1'}\n"})
@@ -447,7 +465,7 @@ pub def test_selected_package_name_and_version_must_match_manifest_slot() -> Non
         "Cargo.toml",
         [selected(parent), selected(wrong)],
         [root(parent)],
-        [edge(parent, 0, "child", wrong)],
+        [edge(parent, "child", wrong)],
         16,
     ):
         Ok(_) => fail("a manifest slot cannot bind a differently named selected package")
@@ -463,7 +481,7 @@ pub def test_selected_package_name_and_version_must_match_manifest_slot() -> Non
         "Cargo.toml",
         [selected(parent), selected(wrong_version)],
         [root(parent)],
-        [edge(parent, 0, "child", wrong_version)],
+        [edge(parent, "child", wrong_version)],
         16,
     ):
         Ok(_) => fail("a selected version outside the manifest requirement cannot bind")
@@ -472,6 +490,7 @@ pub def test_selected_package_name_and_version_must_match_manifest_slot() -> Non
 
 
 pub def test_consistent_library_and_binary_edges_coalesce_by_policy_node() -> None:
+    """Protects package/domain coalescing after physical library and binary reachability."""
     parent = node("app")
     child = node("shared")
     lib_id = "sha256:library-unit"
@@ -481,7 +500,7 @@ pub def test_consistent_library_and_binary_edges_coalesce_by_policy_node() -> No
         child_id,
         child,
     )]
-    bindings = [physical_edge(lib_id, 0, "shared", child_id), physical_edge(bin_id, 0, "shared", child_id)]
+    bindings = [physical_edge(lib_id, "shared", child_id), physical_edge(bin_id, "shared", child_id)]
     result = require_ok(
         propagate_features(
             catalogs_from({"app": "[dependencies]\nshared='1'\n", "shared": ""}),
@@ -497,6 +516,7 @@ pub def test_consistent_library_and_binary_edges_coalesce_by_policy_node() -> No
 
 
 pub def test_binary_reaches_own_library_without_a_manifest_dependency_slot() -> None:
+    """Protects internal same-package library reachability without inventing a Cargo slot."""
     package = node("app")
     binary_id = "sha256:app-binary"
     library_id = "sha256:app-library"
@@ -511,7 +531,7 @@ pub def test_binary_reaches_own_library_without_a_manifest_dependency_slot() -> 
                 SelectedUnitRole.Library,
             )],
             [GraphRoot(unit=binary_id)],
-            [physical_edge(binary_id, 0, "app", library_id)],
+            [physical_edge(binary_id, "app", library_id)],
             16,
         ),
     )
@@ -520,6 +540,7 @@ pub def test_binary_reaches_own_library_without_a_manifest_dependency_slot() -> 
 
 
 pub def test_compiler_support_physical_closure_reaches_depth_two_without_catalogs() -> None:
+    """Protects compiler-support closure traversal beyond one physical edge."""
     root_node = node("root")
     support_one = node("core", DependencyDomain.Target)
     support_two = node("alloc", DependencyDomain.Target)
@@ -533,7 +554,7 @@ pub def test_compiler_support_physical_closure_reaches_depth_two_without_catalog
                 SelectedUnitRole.CompilerSupport,
             )],
             [root(root_node)],
-            [edge(root_node, 0, "core", support_one), edge(support_one, 0, "alloc", support_two)],
+            [edge(root_node, "core", support_one), edge(support_one, "alloc", support_two)],
             16,
         ),
     )
@@ -542,6 +563,7 @@ pub def test_compiler_support_physical_closure_reaches_depth_two_without_catalog
 
 
 pub def test_compiler_support_root_reaches_depth_two_without_catalogs() -> None:
+    """Protects compiler-support roots and their physical closure without catalogs."""
     support = node("core")
     leaf = node("alloc")
     result = require_ok(
@@ -551,7 +573,7 @@ pub def test_compiler_support_root_reaches_depth_two_without_catalogs() -> None:
             "Cargo.toml",
             [selected(support, SelectedUnitRole.CompilerSupport), selected(leaf, SelectedUnitRole.CompilerSupport)],
             [root(support)],
-            [edge(support, 0, "alloc", leaf)],
+            [edge(support, "alloc", leaf)],
             16,
         ),
     )
@@ -560,6 +582,7 @@ pub def test_compiler_support_root_reaches_depth_two_without_catalogs() -> None:
 
 
 pub def test_compiler_support_edge_uses_ordinary_child_selected_features() -> None:
+    """Protects authenticated selected features when compiler support reaches an ordinary child."""
     support = node("core")
     ordinary = node("ordinary")
     selected_ordinary = AdmittedSelectedUnit(
@@ -577,7 +600,7 @@ pub def test_compiler_support_edge_uses_ordinary_child_selected_features() -> No
             "Cargo.toml",
             [selected(support, SelectedUnitRole.CompilerSupport), selected_ordinary],
             [root(support)],
-            [edge(support, 0, "ordinary", ordinary)],
+            [edge(support, "ordinary", ordinary)],
             16,
         ),
     )
@@ -595,7 +618,7 @@ def require_feature_fact_refusal(child_features: list[str], child_defaults: bool
         "Cargo.toml",
         [selected(parent), selected_with_facts(unit_id(child), child, child_features, child_defaults)],
         [root(parent)],
-        [edge(parent, 0, "child", child)],
+        [edge(parent, "child", child)],
         16,
     ):
         Ok(_) => return fail_t[str]("inconsistent selected-unit activation facts must refuse")
@@ -603,11 +626,13 @@ def require_feature_fact_refusal(child_features: list[str], child_defaults: bool
 
 
 pub def test_selected_unit_feature_omission_refuses_after_fixed_point() -> None:
+    """Protects refusal when selected feature facts omit settled demands."""
     error = require_feature_fact_refusal([], true, "[dependencies]\nchild={version='1',features=['alpha']}\n")
     assert "features disagree" in error
 
 
 pub def test_selected_unit_feature_extra_refuses_after_fixed_point() -> None:
+    """Protects refusal when selected feature facts add unsettled demands."""
     error = require_feature_fact_refusal(
         ["alpha", "beta"],
         true,
@@ -617,11 +642,13 @@ pub def test_selected_unit_feature_extra_refuses_after_fixed_point() -> None:
 
 
 pub def test_selected_unit_default_feature_mismatch_refuses_after_fixed_point() -> None:
+    """Protects refusal when selected default-feature state differs from policy."""
     error = require_feature_fact_refusal([], true, "[dependencies]\nchild={version='1',default-features=false}\n")
     assert "default-feature state disagrees" in error
 
 
 pub def test_coalesced_physical_units_must_all_match_settled_features() -> None:
+    """Protects reconciliation for every physical unit coalesced into one policy node."""
     parent = node("root")
     child = node("child")
     first_parent = "sha256:first-parent"
@@ -641,7 +668,7 @@ pub def test_coalesced_physical_units_must_all_match_settled_features() -> None:
             true,
         ), selected_with_facts(second_child, child, ["alpha", "beta"], true)],
         [GraphRoot(unit=first_parent), GraphRoot(unit=second_parent)],
-        [physical_edge(first_parent, 0, "child", first_child), physical_edge(second_parent, 0, "child", second_child)],
+        [physical_edge(first_parent, "child", first_child), physical_edge(second_parent, "child", second_child)],
         16,
     ):
         Ok(_) => fail("every coalesced physical unit must agree with the settled activation")
@@ -650,6 +677,7 @@ pub def test_coalesced_physical_units_must_all_match_settled_features() -> None:
 
 
 pub def test_role_kind_mismatch_is_refused() -> None:
+    """Protects the authenticated role, crate-kind, and domain relationship."""
     script = node("macro", DependencyDomain.Host)
     invalid = AdmittedSelectedUnit(
         identity=unit_id(script),

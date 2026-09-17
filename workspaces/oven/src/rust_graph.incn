@@ -186,6 +186,7 @@ def unit_for(
     identity: str,
     manifest: str,
 ) -> Result[AdmittedSelectedUnit, IntakeError]:
+    """Resolve exactly one physical unit, refusing missing or duplicate identities before policy uses it."""
     mut found: Option[AdmittedSelectedUnit] = None
     for unit in units:
         if unit.identity == identity:

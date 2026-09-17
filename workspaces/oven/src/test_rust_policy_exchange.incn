@@ -64,6 +64,7 @@ def status(response: JsonValue) -> str:
 
 
 pub def test_selected_leaf_echoes_authenticated_graph_identity() -> None:
+    """Protects echoing the host-authenticated graph identity through the selected response."""
     response = evaluate(request())
     assert status(response) == "selected"
     match response.get("graph_digest"):
@@ -79,17 +80,21 @@ pub def test_selected_leaf_echoes_authenticated_graph_identity() -> None:
 
 
 pub def test_core_engine_dispatches_the_rust_policy_schema() -> None:
+    """Protects core-engine dispatch for the closed Rust policy schema."""
     assert status(evaluate_core(request())) == "selected"
 
 
 pub def test_unknown_top_level_field_refuses() -> None:
+    """Protects strict refusal of unrecognized envelope fields."""
     assert status(evaluate(request(extra=",\"unexpected\":true"))) == "refused"
 
 
 pub def test_selected_build_script_role_refuses() -> None:
+    """Protects the inventory-only boundary for build-script roles."""
     assert status(evaluate(request(role="build_script"))) == "refused"
 
 
 pub def test_unknown_schema_and_operation_refuse() -> None:
+    """Protects strict refusal of unsupported schema and operation values."""
     assert status(evaluate(request(schema="incan.oven.rust-policy-exchange/2"))) == "refused"
     assert status(evaluate(request(operation="select_again"))) == "refused"
