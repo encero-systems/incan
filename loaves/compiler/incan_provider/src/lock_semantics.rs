@@ -544,12 +544,12 @@ mod tests {
         CargoFeatureSelection, compute_resolved_fingerprint, compute_resolved_fingerprint_with_sdk_paths,
     };
 
+    use crate::inventory::{extend_requirements_with_provider_plan, resolve_sdk_component_selection};
+    use crate::requirements::ProjectRequirements;
     use crate::{
         ComponentSelectionReason, ProviderPlan, ProviderProvenance, ProviderRecord, ResolvedSdkComponents,
         SdkComponentSelection, SdkInventory,
     };
-    use crate::inventory::{extend_requirements_with_provider_plan, resolve_sdk_component_selection};
-    use crate::requirements::ProjectRequirements;
     use incan_frontend::library_manifest_index::LibraryManifestIndex;
     use oven_model::manifest::{DependencySource, DependencySpec};
     use oven_model::oven_interop::InteropCSection;
@@ -965,13 +965,8 @@ mod tests {
             incan_lang::version::INCAN_VERSION,
             incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION,
         )?;
-        let components = resolve_sdk_component_selection(
-            &inventory,
-            &SdkComponentSelection::default(),
-            None,
-            None,
-            true,
-        )?;
+        let components =
+            resolve_sdk_component_selection(&inventory, &SdkComponentSelection::default(), None, None, true)?;
         let provider_plan = ProviderPlan::from_resolved_inputs(
             LibraryManifestIndex::default(),
             None,
@@ -981,7 +976,11 @@ mod tests {
         )?;
         let mut requirements = ProjectRequirements::default();
         extend_requirements_with_provider_plan(&mut requirements, &provider_plan)?;
-        Ok((provider_plan, requirements.sdk_path_dependencies, admission_started.elapsed()))
+        Ok((
+            provider_plan,
+            requirements.sdk_path_dependencies,
+            admission_started.elapsed(),
+        ))
     }
 
     #[test]
@@ -1019,7 +1018,10 @@ mod tests {
             let (identities, measurement) =
                 measure_provider_semantic_identity_pass("verified-sdk", &provider_plan, &specs)?;
             if let Some(expected) = expected_identities.as_ref() {
-                assert_eq!(expected, &identities, "repeated SDK measurements must preserve identities");
+                assert_eq!(
+                    expected, &identities,
+                    "repeated SDK measurements must preserve identities"
+                );
             } else {
                 expected_identities = Some(identities);
             }
