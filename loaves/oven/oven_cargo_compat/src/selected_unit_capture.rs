@@ -23,6 +23,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
     metadata: &CargoMetadata,
     outputs: &[CargoInvocationOutput],
     expected_rustc: &Path,
+    rustc_host: &str,
 ) -> Result<OvenLegacyCargoSelectedUnitCapture, OvenLegacyCargoError> {
     let mut artifacts = Vec::new();
     let mut artifact_records = BTreeMap::<Vec<PathBuf>, CargoCompilerArtifact>::new();
@@ -226,7 +227,11 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
             } else {
                 mode
             },
-            platform: argument_value(&invocation.arguments, "--target").map(ToString::to_string),
+            platform: Some(
+                argument_value(&invocation.arguments, "--target")
+                    .unwrap_or(rustc_host)
+                    .to_string(),
+            ),
             features: rustc_feature_cfgs(&invocation.arguments),
             dependencies,
         });
@@ -1087,6 +1092,7 @@ mod tests {
             &metadata,
             &[CargoInvocationOutput { stdout }],
             Path::new(&rustc),
+            "fixture-host",
         )?;
         assert_eq!(capture.roots, [1]);
         assert!(capture.rustc_invocations_observed);
@@ -1138,10 +1144,14 @@ mod tests {
             stdout.extend_from_slice(&serde_json::to_vec(&record)?);
             stdout.push(b'\n');
         }
-        let capture =
-            capture_legacy_cargo_selected_units_from_trace(&metadata, &[CargoInvocationOutput { stdout }], &rustc)?;
+        let capture = capture_legacy_cargo_selected_units_from_trace(
+            &metadata,
+            &[CargoInvocationOutput { stdout }],
+            &rustc,
+            "fixture-host",
+        )?;
         assert_eq!(capture.roots, [0, 1]);
-        assert_eq!(capture.units[0].platform, None);
+        assert_eq!(capture.units[0].platform.as_deref(), Some("fixture-host"));
         assert_eq!(capture.units[1].platform.as_deref(), Some("wasm32-unknown-unknown"));
         Ok(())
     }
@@ -1229,8 +1239,12 @@ mod tests {
             }
             Ok(CargoInvocationOutput { stdout })
         };
-        let capture =
-            capture_legacy_cargo_selected_units_from_trace(&metadata, &[encode(&first)?, encode(&second)?], &rustc)?;
+        let capture = capture_legacy_cargo_selected_units_from_trace(
+            &metadata,
+            &[encode(&first)?, encode(&second)?],
+            &rustc,
+            "fixture-host",
+        )?;
         assert_eq!(capture.units.len(), 2);
         assert_eq!(capture.units[1].dependencies.len(), 1);
         assert_eq!(capture.units[1].dependencies[0].unit_index, 0);
@@ -1245,6 +1259,7 @@ mod tests {
             &metadata,
             &[encode(&first)?, encode(&conflicting)?],
             &rustc,
+            "fixture-host",
         );
         assert!(conflict.is_err());
         Ok(())

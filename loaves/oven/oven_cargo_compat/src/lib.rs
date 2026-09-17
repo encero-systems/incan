@@ -1210,7 +1210,8 @@ pub fn prepare_direct_rustc_plan(
         None => read_legacy_cargo_metadata(&request.cargo, &cargo_manifest, &request.receipt.intent.features)?,
     };
     let mut selected_units = if outputs_have_rustc_trace(&cargo_outputs) {
-        let mut capture = capture_legacy_cargo_selected_units_from_trace(&metadata, &cargo_outputs, &request.rustc)?;
+        let mut capture =
+            capture_legacy_cargo_selected_units_from_trace(&metadata, &cargo_outputs, &request.rustc, &rustc_host)?;
         let (host_cfg, target_cfg) =
             rustc_host_and_target_cfg_snapshots(&request.rustc, &request.receipt.intent.target)
                 .map_err(|error| OvenLegacyCargoError::Plan(error.to_string()))?;
