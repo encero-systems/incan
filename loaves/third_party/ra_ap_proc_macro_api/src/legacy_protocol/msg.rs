@@ -16,20 +16,17 @@ pub enum Request {
     // IMPORTANT: Keep his first, otherwise postcard will break as its not a self describing format
     // As such, this is the only request that needs to be supported across all protocol versions
     // and by keeping it first, we ensure it always has the same discriminant encoding in postcard
-    /// Performs an API version check between the client and the server.
-    /// Since [`crate::version::VERSION_CHECK_VERSION`]
+    /// Performs an API version check between the client and the server. Since
+    /// [`crate::version::VERSION_CHECK_VERSION`]
     ApiVersionCheck {},
 
-    /// Retrieves a list of macros from a given dynamic library.
-    /// Since [`crate::version::NO_VERSION_CHECK_VERSION`]
+    /// Retrieves a list of macros from a given dynamic library. Since [`crate::version::NO_VERSION_CHECK_VERSION`]
     ListMacros { dylib_path: Utf8PathBuf },
 
-    /// Expands a procedural macro.
-    /// Since [`crate::version::NO_VERSION_CHECK_VERSION`]
+    /// Expands a procedural macro. Since [`crate::version::NO_VERSION_CHECK_VERSION`]
     ExpandMacro(Box<ExpandMacro>),
 
-    /// Sets server-specific configurations.
-    /// Since [`crate::version::RUST_ANALYZER_SPAN_SUPPORT`]
+    /// Sets server-specific configurations. Since [`crate::version::RUST_ANALYZER_SPAN_SUPPORT`]
     SetConfig(ServerConfig),
 }
 
@@ -50,24 +47,20 @@ pub enum Response {
     // IMPORTANT: Keep his first, otherwise postcard will break as its not a self describing format
     // As such, this is the only request that needs to be supported across all protocol versions
     // and by keeping it first, we ensure it always has the same discriminant encoding in postcard
-    /// Returns the API version supported by the server.
-    /// Since [`crate::version::NO_VERSION_CHECK_VERSION`]
+    /// Returns the API version supported by the server. Since [`crate::version::NO_VERSION_CHECK_VERSION`]
     ApiVersionCheck(u32),
 
-    /// Returns a list of available macros in a dynamic library.
-    /// Since [`crate::version::NO_VERSION_CHECK_VERSION`]
+    /// Returns a list of available macros in a dynamic library. Since [`crate::version::NO_VERSION_CHECK_VERSION`]
     ListMacros(Result<Vec<(String, ProcMacroKind)>, String>),
 
-    /// Returns result of a macro expansion.
-    /// Since [`crate::version::NO_VERSION_CHECK_VERSION`]
+    /// Returns result of a macro expansion. Since [`crate::version::NO_VERSION_CHECK_VERSION`]
     ExpandMacro(Result<FlatTree, PanicMessage>),
 
-    /// Confirms the application of a configuration update.
-    /// Since [`crate::version::RUST_ANALYZER_SPAN_SUPPORT`]
+    /// Confirms the application of a configuration update. Since [`crate::version::RUST_ANALYZER_SPAN_SUPPORT`]
     SetConfig(ServerConfig),
 
-    /// Returns the result of a macro expansion, including extended span data.
-    /// Since [`crate::version::RUST_ANALYZER_SPAN_SUPPORT`]
+    /// Returns the result of a macro expansion, including extended span data. Since
+    /// [`crate::version::RUST_ANALYZER_SPAN_SUPPORT`]
     ExpandMacroExtended(Result<ExpandMacroExtended, PanicMessage>),
 }
 
@@ -111,14 +104,14 @@ pub struct ExpandMacro {
 pub struct ExpandMacroData {
     /// Argument of macro call.
     ///
-    /// In custom derive this will be a struct or enum; in attribute-like macro - underlying
-    /// item; in function-like macro - the macro body.
+    /// In custom derive this will be a struct or enum; in attribute-like macro - underlying item; in function-like
+    /// macro - the macro body.
     pub macro_body: FlatTree,
 
     /// Name of macro to expand.
     ///
-    /// In custom derive this is the name of the derived trait (`Serialize`, `Getters`, etc.).
-    /// In attribute-like and function-like macros - single name of macro itself (`show_streams`).
+    /// In custom derive this is the name of the derived trait (`Serialize`, `Getters`, etc.). In attribute-like and
+    /// function-like macros - single name of macro itself (`show_streams`).
     pub macro_name: String,
 
     /// Possible attributes for the attribute-like macros.

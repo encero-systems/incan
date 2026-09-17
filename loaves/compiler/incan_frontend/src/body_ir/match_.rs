@@ -181,8 +181,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// sub-patterns (both already-established sources elsewhere in this file); a `Struct`/`Enum` constructor pattern's
     /// own fields fall back to [`IncanType::Unknown`] per field, since resolving a model/class/enum-variant's real
     /// field types would mean rebuilding the existing Rust-emission backend's own field-type-projection machinery
-    /// (`constructor_field_types_for_pattern` in `src/backend/ir/lower/expr/patterns.rs`), which this bucket
-    /// deliberately does not mirror -- see [`bir::Pattern`]'s own docs.
+    /// (`constructor_field_types_for_pattern` in `loaves/compiler/incan_ir/src/lower/expr/patterns.rs`), which this
+    /// bucket deliberately does not mirror -- see [`bir::Pattern`]'s own docs.
     #[allow(clippy::too_many_arguments)]
     /// Lower one pattern arm whose body is a statement block, restoring the enclosing bindings afterwards.
     ///

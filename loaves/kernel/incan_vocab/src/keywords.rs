@@ -524,10 +524,9 @@ pub struct DeclarationSurface {
     pub clauses: Vec<ClauseSurface>,
     /// Nested declarations owned by this declaration.
     ///
-    /// A vocabulary can use this to describe a declaration-shaped member without
-    /// teaching the host parser a language-specific keyword.  The nested
-    /// declaration receives the enclosing declaration as its placement rule
-    /// when it is registered.
+    /// A vocabulary can use this to describe a declaration-shaped member without teaching the host parser a
+    /// language-specific keyword. The nested declaration receives the enclosing declaration as its placement rule when
+    /// it is registered.
     #[cfg_attr(feature = "serde", serde(default))]
     pub declarations: Vec<DeclarationSurface>,
 }
@@ -1107,10 +1106,10 @@ impl ScopedSurfaceDescriptor {
 
 /// Fixed, compiler-defined lexical submode kind an embedded-fragment descriptor may claim.
 ///
-/// This is the complete submode catalog RFC 081 (`#1023`) implements. It is deliberately closed and enumerable:
-/// a descriptor can only ever claim one of these kinds for a given eligible position, never an arbitrary
-/// author-defined grammar, so unrecognized syntax inside a claimed position is always a parse error rather than a
-/// silent reinterpretation.
+/// This is the complete submode catalog RFC 081 (`#1023`) implements. It is deliberately closed and enumerable: a
+/// descriptor can only ever claim one of these kinds for a given eligible position, never an arbitrary author-defined
+/// grammar, so unrecognized syntax inside a claimed position is always a parse error rather than a silent
+/// reinterpretation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
@@ -1148,7 +1147,7 @@ pub struct EmbeddedFragmentFormatHint {
 /// artifact key downstream desugarers/lowering hooks should expect to receive. Per RFC 081's Reference-level
 /// explanation, the descriptor must not apply outside its declared eligible positions, and when two same-depth
 /// descriptors claim the same submode in the same eligible position the compiler rejects the combination as
-/// ambiguous (see `crates/incan_syntax/src/parser/expr.rs` same-depth ambiguity handling).
+/// ambiguous (see `loaves/kernel/incan_syntax/src/parser/expr.rs` same-depth ambiguity handling).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct EmbeddedFragmentDescriptor {

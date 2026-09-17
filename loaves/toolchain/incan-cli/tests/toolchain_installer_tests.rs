@@ -519,14 +519,13 @@ fn package_fixture_archive_with_profile(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let seed = write_fixture_sdk_provider_seed(root, profile)?;
     let loafs = write_fixture_loafs(root)?;
-    // Compiler-suite roots run with `cargo` deliberately poisoned on `PATH` (and `CARGO`/`CARGO_*`
-    // stripped from the environment) so an Oven test that should never touch Cargo fails loudly if
-    // it does. This test is the one legitimate exception: it packages a real release archive and
-    // needs real Cargo. When this binary is built by a normal `cargo test` invocation, Cargo sets
-    // `CARGO` in the environment of the rustc/build process, and -- because that's an ordinary
-    // runtime env var here, not a build-time constant -- it is only actually visible in this
-    // process if the guard hasn't already stripped it; pass it through when present, but
-    // package_archive.sh does not depend on it (see its own `${CARGO_HOME}/bin/cargo` fallback).
+    // Compiler-suite roots run with `cargo` deliberately poisoned on `PATH` (and `CARGO`/`CARGO_*` stripped from the
+    // environment) so an Oven test that should never touch Cargo fails loudly if it does. This test is the one
+    // legitimate exception: it packages a real release archive and needs real Cargo. When this binary is built by a
+    // normal `cargo test` invocation, Cargo sets `CARGO` in the environment of the rustc/build process, and -- because
+    // that's an ordinary runtime env var here, not a build-time constant -- it is only actually visible in this
+    // process if the guard hasn't already stripped it; pass it through when present, but package_archive.sh does not
+    // depend on it (see its own `${CARGO_HOME}/bin/cargo` fallback).
     let mut command = Command::new("bash");
     command
         .arg(toolchain_package_archive_script())

@@ -21,17 +21,12 @@
 //!
 //! ## Module Organization
 //!
-//! - `ir/` - Code generation and Intermediate Representation
-//!   - `codegen.rs` - **Primary entrypoint** (`IrCodegen`)
-//!   - `types.rs` - IR types with ownership info
-//!   - `expr.rs` - Typed expressions
-//!   - `stmt.rs` - Statements
-//!   - `decl.rs` - Declarations
-//!   - `lower.rs` - AST to IR lowering
-//!   - `emit.rs` - IR to Rust via syn/quote/prettyplease
+//! - `ir` - the IR and its emission under their pre-ring path: a re-export of the `incan_ir` (types, lowering) and
+//!   `incan_emit` (codegen entrypoint `IrCodegen`, emission, conversions) crates
 //! - `project/` - Rust source projection and explicit publisher support (plan, generator, cargo_toml, runner)
-//! - `selection.rs` - Backend-selection identity and execution receipt (#986)
-//! - `shadow.rs` - Bounded source-observable legacy/replacement shadow comparison (#1146)
+//! - `selection` - backend-selection identity and execution receipt (#986), re-exported from `incan_emit`
+//! - `shadow/` - bounded source-observable legacy/replacement shadow comparison (#1146)
+//! - `c_abi` - the platform C ABI table
 
 // Enforce explicit error handling in project generation code.
 // XXX: codegen modules emit `.unwrap()` as string literals in generated Rust code.

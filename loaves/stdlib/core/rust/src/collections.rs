@@ -1,7 +1,7 @@
 //! Collection helpers for Incan-generated Rust code.
 //!
-//! This module exists to keep runtime behavior Python-like while avoiding Rust-default panic messages
-//! (e.g. Vec/HashMap indexing panics). Instead, we raise canonical `IncanError` messages.
+//! This module exists to keep runtime behavior Python-like while avoiding Rust-default panic messages (e.g. Vec/HashMap
+//! indexing panics). Instead, we raise canonical `IncanError` messages.
 
 use core::borrow::Borrow;
 use core::fmt::Display;

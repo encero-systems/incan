@@ -67,8 +67,8 @@ fn prepare_test_command_session(
 
 /// Create a centered banner with a configurable fill character.
 ///
-/// For example:
-/// `centered_banner("test session starts", '_')` -> `"___________________ test session starts __________________"`
+/// For example: `centered_banner("test session starts", '_')` -> `"___________________ test session starts
+/// __________________"`
 fn centered_banner(label: &str, fill: char) -> String {
     let inner_width = label.len() + 2; // spaces around label
 
@@ -624,9 +624,8 @@ fn marker_expr_matches(test: &TestInfo, tokens: &[MarkerToken]) -> Result<bool, 
 
 /// Retain collected tests selected by the CLI's keyword, slow-test, and marker rules.
 ///
-/// This is deliberately pure: collection and execution remain responsible for their
-/// own I/O, while selection rules can be covered without rebuilding a generated test
-/// project for every boolean marker combination.
+/// This is deliberately pure: collection and execution remain responsible for their own I/O, while selection rules can
+/// be covered without rebuilding a generated test project for every boolean marker combination.
 fn filter_collected_tests(
     tests: Vec<TestInfo>,
     filter: Option<&str>,

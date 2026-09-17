@@ -1,7 +1,7 @@
 //! Indexing and slicing helpers shared by compiler/runtime.
 //!
-//! These helpers normalize Python-like slice bounds (negative indices and clamping),
-//! keeping behavior consistent across core string semantics and stdlib collections.
+//! These helpers normalize Python-like slice bounds (negative indices and clamping), keeping behavior consistent across
+//! core string semantics and stdlib collections.
 
 /// Normalize slice bounds using Python-like semantics.
 ///
@@ -9,8 +9,8 @@
 /// - `start`/`end`: optional bounds (may be negative).
 /// - `step`: step size (must be non-zero; checked by the caller).
 ///
-/// Returns `(start_idx, end_idx)` after applying default values, negative index normalization,
-/// and clamping for the given step direction.
+/// Returns `(start_idx, end_idx)` after applying default values, negative index normalization, and clamping for the
+/// given step direction.
 pub fn normalize_slice_bounds(len: i64, start: Option<i64>, end: Option<i64>, step: i64) -> (i64, i64) {
     let default_start = if step > 0 { 0 } else { len - 1 };
     let default_end = if step > 0 { len } else { -1 };

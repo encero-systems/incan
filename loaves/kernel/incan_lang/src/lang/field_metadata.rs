@@ -1,7 +1,7 @@
 //! Field metadata key registry.
 //!
-//! Centralizes the allowed keys for model/class field metadata to avoid stringly-typed
-//! checks spread across the compiler and tooling.
+//! Centralizes the allowed keys for model/class field metadata to avoid stringly-typed checks spread across the
+//! compiler and tooling.
 
 /// Stable identifier for field metadata keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -221,9 +221,9 @@ pub fn prepare_library_project(
         inline_imports.extend(collect_rust_dependency_uses(module, false));
     }
     // The compiler-owned standard library facets and Rust's sysroot are supplied by the selected Oven plan. The
-    // remaining
-    // caller-authored imports are resolved after code generation and compiled through the same direct-Rustc closure
-    // materializer used by normal executables and test batches; this library route must not regain a Cargo fallback.
+    // remaining caller-authored imports are resolved after code generation and compiled through the same
+    // direct-Rustc closure materializer used by normal executables and test batches; this library route must not
+    // regain a Cargo fallback.
     let source_inline_crates = inline_imports
         .iter()
         .filter(|import| !incan_lang::lang::stdlib::facets::is_facet(&import.crate_name) && import.crate_name != "std")
@@ -933,9 +933,9 @@ pub fn prepare_library_project(
             ))
         })?;
     let backend_receipt = finalize_backend_receipt(&backend_selection, backend_executed, backend_output_identity)?;
-    // Not persisted here — see the matching comment in `prepare_oven_project`: this function
-    // also runs for internal/dependency callers, and real compilation still follows below. The
-    // receipt is published once by `build_library_report` after the whole build succeeds (#986).
+    // Not persisted here — see the matching comment in `prepare_oven_project`: this function also runs for
+    // internal/dependency callers, and real compilation still follows below. The receipt is published once by
+    // `build_library_report` after the whole build succeeds (#986).
     report_draft.backend = Some(backend_receipt);
     let synchronize_provider_dependencies_start = Instant::now();
     synchronize_projected_provider_dependencies(

@@ -1,14 +1,13 @@
 //! Language “surface” vocabulary.
 //!
-//! This module is for **user-facing** names that are part of the language experience but are not
-//! pure syntax tokens:
+//! This module is for **user-facing** names that are part of the language experience but are not pure syntax tokens:
 //!
 //! - prelude/runtime functions like `spawn(...)`, `timeout(...)`
 //! - runtime/interop types like `Mutex[T]`, `Sender[T]`, `Vec[T]`
 //! - builtin methods like `str.split(...)`
 //!
-//! The goal is the same as other `incan_lang::lang` registries: avoid stringly-typed checks
-//! scattered through the compiler/tooling by providing stable IDs + metadata.
+//! The goal is the same as other `incan_lang::lang` registries: avoid stringly-typed checks scattered through the
+//! compiler/tooling by providing stable IDs + metadata.
 
 pub mod collection_helpers;
 pub mod constructors;

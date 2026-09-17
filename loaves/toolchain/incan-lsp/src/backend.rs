@@ -1,7 +1,7 @@
 //! LSP (Language Server Protocol) backend implementation for Incan
 //!
-//! Call-site explicit generics (`callee[T](...)`, `recv.m[U](...)`) get type-oriented completions and hover
-//! (see `call_site_type_args.rs`, RFC 054).
+//! Call-site explicit generics (`callee[T](...)`, `recv.m[U](...)`) get type-oriented completions and hover (see
+//! `call_site_type_args.rs`, RFC 054).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -7436,8 +7436,8 @@ impl LanguageServer for IncanLanguageServer {
         Ok(local_signature_help_at_offset(ast, &doc.source, offset))
     }
 
-    /// Return document symbols for the current parsed document, if available.
-    /// Answer `textDocument/semanticTokens/full` for an open document.
+    /// Return document symbols for the current parsed document, if available. Answer
+    /// `textDocument/semanticTokens/full` for an open document.
     ///
     /// The reply covers every token in the file, as the protocol requires: there is no way to classify one region
     /// and leave the rest to the editor's grammar. A document with no stored state yields `None` so the client keeps
@@ -8291,8 +8291,8 @@ fn public_package_completion(label: String, kind: CompletionItemKind, detail: &s
     }
 }
 
-/// If the cursor is selecting items in a `from std.<module> import ...` statement,
-/// return completions for known public items in that stdlib module.
+/// If the cursor is selecting items in a `from std.<module> import ...` statement, return completions for known public
+/// items in that stdlib module.
 fn stdlib_import_item_completions(
     line_prefix: &str,
     provider_plan: Option<&ProviderPlan>,
@@ -8341,8 +8341,8 @@ fn stdlib_import_item_completions(
     Some(items)
 }
 
-/// If the cursor is inside a `from std.<...>` or `import std::<...>` context,
-/// return completions for stdlib module names. Returns `None` if not in that context.
+/// If the cursor is inside a `from std.<...>` or `import std::<...>` context, return completions for stdlib module
+/// names. Returns `None` if not in that context.
 fn stdlib_module_completions(line_prefix: &str, provider_plan: Option<&ProviderPlan>) -> Option<Vec<CompletionItem>> {
     let trimmed = line_prefix.trim_start();
 
@@ -8352,10 +8352,9 @@ fn stdlib_module_completions(line_prefix: &str, provider_plan: Option<&ProviderP
         .or_else(|| trimmed.strip_prefix("import std::"))
         .or_else(|| trimmed.strip_prefix("import std."))?;
 
-    // Split what the user has typed after `std.` to determine depth.
-    // e.g. "serde." → ["serde", ""] → user wants children of std.serde
-    // e.g. "" → user wants top-level std.* modules
-    // e.g. "web import " → user has completed the module path, don't intercept
+    // Split what the user has typed after `std.` to determine depth. e.g. "serde." → ["serde", ""] → user wants
+    // children of std.serde e.g. "" → user wants top-level std.* modules e.g. "web import " → user has completed the
+    // module path, don't intercept
     let parts: Vec<&str> = after_std.split(['.', ':']).collect();
 
     // If we see " import " in the remainder, the user is selecting items from the module — bail.
@@ -8470,8 +8469,8 @@ fn stdlib_module_completions(line_prefix: &str, provider_plan: Option<&ProviderP
     Some(items)
 }
 
-/// If the cursor is on a decorator line (starts with `@`), return completions for known decorator names.
-/// Returns `None` if not in a decorator context.
+/// If the cursor is on a decorator line (starts with `@`), return completions for known decorator names. Returns `None`
+/// if not in a decorator context.
 fn decorator_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
     let trimmed = line_prefix.trim_start();
     if !trimmed.starts_with('@') {

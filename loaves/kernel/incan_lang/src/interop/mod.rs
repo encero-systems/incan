@@ -1,8 +1,7 @@
 //! Rust interop vocabulary shared across compiler stages (RFC 005 / RFC 041).
 //!
 //! Host-specific extraction (rust-analyzer, Cargo) lives in the `rust_inspect` crate (wired by `incan` behind the
-//! `rust_inspect` feature);
-//! this module holds only portable data shapes.
+//! `rust_inspect` feature); this module holds only portable data shapes.
 
 pub mod capabilities;
 pub mod coercions;

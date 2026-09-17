@@ -1,7 +1,7 @@
 //! Punctuation vocabulary.
 //!
-//! This module defines the canonical set of non-operator punctuation tokens used by the
-//! lexer/parser: delimiters, separators, access/path markers, and a few structural markers.
+//! This module defines the canonical set of non-operator punctuation tokens used by the lexer/parser: delimiters,
+//! separators, access/path markers, and a few structural markers.
 //!
 //! ## Notes
 //! - Lookup via [`from_str`] is **case-sensitive**.

@@ -4887,9 +4887,8 @@ mod tests {
         }
         let unreported = target_deps.join("libunrelated_cargo_residue.rlib");
         fs::write(&unreported, b"unreported")?;
-        // Cargo reports both the hashed `deps` input and an unhashed convenience
-        // copy at the profile root. The latter is publisher output, not a
-        // direct-rustc input, and must not expand the sealed loaf closure.
+        // Cargo reports both the hashed `deps` input and an unhashed convenience copy at the profile root. The latter
+        // is publisher output, not a direct-rustc input, and must not expand the sealed loaf closure.
         let profile_copy = publisher.path().join("target/libincan_vocab.rlib");
         fs::write(&profile_copy, b"profile copy")?;
         let profile_copy_canonical = fs::canonicalize(&profile_copy)?;

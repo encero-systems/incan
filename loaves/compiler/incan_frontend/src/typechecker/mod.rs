@@ -1071,9 +1071,8 @@ impl TypeChecker {
     #[cfg(feature = "rust_inspect")]
     /// Return Rust type metadata suitable for resolving one inherent method call.
     pub fn rust_item_metadata_for_method_call(&self, canonical_path: &str, method: &str) -> Option<RustItemMetadata> {
-        // A method call is an explicit source-level request for the receiver's ABI.
-        // Fast metadata can know the type without its inherent methods, so complete
-        // the lookup before falling back to generic call inference.
+        // A method call is an explicit source-level request for the receiver's ABI. Fast metadata can know the type
+        // without its inherent methods, so complete the lookup before falling back to generic call inference.
         let metadata = self
             .rust_item_metadata_for_path(canonical_path)
             .or_else(|| self.rust_item_metadata_for_path_blocking(canonical_path))?;

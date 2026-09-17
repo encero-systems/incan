@@ -128,9 +128,10 @@ pub(super) fn unsupported_expr_label(expr: &ast::Expr) -> String {
         ast::Expr::VocabBlock(_) => undesugared_label("vocab block expression"),
         // RFC 081 (#1023): unlike `VocabBlock`/`Surface`, an embedded fragment is *not* a `build_body_ir_module_v0`
         // input-contract violation -- it is meant to reach lowering as itself (see `IrExprKind::EmbeddedFragment`'s
-        // rustdoc in `src/backend/ir/expr.rs`, the pipeline this replacement-backend Body IR does not yet share).
-        // This still-maturing pipeline simply does not cover it yet, so it falls through this fallback arm like
-        // any other not-yet-supported expression kind; only the label is specific enough to say which one.
+        // rustdoc in `loaves/compiler/incan_ir/src/expr.rs`, the pipeline this replacement-backend Body IR does not yet
+        // share). This still-maturing pipeline simply does not cover it yet, so it falls through this fallback
+        // arm like any other not-yet-supported expression kind; only the label is specific enough to say which
+        // one.
         ast::Expr::Embedded(_) => "embedded DSL fragment expression".to_string(),
         _ => "expression".to_string(),
     }
@@ -156,7 +157,7 @@ pub(super) fn surface_expr_label(payload: &ast::SurfaceExprPayload) -> String {
 /// Resolve the per-element types for a tuple-typed value being destructured into `count` targets, falling back to
 /// [`IncanType::Unknown`] per element when the resolved type is not (or not yet) known to be a tuple of the right
 /// arity -- mirrors how the existing Rust-emission backend falls back to `IrType::Unknown` per slot in the same
-/// situation (`src/backend/ir/lower/stmt.rs`'s `TupleUnpack` lowering). Used by
+/// situation (`loaves/compiler/incan_ir/src/lower/stmt.rs`'s `TupleUnpack` lowering). Used by
 /// [`BodyBuilder::lower_tuple_unpack`], [`BodyBuilder::lower_tuple_assign`], and
 /// [`BodyBuilder::bind_for_pattern_fields`].
 ///
@@ -244,8 +245,8 @@ pub(super) fn match_pattern_is_supported(pattern: &ast::Pattern) -> bool {
 /// Two independent things can make a loop pattern unbindable, and both are checked here.
 ///
 /// **Shape.** The accepted subset is deliberately the same one `TypeChecker::define_for_pattern_bindings`
-/// (`src/frontend/typechecker/check_stmt.rs`) accepts -- a plain binding, `_`, and recursively a tuple of those
-/// (#1125). Naming the offending shape keeps a hand-built AST that bypassed the typechecker diagnosable.
+/// (`loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs`) accepts -- a plain binding, `_`, and recursively a
+/// tuple of those (#1125). Naming the offending shape keeps a hand-built AST that bypassed the typechecker diagnosable.
 ///
 /// **Type agreement.** A tuple pattern can only take elements from a tuple. Without this check, `for a, b in
 /// items` over a `list[int]` would lower `.0`/`.1` projections out of an `int` -- structurally valid Body IR

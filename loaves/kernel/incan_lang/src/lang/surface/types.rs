@@ -1,16 +1,15 @@
 //! Surface/runtime/interop types vocabulary.
 //!
-//! These types are part of the language surface (documented, user-facing), but are not "core"
-//! builtin types like `int`/`str` and do not belong in `lang::types::*` registries.
+//! These types are part of the language surface (documented, user-facing), but are not "core" builtin types like
+//! `int`/`str` and do not belong in `lang::types::*` registries.
 //!
 //! Each entry carries explicit ownership metadata so stdlib/runtime-facing vocabulary can be filtered without
 //! hard-coded side tables.
 
 use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
 
-/// Stable identifier for a surface type.
-/// TODO: given RFC 023 approach, we should move/remove some of these types. Stdlibs should be able to define their own
-/// types.
+/// Stable identifier for a surface type. TODO: given RFC 023 approach, we should move/remove some of these types.
+/// Stdlibs should be able to define their own types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SurfaceTypeId {
     // Async primitives
@@ -379,9 +378,8 @@ pub const SEMAPHORE_PERMIT_TYPE_NAME: &str = "SemaphorePermit";
 
 /// Return the stdlib module path that owns this surface type, if it is not globally available.
 ///
-/// This is used by the compiler to enforce RFC 022 “explicit imports” for stdlib-scoped types
-/// (e.g. `App`, `Mutex`, `FieldInfo`). Rust interop types like `Vec`/`HashMap` remain globally
-/// available and return `None`.
+/// This is used by the compiler to enforce RFC 022 “explicit imports” for stdlib-scoped types (e.g. `App`, `Mutex`,
+/// `FieldInfo`). Rust interop types like `Vec`/`HashMap` remain globally available and return `None`.
 pub fn stdlib_module_path(id: SurfaceTypeId) -> Option<&'static str> {
     info_for(id).ownership.stdlib_module_path
 }

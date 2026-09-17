@@ -770,7 +770,7 @@ mod tests {
     };
     use crate::{lexer, parser};
 
-    /// Shared with `tests/integration_tests.rs` (GitHub #247 export + CLI fmt coverage).
+    /// Shared with `loaves/toolchain/incan-cli/tests/integration_tests.rs` (GitHub #247 export + CLI fmt coverage).
     const BLOCK_DOCSTRING_PUBLIC_TYPE_LIKE: &str =
         include_str!("../../incan_test_support/fixtures/block_docstring_public_type_like.incn");
 

@@ -1206,8 +1206,7 @@ fn native_test_output_name(runner_crate_name: &str, tests: &[TestInfo]) -> Strin
     format!("{runner_crate_name}-{}-tests", &digest[..16])
 }
 
-/// Normalize a libtest test name by stripping any leading crate/module qualifiers before
-/// [`INCAN_FILE_TEST_MOD`].
+/// Normalize a libtest test name by stripping any leading crate/module qualifiers before [`INCAN_FILE_TEST_MOD`].
 ///
 /// Examples:
 /// - `__incan_file_tests::incan_harness_0_case` (unchanged)
@@ -1436,20 +1435,22 @@ fn harness_needs_async_runtime(tests: &[TestInfo], fixtures: &HashMap<String, Fi
     tests.iter().any(|test| test.is_async) || fixtures.values().any(|fixture| fixture.is_async)
 }
 
-/// Add the stdlib async feature when the generated harness itself needs the runtime.
+/// Add the async facet when the generated harness itself needs the runtime, on top of the facets the batch's
+/// sources link.
 fn test_runner_stdlib_facets(
     base: &[String],
     tests: &[TestInfo],
     fixtures: &HashMap<String, FixtureExecutionInfo>,
 ) -> Vec<String> {
-    let mut features = base.iter().cloned().collect::<BTreeSet<_>>();
+    let mut facets = base.iter().cloned().collect::<BTreeSet<_>>();
     if harness_needs_async_runtime(tests, fixtures) {
-        features.insert("async".to_string());
+        facets.insert(incan_lang::lang::stdlib::facets::ASYNC.to_string());
     }
-    features.into_iter().collect()
+    facets.into_iter().collect()
 }
 
-/// Collect stdlib feature flags needed by a test batch.
+/// Collect the standard library facets a test batch links: the batch's own, plus the async facet when any module
+/// harness in the batch needs the runtime.
 fn test_runner_stdlib_facets_for_batch(
     base: &[String],
     tests: &[TestInfo],
@@ -1460,7 +1461,7 @@ fn test_runner_stdlib_facets_for_batch(
         return test_runner_stdlib_facets(base, tests, fixtures);
     }
 
-    let mut features = base.iter().cloned().collect::<BTreeSet<_>>();
+    let mut facets = base.iter().cloned().collect::<BTreeSet<_>>();
     if module_harnesses.iter().any(|harness| {
         let file_tests = tests
             .iter()
@@ -1469,9 +1470,9 @@ fn test_runner_stdlib_facets_for_batch(
             .collect::<Vec<_>>();
         harness_needs_async_runtime(&file_tests, &harness.fixtures)
     }) {
-        features.insert("async".to_string());
+        facets.insert(incan_lang::lang::stdlib::facets::ASYNC.to_string());
     }
-    features.into_iter().collect()
+    facets.into_iter().collect()
 }
 
 struct FixtureArgRender<'a> {
@@ -2294,8 +2295,7 @@ fn run_file_tests_batch_oven(
     // `std.*` source modules lower through the compiler-owned standard library facets. ProjectGenerator always
     // supplies those crates directly, so treating their internal `rust.module("incan_std_<facet>::...")` markers as
     // user Cargo imports would create a duplicate, path-unstable dependency. Every other inline Rust import remains
-    // part of the
-    // explicit publisher's generated manifest and therefore its Oven build-unit identity.
+    // part of the explicit publisher's generated manifest and therefore its Oven build-unit identity.
     let inline_imports = collect_test_dependency_inline_imports(&module_for_imports, &source_dependency_modules)
         .into_iter()
         .filter(|import| !incan_lang::lang::stdlib::facets::is_facet(&import.crate_name))
@@ -2821,8 +2821,8 @@ fn run_file_tests_batch_oven(
 
 /// Select only caller-imported Rust dependencies for the direct path-crate materializer.
 ///
-/// Compiler-owned standard-library/provider imports are satisfied by the selected Loaf. The materializer must
-/// not try to rebuild that sealed closure from the generated test project.
+/// Compiler-owned standard-library/provider imports are satisfied by the selected Loaf. The materializer must not try
+/// to rebuild that sealed closure from the generated test project.
 fn oven_test_inline_dependency_specs(
     resolved: &ResolvedDependencies,
     inline_imports: &[incan_provider::dependency_resolver::InlineRustImport],

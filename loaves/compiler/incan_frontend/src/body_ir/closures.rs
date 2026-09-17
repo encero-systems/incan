@@ -135,8 +135,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Resolve each of a closure literal's parameter types from the typechecker's resolved callable type at the
     /// closure's own span, falling back to [`IncanType::Unknown`] per parameter when unavailable or of mismatched
     /// length. Mirrors the existing Rust-emission backend's own `recorded_param_types` fallback
-    /// (`src/backend/ir/lower/expr/mod.rs`), minus that backend's additional Rust-display-exact override, which is
-    /// meaningful only for concrete Rust closure syntax, not this target-agnostic model.
+    /// (`loaves/compiler/incan_ir/src/lower/expr/mod.rs`), minus that backend's additional Rust-display-exact override,
+    /// which is meaningful only for concrete Rust closure syntax, not this target-agnostic model.
     pub(super) fn closure_param_types(
         &self,
         params: &[ast::Spanned<ast::Param>],
@@ -160,12 +160,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower a partial callable preset expression (`partial Target(name=value, ...)`) into the same
     /// [`bir::Rvalue::Closure`] shape a closure literal produces, mirroring how the existing Rust-emission backend
     /// already desugars a partial application into a synthesized closure that forwards the still-missing arguments
-    /// into a call (`src/backend/ir/lower/expr/mod.rs`'s `ast::Expr::Partial` arm) -- see #1101's B4 pre-intake.
-    /// Partial construction currently supports only a bare top-level function-name `target` whose full parameter list
-    /// the typechecker resolved. General Body IR calls still distinguish named functions from local callable values
-    /// and record local supplied-parameter slots (see [`Self::lower_call`]). A method-shaped partial target from
-    /// `partial recv.method(...)`, explicit type arguments, or a target with an unnamed parameter lowers to an
-    /// explicit unsupported placeholder instead.
+    /// into a call (`loaves/compiler/incan_ir/src/lower/expr/mod.rs`'s `ast::Expr::Partial` arm) -- see #1101's B4
+    /// pre-intake. Partial construction currently supports only a bare top-level function-name `target` whose full
+    /// parameter list the typechecker resolved. General Body IR calls still distinguish named functions from local
+    /// callable values and record local supplied-parameter slots (see [`Self::lower_call`]). A method-shaped
+    /// partial target from `partial recv.method(...)`, explicit type arguments, or a target with an unnamed
+    /// parameter lowers to an explicit unsupported placeholder instead.
     ///
     /// Preset values (`partial.args`) are lowered once each, at the partial-creation site -- exactly like an
     /// ordinary call argument, not deduplicated per free-variable name the way [`Self::lower_closure`]'s captures

@@ -1,7 +1,7 @@
 //! Conversion helpers for Incan-generated Rust code.
 //!
-//! These helpers exist to ensure Python-like conversion errors (e.g. `int("x")`) produce canonical,
-//! typed exception messages rather than Rust's default `parse()` panic output.
+//! These helpers exist to ensure Python-like conversion errors (e.g. `int("x")`) produce canonical, typed exception
+//! messages rather than Rust's default `parse()` panic output.
 
 use crate::errors::raise;
 use incan_lang::{

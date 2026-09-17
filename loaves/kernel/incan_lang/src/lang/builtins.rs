@@ -1,8 +1,8 @@
 //! Builtin function vocabulary.
 //!
-//! This module defines the canonical set of builtin functions recognized by the compiler.
-//! Callers should use the stable identifier [`BuiltinFnId`] for identity and query spellings and other metadata
-//! through [`BuiltinFnInfo`] / [`BUILTIN_FUNCTIONS`].
+//! This module defines the canonical set of builtin functions recognized by the compiler. Callers should use the stable
+//! identifier [`BuiltinFnId`] for identity and query spellings and other metadata through [`BuiltinFnInfo`] /
+//! [`BUILTIN_FUNCTIONS`].
 //!
 //! ## Notes
 //! - Lookup via [`from_str`] is **case-sensitive**.

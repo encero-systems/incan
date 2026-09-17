@@ -2,8 +2,8 @@
 //!
 //! Body IR v0 is the backend-facing, target-agnostic representation of one function/method body. It sits between
 //! typechecked source (AST + [`crate::SemanticFactStore`] / declaration-level [`crate::HirModule`]) and the
-//! target-specific backend lowering under `src/backend/ir/` — it must be consumable by a replacement backend without
-//! that backend needing to read generated-Rust semantics or private compiler internals.
+//! target-specific backend lowering in `loaves/compiler/incan_ir` — it must be consumable by a replacement backend
+//! without that backend needing to read generated-Rust semantics or private compiler internals.
 //!
 //! Body IR v0 deliberately models a **normalized** statement/control-flow vocabulary rather than a flattened
 //! basic-block CFG: `while`/`for` desugar into a single canonical `Loop` + conditional `Break` shape during
@@ -390,8 +390,8 @@ impl Body {
     /// This is a **derived** fact, walked from the already-lowered statement tree, rather than a flag stored
     /// redundantly on `Body` -- mirroring how the existing Rust-emission backend computes its own `is_generator`
     /// boolean at lowering time (`return_type_is_generator(&return_type) && body_contains_yield(&f.body)` in
-    /// `src/backend/ir/lower/decl/functions.rs`) rather than threading a separate stored flag through its own IR.
-    /// Unlike that backend function, this does not also fold in a return-type check: `Generator[T]` is
+    /// `loaves/compiler/incan_ir/src/lower/decl/functions.rs`) rather than threading a separate stored flag through its
+    /// own IR. Unlike that backend function, this does not also fold in a return-type check: `Generator[T]` is
     /// declaration-level information a `Body` alone does not carry, so a caller that has the owning declaration in
     /// hand should combine the two the same way the existing backend does. In practice a well-typed program's
     /// `yield` only ever appears inside a function whose declared return type is `Generator[T]` (the typechecker
@@ -557,10 +557,10 @@ pub enum LocalOrigin {
     /// A receiver is always a Rust-level reference (`&self` or `&mut self`) at the emission boundary — Incan's
     /// `Receiver` AST has no "by value" variant — so it is never itself drop-relevant and a bare read of it can
     /// never soundly select [`OwnershipFact::Move`]; see the receiver carve-out in
-    /// [`crate::body_ir::OwnershipFact`]'s use sites in `src/frontend/body_ir.rs` for how lowering enforces that.
-    /// `mutable` records `self` (`false`) vs `mut self` (`true`) purely as a descriptive fact for now — v0 does not
-    /// yet use it to pick a different ownership fact at read sites, the same way parameter mutability is not
-    /// tracked as an ownership-fact input either.
+    /// [`crate::body_ir::OwnershipFact`]'s use sites in `loaves/compiler/incan_frontend/src/body_ir.rs` for how
+    /// lowering enforces that. `mutable` records `self` (`false`) vs `mut self` (`true`) purely as a descriptive
+    /// fact for now — v0 does not yet use it to pick a different ownership fact at read sites, the same way
+    /// parameter mutability is not tracked as an ownership-fact input either.
     Receiver {
         /// Whether the receiver was declared `mut self` (`true`) rather than plain `self` (`false`).
         mutable: bool,
@@ -1015,12 +1015,12 @@ pub enum Rvalue {
     ResultVariant(ResultVariant),
     /// An f-string interpolation, built from a sequence of literal text chunks and already-lowered embedded
     /// expressions. Mirrors the existing Rust-emission backend's dedicated `IrExprKind::Format { parts }` node
-    /// (`src/backend/ir/expr.rs`) rather than a helper-call desugar: an f-string is a compiler-owned structured
-    /// value, not something inferred later from a generated Rust call shape (#653 criterion 3), so it gets its own
-    /// `Rvalue` shape just like the existing backend gives it its own `IrExprKind` shape.
+    /// (`loaves/compiler/incan_ir/src/expr.rs`) rather than a helper-call desugar: an f-string is a compiler-owned
+    /// structured value, not something inferred later from a generated Rust call shape (#653 criterion 3), so it
+    /// gets its own `Rvalue` shape just like the existing backend gives it its own `IrExprKind` shape.
     Format(Vec<FormatPart>),
     /// A closure literal (`(params) => expr`), or a partial callable's synthesized forwarding closure (`partial
-    /// Target(presets)`) -- see `src/frontend/body_ir.rs`'s `BodyBuilder::lower_partial`.
+    /// Target(presets)`) -- see `loaves/compiler/incan_frontend/src/body_ir.rs`'s `BodyBuilder::lower_partial`.
     ///
     /// Unlike the existing Rust-emission backend's `IrExprKind::Closure` (whose `captures: Vec<String>` field is
     /// always populated empty at both of that backend's own lowering call sites -- it relies entirely on Rust's own
@@ -1063,35 +1063,36 @@ pub enum Rvalue {
     /// the first arm whose pattern matches (and whose optional [`MatchArm::guard`], if present, evaluates truthy).
     ///
     /// Mirrors the existing Rust-emission backend's own `IrExprKind::Match { scrutinee, arms }` node
-    /// (`src/backend/ir/expr.rs`): that backend has already reduced Incan's match-pattern surface to the small,
-    /// closed vocabulary [`Pattern`] mirrors (see its own docs), and compiles each arm's pattern directly into a
-    /// native Rust `match` arm, letting rustc perform exhaustiveness checking and the actual destructuring/dispatch
-    /// itself. Matching the same #653-criterion-3 "compiler-owned semantic gets its own explicit node" treatment as
-    /// [`Self::Format`]/[`StatementKind::TryPropagate`]/[`StatementKind::IterNext`], `match` stays a single
-    /// structured `Rvalue` here too rather than being decomposed into a chain of `If` statements: decomposing it
-    /// would mean re-deriving the same destructuring/dispatch logic a target backend's native `match` already
-    /// gives for free, and would lose the direct correspondence with the existing backend's own `Pattern`
-    /// vocabulary this model is built to mirror.
+    /// (`loaves/compiler/incan_ir/src/expr.rs`): that backend has already reduced Incan's match-pattern surface to the
+    /// small, closed vocabulary [`Pattern`] mirrors (see its own docs), and compiles each arm's pattern directly
+    /// into a native Rust `match` arm, letting rustc perform exhaustiveness checking and the actual
+    /// destructuring/dispatch itself. Matching the same #653-criterion-3 "compiler-owned semantic gets its own
+    /// explicit node" treatment as [`Self::Format`]/[`StatementKind::TryPropagate`]/[`StatementKind::IterNext`],
+    /// `match` stays a single structured `Rvalue` here too rather than being decomposed into a chain of `If`
+    /// statements: decomposing it would mean re-deriving the same destructuring/dispatch logic a target backend's
+    /// native `match` already gives for free, and would lose the direct correspondence with the existing backend's
+    /// own `Pattern` vocabulary this model is built to mirror.
     Match {
         /// The value being matched. Always read as [`OwnershipFact::Borrow`]: more than one arm's pattern bindings
         /// may read from the scrutinee across the arm list (only one arm actually runs at a time, but see
-        /// `BodyBuilder::lower_match` in `src/frontend/body_ir.rs` for why this model's last-use approximation does
-        /// not attempt per-arm-exclusive dataflow), so treating this top-level read as an unconditional move would
-        /// risk being unsound for whichever arm ends up executing. Each pattern binding computes its own, more
-        /// precise ownership fact separately (see [`Pattern::Var`]/[`PatternBinding`]) -- a *nested*
-        /// (`Tuple`/`Struct`/`Enum`-projected) binding can never disagree with this field, since a projected read
-        /// is never a move (see [`PatternBinding::fact`]'s own docs), but a *root-level* `Pattern::Var`/wildcard
-        /// binding that captures the scrutinee's whole value can legitimately select
-        /// [`OwnershipFact::Move`]/[`OwnershipFact::Clone`] for that one arm. This field's own `Borrow` and such a
-        /// root binding's `Move` are not reconciled against each other here -- a target backend that sees a
-        /// root-level `Move`/`Clone` binding in some arm must match the scrutinee by value (or clone it) rather
+        /// `BodyBuilder::lower_match` in `loaves/compiler/incan_frontend/src/body_ir.rs` for why this model's last-use
+        /// approximation does not attempt per-arm-exclusive dataflow), so treating this top-level read as an
+        /// unconditional move would risk being unsound for whichever arm ends up executing. Each pattern
+        /// binding computes its own, more precise ownership fact separately (see
+        /// [`Pattern::Var`]/[`PatternBinding`]) -- a *nested* (`Tuple`/`Struct`/`Enum`-projected) binding can
+        /// never disagree with this field, since a projected read is never a move (see
+        /// [`PatternBinding::fact`]'s own docs), but a *root-level* `Pattern::Var`/wildcard binding that
+        /// captures the scrutinee's whole value can legitimately select [`OwnershipFact::Move`]/
+        /// [`OwnershipFact::Clone`] for that one arm. This field's own `Borrow` and such a root binding's
+        /// `Move` are not reconciled against each other here -- a target backend that sees a root-level
+        /// `Move`/`Clone` binding in some arm must match the scrutinee by value (or clone it) rather
         /// than by the reference this field's `Borrow` would otherwise suggest, the same kind of cross-fact
         /// reconciliation v0 already leaves to later work elsewhere (see the module-level docs).
         scrutinee: Operand,
         /// Every arm, in source order. The first arm whose pattern matches and whose guard (if any) is truthy runs.
         /// Incan's typechecker enforces match exhaustiveness ahead of lowering (`check_match_exhaustiveness` in
-        /// `src/frontend/typechecker/check_expr/match_.rs`), so Body IR itself does not need to model a fallthrough
-        /// "no arm matched" case.
+        /// `loaves/compiler/incan_frontend/src/typechecker/check_expr/match_.rs`), so Body IR itself does not need to
+        /// model a fallthrough "no arm matched" case.
         arms: Vec<MatchArm>,
     },
 }
@@ -1493,11 +1494,11 @@ impl DefaultComputation {
 /// its own -- a closure is not a top-level declaration, and any runtime/panic facts its body introduces are folded
 /// directly into the owning [`Body`]'s own accumulated facts by lowering rather than tracked separately per closure. It
 /// also reuses the *same* [`LocalId`] numbering as its owning [`Body`] rather than starting a fresh local space at
-/// zero: the frontend lowering that builds this model (`src/frontend/body_ir.rs`) already keeps one flat, function-wide
-/// local-ID namespace. The frontend snapshots and restores its active name-to-local map at lexical boundaries
-/// (including closures), so giving each closure a separate zero-based local space would mean inventing a parallel
-/// indexing scheme just for this one construct. Reusing the owning body's monotonic counter keeps every [`LocalId`] in
-/// a function globally unique and lets [`Rvalue::Closure`]'s [`CallableParam::local`] values and
+/// zero: the frontend lowering that builds this model (`loaves/compiler/incan_frontend/src/body_ir.rs`) already keeps
+/// one flat, function-wide local-ID namespace. The frontend snapshots and restores its active name-to-local map at
+/// lexical boundaries (including closures), so giving each closure a separate zero-based local space would mean
+/// inventing a parallel indexing scheme just for this one construct. Reusing the owning body's monotonic counter keeps
+/// every [`LocalId`] in a function globally unique and lets [`Rvalue::Closure`]'s [`CallableParam::local`] values and
 /// [`Self::capture_locals`] simply index into the same [`Body::locals`] the rest of the function uses, so a closure's
 /// own parameters and captures show up in the ordinary `locals:` listing like any other local.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1586,7 +1587,7 @@ pub struct MatchArm {
     /// This arm's produced value. A source arm whose body is a statement block rather than a single `=> expr`
     /// always resolves to [`Constant::Unit`], mirroring the existing Rust-emission backend's own
     /// `IrExprKind::Block { stmts, value: None }` treatment of the same shape
-    /// (`src/backend/ir/lower/expr/patterns.rs`'s `lower_match_arms`).
+    /// (`loaves/compiler/incan_ir/src/lower/expr/patterns.rs`'s `lower_match_arms`).
     pub result: Operand,
 }
 
@@ -1625,21 +1626,21 @@ impl MatchArm {
 
 /// A `match` arm's pattern.
 ///
-/// Mirrors the existing Rust-emission backend's own closed `Pattern` vocabulary (`src/backend/ir/expr.rs`) almost
-/// exactly -- see #1101's B6 pre-intake in `plan.md` for why this vocabulary is already small and closed rather
-/// than something this bucket needed to design from scratch: the existing backend compiles each variant here
-/// directly into the matching native Rust pattern syntax and lets rustc itself do the actual destructuring/
-/// dispatch, so a target backend consuming this model can do the same. The one deliberate divergence from the
-/// existing backend's vocabulary is [`Self::Var`]: the existing backend's `Pattern::Var(String)` carries a bare
-/// source name (that backend's own separate, string-keyed scope tracks what it resolves to), while this model's
-/// [`PatternBinding`] carries an already-declared [`LocalId`] plus the Duckborrower fact/last-use marker for
+/// Mirrors the existing Rust-emission backend's own closed `Pattern` vocabulary
+/// (`loaves/compiler/incan_ir/src/expr.rs`) almost exactly -- see #1101's B6 pre-intake in `plan.md` for why this
+/// vocabulary is already small and closed rather than something this bucket needed to design from scratch: the existing
+/// backend compiles each variant here directly into the matching native Rust pattern syntax and lets rustc itself do
+/// the actual destructuring/ dispatch, so a target backend consuming this model can do the same. The one deliberate
+/// divergence from the existing backend's vocabulary is [`Self::Var`]: the existing backend's `Pattern::Var(String)`
+/// carries a bare source name (that backend's own separate, string-keyed scope tracks what it resolves to), while this
+/// model's [`PatternBinding`] carries an already-declared [`LocalId`] plus the Duckborrower fact/last-use marker for
 /// reading that part of the scrutinee -- consistent with #653's requirement that ownership decisions be
 /// represented as explicit facts on the model itself, not deferred to a target backend's own name resolution.
 ///
 /// v0 does not model the existing backend's union-type pattern narrowing (matching one member of a source `Union`
 /// type against a target's own narrower union subset, rewriting the pattern and synthesizing extra arms --
-/// `lower_narrowed_union_capture_arms`/`union_pattern_target` in `src/backend/ir/lower/expr/patterns.rs`) or RFC
-/// 021 field-alias resolution for named struct-pattern fields (`resolve_field_alias`, private to that backend's
+/// `lower_narrowed_union_capture_arms`/`union_pattern_target` in `loaves/compiler/incan_ir/src/lower/expr/patterns.rs`)
+/// or RFC 021 field-alias resolution for named struct-pattern fields (`resolve_field_alias`, private to that backend's
 /// own lowering pass, with no Body IR v0 equivalent). Both are backend-owned refinements layered on top of the same
 /// closed vocabulary below, not part of the vocabulary itself, and out of scope for this bucket; a pattern that
 /// would need either still lowers structurally through the plain (non-narrowed) mapping, at the cost of the
@@ -1693,9 +1694,9 @@ pub enum Pattern {
     },
     /// An alternation pattern (`A | B`): matches if any alternative matches. Incan's typechecker (RFC 071) requires
     /// every alternative to bind an identical name/type set (`check_or_pattern` in
-    /// `src/frontend/typechecker/check_expr/match_.rs`), so lowering declares exactly one shared local per bound
-    /// name across all alternatives rather than one per alternative -- see `BodyBuilder::lower_match_pattern` in
-    /// `src/frontend/body_ir.rs`.
+    /// `loaves/compiler/incan_frontend/src/typechecker/check_expr/match_.rs`), so lowering declares exactly one shared
+    /// local per bound name across all alternatives rather than one per alternative -- see
+    /// `BodyBuilder::lower_match_pattern` in `loaves/compiler/incan_frontend/src/body_ir.rs`.
     Or(Vec<Pattern>),
 }
 
@@ -1796,9 +1797,9 @@ impl NominalPatternTarget {
 pub struct PatternBinding {
     pub local: LocalId,
     /// The ownership decision selected for this binding, computed the same way [`PlaceOperand::fact`] is: the
-    /// frontend lowering that builds this model (`src/frontend/body_ir.rs`) calls its own equivalent of the same
-    /// place-read ownership selection used for every other read in this file, on the scrutinee place this binding
-    /// projects into.
+    /// frontend lowering that builds this model (`loaves/compiler/incan_frontend/src/body_ir.rs`) calls its own
+    /// equivalent of the same place-read ownership selection used for every other read in this file, on the
+    /// scrutinee place this binding projects into.
     pub fact: OwnershipFact,
     /// Whether this is statically the last read of the underlying scrutinee place this binding was computed from
     /// (see [`PlaceOperand::last_use`] for the same caveat about `fact`/`last_use` being kept as separate facts).
@@ -1819,10 +1820,10 @@ impl PatternBinding {
 
 /// One part of an [`Rvalue::Format`] f-string, either a literal text chunk carried through verbatim or an
 /// already-lowered embedded expression plus the formatting style its source `{expr}`/`{expr!r}` syntax requested.
-/// Mirrors the existing Rust-emission backend's `FormatPart` (`src/backend/ir/expr.rs`), except the expression side
-/// carries an [`Operand`] rather than a full expression tree -- Body IR always lowers embedded expressions through
-/// the same [`Operand`]-producing path as any other read, so ownership facts and last-use tracking apply to
-/// f-string interpolations exactly like any other expression use.
+/// Mirrors the existing Rust-emission backend's `FormatPart` (`loaves/compiler/incan_ir/src/expr.rs`), except the
+/// expression side carries an [`Operand`] rather than a full expression tree -- Body IR always lowers embedded
+/// expressions through the same [`Operand`]-producing path as any other read, so ownership facts and last-use tracking
+/// apply to f-string interpolations exactly like any other expression use.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum FormatPart {
     /// Literal text between interpolations, carried through unescaped: the lexer has already collapsed `{{` and
@@ -1849,9 +1850,9 @@ impl FormatPart {
 }
 
 /// Formatting style requested by one f-string interpolation (`{expr}` vs. `{expr!r}`). Mirrors the existing
-/// Rust-emission backend's `FormatStyle` (`src/backend/ir/expr.rs`); unlike that backend's version, this one carries
-/// no `emits_rust_debug`-style target-representation logic, since Body IR v0 stays target-agnostic and leaves the
-/// decision of how a given style maps to a concrete formatting call to the consuming backend.
+/// Rust-emission backend's `FormatStyle` (`loaves/compiler/incan_ir/src/expr.rs`); unlike that backend's version, this
+/// one carries no `emits_rust_debug`-style target-representation logic, since Body IR v0 stays target-agnostic and
+/// leaves the decision of how a given style maps to a concrete formatting call to the consuming backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FormatStyle {
     /// User-facing display formatting (`{value}`).
@@ -2298,7 +2299,7 @@ pub enum Callee {
     ///
     /// Also used for compiler-synthesized collection-growth calls a comprehension desugar introduces (`push`/
     /// `insert`) that have no source-level call site of their own -- see `lower_comprehension_terminal` in
-    /// `src/frontend/body_ir.rs` for the synthesized case.
+    /// `loaves/compiler/incan_frontend/src/body_ir.rs` for the synthesized case.
     Method(MethodTarget),
     /// A compiler-owned runtime/helper operation, represented explicitly instead of as a generated-Rust helper-call
     /// idiom (#653 criterion 3).
@@ -2754,11 +2755,11 @@ impl std::fmt::Display for CallableTarget {
 /// generated Rust call shapes.
 ///
 /// Most of these mirror a helper the existing Rust-emission backend already generates for string and list operators
-/// (see `src/backend/ir/conversions.rs::determine_binop_plan`). The membership helpers do not: that backend reaches
-/// containment through a `contains` method call rather than a binary-operator plan, so every `*_contains` name here
-/// states a runtime requirement Body IR needs and the runtime must satisfy, not a call shape read back out of
-/// emitted Rust. Each variant's [`Self::as_str`] name *is* that requirement's name; it is not a promise that a Rust
-/// function of exactly that signature already exists.
+/// (see `loaves/compiler/incan_emit/src/conversions.rs::determine_binop_plan`). The membership helpers do not: that
+/// backend reaches containment through a `contains` method call rather than a binary-operator plan, so every
+/// `*_contains` name here states a runtime requirement Body IR needs and the runtime must satisfy, not a call shape
+/// read back out of emitted Rust. Each variant's [`Self::as_str`] name *is* that requirement's name; it is not a
+/// promise that a Rust function of exactly that signature already exists.
 ///
 /// Membership and concatenation are named per operand type rather than shared across collections. One `Contains`
 /// helper would oblige a consumer to re-derive string-versus-list-versus-set-versus-dict from operand types, which
@@ -3066,10 +3067,10 @@ fn render_statement(out: &mut String, stmt: &Statement, indent: &str, depth: usi
 }
 
 /// How [`StatementKind::IterNext`] should poll one iteration, mirroring the two paths the existing Rust-emission
-/// backend already branches on for general-iterable `for` (`src/backend/ir/lower/stmt.rs`'s `ast::Statement::For`
-/// arm, keyed by `TypeCheckInfo::protocol_iteration`): a builtin collection needs no named method dispatch at all,
-/// while a user-defined iterable resolves concrete `__iter__`/`__next__`-shaped method names through the
-/// typechecker's iteration-protocol resolution.
+/// backend already branches on for general-iterable `for` (`loaves/compiler/incan_ir/src/lower/stmt.rs`'s
+/// `ast::Statement::For` arm, keyed by `TypeCheckInfo::protocol_iteration`): a builtin collection needs no named method
+/// dispatch at all, while a user-defined iterable resolves concrete `__iter__`/`__next__`-shaped method names through
+/// the typechecker's iteration-protocol resolution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IterProtocol {
     /// Iterate a builtin collection (`List`/`Dict`/`String`) or a range with no explicit method dispatch. How to
@@ -3194,9 +3195,9 @@ pub enum StatementKind {
     /// [`Body::is_generator`]. A bare `yield` (no value) and expression-position `yield` (the two-way send/receive
     /// protocol, e.g. `x = yield val`) are out of scope for v0: both are stubs even in the existing Rust-emission
     /// backend today (`ast::Expr::Yield(_) => (IrExprKind::Unit, IrType::Unknown)` in
-    /// `src/backend/ir/lower/expr/mod.rs`), so there is no real, delivered behavior for this variant to preserve.
-    /// A generator function's body needs no separate top-level state-machine node: it lowers through this same
-    /// statement vocabulary, while the target runtime owns the concrete suspension mechanism. The existing
+    /// `loaves/compiler/incan_ir/src/lower/expr/mod.rs`), so there is no real, delivered behavior for this variant to
+    /// preserve. A generator function's body needs no separate top-level state-machine node: it lowers through this
+    /// same statement vocabulary, while the target runtime owns the concrete suspension mechanism. The existing
     /// generated-Rust path uses `incan_std_core::iter::Generator`'s channel-backed spawn bridge for `yield`-based
     /// functions; generator expressions instead carry their own deferred [`Rvalue::Generator`] body and use the
     /// iterator-adapter runtime path. Neither representation asks a consumer to infer a suspension point from a
@@ -3222,10 +3223,11 @@ pub enum StatementKind {
     Expr { value: Operand },
     /// `operand?` (try/propagate). Evaluates `operand` (a `Result`-typed value; the current typechecker only
     /// allows `?` on `Result`, not `Option` -- see `validate_try_result_type` in
-    /// `src/frontend/typechecker/check_expr/control_flow.rs`). On the failure variant (`Err`), returns early from
-    /// the enclosing function with the failure value, converting it via `From`/`Into` when the enclosing
-    /// function's error type differs from `operand`'s, mirroring Rust's built-in `?` desugaring. Otherwise stores
-    /// the unwrapped success value (`Ok(v)`'s `v`) into `destination` and falls through to the next statement.
+    /// `loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs`). On the failure variant (`Err`),
+    /// returns early from the enclosing function with the failure value, converting it via `From`/`Into` when the
+    /// enclosing function's error type differs from `operand`'s, mirroring Rust's built-in `?` desugaring.
+    /// Otherwise stores the unwrapped success value (`Ok(v)`'s `v`) into `destination` and falls through to the
+    /// next statement.
     ///
     /// Modeled as a single compiler-owned primitive rather than decomposed into explicit `is_err`/`unwrap`-style
     /// calls, matching the same #653-criterion-3 rationale as [`Callee::Helper`]: this operation is a
@@ -3258,7 +3260,7 @@ pub enum StatementKind {
         /// Where the produced item is written when the iterator was not exhausted.
         destination: Place,
         /// The iterator being polled (already materialized by an earlier `Assign`/`Call` -- see
-        /// `lower_general_iteration` in `src/frontend/body_ir.rs`).
+        /// `lower_general_iteration` in `loaves/compiler/incan_frontend/src/body_ir.rs`).
         iterator: Operand,
         /// Which iteration protocol drives this poll.
         protocol: IterProtocol,
@@ -4175,8 +4177,8 @@ mod tests {
     /// One `Rvalue::Match` exercising every `Pattern` variant this data model closes over (see #1101's B6): a
     /// literal, a tuple nesting a binding and a wildcard behind a guard, a named-field struct constructor, a
     /// positional enum constructor, and an alternation. Mirrors `sample_body`'s own style of hand-building a
-    /// [`Statement`] rather than going through the frontend lowering the `src/frontend/body_ir.rs` integration
-    /// tests exercise instead.
+    /// [`Statement`] rather than going through the frontend lowering the
+    /// `loaves/compiler/incan_frontend/src/body_ir.rs` integration tests exercise instead.
     #[test]
     fn match_rvalue_renders_scrutinee_and_every_pattern_shape() {
         let mut body = sample_body();

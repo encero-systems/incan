@@ -250,10 +250,9 @@ pub fn prepare_oven_project(
     }
     // `std.*` source modules lower through the compiler-owned standard library facets. ProjectGenerator supplies
     // those crates directly, so their internal `rust.module("incan_std_<facet>::...")` declarations are not
-    // user-selected Cargo
-    // inputs. Rust's own `std` crate is likewise supplied by the selected compiler. The selected stdlib provider may
-    // have its own external Rust closure, which the named publisher records in `inline_imports`; caller-owned Rust
-    // imports are materialized only through the narrow direct-rustc path-package seam below.
+    // user-selected Cargo inputs. Rust's own `std` crate is likewise supplied by the selected compiler. The selected
+    // stdlib provider may have its own external Rust closure, which the named publisher records in `inline_imports`;
+    // caller-owned Rust imports are materialized only through the narrow direct-rustc path-package seam below.
     source_inline_imports
         .retain(|import| !incan_lang::lang::stdlib::facets::is_facet(&import.crate_name) && import.crate_name != "std");
     let source_inline_crates = source_inline_imports
@@ -452,10 +451,10 @@ pub fn prepare_oven_project(
     lap = Instant::now();
     let backend_receipt = finalize_backend_receipt(&backend_selection, backend_executed, backend_output_identity)?;
     // Not persisted here: `prepare_oven_project` runs for internal/dependency callers too (see
-    // `BackendSelectionOptions::default()` call sites), and real compilation (the Oven plan
-    // selection and rustc bake below) can still fail after this point. The receipt is instead
-    // published by the top-level `build_file_report`/`build_library_report` entry points, once
-    // and only once the whole build has actually succeeded (#986).
+    // `BackendSelectionOptions::default()` call sites), and real compilation (the Oven plan selection and rustc bake
+    // below) can still fail after this point. The receipt is instead published by the top-level
+    // `build_file_report`/`build_library_report` entry points, once and only once the whole build has actually
+    // succeeded (#986).
 
     let mut receipt_request = OvenGeneratedProjectRequest::new(
         &project_root,

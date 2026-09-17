@@ -69,13 +69,13 @@ fn semantic_compiler_paths_do_not_reverse_emitted_names_into_source_bindings() -
 
 /// Guardrail against reintroducing stringly-typed vocabulary checks.
 ///
-/// This is intentionally a **coarse** safety net. It looks for suspicious patterns like `== "List"` or
-/// `match name.as_str() { "List" => ... }` in Rust source files where we expect callers to go through
-/// `incan_lang::lang` registries instead.
+/// This is intentionally a **coarse** safety net. It looks for suspicious patterns like `== "List"` or `match
+/// name.as_str() { "List" => ... }` in Rust source files where we expect callers to go through `incan_lang::lang`
+/// registries instead.
 ///
 /// Notes:
-/// - We allow occurrences in `loaves/kernel/incan_lang/src/lang/**` (registries themselves), in docgen, and in
-///   tests/fixtures.
+/// - We allow occurrences in `loaves/kernel/incan_lang/src/lang/**` (registries themselves), in docgen, and in any
+///   `tests/` directory.
 /// - This is not meant to be perfect; it’s meant to catch “oops I added a string match”.
 #[test]
 fn no_new_stringly_vocab_checks_in_rust_sources() {

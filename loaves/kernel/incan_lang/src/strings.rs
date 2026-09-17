@@ -1,7 +1,7 @@
 //! Define shared string semantics (policy + pure helpers).
 //!
-//! This module holds **pure/deterministic** helpers used by both the compiler (typechecking,
-//! const-eval, lowering decisions) and the runtime/stdlib to avoid semantic drift.
+//! This module holds **pure/deterministic** helpers used by both the compiler (typechecking, const-eval, lowering
+//! decisions) and the runtime/stdlib to avoid semantic drift.
 //!
 //! ## Notes
 //! - **Indexing model**: Unicode scalar indexing (Rust `char`), not bytes or grapheme clusters.

@@ -152,10 +152,9 @@ fn messages(errors: Vec<CompileError>) -> Vec<String> {
     errors.into_iter().map(|error| error.message).collect()
 }
 
-/// Fold a `typecheck_err_messages` result (lex/parse failure or typecheck errors) into a `ComparisonOutcome`,
-/// given a predicate over the typechecker error messages that decides whether the observed shape still matches
-/// the case's documented expectation.
-/// Lower `src` to Body IR and report whether every construct in it is faithfully represented.
+/// Fold a `typecheck_err_messages` result (lex/parse failure or typecheck errors) into a `ComparisonOutcome`, given a
+/// predicate over the typechecker error messages that decides whether the observed shape still matches the case's
+/// documented expectation. Lower `src` to Body IR and report whether every construct in it is faithfully represented.
 ///
 /// This is `EvidenceLane::DirectParserTypechecker` evidence: it exercises the frontend only, asserting that the
 /// source is accepted *and* that lowering produced no `unsupported(...)` placeholder. It deliberately proves nothing
@@ -2870,9 +2869,9 @@ fn verify_mut_shadow(graph: &CheckedIdentityGraph) -> Result<IdentityAssertions,
 }
 
 fn verify_generic_binder(graph: &CheckedIdentityGraph) -> Result<IdentityAssertions, String> {
-    // The binder token introduces a declaration, so it deliberately does not appear in the
-    // checker-owned reference map. Its annotations are references to that declaration and carry
-    // the canonical GenericBinder identity into downstream consumers.
+    // The binder token introduces a declaration, so it deliberately does not appear in the checker-owned reference
+    // map. Its annotations are references to that declaration and carry the canonical GenericBinder identity into
+    // downstream consumers.
     let parameter = graph.resolved_identity("identity_generic", "T", 1)?;
     let return_type = graph.resolved_identity("identity_generic", "T", 2)?;
     if parameter.kind != SemanticSourceTargetKind::GenericBinder {

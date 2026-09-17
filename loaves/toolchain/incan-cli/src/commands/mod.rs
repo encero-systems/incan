@@ -1,7 +1,7 @@
 //! CLI command implementations
 //!
-//! All command functions return `CliResult<ExitCode>` instead of calling `process::exit`.
-//! Error handling and exits happen in the top-level `run()`.
+//! All command functions return `CliResult<ExitCode>` instead of calling `process::exit`. Error handling and exits
+//! happen in the top-level `run()`.
 //!
 //! ## Submodules
 //!

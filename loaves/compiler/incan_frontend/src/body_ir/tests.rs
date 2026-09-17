@@ -1186,9 +1186,9 @@ fn lowers_a_dict_comprehension_into_an_insert_loop() -> Result<(), Box<dyn std::
 fn generator_expression_keeps_its_multi_clause_body_lazy_and_captures_its_environment()
 -> Result<(), Box<dyn std::error::Error>> {
     // Mirrors the multi-clause fixture from `test_rfc006_generator_expression_infers_element_type` in
-    // `src/frontend/typechecker/tests.rs`, but also reads `offset` from both the filter and element. The Body IR
-    // value must capture that enclosing local once at construction; it must not materialize the chain or run
-    // either filter/element in the enclosing body.
+    // `loaves/compiler/incan_frontend/src/typechecker/tests.rs`, but also reads `offset` from both the filter and
+    // element. The Body IR value must capture that enclosing local once at construction; it must not materialize
+    // the chain or run either filter/element in the enclosing body.
     let source = "def positives(offset: int, xs: list[int], ys: list[int]) -> Generator[int]:\n  return (x * offset for x in xs if x > offset for y in ys if y > x)\n";
     let module = build(source, &["m", "generator_expr"])?;
     let snapshot = module.render_snapshot();
@@ -1425,7 +1425,7 @@ fn lowers_tuple_assign_swap_with_correct_evaluation_order() -> Result<(), Box<dy
     // swap would clobber `arr[i]` before `arr[j]`'s read observes it. A leading plain-identifier target (`a, b
     // = ...`) always parses as `TupleUnpackStmt` instead (new bindings, possibly shadowing) -- lvalue index/
     // field targets are what actually reaches `TupleAssignStmt`, matching the parser's own routing
-    // (`crates/incan_syntax/src/parser/stmts.rs`'s `assignment_or_expr_stmt`).
+    // (`loaves/kernel/incan_syntax/src/parser/stmts.rs`'s `assignment_or_expr_stmt`).
     let source =
         "def swap(mut arr: list[int], i: int, j: int) -> int:\n  arr[i], arr[j] = (arr[j], arr[i])\n  return arr[i]\n";
     let module = build(source, &["m", "tuple_assign"])?;
@@ -3228,7 +3228,7 @@ fn lowers_a_tuple_for_pattern_over_a_user_defined_iteration_protocol() -> Result
 
 #[test]
 fn lowers_a_nested_tuple_for_pattern_through_projected_subfields() -> Result<(), Box<dyn std::error::Error>> {
-    // `for_binding_pattern_item` (`crates/incan_syntax/src/parser/stmts.rs`) admits only `_` or a bare
+    // `for_binding_pattern_item` (`loaves/kernel/incan_syntax/src/parser/stmts.rs`) admits only `_` or a bare
     // identifier, so a nested loop pattern has no source spelling yet -- see
     // `nested_tuple_for_patterns_have_no_source_spelling_yet`. The typechecker's own
     // `define_for_pattern_bindings` already recurses through nested `Pattern::Tuple` specifically so a

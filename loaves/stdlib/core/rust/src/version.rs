@@ -16,10 +16,10 @@
 //! The expansion deliberately does not require Cargo environment variables in the consumer, so Oven may invoke
 //! `rustc` directly.
 //!
-//! Released stdlibs follow caret compatibility from the declared numeric minimum: the same major after 1.0,
-//! the same minor for `0.x`, and the same patch for `0.0.x`. A released stdlib may succeed a declared prerelease;
-//! for example, code generated for `0.6.0-dev.4` accepts `0.6.1`. A linked prerelease demands exact equality because
-//! a `-dev.N` stdlib promises nothing about the next one.
+//! Released stdlibs follow caret compatibility from the declared numeric minimum: the same major after 1.0, the same
+//! minor for `0.x`, and the same patch for `0.0.x`. A released stdlib may succeed a declared prerelease; for example,
+//! code generated for `0.6.0-dev.4` accepts `0.6.1`. A linked prerelease demands exact equality because a `-dev.N`
+//! stdlib promises nothing about the next one.
 
 /// The version of this stdlib crate, read from `Cargo.toml` at compile time.
 ///

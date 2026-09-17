@@ -1,6 +1,6 @@
 //! The `oven.lock` model: what a project's lock records, how it is parsed, fingerprinted and published, and the
 //! publication lock that serializes writers. The compiler's lock command fills the semantic state from its provider
-//! plan (`provider::lock_semantics` in the root crate); this module knows only the resulting data.
+//! plan (`incan_provider::lock_semantics`); this module knows only the resulting data.
 //!
 //! The lockfile embeds a Cargo.lock payload and records a dependency fingerprint for strict `--locked` / `--frozen`
 //! builds.

@@ -282,11 +282,10 @@ def test_generic_json_result_infers_from_parameter_context() -> None:
 
     /// One provider journey carries the three related `receiver_factory` contracts.
     ///
-    /// The former three tests independently built the same Rust dependency graph,
-    /// then each asked a compiled Incan provider and consumer to traverse it. The
-    /// contracts are independent, but the journeys were not: one provider build
-    /// and one consumer build prove all three without repeating the same
-    /// expensive inspection boundary in a package-test batch.
+    /// The former three tests independently built the same Rust dependency graph, then each asked a compiled Incan
+    /// provider and consumer to traverse it. The contracts are independent, but the journeys were not: one provider
+    /// build and one consumer build prove all three without repeating the same expensive inspection boundary in a
+    /// package-test batch.
     #[test]
     fn compiled_provider_preserves_shared_rust_interop_contracts_issues834_835_961()
     -> Result<(), Box<dyn std::error::Error>> {

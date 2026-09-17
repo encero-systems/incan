@@ -1,7 +1,7 @@
 //! Collection / generic-base builtin type vocabulary.
 //!
-//! This registry covers builtin collection and generic-base type names (e.g. `List`, `Dict`,
-//! `Option`) and their accepted aliases.
+//! This registry covers builtin collection and generic-base type names (e.g. `List`, `Dict`, `Option`) and their
+//! accepted aliases.
 //!
 //! ## Notes
 //! - Lookup via [`from_str`] is **case-sensitive**.
@@ -155,8 +155,8 @@ pub fn from_str(name: &str) -> Option<CollectionTypeId> {
         .map(|t| t.id)
 }
 
-/// Resolve a Rust generic display base such as `Vec`, `HashMap`, or `HashSet` into the matching
-/// Incan collection type without making Rust-specific names valid source-level aliases.
+/// Resolve a Rust generic display base such as `Vec`, `HashMap`, or `HashSet` into the matching Incan collection type
+/// without making Rust-specific names valid source-level aliases.
 pub fn from_rust_display_base(base: &str) -> Option<CollectionTypeId> {
     let tail = base.rsplit("::").next().unwrap_or(base);
     match tail {

@@ -28,8 +28,8 @@ use std::fmt::Display;
 /// position transitively even though their names do not say so.
 ///
 /// `scope_discriminant` is the subtler one. It indexes a module-wide table filled in traversal order
-/// (`src/frontend/symbols.rs`: `self.current_scope = self.scopes.len() - 1`), so inserting or moving any
-/// declaration renumbers every declaration traversed after it. Its *presence* is meaningful — it separates a
+/// (`loaves/compiler/incan_frontend/src/symbols.rs`: `self.current_scope = self.scopes.len() - 1`), so inserting or
+/// moving any declaration renumbers every declaration traversed after it. Its *presence* is meaningful — it separates a
 /// nested binding from a module-level namesake — and [`crate::stable_identity::StableDeclarationId`] keeps that
 /// in the identity. Its value is position and belongs nowhere.
 const POSITIONAL_ID_FIELDS: &[&str] = &["decl_id", "direct_call_id", "id", "module_id", "scope_discriminant"];

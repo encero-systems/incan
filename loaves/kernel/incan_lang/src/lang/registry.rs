@@ -1,8 +1,8 @@
 //! Shareable metadata for `incan_lang::lang` registries.
 //!
-//! The `incan_lang::lang` module is a set of **registry-first** vocabularies: keywords,
-//! operators, builtin functions, builtin types, etc. This submodule provides the small,
-//! dependency-free metadata types that are reused across all registries.
+//! The `incan_lang::lang` module is a set of **registry-first** vocabularies: keywords, operators, builtin functions,
+//! builtin types, etc. This submodule provides the small, dependency-free metadata types that are reused across all
+//! registries.
 //!
 //! ## Notes
 //! - These types are intentionally lightweight and `Copy`-friendly so registries can live in `const` tables.
@@ -231,8 +231,8 @@ pub const RFC_116: RfcId = "RFC 116";
 
 /// Namespace-style access to RFC ids.
 ///
-/// This exists purely for ergonomics at call sites so individual registries don’t need to import
-/// dozens of `RFC_###` constants into their `use` lists.
+/// This exists purely for ergonomics at call sites so individual registries don’t need to import dozens of `RFC_###`
+/// constants into their `use` lists.
 ///
 /// ## Notes
 /// - Rust identifiers cannot start with digits, so the style is `RFC::_000` (not `RFC::000`).
@@ -379,8 +379,8 @@ impl RFC {
 
 /// Identify the language/compiler version a vocabulary item is available since.
 ///
-/// This is intentionally **minor-only**: we track `major.minor` and do not model patch versions
-/// (patch releases must not introduce new language features).
+/// This is intentionally **minor-only**: we track `major.minor` and do not model patch versions (patch releases must
+/// not introduce new language features).
 ///
 /// ## Examples
 /// ```rust

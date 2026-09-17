@@ -562,7 +562,7 @@ mod embedded_fragment_tests {
     // The parser-level fixtures above all call `parse_embedded_fixture`, which unconditionally lexes with
     // `lex_tolerant` and discards its collected errors. That mirrors the parser's own unit-test convenience, not
     // the real production entrypoint (`CompilationSession::parse_source_for_collection` in
-    // `src/cli/commands/common.rs`), which only falls back to `lex_tolerant` after the strict `lex()` fails, and
+    // `loaves/compiler/incan_driver/src/session.rs`), which only falls back to `lex_tolerant` after the strict `lex()` fails, and
     // then reconciles the tolerant lexer's errors through `parse_with_source_and_lex_errors` rather than
     // dropping them outright. The test below exercises that exact reconciliation path directly.
 

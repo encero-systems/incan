@@ -408,10 +408,10 @@ pub enum IrExprKind {
     /// structural content (tags, selectors, declarations, regex/type shapes, ...) deliberately does **not** get a
     /// mirrored IR node tree here — Body IR's job is Rust code generation, and there is no code to generate for
     /// content with no runtime meaning yet. Only the holes, which are genuine Incan expressions, need real IR
-    /// representation. Emission (`src/backend/ir/emit/expressions/mod.rs`) refuses to emit Rust code for this node
-    /// with a clear `EmitError` rather than guessing at semantics, exactly as `VocabBlock`/`Surface` refuse at
-    /// lowering when they reach it unexpectedly — the difference is where in the pipeline the refusal happens,
-    /// because this node's holes genuinely do need to reach lowering, unlike those DSL-erased nodes.
+    /// representation. Emission (`loaves/compiler/incan_emit/src/emit/expressions/mod.rs`) refuses to emit Rust code
+    /// for this node with a clear `EmitError` rather than guessing at semantics, exactly as `VocabBlock`/`Surface`
+    /// refuse at lowering when they reach it unexpectedly — the difference is where in the pipeline the refusal
+    /// happens, because this node's holes genuinely do need to reach lowering, unlike those DSL-erased nodes.
     EmbeddedFragment {
         submode: incan_vocab::EmbeddedFragmentSubmode,
         source_text: String,

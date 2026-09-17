@@ -63,11 +63,11 @@ const EXAMPLE_SOURCE_BASELINE: usize = 91;
 
 /// Examples whose `main` executes today. Update this in the same change that moves it.
 ///
-/// It moved from zero to four when `print` gained a represented builtin identity and an executed implementation:
-/// 25 of the 68 examples had been stopping at their first call.
-/// Hashed set membership then admitted `examples/advanced/membership_ops.incn`, raising execution to five.
-/// Canonical string helpers then admitted `examples/simple/strings.incn`, raising execution to six.
-/// Checked scalar conversions admit `examples/advanced/type_conversions.incn`, raising execution to seven.
+/// It moved from zero to four when `print` gained a represented builtin identity and an executed implementation: 25 of
+/// the 68 examples had been stopping at their first call. Hashed set membership then admitted
+/// `examples/advanced/membership_ops.incn`, raising execution to five. Canonical string helpers then admitted
+/// `examples/simple/strings.incn`, raising execution to six. Checked scalar conversions admit
+/// `examples/advanced/type_conversions.incn`, raising execution to seven.
 ///
 /// Remaining model/default profiles are tracked under #1250; #989 owns imports and multi-module execution. The
 /// selected #1256 string helpers are no longer a blocker for the committed strings example. Repeated-binding

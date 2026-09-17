@@ -1,8 +1,7 @@
 //! Prelude / surface functions (non-syntax vocabulary).
 //!
-//! This registry covers *globally available* helper functions that are not “core builtins” in the
-//! narrow sense, but are part of the language’s standard surface (especially async/time/channel
-//! helpers).
+//! This registry covers *globally available* helper functions that are not “core builtins” in the narrow sense, but are
+//! part of the language’s standard surface (especially async/time/channel helpers).
 
 use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
 

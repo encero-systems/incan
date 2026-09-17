@@ -989,7 +989,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // The receiver is read before the arguments, matching source evaluation order: `recv.m(f())` observes the
         // receiver place first. Method receivers are treated as borrowed rather than moved/cloned, mirroring how the
         // existing Rust-emission backend's ownership planner treats most method receivers
-        // (`src/backend/ir/ownership.rs`) -- see this module's rustdoc for the full precedent discussion.
+        // (`loaves/compiler/incan_emit/src/ownership.rs`) -- see this module's rustdoc for the full precedent
+        // discussion.
         let receiver_operand = if let ast::Expr::Field(base, member) = &recv.node
             && self.local_value_enum_variant_target(base, member, recv.span).is_some()
         {

@@ -21,11 +21,11 @@
 //! #987's own scope calls for "receipt-aware reference/replacement or shadow comparisons where both paths are
 //! available." #986 landed [`incan_driver::backend::selection`], so rows that actually execute a backend declare a real
 //! [`BackendSelection`] before execution and finalize that exact run into a real
-//! [`incan_driver::backend::selection::BackendExecutionReceipt`] — the same three-call sequence
-//! `src/cli/commands/build.rs` uses for an actual build. Compiler-behavior callbacks,
+//! [`incan_driver::backend::selection::BackendExecutionReceipt`] — the same three-call sequence the driver's build
+//! pipeline (`loaves/compiler/incan_driver/src/build/`) uses for an actual build. Compiler-behavior callbacks,
 //! checked-graph generation, and artifact inspection are not backend executions and therefore carry distinct
-//! observation evidence rather than fabricated receipts. The #988 Body-IR cases additionally carry a Body-IR
-//! snapshot, ownership evidence, and runtime requirements.
+//! observation evidence rather than fabricated receipts. The #988 Body-IR cases additionally carry a Body-IR snapshot,
+//! ownership evidence, and runtime requirements.
 //!
 //! ## Source-observable comparison (#1146)
 //!
@@ -112,7 +112,8 @@ pub(crate) enum BehaviorCategory {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum EvidenceLane {
-    /// `src/frontend/**` unit tests, diagnostics tests, parser snapshots — source acceptance/rejection.
+    /// `loaves/compiler/incan_frontend/src/**` unit tests, diagnostics tests, parser snapshots — source
+    /// acceptance/rejection.
     DirectParserTypechecker,
     /// `loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs`, `loaves/compiler/incan_emit/tests/snapshots/**` —
     /// current generated Rust shape.
@@ -432,10 +433,10 @@ fn execute_replacement_plan(source: &str, plan: ReplacementExecutionPlan) -> Rep
 
 /// Observe one row through both routes and bind the result to the receipts the comparison produced.
 ///
-/// When both routes ran, this reports the comparison itself. When only the replacement route ran, it reports
-/// *that* execution's own receipt and Body-IR evidence rather than re-running it: the comparison already
-/// retained everything the row needs, and executing twice would make the reported receipt describe a different
-/// run than the one the comparison observed.
+/// When both routes ran, this reports the comparison itself. When only the replacement route ran, it reports *that*
+/// execution's own receipt and Body-IR evidence rather than re-running it: the comparison already retained everything
+/// the row needs, and executing twice would make the reported receipt describe a different run than the one the
+/// comparison observed.
 ///
 /// `Err` is reserved for the one case where there is genuinely nothing to report — no staged capability, or a
 /// comparison that retained no executed route at all — because the caller answers `Err` by running the row

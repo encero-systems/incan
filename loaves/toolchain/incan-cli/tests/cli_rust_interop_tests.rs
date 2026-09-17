@@ -819,9 +819,8 @@ pub fn create_udf(
 }
 "#,
     )?;
-    // These three isolated helper crates used to force separate package and
-    // metadata walks in an already single-project regression. Their import
-    // routes remain distinct Rust modules, while one fixture crate now owns
+    // These three isolated helper crates used to force separate package and metadata walks in an already
+    // single-project regression. Their import routes remain distinct Rust modules, while one fixture crate now owns
     // the shared package boundary.
     let helper_src = tmp.path().join("rust").join("generic_helpers").join("src");
     fs::create_dir_all(&helper_src)?;

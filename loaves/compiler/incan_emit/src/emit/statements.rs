@@ -1113,9 +1113,9 @@ impl<'a> IrEmitter<'a> {
     ) -> Result<TokenStream, EmitError> {
         match &stmt.kind {
             IrStmtKind::Expr(expr) => {
-                // Lowering currently models tuple-unpack/chained-assignment expansion as a block
-                // expression used in statement position. Emit those inner statements directly so
-                // the introduced bindings remain visible to following statements.
+                // Lowering currently models tuple-unpack/chained-assignment expansion as a block expression used in
+                // statement position. Emit those inner statements directly so the introduced bindings remain visible
+                // to following statements.
                 if let IrExprKind::Block { stmts, value: None } = &expr.kind {
                     let inner = self.emit_stmts_with_tail(stmts, following_slices, following_expr)?;
                     return Ok(quote! { #(#inner)* });
@@ -1327,9 +1327,9 @@ impl<'a> IrEmitter<'a> {
                 let mutable_bindings = for_pattern_mutated_bindings(pattern, body);
                 let pat = self.emit_pattern_with_mutable_bindings(pattern, &mutable_bindings);
                 let body_stmts = self.emit_stmts(body)?;
-                // For non-copy collections, iterate by reference to avoid move
-                // This handles the common case where a collection is used multiple times
-                // For primitive element types, use .iter().copied() to get values instead of references
+                // For non-copy collections, iterate by reference to avoid move This handles the common case where a
+                // collection is used multiple times For primitive element types, use .iter().copied() to get values
+                // instead of references
                 let needs_mut_items = for_body_needs_mut_iteration(pattern, body);
                 let iterable_is_borrowable_lvalue = matches!(
                     &iterable.kind,

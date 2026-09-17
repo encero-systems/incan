@@ -29,8 +29,8 @@ use crate::{
 
 /// Represents a process handling proc-macro communication.
 pub(crate) struct ProcMacroServerProcess {
-    /// The state of the proc-macro server process, the protocol is currently strictly sequential
-    /// hence the lock on the state.
+    /// The state of the proc-macro server process, the protocol is currently strictly sequential hence the lock on the
+    /// state.
     state: Mutex<ProcessSrvState>,
     version: u32,
     protocol: Protocol,

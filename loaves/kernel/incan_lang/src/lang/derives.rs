@@ -1,7 +1,7 @@
 //! Builtin derive vocabulary.
 //!
-//! This registry defines the canonical set of derive names accepted by the compiler via `@derive(...)`.
-//! Callers should avoid hard-coding derive strings and instead use [`DeriveId`] for identity.
+//! This registry defines the canonical set of derive names accepted by the compiler via `@derive(...)`. Callers should
+//! avoid hard-coding derive strings and instead use [`DeriveId`] for identity.
 //!
 //! ## Notes
 //! - Derives are treated as *language vocabulary* (like keywords/operators) even though they map to Rust traits/derive

@@ -49,9 +49,8 @@ struct ToolchainPathSearchPaths {
 
 /// The repository checkout this crate was compiled from: the workspace root three directories above the crate.
 ///
-/// Every crate under `loaves/` lives at `loaves/<ring>/<crate>`, so the workspace root — where `crates/`,
-/// `Cargo.lock` and the stdlib sources sit during development — is the manifest directory's third ancestor. The
-/// root crate used its own manifest directory for this before the crate split; a development build resolves
+/// Every crate under `loaves/` lives at `loaves/<ring>/<crate>`, so the workspace root — where `Cargo.lock` and
+/// the rings sit during development — is the manifest directory's third ancestor. A development build resolves
 /// support crates and stdlib sources against this path when neither an installed layout nor an override applies.
 pub fn development_root() -> PathBuf {
     let mut root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -449,7 +448,6 @@ fn find_stdlib_root_in(paths: StdlibSearchPaths) -> Option<PathBuf> {
     None
 }
 
-/// Resolve the stdlib beneath a repository, crate, or installed toolchain root.
 /// A stdlib root is the directory that holds the component catalog.
 fn is_stdlib_root(path: &Path) -> bool {
     path.join(STDLIB_CATALOG_FILE).is_file()
@@ -463,7 +461,6 @@ fn stdlib_root_from_development_root(root: &Path) -> Option<PathBuf> {
         .find(|candidate| is_stdlib_root(candidate))
 }
 
-/// Resolve either a direct stdlib directory or a toolchain/crate root containing `stdlib/`.
 /// An override or installed root names the stdlib root itself or the directory holding a `stdlib/` root.
 fn stdlib_root_from_override(root: &Path) -> Option<PathBuf> {
     if !root.is_dir() {
@@ -476,7 +473,6 @@ fn stdlib_root_from_override(root: &Path) -> Option<PathBuf> {
     is_stdlib_root(&nested).then_some(nested)
 }
 
-/// Return whether `path` is the Incan built-in stdlib source root itself.
 /// The stdlib root above a built-in component directory: a project (`loaf.toml`) whose parent holds the catalog.
 fn stdlib_root_of_component_dir(path: &Path) -> Option<PathBuf> {
     if !path.join("loaf.toml").is_file() {

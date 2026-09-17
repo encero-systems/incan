@@ -1479,9 +1479,9 @@ impl ProjectGenerator {
             changed |= Self::write_file_if_changed(&module_file, module_code)?;
         }
 
-        // Build main.rs with the generated header first, then mod declarations.
-        // Crate attributes (`#![...]`) must appear before any Rust items (including `mod ...;`),
-        // so we insert module declarations at the backend marker after any crate attributes.
+        // Build main.rs with the generated header first, then mod declarations. Crate attributes (`#![...]`) must
+        // appear before any Rust items (including `mod ...;`), so we insert module declarations at the backend marker
+        // after any crate attributes.
         let mut full_main = String::new();
         full_main.push_str(main_code);
         self.add_sdk_provider_crate_lints(&mut full_main, is_sdk_provider_build());

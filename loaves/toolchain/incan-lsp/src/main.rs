@@ -2,8 +2,8 @@
 //!
 //! Run with: incan-lsp
 //!
-//! `--version` and `--help` are handled before the server starts so install docs
-//! and tooling can verify the binary without speaking LSP over stdio.
+//! `--version` and `--help` are handled before the server starts so install docs and tooling can verify the binary
+//! without speaking LSP over stdio.
 //!
 //! The LSP communicates via stdin/stdout using the Language Server Protocol.
 

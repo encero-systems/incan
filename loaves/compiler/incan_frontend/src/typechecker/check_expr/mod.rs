@@ -648,15 +648,15 @@ impl TypeChecker {
     /// Typecheck a descriptor-gated embedded-fragment expression (RFC 081, `#1023`).
     ///
     /// Unlike [`TypeChecker::check_surface_expr`], this node is never eliminated by the pre-typecheck vocab
-    /// desugar pass (`src/frontend/vocab_desugar_pass/rewrite.rs`) — it must reach `check_expr` as itself, because
-    /// its [`EmbeddedNode::Hole`] sub-expressions are genuine Incan expressions that need real types, exactly as
-    /// if they appeared in ordinary expression position. The surrounding structural content (tags, selectors,
-    /// declarations, regex/type shapes, ...) is DSL-owned syntax with no ordinary Incan type of its own — its
-    /// runtime meaning is supplied by the owning DSL's desugarer or lowering hook (RFC 081 §Semantics), which is
-    /// downstream of `#1023`. The fragment as a whole therefore resolves to `ResolvedType::Unknown`, deliberately
-    /// reusing the existing "no further ordinary-Incan meaning to check here" sentinel rather than introducing a
-    /// new `ResolvedType` variant that every exhaustive match over `ResolvedType` across the compiler would need
-    /// to handle for a type with no ordinary-Incan operations anyway.
+    /// desugar pass (`loaves/compiler/incan_frontend/src/vocab_desugar_pass/rewrite.rs`) — it must reach `check_expr`
+    /// as itself, because its [`EmbeddedNode::Hole`] sub-expressions are genuine Incan expressions that need real
+    /// types, exactly as if they appeared in ordinary expression position. The surrounding structural content
+    /// (tags, selectors, declarations, regex/type shapes, ...) is DSL-owned syntax with no ordinary Incan type of
+    /// its own — its runtime meaning is supplied by the owning DSL's desugarer or lowering hook (RFC 081
+    /// §Semantics), which is downstream of `#1023`. The fragment as a whole therefore resolves to
+    /// `ResolvedType::Unknown`, deliberately reusing the existing "no further ordinary-Incan meaning to check here"
+    /// sentinel rather than introducing a new `ResolvedType` variant that every exhaustive match over
+    /// `ResolvedType` across the compiler would need to handle for a type with no ordinary-Incan operations anyway.
     fn check_embedded_fragment_expr(&mut self, fragment: &EmbeddedFragmentExpr) -> ResolvedType {
         for hole in fragment.holes() {
             self.check_expr(hole);

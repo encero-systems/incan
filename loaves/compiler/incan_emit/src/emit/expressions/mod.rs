@@ -23,7 +23,7 @@
 //! - **Not lexer tokens**: [`TokenStream`] here is `proc_macro2::TokenStream` used for Rust codegen. Lexer output is a
 //!   separate token type in the frontend.
 //! - **Ownership planning is centralized**: Ownership/borrow/copy/string adjustments should go through
-//!   `backend::ir::ownership` instead of being hand-coded inline.
+//!   [`crate::ownership`] instead of being hand-coded inline.
 //! - **Side-effect free**: Emission is pure codegen; it does not touch the filesystem.
 //!
 //! ## Examples
@@ -35,8 +35,8 @@
 //!
 //! ## See also
 //!
-//! - `src/backend/ir/ownership.rs`: ownership/coercion planner for emitted Rust boundaries
-//! - `src/backend/ir/emit/mod.rs`: higher-level emission (items/statements) that calls into this module
+//! - [`crate::ownership`]: ownership/coercion planner for emitted Rust boundaries
+//! - [`crate::emit`]: higher-level emission (items/statements) that calls into this module
 
 mod builtins;
 mod calls;

@@ -36,9 +36,8 @@ pub type RelatedDeclarationSources = HashMap<SymbolOrigin, RelatedDeclarationSou
 
 /// Convert a byte offset to LSP Position (0-based line and character).
 ///
-/// Counts UTF-16 code units, as required by the LSP default position encoding.
-/// If the offset is beyond the end of the source, returns the position
-/// at the end of the last line.
+/// Counts UTF-16 code units, as required by the LSP default position encoding. If the offset is beyond the end of the
+/// source, returns the position at the end of the last line.
 pub fn offset_to_position(source: &str, offset: usize) -> Position {
     let offset = offset.min(source.len());
     let mut line = 0u32;
@@ -61,9 +60,9 @@ pub fn offset_to_position(source: &str, offset: usize) -> Position {
 
 /// Convert an LSP Position (0-based line and character) to a byte offset.
 ///
-/// Returns `None` if the position is beyond the end of the source.
-/// Counts UTF-16 code units, as required by the LSP default position encoding. A position beyond a line's end is
-/// clamped to that line's terminating newline (or end of file), matching [`offset_to_position`]'s bounded behavior.
+/// Returns `None` if the position is beyond the end of the source. Counts UTF-16 code units, as required by the LSP
+/// default position encoding. A position beyond a line's end is clamped to that line's terminating newline (or end of
+/// file), matching [`offset_to_position`]'s bounded behavior.
 pub fn position_to_offset(source: &str, position: Position) -> Option<usize> {
     let mut line = 0u32;
     let mut col = 0u32;

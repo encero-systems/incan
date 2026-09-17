@@ -1,5 +1,5 @@
 //! Helpers the emission tests share with the crates above them: parse, generate, and the assertions on generated
-//! Rust. On under `cfg(test)` and the `test_support` feature, which the root crate's dev-dependency turns on.
+//! Rust. On under `cfg(test)` and the `test_support` feature, which the dependants' dev-dependencies turn on.
 
 use incan_frontend::ast::Program;
 
@@ -36,7 +36,7 @@ pub fn assert_no_generated_unused_lint_allows(code: &str) {
     assert!(!code.contains("#[allow(dead_code, unused_variables)]"), "{code}");
 }
 
-/// Parse an Incan program into an AST Lex and parse one source, panicking on a syntax error a test did not expect.
+/// Lex and parse one source into a program, panicking on a syntax error a test did not expect.
 pub fn parse_program(source: &str) -> Program {
     let tokens = must_ok(lexer::lex(source));
     must_ok(parser::parse(&tokens))

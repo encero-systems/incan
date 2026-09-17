@@ -25,9 +25,8 @@ use incan_lang::lang::operators::OperatorId;
 use incan_lang::lang::punctuation::PunctuationId;
 use incan_semantics_core::SurfaceFeatureKey;
 
-// NOTE: This module is split across multiple files using `include!` to keep all parser
-// methods in the same Rust module (preserving privacy + call patterns) while avoiding
-// a single large source file.
+// NOTE: This module is split across multiple files using `include!` to keep all parser methods in the same Rust module
+// (preserving privacy + call patterns) while avoiding a single large source file.
 
 include!("core.rs");
 include!("helpers.rs");

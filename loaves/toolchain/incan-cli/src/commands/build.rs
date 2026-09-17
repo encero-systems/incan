@@ -47,18 +47,16 @@ use oven_rustc::rustc::clear_inherited_cargo_environment;
 
 /// Pre-flight refusal check for a declared `--backend` request (#986).
 ///
-/// Must run before any "reuse a sealed cache-hit Loaf" shortcut in `build_file`,
-/// `build_file_report`, `build_library`, and `build_library_report`: those shortcuts return
-/// success without ever calling `prepare_oven_project`/`prepare_library_project`, which is where
-/// backend selection normally runs, so a refused request (for example `--backend replacement`
-/// with no working fallback) would otherwise be silently masked by reusing a previously sealed
-/// artifact instead of failing visibly.
+/// Must run before any "reuse a sealed cache-hit Loaf" shortcut in `build_file`, `build_file_report`, `build_library`,
+/// and `build_library_report`: those shortcuts return success without ever calling
+/// `prepare_oven_project`/`prepare_library_project`, which is where backend selection normally runs, so a refused
+/// request (for example `--backend replacement` with no working fallback) would otherwise be silently masked by reusing
+/// a previously sealed artifact instead of failing visibly.
 ///
-/// Refusal depends only on the requested backend and its fallback policy, never on source
-/// content, so this uses a placeholder source identity rather than loading and hashing the
-/// project's modules just to decide whether to proceed — the real, source-identified selection is
-/// still built fresh inside `prepare_oven_project`/`prepare_library_project` whenever a build
-/// actually reaches them.
+/// Refusal depends only on the requested backend and its fallback policy, never on source content, so this uses a
+/// placeholder source identity rather than loading and hashing the project's modules just to decide whether to proceed
+/// — the real, source-identified selection is still built fresh inside `prepare_oven_project`/`prepare_library_project`
+/// whenever a build actually reaches them.
 fn ensure_backend_request_available(backend_options: &BackendSelectionOptions) -> CliResult<()> {
     let selection = select_backend(
         backend_options.requested,
@@ -246,9 +244,9 @@ pub(crate) fn build_file_report(
     print_build_progress(report_options, format!("Binary: {}", bake.output.display()));
     let mut report_draft = prepared.report.clone();
     report_draft.artifacts.push(artifact_report("binary", &bake.output));
-    // Published only now that the whole build — codegen, Oven plan selection, and the rustc bake
-    // above — has actually succeeded (#986); `prepare_oven_project` itself never persists this,
-    // since it also runs for internal/dependency callers that must not overwrite a real receipt.
+    // Published only now that the whole build — codegen, Oven plan selection, and the rustc bake above — has actually
+    // succeeded (#986); `prepare_oven_project` itself never persists this, since it also runs for internal/dependency
+    // callers that must not overwrite a real receipt.
     if let Some(backend_receipt) = report_draft.backend.as_ref() {
         write_backend_receipt(backend_receipt, &default_backend_receipt_path(&prepared.project_root))?;
     }
@@ -466,9 +464,8 @@ pub enum BackendSelectionInspectFormat {
 
 /// Read, verify, and render one persisted backend-selection execution receipt (#986).
 ///
-/// Mirrors `inspect_oven_receipt`'s read-verify-render shape, but has no bounded store to
-/// consult: a backend-selection receipt is self-contained, so verification is just
-/// `BackendExecutionReceipt::verify_identity`.
+/// Mirrors `inspect_oven_receipt`'s read-verify-render shape, but has no bounded store to consult: a backend-selection
+/// receipt is self-contained, so verification is just `BackendExecutionReceipt::verify_identity`.
 pub fn inspect_backend_selection(path: &Path, format: BackendSelectionInspectFormat) -> CliResult<ExitCode> {
     let bytes = fs::read(path).map_err(|error| {
         CliError::failure(format!(

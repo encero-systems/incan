@@ -1,7 +1,7 @@
 //! Prelude constructors / variant-like helpers (surface vocabulary).
 //!
-//! These are callable names in the global namespace that behave like constructors for common sum types
-//! (e.g. `Ok(...)`, `Err(...)`, `Some(...)`).
+//! These are callable names in the global namespace that behave like constructors for common sum types (e.g. `Ok(...)`,
+//! `Err(...)`, `Some(...)`).
 
 use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
 

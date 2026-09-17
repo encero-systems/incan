@@ -150,9 +150,8 @@ impl TypeChecker {
             return result;
         }
 
-        // Special-case: Enum variant constructor syntax `Enum.Variant(...)`.
-        // If callee is a field access where the base resolves to a known enum type
-        // and the field name matches a variant, treat this as a constructor and
+        // Special-case: Enum variant constructor syntax `Enum.Variant(...)`. If callee is a field access where the
+        // base resolves to a known enum type and the field name matches a variant, treat this as a constructor and
         // return the enum type.
         if let Expr::Field(base, member_name) = &callee.node {
             let base_ty = self.check_type_receiver_expr(base);

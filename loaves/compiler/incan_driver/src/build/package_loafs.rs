@@ -332,8 +332,6 @@ pub fn read_packaged_library_loaf_manifest(
     Ok(Some(manifest))
 }
 
-/// Return whether a provider declares an explicit package-Loaf handoff.
-///
 /// Resolve one package-owned native output without permitting a symlink escape from its artifact root.
 fn validated_packaged_library_output_path(
     artifact: &LibraryArtifactMetadata,

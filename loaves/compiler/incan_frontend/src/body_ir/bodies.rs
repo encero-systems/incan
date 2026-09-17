@@ -8,7 +8,7 @@ use super::*;
 /// [`IncanType::SelfType`] for trait defaults.
 ///
 /// Exactly five declaration kinds carry a `methods` field -- model, class, trait, newtype, and enum (see
-/// `crates/incan_syntax/src/ast/decls.rs`) -- and all five reach this function. No kind that carries methods is
+/// `loaves/kernel/incan_syntax/src/ast/decls.rs`) -- and all five reach this function. No kind that carries methods is
 /// skipped, which matters because a skipped kind is the one failure this module cannot make visible: every other
 /// unsupported construct leaves a `StatementKind::Unsupported` or `Operand::Unknown` marker behind, while a skipped
 /// declaration produces no [`bir::Body`] at all and a consumer counting bodies reads the program as fully
@@ -241,11 +241,11 @@ pub(super) fn lower_method_body(
     })
 }
 /// Reconstruct the concrete `self` type for a method declared on `owner_name`, mirroring how
-/// `check_method_with_self_ty` (`src/frontend/typechecker/check_decl.rs`) derives its own `self` binding's type:
-/// a bare [`IncanType::Named`] for a non-generic owner, or an [`IncanType::Generic`] instantiated with the owner's
-/// own type parameters (as type variables) for a generic owner. That typechecker-side resolved type is transient
-/// checker state, not persisted anywhere in [`TypeCheckInfo`], so lowering rebuilds the equivalent type directly
-/// from the AST rather than depending on a lookup table that does not exist.
+/// `check_method_with_self_ty` (`loaves/compiler/incan_frontend/src/typechecker/check_decl.rs`) derives its own `self`
+/// binding's type: a bare [`IncanType::Named`] for a non-generic owner, or an [`IncanType::Generic`] instantiated with
+/// the owner's own type parameters (as type variables) for a generic owner. That typechecker-side resolved type is
+/// transient checker state, not persisted anywhere in [`TypeCheckInfo`], so lowering rebuilds the equivalent type
+/// directly from the AST rather than depending on a lookup table that does not exist.
 pub(super) fn owner_self_type(owner_name: &str, owner_type_params: &[ast::TypeParam]) -> IncanType {
     if owner_type_params.is_empty() {
         IncanType::Named(owner_name.to_string())

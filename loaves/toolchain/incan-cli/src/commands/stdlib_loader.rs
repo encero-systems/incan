@@ -43,8 +43,8 @@ pub struct StdlibModule {
 
 /// Detect and load all stdlib modules imported by the given modules.
 ///
-/// Scans all imports in `modules` for `std.*` paths, resolves them to stdlib `.incn` files, parses them,
-/// and returns them as `StdlibModule` entries.
+/// Scans all imports in `modules` for `std.*` paths, resolves them to stdlib `.incn` files, parses them, and returns
+/// them as `StdlibModule` entries.
 ///
 /// ## Errors
 ///

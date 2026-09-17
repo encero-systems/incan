@@ -1,7 +1,7 @@
 //! Builtin trait vocabulary.
 //!
-//! This registry defines the canonical set of builtin trait names recognized by the compiler.
-//! Callers should avoid hard-coding trait strings and instead use [`TraitId`] for identity.
+//! This registry defines the canonical set of builtin trait names recognized by the compiler. Callers should avoid
+//! hard-coding trait strings and instead use [`TraitId`] for identity.
 //!
 //! ## Notes
 //! - Lookup via [`from_str`] is **case-sensitive** (trait names are case-sensitive).

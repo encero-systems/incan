@@ -24,8 +24,8 @@ fn read_generated_rust(path: &std::path::Path) -> Result<String, Box<dyn std::er
 use incan_frontend::module::{ExportedTypeLikeDoc, ExportedTypeLikeKind, exported_type_like_docs};
 use incan_frontend::{lexer, parser, typechecker};
 
-/// Shared with `src/frontend/module.rs` tests (`exported_type_like_docs`) for GitHub #247.
-/// The block-docstring fixture the checkout shares between roots, read from the harness crate's fixtures at test time.
+/// The block-docstring fixture the checkout shares between roots, read from the harness crate's fixtures at test time;
+/// `loaves/compiler/incan_frontend/src/module.rs` reads the same file for GitHub #247.
 fn block_docstring_public_type_like() -> Result<String, Box<dyn std::error::Error>> {
     Ok(fs::read_to_string(incan_test_support::fixture(
         "block_docstring_public_type_like.incn",
@@ -10264,9 +10264,8 @@ def test_timeout_marker() -> None:
             ),
         );
 
-        // One list invocation exercises CLI-to-runner marker wiring. Pure parser,
-        // strict-registration, keyword, and slow-selection combinations are unit
-        // tested below the process boundary rather than rebuilding this project.
+        // One list invocation exercises CLI-to-runner marker wiring. Pure parser, strict-registration, keyword, and
+        // slow-selection combinations are unit tested below the process boundary rather than rebuilding this project.
         let marker_list = run_incan_test_with_args(
             &dir,
             &["--list", "-m", "api and not slow", "--strict-markers", "--slow"],
@@ -10283,10 +10282,9 @@ def test_timeout_marker() -> None:
         assert!(!marker_stdout.contains("test_runner_collection_surface.incn::test_api_slow"));
         assert!(!marker_stdout.contains("test_runner_collection_surface.incn::test_db"));
 
-        // This one ordinary execution covers the outcome matrix below. Its
-        // constituent cases previously rebuilt the same generated test project
-        // five times with different keyword filters, despite no filter-specific
-        // behavior being under test here.
+        // This one ordinary execution covers the outcome matrix below. Its constituent cases previously rebuilt the
+        // same generated test project five times with different keyword filters, despite no filter-specific behavior
+        // being under test here.
         let ordinary = run_incan_test_with_args(&dir, &["--verbose"]);
         let ordinary_stdout = String::from_utf8_lossy(&ordinary.stdout);
         let ordinary_stderr = String::from_utf8_lossy(&ordinary.stderr);
@@ -10323,11 +10321,9 @@ def test_timeout_marker() -> None:
             ordinary_combined,
         );
 
-        // Parsing `--feature` and turning a true `xfailif(feature(...))` into
-        // the runner's XFail marker are direct CLI/discovery contracts. The
-        // ordinary execution above already proves that an XFail marker renders
-        // correctly in the generated runner, so it need not rebuild this same
-        // project with a one-test keyword filter.
+        // Parsing `--feature` and turning a true `xfailif(feature(...))` into the runner's XFail marker are direct
+        // CLI/discovery contracts. The ordinary execution above already proves that an XFail marker renders correctly
+        // in the generated runner, so it need not rebuild this same project with a one-test keyword filter.
     }
 
     #[test]
@@ -11573,9 +11569,8 @@ module tests:
 "#,
         )?;
 
-        // Discovery-level coverage proves inline marker registration and default
-        // marks. One execution preserves the distinct generated-harness outcome
-        // contract without rebuilding this project for a list-only query.
+        // Discovery-level coverage proves inline marker registration and default marks. One execution preserves the
+        // distinct generated-harness outcome contract without rebuilding this project for a list-only query.
         let run = run_incan_test_with_args(&dir, &["--verbose"]);
         let run_stdout = String::from_utf8_lossy(&run.stdout);
         let run_stderr = String::from_utf8_lossy(&run.stderr);
@@ -11999,10 +11994,9 @@ def test_todo() -> None:
 "#,
         );
 
-        // The three failing forms share one project and the normal runner
-        // reports every failure before returning its aggregate non-zero exit.
-        // Keep one complete failure report rather than rebuilding that project
-        // separately for each asserted diagnostic.
+        // The three failing forms share one project and the normal runner reports every failure before returning its
+        // aggregate non-zero exit. Keep one complete failure report rather than rebuilding that project separately for
+        // each asserted diagnostic.
         let failures = run_incan_test_with_args(&dir, &["--verbose"]);
         let failures_stdout = String::from_utf8_lossy(&failures.stdout);
         let failures_stderr = String::from_utf8_lossy(&failures.stderr);

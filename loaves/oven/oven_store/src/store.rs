@@ -3450,8 +3450,7 @@ fn related_policy_offending_domains(
         .collect()
 }
 
-/// Sum logical and physical accounting for one compatibility domain. Fold a superseded-release reclamation report into
-/// the retention-prune report that followed it.
+/// Fold a superseded-release reclamation report into the retention-prune report that followed it.
 ///
 /// The two passes run back to back under one manager lock, so the user-visible result must read as a single
 /// reclamation: the earliest `before`, the latest `after`, and the union of what each pass touched.

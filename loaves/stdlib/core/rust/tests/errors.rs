@@ -18,8 +18,7 @@ impl fmt::Display for FakeJsonError {
 }
 
 #[test]
-/// `json_decode_error_string` must always prefix with `JSONDecodeError: ` and preserve the
-/// underlying error text.
+/// `json_decode_error_string` must always prefix with `JSONDecodeError: ` and preserve the underlying error text.
 fn json_decode_error_string_is_prefixed() {
     let err = FakeJsonError("expected value at line 1 column 1");
     let formatted = json_decode_error_string(&err);

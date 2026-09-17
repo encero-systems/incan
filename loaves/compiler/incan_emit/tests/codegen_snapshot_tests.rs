@@ -1,10 +1,9 @@
 //! Golden snapshot tests for codegen
 //!
-//! These tests generate Rust code from `.incn` input files and compare the output against stored snapshots.
-//! This ensures codegen changes are reviewed and intentional.
+//! These tests generate Rust code from `.incn` input files and compare the output against stored snapshots. This
+//! ensures codegen changes are reviewed and intentional.
 //!
-//! Run with: `cargo test --test codegen_snapshot_tests`
-//! Review changes: `cargo insta review`
+//! Run with: `cargo test --test codegen_snapshot_tests` Review changes: `cargo insta review`
 
 use incan_emit::IrCodegen;
 use incan_frontend::{lexer, parser};

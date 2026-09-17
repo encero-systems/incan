@@ -12,10 +12,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// element into it via a compiler-synthesized `push` [`bir::Callee::Method`] call, then a read of the completed
     /// list. Only v0's single mirrored `(pattern, iter, filter)` clause is lowered -- `comp.clauses` is intentionally
     /// not consulted, since neither the typechecker (`check_list_comp` in
-    /// `src/frontend/typechecker/check_expr/comps.rs`) nor the existing Rust-emission backend
-    /// (`src/backend/ir/lower/expr/comprehensions.rs`) reads it either; a list comprehension with more than one `for`
-    /// clause is not actually type-checked or emitted as multi-clause today; treating `comp.clauses` as authoritative
-    /// here would silently lower a shape nothing else in the pipeline validates.
+    /// `loaves/compiler/incan_frontend/src/typechecker/check_expr/comps.rs`) nor the existing Rust-emission backend
+    /// (`loaves/compiler/incan_ir/src/lower/expr/comprehensions.rs`) reads it either; a list comprehension with more
+    /// than one `for` clause is not actually type-checked or emitted as multi-clause today; treating `comp.clauses`
+    /// as authoritative here would silently lower a shape nothing else in the pipeline validates.
     pub(super) fn lower_list_comp(
         &mut self,
         comp: &ast::ListComp,

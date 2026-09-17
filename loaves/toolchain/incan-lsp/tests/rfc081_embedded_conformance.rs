@@ -2,7 +2,7 @@
 //!
 //! RFC 081 fixes a catalogue of exactly six submodes — `Markup`, `Style`, `RawText`, `RegexTemplate`,
 //! `SelectorDeclarationValue`, `TypePosition` — and issue #1022 asks for each accepted surface to be proven end to
-//! end rather than only at the parser. The parser fixtures in `crates/incan_syntax/src/parser/embedded/tests.rs`
+//! end rather than only at the parser. The parser fixtures in `loaves/kernel/incan_syntax/src/parser/embedded/tests.rs`
 //! already pin each grammar's accept and reject boundaries; this suite picks the artifact up where they leave off
 //! and carries every submode through the rest of the pipeline:
 //!

@@ -26,9 +26,8 @@
 //!
 //! ## Design
 //!
-//! The CLI uses clap for argument parsing with derive macros.
-//! Command functions return `CliResult<T>` instead of calling `process::exit`.
-//! Only the top-level `run()` function handles errors and exits.
+//! The CLI uses clap for argument parsing with derive macros. Command functions return `CliResult<T>` instead of
+//! calling `process::exit`. Only the top-level `run()` function handles errors and exits.
 
 // Enforce explicit error handling - no panicking in production code
 #![deny(clippy::unwrap_used)]
@@ -703,8 +702,8 @@ pub enum Command {
 
 #[derive(Subcommand, Debug)]
 pub enum InspectCommand {
-    /// Inspect a backend-selection execution receipt (#986): requested/selected/executed backend,
-    /// fallback outcome, and shadow-comparison state for one build
+    /// Inspect a backend-selection execution receipt (#986): requested/selected/executed backend, fallback outcome,
+    /// and shadow-comparison state for one build
     BackendSelection {
         /// Receipt written by a normal `incan build` (default `.incan/backend/receipt.json`)
         #[arg(long, value_name = "PATH")]
@@ -1404,8 +1403,7 @@ pub fn run() {
     }
 }
 
-/// Execute the CLI command and return result.
-/// Execute one already-parsed CLI request without terminating the process.
+/// Execute the CLI command and return result. Execute one already-parsed CLI request without terminating the process.
 fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
     // Handle debug flags first
     if let Some(file) = cli.lex_file {
@@ -2794,8 +2792,8 @@ fn resolve_run_entry_file(file: Option<PathBuf>) -> CliResult<PathBuf> {
     resolve_main_script_entry_file(file, "run", "a file path, -c/--command")
 }
 
-/// Handle the `run` subcommand with its various forms.
-/// Resolve RFC 077 scope before delegating a file-backed run to the existing single-project pipeline.
+/// Handle the `run` subcommand with its various forms. Resolve RFC 077 scope before delegating a file-backed run to the
+/// existing single-project pipeline.
 fn execute_workspace_run(
     input: RunInput,
     opts: RunOptions,
@@ -2940,9 +2938,8 @@ fn command_prefers_banner(cli: &Cli) -> bool {
 
 /// Decide whether to print the ASCII logo banner.
 ///
-/// Banner suppression (`--no-banner` / `INCAN_NO_BANNER`) always wins.
-/// Banners are also suppressed when output is not a TTY (script-friendly).
-/// By default, branding is shown only for interactive `build` and `run` flows.
+/// Banner suppression (`--no-banner` / `INCAN_NO_BANNER`) always wins. Banners are also suppressed when output is not a
+/// TTY (script-friendly). By default, branding is shown only for interactive `build` and `run` flows.
 fn should_print_banner(cli: &Cli, _use_color: bool) -> bool {
     if cli.no_banner || env::var_os("INCAN_NO_BANNER").is_some() {
         return false;

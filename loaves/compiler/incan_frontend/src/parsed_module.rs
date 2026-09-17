@@ -12,7 +12,7 @@ use crate::ast::Program;
 /// that the workspace layout rewrite (#1478) lists as one of the four to cut before the crate split, pointing the
 /// wrong way.
 ///
-/// `cli::prelude` re-exports it, so callers that already name it there are unaffected.
+/// The crate root re-exports it, so callers that name `incan_frontend::ParsedModule` are unaffected.
 #[derive(Clone)]
 pub struct ParsedModule {
     /// The module's own name.

@@ -27,9 +27,8 @@ pub struct LibraryManifest {
     pub modules: Vec<ModuleExport>,
     /// Named helper bindings that desugarers may reference symbolically.
     ///
-    /// Each binding maps a stable helper key such as `filter` to a public library export that the
-    /// compiler can import under a hidden alias before lowering desugared code back into the host
-    /// AST.
+    /// Each binding maps a stable helper key such as `filter` to a public library export that the compiler can import
+    /// under a hidden alias before lowering desugared code back into the host AST.
     #[cfg_attr(feature = "serde", serde(default))]
     pub helper_bindings: Vec<HelperBinding>,
     /// Additional Cargo dependencies required by the library's generated surface.

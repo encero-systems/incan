@@ -217,7 +217,7 @@ fn hash_sdk_provider_source_tree(root: &Path, current: &Path, hasher: &mut Sha25
 /// "would this compiler produce different components", which is a different question for almost every edit anyone
 /// makes. [`compiler_effect_digest`] answers the second one directly.
 ///
-/// [`crate::version::SDK_PROVIDER_CODEGEN_REVISION`] is folded alongside it. Publication code can change the shape
+/// [`incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION`] is folded alongside it. Publication code can change the shape
 /// of the store without changing any component's content, and that constant is the declared mechanism for saying
 /// so; the inventory already validates it on every cache hit, and folding it here means a bump also partitions the
 /// store rather than only rejecting what is in it.

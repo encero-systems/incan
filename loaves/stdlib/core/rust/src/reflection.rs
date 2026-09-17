@@ -1,7 +1,7 @@
 //! Reflection support for Incan models and classes.
 //!
-//! The `HasFieldInfo` trait provides introspection capabilities for structured types,
-//! allowing generated code to query field names and types at runtime.
+//! The `HasFieldInfo` trait provides introspection capabilities for structured types, allowing generated code to query
+//! field names and types at runtime.
 
 use crate::frozen::{FrozenDict, FrozenList, FrozenStr};
 use std::marker::PhantomData;

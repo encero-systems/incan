@@ -93,7 +93,7 @@ use crate::typechecker::{
 ///
 /// `program` must be a **desugared, feature-projected, typechecked** module, and `type_info` must be the checker
 /// output for exactly that projected program. Every caller owes the same preparation the legacy pipeline performs
-/// before emission (`CompilationSession::parse_source` in `src/cli/commands/common.rs`: parse, then
+/// before emission (`CompilationSession::parse_source` in `loaves/compiler/incan_driver/src/session.rs`: parse, then
 /// `vocab_desugar_pass::desugar_program_vocab_blocks`, then feature projection, and only then typecheck), so a
 /// vocab-authored body means the same thing through either backend (#1166).
 ///
@@ -160,7 +160,7 @@ pub fn build_body_ir_module_v0_with_executable_context(
 /// it hands lowering a program the legacy path would never have produced, which is the divergence #1166 closes.
 ///
 /// The legacy pipeline owes Body IR a desugared, feature-projected program, and it pays that debt at parse time:
-/// `CompilationSession::parse_source` (`src/cli/commands/common.rs`) parses, runs
+/// `CompilationSession::parse_source` (`loaves/compiler/incan_driver/src/session.rs`) parses, runs
 /// `vocab_desugar_pass::desugar_program_vocab_blocks`, then projects the result through the session's active
 /// package features — all before the program is typechecked or lowered. A manifest-free caller has no package
 /// feature graph, so it applies the same two steps with the empty feature projection. It must reject an explicit
@@ -772,10 +772,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// stronger reason than the projected case: a receiver is always a Rust-level reference at the emission
     /// boundary, so moving a non-Copy value out of it would not even compile — the only sound way to produce an
     /// owned value from it is to clone (mirrors the existing backend ownership planner's treatment of non-Copy
-    /// `self` reads in `src/backend/ir/ownership.rs`, which this module's own docs cite as precedent). Every other
-    /// bare local read decrements its remaining-reads countdown; reaching zero selects `Move` (and records the
-    /// local as moved for [`Self::insert_scope_drops`]), otherwise `Clone`. A local with no tracked countdown (an
-    /// [`bir::LocalOrigin::External`] reference) gets the explicit [`bir::OwnershipFact::Unknown`].
+    /// `self` reads in `loaves/compiler/incan_emit/src/ownership.rs`, which this module's own docs cite as precedent).
+    /// Every other bare local read decrements its remaining-reads countdown; reaching zero selects `Move` (and
+    /// records the local as moved for [`Self::insert_scope_drops`]), otherwise `Clone`. A local with no tracked
+    /// countdown (an [`bir::LocalOrigin::External`] reference) gets the explicit [`bir::OwnershipFact::Unknown`].
     ///
     /// Note that [`count_reads_in_stmts`] counts a `.field`/`[index]` occurrence of a name toward that local's
     /// total the same as a bare occurrence, but only bare reads ever decrement the countdown here. A local read

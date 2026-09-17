@@ -169,14 +169,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// carried through verbatim; each embedded expression is lowered through the same
     /// [`Self::lower_expr_to_operand`] path as any other read, so ownership facts and last-use tracking apply to
     /// f-string interpolations exactly like any other expression use. Mirrors the existing Rust-emission backend's
-    /// dedicated `Format` node (`src/backend/ir/lower/expr/mod.rs`) rather than desugaring into a helper call --
-    /// see [`bir::Rvalue::Format`]'s own docs for why this needed its own `Rvalue` shape.
+    /// dedicated `Format` node (`loaves/compiler/incan_ir/src/lower/expr/mod.rs`) rather than desugaring into a helper
+    /// call -- see [`bir::Rvalue::Format`]'s own docs for why this needed its own `Rvalue` shape.
     ///
     /// Building the formatted string always allocates and always needs the `fstring` runtime helper
     /// (`incan_std_core::strings::fstring`, the function the existing Rust-emission backend's `Format` node itself
-    /// compiles down to -- see `src/backend/ir/emit/expressions/format.rs`), so both requirements are recorded
-    /// unconditionally here, the same way [`Self::lower_binary_from_operands`] records requirements for its own
-    /// compiler-owned string helpers.
+    /// compiles down to -- see `loaves/compiler/incan_emit/src/emit/expressions/format.rs`), so both requirements are
+    /// recorded unconditionally here, the same way [`Self::lower_binary_from_operands`] records requirements for
+    /// its own compiler-owned string helpers.
     pub(super) fn lower_fstring(
         &mut self,
         parts: &[ast::FStringPart],

@@ -145,8 +145,8 @@ pub fn env_list(format: EnvOutputFormat, project: Option<&Path>) -> CliResult<Ex
 
 /// Show project environments.
 ///
-/// With `env_name`, prints one resolved environment in a compact summary view.
-/// Without `env_name`, prints an overview of available environments.
+/// With `env_name`, prints one resolved environment in a compact summary view. Without `env_name`, prints an overview
+/// of available environments.
 pub fn env_show(env_name: Option<&str>, format: EnvOutputFormat, project: Option<&Path>) -> CliResult<ExitCode> {
     let context = load_env_context(project)?;
     match env_name {

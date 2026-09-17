@@ -9,10 +9,9 @@ use incan_test_support::cli_project::*;
 
 /// One normal command covers the passing `std.environ` access matrix.
 ///
-/// These formerly independent fixtures each created a fresh project and
-/// repeated the same direct-rustc journey. Their accessor contracts are
-/// orthogonal but composable, so failures still name the precise assertion
-/// without paying for four copies of normal-command setup.
+/// These formerly independent fixtures each created a fresh project and repeated the same direct-rustc journey. Their
+/// accessor contracts are orthogonal but composable, so failures still name the precise assertion without paying for
+/// four copies of normal-command setup.
 #[test]
 fn run_std_environ_passing_accessors_share_one_program_issues557_rfc089() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;

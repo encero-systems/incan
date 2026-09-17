@@ -18,10 +18,10 @@
 //!
 //! # What must be covered, and why an Incan-only digest is unsound
 //!
-//! Every component links against the standard library facets, thousands of lines of Rust runtime. A digest
-//! that folded only `.incn` meaning would report a hit for an edit to that runtime, which is a false reuse of a
-//! component whose behaviour changed. The Rust half is therefore mandatory rather than an enhancement, and it is
-//! folded here beside the Incan half.
+//! Every component links against the standard library facets, thousands of lines of Rust runtime. A digest that folded
+//! only `.incn` meaning would report a hit for an edit to that runtime, which is a false reuse of a component whose
+//! behaviour changed. The Rust half is therefore mandatory rather than an enhancement, and it is folded here beside the
+//! Incan half.
 //!
 //! # The transitional input, and when to remove it
 //!
@@ -196,15 +196,17 @@ pub const COMPILER_STDLIB_ROOT: &str = "loaves/stdlib";
 ///   standard-library sources with this compiler, so a change to any of them that alters what the compiler understands
 ///   moves the digest, and one that does not, does not. That is a stronger answer than hashing their source, not a
 ///   weaker one.
-/// - **Cannot reach a component.** `src/cli`, `src/lsp`, `src/inspect`, `src/oven`, `loaves/kernel/incan_codegraph`,
-///   `loaves/compiler/rust_inspect` and `tests/` are the compiler's own tooling. They decide *when* components are
-///   built and *where* they are written, never what a component contains.
+/// - **Cannot reach a component.** The toolchain ring (`loaves/toolchain`), the driver's orchestration and inspection
+///   (`loaves/compiler/incan_driver` outside its `backend`), the Oven ring, `loaves/kernel/incan_codegraph`,
+///   `loaves/compiler/rust_inspect` and every `tests/` root are the compiler's own tooling. They decide *when*
+///   components are built and *where* they are written, never what a component contains.
 ///
 /// The second reason has one edge the digest does not cover by itself: publication code that changes the store's
 /// own layout or manifest produces a differently-shaped store from identical component content. That case is
-/// deliberate by construction and already has its own mechanism — [`crate::version::SDK_PROVIDER_CODEGEN_REVISION`],
-/// which the inventory validates on every cache hit and which is folded into the store identity beside this
-/// digest. Publication changes bump that constant; they do not rely on a source hash noticing them.
+/// deliberate by construction and already has its own mechanism —
+/// [`incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION`], which the inventory validates on every cache hit and which
+/// is folded into the store identity beside this digest. Publication changes bump that constant; they do not rely on a
+/// source hash noticing them.
 ///
 /// Lowering and emission are the transitional entries. They change generated Rust without moving any HIR, so until
 /// direct-HIR lands their source is folded: `loaves/compiler/incan_ir` and `loaves/compiler/incan_emit` since the

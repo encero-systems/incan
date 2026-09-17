@@ -2531,7 +2531,8 @@ def unpack(vault: Vault) -> str:
 #[test]
 fn test_class_private_field_settable_via_external_named_construction() {
     // Unlike `pub model`, a class's private fields remain settable through ordinary named-argument construction
-    // from outside the class, even across modules (see issue886/`tests/integration_tests.rs`,
+    // from outside the class, even across modules (see
+    // issue886/`loaves/toolchain/incan-cli/tests/integration_tests.rs`,
     // `test_imported_private_class_constructor_compile_and_run_issue886`, and the stdlib's `tempfile.incn`
     // module-level factory functions, which both rely on this). Only member access after construction is private.
     let source = r#"

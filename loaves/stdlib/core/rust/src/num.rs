@@ -518,8 +518,8 @@ pub fn py_mod_f32(a: f32, b: f32) -> f32 {
 
 /// Greatest common divisor for signed 64-bit integers.
 ///
-/// The result is always non-negative and matches Python's `math.gcd` behavior for `int` when it
-/// fits in Incan's signed 64-bit `int`.
+/// The result is always non-negative and matches Python's `math.gcd` behavior for `int` when it fits in Incan's signed
+/// 64-bit `int`.
 ///
 /// ## Panics
 ///

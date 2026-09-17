@@ -1,5 +1,5 @@
-//! Parity checks for string semantics between the shared semantic core and runtime stdlib,
-//! plus const-eval acceptance of string operations.
+//! Parity checks for string semantics between the shared semantic core and runtime stdlib, plus const-eval acceptance
+//! of string operations.
 
 use incan_frontend::typechecker::{ConstValue, TypeCheckInfo};
 use incan_frontend::{lexer, parser, typechecker};

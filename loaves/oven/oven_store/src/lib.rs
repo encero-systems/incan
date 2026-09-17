@@ -919,7 +919,6 @@ fn read_required_input(path: &Path, file_name: &'static str) -> Result<String, O
     }
 }
 
-/// Extract a root package identity without resolving a Cargo dependency graph.
 /// Supplemental-digest key under which a native compiler-suite receipt records its workspace manifest.
 ///
 /// The explicit library-tests publisher binds its publication to this key: the workspace `Cargo.toml` is the one

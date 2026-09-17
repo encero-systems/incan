@@ -15,10 +15,12 @@ pub fn packaged_library_loaf_manifest_path(artifact_root: &Path) -> PathBuf {
     artifact_root.join(OVEN_PACKAGED_LIBRARY_LOAF_MANIFEST_RELATIVE_PATH)
 }
 
+/// Return whether a provider declares an explicit package-Loaf handoff.
+///
 /// The common command preflight uses this only to refuse an implicit provider rebuild. The consumer's Oven planner
-/// immediately follows with full schema, receipt, artifact-digest, target, toolchain, and closure validation in
-/// [`packaged_library_loaf_profile`] and [`import_packaged_library_loaf`]. Keeping those checks in one place avoids
-/// two subtly different package validators.
+/// (the driver's `build::package_loafs`) immediately follows with full schema, receipt, artifact-digest, target,
+/// toolchain, and closure validation. Keeping those checks in one place avoids two subtly different package
+/// validators.
 pub fn oven_library_dependency_declares_package_loaf(dependency_root: &Path) -> bool {
     let artifact_root = dependency_root.join(LIBRARY_ARTIFACT_DIRECTORY);
     let manifest_path = packaged_library_loaf_manifest_path(&artifact_root);

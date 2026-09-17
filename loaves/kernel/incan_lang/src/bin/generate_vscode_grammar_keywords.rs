@@ -28,7 +28,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Return the repository root that contains the checked-in VS Code grammar artifact.
 /// Locate the checkout whose grammar this tool syncs: an explicit `INCAN_SOURCE_ROOT`, the current directory when it
 /// is the checkout, or the checkout three levels above this kernel crate.
 fn workspace_root() -> PathBuf {

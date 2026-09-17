@@ -105,11 +105,11 @@ fn embedded_fragment_vocab_block_bypasses_wasm_desugar_and_typechecks() -> Resul
         .check_program(&program)
         .map_err(|errs| format!("typecheck errors: {errs:?}"))?;
 
-    // Lowering + emission, through the actual `IrCodegen` pipeline `#1023` extended (`src/backend/ir/lower`,
-    // `IrExprKind::EmbeddedFragment`): the fragment must reach lowering successfully (it is not a
-    // `VocabBlock`/`Surface`-style contract violation) and only fail at the emission boundary, with the exact
-    // honest `EmitError::Unsupported` message that node's rustdoc documents -- never a panic, and never a
-    // silent guess at DSL-owned runtime semantics.
+    // Lowering + emission, through the actual `IrCodegen` pipeline `#1023` extended
+    // (`loaves/compiler/incan_ir/src/lower`, `IrExprKind::EmbeddedFragment`): the fragment must reach lowering
+    // successfully (it is not a `VocabBlock`/`Surface`-style contract violation) and only fail at the emission
+    // boundary, with the exact honest `EmitError::Unsupported` message that node's rustdoc documents -- never a
+    // panic, and never a silent guess at DSL-owned runtime semantics.
     let mut codegen = crate::IrCodegen::new();
     codegen.set_library_manifest_index(known_library_index("webkit"));
     let result = codegen.try_generate(&program);

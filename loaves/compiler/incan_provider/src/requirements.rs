@@ -365,8 +365,7 @@ pub fn collect_project_requirements(
     modules: &[ParsedModule],
     library_manifest_index: &LibraryManifestIndex,
 ) -> ProviderResult<ProjectRequirements> {
-    // ---- Every `std.<namespace>` the collected modules import, the program's own and any stdlib source compiled in
-    // ----
+    // ---- Every `std.<namespace>` the modules import: the program's own and any stdlib source compiled in ----
     let mut imported_stdlib_namespaces = HashSet::new();
     for module in modules {
         for decl in &module.ast.declarations {

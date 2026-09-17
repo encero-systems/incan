@@ -1,7 +1,6 @@
 //! Decorator vocabulary registry.
 //!
-//! This module centralizes recognized decorator spellings so downstream code
-//! doesn't need stringly-typed comparisons.
+//! This module centralizes recognized decorator spellings so downstream code doesn't need stringly-typed comparisons.
 //!
 //! ## Namespaces
 //!

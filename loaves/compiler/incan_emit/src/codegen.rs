@@ -2064,9 +2064,8 @@ impl<'a> IrCodegen<'a> {
             lowering.seed_dependency_trait_decls(&dependency_modules)?;
             lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut ir = lowering.lower_program(ast)?;
-            // Do not auto-add serde derives to dependency modules.
-            // Global serde usage in the main module must not mutate unrelated dependency
-            // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
+            // Do not auto-add serde derives to dependency modules. Global serde usage in the main module must not
+            // mutate unrelated dependency newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
             crate::trait_bound_inference::infer_trait_bounds(&mut ir);
             record_direct_generated_path_support_items_from_ir(&mut dependency_reachable_items, &ir);
             let module_path = path_segments.clone().unwrap_or_else(|| vec![name.to_string()]);
@@ -2372,9 +2371,8 @@ impl<'a> IrCodegen<'a> {
                 let mut ir = lowering.lower_program(ast)?;
                 self.native_union_origins
                     .insert(path.clone(), lowering.native_publication_origins());
-                // Do not auto-add serde derives to dependency modules.
-                // Global serde usage in the main module must not mutate unrelated dependency
-                // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
+                // Do not auto-add serde derives to dependency modules. Global serde usage in the main module must not
+                // mutate unrelated dependency newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
                 crate::trait_bound_inference::infer_trait_bounds(&mut ir);
                 record_direct_generated_path_support_items_from_ir(&mut dependency_reachable_items, &ir);
                 self.source_dependency_module_paths.push((ast, path.clone()));

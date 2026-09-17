@@ -722,8 +722,7 @@ pub fn collect_rust_inspect_query_paths_from_programs<'a>(
     // semantic/codegen hot paths may query later, including Rust types with uppercase names.
     //
     // We still avoid crate/module imports and the standard library facets by default. Full eager prewarm can force
-    // broad
-    // rust-analyzer walks and persist negative module lookups that are not safe metadata items.
+    // broad rust-analyzer walks and persist negative module lookups that are not safe metadata items.
     // Set `INCAN_RUST_INSPECT_PREWARM_ALL=1` to restore full eager prewarm for debugging/regressions.
     let prewarm_all = env_flag_enabled("INCAN_RUST_INSPECT_PREWARM_ALL");
     let mut paths: BTreeSet<String> = BTreeSet::new();

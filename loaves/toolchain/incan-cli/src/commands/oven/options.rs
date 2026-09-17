@@ -66,8 +66,8 @@ pub struct OvenReceiptInspection {
     pub build_unit_identity: String,
     /// Target/toolchain/profile/features selected by this receipt.
     pub intent: OvenBuildIntent,
-    /// Named compiler, runtime, dependency, and provider inputs that compose the build-unit identity.
-    /// These values are portable identity evidence, never project-local source paths.
+    /// Named compiler, runtime, dependency, and provider inputs that compose the build-unit identity. These values are
+    /// portable identity evidence, never project-local source paths.
     pub build_unit_inputs: std::collections::BTreeMap<String, String>,
     /// Store-plan selection outcome for the receipt.
     pub selection: OvenPlanSelectionInspection,

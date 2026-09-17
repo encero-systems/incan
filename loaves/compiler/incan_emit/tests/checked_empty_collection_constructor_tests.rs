@@ -361,11 +361,11 @@ fn nonempty_dict_conversion_does_not_gain_a_checked_constructor_fact_issue1247()
 /// typed `list[Elem]` on `Holder[Picked](items=[])` must emit `Vec::<Picked>::new()`; emitting `Vec::<Elem>::new()`
 /// names a type parameter bound nowhere at the call.
 ///
-/// The defect only surfaces when the two names differ. `Holder[U]` constructed with `U` emits the declaration's
-/// name and is accidentally correct, which is why this went unnoticed until the standard library hit the case with
+/// The defect only surfaces when the two names differ. `Holder[U]` constructed with `U` emits the declaration's name
+/// and is accidentally correct, which is why this went unnoticed until the standard library hit the case with
 /// `FlatMapFallibleIterator`'s fourth parameter, `Output`. There the wrong name resolved silently to a same-named
-/// parameter on the enclosing trait implementation and failed as a type mismatch rather than an unknown type.
-/// See #1507.
+/// parameter on the enclosing trait implementation and failed as a type mismatch rather than an unknown type. See
+/// #1507.
 #[test]
 fn empty_literal_uses_the_supplied_type_argument_not_the_declared_name_issue1507()
 -> Result<(), Box<dyn std::error::Error>> {

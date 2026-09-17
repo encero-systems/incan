@@ -1,9 +1,9 @@
 //! Resolving and publishing a project's lock: the request and result types every lock operation shares, and the
 //! collection metrics the tests read.
 //!
-//! A lock is resolved once per command and consumed by build, run, test and the LSP alike; the submodules own the
-//! work (`resolution`, `workspace`, `registry_sources`, `rust_inspect`, `test_inputs`) and this module owns
-//! the shapes they exchange, so a request built by one command is the same request another resolves.
+//! A lock is resolved once per command and consumed by build, run, test and the LSP alike; the submodules own the work
+//! (`resolution`, `workspace`, `registry_sources`, `rust_inspect`, `test_inputs`) and this module owns the shapes they
+//! exchange, so a request built by one command is the same request another resolves.
 
 #[cfg(feature = "rust_inspect")]
 pub mod registry_sources;

@@ -1,7 +1,7 @@
 //! Incan compiler version information.
 //!
-//! This module exposes the compiler version as a single constant so all subsystems
-//! (CLI, codegen headers, project generator) agree on the same value.
+//! This module exposes the compiler version as a single constant so all subsystems (CLI, codegen headers, project
+//! generator) agree on the same value.
 //!
 //! ## Notes
 //!

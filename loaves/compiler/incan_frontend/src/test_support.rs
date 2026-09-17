@@ -1,6 +1,6 @@
 //! Fixtures the frontend's tests share with the crates above it: a seeded rust-inspect workspace and a checked program
 //! with a vocabulary declaration injected after typechecking. On under `cfg(test)` and the `test_support` feature,
-//! which the root crate's dev-dependency turns on.
+//! which the dependants' dev-dependencies turn on.
 
 use crate::ast;
 use crate::body_ir::build_body_ir_module_v0;

@@ -1,5 +1,5 @@
-//! Parity checks between compiler-side const-eval expectations and runtime stdlib semantics.
-//! Pilot scope: numeric expressions (small matrix).
+//! Parity checks between compiler-side const-eval expectations and runtime stdlib semantics. Pilot scope: numeric
+//! expressions (small matrix).
 
 use incan_lang::strings::str_contains;
 use incan_lang::{NumericOp, NumericTy, result_numeric_type};

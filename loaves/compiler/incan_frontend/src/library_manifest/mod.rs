@@ -1,11 +1,10 @@
 //! The library manifest (`.incnlib`): the vocabulary a checked library publishes and a consumer's frontend resolves
 //! against.
 //!
-//! This is the frontend's own contract, not the provider's: the manifest model embeds checked exports, resolved
-//! types and source anchors the typechecker produces, and the typechecker reads dependency manifests through the
-//! same types. The provider layer (`crate::library_manifest`) loads, digests and publishes manifests; it depends
-//! on this module and never the reverse. The model is transport-agnostic — JSON is the on-disk encoding, behind
-//! typed read and write APIs.
+//! This is the frontend's own contract, not the provider's: the manifest model embeds checked exports, resolved types
+//! and source anchors the typechecker produces, and the typechecker reads dependency manifests through the same types.
+//! The provider ring (`incan_provider`) loads, digests and publishes manifests; it depends on this module and never the
+//! reverse. The model is transport-agnostic — JSON is the on-disk encoding, behind typed read and write APIs.
 
 mod artifact;
 mod model;

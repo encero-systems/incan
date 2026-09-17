@@ -1,9 +1,8 @@
 //! Client-side Proc-Macro crate
 //!
-//! We separate proc-macro expanding logic to an extern program to allow
-//! different implementations (e.g. wasm or dylib loading). And this crate
-//! is used to provide basic infrastructure for communication between two
-//! processes: Client (RA itself), Server (the external program)
+//! We separate proc-macro expanding logic to an extern program to allow different implementations (e.g. wasm or dylib
+//! loading). And this crate is used to provide basic infrastructure for communication between two processes: Client (RA
+//! itself), Server (the external program)
 
 #![cfg_attr(not(feature = "sysroot-abi"), allow(unused_crate_dependencies))]
 #![cfg_attr(
@@ -79,14 +78,14 @@ pub enum ProcMacroKind {
     Bang,
 }
 
-/// A handle to an external process which load dylibs with macros (.so or .dll)
-/// and runs actual macro expansion functions.
+/// A handle to an external process which load dylibs with macros (.so or .dll) and runs actual macro expansion
+/// functions.
 #[derive(Debug)]
 pub struct ProcMacroClient {
     /// Currently, the proc macro process expands all procedural macros sequentially.
     ///
-    /// That means that concurrent salsa requests may block each other when expanding proc macros,
-    /// which is unfortunate, but simple and good enough for the time being.
+    /// That means that concurrent salsa requests may block each other when expanding proc macros, which is
+    /// unfortunate, but simple and good enough for the time being.
     pool: Arc<ProcMacroServerPool>,
     path: AbsPathBuf,
 }
@@ -105,8 +104,8 @@ impl MacroDylib {
 
 /// A handle to a specific proc-macro (a `#[proc_macro]` annotated function).
 ///
-/// It exists within the context of a specific proc-macro server -- currently
-/// we share a single expander process for all macros within a workspace.
+/// It exists within the context of a specific proc-macro server -- currently we share a single expander process for all
+/// macros within a workspace.
 #[derive(Debug, Clone)]
 pub struct ProcMacro {
     pool: ProcMacroServerPool,
@@ -237,8 +236,8 @@ impl ProcMacro {
         });
     }
 
-    /// Expands the procedural macro by sending an expansion request to the server.
-    /// This includes span information and environmental context.
+    /// Expands the procedural macro by sending an expansion request to the server. This includes span information and
+    /// environmental context.
     pub fn expand(
         &self,
         subtree: tt::SubtreeView<'_>,

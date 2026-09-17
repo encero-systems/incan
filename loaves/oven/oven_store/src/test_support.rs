@@ -1,5 +1,5 @@
 //! The frozen fixture project the store tests publish, shared with the crates above: on under `cfg(test)` and the
-//! `test_support` feature, which the root crate's dev-dependency turns on.
+//! `test_support` feature, which the dependants' dev-dependencies turn on.
 
 use std::fs;
 use std::path::Path;

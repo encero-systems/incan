@@ -603,7 +603,7 @@ impl CompilationSession {
     /// compile-time materialization passes.
     ///
     /// Always parses with the original `source` text available (RFC 081, `#1023`), so a descriptor-gated embedded
-    /// fragment (`crates/incan_syntax/src/parser/embedded/`) can claim eligible positions in every real
+    /// fragment (`loaves/kernel/incan_syntax/src/parser/embedded/`) can claim eligible positions in every real
     /// compilation, not only in the parser's own unit tests. The ordinary strict lexer (`lexer::lex`) still runs
     /// first, unchanged, for the overwhelming majority of files that tokenize cleanly. It only fails outright for
     /// source containing bytes that are not valid ordinary-Incan token starts at all (`;`, `` ` ``, `$`, and

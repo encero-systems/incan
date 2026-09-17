@@ -4,8 +4,7 @@
 //! up with two implementations that could disagree: RFC 120 records that "a check living in the CLI could not agree
 //! with one living in the frontend by construction", and #1293 found a live instance -- manifest export projection
 //! in `loaves/toolchain/incan-cli/src/commands/build.rs` disagreeing with the validator in the frontend's
-//! `library_manifest` about which hop of a
-//! re-export chain a path described.
+//! `library_manifest` about which hop of a re-export chain a path described.
 //!
 //! This suite does not refactor anything and does not judge the existing reach-ins. It records them, so the set can
 //! only shrink. Removing an entry is the work tracked by #1298; adding one fails here first.

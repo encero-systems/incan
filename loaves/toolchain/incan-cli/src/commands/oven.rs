@@ -798,9 +798,9 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
     };
     // Schema 12 derives its compiler-owned generated-code check capability from the workspace-library graph. A
     // focused target need not itself own the standard library facets, so retain the complete receipt-bound shard
-    // lease set solely
-    // while deriving that shared capability. This does not broaden execution: the prepared-child queue below still
-    // contains only `selected_shard_references`. It also avoids a fabricated ambient closure or Cargo recovery path.
+    // lease set solely while deriving that shared capability. This does not broaden execution: the prepared-child
+    // queue below still contains only `selected_shard_references`. It also avoids a fabricated ambient closure or
+    // Cargo recovery path.
     let warning_check_shards = if matches!(suite.schema_version, 12..=OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION)
         && !options.targets.is_empty()
     {
@@ -1691,12 +1691,12 @@ pub(crate) struct PreparedCompilerSuiteChild<'a> {
 
 /// Select receipt-bound suite shards by their unique source-relative paths.
 ///
-/// Target selection is intentionally a read-only projection of the admitted suite rather than a new planning
-/// authority. Partitioned selection uses the publisher-recorded, digest-verified source footprints as a stable
-/// scheduling signal; it never consults prior timings or persists a mutable performance profile. This keeps focused
-/// diagnosis representative of the same direct-Rustc roots that a complete Oven run will execute, while making an
-/// unknown or ambiguous source path fail closed.
-/// Read per-root durations from a previous run's `compiler-suite-report.json`, keyed by source path.
+/// Target selection is intentionally a read-only projection of the admitted suite rather than a new planning authority.
+/// Partitioned selection uses the publisher-recorded, digest-verified source footprints as a stable scheduling signal;
+/// it never consults prior timings or persists a mutable performance profile. This keeps focused diagnosis
+/// representative of the same direct-Rustc roots that a complete Oven run will execute, while making an unknown or
+/// ambiguous source path fail closed. Read per-root durations from a previous run's `compiler-suite-report.json`, keyed
+/// by source path.
 ///
 /// A root's cost to a shard is everything the shard pays for it: the direct-Rustc bake, the libtest inventory, and
 /// the execution. Summing the three is what makes this comparable across roots -- a root that is slow to compile and

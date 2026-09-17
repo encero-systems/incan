@@ -1,7 +1,7 @@
 //! Property-based tests for the Incan compiler
 //!
-//! These tests use proptest to verify invariants across many randomly
-//! generated inputs, catching edge cases that hand-written tests might miss.
+//! These tests use proptest to verify invariants across many randomly generated inputs, catching edge cases that
+//! hand-written tests might miss.
 
 use incan_test_support as support;
 
@@ -114,7 +114,7 @@ def greet(name: str) -> str:
     /// teaching the formatter to avoid one of them.
     ///
     /// Comment reattachment stability is the remaining work and is tracked separately; it is a different subsystem
-    /// (`src/format/comments/`) from the declaration and literal writers fixed here.
+    /// (`loaves/compiler/incan_format/src/comments/`) from the declaration and literal writers fixed here.
     const EXPECTED_ROUND_TRIP_FAILURES: &[(&str, &str)] = &[
         (
             "advanced/function_references/main.incn",

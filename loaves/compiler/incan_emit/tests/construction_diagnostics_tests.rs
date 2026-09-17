@@ -1,7 +1,7 @@
 //! Diagnostics-focused tests for construction semantics.
 //!
-//! These tests are intentionally “frontend only”: they run lexer+parser+typechecker
-//! and assert that errors are produced at the Incan level (not leaked as Rust errors).
+//! These tests are intentionally “frontend only”: they run lexer+parser+typechecker and assert that errors are produced
+//! at the Incan level (not leaked as Rust errors).
 
 use incan_frontend::{lexer, parser, typechecker};
 

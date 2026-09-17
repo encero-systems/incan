@@ -1,7 +1,7 @@
 //! Operator vocabulary.
 //!
-//! This module defines the canonical operator set (symbol operators like `+` and word operators
-//! like `and`) along with basic metadata such as precedence, associativity, and fixity.
+//! This module defines the canonical operator set (symbol operators like `+` and word operators like `and`) along with
+//! basic metadata such as precedence, associativity, and fixity.
 //!
 //! ## Notes
 //! - Lookup via [`from_str`] is **case-sensitive**.

@@ -73,10 +73,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ast::Statement::Expr(expr) => {
                 // `yield value` parses as an ordinary expression statement wrapping `ast::Expr::Yield(Some(_))`
                 // (there is no separate `ast::Statement::Yield` AST node) -- mirror the existing Rust-emission
-                // backend's own `lower_statement` (`src/backend/ir/lower/stmt.rs`), which special-cases this exact
-                // shape before falling back to generic expression-statement lowering. A bare `yield` (no value)
-                // falls through to the generic `Expr` arm below, same as that backend, and lowers via the
-                // expression-position `yield` stub (see the module docs).
+                // backend's own `lower_statement` (`loaves/compiler/incan_ir/src/lower/stmt.rs`), which special-cases
+                // this exact shape before falling back to generic expression-statement lowering. A bare
+                // `yield` (no value) falls through to the generic `Expr` arm below, same as that
+                // backend, and lowers via the expression-position `yield` stub (see the module docs).
                 if let ast::Expr::Yield(Some(value)) = &expr.node {
                     self.lower_yield(value, scope, span, out);
                 } else {
@@ -217,7 +217,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Lower `obj.field = value` (including the compound `obj.field <op>= value` form). The parser already
     /// desugars a compound `FieldAssignmentStmt` so `value` is the full `obj.field <op> rhs` expression
-    /// (`crates/incan_syntax/src/parser/stmts.rs`'s `assignment_or_expr_stmt`) -- `fa.compound_op` is purely a
+    /// (`loaves/kernel/incan_syntax/src/parser/stmts.rs`'s `assignment_or_expr_stmt`) -- `fa.compound_op` is purely a
     /// formatter hint for round-tripping `+=` spelling and carries no separate lowering semantics here, so this
     /// only needs to build the write-side place and lower `value` normally.
     pub(super) fn lower_field_assignment(
@@ -532,9 +532,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// materializes each element into its own fresh temporary *before* writing to any target, so aliased targets
     /// and sources (for example `arr[i], arr[j] = arr[j], arr[i]`) read the pre-assignment values rather than one
     /// another's already-written results. This is genuinely new coverage: the existing Rust-emission backend does
-    /// not implement `TupleAssign` at all (`src/backend/ir/lower/stmt.rs` returns a `LoweringError`), so there is
-    /// no existing behavior to mirror here -- the evaluation order above is v0's own design, chosen specifically
-    /// to make `a, b = b, a` swap correctly.
+    /// not implement `TupleAssign` at all (`loaves/compiler/incan_ir/src/lower/stmt.rs` returns a `LoweringError`), so
+    /// there is no existing behavior to mirror here -- the evaluation order above is v0's own design, chosen
+    /// specifically to make `a, b = b, a` swap correctly.
     pub(super) fn lower_tuple_assign(
         &mut self,
         tuple_assign: &ast::TupleAssignStmt,
@@ -590,7 +590,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Lower `x = y = z = value` into `z = value; y = <read z>; x = <read y>` (rightmost target first), matching
     /// the direction the existing Rust-emission backend already chose for this same desugar
-    /// (`src/backend/ir/lower/stmt.rs`'s `ChainedAssignment` arm).
+    /// (`loaves/compiler/incan_ir/src/lower/stmt.rs`'s `ChainedAssignment` arm).
     pub(super) fn lower_chained_assignment(
         &mut self,
         chained_assignment: &ast::ChainedAssignmentStmt,

@@ -146,9 +146,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower an expression-position `if` (`ast::Expr::If`) into the same [`bir::StatementKind::If`] shape
     /// statement-position `if` uses (see [`Self::lower_if`]), reusing [`Self::lower_branch_block`] for both
     /// branches. The typechecker gives an expression-position `if` type `Unit` unconditionally (`check_if_expr` in
-    /// `src/frontend/typechecker/check_expr/control_flow.rs` discards any branch value and always returns
-    /// `ResolvedType::Unit`) -- unlike a `loop` expression, an `if` expression cannot yet produce a value from its
-    /// branches, so its Body IR operand is always the `Unit` constant rather than a place read.
+    /// `loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs` discards any branch value and always
+    /// returns `ResolvedType::Unit`) -- unlike a `loop` expression, an `if` expression cannot yet produce a value
+    /// from its branches, so its Body IR operand is always the `Unit` constant rather than a place read.
     pub(super) fn lower_if_expr(
         &mut self,
         if_expr: &ast::IfExpr,
@@ -353,9 +353,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// dedicated result local that every `break value` inside the loop's *own* body (not a nested loop's --
     /// enforced by [`Self::loop_break_targets`]) assigns into before exiting. The typechecker resolves this
     /// expression's type from the union of its `break value` operand types (`check_loop_expr` in
-    /// `src/frontend/typechecker/check_expr/control_flow.rs`), so -- unlike an `if` expression, which is always
-    /// `Unit` -- a `loop` expression's produced value genuinely comes from its branches and needs this
-    /// merge-into-one-place treatment; see [`Self::lower_break`] for the other half of the mechanism.
+    /// `loaves/compiler/incan_frontend/src/typechecker/check_expr/control_flow.rs`), so -- unlike an `if` expression,
+    /// which is always `Unit` -- a `loop` expression's produced value genuinely comes from its branches and needs
+    /// this merge-into-one-place treatment; see [`Self::lower_break`] for the other half of the mechanism.
     pub(super) fn lower_loop_expr(
         &mut self,
         loop_expr: &ast::LoopExpr,
@@ -384,11 +384,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// The two spellings differ in exactly one fact and it is the break target. The typechecker already draws the
     /// same line — `check_loop_stmt` pushes a `LoopContextKind::Statement` context and rejects `break value` inside
     /// it with `break_value_requires_loop_expression`, while `check_loop_expr` pushes an `Expression` context and
-    /// unifies the break types (both in `src/frontend/typechecker/check_stmt.rs`). Passing `None` here is that same
-    /// rule read off the typechecker rather than a second one invented in lowering: a well-typed program has no
-    /// value-carrying `break` to route anywhere, and a hand-built AST that has one keeps its value on the `Break`
-    /// statement per [`bir::StatementKind::Break`]'s documented default instead of being silently merged into some
-    /// enclosing loop's result.
+    /// unifies the break types (both in `loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs`). Passing `None`
+    /// here is that same rule read off the typechecker rather than a second one invented in lowering: a well-typed
+    /// program has no value-carrying `break` to route anywhere, and a hand-built AST that has one keeps its value
+    /// on the `Break` statement per [`bir::StatementKind::Break`]'s documented default instead of being silently
+    /// merged into some enclosing loop's result.
     ///
     /// Scoping mirrors [`Self::lower_while`], which the typechecker treats identically (`check_while_stmt` opens
     /// the same `ScopeKind::Block` and pushes the same statement loop context). `continue` needs nothing here at
@@ -470,14 +470,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ///
     /// Both paths accept the same loop-pattern subset the typechecker accepts -- a plain binding, `_`, and
     /// (recursively) a tuple of those, per `TypeChecker::define_for_pattern_bindings` in
-    /// `src/frontend/typechecker/check_stmt.rs` (#1125). A plain `for x in ...` binds the produced item directly;
-    /// every other shape writes it into a per-iteration temporary that [`Self::bind_for_pattern`] then projects one
-    /// real named binding out of per bound name. Any shape outside that subset -- which the typechecker already
-    /// rejects with its own diagnostic before lowering ever runs -- lowers to `Unsupported` naming the offending
-    /// shape, checked up front so a refusal never leaves half-emitted bindings behind (the same "check before
-    /// partially lowering" precedent as [`Self::lower_binary`] and [`Self::lower_match`]). The same up-front check
-    /// also refuses a tuple pattern whose produced item is not a tuple of matching arity, so lowering can never invent
-    /// `.0`/`.1` projections into a value that has no such fields -- see [`unsupported_for_pattern`].
+    /// `loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs` (#1125). A plain `for x in ...` binds the
+    /// produced item directly; every other shape writes it into a per-iteration temporary that
+    /// [`Self::bind_for_pattern`] then projects one real named binding out of per bound name. Any shape outside
+    /// that subset -- which the typechecker already rejects with its own diagnostic before lowering ever runs --
+    /// lowers to `Unsupported` naming the offending shape, checked up front so a refusal never leaves half-emitted
+    /// bindings behind (the same "check before partially lowering" precedent as [`Self::lower_binary`] and
+    /// [`Self::lower_match`]). The same up-front check also refuses a tuple pattern whose produced item is not a
+    /// tuple of matching arity, so lowering can never invent `.0`/`.1` projections into a value that has no such
+    /// fields -- see [`unsupported_for_pattern`].
     pub(super) fn lower_for(
         &mut self,
         for_stmt: &ast::ForStmt,
@@ -955,10 +956,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// is fallible (`for item in iterable?:`, RFC 115), `iter_expr` is itself `ast::Expr::Try(inner)` with the `?`
     /// acting as the fallible-poll marker rather than an ordinary `Result` unwrap -- `inner` is lowered directly as
     /// the iterable in that case (matching the existing Rust-emission backend's own `(Expr::Try(inner), Some(_)) =>
-    /// lower inner` special case in `src/backend/ir/lower/stmt.rs`), so the marker `?` is not double-lowered through
-    /// [`Self::lower_try`]. Any other `Expr::Try` (an ordinary `for item in result_of_iterable?:` unwrap) falls
-    /// through to the normal expression-lowering path, which already turns it into a
-    /// [`bir::StatementKind::TryPropagate`] ahead of the loop via [`Self::lower_expr_to_place`]'s existing
+    /// lower inner` special case in `loaves/compiler/incan_ir/src/lower/stmt.rs`), so the marker `?` is not
+    /// double-lowered through [`Self::lower_try`]. Any other `Expr::Try` (an ordinary `for item in
+    /// result_of_iterable?:` unwrap) falls through to the normal expression-lowering path, which already turns it
+    /// into a [`bir::StatementKind::TryPropagate`] ahead of the loop via [`Self::lower_expr_to_place`]'s existing
     /// `Expr::Try` handling -- no special-casing needed for that form.
     ///
     /// The iterable is always read as a [`bir::OwnershipFact::Borrow`], matching [`Self::lower_method_call`]'s

@@ -585,8 +585,8 @@ impl AstLowering {
 
     /// Check whether a `rust.module()` path qualifies for decorator passthrough.
     ///
-    /// Facet decorators are runtime/runner markers (e.g. `std.testing.parametrize`) and must not be emitted
-    /// as Rust attributes — they are interpreted by the Incan test runner, not by `rustc`. Passthrough is reserved for
+    /// Facet decorators are runtime/runner markers (e.g. `std.testing.parametrize`) and must not be emitted as Rust
+    /// attributes — they are interpreted by the Incan test runner, not by `rustc`. Passthrough is reserved for
     /// external Rust-backed proc-macro crates like `incan_web_macros`.
     fn is_passthrough_rust_module(module_path: &str) -> bool {
         !incan_lang::lang::stdlib::facets::path_names_a_facet(module_path)

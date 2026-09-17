@@ -1643,9 +1643,8 @@ impl AstLowering {
             }
 
             ast::Statement::ChainedAssignment(ca) => {
-                // Lower chained assignment x = y = z = 5 into:
-                // let z = 5; let y = z; let x = y;
-                // We return a block expression that does all the assignments
+                // Lower chained assignment x = y = z = 5 into: let z = 5; let y = z; let x = y; We return a block
+                // expression that does all the assignments
                 let value = self.lower_expr_spanned(&ca.value)?;
                 let ty = value.ty.clone();
 

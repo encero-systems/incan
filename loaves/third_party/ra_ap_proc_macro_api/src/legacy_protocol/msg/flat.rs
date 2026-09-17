@@ -1,14 +1,11 @@
 //! Serialization-friendly representation of `tt::TopSubtree`.
 //!
-//! It is possible to serialize `TopSubtree` recursively, as a tree, but using
-//! arbitrary-nested trees in JSON is problematic, as they can cause the JSON
-//! parser to overflow the stack.
+//! It is possible to serialize `TopSubtree` recursively, as a tree, but using arbitrary-nested trees in JSON is
+//! problematic, as they can cause the JSON parser to overflow the stack.
 //!
-//! Additionally, such implementation would be pretty verbose, and we do care
-//! about performance here a bit.
+//! Additionally, such implementation would be pretty verbose, and we do care about performance here a bit.
 //!
-//! So what this module does is dumping a `tt::TopSubtree` into a bunch of flat
-//! array of numbers.
+//! So what this module does is dumping a `tt::TopSubtree` into a bunch of flat array of numbers.
 //!
 //! ```json
 //!  {
@@ -30,9 +27,8 @@
 //!  }
 //! ```
 //!
-//! We probably should replace most of the code here with bincode someday, but,
-//! as we don't have bincode in Cargo.toml yet, lets stick with serde_json for
-//! the time being.
+//! We probably should replace most of the code here with bincode someday, but, as we don't have bincode in Cargo.toml
+//! yet, lets stick with serde_json for the time being.
 
 #[cfg(feature = "sysroot-abi")]
 use proc_macro_srv::TokenStream;
