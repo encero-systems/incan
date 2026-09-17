@@ -76,7 +76,12 @@ pub fn capture_legacy_cargo_selected_units(
         .iter()
         .map(|package| (package.id.as_str(), package))
         .collect::<BTreeMap<_, _>>();
-    let mut build_scripts = BTreeMap::new();
+    if let Some(root) = graph.roots.iter().find(|root| **root >= graph.units.len()) {
+        return Err(OvenLegacyCargoError::Plan(format!(
+            "Cargo unit root index {root} is outside its unit graph"
+        )));
+    }
+    let mut build_script_records = BTreeMap::<String, Vec<CargoBuildScriptExecuted>>::new();
     for output in outputs {
         for line in output
             .stdout
@@ -97,22 +102,56 @@ pub fn capture_legacy_cargo_selected_units(
                     "Cargo build-script record has an inconsistent reason".to_string(),
                 ));
             }
-            if let Some(previous) = build_scripts.insert(record.package_id.clone(), record.clone())
-                && previous != record
-            {
-                return Err(OvenLegacyCargoError::Plan(
-                    "Cargo emitted conflicting build-script facts for one selected package".to_string(),
-                ));
-            }
+            build_script_records
+                .entry(record.package_id.clone())
+                .or_default()
+                .push(record);
         }
     }
-    if let Some(package_id) = build_scripts
-        .keys()
-        .find(|package_id| !graph.units.iter().any(|unit| &unit.pkg_id == *package_id))
-    {
+    if let Some(package_id) = build_script_records.keys().find(|package_id| {
+        !graph.units.iter().any(|unit| {
+            &unit.pkg_id == *package_id
+                && unit.mode == "run-custom-build"
+                && unit.target.kind.iter().any(|kind| kind == "custom-build")
+        })
+    }) {
         return Err(OvenLegacyCargoError::Plan(format!(
-            "Cargo emitted build-script facts for unselected package `{package_id}`"
+            "Cargo emitted build-script facts without a selected run-custom-build unit for `{package_id}`"
         )));
+    }
+    let mut build_script_units = BTreeMap::new();
+    for (index, unit) in graph.units.iter().enumerate().filter(|(_, unit)| {
+        unit.mode == "run-custom-build" && unit.target.kind.iter().any(|kind| kind == "custom-build")
+    }) {
+        if build_script_units.insert(unit.pkg_id.as_str(), index).is_some() {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "Cargo selected multiple run-custom-build units for `{}` without per-record unit identity",
+                unit.pkg_id
+            )));
+        }
+        if !graph.units.iter().any(|consumer| {
+            consumer.pkg_id == unit.pkg_id
+                && consumer.mode != "run-custom-build"
+                && consumer.dependencies.iter().any(|dependency| dependency.index == index)
+        }) {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "Cargo run-custom-build unit for `{}` has no same-package consumer edge",
+                unit.pkg_id
+            )));
+        }
+        if !build_script_records.contains_key(&unit.pkg_id) {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "Cargo selected a run-custom-build unit for `{}` without structured execution facts",
+                unit.pkg_id
+            )));
+        }
+    }
+    for (package_id, records) in &build_script_records {
+        if records.len() != 1 {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "Cargo emitted multiple build-script records for `{package_id}` without per-record unit identity"
+            )));
+        }
     }
     let mut units = Vec::with_capacity(graph.units.len());
     for unit in &graph.units {
@@ -125,18 +164,15 @@ pub fn capture_legacy_cargo_selected_units(
         let mut features = unit.features.clone();
         features.sort();
         features.dedup();
-        let build_script = build_scripts
-            .get(&unit.pkg_id)
+        let build_script = build_script_units
+            .get(unit.pkg_id.as_str())
+            .filter(|index| **index == units.len())
+            .and_then(|_| build_script_records.get(&unit.pkg_id))
+            .and_then(|records| records.first())
             .map(|record| {
                 let mut cfgs = record.cfgs.clone();
                 cfgs.sort();
                 cfgs.dedup();
-                let mut linked_libraries = record.linked_libs.clone();
-                linked_libraries.sort();
-                linked_libraries.dedup();
-                let mut linked_paths = record.linked_paths.clone();
-                linked_paths.sort();
-                linked_paths.dedup();
                 let mut environment = BTreeMap::new();
                 for (name, value) in &record.env {
                     if environment.insert(name.clone(), value.clone()).is_some() {
@@ -149,8 +185,8 @@ pub fn capture_legacy_cargo_selected_units(
                 Ok(OvenLegacyCargoBuildScriptFacts {
                     cfgs,
                     environment,
-                    linked_libraries,
-                    linked_paths,
+                    linked_libraries: record.linked_libs.clone(),
+                    linked_paths: record.linked_paths.clone(),
                     out_dir: record.out_dir.clone(),
                 })
             })
@@ -217,6 +253,13 @@ mod tests {
                     "target": {"kind": ["lib"], "crate_types": ["lib"], "name": "dep", "src_path": "/registry/dep/src/lib.rs", "edition": "2021"},
                     "mode": "build",
                     "features": [],
+                    "dependencies": [{"index": 2, "extern_crate_name": null}]
+                },
+                {
+                    "pkg_id": "registry+https://example.invalid/index#dep@2.0.0",
+                    "target": {"kind": ["custom-build"], "crate_types": ["bin"], "name": "build-script-build", "src_path": "/registry/dep/build.rs", "edition": "2021"},
+                    "mode": "run-custom-build",
+                    "features": [],
                     "dependencies": []
                 }
             ]
@@ -231,8 +274,8 @@ mod tests {
             stdout: serde_json::to_vec(&serde_json::json!({
                 "reason": "build-script-executed",
                 "package_id": "registry+https://example.invalid/index#dep@2.0.0",
-                "linked_libs": ["static=dep_native"],
-                "linked_paths": ["native=/tmp/dep-native"],
+                "linked_libs": ["static=second", "static=first", "static=second"],
+                "linked_paths": ["native=/tmp/z", "native=/tmp/a", "native=/tmp/z"],
                 "cfgs": ["dep_cfg"],
                 "env": [["DEP_MODE", "sealed"]],
                 "out_dir": "/tmp/dep-out"
@@ -245,7 +288,8 @@ mod tests {
             capture.units[0].dependencies[0].extern_crate_name.as_deref(),
             Some("dep_alias")
         );
-        let build_script = capture.units[1]
+        assert!(capture.units[1].build_script.is_none());
+        let build_script = capture.units[2]
             .build_script
             .as_ref()
             .ok_or("missing build-script facts")?;
@@ -254,7 +298,14 @@ mod tests {
             build_script.environment.get("DEP_MODE").map(String::as_str),
             Some("sealed")
         );
-        assert_eq!(build_script.linked_libraries, ["static=dep_native"]);
+        assert_eq!(
+            build_script.linked_libraries,
+            ["static=second", "static=first", "static=second"]
+        );
+        assert_eq!(
+            build_script.linked_paths,
+            ["native=/tmp/z", "native=/tmp/a", "native=/tmp/z"]
+        );
         Ok(())
     }
 
@@ -278,6 +329,53 @@ mod tests {
             }))?,
         };
         assert!(capture_legacy_cargo_selected_units(&graph, &metadata, &[output]).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn capture_refuses_invalid_roots_and_ambiguous_build_script_units() -> Result<(), Box<dyn std::error::Error>> {
+        let metadata = serde_json::from_value::<CargoMetadata>(serde_json::json!({
+            "packages": [{"id": "path+file:///fixture#root@1.0.0", "name": "root", "version": "1.0.0", "manifest_path": "/fixture/Cargo.toml"}]
+        }))?;
+        let invalid_root = serde_json::from_value::<CargoUnitGraph>(serde_json::json!({
+            "version": 1, "roots": [1],
+            "units": [{
+                "pkg_id": "path+file:///fixture#root@1.0.0",
+                "target": {"kind": ["lib"], "crate_types": ["lib"], "name": "root", "src_path": "/fixture/src/lib.rs", "edition": "2024"},
+                "mode": "build", "features": [], "dependencies": []
+            }]
+        }))?;
+        assert!(capture_legacy_cargo_selected_units(&invalid_root, &metadata, &[]).is_err());
+
+        let ambiguous = serde_json::from_value::<CargoUnitGraph>(serde_json::json!({
+            "version": 1, "roots": [0],
+            "units": [
+                {
+                    "pkg_id": "path+file:///fixture#root@1.0.0",
+                    "target": {"kind": ["lib"], "crate_types": ["lib"], "name": "root", "src_path": "/fixture/src/lib.rs", "edition": "2024"},
+                    "mode": "build", "features": [],
+                    "dependencies": [{"index": 1, "extern_crate_name": null}, {"index": 2, "extern_crate_name": null}]
+                },
+                {
+                    "pkg_id": "path+file:///fixture#root@1.0.0",
+                    "target": {"kind": ["custom-build"], "crate_types": ["bin"], "name": "build-host", "src_path": "/fixture/build.rs", "edition": "2024"},
+                    "mode": "run-custom-build", "platform": "aarch64-apple-darwin", "features": [], "dependencies": []
+                },
+                {
+                    "pkg_id": "path+file:///fixture#root@1.0.0",
+                    "target": {"kind": ["custom-build"], "crate_types": ["bin"], "name": "build-target", "src_path": "/fixture/build.rs", "edition": "2024"},
+                    "mode": "run-custom-build", "platform": "wasm32-unknown-unknown", "features": [], "dependencies": []
+                }
+            ]
+        }))?;
+        let output = CargoInvocationOutput {
+            stdout: serde_json::to_vec(&serde_json::json!({
+                "reason": "build-script-executed", "package_id": "path+file:///fixture#root@1.0.0", "out_dir": "/tmp/root-out"
+            }))?,
+        };
+        let error = capture_legacy_cargo_selected_units(&ambiguous, &metadata, &[output])
+            .expect_err("multiple physical build-script units must remain ambiguous");
+        assert!(error.to_string().contains("multiple run-custom-build units"));
         Ok(())
     }
 }
