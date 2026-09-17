@@ -142,7 +142,8 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
                 && {
                     let mut artifact_crate_types = artifact.target.crate_types.clone();
                     artifact_crate_types.sort();
-                    let mut observed_crate_types = argument_values(&invocation.arguments, "--crate-type");
+                    let mut observed_crate_types =
+                        comma_separated_argument_values(&invocation.arguments, "--crate-type");
                     observed_crate_types.sort();
                     artifact_crate_types == observed_crate_types
                 }
@@ -191,7 +192,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
     for (index, item) in matched.iter().enumerate() {
         let invocation = item.invocation;
         let artifact = item.artifact;
-        let crate_types = argument_values(&invocation.arguments, "--crate-type");
+        let crate_types = comma_separated_argument_values(&invocation.arguments, "--crate-type");
         let mode = if artifact.profile.test { "test" } else { "build" }.to_string();
         let dependencies = extern_arguments(&invocation.arguments)?
             .into_iter()
@@ -324,13 +325,21 @@ fn argument_values(arguments: &[String], name: &str) -> Vec<String> {
     arguments
         .windows(2)
         .filter(|pair| pair[0] == name)
-        .flat_map(|pair| pair[1].split(','))
+        .map(|pair| pair[1].as_str())
         .chain(
             arguments
                 .iter()
                 .filter_map(|argument| argument.strip_prefix(&format!("{name}="))),
         )
         .map(ToString::to_string)
+        .collect()
+}
+
+/// Read repeatable rustc values and expand the comma-list grammar used by options such as `--crate-type`.
+fn comma_separated_argument_values(arguments: &[String], name: &str) -> Vec<String> {
+    argument_values(arguments, name)
+        .into_iter()
+        .flat_map(|value| value.split(',').map(ToString::to_string).collect::<Vec<_>>())
         .collect()
 }
 
@@ -1114,8 +1123,22 @@ mod tests {
     #[test]
     fn stable_trace_refuses_externs_without_exact_paths() {
         let arguments = vec!["--extern".to_string(), "dependency".to_string()];
-        let error = extern_arguments(&arguments).expect_err("name-only extern must fail closed");
-        assert!(error.to_string().contains("no exact artifact path"));
+        assert!(matches!(
+            extern_arguments(&arguments),
+            Err(error) if error.to_string().contains("no exact artifact path")
+        ));
+
+        let comma_path = vec![
+            "--extern".to_string(),
+            "dependency=/path,with-comma/libdependency.rlib".to_string(),
+        ];
+        assert_eq!(
+            extern_arguments(&comma_path).ok(),
+            Some(vec![(
+                "dependency".to_string(),
+                "/path,with-comma/libdependency.rlib".to_string()
+            )])
+        );
     }
 
     #[test]
@@ -1183,14 +1206,21 @@ mod tests {
         let capture =
             capture_legacy_cargo_selected_units_from_trace(&metadata, &[encode(&first)?, encode(&second)?], &rustc)?;
         assert_eq!(capture.units.len(), 2);
+        assert_eq!(capture.units[1].dependencies.len(), 1);
         assert_eq!(capture.units[1].dependencies[0].unit_index, 0);
-        assert_eq!(
-            capture.units[0]
-                .build_script
-                .as_ref()
-                .map(|facts| facts.cfgs.as_slice()),
-            Some(["sealed".to_string()].as_slice())
+        let facts = capture.units[0]
+            .build_script
+            .as_ref()
+            .ok_or("missing warm build-script facts")?;
+        assert_eq!(facts.cfgs, ["sealed"]);
+        let mut conflicting = second.clone();
+        conflicting[1]["cfgs"] = serde_json::json!(["different"]);
+        let conflict = capture_legacy_cargo_selected_units_from_trace(
+            &metadata,
+            &[encode(&first)?, encode(&conflicting)?],
+            &rustc,
         );
+        assert!(conflict.is_err());
         Ok(())
     }
 }
