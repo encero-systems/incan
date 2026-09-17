@@ -138,8 +138,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
             .map(|path| path.to_string_lossy().to_string())
             .ok_or_else(|| OvenLegacyCargoError::Plan("Cargo package manifest has no parent".to_string()))?;
         let candidates = invocations.iter().enumerate().filter_map(|(index, invocation)| {
-            let emitted = invocation_artifact_paths(invocation, artifact, rustc_host)?;
-            (invocation.environment.get("CARGO_MANIFEST_DIR") == Some(&expected_manifest)
+            let identity_matches = invocation.environment.get("CARGO_MANIFEST_DIR") == Some(&expected_manifest)
                 && invocation.environment.get("CARGO_PKG_NAME") == Some(&package.name)
                 && argument_value(&invocation.arguments, "--crate-name")
                     .is_some_and(|name| name == artifact.target.name.replace('-', "_"))
@@ -157,8 +156,12 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
                     artifact_features.sort();
                     artifact_features.dedup();
                     artifact_features == rustc_feature_cfgs(&invocation.arguments)
-                })
-            .then_some((index, invocation, emitted))
+                };
+            if !identity_matches {
+                return None;
+            }
+            let emitted = invocation_artifact_paths(invocation, artifact, rustc_host)?;
+            Some((index, invocation, emitted))
         });
         let candidates = candidates.collect::<Vec<_>>();
         let [(invocation_index, invocation, emitted)] = candidates.as_slice() else {
