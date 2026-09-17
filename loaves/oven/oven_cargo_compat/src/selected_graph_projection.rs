@@ -769,7 +769,10 @@ fn captured_crate_kind(
     }
 }
 
-/// Derive compilation domain only from a traced unit platform matched to the sealed host or target.
+/// Derive compilation domain from the matched rustc invocation's explicit-target provenance.
+///
+/// Host and target triples can be equal in a normal native build. The exact `--target` presence, not a comparison
+/// order between equal strings, distinguishes a host proc macro from a target binary in that case.
 fn captured_domain(
     unit: &OvenLegacyCargoSelectedUnit,
     selection: &OvenSelectedRustFacetSelection,
@@ -780,16 +783,22 @@ fn captured_domain(
             "is absent; projection cannot infer host or target domain",
         )
     })?;
-    if platform == selection.host {
-        return Ok(OvenSelectedRustFacetDomain::Host);
+    match unit.target_is_explicit {
+        Some(false) if platform == selection.host => Ok(OvenSelectedRustFacetDomain::Host),
+        Some(true) if platform == selection.intent.target => Ok(OvenSelectedRustFacetDomain::Target),
+        Some(false) => Err(projection_error(
+            "selected Cargo unit platform",
+            "has no `--target` but does not match the sealed compiler host",
+        )),
+        Some(true) => Err(projection_error(
+            "selected Cargo unit platform",
+            "has `--target` but does not match the sealed target",
+        )),
+        None => Err(projection_error(
+            "selected Cargo unit platform",
+            "has no traced `--target` provenance",
+        )),
     }
-    if platform == selection.intent.target {
-        return Ok(OvenSelectedRustFacetDomain::Target);
-    }
-    Err(projection_error(
-        "selected Cargo unit platform",
-        "does not match the sealed host or target",
-    ))
 }
 
 /// Derive an inspection role from Cargo's traced target kind and mode without accepting caller relabelling.
@@ -948,6 +957,7 @@ mod tests {
                 edition: "2021".to_string(),
                 mode: "build".to_string(),
                 platform: Some("x86_64-unknown-linux-gnu".to_string()),
+                target_is_explicit: Some(true),
                 cfg: vec!["target_has_atomic=\"8\"".to_string()],
                 effective_features: vec!["derive".to_string()],
                 dependencies: Vec::new(),
@@ -1073,6 +1083,38 @@ mod tests {
     }
 
     #[test]
+    fn projection_uses_explicit_target_for_native_test_units() -> Result<(), Box<dyn std::error::Error>> {
+        let mut capture = capture()?;
+        capture.units[0].target_kinds = vec!["test".to_string()];
+        capture.units[0].crate_types = vec!["bin".to_string()];
+        capture.units[0].mode = "test".to_string();
+        capture.units[0].target_is_explicit = Some(true);
+        let graph = project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?, None)?;
+        assert_eq!(graph.units[0].role, OvenSelectedRustFacetUnitRole::IntegrationTest);
+        Ok(())
+    }
+
+    #[test]
+    fn projection_uses_absent_target_for_host_proc_macro() -> Result<(), Box<dyn std::error::Error>> {
+        let mut capture = capture()?;
+        capture.units[0].target_kinds = vec!["proc-macro".to_string()];
+        capture.units[0].crate_types = vec!["proc-macro".to_string()];
+        capture.units[0].target_is_explicit = Some(false);
+        let graph = project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?, None)?;
+        assert_eq!(graph.units[0].role, OvenSelectedRustFacetUnitRole::ProcMacro);
+        assert_eq!(graph.units[0].domain, OvenSelectedRustFacetDomain::Host);
+        Ok(())
+    }
+
+    #[test]
+    fn projection_refuses_untraced_target_provenance() -> Result<(), Box<dyn std::error::Error>> {
+        let mut capture = capture()?;
+        capture.units[0].target_is_explicit = None;
+        assert!(project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?, None).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn projection_refuses_registry_catalog_checksum_substitution() -> Result<(), Box<dyn std::error::Error>> {
         let capture = capture()?;
         let mut sealed = sealed(&capture)?;
@@ -1174,6 +1216,7 @@ mod tests {
             edition: "2021".to_string(),
             mode: "run-custom-build".to_string(),
             platform: Some("x86_64-unknown-linux-gnu".to_string()),
+            target_is_explicit: Some(true),
             cfg: Vec::new(),
             effective_features: Vec::new(),
             dependencies: Vec::new(),
@@ -1269,6 +1312,7 @@ mod tests {
             edition: "2021".to_string(),
             mode: "run-custom-build".to_string(),
             platform: Some("x86_64-unknown-linux-gnu".to_string()),
+            target_is_explicit: Some(true),
             cfg: Vec::new(),
             effective_features: Vec::new(),
             dependencies: Vec::new(),
