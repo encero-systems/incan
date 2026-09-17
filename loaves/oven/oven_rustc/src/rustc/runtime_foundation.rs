@@ -1644,6 +1644,7 @@ mod tests {
             action: "build".to_string(),
             role: OvenLoafMemberRole::CompiledClosure,
         }];
+        let publication_lock = acquire_exclusive_loaf_generation_lock(output.path())?;
         import_loaf_envelope_from_mirrors(
             output.path(),
             scratch.path(),
@@ -1659,6 +1660,7 @@ mod tests {
             &[mirror.path().to_path_buf()],
         )
         .map_err(|error| format!("mirror import failed: {error}"))?;
+        drop(publication_lock);
         let held =
             acquire_committed_release_runtime_foundation(output.path(), OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL)?
                 .ok_or("runtime foundation was not acquired")?;
