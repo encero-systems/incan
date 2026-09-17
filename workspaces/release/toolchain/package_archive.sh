@@ -414,8 +414,9 @@ git show HEAD:Cargo.lock > "$package_dir/crates/Cargo.lock" \
 #      other build-owned artifact would be.
 #   3. `command -v cargo` outright, unchanged for every caller with no such guard (a real release
 #      build, local manual packaging) and as a last-resort fallback otherwise.
-if [ -n "${CARGO_BIN:-}" ]; then
-  cargo_bin="$CARGO_BIN"
+explicit_cargo_bin="${CARGO_BIN:-}"
+if [ -n "$explicit_cargo_bin" ]; then
+  cargo_bin="$explicit_cargo_bin"
   [ -x "$cargo_bin" ] || fail "CARGO_BIN does not name an executable: $cargo_bin"
 else
   cargo_bin=""
@@ -473,18 +474,20 @@ fi
 # of the resolved binary's directory. Fall back to the sibling-of-Cargo heuristic only when that
 # lookup is empty, which covers the guarded/sandboxed case above where `$HOME` itself is redirected
 # but the resolved Cargo binary's real location still has `.rustup` as a physical sibling.
-direct_toolchain_cargo="$(
-  find "$rustup_home_dir/toolchains" -mindepth 3 -maxdepth 3 \
-    -type f -name cargo -path '*/bin/cargo' 2>/dev/null | head -1
-)"
-if [ -z "$direct_toolchain_cargo" ]; then
+if [ -z "$explicit_cargo_bin" ]; then
   direct_toolchain_cargo="$(
-    find "$(dirname "$cargo_home_dir")/.rustup/toolchains" -mindepth 3 -maxdepth 3 \
+    find "$rustup_home_dir/toolchains" -mindepth 3 -maxdepth 3 \
       -type f -name cargo -path '*/bin/cargo' 2>/dev/null | head -1
   )"
-fi
-if [ -n "$direct_toolchain_cargo" ] && [ -x "$direct_toolchain_cargo" ]; then
-  cargo_bin="$direct_toolchain_cargo"
+  if [ -z "$direct_toolchain_cargo" ]; then
+    direct_toolchain_cargo="$(
+      find "$(dirname "$cargo_home_dir")/.rustup/toolchains" -mindepth 3 -maxdepth 3 \
+        -type f -name cargo -path '*/bin/cargo' 2>/dev/null | head -1
+    )"
+  fi
+  if [ -n "$direct_toolchain_cargo" ] && [ -x "$direct_toolchain_cargo" ]; then
+    cargo_bin="$direct_toolchain_cargo"
+  fi
 fi
 # `cargo metadata --offline` below resolves its registry cache from `$CARGO_HOME` (default
 # `$HOME/.cargo`), which is equally a victim of the guard's `$HOME` redirect: the offline cache

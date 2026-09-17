@@ -187,6 +187,8 @@ fn production_archive_binds_the_exact_reported_release_policy_output() -> Result
     assert!(script.contains("select_release_policy_output.sh"));
     assert!(script.contains("INCAN_SDK_INVENTORY=\"$sdk_seed_root/sdk-inventory.json\""));
     assert!(script.contains("INCAN_HOME=\"$release_policy_publisher_home\""));
+    assert!(script.contains("explicit_cargo_bin=\"${CARGO_BIN:-}\""));
+    assert!(script.contains("if [ -z \"$explicit_cargo_bin\" ]; then"));
     assert!(script.contains("--policy-engine-store \"$policy_engine_store\""));
     assert!(script.contains("--policy-engine-identity \"$policy_engine_identity\""));
     assert!(script.contains("--policy-engine-target \"$target\""));
