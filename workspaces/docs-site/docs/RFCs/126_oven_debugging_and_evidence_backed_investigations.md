@@ -23,6 +23,8 @@
 
 This RFC proposes an Oven-owned architecture through which humans and agents conduct durable, evidence-backed investigations of Rust, Incan, and mixed program executions. Its north star is that humans and agents can investigate unexpected behavior, test competing explanations, and verify repairs across Oven-managed Rust and Incan projects, with inspectable evidence throughout. Compiler services supply checked meaning, runtime integrations supply supported observations, and Oven coordinates the exact artifacts and bounded execution used to test a hypothesis. Native debugging supplies interactive execution control and observation within that architecture; editor and MCP clients consume the same service contracts.
 
+> **Reading this RFC:** Start with the [three test drives](#guide-level-explanation) for the proposed human and agent experience. The core model below introduces the concepts; the [reference-level explanation](#reference-level-explanation) defines their guarantees and limits. The test drives are illustrative, not runnable commands for a shipped feature.
+
 ## Core model
 
 1. **An investigation is durable.** A failure, question, counterexample, capture, or exploratory purpose can open a durable record that accumulates references to relevant evidence, hypotheses, experiments, executions, and verification outcomes as the investigation develops.
@@ -89,27 +91,104 @@ Generated Rust is not the source authority, public debugging contract, or requir
 
 ## Guide-level explanation
 
-### Start from the failure
+These walkthroughs illustrate the proposed experience, not functionality available today. Actions are described in ordinary language; the displayed records are illustrative views, not command syntax, MCP tool names, or wire schemas. The examples assume the capabilities they use are supported. Exact client surfaces remain a design question.
 
-A developer selects a failed test, an executable, or a captured failure. Oven resolves the selected workspace member, target, environment, build, and available source/debug artifacts. A missing artifact or mismatched source revision is reported before a source location is presented as trustworthy. A direct-file Incan convenience may delegate project execution to the same service under RFC 118.
+### Test drive: why is the total wrong?
 
-The first stop shows authored source, meaningful frames, local variables, and structured values. A list exposes elements, an enum exposes its active variant, and a model exposes fields. Compiler-generated machinery can be expanded deliberately. Selecting a Rust frame selects Rust expression semantics; selecting an Incan frame selects Incan semantics.
+You have an Incan checkout application calling a Rust pricing library. A test says a subtotal of 12,000 cents with a 2,000-cent discount should produce 10,000 cents. It actually produces 8,000 cents.
 
-### Test an explanation
+**1. Open the failed test as an investigation.** Select the failure in your editor. Oven identifies the test execution, the executable it used, and the matching source snapshot. You see the authored Incan caller and Rust callee, without having to reconstruct the build command.
 
-Suppose a mixed-language test returns an incorrect total. Compiler context identifies the relevant functions. An Architect finding suggests that a recoverable failure may be discarded, but does not establish the cause. The investigator proposes two explanations: the caller supplied the wrong value, or the callee transformed the right value incorrectly.
+```text
+Question: Why did checkout return 8,000 cents instead of 10,000?
+Evidence: failed test checkout_discount
+Execution: run-A, built from source snapshot A
+Source match: verified
+```
 
-A bounded experiment stops at the call boundary and records the selected argument and result. Its output contains the stop reason, source/build identities, the requested values, and unavailable or omitted fields. The observation may distinguish the hypotheses or leave both open. A subsequent experiment can reduce the failing input while retaining the same failure predicate and declared external fixtures.
+If your editor contains newer changes, it shows the mismatch and offers the matching source or a new build. It does not place a trustworthy-looking breakpoint against the wrong executable.
 
-After an implementation repair, the investigation links the changed source and new executable to reruns of the original reproduction and appropriate regression tests. A human can inspect the same evidence without replaying the agent's conversation.
+**2. Record two explanations.** You or an agent can add these to the investigation. Neither is a diagnosis yet.
 
-### Continue someone else's investigation
+| Hypothesis                                         | What would distinguish it?                                            |
+| -------------------------------------------------- | --------------------------------------------------------------------- |
+| The caller already subtracted the discount.        | Inspect the subtotal supplied at the Rust call boundary.              |
+| The pricing function subtracts the discount twice. | Inspect the incoming values and the intermediate subtraction results. |
 
-A capture can be opened by an editor or queried through MCP after the original process exits. It contains only the state actually captured, with retention, sensitivity, and completeness information. Continuing a live process requires acquiring execution control. Reading a historical capture does not resume or rerun the program.
+**3. Run a bounded experiment.** Ask to stop at the pricing call and capture its arguments, with a two-second execution budget. The editor can expose this as an action; an agent requests the same operation through MCP. Both receive evidence tied to the same execution and stop.
 
-### Investigate waiting and external operations
+```text
+Experiment: inspect the pricing call arguments
+Execution: run-B, same executable and fixture as run-A
+Stopped because: breakpoint reached
+Observed: subtotal = 12,000; discount = 2,000
+Capture: pricing-entry-B; requested arguments retained
+Hypothesis update: caller-subtraction explanation contradicted for this run
+Still open: what happens inside the pricing function?
+```
 
-For a supported async runtime, the investigator can inspect recorded tasks, suspension locations, cancellation, and wait relationships. Uninstrumented relationships remain unknown. RFC 104 receipts explain authority-bearing operations; RFC 093 telemetry can connect them to the surrounding request or operation. Neither is treated as a complete scheduler history.
+The first experiment has narrowed the question. It has not proved the second explanation. Stepping through the function and retaining the selected values then shows 12,000 becoming 10,000 and subsequently 8,000 at two subtraction locations. The investigation links those observations to the second hypothesis. Selecting each frame uses that frame’s language semantics.
+
+**4. Verify the correction.** Remove the extra subtraction and build a new executable. Rerun the original test, then independent cases for zero discount and a different discount amount.
+
+```text
+Claim: the duplicate subtraction caused this failing case
+Before: run-A / source A → expected 10,000; observed 8,000
+After:  run-D / source B → expected 10,000; observed 10,000
+Regression cases: zero discount passed; different discount passed
+Evidence: original failure, boundary capture, subtraction observations,
+          changed artifact, and test results
+Limit: these cases do not establish correctness for every pricing rule
+```
+
+You can inspect the observations behind the claim rather than trust an agent’s summary. If reduction is supported, you can also ask it to find a smaller failing fixture; ordinary debugging does not depend on having a reducer.
+
+### Test drive: pick up an investigation tomorrow
+
+An agent investigated the pricing failure overnight. Its process has exited and your working tree has changed. You open its retained investigation in the editor.
+
+**What you can do:** inspect the hypotheses, source snapshot, captured arguments, and verification runs; follow each claim to its evidence; compare the before/after artifacts through supported identity mappings. Opening the investigation does not launch the application.
+
+**What you cannot assume:** that every value was saved, that current source matches the old executable, or that the original process can be resumed.
+
+```text
+Investigation: checkout_discount
+Execution run-B: exited
+Captured: subtotal, discount, selected frames
+Requested now: customer.account_details
+Result: not captured
+Action required to obtain it: authorize a new execution and capture
+```
+
+“Not captured” does not mean the customer had no account details. Likewise, “optimized out” would mean the value was unavailable in that executable, and “redacted” would mean the display withheld it. Those outcomes call for different next steps.
+
+Suppose a decoder correction later changes how one captured value is interpreted. The original observation remains available, the new interpretation identifies its decoder and references the old observation, and conclusions using the old interpretation expose that relationship. The investigation’s history does not silently change.
+
+If a process is still live, acquiring its control lease lets you coordinate authorized stepping with other clients. It does not grant permission to evaluate effectful expressions, repeat external operations, or edit source.
+
+### Test drive: did the timed-out operation happen?
+
+A supported runtime integration records a worker waiting during an external operation. You ask an agent to run a bounded experiment: wait for the completion condition, capture the relevant task/wait evidence, and stop after two seconds.
+
+The request times out before completion is observed. A useful result keeps several facts separate:
+
+| Question                                     | What the evidence says                                                                           |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Why did the bounded experiment stop waiting? | Its time budget expired.                                                                         |
+| Was completion observed?                     | No, within the captured interval.                                                                |
+| Did the external operation execute?          | It may have; confirmation is unavailable.                                                        |
+| Was cancellation successful?                 | Cancellation was requested; stopping is not confirmed.                                           |
+| What runtime evidence exists?                | The captured worker wait and its declared coverage; uninstrumented relationships remain unknown. |
+
+The agent cannot safely conclude “the operation failed, so retry it.” It follows the retained operation identity to reconcile the outcome, using the supported operation/receipt contract. Repeating an external effect requires its own authority; a debugger control lease is insufficient.
+
+A later result may establish that the operation completed despite the timeout. Or the outcome may remain uncertain. Both are more useful than a false failure claim that causes a duplicate operation.
+
+### Reading the contracts behind the examples
+
+The first walkthrough uses investigation records, mixed-language debugging, bounded experiments, and verification. The second adds historical inspection. The third depends on supported runtime observation and operation reconciliation. None assumes universal replay or a complete trace of every event.
+
+The reference sections below explain what must stay true across those experiences: who owns the facts, how identities connect, what a capability promises, what authority an action requires, and what the evidence can establish.
 
 ## Reference-level explanation
 
