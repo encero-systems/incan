@@ -51,7 +51,9 @@ from std.async.time import sleep, timeout, timeout_join, TimeoutError, TimeoutJo
 | -------------------- | ------------------------------------------------------------------------------------------------- |
 | `TimeoutJoinOutcome` | Outcome type returned by durable timeout helpers, including the recovered live handle on timeout. |
 | `TimeoutError`       | Error type returned by canceling timeout helpers when the deadline expires.                       |
-| `Duration`           | Simple duration value object exposed as a convenience type.                                       |
+| `Duration`           | Nonnegative duration value object with integer-exact seconds and millisecond constructors.         |
+
+`Duration.from_secs(secs)` and `Duration.from_millis(milliseconds)` clamp nonpositive inputs to zero. The millisecond constructor decomposes the integer directly into seconds and nanoseconds, so values above the exact range of floating-point integers retain their full integer precision. `Duration.from_secs_f64(seconds)` also clamps nonpositive inputs to zero and otherwise follows floating-point precision.
 
 ## Module: `std.async.race`
 
