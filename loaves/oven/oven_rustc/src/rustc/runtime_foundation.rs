@@ -673,11 +673,11 @@ mod tests {
     use crate::rustc::{
         OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION,
         OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact,
-        OvenSelectedRustFacetDependency, OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetIntent,
-        OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath,
-        OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource,
-        OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec, selected_graph_sha256,
-        selected_graph_source_digest, selected_graph_unit_identity,
+        OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetDependency, OvenSelectedRustFacetGeneratedInput,
+        OvenSelectedRustFacetIntent, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
+        OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection,
+        OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec,
+        selected_graph_sha256, selected_graph_source_digest, selected_graph_unit_identity,
     };
     use crate::rustc::{
         OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetUnit,
@@ -752,6 +752,16 @@ mod tests {
     }
 
     /// Construct the selected build context shared by every fixture unit.
+    fn cfg_snapshot(architecture: &str, operating_system: &str) -> OvenSelectedRustFacetCfgSnapshot {
+        OvenSelectedRustFacetCfgSnapshot {
+            flags: vec!["unix".to_string()],
+            values: BTreeMap::from([
+                ("target_arch".to_string(), vec![architecture.to_string()]),
+                ("target_os".to_string(), vec![operating_system.to_string()]),
+            ]),
+        }
+    }
+
     fn selection() -> OvenSelectedRustFacetSelection {
         OvenSelectedRustFacetSelection {
             intent: OvenSelectedRustFacetIntent {
@@ -761,6 +771,8 @@ mod tests {
                 features: vec!["async".to_string(), "json".to_string(), "ordinal".to_string()],
             },
             host: "aarch64-apple-darwin".to_string(),
+            host_cfg: cfg_snapshot("aarch64", "macos"),
+            target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
             default_features: true,
             toolchain_version: "1.85.0".to_string(),

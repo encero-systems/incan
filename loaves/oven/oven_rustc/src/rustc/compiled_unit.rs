@@ -327,6 +327,16 @@ mod tests {
         }
     }
 
+    fn cfg_snapshot(architecture: &str, operating_system: &str) -> OvenSelectedRustFacetCfgSnapshot {
+        OvenSelectedRustFacetCfgSnapshot {
+            flags: vec!["unix".to_string()],
+            values: BTreeMap::from([
+                ("target_arch".to_string(), vec![architecture.to_string()]),
+                ("target_os".to_string(), vec![operating_system.to_string()]),
+            ]),
+        }
+    }
+
     fn selection() -> OvenSelectedRustFacetSelection {
         OvenSelectedRustFacetSelection {
             intent: OvenSelectedRustFacetIntent {
@@ -336,6 +346,8 @@ mod tests {
                 features: vec!["root-feature".to_string()],
             },
             host: "aarch64-apple-darwin".to_string(),
+            host_cfg: cfg_snapshot("aarch64", "macos"),
+            target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
             default_features: true,
             toolchain_version: "1.85.0".to_string(),

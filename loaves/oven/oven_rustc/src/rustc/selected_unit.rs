@@ -834,12 +834,12 @@ mod tests {
 
     use super::*;
     use crate::rustc::{
-        OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION, OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDomain,
-        OvenSelectedRustFacetGraph, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
-        OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource,
-        OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnitRole,
-        compiled_rust_unit_identities, selected_graph_sha256, selected_graph_source_digest,
-        selected_graph_unit_identity,
+        OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION, OvenSelectedRustFacetCfgSnapshot,
+        OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDomain, OvenSelectedRustFacetGraph,
+        OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPurpose,
+        OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind,
+        OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnitRole, compiled_rust_unit_identities,
+        selected_graph_sha256, selected_graph_source_digest, selected_graph_unit_identity,
     };
 
     const COMPILER_CLOSURE: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -852,6 +852,16 @@ mod tests {
         selected_graph_sha256(b"selected-unit toolchain owner")
     }
 
+    fn cfg_snapshot(architecture: &str, operating_system: &str) -> OvenSelectedRustFacetCfgSnapshot {
+        OvenSelectedRustFacetCfgSnapshot {
+            flags: vec!["unix".to_string()],
+            values: BTreeMap::from([
+                ("target_arch".to_string(), vec![architecture.to_string()]),
+                ("target_os".to_string(), vec![operating_system.to_string()]),
+            ]),
+        }
+    }
+
     fn selection() -> OvenSelectedRustFacetSelection {
         OvenSelectedRustFacetSelection {
             intent: super::super::OvenSelectedRustFacetIntent {
@@ -861,6 +871,8 @@ mod tests {
                 features: Vec::new(),
             },
             host: "x86_64-unknown-linux-gnu".to_string(),
+            host_cfg: cfg_snapshot("x86_64", "linux"),
+            target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
             default_features: false,
             toolchain_version: "1.85.0".to_string(),

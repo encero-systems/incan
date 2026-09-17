@@ -521,13 +521,13 @@ pub(crate) mod tests {
         OVEN_RUNTIME_FOUNDATION_SCHEMA_VERSION, OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
         OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION, OvenRuntimeFoundation, OvenRuntimeFoundationUnit,
         OvenRustcArtifactExtern, OvenRustcArtifactManifest, OvenRustcRegistryLeaf, OvenRustcRegistrySource,
-        OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact, OvenSelectedRustFacetDependency,
-        OvenSelectedRustFacetGraph, OvenSelectedRustFacetIntent, OvenSelectedRustFacetOwner,
-        OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetOwnerRoot, OvenSelectedRustFacetPath,
-        OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource,
-        OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec,
-        resolve_active_rustc, rustc_host_target, rustc_identity, selected_graph_sha256, selected_graph_source_digest,
-        selected_graph_unit_identity,
+        OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact, OvenSelectedRustFacetCfgSnapshot,
+        OvenSelectedRustFacetDependency, OvenSelectedRustFacetGraph, OvenSelectedRustFacetIntent,
+        OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetOwnerRoot,
+        OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection,
+        OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember,
+        OvenSelectedRustFacetTargetSpec, resolve_active_rustc, rustc_host_target, rustc_identity,
+        selected_graph_sha256, selected_graph_source_digest, selected_graph_unit_identity,
     };
     use oven_store::OvenBuildIntent;
 
@@ -689,6 +689,16 @@ pub(crate) mod tests {
         Ok(selected_graph_sha256(&fs::read(&artifact)?))
     }
 
+    fn cfg_snapshot(architecture: &str, operating_system: &str) -> OvenSelectedRustFacetCfgSnapshot {
+        OvenSelectedRustFacetCfgSnapshot {
+            flags: vec!["unix".to_string()],
+            values: BTreeMap::from([
+                ("target_arch".to_string(), vec![architecture.to_string()]),
+                ("target_os".to_string(), vec![operating_system.to_string()]),
+            ]),
+        }
+    }
+
     /// Assemble the host-native foundation this connector's first proof compiles.
     fn host_native_foundation(
         host: &str,
@@ -704,6 +714,8 @@ pub(crate) mod tests {
                 features: Vec::new(),
             },
             host: host.to_string(),
+            host_cfg: cfg_snapshot("fixture-host", "fixture"),
+            target_cfg: cfg_snapshot("fixture-target", "fixture"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
             default_features: true,
             toolchain_version: "1.85.0".to_string(),
