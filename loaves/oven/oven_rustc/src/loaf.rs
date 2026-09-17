@@ -1502,7 +1502,7 @@ pub fn acquire_committed_release_store_member(
     }
     let generation_lock = acquire_loaf_generation_lock(loaf_root)?;
     let (manifest, manifest_path) = committed_loaf_envelope_manifest(loaf_root, "release")?;
-    let Some(member) = manifest.release_store_member else {
+    let Some(member) = manifest.release_store_member.as_ref() else {
         return Ok(None);
     };
     if member.schema_version != OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION || member.label != label {
@@ -1547,7 +1547,7 @@ pub fn acquire_committed_release_store_member(
     }
     let executable = payload.artifact_root.join(&executables[0].relative_path);
     Ok(Some(OvenHeldReleaseStoreMember {
-        label: member.label,
+        label: member.label.clone(),
         executable,
         payload,
         _generation_lock: generation_lock,
