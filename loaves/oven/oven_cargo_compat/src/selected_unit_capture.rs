@@ -9,7 +9,8 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use oven_rustc::rustc::{OvenSelectedRustFacetCfgSnapshot, RustcUnitRequest};
+use oven_rustc::rustc::OvenSelectedRustFacetCfgSnapshot;
+use oven_rustc::rustc::substitution::RustcUnitRequest;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -122,7 +123,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
         emitted: Vec<PathBuf>,
         aliases: Vec<PathBuf>,
     }
-    let mut matched = Vec::new();
+    let mut matched: Vec<Matched<'_>> = Vec::new();
     let mut used_invocations = vec![false; invocations.len()];
     for artifact in &artifacts {
         let package = packages.get(artifact.package_id.as_str()).ok_or_else(|| {
@@ -1249,16 +1250,6 @@ mod tests {
         let rustc = scratch.path().join("rustc");
         fs::write(&rustc, b"verified compiler fixture")?;
         let rustc_name = rustc.to_string_lossy().to_string();
-        let custom_dir = scratch.path().join("target/debug/build/root-sealed");
-        let deps_dir = scratch.path().join("target/debug/deps");
-        let output_dir = scratch.path().join("target/debug/build/root-output/out");
-        fs::create_dir_all(&custom_dir)?;
-        fs::create_dir_all(&deps_dir)?;
-        fs::create_dir_all(&output_dir)?;
-        let custom_artifact_path = custom_dir.join("build_script_build");
-        let consumer_artifact_path = deps_dir.join("libroot-sealed.rlib");
-        fs::write(&custom_artifact_path, b"custom")?;
-        fs::write(&consumer_artifact_path, b"consumer")?;
         let host_dir = scratch.path().join("host");
         let wasm_dir = scratch.path().join("wasm");
         fs::create_dir(&host_dir)?;
@@ -1369,9 +1360,9 @@ mod tests {
             "features": [], "filenames": [alias], "profile": {"test": false}
         }))?;
         assert!(invocation_source_matches(&invocation, &artifact.target.src_path));
-        assert!(invocation_owns_artifact(&invocation, &artifact));
+        assert!(invocation_artifact_paths(&invocation, &artifact, "fixture-host").is_some());
         fs::write(&artifact.filenames[0], b"tampered alias bytes")?;
-        assert!(!invocation_owns_artifact(&invocation, &artifact));
+        assert!(invocation_artifact_paths(&invocation, &artifact, "fixture-host").is_none());
         Ok(())
     }
 
@@ -1381,6 +1372,16 @@ mod tests {
         let rustc = scratch.path().join("rustc");
         fs::write(&rustc, b"verified compiler fixture")?;
         let rustc_name = rustc.to_string_lossy().to_string();
+        let custom_dir = scratch.path().join("target/debug/build/root-sealed");
+        let deps_dir = scratch.path().join("target/debug/deps");
+        let output_dir = scratch.path().join("target/debug/build/root-output/out");
+        fs::create_dir_all(&custom_dir)?;
+        fs::create_dir_all(&deps_dir)?;
+        fs::create_dir_all(&output_dir)?;
+        let custom_artifact_path = custom_dir.join("build_script_build");
+        let consumer_artifact_path = deps_dir.join("libroot-sealed.rlib");
+        fs::write(&custom_artifact_path, b"custom")?;
+        fs::write(&consumer_artifact_path, b"consumer")?;
         let metadata = serde_json::from_value::<CargoMetadata>(serde_json::json!({
             "packages": [{
                 "id": "root 1.0.0", "name": "root", "version": "1.0.0",
