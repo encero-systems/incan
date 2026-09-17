@@ -263,7 +263,6 @@ impl OvenRuntimeFoundation {
         if artifacts.intent.target != expected_intent.target
             || artifacts.intent.toolchain != expected_intent.toolchain
             || artifacts.intent.profile != expected_intent.profile
-            || artifacts.intent.features != expected_intent.features
         {
             return Err(runtime_foundation_invalid(
                 "runtime foundation artifact intent",
@@ -1097,6 +1096,26 @@ mod tests {
             },
             units,
         })
+    }
+
+    #[test]
+    fn foundation_refuses_registry_features_that_disagree_with_selected_unit() -> TestResult {
+        let mut foundation = foundation()?;
+        let source = foundation
+            .artifacts
+            .registry_sources
+            .iter_mut()
+            .find(|source| source.package == "serde")
+            .ok_or("fixture lost serde registry source")?;
+        source.features = vec!["derive".to_string()];
+        assert!(matches!(
+            foundation.validated(),
+            Err(OvenRustcError::InvalidInput {
+                field: "runtime foundation prebuilt source",
+                ..
+            })
+        ));
+        Ok(())
     }
 
     /// Build exhaustive package source inventories; build.rs remains warning-only source evidence.

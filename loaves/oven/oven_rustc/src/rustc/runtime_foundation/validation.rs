@@ -281,15 +281,16 @@ pub(crate) fn validate_runtime_unit_policy(
                     source.package == unit.package
                         && source.version == unit.package_version
                         && source.source.digest == unit.source.digest
+                        && source.features == unit.features
                 })
                 .collect::<Vec<_>>();
             let [source] = source_matches.as_slice() else {
                 return Err(runtime_foundation_invalid(
                     "runtime foundation prebuilt source",
                     format!(
-                        "unit {} must match exactly one sealed registry-source record, found {}",
-                        source_matches.len(),
-                        unit.crate_name
+                        "unit {} must match exactly one sealed registry-source record with its effective features, found {}",
+                        unit.crate_name,
+                        source_matches.len()
                     ),
                 ));
             };
