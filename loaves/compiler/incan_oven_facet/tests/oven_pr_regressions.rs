@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use oven_rustc::legacy_cargo::{
+use oven_cargo_compat::{
     OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoError, OvenLegacyCargoPrepareRequest,
     OvenLegacyCargoPublicationKind, prepare_direct_rustc_plan,
 };

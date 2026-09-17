@@ -51,7 +51,8 @@ Check `workspaces/docs-site/docs/RFCs/` for the highest existing RFC number and 
 Rules:
 
 - "Related" entries are **plain text** — `RFC NNN (description)` — never markdown reference links.
-- Leave Issue and RFC PR as `—` until filed.
+- `Issue` links to the governing issue; leave it as `—` until that issue is filed.
+- `RFC PR` records only the PR or PRs that implement the RFC. Leave it as `—` until implementation PRs exist. Never put the proposal PR or a documentation-only PR in this field; opening an RFC proposal does not populate it.
 - `Written against` is the Incan version that was current when the RFC was drafted — the version whose syntax and semantics the RFC assumes. It records context, not intent. It never changes after the RFC is accepted.
 - `Shipped in` is left as `—` until the feature is actually released. Never set it speculatively to a planned version — that belongs on the GitHub issue.
 

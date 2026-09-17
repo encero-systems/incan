@@ -19,7 +19,9 @@ use std::path::Path;
 use serde::Deserialize;
 
 const BASELINE_PATH: &str = "loaves/toolchain/incan-cli/tests/fixtures/cli_layering/cli_compiler_reach_in.json";
-const CLI_ROOT: &str = "loaves/toolchain/incan-cli/src";
+/// The toolchain ring's sources: both binaries' packages, since `oven-cli` carries the `oven`, `lock` and `tools`
+/// handlers `incan` mounts and reaches the compiler through them the same way.
+const TOOLCHAIN_ROOTS: [&str; 2] = ["loaves/toolchain/incan-cli/src", "loaves/toolchain/oven-cli/src"];
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -87,10 +89,13 @@ fn compiler_modules_named_by(source: &str) -> BTreeSet<String> {
     modules
 }
 
-/// Walk the CLI crate's sources and report the compiler modules each file reaches into.
+/// Walk the toolchain packages' sources and report the compiler modules each file reaches into.
 fn observed_reach_in(root: &Path) -> Result<BTreeMap<String, BTreeSet<String>>, Box<dyn std::error::Error>> {
     let mut observed = BTreeMap::new();
-    let mut pending = vec![root.join(CLI_ROOT)];
+    let mut pending = TOOLCHAIN_ROOTS
+        .iter()
+        .map(|toolchain_root| root.join(toolchain_root))
+        .collect::<Vec<_>>();
     while let Some(directory) = pending.pop() {
         for entry in fs::read_dir(&directory)? {
             let path = entry?.path();

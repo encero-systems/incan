@@ -19,10 +19,10 @@ path = "src/main.rs"
 # The command line ships the stdlib semantics packs and Rust inspection the way the toolchain does; a ring crate built
 # on its own selects them explicitly.
 default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
-rust_inspect = ["dep:rust_inspect", "rust_inspect/inspector", "incan_frontend/rust_inspect", "incan_provider/rust_inspect", "incan_driver/rust_inspect"]
-std_testing = ["incan_frontend/std_testing", "incan_provider/std_testing", "incan_driver/std_testing"]
-std_async = ["incan_frontend/std_async", "incan_provider/std_async", "incan_driver/std_async"]
-std_decorators = ["incan_frontend/std_decorators", "incan_provider/std_decorators", "incan_driver/std_decorators"]
+rust_inspect = ["dep:rust_inspect", "rust_inspect/inspector", "incan_frontend/rust_inspect", "incan_provider/rust_inspect", "incan_driver/rust_inspect", "oven-cli/rust_inspect"]
+std_testing = ["incan_frontend/std_testing", "incan_provider/std_testing", "incan_driver/std_testing", "oven-cli/std_testing"]
+std_async = ["incan_frontend/std_async", "incan_provider/std_async", "incan_driver/std_async", "oven-cli/std_async"]
+std_decorators = ["incan_frontend/std_decorators", "incan_provider/std_decorators", "incan_driver/std_decorators", "oven-cli/std_decorators"]
 
 [dependencies]
 incan_codegraph = { workspace = true }
@@ -37,7 +37,10 @@ incan_syntax = { workspace = true }
 incan_vocab = { workspace = true }
 oven_model = { workspace = true }
 oven_rustc = { workspace = true }
+oven_cargo_compat = { workspace = true }
+oven_interop = { workspace = true }
 oven_store = { workspace = true }
+oven-cli = { workspace = true }
 rust_inspect = { workspace = true, optional = true }
 clap = { version = "4.4", features = ["derive"] }
 hex = "0.4.3"

@@ -15,8 +15,8 @@ use crate::error::{CliError, CliResult};
 use crate::project::{discover_effective_project_manifest, resolve_project_root};
 use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::library_manifest_index::LibraryArtifactMetadata;
+use oven_cargo_compat::OvenProjectRegistrySourceDependency;
 use oven_model::manifest::{DependencySource, DependencySpec};
-use oven_rustc::legacy_cargo::OvenProjectRegistrySourceDependency;
 use oven_rustc::rustc::{
     OvenProjectInspectionRootDependency, OvenProjectInspectionTestDependencyRoot, OvenRustcRegistrySourcePackage,
 };
@@ -734,8 +734,8 @@ mod tests {
 
     use crate::backend::ProjectGenerator;
     use crate::build::{BakeGeneratedOutDir, OVEN_PROJECT_OUTPUT_ARTIFACT_PATH};
+    use oven_cargo_compat::OvenProjectRegistrySourceDependency;
     use oven_model::manifest::{DependencySource, DependencySpec};
-    use oven_rustc::legacy_cargo::OvenProjectRegistrySourceDependency;
     use oven_rustc::rustc::OvenRustcRegistrySourcePackage;
     use oven_store::digest_bytes;
 

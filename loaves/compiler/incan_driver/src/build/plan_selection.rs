@@ -19,14 +19,14 @@ use crate::build_unit::promoted_oven_test_dependencies;
 use crate::error::{CliError, CliResult, oven_plan_error, oven_rustc_error};
 use incan_lang::version::INCAN_VERSION;
 use incan_provider::dependency_resolver::ResolvedDependencies;
-use oven_model::manifest::{DependencySource, DependencySpec};
-use oven_rustc::interop::OVEN_INTEROP_EXECUTION_RECEIPT_INPUT;
-use oven_rustc::legacy_cargo::cargo_process::resolved_cargo_executable;
-use oven_rustc::legacy_cargo::{
+use oven_cargo_compat::cargo_process::resolved_cargo_executable;
+use oven_cargo_compat::{
     OvenLegacyCargoBaseLoaf, OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoPrepareRequest,
     OvenLegacyCargoPublicationKind, direct_rustc_reusable_project_plan_environment, prepare_direct_rustc_plan,
     stage_locked_loaf_fixture,
 };
+use oven_interop::OVEN_INTEROP_EXECUTION_RECEIPT_INPUT;
+use oven_model::manifest::{DependencySource, DependencySpec};
 use oven_rustc::loaf::{
     OVEN_SOURCE_COMPILER_VOCAB_SUPPORT_BUILD_INPUT, OvenToolchainLoaf,
     resolve_compiler_owned_loaf_for_registry_dependencies,
@@ -562,8 +562,8 @@ mod tests {
     use crate::build::{OvenProjectDependencySurface, OvenProjectPlanMode, OvenToolchainMaterialization};
     use crate::build_unit::promoted_oven_test_dependencies;
     use incan_provider::dependency_resolver::ResolvedDependencies;
+    use oven_interop::OVEN_INTEROP_EXECUTION_RECEIPT_INPUT;
     use oven_model::manifest::{DependencySource, DependencySpec};
-    use oven_rustc::interop::OVEN_INTEROP_EXECUTION_RECEIPT_INPUT;
     use oven_rustc::loaf::{OVEN_NESTED_DEPENDENCY_MISS_SUMMARY, OVEN_NO_IMPLICIT_DEPENDENCY_BUILD};
     use oven_rustc::plan::OvenDirectRustcPlanSelection;
     use oven_rustc::rustc::{
@@ -841,7 +841,7 @@ mod tests {
             )
             .with_generated_source("generated-root", &generated)
             .with_build_unit_input(OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, "sha256:selected-native-execution")
-            .with_build_unit_input(oven_rustc::interop::OVEN_INTEROP_PLAN_SCHEMA_INPUT, "5"),
+            .with_build_unit_input(oven_interop::OVEN_INTEROP_PLAN_SCHEMA_INPUT, "5"),
         )?;
         let store = OvenStore::new(
             project.path().join("oven-store"),

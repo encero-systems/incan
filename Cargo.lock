@@ -1445,6 +1445,9 @@ dependencies = [
  "incan_vocab",
  "libc",
  "md-5",
+ "oven-cli",
+ "oven_cargo_compat",
+ "oven_interop",
  "oven_model",
  "oven_rustc",
  "oven_store",
@@ -1522,6 +1525,8 @@ dependencies = [
  "incan_semantics_core",
  "incan_test_support",
  "incan_vocab",
+ "oven_cargo_compat",
+ "oven_interop",
  "oven_model",
  "oven_rustc",
  "oven_store",
@@ -1640,6 +1645,7 @@ dependencies = [
  "incan_frontend",
  "incan_lang",
  "incan_provider",
+ "oven_cargo_compat",
  "oven_model",
  "oven_rustc",
  "oven_store",
@@ -1656,6 +1662,7 @@ dependencies = [
  "incan_semantics_core",
  "incan_test_support",
  "incan_vocab",
+ "oven_cargo_compat",
  "oven_model",
  "oven_rustc",
  "oven_store",
@@ -2278,6 +2285,64 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
+name = "oven-cli"
+version = "0.6.0-dev.5"
+dependencies = [
+ "clap",
+ "incan_driver",
+ "incan_frontend",
+ "incan_lang",
+ "incan_oven_facet",
+ "incan_provider",
+ "oven_cargo_compat",
+ "oven_interop",
+ "oven_model",
+ "oven_rustc",
+ "oven_store",
+ "rust_inspect",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "oven_cargo_compat"
+version = "0.6.0-dev.5"
+dependencies = [
+ "hex",
+ "oven_model",
+ "oven_rustc",
+ "oven_store",
+ "rustix 1.1.4",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "oven_interop"
+version = "0.6.0-dev.5"
+dependencies = [
+ "hex",
+ "oven_model",
+ "oven_rustc",
+ "oven_store",
+ "rustix 1.1.4",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "oven_model"
 version = "0.6.0-dev.5"
 dependencies = [
@@ -2292,6 +2357,10 @@ dependencies = [
  "toml",
  "toml_edit",
 ]
+
+[[package]]
+name = "oven_registry"
+version = "0.6.0-dev.5"
 
 [[package]]
 name = "oven_rustc"

@@ -432,3 +432,17 @@ pub fn expected_artifacts(manifest: &OvenRustcArtifactManifest) -> Result<BTreeM
     }
     Ok(expected)
 }
+
+/// Return the exact commit hash reported by `rustc -vV`, used to remap installed `rust-src` checkouts onto the
+/// virtual `/rustc/<commit>` prefix a source-less toolchain embeds in standard-library debug spans.
+pub fn rustc_commit_hash(rustc: &Path) -> Option<String> {
+    let output = Command::new(rustc).arg("-vV").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("commit-hash: "))
+        .map(|hash| hash.trim().to_string())
+}

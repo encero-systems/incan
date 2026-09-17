@@ -1,0 +1,29 @@
+[package]
+name = "oven_cargo_compat"
+version = "0.6.0-dev.5"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Oven's explicit Cargo-compatibility mode: the hidden legacy_cargo baker, compiler-suite publication and the Loaf bake that run Cargo, over oven_rustc"
+
+[lib]
+name = "oven_cargo_compat"
+path = "src/lib.rs"
+
+[dependencies]
+hex = "0.4.3"
+oven_model = { workspace = true }
+oven_rustc = { workspace = true }
+oven_store = { workspace = true }
+rustix = { version = "1.1.4", features = ["fs"] }
+semver = "1.0.27"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10.9"
+tempfile = "3"
+thiserror = { workspace = true }
+toml = "0.9"
+tracing = { workspace = true }
+
+[dev-dependencies]
+oven_store = { workspace = true, features = ["test_support"] }

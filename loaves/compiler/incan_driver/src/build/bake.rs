@@ -60,8 +60,8 @@ use crate::rust_inspect_workspace::mark_oven_direct_rust_inspection;
 use incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path;
 use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
+use oven_cargo_compat::direct_rustc_compile_environment;
 use oven_model::manifest::ProjectManifest;
-use oven_rustc::legacy_cargo::direct_rustc_compile_environment;
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
 use oven_rustc::rustc::{
     OvenRustcError, OvenTrustedDirectRustcTargetRequest, attach_caller_owned_rustc_libraries,

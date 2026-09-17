@@ -2,18 +2,18 @@
 
 Ring: **oven**
 
-Explicit Cargo-compatibility and adoption mode. Never a hidden backend.
+Explicit Cargo-compatibility and adoption mode: the hidden `legacy_cargo` baker that is the one place Cargo runs, the compiler-suite publication it drives, and the Loaf bake that prepares a generated project's closure through it. Never a hidden backend — it sits over `oven_rustc`, calling direct rustc's planning and Loaf model, and nothing in `oven_rustc` reaches back.
 
-## Sources and remaining moves
+## Sources
 
-- `loaves/oven/oven_rustc/src/legacy_cargo.rs`; its SDK inventory discovery and provider digests come through the facet's provider hook
-- `loaves/compiler/incan_driver/src/backend/project/cargo_toml.rs`, pending inversion of its dependencies on driver-owned project generation
-- `loaves/compiler/incan_driver/src/backend/project/runner.rs`, with its cfg-gated `rust_inspect` calls inverted into a facet hook so rust-analyzer never enters this ring
+- `loaves/oven/oven_cargo_compat/src/lib.rs` and its modules (`cargo_json`, `cargo_process`, `compiler_suite_catalog`, `compiler_suite_targets`, `inspection_sources`, `lock`, `registry_sources`, `sdk_staging`, `workspace_authority`) — formerly `oven_rustc::legacy_cargo`, moved whole with its tests
+- `loaves/oven/oven_cargo_compat/src/loaf_bake.rs` — the bake half of what was `oven_rustc::loaf`: the generated project's closure through the publisher, the sealed registry lock, the merged inspection sources, the generated-root externs
+- `loaves/oven/oven_cargo_compat/src/loaf_bake/vocab_support.rs` — the bounded Cargo run and the vocab-support helpers it bakes and copies into the envelope
 
-## May depend on
+## Depends on
 
-`oven_model`
+`oven_model`, `oven_store`, `oven_rustc`
 
-Retires with the runner's unified-resolution fallback once Oven unifies resolution. Kept as a crate so its removal is a directory delete.
+The inversion that made this a crate: the Cargo-free wire contract the native route reads (the payload, suite, shard, foundation and toolchain-data types, their schema constants, the provider-compilation evidence key, the inspection-source handoff) is declared in `oven_rustc::native_contract` and re-exported here, so a publisher and the consumer that reads its output hold one type; `rustc_commit_hash` lives with the toolchain probes in `oven_rustc::rustc`; and `OvenLoafError::Publisher` carries the publisher's rendered failure, with the `From` impl here, so `oven_rustc`'s Loaf model names no Cargo. `loaves/compiler/incan_driver/src/backend/project/{cargo_toml,runner}.rs` stay in the driver: they render a project from the checked program and provider facts, which is compiler work, not Cargo's.
 
-This directory is a layout skeleton. It holds no code yet; `src/` is a placeholder for the conventional crate root.
+Retires with the runner's unified-resolution fallback once Oven unifies resolution (RFC 118/119). Kept as a crate so its removal is a directory delete.

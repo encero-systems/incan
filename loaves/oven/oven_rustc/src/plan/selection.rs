@@ -7,8 +7,8 @@
 
 use std::collections::BTreeSet;
 
-use crate::legacy_cargo::{OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION, OvenProjectExtensionPayload};
 use crate::loaf::resolve_compiler_owned_loaf_by_identity;
+use crate::native_contract::{OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION, OvenProjectExtensionPayload};
 use crate::rustc::{
     OvenRegistryLeafAuthority, OvenRustcArtifactManifest, OvenTrustedRustcArtifactRoot,
     project_inspection_constituent_matches_receipt, select_direct_rustc_plan_for_execution,

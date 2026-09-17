@@ -1,0 +1,47 @@
+[package]
+name = "oven-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The oven command: the explicit Oven receipt, bounded-store and native direct-rustc workflow, the lock command and the toolchain inspection helpers"
+publish = false
+
+[lib]
+name = "oven_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "oven"
+path = "src/main.rs"
+
+[features]
+# Mirrors the `incan` command line's defaults, since both binaries mount this crate's commands; a ring crate built on
+# its own selects them explicitly.
+default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
+rust_inspect = ["dep:rust_inspect", "rust_inspect/inspector", "incan_frontend/rust_inspect", "incan_provider/rust_inspect", "incan_driver/rust_inspect"]
+std_testing = ["incan_frontend/std_testing", "incan_provider/std_testing", "incan_driver/std_testing"]
+std_async = ["incan_frontend/std_async", "incan_provider/std_async", "incan_driver/std_async"]
+std_decorators = ["incan_frontend/std_decorators", "incan_provider/std_decorators", "incan_driver/std_decorators"]
+
+[dependencies]
+incan_lang = { workspace = true }
+incan_driver = { workspace = true, features = ["cli"] }
+incan_frontend = { workspace = true }
+incan_oven_facet = { workspace = true }
+incan_provider = { workspace = true }
+oven_model = { workspace = true }
+oven_rustc = { workspace = true }
+oven_cargo_compat = { workspace = true }
+oven_interop = { workspace = true }
+oven_store = { workspace = true }
+rust_inspect = { workspace = true, optional = true }
+clap = { version = "4.4", features = ["derive"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = "3"
+toml = "0.9"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+incan_driver = { workspace = true, features = ["cli", "test_support"] }

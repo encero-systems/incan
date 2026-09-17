@@ -79,7 +79,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     let existing_suite_physical_bytes = if envelope == OvenLoafEnvelope::CompilerSuite {
         let suite_store = compiler_suite_store_path(&options)?;
         if suite_store.is_dir() {
-            oven_rustc::legacy_cargo::conservative_directory_reservation(&suite_store).map_err(oven_error)?
+            oven_cargo_compat::conservative_directory_reservation(&suite_store).map_err(oven_error)?
         } else {
             0
         }
@@ -343,9 +343,9 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             &generated_project,
         )
         .map_err(oven_error)?;
-        let observed_transient = oven_rustc::legacy_cargo::conservative_directory_reservation(&options.output)
+        let observed_transient = oven_cargo_compat::conservative_directory_reservation(&options.output)
             .and_then(|owned| {
-                oven_rustc::legacy_cargo::conservative_directory_reservation(scratch.path())
+                oven_cargo_compat::conservative_directory_reservation(scratch.path())
                     .map(|transient| owned.saturating_add(transient))
             })
             .map_err(oven_error)?;
@@ -429,9 +429,9 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             .collect(),
     };
     let publication_lock = acquire_exclusive_loaf_generation_lock(&options.output).map_err(oven_error)?;
-    let replacement_high_water = oven_rustc::legacy_cargo::conservative_directory_reservation(&options.output)
+    let replacement_high_water = oven_cargo_compat::conservative_directory_reservation(&options.output)
         .and_then(|owned| {
-            oven_rustc::legacy_cargo::conservative_directory_reservation(scratch.path())
+            oven_cargo_compat::conservative_directory_reservation(scratch.path())
                 .map(|transient| owned.saturating_add(transient))
         })
         .map_err(oven_error)?;

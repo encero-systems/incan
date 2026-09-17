@@ -776,7 +776,9 @@ def main() -> None:
         &[("INCAN_SDK_INVENTORY", sdk_inventory_text)],
     )?;
     assert_success(&lock, "direct-C interop lock");
-    let bake = run_incan_with_env(
+    // The bootstrap seeds its Cargo.lock through the compatibility publisher, so this is an explicit bake: under the
+    // compiler suite it receives the fixture Cargo the suite injects for explicit bakes, never the scheduler's guard.
+    let mut bake_command = configured_incan_command(
         tmp.path(),
         &[
             "oven",
@@ -787,8 +789,9 @@ def main() -> None:
             "--target",
             "aarch64-apple-darwin",
         ],
-        &[("INCAN_SDK_INVENTORY", sdk_inventory_text)],
-    )?;
+    );
+    support::configure_explicit_oven_bake_command(&mut bake_command)?;
+    let bake = bake_command.env("INCAN_SDK_INVENTORY", sdk_inventory_text).output()?;
     assert_success(&bake, "automatic direct-C interop bootstrap and bake");
     assert!(
         String::from_utf8_lossy(&bake.stdout).contains("named compatibility publisher"),

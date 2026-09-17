@@ -16,6 +16,7 @@ members = [
     "loaves/compiler/incan_test_support",
     "loaves/toolchain/incan-cli",
     "loaves/toolchain/incan-lsp",
+    "loaves/toolchain/oven-cli",
     "loaves/compiler/rust_inspect",
     "loaves/kernel/incan_codegraph",
     "loaves/kernel/incan_lang",
@@ -24,6 +25,9 @@ members = [
     "loaves/kernel/incan_vocab",
     "loaves/oven/oven_model",
     "loaves/oven/oven_rustc",
+    "loaves/oven/oven_interop",
+    "loaves/oven/oven_registry",
+    "loaves/oven/oven_cargo_compat",
     "loaves/oven/oven_store",
     "loaves/stdlib/derive/incan_derive",
     "loaves/stdlib/derive/incan_web_macros",
@@ -81,6 +85,7 @@ incan_format = { path = "loaves/compiler/incan_format" }
 incan_test_support = { path = "loaves/compiler/incan_test_support" }
 incan-cli = { path = "loaves/toolchain/incan-cli" }
 incan-lsp = { path = "loaves/toolchain/incan-lsp" }
+oven-cli = { path = "loaves/toolchain/oven-cli" }
 incan_frontend = { path = "loaves/compiler/incan_frontend", default-features = false }
 incan_ir = { path = "loaves/compiler/incan_ir", default-features = false }
 incan_oven_facet = { path = "loaves/compiler/incan_oven_facet" }
@@ -92,6 +97,9 @@ incan_semantics_core = { path = "loaves/kernel/incan_semantics_core" }
 incan_syntax = { path = "loaves/kernel/incan_syntax" }
 oven_model = { path = "loaves/oven/oven_model", version = "0.6.0-dev.5" }
 oven_rustc = { path = "loaves/oven/oven_rustc", version = "0.6.0-dev.5" }
+oven_interop = { path = "loaves/oven/oven_interop", version = "0.6.0-dev.5" }
+oven_registry = { path = "loaves/oven/oven_registry", version = "0.6.0-dev.5" }
+oven_cargo_compat = { path = "loaves/oven/oven_cargo_compat", version = "0.6.0-dev.5" }
 oven_store = { path = "loaves/oven/oven_store", version = "0.6.0-dev.5" }
 
 # The named, receipt-bound compatibility profile used only by Oven's explicit compiler-suite publisher. Normal

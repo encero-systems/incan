@@ -1,0 +1,13 @@
+[package]
+name = "oven_registry"
+version = "0.6.0-dev.5"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Oven's registry client contract: index access, Loaf and asset acquisition, verification and trust policy (RFC 125)"
+
+[lib]
+name = "oven_registry"
+path = "src/lib.rs"
+
+[dependencies]
