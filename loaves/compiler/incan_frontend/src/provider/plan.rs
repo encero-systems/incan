@@ -322,19 +322,48 @@ fn next_provider_semantic_projection_identity() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-fn provider_semantic_projection_persistent_key(records: &BTreeMap<String, ProviderRecord>) -> String {
+fn provider_semantic_projection_persistent_key(records: &BTreeMap<String, ProviderRecord>) -> Result<String, String> {
     let mut hasher = Sha256::new();
-    hasher.update(b"incan-provider-semantic-plan-v1\0");
+    hasher.update(b"incan-provider-semantic-plan-v2\0");
     for (identity, record) in records {
-        hasher.update(identity.len().to_le_bytes());
-        hasher.update(identity.as_bytes());
-        // Provider records are immutable after construction. Their complete semantic Debug representation avoids
-        // rebuilding and revalidating the publication transport solely to key an already-admitted reading.
-        let checked_record = format!("{record:#?}");
-        hasher.update(checked_record.len().to_le_bytes());
-        hasher.update(checked_record.as_bytes());
+        let manifest = record
+            .manifest
+            .as_deref()
+            .map(LibraryManifest::to_json_string)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let artifact = record.artifact.as_ref().map(|artifact| {
+            serde_json::json!({
+                "dependency_key": artifact.dependency_key,
+                "manifest_name": artifact.manifest_name,
+                "manifest_path": artifact.manifest_path,
+                "crate_root": artifact.crate_root,
+                "cargo_toml_path": artifact.cargo_toml_path,
+                "crate_lib_path": artifact.crate_lib_path,
+                "kind": match artifact.kind {
+                    LibraryArtifactKind::Materialized => "materialized",
+                    LibraryArtifactKind::ParserSource => "parser_source",
+                    LibraryArtifactKind::StandardVocab => "standard_vocab",
+                },
+            })
+        });
+        let checked_record = serde_json::json!({
+            "identity_key": identity,
+            "identity": record.identity,
+            "provenance": record.provenance,
+            "authority": record.authority,
+            "namespace_claims": record.namespace_claims,
+            "available": record.available,
+            "enabled": record.enabled,
+            "manifest": manifest,
+            "artifact": artifact,
+            "implementation_facets": record.implementation_facets,
+        });
+        let encoded = serde_json::to_vec(&checked_record).map_err(|error| error.to_string())?;
+        hasher.update(encoded.len().to_le_bytes());
+        hasher.update(encoded);
     }
-    format!("{:x}", hasher.finalize())
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// Immutable provider catalog and active module projection shared by every compiler stage.
@@ -357,7 +386,7 @@ pub struct ProviderPlan {
     /// Process-local identity assigned when this immutable record set is constructed.
     semantic_projection_identity: u64,
     /// Complete process-independent key derived once from the admitted immutable provider records.
-    semantic_projection_persistent_key: String,
+    semantic_projection_persistent_key: Option<Result<String, String>>,
 }
 
 impl ProviderPlan {
@@ -412,7 +441,7 @@ impl ProviderPlan {
             public_dependencies: artifact_graph.public_dependencies,
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
-            semantic_projection_persistent_key,
+            semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
         })
     }
 
@@ -847,7 +876,7 @@ impl ProviderPlan {
             public_dependencies: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
-            semantic_projection_persistent_key,
+            semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
         }
     }
 
@@ -919,7 +948,7 @@ impl ProviderPlan {
             public_dependencies: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
-            semantic_projection_persistent_key,
+            semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
         }
     }
 
@@ -956,8 +985,13 @@ impl ProviderPlan {
     }
 
     /// Return the process-independent key for the admitted immutable facts consumed by semantic projection.
-    pub fn semantic_projection_persistent_key(&self) -> &str {
-        &self.semantic_projection_persistent_key
+    pub fn semantic_projection_persistent_key(&self) -> Result<&str, String> {
+        match self.semantic_projection_persistent_key.as_ref() {
+            Some(Ok(key)) => Ok(key),
+            Some(Err(error)) => Err(error.clone()),
+            None if self.records.is_empty() => Ok(""),
+            None => Err("provider semantic projection key was not constructed".to_string()),
+        }
     }
 
     /// Return whether this plan carries an SDK-owned reserved-namespace catalog.

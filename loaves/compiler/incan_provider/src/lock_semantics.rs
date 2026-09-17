@@ -453,7 +453,10 @@ fn provider_dependency_semantic_digests_observed_with_context(
     let key = if let Some(context) = context {
         format!("{persistent_key}\u{19}{context}")
     } else {
-        format!("{persistent_key}{}", provider_plan.semantic_projection_persistent_key())
+        format!(
+            "{persistent_key}{}",
+            provider_plan.semantic_projection_persistent_key()?
+        )
     };
     static DIGESTS: std::sync::OnceLock<std::sync::Mutex<BTreeMap<String, BTreeMap<String, String>>>> =
         std::sync::OnceLock::new();
@@ -1582,6 +1585,17 @@ mod tests {
         let fixture = production_toolchain_semantic_fixture(&temp.path().join("checked-facts"))?;
         let session = ProviderSemanticIdentitySession::default();
         let first = session.identities(&fixture.provider_plan, &fixture.specs)?;
+
+        let equivalent_plan = ProviderPlan::new(
+            incan_frontend::library_manifest_index::LibraryManifestIndex::default(),
+            fixture.provider_plan.records().cloned().collect(),
+            std::iter::empty::<Vec<String>>(),
+        )?;
+        assert_eq!(
+            fixture.provider_plan.semantic_projection_persistent_key()?,
+            equivalent_plan.semantic_projection_persistent_key()?,
+            "equivalent admitted provider facts must reconstruct the same persisted key"
+        );
 
         let mut changed_record = fixture
             .provider_plan
