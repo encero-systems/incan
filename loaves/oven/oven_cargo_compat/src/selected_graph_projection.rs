@@ -920,6 +920,7 @@ mod tests {
                 cfg: vec!["target_has_atomic=\"8\"".to_string()],
                 effective_features: vec!["derive".to_string()],
                 dependencies: Vec::new(),
+                sysroot_externs: Vec::new(),
                 build_script: None,
                 registry_source: Some(super::super::OvenLegacyCargoSelectedRegistrySource {
                     registry: "registry+https://example.invalid/index".to_string(),
@@ -1153,6 +1154,7 @@ mod tests {
             cfg: Vec::new(),
             effective_features: Vec::new(),
             dependencies: Vec::new(),
+            sysroot_externs: Vec::new(),
             build_script: Some(super::super::OvenLegacyCargoBuildScriptFacts {
                 cfgs: vec!["has_bindings".to_string()],
                 environment: BTreeMap::new(),
@@ -1247,6 +1249,7 @@ mod tests {
             cfg: Vec::new(),
             effective_features: Vec::new(),
             dependencies: Vec::new(),
+            sysroot_externs: Vec::new(),
             build_script: Some(super::super::OvenLegacyCargoBuildScriptFacts {
                 cfgs: Vec::new(),
                 environment: BTreeMap::from([("DEP_FIXTURE".to_string(), "/transient/out".to_string())]),

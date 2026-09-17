@@ -253,15 +253,19 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
                 "stable rustc build-script tool probe {index} has no exact Cargo build-script OUT_DIR record"
             )));
         }
-        let domain = invocation.environment.get("TARGET").cloned().ok_or_else(|| {
+        let target_context = invocation.environment.get("TARGET").cloned().ok_or_else(|| {
             OvenLegacyCargoError::Plan(format!(
                 "stable rustc build-script tool probe {index} has no target domain"
             ))
         })?;
+        let rustc_target = argument_value(&invocation.arguments, "--target")
+            .unwrap_or(rustc_host)
+            .to_string();
         build_script_tool_probes.push(OvenLegacyCargoBuildScriptToolProbe {
             package_id: (*probe_package).to_string(),
             out_dir,
-            domain,
+            target_context,
+            rustc_target,
             digest: probe_digest,
         });
     }
@@ -295,7 +299,9 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
         let artifact = item.artifact;
         let crate_types = observed_crate_types(invocation);
         let mode = if artifact.profile.test { "test" } else { "build" }.to_string();
-        let dependencies = extern_arguments(&invocation.arguments)?
+        let externs = extern_arguments(&invocation.arguments)?;
+        let dependencies = externs
+            .paths
             .into_iter()
             .map(|(alias, path)| {
                 let child = artifact_units.get(&path).ok_or_else(|| {
@@ -397,6 +403,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
     )?;
     for (unit, item) in capture.units.iter_mut().zip(&matched) {
         unit.cfg = rustc_non_feature_cfgs(&item.invocation.arguments);
+        unit.sysroot_externs = extern_arguments(&item.invocation.arguments)?.sysroot;
     }
     for ((consumer, build_unit), record) in build_script_edges {
         let dependency = capture
@@ -696,22 +703,36 @@ fn comma_separated_argument_values(arguments: &[String], name: &str) -> Vec<Stri
         .collect()
 }
 
-/// Decode every path-bearing rustc extern and refuse values that cannot identify one exact artifact.
-fn extern_arguments(arguments: &[String]) -> Result<Vec<(String, String)>, OvenLegacyCargoError> {
-    argument_values(arguments, "--extern")
-        .into_iter()
-        .map(|value| {
-            let (alias, path) = value.split_once('=').ok_or_else(|| {
-                OvenLegacyCargoError::Plan(format!("rustc extern `{value}` has no exact artifact path"))
-            })?;
-            if alias.is_empty() || path.is_empty() {
-                return Err(OvenLegacyCargoError::Plan(format!(
-                    "rustc extern `{value}` has an empty alias or artifact path"
-                )));
+/// Exact path-bearing and verified-sysroot externs decoded from one rustc invocation.
+struct CapturedExterns {
+    paths: Vec<(String, String)>,
+    sysroot: Vec<String>,
+}
+
+/// Decode every rustc extern, admitting only the compiler's built-in `proc_macro` crate without a path.
+fn extern_arguments(arguments: &[String]) -> Result<CapturedExterns, OvenLegacyCargoError> {
+    let mut paths = Vec::new();
+    let mut sysroot = Vec::new();
+    for value in argument_values(arguments, "--extern") {
+        let Some((alias, path)) = value.split_once('=') else {
+            if value == "proc_macro" {
+                sysroot.push(value);
+                continue;
             }
-            Ok((alias.to_string(), path.to_string()))
-        })
-        .collect()
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "rustc extern `{value}` has no exact artifact path or admitted sysroot identity"
+            )));
+        };
+        if alias.is_empty() || path.is_empty() {
+            return Err(OvenLegacyCargoError::Plan(format!(
+                "rustc extern `{value}` has an empty alias or artifact path"
+            )));
+        }
+        paths.push((alias.to_string(), path.to_string()));
+    }
+    sysroot.sort();
+    sysroot.dedup();
+    Ok(CapturedExterns { paths, sysroot })
 }
 
 /// Return the sorted unique Cargo feature cfg values passed to one rustc invocation.
@@ -763,7 +784,8 @@ pub struct OvenLegacyCargoSelectedUnitCapture {
 pub struct OvenLegacyCargoBuildScriptToolProbe {
     pub package_id: String,
     pub out_dir: PathBuf,
-    pub domain: String,
+    pub target_context: String,
+    pub rustc_target: String,
     pub digest: String,
 }
 
@@ -800,6 +822,9 @@ pub struct OvenLegacyCargoSelectedUnit {
     pub cfg: Vec<String>,
     pub effective_features: Vec<String>,
     pub dependencies: Vec<OvenLegacyCargoSelectedDependency>,
+    /// Bare compiler/sysroot externs admitted from the verified rustc invocation.
+    #[serde(default)]
+    pub sysroot_externs: Vec<String>,
     pub build_script: Option<OvenLegacyCargoBuildScriptFacts>,
     /// Exact staged registry source evidence, when this is a registry-backed unit.
     pub registry_source: Option<OvenLegacyCargoSelectedRegistrySource>,
@@ -1050,6 +1075,7 @@ fn capture_legacy_cargo_selected_units_inner(
             cfg: Vec::new(),
             effective_features: features,
             dependencies,
+            sysroot_externs: Vec::new(),
             build_script,
             registry_source: None,
         });
@@ -1404,6 +1430,7 @@ mod tests {
                 cfg: Vec::new(),
                 effective_features: Vec::new(),
                 dependencies: Vec::new(),
+                sysroot_externs: Vec::new(),
                 build_script: Some(OvenLegacyCargoBuildScriptFacts {
                     cfgs: Vec::new(),
                     environment: BTreeMap::new(),
@@ -1578,12 +1605,16 @@ mod tests {
             "dependency=/path,with-comma/libdependency.rlib".to_string(),
         ];
         assert_eq!(
-            extern_arguments(&comma_path).ok(),
+            extern_arguments(&comma_path).ok().map(|externs| externs.paths),
             Some(vec![(
                 "dependency".to_string(),
                 "/path,with-comma/libdependency.rlib".to_string()
             )])
         );
+        let sysroot = vec!["--extern".to_string(), "proc_macro".to_string()];
+        let captured = extern_arguments(&sysroot).expect("verified proc_macro sysroot extern should be retained");
+        assert!(captured.paths.is_empty());
+        assert_eq!(captured.sysroot, ["proc_macro"]);
     }
 
     #[test]
