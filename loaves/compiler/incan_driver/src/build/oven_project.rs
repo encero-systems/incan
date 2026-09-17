@@ -295,7 +295,7 @@ pub fn prepare_oven_project(
     record_timing(&mut prepare_timings, "prepare_lock_policy", lap);
     lap = Instant::now();
     let mut oven_build_inputs = oven_build_unit_inputs(&provider_plan, &project_requirements, &resolved)?;
-    let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
+    let mut rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
     let rustc_target = authority_context
         .as_ref()
         .and_then(|context| context.requested_target.clone())
@@ -627,9 +627,29 @@ pub fn prepare_oven_project(
     };
     let runtime_foundation = match &plan_selection {
         OvenDirectRustcPlanSelection::ToolchainLoaf(native) => {
-            let root = native.release_envelope_root().ok_or_else(|| {
-                CliError::failure("selected ToolchainLoaf has no verified release-envelope authority".to_string())
-            })?;
+            let Some(root) = native.release_envelope_root().map_err(oven_error)? else {
+                return Ok(OvenPreparedProject {
+                    generator,
+                    project_root,
+                    entrypoint: normalized_file_path,
+                    provider_plan,
+                    receipt,
+                    plan_selection,
+                    runtime_foundation: None,
+                    materialization: plan_preparation.materialization,
+                    cargo_process_started: plan_preparation.cargo_process_started,
+                    rustc,
+                    crate_name: ProjectGenerator::rust_target_name(&project_name),
+                    rust_edition,
+                    caller_owned_libraries,
+                    report,
+                    prepare_timings,
+                    #[cfg(feature = "rust_inspect")]
+                    rust_inspect_manifest_dir: rust_inspect_manifest_dir
+                        .as_ref()
+                        .map(|workspace| workspace.manifest_dir().to_path_buf()),
+                });
+            };
             let held = acquire_committed_release_runtime_foundation(&root, "rust-policy-foundation")
                 .map_err(oven_error)?
                 .ok_or_else(|| {
@@ -642,6 +662,13 @@ pub fn prepare_oven_project(
                     "selected ToolchainLoaf release has no admitted runtime dependency closure".to_string(),
                 ));
             }
+            let retained_identity = rustc_identity(held.compiler.rustc()).map_err(oven_rustc_error)?;
+            if retained_identity != rustc_toolchain {
+                return Err(CliError::failure(
+                    "selected runtime dependency closure uses a different retained compiler".to_string(),
+                ));
+            }
+            rustc = held.compiler.rustc().to_path_buf();
             Some(held)
         }
         _ => None,

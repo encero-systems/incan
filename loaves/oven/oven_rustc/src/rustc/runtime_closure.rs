@@ -200,33 +200,50 @@ impl OvenSelectedRuntimeClosure {
 
     /// Project policy-authored public roots into exact caller-owned direct-rustc libraries.
     pub fn root_libraries(&self) -> Result<Vec<OvenCallerOwnedRustcLibrary>, OvenRustcError> {
-        let mut libraries = Vec::with_capacity(self.payload.roots.len());
+        let roots = self
+            .payload
+            .roots
+            .iter()
+            .map(|root| (root.compiled_identity.as_str(), root))
+            .collect::<BTreeMap<_, _>>();
+        let mut libraries = Vec::with_capacity(self.payload.units.len());
         for root in &self.payload.roots {
-            let unit = self
-                .payload
-                .units
-                .iter()
-                .find(|unit| {
-                    unit.selected_identity == root.selected_identity && unit.compiled_identity == root.compiled_identity
-                })
-                .ok_or_else(|| OvenRustcError::InvalidStoredPlan {
+            if !self.payload.units.iter().any(|unit| {
+                unit.selected_identity == root.selected_identity && unit.compiled_identity == root.compiled_identity
+            }) {
+                return Err(OvenRustcError::InvalidStoredPlan {
                     identity: self.store_identity.clone(),
                     message: format!("runtime root `{}` has no exact retained unit", root.alias),
-                })?;
-            let output = self
-                .artifact(&root.compiled_identity)
-                .ok_or_else(|| OvenRustcError::InvalidStoredPlan {
+                });
+            }
+            if self.artifact(&root.compiled_identity).is_none() {
+                return Err(OvenRustcError::InvalidStoredPlan {
                     identity: self.store_identity.clone(),
                     message: format!("runtime root `{}` lost its exact artifact", root.alias),
+                });
+            }
+        }
+        for unit in &self.payload.units {
+            let output = self
+                .artifact(&unit.compiled_identity)
+                .ok_or_else(|| OvenRustcError::InvalidStoredPlan {
+                    identity: self.store_identity.clone(),
+                    message: format!("runtime closure lost exact artifact for {}", unit.crate_name),
                 })?;
+            let root = roots.get(unit.compiled_identity.as_str()).copied();
             libraries.push(OvenCallerOwnedRustcLibrary {
-                crate_name: root.alias.clone(),
+                crate_name: root.map_or_else(|| unit.crate_name.clone(), |root| root.alias.clone()),
                 output: output.clone(),
                 digest: unit.digest.clone(),
-                expose_extern: true,
+                expose_extern: root.is_some(),
             });
         }
         Ok(libraries)
+    }
+
+    /// Iterate the exact public aliases authored by the selected Incan graph.
+    pub fn root_aliases(&self) -> impl Iterator<Item = &str> {
+        self.payload.roots.iter().map(|root| root.alias.as_str())
     }
 }
 
@@ -589,9 +606,12 @@ mod tests {
         assert_eq!(selected.payload().units.len(), 2);
         assert_eq!(selected.payload().roots.len(), 1);
         let root_libraries = selected.root_libraries()?;
-        assert_eq!(root_libraries.len(), 1);
-        assert_eq!(root_libraries[0].crate_name, selected.payload().roots[0].alias);
-        assert!(root_libraries[0].expose_extern);
+        assert_eq!(root_libraries.len(), selected.payload().units.len());
+        let public = root_libraries
+            .iter()
+            .find(|library| library.expose_extern)
+            .ok_or("closure has no public root library")?;
+        assert_eq!(public.crate_name, selected.payload().roots[0].alias);
         for unit in &selected.payload().units {
             let artifact = selected
                 .artifact(&unit.compiled_identity)

@@ -1075,12 +1075,33 @@ impl OvenToolchainLoaf {
     /// Return the verified release-envelope root that owns this lock-held Loaf.
     ///
     /// Standalone test Loafs have no generation lock and therefore expose no envelope authority.
-    pub fn release_envelope_root(&self) -> Option<PathBuf> {
+    pub fn release_envelope_root(&self) -> Result<Option<PathBuf>, OvenLoafError> {
         if self._generation_lock.is_none() {
-            return None;
+            return Ok(None);
         }
-        let root = self.artifact_root.ancestors().nth(3)?.to_path_buf();
-        root.join("envelope.json").is_file().then_some(root)
+        let Some(root) = self.artifact_root.ancestors().nth(3).map(Path::to_path_buf) else {
+            return Ok(None);
+        };
+        let manifest_path = root.join("envelope.json");
+        if !manifest_path.is_file() {
+            return Ok(None);
+        }
+        let bytes = fs::read(&manifest_path).map_err(|source| OvenLoafError::Io {
+            path: manifest_path.clone(),
+            source,
+        })?;
+        let manifest: OvenLoafEnvelopeManifest =
+            serde_json::from_slice(&bytes).map_err(|error| OvenLoafError::InvalidLoaf {
+                path: manifest_path.clone(),
+                message: format!("invalid committed envelope manifest: {error}"),
+            })?;
+        if manifest.schema_version != OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION {
+            return Err(OvenLoafError::InvalidLoaf {
+                path: manifest_path,
+                message: format!("unsupported envelope manifest schema {}", manifest.schema_version),
+            });
+        }
+        Ok((manifest.envelope == "release").then_some(root))
     }
 }
 
