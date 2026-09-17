@@ -175,7 +175,12 @@ def generated_input_digest(members: JsonValue, path: list[str]) -> Result[str, S
         digest_json = JsonValue.string(digest).to_json().map_err((_) => invalid(item_path + ["digest"]))?
         entries.append(name_json + ":" + digest_json)
     encoded = "{" + ",".join(entries) + "}"
-    return Ok("sha256:" + hexlify(sha256.digest(encoded.ordinal_bytes())))
+    return Ok("sha256:" + hexlify(sha256.digest(canonical_bytes(encoded))))
+
+
+def canonical_bytes[T with OrdinalKey](value: T) -> bytes:
+    """Encode canonical text through the public UTF-8 OrdinalKey contract."""
+    return value.ordinal_bytes()
 
 
 def decode_environment(value: JsonValue, path: list[str]) -> Result[JsonValue, SelectionError]:
