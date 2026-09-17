@@ -38,7 +38,11 @@ pub fn oven_build_unit_inputs_with_provider_identities(
     resolved: &ResolvedDependencies,
     semantic_identities: &CheckedProviderSemanticIdentities,
 ) -> CliResult<BTreeMap<String, String>> {
-    let provider_records = oven_native_provider_records_with_checked_identities(provider_plan, semantic_identities)?;
+    let provider_records = oven_native_provider_records_with_checked_identities(
+        provider_plan,
+        &semantic_sdk_path_dependencies(requirements),
+        semantic_identities,
+    )?;
     oven_build_unit_inputs_with_provider_records(requirements, resolved, provider_records)
 }
 
@@ -80,10 +84,11 @@ pub fn oven_native_provider_records(
 /// Encode selected native provider records from identities checked by the current compilation session.
 pub fn oven_native_provider_records_with_checked_identities(
     provider_plan: &ProviderPlan,
+    sdk_path_dependencies: &[DependencySpec],
     semantic_identities: &CheckedProviderSemanticIdentities,
 ) -> CliResult<Vec<String>> {
     let semantic_identities = semantic_identities
-        .for_plan(provider_plan)
+        .for_context(provider_plan, sdk_path_dependencies)
         .map_err(CliError::failure)?;
     oven_native_provider_records_from_map(provider_plan, semantic_identities)
 }
@@ -165,4 +170,36 @@ pub fn promoted_oven_test_dependencies(resolved: &ResolvedDependencies) -> CliRe
     }
     promoted.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
     Ok(promoted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incan_frontend::library_manifest::LibraryManifest;
+    use incan_frontend::library_manifest_index::LibraryManifestIndex;
+    use incan_provider::lock_semantics::ProviderSemanticIdentitySession;
+
+    #[test]
+    fn native_provider_records_refuse_a_bundle_from_changed_checked_manifest_context()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let first_plan = ProviderPlan::for_in_memory_sdk_manifest(
+            LibraryManifestIndex::default(),
+            LibraryManifest::new("checked_provider", "1.0.0"),
+        );
+        let session = ProviderSemanticIdentitySession::default();
+        let checked = session.identities(&first_plan, &[])?;
+
+        let mut changed_manifest = LibraryManifest::new("checked_provider", "1.0.0");
+        changed_manifest.contract_metadata.provider.semantic_source_digest =
+            Some(format!("sha256:{}", "b".repeat(64)));
+        let changed_plan = ProviderPlan::for_in_memory_sdk_manifest(
+            LibraryManifestIndex::default(),
+            changed_manifest,
+        );
+        assert!(
+            oven_native_provider_records_with_checked_identities(&changed_plan, &[], &checked).is_err(),
+            "native provider records must reject identities retained from a changed checked manifest"
+        );
+        Ok(())
+    }
 }

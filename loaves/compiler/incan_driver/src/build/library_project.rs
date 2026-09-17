@@ -203,6 +203,7 @@ pub fn prepare_library_project(
         compilation_session.sdk_components.as_ref(),
         Some(&package_feature_plan),
         &provider_plan,
+        &semantic_sdk_paths,
         &provider_semantic_identities,
     )
     .map_err(CliError::failure)?;
