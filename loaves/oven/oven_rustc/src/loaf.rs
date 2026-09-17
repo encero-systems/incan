@@ -3248,6 +3248,24 @@ mod tests {
             "retained rustc did not execute: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+        let source = second_parent.path().join("detached.rs");
+        let executable = second_parent
+            .path()
+            .join(format!("detached{}", std::env::consts::EXE_SUFFIX));
+        fs::write(&source, "fn main() { println!(\"retained sysroot\"); }\n")?;
+        let compile = std::process::Command::new(second.join("bin/rustc"))
+            .arg(&source)
+            .arg("-o")
+            .arg(&executable)
+            .output()?;
+        assert!(
+            compile.status.success(),
+            "retained rustc could not compile with its detached sysroot: {}",
+            String::from_utf8_lossy(&compile.stderr)
+        );
+        let executed = std::process::Command::new(&executable).output()?;
+        assert!(executed.status.success());
+        assert_eq!(String::from_utf8(executed.stdout)?, "retained sysroot\n");
         Ok(())
     }
 
