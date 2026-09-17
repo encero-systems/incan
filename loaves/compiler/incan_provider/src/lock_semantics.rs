@@ -1585,6 +1585,14 @@ mod tests {
         changed_manifest
             .contract_metadata
             .provider
+            .public_features
+            .insert(
+                "checked-feature".to_string(),
+                incan_frontend::library_manifest::ProviderFeatureMetadata::default(),
+            );
+        changed_manifest
+            .contract_metadata
+            .provider
             .active_features
             .insert("checked-feature".to_string());
         changed_manifest.contract_metadata.provider.implementation_facets[0].cargo_dependencies[0]
