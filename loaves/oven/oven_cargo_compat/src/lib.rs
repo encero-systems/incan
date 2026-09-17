@@ -4314,8 +4314,11 @@ mod tests {
         );
         fs::create_dir_all(staging.path().join(&relative_root))?;
         fs::write(staging.path().join("foundation.json"), b"{}")?;
-        let materialized_files =
-            materialized_files_from_directory(staging.path(), "", "empty generated output publication fixture")?;
+        let materialized_files = materialized_files_from_directory(
+            staging.path(),
+            "foundation",
+            "empty generated output publication fixture",
+        )?;
 
         let mirror_root = tempfile::tempdir()?;
         let mirror = OvenStore::new(
@@ -4341,7 +4344,11 @@ mod tests {
         assert_eq!(imported.len(), 1);
         let (acquired, _payload, _lease) = local.select_payload(&published.identity)?;
         assert!(
-            acquired.materialized_root().join(&relative_root).is_dir(),
+            acquired
+                .materialized_root()
+                .join("foundation")
+                .join(&relative_root)
+                .is_dir(),
             "the admitted empty generated-output root must survive cold publication, mirror import and acquisition"
         );
         Ok(())
