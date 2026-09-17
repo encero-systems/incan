@@ -362,6 +362,37 @@ fn merge_loaf_inspection_sources(
         } else {
             copy_regular_directory_tree(&source.source_root, &destination, "registry inspection source")?;
         }
+        let actual_members = materialized_files_from_directory(&destination, "", "registry inspection source")?
+            .into_iter()
+            .map(|file| {
+                let path = file
+                    .relative_path
+                    .strip_prefix('/')
+                    .ok_or_else(|| OvenLoafError::Preparation {
+                        message: "sealed registry source member lost its package-relative prefix".to_string(),
+                    })?;
+                Ok((
+                    path.to_string(),
+                    digest_bytes(&fs::read(&file.source_path).map_err(|source| OvenLoafError::Io {
+                        path: file.source_path,
+                        source,
+                    })?),
+                ))
+            })
+            .collect::<Result<Vec<_>, OvenLoafError>>()?;
+        let expected_members = source
+            .members
+            .iter()
+            .map(|member| (member.path.clone(), member.digest.clone()))
+            .collect::<Vec<_>>();
+        if actual_members != expected_members {
+            return Err(OvenLoafError::Preparation {
+                message: format!(
+                    "sealed registry source for `{}` {} does not match its staged member inventory",
+                    source.package, source.version
+                ),
+            });
+        }
         for file in materialized_files_from_directory(&destination, &relative_root, "registry inspection source")? {
             let bytes = fs::read(&file.source_path).map_err(|source_error| OvenLoafError::Io {
                 path: file.source_path.clone(),
@@ -630,16 +661,24 @@ mod tests {
             "[package]\nname = \"blake2\"\nversion = \"0.10.6\"\n",
         )?;
         fs::write(source.path().join("src/lib.rs"), "pub fn sealed() {}\n")?;
-        let source_digest = digest_source_tree(source.path())?;
+        let staged_sources = tempfile::tempdir()?;
+        let (source_root, source_digest, members) = stage_registry_source_directory(
+            staged_sources.path(),
+            "blake2",
+            "0.10.6",
+            "registry+https://example.invalid/index",
+            "blake2-checksum",
+            source.path(),
+        )?;
         let authority = OvenLegacyCargoInspectionSource {
             package: "blake2".to_string(),
             version: "0.10.6".to_string(),
             registry: "registry+https://example.invalid/index".to_string(),
             checksum: "blake2-checksum".to_string(),
             features: vec!["derive".to_string(), "std".to_string()],
-            source_root: source.path().to_path_buf(),
+            source_root,
             source_digest,
-            members: Vec::new(),
+            members,
         };
         let staging = tempfile::tempdir()?;
         let receipt = runtime_receipt_for_plan()?;

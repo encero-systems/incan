@@ -6666,7 +6666,7 @@ version = "1.0.0"
             "mutable cache output",
         )?;
 
-        let (staged, first_digest) = stage_registry_source_directory(
+        let (staged, first_digest, _) = stage_registry_source_directory(
             staging.path(),
             "fixture",
             "1.0.0",

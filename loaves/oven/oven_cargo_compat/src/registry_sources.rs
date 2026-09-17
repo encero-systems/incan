@@ -62,7 +62,7 @@ pub fn stage_registry_source(
     source_root: &Path,
     source_artifacts: &mut Vec<OvenRustcSupportingArtifact>,
 ) -> Result<OvenRustcRegistrySource, OvenLegacyCargoError> {
-    let (staged_root, digest) =
+    let (staged_root, digest, _) =
         stage_registry_source_directory(staging, package, version, registry, checksum, source_root)?;
     let relative_root = staged_root
         .strip_prefix(staging)
