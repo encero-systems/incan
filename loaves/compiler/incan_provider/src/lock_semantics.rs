@@ -308,7 +308,7 @@ impl ProviderSemanticIdentitySession {
             identities: Arc::new(provider_semantic_identities_with_dependencies(
                 provider_plan,
                 &semantic_toolchain_dependencies,
-                Some(provider_plan.semantic_projection_identity()),
+                None,
             )?),
         });
         let mut cached = self

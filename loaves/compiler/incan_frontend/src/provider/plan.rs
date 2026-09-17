@@ -330,12 +330,15 @@ fn provider_semantic_projection_persistent_key(records: &BTreeMap<String, Provid
     let mut hasher = Sha256::new();
     hasher.update(b"incan-provider-semantic-plan-v2\0");
     for (identity, record) in records {
-        let manifest = record
-            .manifest
-            .as_deref()
-            .map(LibraryManifest::to_json_string)
-            .transpose()
-            .map_err(|error| error.to_string())?;
+        let manifest = match (record.manifest.as_ref(), record.artifact.as_ref()) {
+            (Some(manifest), Some(artifact)) => Some(
+                retained_sdk_manifest_wire(manifest, &artifact.manifest_path)
+                    .map(Ok)
+                    .unwrap_or_else(|| manifest.to_json_string().map_err(|error| error.to_string()))?,
+            ),
+            (Some(manifest), None) => Some(manifest.to_json_string().map_err(|error| error.to_string())?),
+            (None, _) => None,
+        };
         let artifact = record.artifact.as_ref().map(|artifact| {
             serde_json::json!({
                 "dependency_key": artifact.dependency_key,
@@ -1737,8 +1740,13 @@ type SdkManifestFileStamp = (PathBuf, u64, Option<SystemTime>);
 /// into the same structure repeatedly. That boundary is the point: an earlier attempt keyed this on the digest the
 /// inventory *records* for a provider, which cannot notice the generated Rust behind that digest changing, and its
 /// own integrity test caught it. The key here is what the file system reports about the file that was read.
-fn sdk_manifest_memo() -> &'static Mutex<HashMap<SdkManifestFileStamp, Arc<LibraryManifest>>> {
-    static MEMO: OnceLock<Mutex<HashMap<SdkManifestFileStamp, Arc<LibraryManifest>>>> = OnceLock::new();
+struct SdkManifestMemoEntry {
+    manifest: Arc<LibraryManifest>,
+    canonical_wire: String,
+}
+
+fn sdk_manifest_memo() -> &'static Mutex<HashMap<SdkManifestFileStamp, SdkManifestMemoEntry>> {
+    static MEMO: OnceLock<Mutex<HashMap<SdkManifestFileStamp, SdkManifestMemoEntry>>> = OnceLock::new();
     MEMO.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -1758,17 +1766,36 @@ fn read_sdk_provider_manifest(
     let stamp = sdk_manifest_file_stamp(manifest_path);
     if let Some(stamp) = stamp.as_ref()
         && let Ok(memo) = sdk_manifest_memo().lock()
-        && let Some(manifest) = memo.get(stamp)
+        && let Some(entry) = memo.get(stamp)
     {
-        return Ok(Arc::clone(manifest));
+        return Ok(Arc::clone(&entry.manifest));
     }
-    let manifest = Arc::new(LibraryManifest::read_from_path(manifest_path)?);
+    let canonical_wire = std::fs::read_to_string(manifest_path).map_err(|source| {
+        crate::library_manifest::LibraryManifestError::Read {
+            path: manifest_path.to_path_buf(),
+            source,
+        }
+    })?;
+    let manifest = Arc::new(LibraryManifest::from_json_str(&canonical_wire)?);
     if let Some(stamp) = stamp
         && let Ok(mut memo) = sdk_manifest_memo().lock()
     {
-        memo.insert(stamp, Arc::clone(&manifest));
+        memo.insert(
+            stamp,
+            SdkManifestMemoEntry {
+                manifest: Arc::clone(&manifest),
+                canonical_wire,
+            },
+        );
     }
     Ok(manifest)
+}
+
+fn retained_sdk_manifest_wire(manifest: &Arc<LibraryManifest>, manifest_path: &Path) -> Option<String> {
+    let stamp = sdk_manifest_file_stamp(manifest_path)?;
+    let memo = sdk_manifest_memo().lock().ok()?;
+    let entry = memo.get(&stamp)?;
+    Arc::ptr_eq(manifest, &entry.manifest).then(|| entry.canonical_wire.clone())
 }
 
 /// Return active provider-local module claims, falling back to checked API metadata for pre-RFC-114 artifacts.
