@@ -25,7 +25,10 @@ use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
 use oven_model::oven_interop::{OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, OVEN_INTEROP_PLAN_SCHEMA_INPUT};
 use oven_store::closure_proof::OvenClosureProof;
 use oven_store::store::OvenStoreError;
-use oven_store::{OvenReceipt, digest_bytes, receipt_without_build_unit_input};
+use oven_store::{
+    OvenArtifactKind, OvenReceipt, OvenStoreExecutionPayload, PublishedOvenStore, digest_bytes,
+    receipt_without_build_unit_input,
+};
 
 pub mod native_candidates;
 
@@ -35,7 +38,9 @@ pub use native_candidates::OvenMaterializedLoafCandidate;
 /// Current wire format for one compiler-shipped Oven Loaf.
 pub const OVEN_LOAF_SCHEMA_VERSION: u32 = 13;
 /// Current wire format for the atomically committed Loaf-envelope manifest.
-pub const OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION: u32 = 3;
+pub const OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION: u32 = 4;
+/// Wire schema for an optional generic store member embedded beside one Loaf generation.
+pub const OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION: u32 = 1;
 pub use oven_model::compiler_suite_env::OVEN_LOAF_ENV;
 /// Actionable user guidance for a normal-command miss without turning it into a compatibility-baker fallback.
 pub const OVEN_LOAF_MISS_GUIDANCE: &str = "Action: run `incan oven bake --project <project-root>` once. That command compiles this project's dependencies and caches the result, reusing anything already compatible. It is a deliberate, separate step: `incan build`, `incan run`, and `incan test` never compile dependencies on their own.";
@@ -191,6 +196,22 @@ pub struct OvenLoafEnvelopeManifest {
     pub evidence: BTreeMap<String, String>,
     /// Complete typed member list for this generation.
     pub loafs: Vec<OvenLoafEnvelopeMember>,
+    /// Optional exact generic store entry shipped with this generation for an upper-layer release consumer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_store_member: Option<OvenReleaseStoreMember>,
+}
+
+/// One exact generic Oven store entry embedded under a committed release generation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OvenReleaseStoreMember {
+    /// Reference schema version.
+    pub schema_version: u32,
+    /// Stable publisher-selected member label.
+    pub label: String,
+    /// Safe path below this generation that contains the embedded Oven store root.
+    pub store_relative_path: PathBuf,
+    /// Exact immutable Oven artifact identity selected from that store.
+    pub artifact_identity: String,
 }
 
 /// One Loaf referenced by a committed envelope generation.
@@ -1457,6 +1478,100 @@ pub struct OvenCommittedLoafGeneration {
     _lock: OvenLoafGenerationLock,
 }
 
+/// A generation-held generic executable store member selected for an upper-layer consumer.
+pub struct OvenHeldReleaseStoreMember {
+    /// Publisher-selected member label.
+    pub label: String,
+    /// One verified executable materialized file below the held store entry.
+    pub executable: PathBuf,
+    /// Verified generic store payload whose active lease protects the complete entry.
+    pub payload: OvenStoreExecutionPayload,
+    _generation_lock: OvenLoafGenerationLock,
+}
+
+/// Acquire and verify one labelled optional release store member under the committed generation lock.
+///
+/// The generic carrier verifies only the exact store identity, ProjectOutput kind, and singular executable file. It
+/// neither decodes the payload nor assigns project, compiler, or policy meaning to those bytes.
+pub fn acquire_committed_release_store_member(
+    loaf_root: &Path,
+    label: &str,
+) -> Result<Option<OvenHeldReleaseStoreMember>, OvenLoafError> {
+    if !loaf_root.join("envelope.json").is_file() {
+        return Ok(None);
+    }
+    let generation_lock = acquire_loaf_generation_lock(loaf_root)?;
+    let (manifest, manifest_path) = committed_loaf_envelope_manifest(loaf_root, "release")?;
+    let Some(member) = manifest.release_store_member else {
+        return Ok(None);
+    };
+    if member.schema_version != OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION || member.label != label {
+        return Ok(None);
+    }
+    let generation = generation_directory_path(&manifest.generation_identity);
+    let store_root = loaf_root.join(&generation).join(&member.store_relative_path);
+    if !safe_generation_relative_path(&member.store_relative_path) {
+        return Err(OvenLoafError::InvalidLoaf {
+            path: manifest_path,
+            message: "release store member has an unsafe store-relative path".to_string(),
+        });
+    }
+    let mut selected = PublishedOvenStore::new(&store_root)
+        .select_payloads_matching_for_execution(|candidate| candidate.identity == member.artifact_identity)?;
+    if selected.len() != 1 {
+        return Err(OvenLoafError::InvalidLoaf {
+            path: store_root,
+            message: "release store member did not select exactly one declared artifact".to_string(),
+        });
+    }
+    let payload = selected.pop().ok_or_else(|| OvenLoafError::Preparation {
+        message: "release store selection became empty".to_string(),
+    })?;
+    payload.verify_materialized_files()?;
+    if payload.manifest.kind != OvenArtifactKind::ProjectOutput {
+        return Err(OvenLoafError::InvalidLoaf {
+            path: store_root,
+            message: "release store member must retain a ProjectOutput artifact".to_string(),
+        });
+    }
+    let executables = payload
+        .admitted_materialized_files()
+        .iter()
+        .filter(|file| file.executable)
+        .collect::<Vec<_>>();
+    if executables.len() != 1 {
+        return Err(OvenLoafError::InvalidLoaf {
+            path: store_root,
+            message: "release store member must retain exactly one executable materialized file".to_string(),
+        });
+    }
+    let executable = payload.artifact_root.join(&executables[0].relative_path);
+    Ok(Some(OvenHeldReleaseStoreMember {
+        label: member.label,
+        executable,
+        payload,
+        _generation_lock: generation_lock,
+    }))
+}
+
+/// Construct the committed generation path named by one canonical envelope identity.
+fn generation_directory_path(generation_identity: &str) -> PathBuf {
+    Path::new("generations").join(
+        generation_identity
+            .strip_prefix("sha256:")
+            .unwrap_or(generation_identity),
+    )
+}
+
+/// Reject absolute or escaping embedded-store roots before opening any store files.
+fn safe_generation_relative_path(path: &Path) -> bool {
+    !path.as_os_str().is_empty()
+        && !path.is_absolute()
+        && path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
 impl OvenCommittedLoafGeneration {
     /// Return the exact committed envelope generation protected by this shared lock.
     pub fn generation_identity(&self) -> &str {
@@ -2609,6 +2724,7 @@ mod tests {
                     physical_bytes: 0,
                     path: committed.clone(),
                 }],
+                release_store_member: None,
             })?,
         )?;
         assert_eq!(committed_loaf_paths(root.path())?, vec![root.path().join(&committed)]);
@@ -2671,6 +2787,7 @@ mod tests {
                         generation_identity,
                         evidence: BTreeMap::from([("compiler_executable_digest".to_string(), compiler_evidence)]),
                         loafs: vec![member],
+                        release_store_member: None,
                     })?,
                 )
             };

@@ -21,10 +21,10 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use crate::loaf::{
-    OvenLoaf, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafMemberRole, commit_loaf_generation,
-    validate_stored_loaf,
+    OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenLoaf, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember,
+    OvenLoafMemberRole, OvenReleaseStoreMember, commit_loaf_generation, validate_stored_loaf,
 };
-use oven_store::digest_source_tree;
+use oven_store::{OvenArtifactKind, PublishedOvenStore, digest_source_tree};
 
 /// The exact generation a local bake would commit, used to decide whether a mirror's envelope is the same one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,7 +200,55 @@ fn stage_and_prove_generation(
             )));
         }
     }
+    if let Some(member) = &manifest.release_store_member {
+        prove_release_store_member(&staged_generation, member)?;
+    }
     Ok(staged_generation)
+}
+
+/// Prove the copied embedded store entry before its generation becomes the committed envelope authority.
+fn prove_release_store_member(generation: &Path, member: &OvenReleaseStoreMember) -> io::Result<()> {
+    if member.schema_version != OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION
+        || member.store_relative_path.as_os_str().is_empty()
+        || member.store_relative_path.is_absolute()
+        || !member
+            .store_relative_path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(io::Error::other(
+            "mirror release store member has an invalid descriptor",
+        ));
+    }
+    let store_root = generation.join(&member.store_relative_path);
+    let selected = PublishedOvenStore::new(&store_root)
+        .select_payloads_matching_for_execution(|candidate| candidate.identity == member.artifact_identity)
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    if selected.len() != 1 {
+        return Err(io::Error::other(
+            "mirror release store member did not select exactly one artifact",
+        ));
+    }
+    let payload = selected
+        .into_iter()
+        .next()
+        .ok_or_else(|| io::Error::other("mirror release store selection vanished"))?;
+    payload
+        .verify_materialized_files()
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    if payload.manifest.kind != OvenArtifactKind::ProjectOutput
+        || payload
+            .admitted_materialized_files()
+            .iter()
+            .filter(|file| file.executable)
+            .count()
+            != 1
+    {
+        return Err(io::Error::other(
+            "mirror release store member has no singular executable ProjectOutput",
+        ));
+    }
+    Ok(())
 }
 
 /// Every check a copied member must pass before it may be committed.
@@ -395,6 +443,7 @@ mod tests {
                 physical_bytes: 0,
                 path: relative_directory.join("loaf.json"),
             }],
+            release_store_member: None,
         };
         fs::write(root.join("envelope.json"), serde_json::to_vec(&manifest)?)?;
         Ok(manifest)
