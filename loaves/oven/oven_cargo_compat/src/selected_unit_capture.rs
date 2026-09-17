@@ -404,6 +404,7 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
     for (unit, item) in capture.units.iter_mut().zip(&matched) {
         unit.cfg = rustc_non_feature_cfgs(&item.invocation.arguments);
         unit.sysroot_externs = extern_arguments(&item.invocation.arguments)?.sysroot;
+        unit.target_is_explicit = Some(argument_value(&item.invocation.arguments, "--target").is_some());
     }
     for ((consumer, build_unit), record) in build_script_edges {
         let dependency = capture
@@ -843,6 +844,11 @@ pub struct OvenLegacyCargoSelectedUnit {
     pub edition: String,
     pub mode: String,
     pub platform: Option<String>,
+    /// Whether the exact matched rustc invocation carried `--target`.
+    ///
+    /// `None` is an untraced generic Cargo graph and cannot authorize host/target classification.
+    #[serde(default)]
+    pub target_is_explicit: Option<bool>,
     /// Exact non-feature rustc cfg arguments; Cargo features remain separately named by `effective_features`.
     pub cfg: Vec<String>,
     pub effective_features: Vec<String>,
@@ -1097,6 +1103,7 @@ fn capture_legacy_cargo_selected_units_inner(
             edition: unit.target.edition.clone(),
             mode: unit.mode.clone(),
             platform: unit.platform.clone(),
+            target_is_explicit: None,
             cfg: Vec::new(),
             effective_features: features,
             dependencies,
@@ -1452,6 +1459,7 @@ mod tests {
                 edition: "2024".to_string(),
                 mode: "run-custom-build".to_string(),
                 platform: None,
+                target_is_explicit: None,
                 cfg: Vec::new(),
                 effective_features: Vec::new(),
                 dependencies: Vec::new(),
@@ -1614,6 +1622,8 @@ mod tests {
         assert_eq!(capture.roots, [0, 1]);
         assert_eq!(capture.units[0].platform.as_deref(), Some("fixture-host"));
         assert_eq!(capture.units[1].platform.as_deref(), Some("wasm32-unknown-unknown"));
+        assert_eq!(capture.units[0].target_is_explicit, Some(false));
+        assert_eq!(capture.units[1].target_is_explicit, Some(true));
         Ok(())
     }
 
