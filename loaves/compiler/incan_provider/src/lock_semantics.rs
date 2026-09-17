@@ -272,36 +272,6 @@ fn checked_provider_semantic_context(
     Ok((semantic_toolchain_dependencies, context_key))
 }
 
-/// Bind every provider fact consumed by final semantic projection for persisted readings.
-fn provider_semantic_plan_key(provider_plan: &ProviderPlan) -> Result<String, String> {
-    let mut key = String::new();
-    for provider in provider_plan.records() {
-        key.push('\u{1b}');
-        key.push_str(&provider.identity.stable_key());
-        key.push(if provider.manifest.is_some() { 'm' } else { '-' });
-        key.push(if provider.artifact.is_some() { 'a' } else { '-' });
-        key.push(if provider.available { 'v' } else { '-' });
-        key.push(match &provider.provenance {
-            ProviderProvenance::ProjectDependency { .. } => 'p',
-            ProviderProvenance::Sdk { .. } => 's',
-            ProviderProvenance::Compiler => 'c',
-        });
-        if let Some(artifact) = provider.artifact.as_ref() {
-            for path in [&artifact.crate_root, &artifact.manifest_path, &artifact.cargo_toml_path] {
-                key.push('\u{1a}');
-                key.push_str(&path.to_string_lossy());
-            }
-        }
-        if let Some(manifest) = provider.manifest.as_deref() {
-            let encoded = manifest.to_json_string().map_err(|error| error.to_string())?;
-            let mut hasher = Sha256::new();
-            hasher.update(encoded.as_bytes());
-            key.push_str(&format!("{:x}", hasher.finalize()));
-        }
-    }
-    Ok(key)
-}
-
 /// Session-bounded reuse of provider semantic identities after rechecking every mutable physical input.
 #[derive(Debug, Default)]
 pub struct ProviderSemanticIdentitySession {
@@ -483,7 +453,7 @@ fn provider_dependency_semantic_digests_observed_with_context(
     let key = if let Some(context) = context {
         format!("{persistent_key}\u{19}{context}")
     } else {
-        format!("{persistent_key}{}", provider_semantic_plan_key(provider_plan)?)
+        format!("{persistent_key}{}", provider_plan.semantic_projection_persistent_key())
     };
     static DIGESTS: std::sync::OnceLock<std::sync::Mutex<BTreeMap<String, BTreeMap<String, String>>>> =
         std::sync::OnceLock::new();
@@ -1647,6 +1617,11 @@ mod tests {
             vec![changed_record],
             std::iter::empty::<Vec<String>>(),
         )?;
+        assert_ne!(
+            fixture.provider_plan.semantic_projection_persistent_key(),
+            changed_plan.semantic_projection_persistent_key(),
+            "changed checked dependency facts must change persisted preliminary-map authority"
+        );
         let semantic_dependencies = semantic_toolchain_dependencies(&fixture.specs)?;
         let mut preliminary_counters = ProviderSemanticDigestCounters::default();
         let _ = provider_dependency_semantic_digests_observed(
