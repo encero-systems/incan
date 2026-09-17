@@ -317,10 +317,9 @@ mod tests {
     use crate::rustc::{
         OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OvenRustcArtifactExtern, OvenRustcArtifactManifest,
     };
+    use oven_store::store::{OvenArtifactKind, OvenArtifactMaterializedFile, OvenStore, OvenStoreLimits};
     use oven_store::test_support::{request as store_request, write_project as write_store_project};
-    use oven_store::{
-        OvenArtifactKind, OvenArtifactMaterializedFile, OvenBuildIntent, OvenStore, OvenStoreLimits, digest_bytes,
-    };
+    use oven_store::{OvenBuildIntent, digest_bytes};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 

@@ -24,11 +24,8 @@ use oven_model::compiler_identity::CompilerIdentity;
 use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
 use oven_model::oven_interop::{OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, OVEN_INTEROP_PLAN_SCHEMA_INPUT};
 use oven_store::closure_proof::OvenClosureProof;
-use oven_store::store::OvenStoreError;
-use oven_store::{
-    OvenArtifactKind, OvenReceipt, OvenStoreExecutionPayload, PublishedOvenStore, digest_bytes,
-    receipt_without_build_unit_input,
-};
+use oven_store::store::{OvenArtifactKind, OvenStoreError, OvenStoreExecutionPayload, PublishedOvenStore};
+use oven_store::{OvenReceipt, digest_bytes, receipt_without_build_unit_input};
 
 pub mod native_candidates;
 
@@ -2609,11 +2606,11 @@ mod tests {
     use std::{fs, thread};
 
     use oven_model::manifest::{DependencySource, DependencySpec};
-    use oven_store::test_support::{request as store_request, write_project as write_store_project};
-    use oven_store::{
-        OvenArtifactKind, OvenArtifactMaterializedFile, OvenGeneratedProjectRequest, OvenStore, OvenStoreLimits,
-        digest_bytes, digest_source_tree, receipt_generated_project,
+    use oven_store::store::{
+        OvenArtifactKind, OvenArtifactMaterializedFile, OvenStore, OvenStoreLimits, PublishedOvenStore,
     };
+    use oven_store::test_support::{request as store_request, write_project as write_store_project};
+    use oven_store::{OvenGeneratedProjectRequest, digest_bytes, digest_source_tree, receipt_generated_project};
 
     use super::{
         CompatibleLoaf, OVEN_LOAF_ENVELOPE_LOCK_FILE, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
