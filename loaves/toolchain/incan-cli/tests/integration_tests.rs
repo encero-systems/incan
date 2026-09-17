@@ -12495,10 +12495,11 @@ fn std_toml_manifest_and_lock_roundtrip_through_compiled_sdk() -> Result<(), Box
 #[test]
 fn imported_rust_generic_bounds_remain_native_obligations() -> Result<(), Box<dyn std::error::Error>> {
     let temporary = tempfile::tempdir()?;
-    let source_dir = temporary.path().join("src");
+    let project_root = temporary.path().join("project");
+    let source_dir = project_root.join("src");
     fs::create_dir_all(&source_dir)?;
     fs::write(
-        temporary.path().join("loaf.toml"),
+        project_root.join("loaf.toml"),
         "[project]\nname = \"foreign_bounds\"\nversion = \"0.1.0\"\n[rust-dependencies]\nserde = \"1.0\"\n",
     )?;
     fs::write(
@@ -12510,10 +12511,19 @@ fn imported_rust_generic_bounds_remain_native_obligations() -> Result<(), Box<dy
         &main,
         "from bounds import identity, Reader\ndef main() -> None:\n    assert identity(\"demo\") == \"demo\"\n    assert Reader().identity([\"linux\"]) == [\"linux\"]\n",
     )?;
+    // Exercise a noncanonical project spelling independently of the host temporary-directory layout.
+    #[cfg(unix)]
+    let bake_root = {
+        let alias = temporary.path().join("project-alias");
+        std::os::unix::fs::symlink(fs::canonicalize(&project_root)?, &alias)?;
+        alias
+    };
+    #[cfg(not(unix))]
+    let bake_root = project_root.clone();
     let mut bake = incan_command();
-    bake.current_dir(temporary.path())
+    bake.current_dir(&project_root)
         .args(["oven", "bake", "--project"])
-        .arg(temporary.path());
+        .arg(&bake_root);
     support::configure_explicit_oven_bake_command(&mut bake)?;
     let baked = bake.output()?;
     assert!(
@@ -12523,7 +12533,7 @@ fn imported_rust_generic_bounds_remain_native_obligations() -> Result<(), Box<dy
         String::from_utf8_lossy(&baked.stderr)
     );
     let ran = incan_command()
-        .current_dir(temporary.path())
+        .current_dir(&project_root)
         .args(["run", "--locked"])
         .arg(&main)
         .output()?;
@@ -12539,9 +12549,9 @@ fn imported_rust_generic_bounds_remain_native_obligations() -> Result<(), Box<dy
         "from bounds import identity\nmodel Plain:\n    value: str\ndef main() -> None:\n    identity(Plain(value=\"demo\"))\n",
     )?;
     let mut bake = incan_command();
-    bake.current_dir(temporary.path())
+    bake.current_dir(&project_root)
         .args(["oven", "bake", "--project"])
-        .arg(temporary.path());
+        .arg(&bake_root);
     support::configure_explicit_oven_bake_command(&mut bake)?;
     let rejected = bake.output()?;
     let diagnostic = format!(

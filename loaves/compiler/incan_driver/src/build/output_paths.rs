@@ -95,7 +95,9 @@ pub fn validated_project_output_relative_path(relative_path: &str, role: &str) -
     Ok(relative.to_path_buf())
 }
 
-/// Add one regular file below a generated project result to the completed-Loaf publication set.
+/// Add one regular file physically below the project root to the completed-Loaf publication set.
+///
+/// Resolve ancestor aliases on both sides before checking containment, while refusing a symlink at the file itself.
 fn append_project_output_bake_file(
     project_root: &Path,
     source_path: &Path,
@@ -114,8 +116,20 @@ fn append_project_output_bake_file(
             source_path.display()
         )));
     }
-    let caller_relative_path = source_path
-        .strip_prefix(project_root)
+    let canonical_root = fs::canonicalize(project_root).map_err(|error| {
+        CliError::failure(format!(
+            "cannot resolve Oven project root {}: {error}",
+            project_root.display()
+        ))
+    })?;
+    let canonical_source = fs::canonicalize(source_path).map_err(|error| {
+        CliError::failure(format!(
+            "cannot resolve generated Oven project output {}: {error}",
+            source_path.display()
+        ))
+    })?;
+    let caller_relative_path = canonical_source
+        .strip_prefix(&canonical_root)
         .map_err(|_| {
             CliError::failure(format!(
                 "completed Oven project output {} escaped project root {}",
@@ -130,7 +144,7 @@ fn append_project_output_bake_file(
         .replace('\\', "/");
     let _ = validated_project_output_relative_path(&caller_relative_path, "caller output")?;
     files.push(OvenProjectOutputBakeFile {
-        source_path: source_path.to_path_buf(),
+        source_path: canonical_source,
         caller_relative_path,
         output_relative_path,
     });
@@ -906,6 +920,51 @@ mod tests {
         assert!(output_paths.contains("generated/provider-sidecars/desugarers/fixture.wasm"));
         assert!(output_paths.contains(OVEN_PROJECT_OUTPUT_ARTIFACT_PATH));
         assert!(output_paths.iter().all(|path| !path.contains("rust-inspect")));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_output_accepts_symlink_equivalent_roots() -> Result<(), Box<dyn std::error::Error>> {
+        let temporary = tempfile::tempdir()?;
+        let project = temporary.path().join("project");
+        fs::create_dir_all(project.join("target"))?;
+        fs::write(project.join("target/result"), "native artifact")?;
+        let canonical_project = fs::canonicalize(&project)?;
+        let alias = temporary.path().join("alias");
+        std::os::unix::fs::symlink(&canonical_project, &alias)?;
+        for (root, source) in [
+            (alias.clone(), canonical_project.join("target/result")),
+            (canonical_project.clone(), alias.join("target/result")),
+        ] {
+            let mut files = Vec::new();
+            append_project_output_bake_file(&root, &source, "artifact/result".into(), &mut files)?;
+            assert_eq!(files.len(), 1);
+            assert_eq!(files[0].caller_relative_path, "target/result");
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_output_rejects_physical_escape_and_symlink_files() -> Result<(), Box<dyn std::error::Error>> {
+        let temporary = tempfile::tempdir()?;
+        let project = temporary.path().join("project");
+        let outside = temporary.path().join("outside");
+        fs::create_dir_all(&project)?;
+        fs::create_dir_all(&outside)?;
+        fs::write(outside.join("result"), "outside artifact")?;
+        std::os::unix::fs::symlink(&outside, project.join("escape"))?;
+        std::os::unix::fs::symlink(outside.join("result"), project.join("linked-file"))?;
+        for source in [
+            outside.join("result"),
+            project.join("escape/result"),
+            project.join("linked-file"),
+        ] {
+            let mut files = Vec::new();
+            assert!(append_project_output_bake_file(&project, &source, "artifact/result".into(), &mut files).is_err());
+            assert!(files.is_empty(), "a refused file must not enter the publication set");
+        }
         Ok(())
     }
 }
