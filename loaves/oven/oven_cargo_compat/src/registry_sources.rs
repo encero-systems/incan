@@ -484,6 +484,7 @@ pub fn publisher_registry_leaf_catalog(
             &mut source_artifacts,
         )?;
         sealed.push(OvenRustcRegistryLeaf {
+            selected_unit_identity: None,
             package: leaf.package,
             version: leaf.version,
             crate_name: leaf.crate_name,

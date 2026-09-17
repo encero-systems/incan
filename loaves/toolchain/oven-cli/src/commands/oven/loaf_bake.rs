@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use incan_driver::build::publication::stored_project_output_from_parts;
 use incan_driver::build::{OvenProjectOutputPayload, OvenStoredProjectOutput};
-use oven_cargo_compat::loaf_bake::prepare_loaf_from_generated_project_with_selected_units;
+use oven_cargo_compat::loaf_bake::{prepare_loaf_from_generated_project_with_selected_units, prepare_loaf_from_generated_project_with_selected_unit_bindings};
 use oven_cargo_compat::{
     OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, legacy_cargo_build_script_closure_digest,
     encode_selected_graph_policy_request, finalize_compiler_support_selected_graph, legacy_cargo_foundation_projection,
@@ -542,7 +542,25 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         Some((_, expected_capture, sources, _, capture_loaf_identity, generated_project, inspection_packages)),
     ) = (finalized_release_graph.as_ref(), release_foundation_capture.as_ref())
     {
-        let final_prepared = prepare_loaf_from_generated_project_with_selected_units(
+        let selected_unit_bindings = finalized
+            .capture
+            .units
+            .iter()
+            .zip(&finalized.graph.graph().units)
+            .map(|(captured, selected)| {
+                oven_cargo_compat::legacy_cargo_selected_unit_capture_identity(captured)
+                    .map(|identity| (identity, selected.identity.clone()))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()
+            .map_err(oven_error)?;
+        if selected_unit_bindings.len() != finalized.capture.units.len()
+            || finalized.capture.units.len() != finalized.graph.graph().units.len()
+        {
+            return Err(CliError::failure(
+                "final selected graph does not correspond one-to-one with its physical capture".to_string(),
+            ));
+        }
+        let final_prepared = prepare_loaf_from_generated_project_with_selected_unit_bindings(
             &staged_root,
             &OvenLoafBakerContext {
                 compiler: &incan_oven_facet::compiler_identity(),
@@ -561,6 +579,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             },
             finalized.final_receipt.clone(),
             generated_project,
+            Some(&selected_unit_bindings),
         )
         .map_err(oven_error)?;
         if final_prepared.selected_units.as_ref() != Some(expected_capture) {

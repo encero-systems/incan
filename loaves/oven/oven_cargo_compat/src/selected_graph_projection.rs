@@ -115,6 +115,8 @@ pub struct OvenLegacyCargoSelectedGraphProjection {
 
 /// Final receipt and selected graph produced by one physical capture and one authored compiler-support declaration.
 pub struct OvenFinalizedCompilerSupportSelectedGraph {
+    /// Pruned physical capture in the exact order used to project `graph.units`.
+    pub capture: OvenLegacyCargoSelectedUnitCapture,
     /// Receipt retaining the physical build-script closure before authored roots are attached.
     pub capture_receipt: OvenReceipt,
     /// Distinct final receipt binding the exact compiler-support root authority.
@@ -154,6 +156,7 @@ pub fn runtime_foundation_from_compiled_loaf(
             .iter()
             .filter(|leaf| {
                 leaf.package == unit.package
+                    && leaf.selected_unit_identity.as_deref() == Some(unit.identity.as_str())
                     && leaf.version == unit.package_version
                     && leaf.crate_name == unit.crate_name
                     && leaf.features == unit.features
@@ -538,6 +541,7 @@ pub fn finalize_compiler_support_selected_graph(
         &final_receipt,
     )?;
     Ok(OvenFinalizedCompilerSupportSelectedGraph {
+        capture,
         capture_receipt,
         final_receipt,
         graph,

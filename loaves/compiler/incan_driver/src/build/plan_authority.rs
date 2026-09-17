@@ -970,6 +970,7 @@ mod tests {
         let authority = OvenRegistryLeafAuthority::new(
             root.path().to_path_buf(),
             vec![oven_rustc::rustc::OvenRustcRegistryLeaf {
+                selected_unit_identity: None,
                 package: "serde_json".to_string(),
                 version: "1.0.0".to_string(),
                 crate_name: "serde_json".to_string(),

@@ -3710,6 +3710,7 @@ mod tests {
             digest: digest_bytes(registry_manifest),
         });
         let registry_leaf = OvenRustcRegistryLeaf {
+            selected_unit_identity: None,
             package: "fixture-registry".to_string(),
             version: "1.0.0".to_string(),
             crate_name: "fixture_registry".to_string(),

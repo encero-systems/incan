@@ -940,6 +940,15 @@ pub struct OvenLegacyCargoSelectedUnit {
     pub registry_source: Option<OvenLegacyCargoSelectedRegistrySource>,
 }
 
+/// Hash every retained physical fact for one selected unit without interpreting package policy.
+pub fn legacy_cargo_selected_unit_capture_identity(
+    unit: &OvenLegacyCargoSelectedUnit,
+) -> Result<String, OvenLegacyCargoError> {
+    serde_json::to_vec(&("incan.oven.legacy-cargo-selected-unit/1", unit))
+        .map(|bytes| digest_bytes(&bytes))
+        .map_err(|error| OvenLegacyCargoError::Plan(format!("could not encode selected-unit capture: {error}")))
+}
+
 /// Registry source evidence joined by exact Cargo package coordinates before the transient publisher is released.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

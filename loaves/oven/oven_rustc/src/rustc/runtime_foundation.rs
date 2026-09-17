@@ -918,6 +918,7 @@ mod tests {
             ],
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: vec![OvenRustcRegistryLeaf {
+                selected_unit_identity: None,
                 package: "serde".to_string(),
                 version: "1.0.0".to_string(),
                 crate_name: "serde".to_string(),

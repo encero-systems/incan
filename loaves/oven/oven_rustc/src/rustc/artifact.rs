@@ -360,6 +360,12 @@ pub struct OvenCallerOwnedRustcLibrary {
 /// immutable Loaf closure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OvenRustcRegistryLeaf {
+    /// Exact portable selected-unit identity compiled into this artifact.
+    ///
+    /// Legacy plans omit this field and remain readable by their existing consumers, but runtime-foundation
+    /// publication refuses them because package coordinates cannot distinguish compiler-input variants.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_unit_identity: Option<String>,
     /// Registry package name rather than a caller-local dependency alias.
     pub package: String,
     /// Exact publisher-resolved package version.

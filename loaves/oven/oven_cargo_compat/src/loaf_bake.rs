@@ -3,6 +3,7 @@
 //! into the envelope. This is the half of Oven's Loaf handling that runs Cargo, and it sits here, over
 //! `oven_rustc::loaf`'s model, so that the Loaf model, selection and validation never do.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -87,6 +88,23 @@ pub fn prepare_loaf_from_generated_project_with_selected_units(
     receipt: OvenReceipt,
     generated_project: &Path,
 ) -> Result<OvenPreparedLoafWithSelectedUnits, OvenLoafError> {
+    prepare_loaf_from_generated_project_with_selected_unit_bindings(
+        loaf_root,
+        context,
+        receipt,
+        generated_project,
+        None,
+    )
+}
+
+/// Export one Loaf while binding exact physical capture identities to finalized selected units.
+pub fn prepare_loaf_from_generated_project_with_selected_unit_bindings(
+    loaf_root: &Path,
+    context: &OvenLoafBakerContext<'_>,
+    receipt: OvenReceipt,
+    generated_project: &Path,
+    selected_unit_bindings: Option<&BTreeMap<String, String>>,
+) -> Result<OvenPreparedLoafWithSelectedUnits, OvenLoafError> {
     if loaf_root.exists() && !loaf_root.is_dir() {
         return Err(OvenLoafError::Preparation {
             message: format!("loaf root is not a directory: {}", loaf_root.display()),
@@ -147,6 +165,12 @@ pub fn prepare_loaf_from_generated_project_with_selected_units(
             },
         )?;
     }
+    if let Some(bindings) = selected_unit_bindings {
+        let selected_units = selected_units.as_ref().ok_or_else(|| OvenLoafError::Preparation {
+            message: "selected-unit bindings require an exact physical capture".to_string(),
+        })?;
+        bind_registry_leaf_selected_unit_identities(&mut publication.registry_leaves, selected_units, bindings)?;
+    }
     let result = export_loaf(
         &store,
         &publication.plan_identity,
@@ -177,6 +201,53 @@ pub fn prepare_loaf_from_generated_project_with_selected_units(
         preparation: result,
         selected_units,
     })
+}
+
+/// Bind every exported registry artifact to exactly one authenticated selected physical unit.
+fn bind_registry_leaf_selected_unit_identities(
+    leaves: &mut [OvenRustcRegistryLeaf],
+    selected_units: &OvenLegacyCargoSelectedUnitCapture,
+    bindings: &BTreeMap<String, String>,
+) -> Result<(), OvenLoafError> {
+    let mut used = BTreeSet::new();
+    for leaf in leaves {
+        let matched = selected_units
+            .units
+            .iter()
+            .filter(|unit| {
+                unit.package == leaf.package
+                    && unit.package_version == leaf.version
+                    && unit.target_name.replace('-', "_") == leaf.crate_name
+                    && unit.effective_features == leaf.features
+            })
+            .collect::<Vec<_>>();
+        let [unit] = matched.as_slice() else {
+            return Err(OvenLoafError::Preparation {
+                message: "registry artifact does not bind exactly one captured physical unit".to_string(),
+            });
+        };
+        let capture_identity =
+            super::legacy_cargo_selected_unit_capture_identity(unit).map_err(|error| OvenLoafError::Preparation {
+                message: error.to_string(),
+            })?;
+        let selected_identity = bindings
+            .get(&capture_identity)
+            .ok_or_else(|| OvenLoafError::Preparation {
+                message: "registry artifact has no authenticated selected-unit binding".to_string(),
+            })?;
+        if !used.insert(selected_identity.clone()) {
+            return Err(OvenLoafError::Preparation {
+                message: "selected unit is bound to more than one registry artifact".to_string(),
+            });
+        }
+        leaf.selected_unit_identity = Some(selected_identity.clone());
+    }
+    if used.len() != bindings.len() {
+        return Err(OvenLoafError::Preparation {
+            message: "selected-unit bindings contain an uncompiled physical unit".to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// Copy a fully verified temporary store entry into the compiler-owned loaf layout and report its accounting.
@@ -578,7 +649,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use oven_rustc::rustc::{
         OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, OvenRustcArtifactExtern,
@@ -588,8 +659,96 @@ mod tests {
     use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project};
 
     use crate::{
-        OvenLegacyCargoInspectionSource, OvenLegacyCargoInspectionSourceMember, stage_registry_source_directory,
+        OvenLegacyCargoInspectionSource, OvenLegacyCargoInspectionSourceMember, OvenLegacyCargoSelectedUnit,
+        OvenLegacyCargoSelectedUnitCapture, legacy_cargo_selected_unit_capture_identity,
+        stage_registry_source_directory,
     };
+
+    fn selected_registry_unit(cfg: &[&str]) -> OvenLegacyCargoSelectedUnit {
+        OvenLegacyCargoSelectedUnit {
+            package_id: "registry+https://example.invalid/index#blake2@0.10.6".to_string(),
+            package: "blake2".to_string(),
+            package_version: "0.10.6".to_string(),
+            package_source: Some("registry+https://example.invalid/index".to_string()),
+            target_name: "blake2".to_string(),
+            target_kinds: vec!["lib".to_string()],
+            crate_types: vec!["lib".to_string()],
+            source_path: PathBuf::from("/sealed/blake2/src/lib.rs"),
+            root_module: "src/lib.rs".to_string(),
+            edition: "2021".to_string(),
+            mode: "build".to_string(),
+            platform: Some("aarch64-apple-darwin".to_string()),
+            target_is_explicit: Some(true),
+            cfg: cfg.iter().map(|value| (*value).to_string()).collect(),
+            effective_features: vec!["std".to_string()],
+            dependencies: Vec::new(),
+            sysroot_externs: Vec::new(),
+            build_script: None,
+            registry_source: None,
+        }
+    }
+
+    fn registry_leaf() -> OvenRustcRegistryLeaf {
+        OvenRustcRegistryLeaf {
+            selected_unit_identity: None,
+            package: "blake2".to_string(),
+            version: "0.10.6".to_string(),
+            crate_name: "blake2".to_string(),
+            features: vec!["std".to_string()],
+            source: OvenRustcRegistrySource {
+                registry: "registry+https://example.invalid/index".to_string(),
+                checksum: "blake2-checksum".to_string(),
+                relative_root: "registry-sources/blake2-0.10.6".to_string(),
+                digest: "sha256:blake2-source".to_string(),
+            },
+            artifact: OvenRustcArtifactExtern {
+                crate_name: "blake2".to_string(),
+                relative_path: "deps/libblake2.rlib".to_string(),
+                digest: "sha256:blake2-artifact".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn registry_leaf_binding_requires_exact_unambiguous_physical_capture() -> Result<(), Box<dyn std::error::Error>> {
+        let unit = selected_registry_unit(&["target_has_atomic=\"64\""]);
+        let capture_identity = legacy_cargo_selected_unit_capture_identity(&unit)?;
+        let capture = OvenLegacyCargoSelectedUnitCapture {
+            roots: vec![0],
+            units: vec![unit.clone()],
+            rustc_invocations_observed: true,
+            build_script_tool_probes: Vec::new(),
+            compiler: None,
+        };
+        let mut bindings = BTreeMap::from([(capture_identity, "sha256:selected-unit".to_string())]);
+        let mut leaves = vec![registry_leaf()];
+
+        bind_registry_leaf_selected_unit_identities(&mut leaves, &capture, &bindings)?;
+        assert_eq!(
+            leaves[0].selected_unit_identity.as_deref(),
+            Some("sha256:selected-unit")
+        );
+
+        let mut missing = vec![registry_leaf()];
+        assert!(bind_registry_leaf_selected_unit_identities(&mut missing, &capture, &BTreeMap::new()).is_err());
+
+        let mut variant = unit;
+        variant.cfg.push("target_feature=\"neon\"".to_string());
+        let ambiguous = OvenLegacyCargoSelectedUnitCapture {
+            units: vec![capture.units[0].clone(), variant],
+            ..capture
+        };
+        let mut ambiguous_leaf = vec![registry_leaf()];
+        assert!(bind_registry_leaf_selected_unit_identities(&mut ambiguous_leaf, &ambiguous, &bindings).is_err());
+
+        bindings.insert(
+            "sha256:uncompiled-capture".to_string(),
+            "sha256:uncompiled-unit".to_string(),
+        );
+        let mut extra = vec![registry_leaf()];
+        assert!(bind_registry_leaf_selected_unit_identities(&mut extra, &ambiguous, &bindings).is_err());
+        Ok(())
+    }
     fn runtime_receipt(
         source: &Path,
         providers: &str,
@@ -731,6 +890,7 @@ mod tests {
             digest: digest_bytes(artifact),
         });
         plan.registry_leaves.push(OvenRustcRegistryLeaf {
+            selected_unit_identity: None,
             package: authority.package.clone(),
             version: authority.version.clone(),
             crate_name: "blake2".to_string(),

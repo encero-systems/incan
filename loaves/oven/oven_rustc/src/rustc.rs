@@ -5454,6 +5454,7 @@ fi
             source: registry_source.clone(),
         }];
         artifacts.registry_leaves = vec![OvenRustcRegistryLeaf {
+            selected_unit_identity: None,
             package: "serde_fixture".to_string(),
             version: "1.2.3".to_string(),
             crate_name: "serde_fixture".to_string(),
@@ -6190,6 +6191,7 @@ fi
         let authority = OvenRegistryLeafAuthority::new_with_trusted_dependency_search_paths(
             registry.clone(),
             vec![OvenRustcRegistryLeaf {
+                selected_unit_identity: None,
                 package: "registry_helper".to_string(),
                 version: "1.0.0".to_string(),
                 crate_name: "registry_helper".to_string(),
@@ -6266,6 +6268,7 @@ fi
             let bytes = format!("sealed itoa {version}").into_bytes();
             fs::write(&artifact, &bytes)?;
             leaves.push(OvenRustcRegistryLeaf {
+                selected_unit_identity: None,
                 package: "itoa".to_string(),
                 version: version.to_string(),
                 crate_name: "itoa".to_string(),
@@ -6330,6 +6333,7 @@ fi
             fs::write(&artifact, &bytes)?;
             artifacts.insert(version, fs::canonicalize(&artifact)?);
             leaves.push(OvenRustcRegistryLeaf {
+                selected_unit_identity: None,
                 package: "shared".to_string(),
                 version: version.to_string(),
                 crate_name: "shared".to_string(),
@@ -6391,6 +6395,7 @@ fi
             OvenRegistryLeafAuthority::new(
                 narrow.path().to_path_buf(),
                 vec![OvenRustcRegistryLeaf {
+                    selected_unit_identity: None,
                     package: "bitflags".to_string(),
                     version: "2.13.1".to_string(),
                     crate_name: "bitflags".to_string(),
@@ -6406,6 +6411,7 @@ fi
             OvenRegistryLeafAuthority::new(
                 broad.path().to_path_buf(),
                 vec![OvenRustcRegistryLeaf {
+                    selected_unit_identity: None,
                     package: "bitflags".to_string(),
                     version: "1.3.2".to_string(),
                     crate_name: "bitflags".to_string(),
@@ -6447,6 +6453,7 @@ fi
         let provider_authority = OvenRegistryLeafAuthority::new(
             provider_root.path().to_path_buf(),
             vec![OvenRustcRegistryLeaf {
+                selected_unit_identity: None,
                 package: "datafusion".to_string(),
                 version: "53.1.0".to_string(),
                 crate_name: "datafusion".to_string(),
@@ -6493,6 +6500,7 @@ fi
         let provider_datafusion = provider_root.path().join("libdatafusion.rlib");
         fs::write(&provider_datafusion, provider_datafusion_bytes)?;
         let memchr_leaf = |bytes: &[u8]| OvenRustcRegistryLeaf {
+            selected_unit_identity: None,
             package: "memchr".to_string(),
             version: "2.8.0".to_string(),
             crate_name: "memchr".to_string(),
@@ -6511,6 +6519,7 @@ fi
             vec![
                 memchr_leaf(provider_memchr_bytes),
                 OvenRustcRegistryLeaf {
+                    selected_unit_identity: None,
                     package: "datafusion".to_string(),
                     version: "53.1.0".to_string(),
                     crate_name: "datafusion".to_string(),
@@ -6555,6 +6564,7 @@ fi
         fs::write(consumer_root.path().join("libtokio-consumer1234.rlib"), consumer_bytes)?;
         fs::write(provider_root.path().join("libtokio-provider5678.rlib"), provider_bytes)?;
         let leaf = |features: &[&str], bytes: &[u8], relative_path: &str| OvenRustcRegistryLeaf {
+            selected_unit_identity: None,
             package: "tokio".to_string(),
             version: "1.52.3".to_string(),
             crate_name: "tokio".to_string(),
@@ -6622,6 +6632,7 @@ fi
         let provider_authority = OvenRegistryLeafAuthority::new(
             provider_root.path().to_path_buf(),
             vec![OvenRustcRegistryLeaf {
+                selected_unit_identity: None,
                 package: "tokio".to_string(),
                 version: "1.52.3".to_string(),
                 crate_name: "tokio".to_string(),
@@ -6662,6 +6673,7 @@ fi
         let provider_authority = OvenRegistryLeafAuthority::new(
             provider_root.path().to_path_buf(),
             vec![OvenRustcRegistryLeaf {
+                selected_unit_identity: None,
                 package: "tokio".to_string(),
                 version: "1.52.3".to_string(),
                 crate_name: "tokio".to_string(),
@@ -6703,6 +6715,7 @@ fi
         let provider_authority = OvenRegistryLeafAuthority::new(
             provider_root.path().to_path_buf(),
             vec![OvenRustcRegistryLeaf {
+                selected_unit_identity: None,
                 package: "datafusion".to_string(),
                 version: "53.1.0".to_string(),
                 crate_name: "datafusion".to_string(),
@@ -6913,6 +6926,7 @@ fi
     #[test]
     fn first_diverging_shared_package_reports_a_same_version_byte_distinct_overlap() {
         let leaf = |package: &str, version: &str, digest: &str| OvenRustcRegistryLeaf {
+            selected_unit_identity: None,
             package: package.to_string(),
             version: version.to_string(),
             crate_name: package.replace('-', "_"),
@@ -6981,6 +6995,7 @@ fi
         fs::write(&first_artifact, first_bytes)?;
         fs::write(&second_artifact, second_bytes)?;
         let leaf = |digest| OvenRustcRegistryLeaf {
+            selected_unit_identity: None,
             package: "fixture-registry".to_string(),
             version: "1.0.0".to_string(),
             crate_name: "fixture_registry".to_string(),
@@ -7175,6 +7190,7 @@ fi
         // witness: a base prebuilt on another machine publishes the same filename with a different strict version
         // hash, so the conservative regime additionally demands bit-identical content.
         let leaf = |relative_path: &str, digest_input: &str| OvenRustcRegistryLeaf {
+            selected_unit_identity: None,
             package: "rand_core".to_string(),
             version: "0.6.4".to_string(),
             crate_name: "rand_core".to_string(),
@@ -7232,6 +7248,7 @@ fi
             source: source.clone(),
         };
         let leaf = |crate_name: &str, artifact| OvenRustcRegistryLeaf {
+            selected_unit_identity: None,
             package: crate_name.to_string(),
             version: "1.0.0".to_string(),
             crate_name: crate_name.to_string(),
@@ -7575,6 +7592,7 @@ fi
             source: source.clone(),
         };
         let leaf = |crate_name: &str, artifact| OvenRustcRegistryLeaf {
+            selected_unit_identity: None,
             package: crate_name.replace('_', "-"),
             version: "1.0.0".to_string(),
             crate_name: crate_name.to_string(),
@@ -7956,6 +7974,7 @@ fi
             ..release_serde.clone()
         };
         let leaf = |features: &[&str], artifact| OvenRustcRegistryLeaf {
+            selected_unit_identity: None,
             package: "serde".to_string(),
             version: "1.0.228".to_string(),
             crate_name: "serde".to_string(),
@@ -8150,6 +8169,7 @@ fi
             ..release_libc.clone()
         };
         let leaf = |artifact| OvenRustcRegistryLeaf {
+            selected_unit_identity: None,
             package: "libc".to_string(),
             version: "0.2.155".to_string(),
             crate_name: "libc".to_string(),
