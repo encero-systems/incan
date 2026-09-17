@@ -3220,6 +3220,37 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn retained_runtime_compiler_executes_after_source_closure_is_removed() -> Result<(), Box<dyn std::error::Error>> {
+        let rustc = std::env::var_os("RUSTC").ok_or("Cargo did not provide the selected rustc path")?;
+        let rustc = fs::canonicalize(rustc)?;
+        let target = crate::rustc::rustc_host_target(&rustc)?;
+        let first_parent = tempfile::tempdir()?;
+        let first = first_parent.path().join("source-toolchain");
+        let (first_identity, _) = stage_release_runtime_foundation_toolchain(&rustc, &target, &first)?;
+        let second_parent = tempfile::tempdir()?;
+        let second = second_parent.path().join("retained-toolchain");
+        let (second_identity, second_members) =
+            stage_release_runtime_foundation_toolchain(&first.join("bin/rustc"), &target, &second)?;
+        assert_eq!(second_identity, first_identity);
+        assert!(
+            second_members
+                .iter()
+                .any(|member| member.relative_path == Path::new("bin/rustc"))
+        );
+
+        drop(first_parent);
+        let output = std::process::Command::new(second.join("bin/rustc"))
+            .arg("-vV")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "retained rustc did not execute: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn committed_release_store_member_is_optional_and_runtime_acquires_the_real_payload()
