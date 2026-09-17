@@ -623,6 +623,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// A custom target reaches rustc through its admitted JSON path rather than a substituted target triple.
     #[test]
     fn custom_target_uses_the_exact_admitted_json_path() -> Result<(), Box<dyn std::error::Error>> {
         let target = PathBuf::from("/sealed/toolchain/targets/custom.json");

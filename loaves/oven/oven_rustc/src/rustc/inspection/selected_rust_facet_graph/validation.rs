@@ -327,6 +327,7 @@ pub fn selected_graph_generated_input_digest(
     selected_graph_member_inventory_digest(members, "generated_input.members")
 }
 
+/// Validate member paths and digests, reject duplicate paths, then hash the canonical sorted JSON object.
 fn selected_graph_member_inventory_digest(
     members: &[OvenSelectedRustFacetSourceMember],
     field: &str,
