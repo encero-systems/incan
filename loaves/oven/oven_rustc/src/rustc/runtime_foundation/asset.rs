@@ -1,5 +1,6 @@
 //! Publishing and admitting a runtime-foundation asset: the immutable directory that carries a validated foundation,
-//! its provider records and the members they name, sealed under one identity and audited member by member.
+//! its selected-package source inventories and the members they name, sealed under one identity and audited member by
+//! member.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -14,17 +15,16 @@ use super::super::{
 use super::{
     OVEN_RUNTIME_FOUNDATION_ASSET_FILENAME, OVEN_RUNTIME_FOUNDATION_ASSET_SCHEMA_VERSION,
     OvenAdmittedRuntimeFoundationAsset, OvenRuntimeFoundation, OvenRuntimeFoundationAsset,
-    OvenRuntimeFoundationProviderDeclaration, OvenRuntimeFoundationProviderRecord, OvenRuntimeFoundationProviderState,
-    ValidatedOvenRuntimeFoundationAsset, runtime_foundation_invalid,
+    OvenRuntimeFoundationSourceInventory, ValidatedOvenRuntimeFoundationAsset, runtime_foundation_invalid,
 };
 
-/// Publish one complete provider-supplied runtime foundation into an installed asset root.
+/// Publish one complete source-inventory-bearing runtime foundation into an installed asset root.
 ///
-/// The caller must supply the selected foundation and exhaustive provider facts explicitly; this function never
-/// reads Cargo metadata, searches a target directory, or reconstructs a provider result. It first materializes the
-/// supplied roots to verify every source/artifact byte and provider gate, copies only descriptor-derived foundation
-/// members into a sibling staging directory, re-admits that staged payload, and only then atomically exposes it at
-/// `destination`.
+/// The caller must supply the selected foundation and exhaustive source-inventory facts explicitly; this function never
+/// reads Cargo metadata, searches a target directory, or reconstructs source evidence. It first materializes the
+/// supplied roots to verify every source/artifact byte and source-inventory gate, copies only descriptor-derived
+/// foundation members into a sibling staging directory, re-admits that staged payload, and only then atomically exposes
+/// it at `destination`.
 ///
 /// The separately held Toolchain owner is verified but never copied into this asset root. It stays part of the
 /// installed compiler distribution rather than becoming an unrecorded foundation member.
@@ -46,17 +46,17 @@ pub fn publish_runtime_foundation_asset(
         )
     })?;
     let destination = destination_parent.join(destination_name);
-    // Do not rehash/copy a provider payload if an immutable installed root already owns this name.
+    // Do not rehash/copy a source inventory payload if an immutable installed root already owns this name.
     require_absent_runtime_foundation_destination(&destination)?;
 
     let mut asset = asset;
-    canonicalize_runtime_foundation_asset_facts(&mut asset.foundation, &mut asset.providers)?;
+    canonicalize_runtime_foundation_asset_facts(&mut asset.foundation, &mut asset.source_inventories)?;
     let validated = asset.clone().validated()?;
     let source_foundation_root = canonical_directory(source_foundation_root, "runtime foundation source root")?;
     let toolchain_root = canonical_directory(toolchain_root, "runtime foundation toolchain root")?;
     let owner_roots =
         runtime_foundation_asset_owner_roots(&validated, source_foundation_root.clone(), toolchain_root.clone())?;
-    // Verify the source material and reject unsupported provider/native-link facts before creating any output.
+    // Verify source, generated, native and artifact facts before creating any output.
     let _ = validated.materialize_for_publication(&owner_roots)?;
 
     let members = runtime_foundation_asset_member_paths(&validated)?;
@@ -204,7 +204,25 @@ pub fn admit_runtime_foundation_asset_for_publication(
         path: descriptor.clone(),
         source,
     })?;
-    let asset = serde_json::from_slice::<OvenRuntimeFoundationAsset>(&bytes).map_err(|error| {
+    let descriptor_value = serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|error| {
+        runtime_foundation_invalid(
+            "runtime foundation descriptor",
+            format!("cannot decode {}: {error}", descriptor.display()),
+        )
+    })?;
+    let schema_version = descriptor_value
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| runtime_foundation_invalid("runtime foundation asset schema", "is missing or not an integer"))?;
+    if schema_version != u64::from(OVEN_RUNTIME_FOUNDATION_ASSET_SCHEMA_VERSION) {
+        return Err(runtime_foundation_invalid(
+            "runtime foundation asset schema",
+            format!(
+                "expected schema {OVEN_RUNTIME_FOUNDATION_ASSET_SCHEMA_VERSION}, found {schema_version}; rebuild and republish the asset"
+            ),
+        ));
+    }
+    let asset = serde_json::from_value::<OvenRuntimeFoundationAsset>(descriptor_value).map_err(|error| {
         runtime_foundation_invalid(
             "runtime foundation descriptor",
             format!("cannot decode {}: {error}", descriptor.display()),
@@ -385,27 +403,24 @@ fn runtime_foundation_asset_member_paths(
             }
         }
     }
-    for record in asset.providers.values() {
-        let package = match &record.declaration {
-            OvenRuntimeFoundationProviderDeclaration::NoBuildScript { package }
-            | OvenRuntimeFoundationProviderDeclaration::BuildScript { package, .. } => package,
-        };
+    for record in asset.source_inventories.values() {
+        let package = &record.package;
         if package.root.owner != foundation_owner {
             continue;
         }
         record_runtime_foundation_asset_directory(
             &mut members,
             &package.root.path,
-            "runtime foundation provider source root",
+            "runtime foundation package source root",
         )?;
         record_runtime_foundation_asset_file(
             &mut members,
             &runtime_foundation_asset_member_path(
                 &package.root.path,
                 &package.manifest.path,
-                "runtime foundation provider manifest",
+                "runtime foundation package manifest",
             )?,
-            "runtime foundation provider manifest",
+            "runtime foundation package manifest",
         )?;
         for source_member in &package.members {
             record_runtime_foundation_asset_file(
@@ -413,9 +428,9 @@ fn runtime_foundation_asset_member_paths(
                 &runtime_foundation_asset_member_path(
                     &package.root.path,
                     &source_member.path,
-                    "runtime foundation provider source member",
+                    "runtime foundation package source member",
                 )?,
-                "runtime foundation provider source member",
+                "runtime foundation package source member",
             )?;
         }
     }
@@ -552,16 +567,16 @@ fn collect_runtime_foundation_asset_members(
 /// Derive the content identity of a release asset without confusing it with a compiled-unit output identity.
 pub(crate) fn runtime_foundation_asset_identity(
     foundation: &OvenRuntimeFoundation,
-    providers: &[OvenRuntimeFoundationProviderRecord],
+    source_inventories: &[OvenRuntimeFoundationSourceInventory],
 ) -> Result<String, OvenRustcError> {
     let mut foundation = foundation.clone();
-    let mut providers = providers.to_vec();
-    canonicalize_runtime_foundation_asset_facts(&mut foundation, &mut providers)?;
+    let mut source_inventories = source_inventories.to_vec();
+    canonicalize_runtime_foundation_asset_facts(&mut foundation, &mut source_inventories)?;
     let bytes = serde_json::to_vec(&(
-        "incan.oven.runtime-foundation-asset/3",
+        "incan.oven.runtime-foundation-asset/4",
         OVEN_RUNTIME_FOUNDATION_ASSET_SCHEMA_VERSION,
         &foundation,
-        &providers,
+        &source_inventories,
     ))
     .map_err(|error| {
         runtime_foundation_invalid(
@@ -574,13 +589,13 @@ pub(crate) fn runtime_foundation_asset_identity(
 
 /// Normalize presentation-order fields before they become a release-asset identity input.
 ///
-/// The selected graph already has a canonical form, while foundation execution policy and provider records are
+/// The selected graph already has a canonical form, while foundation execution policy and source inventories are
 /// semantically maps keyed by selected identity. Their arrival order must not manufacture a second foundation or
 /// defeat reuse. Artifact-manifest ordering is deliberately left intact because its search-path order can affect the
 /// compiler invocation and is therefore part of the manifest's observable contract.
 pub(crate) fn canonicalize_runtime_foundation_asset_facts(
     foundation: &mut OvenRuntimeFoundation,
-    providers: &mut [OvenRuntimeFoundationProviderRecord],
+    source_inventories: &mut [OvenRuntimeFoundationSourceInventory],
 ) -> Result<(), OvenRustcError> {
     foundation.selected_graph = foundation
         .selected_graph
@@ -592,30 +607,9 @@ pub(crate) fn canonicalize_runtime_foundation_asset_facts(
     foundation
         .units
         .sort_by(|left, right| left.selected_identity.cmp(&right.selected_identity));
-    providers.sort_by(|left, right| left.selected_identity.cmp(&right.selected_identity));
-    for provider in providers {
-        match &mut provider.declaration {
-            OvenRuntimeFoundationProviderDeclaration::NoBuildScript { package } => package.members.sort(),
-            OvenRuntimeFoundationProviderDeclaration::BuildScript {
-                package,
-                host_dependencies,
-                ..
-            } => {
-                package.members.sort();
-                host_dependencies
-                    .sort_by(|left, right| left.alias.cmp(&right.alias).then_with(|| left.unit.cmp(&right.unit)));
-            }
-        }
-        if let OvenRuntimeFoundationProviderState::Captured { receipt } = &mut provider.state {
-            receipt
-                .effects
-                .generated_inputs
-                .sort_by(|left, right| left.name.cmp(&right.name).then_with(|| left.source.cmp(&right.source)));
-            receipt.effects.emitted_cfg.sort();
-            receipt.effects.checked_cfg.sort();
-            receipt.effects.rerun_paths.sort();
-            receipt.effects.rerun_environment.sort();
-        }
+    source_inventories.sort_by(|left, right| left.selected_identity.cmp(&right.selected_identity));
+    for inventory in source_inventories {
+        inventory.package.members.sort();
     }
     Ok(())
 }
