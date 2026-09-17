@@ -91,6 +91,10 @@ impl OvenCompilerSuiteTargetCapabilities {
             ) | (
                 "incan-cli",
                 "test",
+                "loaves/toolchain/incan-cli/tests/cli_interop_target_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
                 "loaves/toolchain/incan-cli/tests/cli_surface_tests.rs"
             ) | (
                 "incan-cli",
