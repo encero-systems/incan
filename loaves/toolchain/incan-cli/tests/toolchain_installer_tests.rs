@@ -153,6 +153,22 @@ fn toolchain_package_archive_script() -> PathBuf {
     repo_root().join("workspaces/release/toolchain/package_archive.sh")
 }
 
+#[test]
+fn production_archive_binds_the_exact_reported_release_policy_output() -> Result<(), Box<dyn std::error::Error>> {
+    let script = fs::read_to_string(toolchain_package_archive_script())?;
+    assert!(script.contains("oven bake \\\n      --project \"workspaces/oven\" \\\n      --format json"));
+    assert!(script.contains(".project_target == \"executable:src/plan_json_main.incn\""));
+    assert!(script.contains(".profile == \"release\""));
+    assert!(script.contains("INCAN_SDK_INVENTORY=\"$sdk_seed_root/sdk-inventory.json\""));
+    assert!(script.contains("INCAN_HOME=\"$release_policy_publisher_home\""));
+    assert!(script.contains("--policy-engine-store \"$policy_engine_store\""));
+    assert!(script.contains("--policy-engine-identity \"$policy_engine_identity\""));
+    assert!(script.contains(".release_store_member.artifact_identity"));
+    assert!(script.contains("release_policy_publisher_home=\"$(mktemp -d"));
+    assert!(script.contains("rm -rf \"$release_policy_publisher_home\""));
+    Ok(())
+}
+
 fn toolchain_prepare_assets_script() -> PathBuf {
     repo_root().join("workspaces/release/toolchain/prepare_assets.incn")
 }

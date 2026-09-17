@@ -293,13 +293,17 @@ out_dir="$(cd "$out_dir" && pwd -P)"
 package_dir="$out_dir/dist/incan-${release}-${target}"
 archive="$out_dir/incan-${release}-${target}.tar.gz"
 release_provider_store=""
+release_policy_publisher_home=""
 
-cleanup_release_provider_store() {
+cleanup_release_staging() {
   if [ -n "$release_provider_store" ]; then
     rm -rf "$release_provider_store"
   fi
+  if [ -n "$release_policy_publisher_home" ]; then
+    rm -rf "$release_policy_publisher_home"
+  fi
 }
-trap cleanup_release_provider_store EXIT
+trap cleanup_release_staging EXIT
 
 rm -rf "$package_dir"
 mkdir -p "$package_dir/bin" "$package_dir/crates"
@@ -567,7 +571,37 @@ if [ -n "${INCAN_OVEN_LOAF_DIR:-}" ]; then
   mkdir -p "$(dirname "$loaf_root")"
   cp -R "$INCAN_OVEN_LOAF_DIR" "$loaf_root"
 else
+  command -v jq >/dev/null 2>&1 \
+    || fail "production release packaging requires jq to read the structured Oven bake report"
   rustc_bin="$(resolve_release_rustc)" || fail "could not resolve rustc for the release-only Loaf publisher"
+  [ -f "workspaces/oven/loaf.toml" ] \
+    || fail "release policy project is missing workspaces/oven/loaf.toml"
+  [ -f "workspaces/oven/src/plan_json_main.incn" ] \
+    || fail "release policy entrypoint is missing workspaces/oven/src/plan_json_main.incn"
+  release_policy_publisher_home="$(mktemp -d "${TMPDIR:-/tmp}/incan-release-policy-${target}.XXXXXX")"
+  policy_bake_report="$release_policy_publisher_home/core-engine-bake.json"
+  INCAN_HOME="$release_policy_publisher_home" \
+    INCAN_STDLIB="$staged_stdlib_root" \
+    INCAN_SDK_INVENTORY="$sdk_seed_root/sdk-inventory.json" \
+    INCAN_TOOLCHAIN_CRATES_DIR="$package_dir/crates" \
+    CARGO="$cargo_bin" \
+    RUSTC="$rustc_bin" \
+    "$package_dir/bin/incan" oven bake \
+      --project "workspaces/oven" \
+      --format json > "$policy_bake_report" \
+    || fail "could not explicitly bake the release policy project"
+  policy_output_count="$(
+    jq '[.outputs[] | select(.project_target == "executable:src/plan_json_main.incn" and .profile == "release")] | length' \
+      "$policy_bake_report"
+  )" || fail "could not read the structured release policy bake report"
+  [ "$policy_output_count" = "1" ] \
+    || fail "release policy bake must report exactly one release core_engine ProjectOutput"
+  policy_engine_store="$(jq -er '.store | select(type == "string" and length > 0)' "$policy_bake_report")" \
+    || fail "release policy bake did not report its Oven store"
+  policy_engine_identity="$(
+    jq -er '.outputs[] | select(.project_target == "executable:src/plan_json_main.incn" and .profile == "release") | .artifact_identity | select(type == "string" and length > 0)' \
+      "$policy_bake_report"
+  )" || fail "release policy bake did not report the exact core_engine ProjectOutput identity"
   "$package_dir/bin/incan" oven legacy-cargo bake-loafs \
     --compiler-root "$package_dir" \
     --output "$loaf_root" \
@@ -575,8 +609,14 @@ else
     --sdk-inventory "$sdk_seed_root/sdk-inventory.json" \
     --cargo "$cargo_bin" \
     --rustc "$rustc_bin" \
+    --policy-engine-store "$policy_engine_store" \
+    --policy-engine-identity "$policy_engine_identity" \
     --format json >/dev/null \
     || fail "could not bake the release Oven Loaf envelope"
+  packaged_policy_identity="$(jq -er '.release_store_member.artifact_identity | select(type == "string" and length > 0)' "$loaf_root/envelope.json")" \
+    || fail "release Oven Loaf envelope did not retain its policy-engine member"
+  [ "$packaged_policy_identity" = "$policy_engine_identity" ] \
+    || fail "release Oven Loaf envelope retained a different policy-engine identity"
 fi
 [ -d "$loaf_root" ] || fail "release package is missing Oven Loafs"
 [ "$(find "$loaf_root" -name loaf.json -type f | wc -l | tr -d ' ')" = "2" ] \
