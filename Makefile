@@ -519,10 +519,11 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 		rustc_bin="$$(rustup which --toolchain "$(INCAN_TEST_LOAF_TOOLCHAIN)" rustc)"; \
 		target="$$($$rustc_bin -vV | sed -n 's/^host: //p')"; \
 		test -n "$$target"; \
-		rm -rf "$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)"; \
 		mkdir -p "$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)"; \
+		policy_home="$$(mktemp -d "$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)/invocation.XXXXXX")"; \
+		trap 'rm -rf "$$policy_home"' EXIT HUP INT TERM; \
 		$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
-			INCAN_HOME="$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)" \
+			INCAN_HOME="$$policy_home" \
 			INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
 			INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
 			INCAN_SDK_INVENTORY="$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json" \

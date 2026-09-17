@@ -1384,6 +1384,10 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
             && makefile.contains("--envelope release")
             && makefile.contains("INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT")
             && makefile.contains("select_release_policy_output.sh")
+            && makefile
+                .contains("policy_home=\"$$(mktemp -d \"$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)/invocation.XXXXXX\")\"")
+            && makefile.contains("trap 'rm -rf \"$$policy_home\"' EXIT HUP INT TERM")
+            && !makefile.contains("rm -rf \"$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)\"")
             && makefile.contains("--policy-engine-store \"$$policy_engine_store\"")
             && makefile.contains("--policy-engine-identity \"$$policy_engine_identity\"")
             && makefile.contains("--policy-engine-target \"$$target\""),
