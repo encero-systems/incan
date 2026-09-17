@@ -258,6 +258,7 @@ pub fn legacy_cargo_build_script_closure_digest(
     bindings: &BTreeMap<(usize, usize), OvenLegacyCargoSelectedBuildScriptBinding>,
 ) -> Result<String, OvenLegacyCargoError> {
     let mut records = Vec::new();
+    let mut probe_matches = vec![0_usize; capture.build_script_tool_probes.len()];
     for (consumer, unit) in capture.units.iter().enumerate() {
         for dependency in &unit.dependencies {
             let Some(build_unit) = capture.units.get(dependency.unit_index) else {
@@ -269,11 +270,12 @@ pub fn legacy_cargo_build_script_closure_digest(
             if !is_build_script_unit(build_unit) {
                 continue;
             }
-            let facts = build_unit
+            let facts = dependency
                 .build_script
                 .as_ref()
+                .or(build_unit.build_script.as_ref())
                 .ok_or_else(|| projection_error("selected build-script unit", "has no structured retained facts"))?;
-            let tool_probes = build_script_tool_probes(capture, build_unit, facts)?;
+            let tool_probes = build_script_tool_probes(capture, unit, build_unit, facts, &mut probe_matches)?;
             records.push(BuildScriptAuthorityRecord {
                 consumer,
                 build_unit: dependency.unit_index,
@@ -288,6 +290,12 @@ pub fn legacy_cargo_build_script_closure_digest(
             });
         }
     }
+    if probe_matches.iter().any(|matches| *matches != 1) {
+        return Err(projection_error(
+            "selected build-script tool probe",
+            "is not consumed by one exact selected build-script edge",
+        ));
+    }
     let bytes = serde_json::to_vec(&("incan.oven.legacy-cargo-build-script-closure/1", records))
         .map_err(|error| projection_error("selected build-script closure", &error.to_string()))?;
     Ok(oven_rustc::rustc::selected_graph_sha256(&bytes))
@@ -296,38 +304,22 @@ pub fn legacy_cargo_build_script_closure_digest(
 /// Bind every transient compiler probe to one exact captured run-custom-build record.
 fn build_script_tool_probes<'a>(
     capture: &'a OvenLegacyCargoSelectedUnitCapture,
+    consumer: &'a OvenLegacyCargoSelectedUnit,
     build_unit: &'a OvenLegacyCargoSelectedUnit,
     facts: &'a super::OvenLegacyCargoBuildScriptFacts,
+    probe_matches: &mut [usize],
 ) -> Result<Vec<&'a OvenLegacyCargoBuildScriptToolProbe>, OvenLegacyCargoError> {
-    let domain = build_unit
+    let domain = consumer
         .platform
         .as_deref()
-        .ok_or_else(|| projection_error("selected build-script unit", "has no captured target domain"))?;
+        .ok_or_else(|| projection_error("selected build-script consumer", "has no captured target domain"))?;
     let mut selected = Vec::new();
-    for probe in &capture.build_script_tool_probes {
+    for (probe_index, probe) in capture.build_script_tool_probes.iter().enumerate() {
         let matches_unit =
             probe.package_id == build_unit.package_id && probe.out_dir == facts.out_dir && probe.domain == domain;
         if matches_unit {
             selected.push(probe);
-        }
-        let matches = capture
-            .units
-            .iter()
-            .filter(|unit| {
-                is_build_script_unit(unit)
-                    && unit.package_id == probe.package_id
-                    && unit.platform.as_deref() == Some(probe.domain.as_str())
-                    && unit
-                        .build_script
-                        .as_ref()
-                        .is_some_and(|record| record.out_dir == probe.out_dir)
-            })
-            .count();
-        if matches != 1 {
-            return Err(projection_error(
-                "selected build-script tool probe",
-                "does not bind one exact selected run-custom-build unit",
-            ));
+            probe_matches[probe_index] += 1;
         }
     }
     Ok(selected)
@@ -402,17 +394,12 @@ fn validate_projection_bindings(
                 "names an absent build-script unit",
             ));
         };
-        if !consumer_unit
+        let facts = consumer_unit
             .dependencies
             .iter()
-            .any(|edge| edge.unit_index == build_unit)
-            || !is_build_script_unit(build_script_unit)
-            || build_script_unit
-                .build_script
-                .as_ref()
-                .and_then(|facts| facts.output.as_ref())
-                .is_none()
-        {
+            .find(|edge| edge.unit_index == build_unit)
+            .and_then(|edge| edge.build_script.as_ref().or(build_script_unit.build_script.as_ref()));
+        if !is_build_script_unit(build_script_unit) || facts.and_then(|facts| facts.output.as_ref()).is_none() {
             return Err(projection_error(
                 "selected generated output binding",
                 "does not name one consumed retained build-script output",
@@ -432,13 +419,12 @@ fn validate_projection_bindings(
                 "names an absent build-script unit",
             ));
         };
-        if !consumer_unit
+        let facts = consumer_unit
             .dependencies
             .iter()
-            .any(|edge| edge.unit_index == build_unit)
-            || !is_build_script_unit(build_script_unit)
-            || build_script_unit.build_script.is_none()
-        {
+            .find(|edge| edge.unit_index == build_unit)
+            .and_then(|edge| edge.build_script.as_ref().or(build_script_unit.build_script.as_ref()));
+        if !is_build_script_unit(build_script_unit) || facts.is_none() {
             return Err(projection_error(
                 "selected build-script binding",
                 "does not name one consumed retained build-script fact set",
@@ -1184,6 +1170,12 @@ mod tests {
             }),
             registry_source: None,
         });
+        let facts = capture.units[1].build_script.take();
+        capture.units[0]
+            .dependencies
+            .last_mut()
+            .ok_or("selected consumer lost its build-script edge")?
+            .build_script = facts;
         let mut sealed = sealed(&capture)?;
         let generated_owner = digest(b"generated owner");
         sealed.owners.push(OvenSelectedRustFacetOwner {
@@ -1265,6 +1257,12 @@ mod tests {
             }),
             registry_source: None,
         });
+        let facts = capture.units[1].build_script.take();
+        capture.units[0]
+            .dependencies
+            .last_mut()
+            .ok_or("selected consumer lost its build-script edge")?
+            .build_script = facts;
         let mut sealed = sealed(&capture)?;
         let source_owner = sealed.units[&0].source.owner.clone();
         sealed.build_scripts.insert(
