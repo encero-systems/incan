@@ -3,9 +3,9 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +33,9 @@ pub struct OvenLegacyRustcInvocation {
     pub arguments: Vec<String>,
     /// Allowlisted Cargo compilation context needed to bind the invocation to a package and physical variant.
     pub environment: BTreeMap<String, String>,
+    /// Digest of bounded source bytes forwarded unchanged when rustc reads its input from stdin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdin_digest: Option<String>,
 }
 
 /// Run the current executable as Cargo's stable `RUSTC_WRAPPER`, returning `None` for every ordinary invocation.
@@ -75,7 +78,33 @@ fn run_marked_rustc_trace_wrapper() -> Result<i32, ()> {
         .into_os_string()
         .into_string()
         .map_err(|_| ())?;
-    let status = Command::new(&rustc).args(&arguments).status().map_err(|_| ())?;
+    let stdin_source = if arguments.iter().any(|argument| argument == "-") {
+        let mut bytes = Vec::new();
+        std::io::stdin()
+            .take(MAX_RUSTC_TRACE_RECORD_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| ())?;
+        if bytes.len() > MAX_RUSTC_TRACE_RECORD_BYTES {
+            return Err(());
+        }
+        Some(bytes)
+    } else {
+        None
+    };
+    let stdin_digest = stdin_source.as_deref().map(super::digest_bytes);
+    let mut command = Command::new(&rustc);
+    command.args(&arguments);
+    let status = if let Some(bytes) = stdin_source {
+        let mut child = command.stdin(Stdio::piped()).spawn().map_err(|_| ())?;
+        let write_result = child.stdin.take().ok_or(())?.write_all(&bytes);
+        let status = child.wait().map_err(|_| ())?;
+        if write_result.is_err() && status.success() {
+            return Err(());
+        }
+        status
+    } else {
+        command.status().map_err(|_| ())?
+    };
     let exit_code = status.code().unwrap_or(1);
     if !status.success()
         || arguments
@@ -93,6 +122,7 @@ fn run_marked_rustc_trace_wrapper() -> Result<i32, ()> {
         working_directory,
         arguments: arguments.clone(),
         environment,
+        stdin_digest,
     };
     let encoded = serde_json::to_vec(&record).map_err(|_| ())?;
     if encoded.len() > MAX_RUSTC_TRACE_RECORD_BYTES {
@@ -285,6 +315,7 @@ mod tests {
             working_directory: "/fixture".to_string(),
             arguments: vec!["--crate-name".to_string(), "fixture".to_string()],
             environment: BTreeMap::new(),
+            stdin_digest: None,
         })?;
         maximum.resize(MAX_RUSTC_TRACE_RECORD_BYTES, b' ');
         maximum.push(b'\n');

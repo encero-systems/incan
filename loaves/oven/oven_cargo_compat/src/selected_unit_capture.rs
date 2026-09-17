@@ -513,6 +513,9 @@ fn build_script_tool_probe_digest(invocation: &OvenLegacyRustcInvocation) -> Opt
     {
         return None;
     }
+    if invocation.arguments.iter().any(|argument| argument == "-") {
+        return stdin_tool_probe_digest(invocation, out_root);
+    }
     let out_dir = argument_value(&invocation.arguments, "--out-dir").map(Path::new)?;
     if !lexically_beneath(out_dir, out_root) {
         return None;
@@ -563,6 +566,54 @@ fn build_script_tool_probe_digest(invocation: &OvenLegacyRustcInvocation) -> Opt
     let encoded = serde_json::to_vec(&serde_json::json!({
         "arguments": normalized_arguments,
         "environment": semantic_environment,
+        "source_digest": source_digest,
+    }))
+    .ok()?;
+    Some(digest_bytes(&encoded))
+}
+
+/// Bind a metadata-only stdin probe to its captured source digest and an output beneath the package OUT_DIR.
+fn stdin_tool_probe_digest(invocation: &OvenLegacyRustcInvocation, out_root: &Path) -> Option<String> {
+    let source_digest = invocation.stdin_digest.as_deref()?;
+    let hex = source_digest.strip_prefix("sha256:")?;
+    if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    if invocation
+        .arguments
+        .iter()
+        .filter(|argument| argument.as_str() == "-")
+        .count()
+        != 1
+        || invocation.arguments.iter().any(|argument| argument.ends_with(".rs"))
+        || comma_separated_argument_values(&invocation.arguments, "--emit") != ["metadata"]
+    {
+        return None;
+    }
+    let output = argument_value(&invocation.arguments, "-o").map(Path::new)?;
+    if !lexically_beneath(output, out_root) || output == out_root {
+        return None;
+    }
+    let relative = output.strip_prefix(out_root).ok()?;
+    let arguments = invocation
+        .arguments
+        .iter()
+        .map(|argument| {
+            if argument == output.to_string_lossy().as_ref() {
+                format!("<out>/{}", relative.to_string_lossy())
+            } else {
+                argument.clone()
+            }
+        })
+        .collect::<Vec<_>>();
+    let environment = invocation
+        .environment
+        .iter()
+        .filter(|(name, _)| !matches!(name.as_str(), "CARGO_MANIFEST_DIR" | "OUT_DIR"))
+        .collect::<BTreeMap<_, _>>();
+    let encoded = serde_json::to_vec(&serde_json::json!({
+        "arguments": arguments,
+        "environment": environment,
         "source_digest": source_digest,
     }))
     .ok()?;
@@ -1712,6 +1763,7 @@ mod tests {
         fs::write(&emitted, b"exact executable bytes")?;
         fs::write(&alias, b"exact executable bytes")?;
         let invocation = OvenLegacyRustcInvocation {
+            stdin_digest: None,
             reason: "incan-rustc-invocation".to_string(),
             rustc: "/verified/rustc".to_string(),
             working_directory: scratch.path().to_string_lossy().to_string(),
@@ -1753,6 +1805,7 @@ mod tests {
         fs::create_dir_all(out_root.join("probe"))?;
         fs::write(&source, b"pub fn probe() {}\n")?;
         let invocation = OvenLegacyRustcInvocation {
+            stdin_digest: None,
             reason: "incan-rustc-invocation".to_string(),
             rustc: "/verified/rustc".to_string(),
             working_directory: scratch.path().to_string_lossy().to_string(),
@@ -1785,6 +1838,28 @@ mod tests {
             .environment
             .insert("CARGO_CRATE_NAME".to_string(), "probe_package".to_string());
         assert!(build_script_tool_probe_digest(&cargo_unit).is_none());
+        let mut stdin_probe = invocation.clone();
+        stdin_probe.arguments = vec![
+            "--crate-type=rlib".to_string(),
+            "--emit=metadata".to_string(),
+            "-o".to_string(),
+            out_root.join("probe.rmeta").to_string_lossy().to_string(),
+            "-".to_string(),
+        ];
+        assert!(build_script_tool_probe_digest(&stdin_probe).is_none());
+        stdin_probe.stdin_digest = Some(digest_bytes(b"pub fn probe() {}"));
+        let original = build_script_tool_probe_digest(&stdin_probe).ok_or("bounded stdin probe refused")?;
+        stdin_probe.stdin_digest = Some(digest_bytes(b"pub fn changed() {}"));
+        assert_ne!(
+            build_script_tool_probe_digest(&stdin_probe).ok_or("changed stdin probe refused")?,
+            original
+        );
+        stdin_probe.arguments[3] = scratch.path().join("outside.rmeta").to_string_lossy().to_string();
+        assert!(build_script_tool_probe_digest(&stdin_probe).is_none());
+        stdin_probe.arguments[3] = out_root.join("probe.rmeta").to_string_lossy().to_string();
+        stdin_probe.arguments[1] = "--emit=link".to_string();
+        assert!(build_script_tool_probe_digest(&stdin_probe).is_none());
+
         let mut escaped = invocation;
         escaped.arguments[5] = scratch.path().join("outside").to_string_lossy().to_string();
         assert!(build_script_tool_probe_digest(&escaped).is_none());
