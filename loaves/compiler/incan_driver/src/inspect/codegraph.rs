@@ -42,6 +42,7 @@ use incan_frontend::ast::{
     RaceForBody, Span, Spanned, Statement, SurfaceExprPayload, SurfaceStmtPayload, TypeParam, Visibility,
 };
 use incan_frontend::diagnostics::{self, StableDiagnostic};
+use incan_frontend::module::logical_module_segments_from_file;
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::registry_metadata::{
     CheckedRegistryMetadataModule, CheckedRegistrySubjectKind, CheckedRegistryValue, collect_checked_registry_metadata,
@@ -63,7 +64,10 @@ use incan_provider::{
 // incan_driver out of an 8,691-line module with ten dependents (#1479), not editing this file. When that lands the
 // edge resolves with no further work here.
 use crate::diagnostics::CliDiagnosticFailure;
-use crate::modules::{collect_modules_detailed_with_selections, collect_modules_detailed_with_session};
+use crate::modules::{
+    collect_modules_detailed_with_selections, collect_modules_detailed_with_session,
+    collect_modules_detailed_with_session_at_path,
+};
 use crate::project::{discover_effective_project_manifest, read_source, resolve_project_root};
 use crate::session::{CompilationAnalysis, CompilationSession};
 
@@ -260,7 +264,14 @@ fn directory_modules_diagnostics_and_info(
                 project_root.display()
             )));
         };
-        match collect_modules_detailed_with_session(file.clone(), session) {
+        let Some(root_module_path) = logical_module_segments_from_file(&session.source_root, file) else {
+            return Err(CodegraphError::failure(format!(
+                "failed to resolve {} below source root {}",
+                file.display(),
+                session.source_root.display()
+            )));
+        };
+        match collect_modules_detailed_with_session_at_path(file.clone(), session, root_module_path) {
             Ok(modules) => {
                 for module in &modules {
                     if file_set.contains(&module.file_path) {
@@ -885,13 +896,13 @@ impl CodegraphBuilder {
                     binding_ordinal: *binding_ordinal,
                 })
             });
-        Some(codegraph_stable_identity(
+        codegraph_stable_identity(
             canonical,
             self.signatures_by_identity
                 .get(canonical)
                 .map(|facts| facts.signature.clone()),
             context,
-        )?)
+        )
     }
 
     /// Attach session-owned semantic facts for checked body target population.
@@ -3704,6 +3715,66 @@ mod tests {
         retain_root_analysis(&mut analyses, consumer, provider, "later-dependency-context");
 
         assert_eq!(analyses.get(provider), Some(&"provider-root-context"));
+    }
+
+    #[test]
+    fn directory_analysis_keeps_provider_origin_through_a_reexport() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let source_root = temp.path().join("src");
+        fs::create_dir_all(&source_root)?;
+        fs::write(
+            temp.path().join("loaf.toml"),
+            "[project]\nname = \"identity_graph\"\nversion = \"0.1.0\"\n",
+        )?;
+        let provider_path = source_root.join("provider.incn");
+        let facade_path = source_root.join("facade.incn");
+        let main_path = source_root.join("main.incn");
+        fs::write(
+            &provider_path,
+            "pub def helper() -> int:\n    return 7\n\npub run = alias helper\n",
+        )?;
+        fs::write(&facade_path, "pub from provider import run as h\n")?;
+        fs::write(
+            &main_path,
+            "from facade import h as run_helper\n\ndef entrypoint() -> int:\n    return run_helper()\n",
+        )?;
+
+        let files = vec![facade_path.clone(), main_path, provider_path.clone()];
+        let (_, analysis) = directory_modules_diagnostics_and_info(&files, &FeatureSelection::default(), None)?;
+        let provider = analysis
+            .semantic_snapshots_by_path
+            .get(&provider_path)
+            .and_then(|snapshot| {
+                snapshot
+                    .hir
+                    .declarations
+                    .iter()
+                    .find(|declaration| declaration.name.as_deref() == Some("helper"))
+            })
+            .and_then(|declaration| declaration.canonical.as_ref())
+            .ok_or("provider helper identity absent")?;
+        let reexport = analysis
+            .semantic_snapshots_by_path
+            .get(&facade_path)
+            .and_then(|snapshot| {
+                snapshot
+                    .hir
+                    .declarations
+                    .iter()
+                    .find(|declaration| declaration.name.as_deref() == Some("h"))
+            })
+            .and_then(|declaration| declaration.canonical.as_ref())
+            .ok_or("facade re-export identity absent")?;
+
+        assert_eq!(
+            reexport, provider,
+            "a temporary graph root must retain its source-relative provider identity"
+        );
+        assert!(matches!(
+            &provider.origin,
+            SymbolOrigin::Module(path) if path.as_slice() == ["provider"]
+        ));
+        Ok(())
     }
 
     /// Execution requirements and inspection consume one checked consumer snapshot, including aliases and nested
