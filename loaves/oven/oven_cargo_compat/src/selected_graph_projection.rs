@@ -12,10 +12,10 @@ use oven_rustc::rustc::{
     OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDependency, OvenSelectedRustFacetDomain,
     OvenSelectedRustFacetEnvironmentValue, OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph,
     OvenSelectedRustFacetLinkedLibrary, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
-    OvenSelectedRustFacetPath, OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource,
-    OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec,
-    OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole, ValidatedOvenSelectedRustFacetGraph,
-    bind_compiler_support_root_intents, selected_graph_unit_identity,
+    OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection,
+    OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember,
+    OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole,
+    ValidatedOvenSelectedRustFacetGraph, bind_compiler_support_root_intents, selected_graph_unit_identity,
 };
 use oven_store::OvenReceipt;
 use oven_store::{receipt_with_build_unit_input, receipt_with_compiler_support_root_intent};
