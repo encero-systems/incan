@@ -105,6 +105,15 @@ pub struct OvenLegacyCargoSelectedGraphProjection {
     pub build_scripts: BTreeMap<(usize, usize), OvenLegacyCargoSelectedBuildScriptBinding>,
 }
 
+/// Identify only the execution node whose Cargo build script produced reusable compiler facts.
+///
+/// Cargo also compiles the `custom-build` binary itself. That ordinary build unit remains a physical compiler unit;
+/// only the `run-custom-build` execution node supplies generated output, cfg, environment, link directives, or
+/// probes to a consumer edge.
+fn is_build_script_unit(unit: &OvenLegacyCargoSelectedUnit) -> bool {
+    unit.mode == "run-custom-build" && unit.target_kinds.iter().any(|kind| kind == "custom-build")
+}
+
 /// Project one exact physical Cargo capture into a rootless selected Rust graph.
 ///
 /// The result deliberately has no exposed roots. Cargo's observed effective features become only per-unit compiler
@@ -315,8 +324,9 @@ fn build_script_tool_probes<'a>(
         .ok_or_else(|| projection_error("selected build-script consumer", "has no captured target domain"))?;
     let mut selected = Vec::new();
     for (probe_index, probe) in capture.build_script_tool_probes.iter().enumerate() {
-        let matches_unit =
-            probe.package_id == build_unit.package_id && probe.out_dir == facts.out_dir && probe.domain == domain;
+        let matches_unit = probe.package_id == build_unit.package_id
+            && probe.out_dir == facts.out_dir
+            && probe.target_context == domain;
         if matches_unit {
             selected.push(probe);
             probe_matches[probe_index] += 1;
@@ -1006,7 +1016,7 @@ mod tests {
     ) -> Result<OvenReceipt, Box<dyn std::error::Error>> {
         let directory = tempdir()?;
         let digest = legacy_cargo_build_script_closure_digest(capture, &sealed.build_scripts)?;
-        receipt_generated_project(
+        Ok(receipt_generated_project(
             &OvenGeneratedProjectRequest::new(
                 directory.path(),
                 "selected-graph-fixture",
@@ -1017,7 +1027,7 @@ mod tests {
                 Vec::new(),
             )
             .with_build_unit_input(OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, digest),
-        )
+        )?)
     }
 
     #[test]
