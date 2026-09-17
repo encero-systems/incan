@@ -8,8 +8,8 @@ use std::path::Path;
 
 use super::artifact::OvenRustcRegistrySourcePackage;
 use super::{OvenRustcError, validate_project_inspection_authority_payload};
-use oven_store::OvenReceipt;
 use oven_store::store::{OvenArtifactKind, OvenStoreExecutionPayload, OvenStoreLease};
+use oven_store::{OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT, OvenReceipt};
 use serde::{Deserialize, Serialize};
 
 /// Wire schema for one project-level Rust inspection authority.
@@ -18,8 +18,6 @@ pub const OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION: u32 = 2;
 /// Wire schema for compiler-support root intent retained with one explicit publisher receipt.
 pub const OVEN_COMPILER_SUPPORT_ROOT_INTENT_SCHEMA_VERSION: u32 = 1;
 
-/// Receipt build-unit input key whose value is the canonical compiler-support root-intent digest.
-pub const OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT: &str = "compiler-support-root-intent";
 const OVEN_COMPILER_SUPPORT_ROOT_INTENT_DIGEST_DOMAIN: &str = "incan.oven.compiler-support-root-intent/1";
 
 mod selected_rust_facet_graph;
