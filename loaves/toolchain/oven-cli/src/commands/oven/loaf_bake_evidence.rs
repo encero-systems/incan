@@ -14,13 +14,13 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     CliError, CliResult, INCAN_VERSION, Instant, LoafEnvelopeExpectation, LoafMemberExpectation, LoafMirrorMiss,
-    OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLegacyCargoCompilerSuiteResult, OvenLoafEnvelope,
-    OvenLoafEnvelopeManifest, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation,
+    OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLegacyCargoCompilerSuiteResult, OvenLegacyCargoSelectedUnitCapture,
+    OvenLoafEnvelope, OvenLoafEnvelopeManifest, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation,
     OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember, OvenStore, OvenStoreInspection, OvenStoreLimits,
-    announce_oven_progress, configured_mirrors, digest_bytes, digest_runtime_crate_source, elapsed_detail, env,
-    import_loaf_envelope_from_mirrors, loaf_directory_byte_counts, loaf_envelope_inspection_packages,
-    loaf_envelope_specifications, loaf_raw_disk_bytes, oven_error, retire_unreferenced_loaf_generations,
-    rustc_identity, validate_stored_loaf_for_reuse,
+    announce_oven_progress, bind_release_runtime_foundation_evidence, configured_mirrors, digest_bytes,
+    digest_runtime_crate_source, elapsed_detail, env, import_loaf_envelope_from_mirrors, loaf_directory_byte_counts,
+    loaf_envelope_inspection_packages, loaf_envelope_specifications, loaf_raw_disk_bytes, oven_error,
+    retire_unreferenced_loaf_generations, rustc_identity, validate_stored_loaf_for_reuse,
 };
 
 /// Result for one checked fixture in a built-in Loaf envelope.

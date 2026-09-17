@@ -33,7 +33,7 @@ use super::{
     loaf_envelope_compatibility_map_with_release_member, loaf_envelope_evidence, loaf_envelope_inspection_packages,
     loaf_envelope_name, loaf_envelope_specifications, loaf_fixture_action_name, loaf_fixture_probe_is_expected_miss,
     loaf_generation_identity_with_release_member, loaf_raw_disk_bytes, open_store, oven_error, pin_loaf_fixture_rustc,
-    prepare_compiler_test_suite, prepare_loaf_from_generated_project, print_json, read_receipt,
+    prepare_compiler_test_suite, prepare_loaf_from_generated_project_with_selected_units, print_json, read_receipt,
     release_store_member_byte_counts, retire_unreferenced_loaf_generations, reuse_complete_loaf_envelope,
     stage_locked_loaf_fixture, write_receipt, write_sealed_oven_inspection_source_authority,
 };
