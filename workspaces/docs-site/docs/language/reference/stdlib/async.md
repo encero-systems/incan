@@ -53,7 +53,18 @@ from std.async.time import sleep, timeout, timeout_join, TimeoutError, TimeoutJo
 | `TimeoutError`       | Error type returned by canceling timeout helpers when the deadline expires.                       |
 | `Duration`           | Nonnegative duration value object with integer-exact seconds and millisecond constructors.         |
 
-`Duration.from_secs(secs)` and `Duration.from_millis(milliseconds)` clamp nonpositive inputs to zero. The millisecond constructor decomposes the integer directly into seconds and nanoseconds, so values above the exact range of floating-point integers retain their full integer precision. `Duration.from_secs_f64(seconds)` also clamps nonpositive inputs to zero and otherwise follows floating-point precision.
+### `Duration` constructors
+
+Import with `from std.async.time import Duration`. The value has public integer fields `secs` and `nanos`; direct construction does not enforce normalization.
+
+| Signature | Behavior |
+| --- | --- |
+| `Duration.from_secs(secs: int) -> Duration` | Nonpositive inputs produce `(secs=0, nanos=0)`. Positive inputs retain the exact seconds value and set nanoseconds to zero. |
+| `Duration.from_millis(millis: int) -> Duration` | Nonpositive inputs produce zero. Positive inputs use integer division and remainder: `secs = millis // 1000`, `nanos = (millis % 1000) * 1000000`. |
+| `Duration.from_secs_f64(secs: float) -> Duration` | Nonpositive inputs produce zero; positive inputs split the floating-point value into whole seconds and fractional nanoseconds. Precision follows the input floating-point value. |
+
+The integer constructors preserve precision across the full positive `int` range, including millisecond values above the exact range of floating-point integers. Their results satisfy `secs >= 0` and `0 <= nanos < 1000000000`.
+
 
 ## Module: `std.async.race`
 
