@@ -55,18 +55,12 @@ pub fn prepare_sdk_provider_inventory_in_store(
             stdlib_root.display()
         ))
     })?;
-    let catalog = SdkSourceCatalog::read_from_path(&stdlib_root.join(SDK_SOURCE_CATALOG_FILE))
-        .map_err(|error| ProviderError::failure(error.to_string()))?;
-    catalog
-        .validate_compiler_version(incan_lang::version::INCAN_VERSION)
-        .map_err(|error| ProviderError::failure(error.to_string()))?;
     let current_exe = env::current_exe()
         .map_err(|error| ProviderError::failure(format!("failed to resolve current incan executable: {error}")))?;
     let cargo_test_binary = env::var_os("CARGO_BIN_EXE_incan")
         .filter(|path| !path.is_empty())
         .map(PathBuf::from);
     let executable = sdk_provider_builder_executable(cargo_test_binary, current_exe)?;
-    let workspace_lock = sdk_provider_workspace_lock(&stdlib_root);
     let distribution_profile = env::var(INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV)
         .ok()
         .filter(|profile| !profile.is_empty())
@@ -87,16 +81,38 @@ pub fn prepare_sdk_provider_inventory_in_store(
                 }
             })
     });
-    let identity = sdk_provider_store_identity(
+    prepare_sdk_provider_inventory_from_sources(
         &stdlib_root,
         &executable,
-        workspace_lock.as_deref(),
+        &store_root,
         &distribution_profile,
-    )?;
-    let _lock = acquire_sdk_provider_store_lock(&store_root)?;
+        source_root_override,
+    )
+}
+
+/// Publish or reuse an SDK inventory from explicit source, builder and store inputs.
+///
+/// Keeping environment discovery outside this transaction lets callers test real publication and cache hits against
+/// isolated stores without changing process-wide overrides.
+fn prepare_sdk_provider_inventory_from_sources(
+    stdlib_root: &Path,
+    executable: &Path,
+    store_root: &Path,
+    distribution_profile: &str,
+    source_root_override: Option<&Path>,
+) -> ProviderResult<Arc<SdkInventory>> {
+    let catalog = SdkSourceCatalog::read_from_path(&stdlib_root.join(SDK_SOURCE_CATALOG_FILE))
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
+    catalog
+        .validate_compiler_version(incan_lang::version::INCAN_VERSION)
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
+    let workspace_lock = sdk_provider_workspace_lock(stdlib_root);
+    let identity =
+        sdk_provider_store_identity(stdlib_root, executable, workspace_lock.as_deref(), distribution_profile)?;
+    let _lock = acquire_sdk_provider_store_lock(store_root)?;
     let mut build_reports = env::var_os(INTERNAL_SDK_BUILD_REPORT_DIR_ENV)
         .filter(|path| !path.is_empty())
-        .map(|path| SdkBuildReports::new(Path::new(&path), &store_root, &identity))
+        .map(|path| SdkBuildReports::new(Path::new(&path), store_root, &identity))
         .transpose()?;
     let artifact_root = store_root.join(&identity);
     let inventory_path = artifact_root.join(SDK_INVENTORY_FILE);
@@ -122,14 +138,14 @@ pub fn prepare_sdk_provider_inventory_in_store(
         )));
     }
 
-    let staging_root = staged_sdk_provider_root(&store_root, &identity)?;
+    let staging_root = staged_sdk_provider_root(store_root, &identity)?;
     let staged_inventory = match build_sdk_components_into_staging(
         &catalog,
-        &executable,
+        executable,
         workspace_lock.as_deref(),
         &staging_root,
-        &distribution_profile,
-        source_root_override.map(|source_root| (source_root, stdlib_root.as_path())),
+        distribution_profile,
+        source_root_override.map(|source_root| (source_root, stdlib_root)),
         build_reports.as_ref(),
     ) {
         Ok(inventory) => inventory,
@@ -146,7 +162,7 @@ pub fn prepare_sdk_provider_inventory_in_store(
             artifact_root.display()
         ))
     })?;
-    sync_sdk_provider_store(&store_root)?;
+    sync_sdk_provider_store(store_root)?;
     let published_inventory_path = artifact_root.join(SDK_INVENTORY_FILE);
     let published = SdkInventory::read_from_path(&published_inventory_path).map_err(|error| {
         ProviderError::failure(format!(
@@ -600,6 +616,53 @@ fn nested_sdk_component_build_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A policy-only catalog edit must publish a new inventory, while repeated unchanged requests hit the existing
+    /// entry.
+    #[test]
+    fn sdk_publication_cache_tracks_catalog_policy() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let checkout = temp.path().join("checkout");
+        let stdlib = checkout.join("loaves/stdlib");
+        let emitter = checkout.join("loaves/compiler/incan_emit");
+        fs::create_dir_all(emitter.join("src"))?;
+        fs::create_dir_all(&stdlib)?;
+        fs::write(checkout.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
+        fs::write(emitter.join("Cargo.toml"), "[package]\nname = \"incan_emit\"\n")?;
+        let catalog_path = stdlib.join(SDK_SOURCE_CATALOG_FILE);
+        let catalog = format!(
+            "[sdk]\nid = \"incan\"\nversion = \"{}\"\ncompiler-requirement = \"={}\"\n[profiles]\ndefault = []\nfull = []\n[components]\n",
+            incan_lang::version::INCAN_VERSION,
+            incan_lang::version::INCAN_VERSION,
+        );
+        fs::write(&catalog_path, &catalog)?;
+        let store = temp.path().join("store");
+        // No components are compiled: the fixture exercises the real transaction, serialization and cache-hit branch
+        // without substituting a fake publication implementation.
+        let builder = temp.path().join("unused-builder");
+        let first = prepare_sdk_provider_inventory_from_sources(&stdlib, &builder, &store, "full", Some(&checkout))?;
+        let cached = prepare_sdk_provider_inventory_from_sources(&stdlib, &builder, &store, "full", Some(&checkout))?;
+        assert_eq!(first.root, cached.root);
+        assert!(!cached.profiles.contains_key("inspection"));
+
+        fs::write(
+            &catalog_path,
+            catalog.replace("[components]", "inspection = []\n[components]"),
+        )?;
+        let changed = prepare_sdk_provider_inventory_from_sources(&stdlib, &builder, &store, "full", Some(&checkout))?;
+        assert_ne!(first.root, changed.root);
+        assert!(changed.profiles.contains_key("inspection"));
+        let cached_changed =
+            prepare_sdk_provider_inventory_from_sources(&stdlib, &builder, &store, "full", Some(&checkout))?;
+        assert_eq!(changed.root, cached_changed.root);
+        assert!(cached_changed.profiles.contains_key("inspection"));
+        let old = SdkInventory::read_from_path(&first.root.join(SDK_INVENTORY_FILE))?;
+        assert!(
+            !old.profiles.contains_key("inspection"),
+            "publication must leave the old immutable entry untouched"
+        );
+        Ok(())
+    }
 
     #[test]
     fn sdk_build_reports_reject_store_paths_and_distinguish_cache_hits() -> Result<(), Box<dyn std::error::Error>> {

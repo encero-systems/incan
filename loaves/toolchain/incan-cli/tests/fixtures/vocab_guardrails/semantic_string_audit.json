@@ -566,9 +566,9 @@
     },
     {
       "path": "loaves/compiler/incan_provider/src/sdk_store.rs",
-      "category": "provider source-tree hashing target exclusion",
-      "expected_count": 1,
-      "expected_fingerprint": "0xf6b309b30611feae"
+      "category": "provider source/configuration hashing target exclusion and manifest/lock classification",
+      "expected_count": 3,
+      "expected_fingerprint": "0xf68ebbf30c529e39"
     },
     {
       "path": "loaves/compiler/incan_provider/src/vocab_extraction.rs",
