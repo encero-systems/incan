@@ -61,7 +61,7 @@ pub struct OvenLoafBakerContext<'a> {
 /// One exported Loaf and the physical Cargo unit selection captured by the same publisher transaction.
 pub struct OvenPreparedLoafWithSelectedUnits {
     pub preparation: OvenLoafPreparation,
-    pub selected_units: super::OvenLegacyCargoSelectedUnitCapture,
+    pub selected_units: Option<super::OvenLegacyCargoSelectedUnitCapture>,
 }
 
 /// Export one compiler-owned Loaf from an already receipted generated Incan project.
@@ -139,17 +139,14 @@ pub fn prepare_loaf_from_generated_project_with_selected_units(
             message: format!("loaf destination already exists: {}", output_directory.display()),
         });
     }
-    let mut selected_units = publication
-        .selected_units
-        .take()
-        .ok_or_else(|| OvenLoafError::Preparation {
-            message: "fresh Loaf publication omitted its Cargo-selected physical unit capture".to_string(),
-        })?;
-    super::bind_legacy_cargo_selected_registry_sources(&mut selected_units, context.inspection_sources).map_err(
-        |error| OvenLoafError::Preparation {
-            message: error.to_string(),
-        },
-    )?;
+    let mut selected_units = publication.selected_units.take();
+    if let Some(selected_units) = selected_units.as_mut() {
+        super::bind_legacy_cargo_selected_registry_sources(selected_units, context.inspection_sources).map_err(
+            |error| OvenLoafError::Preparation {
+                message: error.to_string(),
+            },
+        )?;
+    }
     let result = export_loaf(
         &store,
         &publication.plan_identity,

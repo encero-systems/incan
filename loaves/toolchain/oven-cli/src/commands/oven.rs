@@ -37,7 +37,7 @@ use crate::{CliError, CliResult, ExitCode, OvenInteropAdapterArgument, OvenLoafE
 use incan_driver::interop_plan::locked_interop_plan_target;
 use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
-use oven_cargo_compat::loaf_bake::{OvenLoafBakerContext, prepare_loaf_from_generated_project_with_selected_units};
+use oven_cargo_compat::loaf_bake::{OvenLoafBakerContext, prepare_loaf_from_generated_project};
 use oven_cargo_compat::{
     OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION,
     OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1,

@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     CliError, CliResult, INCAN_VERSION, Instant, LoafEnvelopeExpectation, LoafMemberExpectation, LoafMirrorMiss,
-    OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLegacyCargoCompilerSuiteResult, OvenLegacyCargoSelectedUnitCapture,
-    OvenLoafEnvelope, OvenLoafEnvelopeManifest, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation,
+    OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLegacyCargoCompilerSuiteResult, OvenLoafEnvelope,
+    OvenLoafEnvelopeManifest, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation,
     OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember, OvenStore, OvenStoreInspection, OvenStoreLimits,
     announce_oven_progress, bind_release_runtime_foundation_evidence, configured_mirrors, digest_bytes,
     digest_runtime_crate_source, elapsed_detail, env, import_loaf_envelope_from_mirrors, loaf_directory_byte_counts,
@@ -31,8 +31,6 @@ pub(crate) struct OvenLoafBakeEntryReport {
     pub(crate) action: String,
     pub(crate) role: OvenLoafMemberRole,
     pub(crate) result: OvenLoafPreparation,
-    #[serde(skip)]
-    pub(crate) selected_units: Option<OvenLegacyCargoSelectedUnitCapture>,
 }
 
 /// Complete result from the hidden, explicit `legacy_cargo` Loaf baker.
@@ -471,7 +469,6 @@ pub(crate) fn reuse_complete_loaf_envelope(
             action: entry.action.clone(),
             role: entry.role,
             result,
-            selected_units: None,
         });
     }
     let member_generation = output.join("generations").join(

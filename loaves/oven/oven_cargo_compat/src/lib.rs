@@ -65,7 +65,7 @@ use oven_rustc::rustc::{
     OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, OvenRustcArtifactExtern,
     OvenRustcArtifactManifest, OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
     OvenRustcSupportingArtifact, clear_inherited_cargo_environment, rerooted_artifact_staging_source,
-    rustc_host_and_target_cfg_snapshots, rustc_host_target, rustc_identity, select_direct_rustc_plan_identity,
+    rustc_host_target, rustc_identity, select_direct_rustc_plan_identity,
     validate_project_extension_payload_against_base,
 };
 use oven_store::process::{isolate_process_group, terminate_process_group};
@@ -1149,34 +1149,10 @@ pub fn prepare_direct_rustc_plan(
     let target = staging.join("target");
     let transient_limit = publisher_reservation.transient_limit_bytes;
     let reclaimed_store_entries = publisher_reservation.prune_report.removed_entries;
-    let unit_graph_target = staging.join("selected-unit-graph-target");
-    let unit_graph_command = match request.publication_kind {
-        OvenLegacyCargoPublicationKind::Executable | OvenLegacyCargoPublicationKind::InteropBootstrap => "build",
-        OvenLegacyCargoPublicationKind::LibraryTests => "test",
-    };
-    let unit_graph_selection = match request.publication_kind {
-        OvenLegacyCargoPublicationKind::InteropBootstrap | OvenLegacyCargoPublicationKind::LibraryTests => {
-            OvenLegacyCargoInvocationTarget::PackageLibrary
-        }
-        OvenLegacyCargoPublicationKind::Executable => OvenLegacyCargoInvocationTarget::None,
-    };
-    let unit_graph_output = run_legacy_cargo_invocation(
-        &request.cargo,
-        &request.rustc,
-        &cargo_manifest,
-        &unit_graph_target,
-        &staging,
-        &request.receipt.intent.target,
-        &request.receipt.intent.profile,
-        &request.receipt.intent.features,
-        transient_limit,
-        unit_graph_command,
-        &unit_graph_selection,
-        true,
-        false,
-        request.base_loaf.is_some(),
-    )?;
-    let selected_unit_graph = parse_compiler_suite_unit_graph(&unit_graph_output)?;
+    // Normal release publication uses stable Cargo. `--unit-graph` is an unstable Cargo interface and must remain
+    // confined to the separately provisioned compiler-suite producer. The stable JSON artifact and build-script
+    // stream below remains publication authority; selected-graph capture stays absent until its physical adapter
+    // can derive exact unit edges without adding a nightly requirement to installed release tooling.
     let cargo_outputs = run_legacy_cargo(
         &request.cargo,
         &request.rustc,
@@ -1231,17 +1207,6 @@ pub fn prepare_direct_rustc_plan(
         Some(metadata) => metadata,
         None => read_legacy_cargo_metadata(&request.cargo, &cargo_manifest, &request.receipt.intent.features)?,
     };
-    let mut selected_units = capture_legacy_cargo_selected_units(&selected_unit_graph, &metadata, &cargo_outputs)?;
-    let (host_cfg, target_cfg) = rustc_host_and_target_cfg_snapshots(&request.rustc, &request.receipt.intent.target)
-        .map_err(|error| OvenLegacyCargoError::Plan(error.to_string()))?;
-    selected_units.compiler = Some(OvenLegacyCargoSelectedCompilerContext {
-        host: rustc_host.clone(),
-        target: request.receipt.intent.target.clone(),
-        toolchain: request.receipt.intent.toolchain.clone(),
-        rustc_identity: rustc_identity.clone(),
-        host_cfg,
-        target_cfg,
-    });
     let resolved_direct_dependencies = resolve_direct_dependency_packages(&metadata, &direct_dependencies)?;
     let reported_artifact_files = publisher_output_artifact_paths(&cargo_outputs, &request.receipt.intent.profile)?;
     let (dependency_search_paths, externs, mut supporting_artifacts) = if reported_artifact_files.is_empty() {
@@ -1264,10 +1229,6 @@ pub fn prepare_direct_rustc_plan(
             &cargo_outputs,
         )?
     };
-    supporting_artifacts.extend(retain_legacy_cargo_selected_generated_outputs(
-        &mut selected_units,
-        &staging,
-    )?);
     let provider_entrypoints = provider_compilation_externs(
         request.provider_compilations,
         &consumer_direct_dependencies,
@@ -1539,7 +1500,9 @@ pub fn prepare_direct_rustc_plan(
         cargo_manifest_digest: digest_bytes(&cargo_manifest_bytes),
         cargo_lock_digest: digest_bytes(&cargo_lock_bytes),
         registry_leaves,
-        selected_units: Some(selected_units),
+        // Stable Cargo does not expose exact physical unit edges. Do not publish a partial graph from package-level
+        // metadata or artifact filenames; the runtime-foundation producer must supply exact admitted evidence.
+        selected_units: None,
         transient_reservation_bytes,
         reclaimed_store_entries,
     })
@@ -7510,6 +7473,54 @@ version = "1.0.0"
             !cargo_marker.exists(),
             "a compatible stored project Loaf must return before invoking the supplied Cargo executable"
         );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stable_release_cargo_invocation_omits_unit_graph_flags() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = tempfile::tempdir()?;
+        let manifest = fixture.path().join("Cargo.toml");
+        fs::write(&manifest, "[package]\nname='fixture'\nversion='0.1.0'\n")?;
+        let log = fixture.path().join("cargo-args");
+        let cargo = fixture.path().join("cargo");
+        fs::write(
+            &cargo,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf '%s\\n' '{{\"reason\":\"build-finished\",\"success\":true}}'\n",
+                log.display()
+            ),
+        )?;
+        fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755))?;
+        let rustc = fixture.path().join("rustc");
+        fs::write(&rustc, "#!/bin/sh\nexit 0\n")?;
+        fs::set_permissions(&rustc, fs::Permissions::from_mode(0o755))?;
+        let target = fixture.path().join("target");
+        let staging = fixture.path().join("staging");
+        fs::create_dir(&staging)?;
+
+        run_legacy_cargo_invocation(
+            &cargo,
+            &rustc,
+            &manifest,
+            &target,
+            &staging,
+            "aarch64-apple-darwin",
+            "debug",
+            &[],
+            u64::MAX,
+            "build",
+            &OvenLegacyCargoInvocationTarget::None,
+            false,
+            false,
+            false,
+        )?;
+
+        let arguments = fs::read_to_string(log)?;
+        assert!(!arguments.contains("-Z"));
+        assert!(!arguments.contains("--unit-graph"));
         Ok(())
     }
 

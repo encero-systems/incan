@@ -33,7 +33,7 @@ use super::{
     loaf_envelope_compatibility_map_with_release_member, loaf_envelope_evidence, loaf_envelope_inspection_packages,
     loaf_envelope_name, loaf_envelope_specifications, loaf_fixture_action_name, loaf_fixture_probe_is_expected_miss,
     loaf_generation_identity_with_release_member, loaf_raw_disk_bytes, open_store, oven_error, pin_loaf_fixture_rustc,
-    prepare_compiler_test_suite, prepare_loaf_from_generated_project_with_selected_units, print_json, read_receipt,
+    prepare_compiler_test_suite, prepare_loaf_from_generated_project, print_json, read_receipt,
     release_store_member_byte_counts, retire_unreferenced_loaf_generations, reuse_complete_loaf_envelope,
     stage_locked_loaf_fixture, write_receipt, write_sealed_oven_inspection_source_authority,
 };
@@ -368,7 +368,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         }
         stage_locked_loaf_fixture(&options.cargo, &generated_project, &compiler_lock).map_err(oven_error)?;
         let receipt = read_receipt(&receipt_path)?;
-        let prepared = prepare_loaf_from_generated_project_with_selected_units(
+        let result = prepare_loaf_from_generated_project(
             &staged_root,
             &OvenLoafBakerContext {
                 compiler: &incan_oven_facet::compiler_identity(),
@@ -389,7 +389,6 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             &generated_project,
         )
         .map_err(oven_error)?;
-        let result = prepared.preparation;
         let observed_transient = oven_cargo_compat::conservative_directory_reservation(&options.output)
             .and_then(|owned| {
                 oven_cargo_compat::conservative_directory_reservation(scratch.path())
@@ -432,7 +431,6 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             action: loaf_fixture_action_name(specification.action).to_string(),
             role: specification.role,
             result,
-            selected_units: Some(prepared.selected_units),
         });
     }
     phase_timing.fixture_preparation_elapsed_ms = fixture_preparation_started.elapsed().as_millis();
