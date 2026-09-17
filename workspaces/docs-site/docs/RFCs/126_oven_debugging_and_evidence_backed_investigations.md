@@ -21,13 +21,13 @@
 
 ## Summary
 
-This RFC proposes an Oven-owned debugging and investigation capability for humans and agents working on Rust, Incan, and mixed projects. Its north star is that humans and agents can investigate unexpected behavior, test competing explanations, and verify repairs across Oven-managed Rust and Incan projects, with inspectable evidence throughout. Compiler services supply checked meaning, runtime integrations supply supported observations, and Oven coordinates the exact artifacts and bounded execution used to test a hypothesis. Editor and MCP clients consume the same service contracts. The intended delivery is v0.8, with design closure and focused feasibility evidence required before v0.7 exits; this Draft is not a shipment claim.
+This RFC proposes an Oven-owned debugging and investigation capability for humans and agents working on Rust, Incan, and mixed projects. Its north star is that humans and agents can investigate unexpected behavior, test competing explanations, and verify repairs across Oven-managed Rust and Incan projects, with inspectable evidence throughout. Compiler services supply checked meaning, runtime integrations supply supported observations, and Oven coordinates the exact artifacts and bounded execution used to test a hypothesis. Editor and MCP clients consume the same service contracts.
 
 ## Core model
 
 1. **An investigation is durable.** A failure, question, or counterexample opens a record connecting the relevant source snapshot, builds, experiments, observations, and verification outcomes.
 2. **Meaning and execution have different owners.** Compiler services own language semantics; Oven owns project selection, artifact lifecycle, execution coordination, and investigation sessions.
-3. **Rust and Incan are first-class.** Pure Rust, pure Incan, and mixed execution are acceptance cases from the beginning. Capabilities can differ, but those differences must be explicit.
+3. **Rust and Incan are first-class.** Pure Rust, pure Incan, and mixed execution are required acceptance cases. Capabilities can differ, but those differences must be explicit.
 4. **Explanations are tested.** A hypothesis states supporting evidence, competing explanations, and an observation that could contradict it. An experiment records what was controlled and what remained uncontrolled.
 5. **Evidence retains its kind.** Checked facts, advisory findings, proof results, observed values, and agent inferences remain distinct even when presented together.
 6. **Clients share state.** CLI, editor, and MCP consumers use one session model, with explicit execution-control ownership and immutable captured observations.
@@ -40,7 +40,7 @@ A native debugger can stop a process without giving a developer a reliable path 
 
 The surrounding RFCs already establish much of the required vocabulary. RFC 106 supplies compiler-backed context; RFC 105 supplies deterministic advisory findings; RFC 111 supplies obligations, assumptions, and counterexamples; RFC 104 supplies execution-bound receipts and honest replay classifications. What is missing is the workflow that connects those facts to an actual native execution, permits bounded experiments, and preserves the result for independent inspection.
 
-This work assumes the post-v0.6 architecture. Generated Rust is not the source authority, public debugging contract, or required semantic handoff. A backend may expose implementation artifacts for advanced inspection, but ordinary debugging must refer to authored source and checked identities.
+Generated Rust is not the source authority, public debugging contract, or required semantic handoff. A backend may expose implementation artifacts for advanced inspection, but ordinary debugging must refer to authored source and checked identities.
 
 ## Goals
 
@@ -58,10 +58,10 @@ This work assumes the post-v0.6 architecture. Generated Rust is not the source a
 - Universal deterministic replay, arbitrary reverse execution, or recovery of information that was never captured.
 - Making an effect receipt a full execution trace, a telemetry span a proof, or a passing reproduction proof of general correctness.
 - Implementing RFC 111's verifier, RFC 105's rules, or RFC 106's graph extraction inside Oven.
-- Requiring the complete RFC 121 type-substrate roadmap or every optional integration before basic debugging can ship.
+- Making basic debugging depend on the complete RFC 121 type substrate or every optional integration.
 - Making arbitrary foreign runtimes, GPUs, or freestanding targets support hosted debugging facilities by implication.
 - Defining an autonomous agent that chooses repairs, modifies contracts, or deploys changes without the invoking workflow's authority.
-- Freezing CLI spellings, MCP protocol revisions, or a debugger vendor in this Draft.
+- Mandating a particular debugger vendor or MCP protocol revision.
 
 ## Guide-level explanation
 
@@ -153,19 +153,19 @@ An investigation service must not turn the read-only RFC 106 context surface int
 
 ### Human and agent interfaces
 
-Editor, CLI, and MCP adapters must consume the same investigation/session contracts and return consistent identities and outcomes. MCP operations should expose task-sized investigations and bounded context packs, with low-level debugger controls available for narrower inspection. Exact tool names and wire mappings must be settled before Planned status.
+Editor, CLI, and MCP adapters must consume the same investigation/session contracts and return consistent identities and outcomes. MCP operations should expose task-sized investigations and bounded context packs, with low-level debugger controls available for narrower inspection. Tool names and wire mappings must preserve the shared contract across clients.
 
 A response must expose its budget, omissions, freshness, and continuation mechanism where applicable. A human-readable explanation must retain links to structured evidence. MCP transport sessions must not define the lifetime of an investigation or live debuggee. The user-program MCP authoring proposal and the compiler-context MCP service remain distinct integrations.
 
-### Acceptance and release boundary
+### Acceptance criteria
 
-The v0.7 exit gate must resolve every question in this Draft, accept the necessary owner-contract amendments, and produce focused feasibility evidence before promoting this RFC to Planned. A document review alone does not establish native-debugging feasibility. The gate must identify the supported target/debugger/runtime matrix, measurable latency and overhead budgets, and explicit exclusions.
+The supported target/debugger/runtime matrix, measurable latency and overhead budgets, and explicit exclusions must be documented. Conformance must be demonstrated with executable evidence.
 
-The v0.8 acceptance corpus must cover pure Rust, pure Incan, and mixed execution in both call directions. It must include: an incorrect result investigated through competing hypotheses and reduced input; a hung or cancelled operation with supported runtime evidence; and a failure reopened from another run using matching artifacts. Each applicable case must connect the observation to a repair and original-reproduction/regression verification.
+The acceptance corpus must cover pure Rust, pure Incan, and mixed execution in both call directions. It must include: an incorrect result investigated through competing hypotheses and reduced input; a hung or cancelled operation with supported runtime evidence; and a failure reopened from another run using matching artifacts. Each applicable case must connect the observation to a repair and original-reproduction/regression verification.
 
 Negative cases must include stale source, missing symbols, optimized-out state, stale handles, concurrent control requests, cancellation, duplicate requests, redaction, unsupported runtimes, unavailable replay, and truncated captures. Editor and MCP consumers must demonstrate consistent evidence. Debugging tests must drive real native artifacts and debugger sessions; metadata snapshots alone are insufficient.
 
-Measure diagnosis and repair correctness, unsupported causal claims, setup steps, tool calls, token/output volume, elapsed investigation time, capture overhead, and retained size against a shell/log baseline on fixed seeded tasks. Targets and repeated-run methodology belong to the v0.7 design closure. Full deterministic replay, broad foreign-runtime coverage, and rich freestanding debugging are separately qualified extensions rather than universal v0.8 promises.
+Measure diagnosis and repair correctness, unsupported causal claims, setup steps, tool calls, token/output volume, elapsed investigation time, capture overhead, and retained size against a shell/log baseline on fixed seeded tasks. Acceptance thresholds and repeated-run methodology must be explicit. Deterministic replay, foreign-runtime coverage, and freestanding debugging must each declare their supported capabilities and limits.
 
 ## Design details
 
@@ -177,7 +177,7 @@ RFC 118 fixes the command/service boundary. Oven consumes language services and 
 
 RFC 019 owns test discovery, fixtures, selection, seeds, and reporting. Investigation recipes must reference that contract instead of defining another runner. RFC 080 contributes AI asset and execution-profile identity; repeating a model request must not be called exact replay without a supported recording mechanism. RFC 094 and RFC 095 supply scope-lifetime and span semantics; those facts do not by themselves supply scheduler history.
 
-Future async closures, stack-safe lowering, algebraic numeric operations, unsafe/layout controls, and additional interop providers should add debugging acceptance cases as their semantics are accepted. Their full implementation is not a prerequisite for this RFC. Existing freestanding and ownership roadmaps retain their independent delivery boundaries.
+Language features such as async closures, stack-safe lowering, algebraic numeric operations, unsafe/layout controls, and interop require debugging acceptance cases for their supported semantics. Capabilities must be declared independently so that an unsupported feature does not obscure the guarantees of a supported one.
 
 ### Identity and evolution
 
@@ -188,10 +188,10 @@ The exact relationship between durable declarations, compilation-specific locati
 ## Alternatives considered
 
 - **Expose native debugger commands directly through MCP.** Useful as an escape hatch, but insufficient for durable evidence, bounded experiments, identity checks, and shared human/agent control.
-- **Build an Incan-only debugger first.** Rejected as the governing architecture because Oven owns Rust and mixed projects as first-class workloads; implementation slices may still target one capability at a time.
+- **Build an Incan-only debugger.** Rejected because Oven owns Rust and mixed projects as first-class workloads.
 - **Make telemetry the debugger.** Telemetry supplies selected events, not complete locals, breakpoint semantics, or native process control.
 - **Make receipts the replay engine.** Receipt classification describes what is known about operations; it does not capture every source of nondeterminism.
-- **Require universal replay or complete verification before delivery.** This would delay useful native debugging and conflate independently valuable capabilities.
+- **Require universal replay or complete verification for debugging.** This conflates independently valuable capabilities and excludes useful investigations where replay or verification is unavailable.
 - **Let each client own a separate session model.** This creates races, stale handles, and inconsistent evidence during human/agent handover.
 
 ## Drawbacks
@@ -216,13 +216,13 @@ Non-normatively, use an Oven investigation service over existing operational API
 
 ## Unresolved questions
 
-- **D1 — Native support matrix:** Which debugger engines, operating systems, architectures, development/optimized profiles, and attach/post-mortem modes form the initial supported matrix, and what executable proof establishes each?
+- **D1 — Native support matrix:** Which debugger engines, operating systems, architectures, development/optimized profiles, and attach/post-mortem modes form the supported matrix, and what executable proof establishes each?
 - **D2 — Identity and retention:** What accepted mapping joins durable declarations, compilation locations, native debug information, payload identities, and exported capture retention across source edits?
 - **D3 — Service schemas and control:** What exact versioned records, state transitions, concurrency guards, retry semantics, and CLI/editor/MCP operations implement the lifecycle contract?
-- **D4 — Evaluation and capture:** Which passive value decoders and expression subset are supported initially, how is target-code execution authorized, and what sensitivity rules govern raw captures?
-- **D5 — Runtime history and replay:** Which runtime integration establishes the first task/wait capture, which historical and replay mechanisms are feasible, and how are unsupported boundaries reported?
-- **D6 — Experiments and reduction:** What initial recipe, fixture, failure-predicate, comparison, and reduction contracts compose with the test runner and typed actions?
-- **D7 — Quantitative acceptance:** Which seeded corpus, baseline, repeated-run methodology, and latency/overhead/storage/diagnosis thresholds define v0.8 acceptance?
+- **D4 — Evaluation and capture:** Which passive value decoders and expression subset are supported, how is target-code execution authorized, and what sensitivity rules govern raw captures?
+- **D5 — Runtime history and replay:** Which runtime integrations support task/wait capture, which historical and replay mechanisms preserve the required evidence, and how are unsupported boundaries reported?
+- **D6 — Experiments and reduction:** What recipe, fixture, failure-predicate, comparison, and reduction contracts compose with the test runner and typed actions?
+- **D7 — Quantitative acceptance:** Which seeded corpus, baseline, repeated-run methodology, and latency/overhead/storage/diagnosis thresholds define conformance?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
      An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
