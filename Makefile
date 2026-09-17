@@ -747,7 +747,7 @@ test-timings:
 # Keep single-root diagnostics on the same short, invocation-owned scratch policy as full suite replay.
 .PHONY: test-one  ## test - Run one receipt-bound compiler-suite source root (optional TEST_EXACT=module::case)
 test-one: test-prewarm-oven-loafs
-	@test -n "$(TEST_ROOT)" || { echo "usage: make test-one TEST_ROOT=tests/cli_provider_boundary_tests.rs" >&2; exit 2; }
+	@test -n "$(TEST_ROOT)" || { echo "usage: make test-one TEST_ROOT=loaves/toolchain/incan-cli/tests/cli_provider_boundary_tests.rs" >&2; exit 2; }
 	@echo "\033[1mRunning $(TEST_ROOT)$(if $(TEST_EXACT), ($(TEST_EXACT)),) through Oven...\033[0m"
 	@set -e; \
 		root_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \

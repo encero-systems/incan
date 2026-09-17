@@ -15,8 +15,8 @@ path = "src/lib.rs"
 # argument derives the CLI's tests exercise; the binaries select features explicitly and never rely on these.
 default = ["cli", "rust_inspect", "std_testing", "std_async", "std_decorators"]
 # The `clap::ValueEnum` derives on the driver's report and test-runner enums, for the binary that parses arguments,
-# plus the build pipeline and the generator's managed-cache lease, which the root crate gated the same way and
-# which have not yet been cut loose from it (#1479). The compatibility corpus's checked collection needs none of it.
+# plus the build pipeline and the generator's managed-cache lease, which the retired root crate gated the same way
+# and which have not yet been cut loose from it (#1479). The compatibility corpus's checked collection needs none of it.
 cli = ["dep:clap"]
 rust_inspect = ["incan_frontend/rust_inspect", "incan_ir/rust_inspect", "incan_emit/rust_inspect", "incan_provider/rust_inspect", "rust_inspect/inspector"]
 std_testing = ["incan_frontend/std_testing", "incan_ir/std_testing", "incan_emit/std_testing", "incan_provider/std_testing"]

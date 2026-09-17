@@ -1,6 +1,7 @@
 # rust_inspect
 
-Ring: **compiler** — becomes `incan_inspect` when the crates are renamed (step 5 of #1478).
+Ring: **compiler**
+
 Rust item inspection substrate for Incan.
 
 This crate is the compiler-side boundary for looking up Rust function/type metadata needed by RFC 041 interop. It is not a general Rust reflection library and it is not part of the generated-program runtime. Its job is narrower:
@@ -20,7 +21,7 @@ Incan needs Rust-side signatures and item shapes for some interop checks:
 - Rust-backed type shape inspection
 - borrow-aware interop codegen
 
-`rust_inspect` exists so that work is isolated from the rest of the compiler. The `incan` crate should depend on a small inspection surface, not own rust-analyzer/Cargo loading details directly.
+`rust_inspect` exists so that work is isolated from the rest of the compiler. The compiler ring should depend on a small inspection surface, not own rust-analyzer/Cargo loading details directly.
 
 ## Current API
 

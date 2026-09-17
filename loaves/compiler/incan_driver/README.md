@@ -16,7 +16,7 @@ Owns compilation sessions, module graphs, build orchestration, generated caches 
 
 ## May depend on
 
-`kernel`, `incan_frontend`, `incan_ir`, `incan_emit`, `incan_provider`, `incan_inspect`, `oven (model + store, as a consumer)`
+`kernel`, `incan_frontend`, `incan_ir`, `incan_emit`, `incan_provider`, `rust_inspect`, `incan_oven_facet`, `oven (model, store and rustc, as a consumer)`
 
 This is what `incan-lsp` and `incan` both link. Its existence is what makes the LSP compile without the CLI (audit finding 1).
 

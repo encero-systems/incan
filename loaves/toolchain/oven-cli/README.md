@@ -2,13 +2,11 @@
 
 Ring: **toolchain**
 
-The `oven`, plus `compiler/incan_oven_facet` for the Incan provider wiring binary: the command surface from RFC 118.
+The `oven` binary: the command surface from RFC 118, authored against the Oven API rather than by moving `incan oven`'s handlers.
 
-## Moves here from
+## Sources
 
-- `loaves/toolchain/incan-cli/src/commands/oven.rs`
-- `loaves/toolchain/incan-cli/src/commands/lock.rs`
-- `loaves/toolchain/incan-cli/src/commands/tools.rs`
+None yet. `incan oven …`, `incan lock` and `incan tools` stay in `incan-cli`: `tools` is a semantic product RFC 118's ownership table gives to `incan`, `lock` is a wrapper over the driver's lock resolution (which this crate may not import), and `oven.rs` is mostly this repository's test-harness tooling, none of it in RFC 118's `oven` surface. The package is authored when RFC 118 lands; the decision is recorded on #1481 (cut 3).
 
 ## May depend on
 

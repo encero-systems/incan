@@ -14,6 +14,6 @@ Provider and SDK contracts (manifest types, component catalog, inventory) and th
 
 ## May depend on
 
-`kernel`, `incan_frontend`, `oven_model`, `oven_store`, `oven_rustc`
+`kernel`, `incan_frontend`, `rust_inspect`, `oven_model`, `oven_store`, `oven_rustc`
 
 `test_support` (feature `test_support`) holds the fixtures the driver's tests share with this crate's.

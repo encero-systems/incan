@@ -11,7 +11,7 @@ description = "Rust inspect metadata extraction substrate for Incan"
 
 [features]
 default = ["inspector"]
-# Probe crates the frontend's and the root crate's tests write to disk to drive the inspector.
+# Probe crates the frontend's and the command line's tests write to disk to drive the inspector.
 test_fixtures = []
 # The rust-analyzer-backed inspector. Off, the crate is only the token-level declaration digest, which the
 # compiler needs in every build because the SDK effect digest folds it in.

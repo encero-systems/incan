@@ -11,7 +11,7 @@ The Incan standard library as SDK components, one directory per component, each 
 | `system/` | `std.environ`, `std.io`, `std.tempfile`, `std.fs` | — | byteorder, encoding_rs, rustix, tempfile |
 | `codecs/` | `std.checksum`, `std.encoding` | — | crc32fast |
 | `compression/` | `std.compression` | — | flate2, zstd, bzip2, xz2, snap |
-| `data/` | `std.collections`, `std.graph`, `std.hash`, `std.json`, `std.math`, `std.uuid`, `std.datetime`, `std.regex`, `std.serde` | `incan_std_data` (JSON traits and value, the `std.serde` facade, the ordinal-map key helpers) | serde, serde_json, xxhash-rust, libm, rand, regex, the eight hash crates |
+| `data/` | `std.collections`, `std.graph`, `std.hash`, `std.json`, `std.toml`, `std.math`, `std.uuid`, `std.datetime`, `std.regex`, `std.serde` | `incan_std_data` (JSON traits and value, the `std.serde` facade, the ordinal-map key helpers) | serde, serde_json, toml, toml_edit, serde_path_to_error, xxhash-rust, libm, rand, regex, the eight hash crates |
 | `async/` | `std.async` | `incan_std_async` (tasks, timers, races, channels, synchronisation) | tokio (rt-multi-thread, macros, time, sync, net) |
 | `observability/` | `std.logging`, `std.telemetry` | — | — |
 | `web/` | `std.web` | `incan_std_web` (route registry, `App`, responses) | axum, inventory, incan_web_macros |

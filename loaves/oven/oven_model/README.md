@@ -17,6 +17,6 @@ loaf.toml, oven.lock, workspace discovery, dependency resolution, lifecycle, too
 
 none
 
-Sole owner of `toml` and `toml_edit`.
+Owns the manifest and lock parsing; `toml` and `toml_edit` are declared once in the workspace table and used by every ring that reads a manifest.
 
 The manifest, workspace, lifecycle and toolchain-layout modules and the interop declarations live here; `lock.rs` is the `oven.lock` model — parse, write, fingerprints, the publication lock; the compiler's `provider::lock_semantics` fills its semantic state.

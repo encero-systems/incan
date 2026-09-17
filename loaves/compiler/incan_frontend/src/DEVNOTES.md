@@ -31,10 +31,10 @@ The Incan compiler frontend consists of several components that transform source
 ## Module Structure
 
 - Syntax is provided by the shared `incan_syntax` crate:
-  - `crates/incan_syntax/src/lexer/*` - Tokenization module
-  - `crates/incan_syntax/src/parser.rs` - Recursive descent parser producing an AST
-  - `crates/incan_syntax/src/ast.rs` - Abstract Syntax Tree node definitions
-  - `crates/incan_syntax/src/diagnostics.rs` - Syntax/parse error reporting
+  - `loaves/kernel/incan_syntax/src/lexer/` - Tokenization module
+  - `loaves/kernel/incan_syntax/src/parser/` - Recursive descent parser producing an AST
+  - `loaves/kernel/incan_syntax/src/ast/` - Abstract Syntax Tree node definitions
+  - `loaves/kernel/incan_syntax/src/diagnostics/` - Syntax/parse error reporting and the diagnostics catalog
 - `symbols.rs` - Symbol table and scope management
 - `typechecker/` - Type checking and validation (two-pass, split by responsibility)
 - `diagnostics.rs` - Compiler diagnostics (type errors, warnings) with Python-friendly messages
@@ -90,7 +90,7 @@ cargo test
 
 > Note: you can also use the make command to run tests: `make test`
 
-Test fixtures are in `tests/fixtures/`:
+Test fixtures are in `loaves/compiler/incan_test_support/fixtures/`:
 
 - `valid/` - Files that should compile successfully
 - `invalid/` - Files that should produce errors

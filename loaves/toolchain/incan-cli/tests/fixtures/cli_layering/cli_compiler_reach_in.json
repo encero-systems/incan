@@ -1,5 +1,5 @@
 {
-  "comment": "Baseline of compiler internals the CLI layer reaches into. This list ratchets DOWN only: removing an entry is the goal, adding one fails tests/cli_layering_guardrails.rs. See issue #1297 and the sibling extraction chore #1298.",
+  "comment": "Baseline of compiler internals the CLI layer reaches into. This list ratchets DOWN only: removing an entry is the goal, adding one fails loaves/toolchain/incan-cli/tests/cli_layering_guardrails.rs. See issue #1297 and the sibling extraction chore #1298.",
   "files": [
     {
       "path": "loaves/toolchain/incan-cli/src/commands/binding_inspect.rs",

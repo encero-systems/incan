@@ -1,6 +1,6 @@
 # Compiler ring
 
-The pipeline from checked AST to emitted Rust, plus the session and provider machinery both binaries share. Depends on kernel only. Never on oven, toolchain, or stdlib runtime crates.
+The pipeline from checked AST to emitted Rust, plus the session and provider machinery both binaries share. Depends on the kernel and, where it plans and runs builds, on the oven ring — `incan_driver`, `incan_provider` and `incan_oven_facet` consume Oven's model, store and rustc; `incan_frontend` and `incan_emit` name its manifest and receipt types (the edges #1480 measured and kept). Never on toolchain or stdlib runtime crates.
 
 **Versioning:** Release-train cadence. Requires a kernel version range.
 
@@ -11,7 +11,7 @@ The pipeline from checked AST to emitted Rust, plus the session and provider mac
 | `incan_emit/` | IR-to-Rust emission with syn/quote, conversions, prettyplease formatting, replacement lowering. |
 | `incan_format/` | Source formatter. |
 | `incan_provider/` | Provider and SDK contracts (manifest types, component catalog, inventory) and their loaders. |
-| `rust_inspect/` (`incan_inspect/` after the step-5 rename) | Rust signature inspection for `rust::` imports and codegraph export. |
+| `rust_inspect/` | Rust signature inspection for `rust::` imports; the crate kept its name through the rewrite. |
 | `incan_oven_facet/` | Implements Oven's provider interface for Incan: stdlib extra crate sources, SDK-provider and library-manifest lock sections, diagnostics mapping, rust_inspect hooks. The one place Oven learns about Incan. |
 | `incan_driver/` | The compile session: module graph, parsed modules, build orchestration, generated cache, replacement compatibility. No clap, no terminal I/O. |
 

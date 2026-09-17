@@ -129,7 +129,7 @@ You should never need to use these macros directly - the compiler handles it.
 
 ### Testing
 
-Derive macros are tested indirectly through the Incan compiler test suite. See the main workspace `tests/` directory for examples.
+Derive macros are tested indirectly through the Incan compiler test suite: the codegen snapshot roots under `loaves/compiler/incan_emit/tests/` and the integration roots under `loaves/toolchain/incan-cli/tests/` exercise every derive the emitter names.
 
 ### Adding New Macros
 

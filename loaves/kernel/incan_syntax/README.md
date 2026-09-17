@@ -10,6 +10,6 @@ Lexer, parser, AST, and the diagnostics catalog.
 
 ## May depend on
 
-`incan_lang`, `incan_vocab`, `incan_semantics`
+`incan_lang`, `incan_vocab`, `incan_semantics_core`
 
 Drops the miette `fancy` feature and the unused `thiserror` and `insta` dependencies on the way in. Renders nothing; it builds diagnostics.

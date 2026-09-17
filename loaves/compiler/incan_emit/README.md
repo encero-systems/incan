@@ -13,7 +13,7 @@ IR-to-Rust emission with syn/quote, conversions, prettyplease formatting, replac
 
 ## May depend on
 
-`kernel`, `incan_ir`
+`kernel`, `incan_frontend`, `incan_ir`, `rust_inspect`, and `oven_model` for the manifest and receipt types
 
 Pure emission. Generated-project orchestration remains in `loaves/compiler/incan_driver/src/backend/project/`; its planned Oven extraction is separate from this crate.
 

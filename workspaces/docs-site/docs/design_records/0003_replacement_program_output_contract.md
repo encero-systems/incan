@@ -18,7 +18,7 @@ The experimental direct replacement backend runs a compiled program without goin
 
 An earlier reading of this boundary treated program output as evidence to be captured rather than delivered — the executor accumulated rendered lines and the CLI relayed them only after the execution receipt had been persisted. That reading has since been reversed in the implementation, and the reversal is the reason this record exists. Output is now written through caller-supplied writers as execution proceeds, which changes what a failure leaves behind and what a receipt can honestly claim.
 
-The contract needs a durable statement because two wrong descriptions are easy to reach for. It is not a general effect system, and the line-oriented projection that survives in reports is not a typed effect trace. Naming the boundary once is cheaper than re-deriving it from `src/backend/replacement/program_io.rs` each time a builtin is admitted.
+The contract needs a durable statement because two wrong descriptions are easy to reach for. It is not a general effect system, and the line-oriented projection that survives in reports is not a typed effect trace. Naming the boundary once is cheaper than re-deriving it from `loaves/compiler/incan_emit/src/replacement/program_io.rs` each time a builtin is admitted.
 
 ## Decision
 
@@ -34,7 +34,7 @@ The contract needs a durable statement because two wrong descriptions are easy t
 
 - **An unrunnable shadow comparison stays visibly non-green.** `unavailable_shadow_comparison` preserves the distinction between "nobody asked" and "asked and could not run": the first is `NotRequested`, the second is `Unavailable` carrying a reason that names the concrete boundary. Only the second is a non-green outcome. An unavailable comparison is a backend-selection regression signal, never grounds for falling back to the other backend.
 
-- **Builtin admission is a registry decision, not a spelling decision.** `EXECUTABLE_BUILTINS` in `src/backend/replacement/mod.rs` is the single source of truth for which builtins the direct profile executes. A builtin is admitted when its direct answer is proven not to diverge from the Rust-emission backend; anything else is refused. This record deliberately does not transcribe the membership list, because the list moves and a copy of it here would rot into a false boundary.
+- **Builtin admission is a registry decision, not a spelling decision.** `EXECUTABLE_BUILTINS` in `loaves/compiler/incan_emit/src/replacement/mod.rs` is the single source of truth for which builtins the direct profile executes. A builtin is admitted when its direct answer is proven not to diverge from the Rust-emission backend; anything else is refused. This record deliberately does not transcribe the membership list, because the list moves and a copy of it here would rot into a false boundary.
 
 ## Consequences
 
@@ -70,6 +70,6 @@ This record derives from the builtin-execution representation work in [#1249](ht
 
 - [Issue #1249: decide and represent how the replacement executor calls builtins like `println`](https://github.com/encero-systems/incan/issues/1249)
 - [Issue #1254: execute replacement profiles from one CompilationSession analysis](https://github.com/encero-systems/incan/issues/1254)
-- `ProgramOutput`, `OutputCheckpoint` — `src/backend/replacement/program_io.rs`
-- `EXECUTABLE_BUILTINS`, `ReplacementExecution::emitted_output`, `canonical_emitted_output_summary` — `src/backend/replacement/mod.rs`
-- `ShadowComparisonState`, `unavailable_shadow_comparison`, `BackendExecutionReceipt` — `src/backend/selection.rs`
+- `ProgramOutput`, `OutputCheckpoint` — `loaves/compiler/incan_emit/src/replacement/program_io.rs`
+- `EXECUTABLE_BUILTINS`, `ReplacementExecution::emitted_output`, `canonical_emitted_output_summary` — `loaves/compiler/incan_emit/src/replacement/mod.rs`
+- `ShadowComparisonState`, `unavailable_shadow_comparison`, `BackendExecutionReceipt` — `loaves/compiler/incan_emit/src/selection.rs`

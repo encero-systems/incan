@@ -21,7 +21,7 @@ fn build_workspace_cli(workspace_root: &std::path::Path) -> Result<(), Box<dyn s
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let status = Command::new(cargo)
         .current_dir(workspace_root)
-        .args(["build", "--locked", "--features", "cli", "--bin", "incan"])
+        .args(["build", "--locked", "-p", "incan-cli", "--bin", "incan"])
         .status()?;
     if status.success() {
         Ok(())

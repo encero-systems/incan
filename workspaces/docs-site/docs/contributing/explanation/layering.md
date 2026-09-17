@@ -1,38 +1,52 @@
 # Layering Rules
 
-This repository follows a strict dependency direction to keep semantics shared and prevent accidental drift between the compiler and the runtime:
+This repository follows a strict dependency direction to keep semantics shared and prevent accidental drift between the compiler and the runtime. The crates live in five rings under `loaves/` (see *Repository layout* in [Architecture](architecture.md)); the direction runs kernel → oven → compiler → toolchain, with the standard library beside them:
 
-- `incan` (compiler) may depend on `incan_lang`.
-- `incan` may depend on `incan_syntax`, `incan_semantics_core`, `incan_semantics_stdlib`, and optional `rust_inspect` for compiler/toolchain work.
-- `incan` must **not** depend on a standard library facet (`incan_std_core` and the other `incan_std_<component>` crates) except as a **dev-dependency** for parity tests.
-- The facets depend on `incan_lang`; the optional facets depend on `incan_std_core`.
+- The **kernel** ring (`incan_lang`, `incan_syntax`, `incan_semantics_core`, `incan_vocab`, `incan_codegraph`) depends on nothing outside itself; `incan_lang` and `incan_vocab` depend on nothing at all.
+- The **oven** ring (`oven_model`, `oven_store`, `oven_rustc`) depends on nothing outside itself. It knows Incan by name only — the compiler's provider interface is implemented in `incan_oven_facet`, on the compiler side of the seam.
+- The **compiler** ring (`incan_frontend`, `incan_ir`, `incan_emit`, `incan_format`, `incan_provider`, `rust_inspect`, `incan_driver`, `incan_oven_facet`, `incan_semantics_stdlib`) depends on the kernel and, for the build orchestration, on the oven ring. Within the ring, `incan_ir` depends on `incan_frontend`, `incan_emit` on both, and `incan_driver` on all three plus `incan_provider` and `incan_oven_facet`.
+- The **toolchain** ring (`incan-cli`, `incan-lsp`) is the only place that depends on the driver; nothing depends on it.
+- No compiler-ring or kernel-ring crate depends on a standard library facet (`incan_std_core` and the other `incan_std_<component>` crates) except as a **dev-dependency** for parity tests.
+- Among the facets, `incan_std_core` depends on `incan_lang` and `incan_derive`; `incan_std_data` and `incan_std_testing` depend on `incan_std_core`; `incan_std_async` and `incan_std_web` stand alone.
 - Generated user programs depend on `incan_std_core` and on whichever other facets their namespaces reach.
 
 ```mermaid
 flowchart TD
-  incanCompiler["incan (compiler)"] --> incanLang["incan_lang"]
-  incanCompiler --> incanSyntax["incan_syntax"]
-  incanCompiler --> semanticsCore["incan_semantics_core"]
-  incanCompiler --> semanticsStdlib["incan_semantics_stdlib"]
-  incanCompiler -. optional CLI/LSP interop .-> rustInspect["rust_inspect"]
-  incanSyntax --> incanLang
-  semanticsStdlib --> semanticsCore
-  stdCore["incan_std_core"] --> incanLang
-  stdFacets["incan_std_data · incan_std_async · incan_std_web · incan_std_testing"] --> stdCore
+  cli["incan-cli · incan-lsp (toolchain)"] --> driver["incan_driver"]
+  driver --> emit["incan_emit"]
+  driver --> provider["incan_provider"]
+  driver --> facet["incan_oven_facet"]
+  emit --> ir["incan_ir"]
+  ir --> frontend["incan_frontend"]
+  frontend --> format["incan_format"]
+  frontend -. optional .-> semanticsStdlib["incan_semantics_stdlib"]
+  frontend --> rustInspect["rust_inspect"]
+  provider --> frontend
+  facet --> provider
+  frontend --> kernel["kernel: incan_lang · incan_syntax · incan_semantics_core · incan_vocab · incan_codegraph"]
+  driver --> oven["oven: oven_model · oven_store · oven_rustc"]
+  provider --> oven
+  facet --> oven
+  frontend --> oven
+  stdCore["incan_std_core"] --> kernel
+  stdCore --> incanDerive["incan_derive"]
+  stdFacets["incan_std_data · incan_std_testing"] --> stdCore
   generatedProgram["generated program"] --> stdCore
   generatedProgram --> stdFacets
-  generatedProgram --> incanDerive["incan_derive"]
+  generatedProgram --> stdStandalone["incan_std_async · incan_std_web"]
+  generatedProgram --> incanDerive
   generatedProgram --> incanWebMacros["incan_web_macros"]
 ```
 
-CI/Test guardrails enforce that `incan` keeps the facets out of its normal dependencies. If you need runtime helpers inside tests, add them under `[dev-dependencies]` only.
+CI/Test guardrails enforce that the compiler and kernel rings keep the facets out of their normal dependencies. If you need runtime helpers inside tests, add them under `[dev-dependencies]` only.
 
 ## Workspace crate categories
 
 Use this policy when deciding where new code belongs:
 
-- **Stable contracts**: `incan_lang`, `incan_syntax`, `incan_semantics_core`, and `incan_vocab`. Other layers build on these crates. Keep them deterministic, dependency-light, and free of runtime side effects.
-- **Compiler/toolchain implementation**: `incan`, `incan_semantics_stdlib`, and `rust_inspect`. These crates are tied to the current compiler/tooling. They may depend on stable contracts but should not become runtime APIs.
+- **Stable contracts**: the kernel ring — `incan_lang`, `incan_syntax`, `incan_semantics_core`, `incan_vocab` and `incan_codegraph`. Other layers build on these crates. Keep them deterministic, dependency-light, and free of runtime side effects.
+- **Build tool**: the oven ring — `oven_model`, `oven_store`, `oven_rustc` (and the `oven_registry`, `oven_interop` and `oven_cargo_compat` skeletons). Manifests, the store, direct-rustc units; nothing Incan-specific beyond the runtime-crate naming rule.
+- **Compiler/toolchain implementation**: the compiler ring — `incan_frontend`, `incan_ir`, `incan_emit`, `incan_format`, `incan_provider`, `rust_inspect`, `incan_driver`, `incan_oven_facet`, `incan_semantics_stdlib` — and the toolchain ring's two binaries. These crates are tied to the current compiler/tooling. They may depend on stable contracts but should not become runtime APIs.
 - **Runtime-only implementation**: the standard library facets (`incan_std_core`, `incan_std_data`, `incan_std_async`, `incan_std_web`, `incan_std_testing`), `incan_derive`, and `incan_web_macros`. Generated Rust programs use these crates. The compiler may generate references to them but must not depend on them in normal builds.
 - **Transitional runtime surfaces**: the current `incan_std_web` facet and related macro glue. This runtime code is not yet a stable long-term contract. Keep it quarantined and avoid treating it as compiler-owned policy.
 
@@ -89,26 +103,28 @@ We want one “source of truth” for language behavior so the compiler and runt
 - Must not become a backchannel for compiler logic.
 - Web macro/runtime glue is transitional until the web surface has a stable long-term ownership model.
 
-**`incan` (compiler)**:
+**The compiler ring (`incan_frontend`, `incan_ir`, `incan_emit`, `incan_driver` and their neighbours)**:
 
-- Parsing, typing, lowering, codegen, diagnostics.
-- May use stable contract crates to implement checks/const-eval and to keep error text aligned.
+- Typing (`incan_frontend`), lowering (`incan_ir`), codegen (`incan_emit`), formatting (`incan_format`), provider and SDK contracts (`incan_provider`), and the build session that drives them (`incan_driver`); diagnostics are catalogued in `incan_syntax`.
+- May use stable contract crates to implement checks/const-eval and to keep error text aligned, and the oven ring to plan and run builds.
 - Must not use runtime-only crates in normal builds; only `incan_std_core` as a dev-dependency for parity tests.
 
 ## Allowed / forbidden dependencies
 
 **Allowed**:
 
-- `incan` → `incan_lang`, `incan_syntax`, `incan_semantics_core`, `incan_semantics_stdlib`, `incan_vocab` as normal compiler/toolchain dependencies.
-- `incan` → `rust_inspect` behind the `rust_inspect`/CLI/LSP interop path.
-- a facet → `incan_lang` (and an optional facet → `incan_std_core`) as normal dependencies.
-- `incan` → `incan_std_core` as a dev-dependency only, for tests.
+- a compiler-ring crate → `incan_lang`, `incan_syntax`, `incan_semantics_core`, `incan_semantics_stdlib`, `incan_vocab`, `incan_codegraph` as normal dependencies.
+- a compiler-ring crate → `oven_model`, `oven_store`, `oven_rustc` where it plans or runs builds (`incan_driver`, `incan_provider`, `incan_oven_facet`; `incan_frontend` and `incan_emit` for the manifest and receipt types).
+- a compiler-ring crate → `rust_inspect` behind the Rust interop path.
+- a facet → `incan_lang` (and `incan_std_data` or `incan_std_testing` → `incan_std_core`) as normal dependencies.
+- a compiler-ring crate → `incan_std_core` as a dev-dependency only, for tests.
 
 **Forbidden**:
 
-- `incan` → any facet in `[dependencies]` (this breaks layering).
-- `incan` → `incan_derive` or `incan_web_macros` in normal dependencies.
-- `incan_lang`, `incan_syntax`, or `incan_semantics_core` → compiler/toolchain/runtime implementation crates.
+- a compiler-ring or kernel-ring crate → any facet in `[dependencies]` (this breaks layering).
+- a compiler-ring crate → `incan_derive` or `incan_web_macros` in normal dependencies.
+- a kernel-ring crate → any compiler-ring, oven-ring, toolchain-ring or runtime crate.
+- an oven-ring crate → any Incan crate; what Oven needs to know about Incan enters through `incan_oven_facet`.
 - Runtime crates calling back into compiler crates.
 
 ## Common pitfalls

@@ -11,8 +11,8 @@ name = "incan_ir"
 path = "src/lib.rs"
 
 [features]
-# Mirrors the root crate's defaults without `cli`, so `cargo test -p incan_ir` sees the stdlib semantics packs; the
-# root selects features explicitly and never relies on these.
+# Mirrors the command line's defaults without `cli`, so `cargo test -p incan_ir` sees the stdlib semantics packs;
+# `incan-cli` selects features explicitly and never relies on these.
 default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
 rust_inspect = ["incan_frontend/rust_inspect"]
 std_testing = ["incan_frontend/std_testing"]

@@ -246,7 +246,7 @@ pub fn write_feature_inventory_reference_from_source(source: &Path, path: &Path)
         "    Do not edit this page by hand. If it looks wrong/outdated, update `loaves/stdlib/core/src/features.incn` and regenerate it.\n",
     );
     output.push('\n');
-    output.push_str("    Regenerate with: `cargo run --features cli --bin generate_feature_inventory`\n\n");
+    output.push_str("    Regenerate with: `cargo run -p incan-cli --bin generate_feature_inventory`\n\n");
     output.push_str(
         "This page is a generated, present-tense atlas of user-facing Incan capabilities. It is intentionally higher-level than the generated language vocabulary tables: one feature can span syntax, type checking, stdlib source, manifests, tooling, and examples.\n\n",
     );

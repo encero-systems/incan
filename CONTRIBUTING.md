@@ -50,7 +50,7 @@ For an up-to-date module map, see:
 
 ### Bumping the Version
 
-The toolchain version lives in **one place**, the root `Cargo.toml`'s `[workspace.package] version`; the kernel, compiler and toolchain crates inherit it. Two rings ship on their own line — the Oven (`oven_model`, `oven_store`, `oven_rustc`) and the stdlib runtime (`incan_stdlib`, `incan_derive`, `incan_web_macros`) — and `incan_vocab`, the vocabulary registration contract, has carried its own since before the rings existed. Each of those declares an explicit `version` in its manifest, and the root `[workspace.dependencies]` entry for it repeats that line as a requirement beside its `path`; `scripts/check_ring_versions.py` (part of `make version-gate`) keeps the crates of a ring, and the table, in agreement.
+The toolchain version lives in **one place**, the root `Cargo.toml`'s `[workspace.package] version`; the kernel, compiler and toolchain crates inherit it. Two rings ship on their own line — the Oven (`oven_model`, `oven_store`, `oven_rustc`) and the stdlib runtime (the `incan_std_*` facets, `incan_derive`, `incan_web_macros`) — and `incan_vocab`, the vocabulary registration contract, has carried its own since before the rings existed. Each of those declares an explicit `version` in its manifest, and the root `[workspace.dependencies]` entry for it repeats that line as a requirement beside its `path`; `scripts/check_ring_versions.py` (part of `make version-gate`) keeps the crates of a ring, and the table, in agreement.
 
 1. Edit the root `Cargo.toml` and update `[workspace.package] version = "..."`. Bump a ring's line in the same change only when that ring actually changed: edit its crates' `version` and the matching `version` in the root table — and, for the stdlib ring, `incan_emit::GENERATED_FOR_STDLIB_VERSION`, the line the compiler generates code for (it does not link the runtime, so it declares the line instead).
 2. Verify everything still passes:
@@ -61,7 +61,7 @@ The toolchain version lives in **one place**, the root `Cargo.toml`'s `[workspac
 
 Notes:
 
-- The compiler exposes the toolchain version as `incan::version::INCAN_VERSION`, backed by `env!("CARGO_PKG_VERSION")`, so it updates automatically with the workspace version.
+- The compiler exposes the toolchain version as `incan_lang::version::INCAN_VERSION`, backed by `env!("CARGO_PKG_VERSION")`, so it updates automatically with the workspace version.
 - Generated code carries `incan_std_core::__incan_stdlib_version_check!("<stdlib line the compiler generates for>")`; the linked stdlib must be compatible with it (exactly equal for a prerelease line, same major.minor and no older patch for a release), so a stdlib bump that changes what generated code compiles against is a compatibility event, not a formality.
 - Codegen snapshots are version-agnostic (they normalize the codegen header to `v<INCAN_VERSION>` and the stdlib check to `<INCAN_STDLIB_VERSION>`), so version bumps should not churn snapshot files.
 

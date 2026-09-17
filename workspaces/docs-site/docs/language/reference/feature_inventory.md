@@ -3,7 +3,7 @@
 !!! warning "Generated file"
     Do not edit this page by hand. If it looks wrong/outdated, update `loaves/stdlib/core/src/features.incn` and regenerate it.
 
-    Regenerate with: `cargo run --features cli --bin generate_feature_inventory`
+    Regenerate with: `cargo run -p incan-cli --bin generate_feature_inventory`
 
 This page is a generated, present-tense atlas of user-facing Incan capabilities. It is intentionally higher-level than the generated language vocabulary tables: one feature can span syntax, type checking, stdlib source, manifests, tooling, and examples.
 
