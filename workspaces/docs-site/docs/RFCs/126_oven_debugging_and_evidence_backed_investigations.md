@@ -25,18 +25,18 @@ This RFC proposes an Oven-owned architecture through which humans and agents con
 
 ## Core model
 
-1. **An investigation is durable.** A failure, question, or counterexample opens a record connecting the relevant source snapshot, builds, experiments, observations, and verification outcomes.
+1. **An investigation is durable.** A failure, question, counterexample, capture, or exploratory purpose can open a durable record that accumulates references to relevant evidence, hypotheses, experiments, executions, and verification outcomes as the investigation develops.
 2. **Meaning and execution have different owners.** Compiler services own language semantics; Oven owns project selection, artifact lifecycle, execution coordination, and investigation sessions.
 3. **Rust and Incan are first-class.** Pure Rust, pure Incan, and mixed execution are required acceptance cases. Capabilities can differ, but those differences must be explicit.
 4. **Explanations are tested.** A hypothesis records known supporting and contradicting evidence, competing explanations, and observations that could distinguish them; missing evidence remains explicit. An experiment records what was controlled and what remained uncontrolled.
 5. **Evidence retains its kind.** Checked facts, advisory findings, proof results, observed values, and agent inferences remain distinct even when presented together.
 6. **Clients share state.** CLI, editor, and MCP consumers use one investigation and session contract, with explicit execution-control ownership, immutable captures, and versioned interpretations.
 7. **Recording is bounded.** Time, retained bytes, events, inspected values, and external-operation budgets are inspectable. Missing or truncated evidence is never silently treated as absence.
-8. **Investigation ends with reviewable evidence.** A repair links back to the original reproduction and its verification, without implying general correctness from one passing run.
+8. **Investigation ends with reviewable evidence.** A claimed resolution or conclusion links back to the original question or reproduction and its verification, without implying general correctness from one passing run.
 
 ### Entities and relationships
 
-An investigation is the durable context connecting a question or failure to hypotheses, experiments, evidence, and verification. It is not a live debugger session. These relationships describe a shared semantic model, not a required order of work or a storage ownership tree. An investigation may begin with a crash capture, an exploratory run, or a question; none requires a hypothesis in advance.
+An investigation is the durable context that accumulates references to hypotheses, experiments, evidence, and verification around a failure, question, counterexample, capture, or exploratory purpose. It is not a live debugger session. These relationships describe a shared semantic model, not a required order of work or a storage ownership tree. An investigation may begin with a crash capture, an exploratory run, or a question; none requires a hypothesis in advance.
 
 ```mermaid
 flowchart TD
@@ -51,12 +51,12 @@ flowchart TD
     S[Live session] -->|controls or observes| X
     X -->|produces| C[Stops and captures]
     C -->|interpreted as| O[Observations]
-    O -->|referenced as| D
+    O -->|is an evidence kind| D
 ```
 
 An investigation may reference zero or more records of each kind while it develops. An experiment describes an intended test or exploratory purpose and may reference multiple executions, or none if it has not run. An execution is one actual program run, which may produce multiple stops and captures. A rerun creates a new execution identity. A live session is a mutable control/observation relationship around an execution; it owns session revisions, the control lease, and ephemeral handles, not the lifetime of the investigation. A multi-process experiment must identify its constituent executions rather than collapse them into one ambiguous run.
 
-A capture retains selected execution material; an observation interprets captured material or an identified live stop. Evidence includes observations and references to independently owned compiler facts, advice, proof outcomes, receipts, and investigator inferences. Verification links a claimed repair to the original failure, changed artifacts, and execution/test evidence. Evidence and executions may be referenced from more than one investigation, experiment, or verification record. Such references do not transfer authority or imply duplicated execution. Historical inspection requires no live session.
+A capture retains selected execution material; an observation interprets captured material or an identified live stop. Evidence includes observations and references to independently owned compiler facts, advice, proof outcomes, receipts, and investigator inferences. An observation is an evidence kind. Referencing an observation as evidence preserves its observation identity and provenance; it does not create a second observation. Verification evaluates a claimed resolution or conclusion against the original failure, question, or reproduction and references the relevant artifacts, configuration, executions, and regression evidence. Evidence and executions may be referenced from more than one investigation, experiment, or verification record. Such references do not transfer authority or imply duplicated execution. Historical inspection requires no live session.
 
 ## Motivation
 
@@ -119,9 +119,29 @@ Oven must own workspace and target selection, artifact acquisition and retention
 
 Each session must expose a versioned capability description identifying target, architecture, toolchain, debugger engine, language integrations, runtime integrations, optimization/debug profile, and supported operations. Unsupported combinations must be rejected or explicitly degraded before an operation claims success. Pure Rust use must not require authored Incan application code or Incan-specific proof metadata.
 
+### Investigation and evidence records
+
+An investigation must have an identity and schema version. It must record its initiating failure, question, counterexample, capture, or exploratory purpose and accumulate references to available evidence as the investigation develops. Source snapshots, execution configurations, executable payload identities, and debug/source artifacts belong to the relevant execution/evidence records; an investigation may span multiple builds and may exist before any executable is selected. Unknown associations must remain explicit. It may link RFC 106 context, RFC 105 findings, RFC 111 obligations and assumptions, RFC 104 receipts, and RFC 093 telemetry without changing their owning semantics.
+
+An experiment must reference its hypotheses, if any, and record its purpose, reproduction recipe, controlled inputs, uncontrolled dependencies, stop/capture conditions, budgets, execution mode, and outcome. A recipe must identify the test or action, arguments, fixture references, working-directory mapping, relevant environment inputs, and seed when applicable. Secrets must be represented through authorized references or redaction markers rather than copied into recipes by default.
+
+Evidence records must distinguish compiler-established facts, deterministic advisory findings, proof outcomes with assumptions, runtime observations, and investigator inferences. Each observation must name its producing execution and capture or stop. An assessment of a hypothesis must not overwrite the certainty or provenance of its underlying evidence. Observation of one path must not imply completeness over all paths.
+
+### Hypotheses and interpretation history
+
+A hypothesis must have an identity, a statement, and versioned references to supporting evidence, contradicting evidence, competing hypotheses, and discriminating experiments or observations where known. An exploratory experiment need not invent a hypothesis. One observation may support several explanations and must not silently establish any of them as the cause.
+
+Hypothesis assessments must record their author or producing service, rationale, evidence references, and revision. An open assessment means evaluation remains pending; supported means cited evidence favors the statement under recorded assumptions; weakened means cited evidence reduces that support; contradicted means cited evidence conflicts with the statement under recorded assumptions; unresolved means the available evidence does not distinguish the relevant alternatives. These are investigation assessments, not truth certificates or a mandatory linear progression. The default contract must not assign numeric confidence. An extension using probabilities must identify its probabilistic model and assumptions rather than present an arbitrary score as calibrated certainty.
+
+Captured bytes, events, and retained state must be immutable. Each decoded observation must identify its capture or live stop, decoder/schema version, relevant type/debug metadata, and decoding limits. Live observations intended for later inspection must retain their decoded result and disclose whether the underlying material was captured. A later correction or reinterpretation must create a new observation referencing the previous one and its reason; it must not overwrite the original. Inferences remain separate from observations. A corrected interpretation must not silently rewrite hypotheses or verification conclusions that cited the earlier interpretation; consumers must expose the correction relationship when presenting those references.
+
 ### Capability profiles and conformance
 
 The architecture defines investigations, hypotheses, experiments, executions, evidence, and verification even when a provider implements only some operations. Every participating provider must preserve identities, evidence kinds, availability, budgets, and authority boundaries. Service-level capability discovery must also work without a live session, including for historical-only consumers. Capability conformance must identify the profile and version, supported language/target/runtime combinations, limits, and executable acceptance evidence. A partial profile must list the unmet obligations; it must not claim full conformance. Supporting one profile does not imply that the entire architecture is implemented.
+
+Profile conformance means that a provider/configuration satisfies the obligations of a declared profile. Integrated Oven-system conformance means that the composed system demonstrates the end-to-end investigation semantics in the acceptance criteria, including durable evidence, experiments, execution relationships, client interoperability, and verification. Individual profile conformance or schema compatibility alone does not establish integrated conformance.
+
+A provider whose profile requires investigation records must participate in Oven’s investigation-record contract and produce or consume the required records; it need not implement or own the investigation persistence service.
 
 The following profiles describe semantic obligations, not fixed protocol identifiers or an implementation sequence:
 
@@ -141,22 +161,6 @@ The following profiles describe semantic obligations, not fixed protocol identif
 An execution provider may use the test runner or typed actions without exposing interactive debugging. A declared native debugging profile must nevertheless demonstrate meaningful source stops, stepping, frames, and selected values on representative programs for each claimed configuration. Reporting all mappings or values as unavailable is not sufficient. A profile must specify its required cases and admissible limitations; capability discovery cannot weaken those obligations on a per-request basis.
 
 The shared investigation model must support recording hypotheses, experiments, and verification even when automation for a particular activity is unavailable. A consumer must distinguish the ability to record or inspect a result from the ability to execute, reduce, evaluate, or replay it.
-
-### Investigation and evidence records
-
-An investigation must have an identity and schema version. It must reference its initiating failure or question and the available evidence. Source snapshots, execution configurations, executable payload identities, and debug/source artifacts belong to the relevant execution/evidence records; an investigation may span multiple builds and may exist before any executable is selected. Unknown associations must remain explicit. It may link RFC 106 context, RFC 105 findings, RFC 111 obligations and assumptions, RFC 104 receipts, and RFC 093 telemetry without changing their owning semantics.
-
-An experiment must reference its hypotheses, if any, and record its purpose, reproduction recipe, controlled inputs, uncontrolled dependencies, stop/capture conditions, budgets, execution mode, and outcome. A recipe must identify the test or action, arguments, fixture references, working-directory mapping, relevant environment inputs, and seed when applicable. Secrets must be represented through authorized references or redaction markers rather than copied into recipes by default.
-
-Evidence records must distinguish compiler-established facts, deterministic advisory findings, proof outcomes with assumptions, runtime observations, and investigator inferences. Each observation must name its producing execution and capture or stop. An assessment of a hypothesis must not overwrite the certainty or provenance of its underlying evidence. Observation of one path must not imply completeness over all paths.
-
-### Hypotheses and interpretation history
-
-A hypothesis must have an identity, a statement, and versioned references to supporting evidence, contradicting evidence, competing hypotheses, and discriminating experiments or observations where known. An exploratory experiment need not invent a hypothesis. One observation may support several explanations and must not silently establish any of them as the cause.
-
-Hypothesis assessments must record their author or producing service, rationale, evidence references, and revision. An open assessment means evaluation remains pending; supported means cited evidence favors the statement under recorded assumptions; weakened means cited evidence reduces that support; contradicted means cited evidence conflicts with the statement under recorded assumptions; unresolved means the available evidence does not distinguish the relevant alternatives. These are investigation assessments, not truth certificates or a mandatory linear progression. The default contract must not assign numeric confidence. An extension using probabilities must identify its probabilistic model and assumptions rather than present an arbitrary score as calibrated certainty.
-
-Captured bytes, events, and retained state must be immutable. Each decoded observation must identify its capture or live stop, decoder/schema version, relevant type/debug metadata, and decoding limits. Live observations intended for later inspection must retain their decoded result and disclose whether the underlying material was captured. A later correction or reinterpretation must create a new observation referencing the previous one and its reason; it must not overwrite the original. Inferences remain separate from observations. A corrected interpretation must not silently rewrite hypotheses or verification conclusions that cited the earlier interpretation; consumers must expose the correction relationship when presenting those references.
 
 ### Source, artifact, and value identity
 
@@ -215,7 +219,7 @@ A bounded experiment should combine resume, stop-condition evaluation, and selec
 
 Historical inspection reads recorded evidence. Replay here refers to program execution, not replaying debugger protocol requests. Replay reproduces execution using a declared supported recording mechanism. A rerun performs another execution and may repeat side effects. Replaying against changed code is a new experiment, not the original recorded execution. Operation replayability must reuse RFC 104 classifications; execution replay support must additionally identify unrecorded nondeterminism and foreign/runtime boundaries. Receipts alone must not establish replay support.
 
-When counterexample reduction is supported, it must preserve an explicit failure predicate and record the attempted transformations and validation outcomes. The result may be a smaller reproducer; it must not claim global minimality without evidence. A reduction with uncontrolled nondeterminism must expose that limitation. Verification must rerun the original reproduction against the repaired artifact and retain independent regression results; it must not silently weaken the asserted contract to declare success.
+When counterexample reduction is supported, it must preserve an explicit failure predicate and record the attempted transformations and validation outcomes. The result may be a smaller reproducer; it must not claim global minimality without evidence. A reduction with uncontrolled nondeterminism must expose that limitation. Verification must state the claimed resolution or conclusion, the conditions under which it was evaluated, and the evidence and limits of that evaluation. A resolution may involve source, configuration, dependency, fixture, or environment changes. An inability to reproduce an observed failure is itself an outcome with stated conditions and limits; it does not establish that the failure is absent or resolved. For an implementation repair, verification must identify the changed artifact, rerun the original reproduction against it, and retain independent regression results. Verification must not silently weaken the asserted contract to declare success.
 
 ### Capture, telemetry, and domain integration
 
@@ -241,7 +245,7 @@ A response must expose its budget, omissions, freshness, and continuation mechan
 
 The supported target/debugger/runtime matrix, measurable latency and overhead budgets, and explicit exclusions must be documented. Conformance must be demonstrated with executable evidence.
 
-Architecture conformance must exercise the shared investigation model across pure Rust, pure Incan, and mixed execution in both call directions. The end-to-end corpus must include an incorrect result investigated through competing hypotheses and bounded experiments, repair verification against the original reproduction, and retained evidence reopened by another client. Each provider must pass the cases for its claimed profiles and configurations; native debugging conformance alone is not a claim of complete investigation-architecture conformance. Reduction cases must demonstrate preserved failure predicates when reduction is claimed. Runtime observation cases must demonstrate hung or cancelled work and the supported task/wait evidence. Historical inspection and execution replay require distinct cases proving their respective guarantees.
+Integrated Oven-system conformance must exercise the shared investigation model across pure Rust, pure Incan, and mixed execution in both call directions. The end-to-end corpus must include an incorrect result investigated through competing hypotheses and bounded experiments, repair verification against the original reproduction, and retained evidence reopened by another client. Each provider must pass the cases for its claimed profiles and configurations; native debugging profile conformance alone is not a claim of integrated Oven-system conformance. Reduction cases must demonstrate preserved failure predicates when reduction is claimed. Runtime observation cases must demonstrate hung or cancelled work and the supported task/wait evidence. Historical inspection and execution replay require distinct cases proving their respective guarantees.
 
 Negative cases must include stale source, missing symbols, optimized-out state, stale handles, concurrent control requests, cancellation, duplicate requests, redaction, unsupported runtimes, unavailable replay, and truncated captures. Editor and MCP consumers must demonstrate consistent evidence. Debugging tests must drive real native artifacts and debugger sessions; metadata snapshots alone are insufficient. Record and client conformance must also exercise investigations that begin without hypotheses, evidence shared across investigations, corrected decoding, absent cross-edit identity mappings, and uncertain execution/cancellation outcomes. Unsupported capabilities must remain discoverable and must not prevent inspection of already retained evidence.
 
