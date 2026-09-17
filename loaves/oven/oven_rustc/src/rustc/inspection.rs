@@ -700,25 +700,24 @@ mod selected_rust_facet_graph_tests {
             .ok_or("fixture graph lost registry dependency")?;
         let alias = "renamed_dependency";
         let mut authority = authority_for_registry_root(alias, dependency, vec!["normal".to_string()], true);
-        authority
-            .dev_registry_source_dependencies
-            .push(OvenProjectInspectionRootDependency {
-                alias: alias.to_string(),
-                package: dependency.package.clone(),
-                version: dependency.package_version.clone(),
-                registry: "registry+https://example.invalid/index".to_string(),
-                checksum: "fixture-registry-checksum".to_string(),
-                requested_features: vec!["dev".to_string()],
-                default_features: false,
-            });
+        assert!(matches!(
+            exact_project_inspection_root_dependency(&authority, OvenSelectedRustFacetPurpose::Test, alias),
+            Err(OvenRustcError::InvalidInput {
+                field: "selected Rust facet roots",
+                ..
+            })
+        ));
+
+        // The sealed test envelope must itself retain one exact normal/dev edge. It determines whether a Test
+        // graph has this root; the raw graph must never fall back to the normal list when it is absent.
         let test_locked = OvenProjectInspectionRootDependency {
             alias: alias.to_string(),
             package: dependency.package.clone(),
             version: dependency.package_version.clone(),
             registry: "registry+https://example.invalid/index".to_string(),
             checksum: "fixture-registry-checksum".to_string(),
-            requested_features: vec!["test".to_string()],
-            default_features: false,
+            requested_features: vec!["normal".to_string()],
+            default_features: true,
         };
         authority.test_dependency_envelope = Some(OvenProjectInspectionTestDependencyEnvelope {
             constituent_index: 0,
@@ -737,8 +736,8 @@ mod selected_rust_facet_graph_tests {
         assert!(normal.default_features);
 
         let test = exact_project_inspection_root_dependency(&authority, OvenSelectedRustFacetPurpose::Test, alias)?;
-        assert_eq!(test.requested_features, ["test"]);
-        assert!(!test.default_features);
+        assert_eq!(test.requested_features, ["normal"]);
+        assert!(test.default_features);
         Ok(())
     }
 
