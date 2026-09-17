@@ -11,10 +11,10 @@ use crate::error::{CliError, CliResult};
 use crate::lock::PreparedOvenProjectRegistrySourceAuthorities;
 use crate::lock::rust_inspect::registry_source_is_owned_by_catalog;
 use incan_provider::dependency_resolver::ResolvedDependencies;
+use oven_cargo_compat::OvenLegacyCargoInspectionPackage;
+use oven_cargo_compat::cargo_process::resolved_cargo_executable;
+use oven_cargo_compat::explicit_project_bake_inspection_sources;
 use oven_model::manifest::DependencySpec;
-use oven_rustc::legacy_cargo::OvenLegacyCargoInspectionPackage;
-use oven_rustc::legacy_cargo::cargo_process::resolved_cargo_executable;
-use oven_rustc::legacy_cargo::explicit_project_bake_inspection_sources;
 use oven_rustc::loaf::resolve_compiler_owned_loaf_by_identity;
 use oven_rustc::rustc::OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH;
 use oven_rustc::rustc::OvenLoadedProjectInspectionAuthority;
@@ -99,12 +99,13 @@ pub fn prepare_project_registry_source_authorities(
                             .registry_sources
                     }
                     oven_store::store::OvenArtifactKind::ProjectPayload => {
-                        let payload = serde_json::from_slice::<oven_rustc::legacy_cargo::OvenProjectExtensionPayload>(
-                            &selected.payload,
-                        )
-                        .map_err(|error| {
-                            CliError::failure(format!("project inspection extension constituent is invalid: {error}"))
-                        })?;
+                        let payload =
+                            serde_json::from_slice::<oven_cargo_compat::OvenProjectExtensionPayload>(&selected.payload)
+                                .map_err(|error| {
+                                    CliError::failure(format!(
+                                        "project inspection extension constituent is invalid: {error}"
+                                    ))
+                                })?;
                         let base_identity = base_loaf_identity.as_deref().ok_or_else(|| {
                             CliError::failure("project inspection extension constituent omitted its release Loaf")
                         })?;

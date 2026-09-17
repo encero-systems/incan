@@ -16,6 +16,7 @@ incan_frontend = { workspace = true }
 incan_provider = { workspace = true }
 oven_model = { workspace = true }
 oven_rustc = { workspace = true }
+oven_cargo_compat = { workspace = true }
 oven_store = { workspace = true }
 
 [dev-dependencies]

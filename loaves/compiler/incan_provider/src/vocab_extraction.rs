@@ -556,8 +556,8 @@ fn run_cargo_build_for_target(
     target: &str,
     profile: &str,
 ) -> ProviderResult<()> {
-    let mut command = oven_rustc::legacy_cargo::cargo_process::cargo_command();
-    oven_rustc::legacy_cargo::cargo_process::configure_cargo_target(&mut command, target_dir);
+    let mut command = oven_cargo_compat::cargo_process::cargo_command();
+    oven_cargo_compat::cargo_process::configure_cargo_target(&mut command, target_dir);
     command.arg("build").arg("--manifest-path").arg(cargo_manifest_path);
     if profile == "release" {
         command.arg("--release");
@@ -686,8 +686,8 @@ fn extract_vocab_metadata_from_library_entrypoint(
     write_extraction_runner_manifest(&helper_root, companion_crate_root, package_name)?;
     write_extraction_runner_source(&helper_root)?;
 
-    let mut command = oven_rustc::legacy_cargo::cargo_process::cargo_command();
-    oven_rustc::legacy_cargo::cargo_process::configure_cargo_target(&mut command, target_dir);
+    let mut command = oven_cargo_compat::cargo_process::cargo_command();
+    oven_cargo_compat::cargo_process::configure_cargo_target(&mut command, target_dir);
     let output = command
         .arg("run")
         .arg("--quiet")

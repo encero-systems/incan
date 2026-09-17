@@ -15,13 +15,13 @@ use incan_frontend::library_manifest::digest_cargo_path_source_tree_with_cache;
 use incan_frontend::library_manifest_index::{
     LibraryArtifactKind, LibraryManifestIndexEntry, load_provider_dependency_artifact,
 };
+use oven_cargo_compat::digest_local_cargo_workspace_authority;
 use oven_interop::{
     default_interop_execution_receipt_path, load_interop_execution_receipt, validate_interop_execution_receipt,
 };
 use oven_model::lock::{IncanLock, LOCK_FILENAME};
 use oven_model::manifest::{DependencySource, GitReference, LOAF_MANIFEST_FILENAME, ProjectManifest};
 use oven_model::oven_interop::locked_oven_interop_targets;
-use oven_rustc::legacy_cargo::digest_local_cargo_workspace_authority;
 use oven_store::{digest_bytes, digest_project_source_tree};
 
 impl ProjectSourceAuthorityDigester {

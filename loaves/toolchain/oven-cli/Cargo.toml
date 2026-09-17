@@ -32,6 +32,7 @@ incan_oven_facet = { workspace = true }
 incan_provider = { workspace = true }
 oven_model = { workspace = true }
 oven_rustc = { workspace = true }
+oven_cargo_compat = { workspace = true }
 oven_interop = { workspace = true }
 oven_store = { workspace = true }
 rust_inspect = { workspace = true, optional = true }

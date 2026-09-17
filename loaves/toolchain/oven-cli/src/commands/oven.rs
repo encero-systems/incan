@@ -37,14 +37,8 @@ use crate::{CliError, CliResult, ExitCode, OvenInteropAdapterArgument, OvenLoafE
 use incan_driver::interop_plan::locked_interop_plan_target;
 use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
-use oven_interop::{
-    OvenInteropAdapter, OvenInteropAdapterStageRequest, OvenInteropCapabilitySelection, OvenInteropNativeBakeRequest,
-    bake_interop_native_plan, default_interop_execution_receipt_path, load_interop_execution_receipt,
-    receipt_interop_execution, selected_interop_toolchain_identity, stage_interop_adapter,
-    write_interop_execution_receipt,
-};
-use oven_model::oven_interop::{LockedInteropTarget, ToolchainRequirement};
-use oven_rustc::legacy_cargo::{
+use oven_cargo_compat::loaf_bake::{OvenLoafBakerContext, prepare_loaf_from_generated_project};
+use oven_cargo_compat::{
     OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION,
     OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1,
     OVEN_COMPILER_TEST_SUITE_TOOLCHAIN_DATA_SCHEMA_VERSION, OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV,
@@ -56,13 +50,20 @@ use oven_rustc::legacy_cargo::{
     legacy_cargo_resolved_registry_sources, prepare_compiler_test_suite, prepare_direct_rustc_plan,
     stage_locked_loaf_fixture,
 };
+use oven_interop::{
+    OvenInteropAdapter, OvenInteropAdapterStageRequest, OvenInteropCapabilitySelection, OvenInteropNativeBakeRequest,
+    bake_interop_native_plan, default_interop_execution_receipt_path, load_interop_execution_receipt,
+    receipt_interop_execution, selected_interop_toolchain_identity, stage_interop_adapter,
+    write_interop_execution_receipt,
+};
+use oven_model::oven_interop::{LockedInteropTarget, ToolchainRequirement};
 use oven_rustc::loaf::{
-    LoafTemporaryDirectory, OVEN_LOAF_ENV, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLoafBakerContext,
-    OvenLoafEnvelope, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenLoafMemberRole,
-    OvenLoafPreparation, acquire_committed_loaf_generation, acquire_exclusive_loaf_generation_lock,
-    commit_loaf_generation, digest_runtime_crate_source, loaf_directory_byte_counts, loaf_envelope_inspection_packages,
-    loaf_envelope_specifications, loaf_raw_disk_bytes, prepare_loaf_from_generated_project,
-    retire_unreferenced_loaf_generations, validate_stored_loaf_for_reuse,
+    LoafTemporaryDirectory, OVEN_LOAF_ENV, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLoafEnvelope,
+    OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation,
+    acquire_committed_loaf_generation, acquire_exclusive_loaf_generation_lock, commit_loaf_generation,
+    digest_runtime_crate_source, loaf_directory_byte_counts, loaf_envelope_inspection_packages,
+    loaf_envelope_specifications, loaf_raw_disk_bytes, retire_unreferenced_loaf_generations,
+    validate_stored_loaf_for_reuse,
 };
 use oven_rustc::loaf_mirror::{
     LoafEnvelopeExpectation, LoafMemberExpectation, LoafMirrorMiss, import_loaf_envelope_from_mirrors,
@@ -1671,8 +1672,8 @@ fn run_compiler_suite_children_with_leases_retained<T>(
 /// It intentionally borrows the enclosing suite's still-leased immutable payload, so a worker can reconstruct its
 /// target-local manifest without serially cloning the complete closure for every root before execution begins.
 pub(crate) struct PreparedCompilerSuiteChild<'a> {
-    target: &'a oven_rustc::legacy_cargo::OvenCompilerTestSuiteTarget,
-    closure: &'a oven_rustc::legacy_cargo::OvenCompilerTestSuiteArtifactClosure,
+    target: &'a oven_cargo_compat::OvenCompilerTestSuiteTarget,
+    closure: &'a oven_cargo_compat::OvenCompilerTestSuiteArtifactClosure,
     intent: &'a OvenBuildIntent,
     artifact_root: &'a Path,
     compiler_root: &'a Path,
@@ -2382,7 +2383,7 @@ fn compiler_suite_composed_artifact_plan(
 #[allow(clippy::too_many_arguments)]
 fn bake_planned_compiler_suite_workspace_libraries(
     libraries: &[OvenCompilerWorkspaceLibrary],
-    closure: &oven_rustc::legacy_cargo::OvenCompilerTestSuiteArtifactClosure,
+    closure: &oven_cargo_compat::OvenCompilerTestSuiteArtifactClosure,
     intent: &OvenBuildIntent,
     receipt: &OvenReceipt,
     artifact_root: &Path,
@@ -2574,7 +2575,7 @@ fn compiler_suite_workspace_library_cache_key(
 /// exact target declaration, immutable closure, foundations, and selected caller-owned workspace outputs.
 fn compiler_suite_target_cache_key(
     receipt: &OvenReceipt,
-    target: &oven_rustc::legacy_cargo::OvenCompilerTestSuiteTarget,
+    target: &oven_cargo_compat::OvenCompilerTestSuiteTarget,
     closure_identity: &str,
     foundation_references: &[OvenCompilerTestSuiteFoundationReference],
     workspace_library_outputs: &BTreeMap<OvenCompilerWorkspaceLibraryKey, OvenCallerOwnedRustcLibrary>,
@@ -2600,7 +2601,7 @@ fn compiler_suite_target_cache_key(
 /// every shared workspace library turns a cache hit into repeated closure-sized allocation and serialization. Its
 /// deterministic digest preserves the same cache boundary without that work on each library node.
 fn compiler_suite_artifact_closure_cache_identity(
-    closure: &oven_rustc::legacy_cargo::OvenCompilerTestSuiteArtifactClosure,
+    closure: &oven_cargo_compat::OvenCompilerTestSuiteArtifactClosure,
 ) -> CliResult<String> {
     serde_json::to_vec(closure)
         .map(|bytes| digest_bytes(&bytes))
@@ -2659,7 +2660,7 @@ fn compiler_suite_dynamic_library_environment(
 /// Attach a target's declared direct-Rustc workspace inputs after every prerequisite has been materialized.
 fn attach_compiler_suite_target_workspace_libraries(
     artifact_plan: &mut OvenRustcArtifactPlan,
-    target: &oven_rustc::legacy_cargo::OvenCompilerTestSuiteTarget,
+    target: &oven_cargo_compat::OvenCompilerTestSuiteTarget,
     libraries: &[OvenCompilerWorkspaceLibrary],
     outputs: &BTreeMap<OvenCompilerWorkspaceLibraryKey, OvenCallerOwnedRustcLibrary>,
 ) -> CliResult<()> {
@@ -3317,7 +3318,7 @@ mod tests {
     };
     use crate::{CliResult, OvenLoafEnvelopeArgument, OvenOutputFormat};
     use incan_driver::oven_store::{default_store_root, resolve_limits_with_environment_and_defaults};
-    use oven_rustc::legacy_cargo::{
+    use oven_cargo_compat::{
         OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1,
         OvenCompilerTestSuiteArtifactClosure, OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload,
         OvenCompilerTestSuiteShardPayload, OvenCompilerTestSuiteShardReference, OvenCompilerTestSuiteTarget,

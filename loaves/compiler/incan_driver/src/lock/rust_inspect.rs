@@ -27,7 +27,7 @@ use crate::rust_inspect_workspace::mark_oven_direct_rust_inspection;
 use crate::rust_inspect_workspace::prewarm_rust_inspect_workspace;
 use incan_provider::dependency_resolver::resolve_reachable_dependencies;
 use incan_provider::requirements::{collect_project_requirements, merge_project_requirement_dependencies};
-use oven_rustc::legacy_cargo::OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV;
+use oven_cargo_compat::OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV;
 use oven_rustc::loaf::resolve_compiler_owned_loaf_for_registry_dependencies;
 use oven_rustc::loaf::resolve_toolchain_loaf_for_registry_sources;
 use oven_rustc::rustc::OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH;

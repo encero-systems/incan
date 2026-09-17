@@ -8,7 +8,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use oven_rustc::legacy_cargo::cargo_process::{cargo_command, configure_cargo_target};
+use oven_cargo_compat::cargo_process::{cargo_command, configure_cargo_target};
 
 /// A file to be written as part of a compilation plan.
 #[derive(Debug, Clone)]

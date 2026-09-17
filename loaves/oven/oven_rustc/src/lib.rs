@@ -1,10 +1,9 @@
-//! Oven's bakers and executors: direct-Rustc planning and execution, Loaf envelopes and their mirrors, native test
-//! and contract evaluation, and the hidden `legacy_cargo` baker that is the one place Cargo runs.
+//! Oven's direct-Rustc planning and execution, Loaf envelopes and their mirrors, native test and contract
+//! evaluation, and the Cargo-free wire contract the native route reads.
 //!
-//! Nothing here names a compiler crate. Interop shims are `oven_interop`, over this crate; `legacy_cargo` stays a
-//! module of this crate until its edges into `loaf` and `rustc` are cut, and becomes `oven_cargo_compat` then.
+//! Nothing here names a compiler crate, and nothing here runs Cargo: the interop shims are `oven_interop` and the
+//! explicit compatibility baker is `oven_cargo_compat`, both over this crate, never under it.
 
-pub mod legacy_cargo;
 pub mod loaf;
 pub mod loaf_mirror;
 pub mod native_contract;

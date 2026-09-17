@@ -42,7 +42,7 @@ pub fn resolved_cargo_executable() -> io::Result<PathBuf> {
     // toolchain: the compatibility baker's Cargo and the direct-Rustc compiler must come from one toolchain, and
     // `resolve_active_rustc` already prefers that same isolated installation.
     if env::var_os("CARGO").filter(|value| !value.is_empty()).is_none()
-        && let Some(cargo) = crate::rustc::incan_owned_cargo()
+        && let Some(cargo) = oven_rustc::rustc::incan_owned_cargo()
     {
         return Ok(cargo);
     }
@@ -92,7 +92,7 @@ fn resolve_cargo_executable_from_path(selected: PathBuf, search_path: Option<OsS
 /// provisioned toolchain and keep using the ambient selection.
 pub fn cargo_command() -> Command {
     if env::var_os("CARGO").filter(|value| !value.is_empty()).is_none()
-        && let Some(cargo) = crate::rustc::incan_owned_cargo()
+        && let Some(cargo) = oven_rustc::rustc::incan_owned_cargo()
     {
         let mut command = Command::new(cargo);
         pin_incan_owned_rustc(&mut command);
@@ -111,7 +111,7 @@ pub fn cargo_command() -> Command {
 ///
 /// An explicit `RUSTC` still wins, matching how `CARGO` is honoured above.
 fn pin_incan_owned_rustc(command: &mut Command) {
-    if let Some(rustc) = rustc_pin_for_incan_owned_cargo(env::var_os("RUSTC"), crate::rustc::incan_owned_rustc()) {
+    if let Some(rustc) = rustc_pin_for_incan_owned_cargo(env::var_os("RUSTC"), oven_rustc::rustc::incan_owned_rustc()) {
         command.env("RUSTC", rustc);
     }
 }

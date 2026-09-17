@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::backend::project::generator::{GENERATED_CARGO_TARGET_DIR_ENV, cargo_config_identity};
+use oven_cargo_compat::cargo_process::cargo_executable;
 use oven_model::lock::CargoFeatureSelection;
-use oven_rustc::legacy_cargo::cargo_process::cargo_executable;
 use oven_store::compiler_suite_env::OVEN_COMPILER_SUITE_RUSTC_ENV;
 
 /// Marker exported by a receipt-bound compiler-suite child. Its presence means that Cargo is not an execution

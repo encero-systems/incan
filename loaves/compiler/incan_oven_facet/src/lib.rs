@@ -16,8 +16,8 @@ use incan_frontend::library_manifest::{LibraryManifest, digest_provider_artifact
 use incan_lang::version::{INCAN_VERSION, SDK_PROVIDER_CODEGEN_REVISION};
 use incan_provider::inventory::discover_active_sdk_inventory;
 use incan_provider::{SDK_INVENTORY_FILE, SdkInventory};
+use oven_cargo_compat::{OvenLegacyCargoError, make_publisher_staging_file_writable};
 use oven_model::compiler_identity::CompilerIdentity;
-use oven_rustc::legacy_cargo::{OvenLegacyCargoError, make_publisher_staging_file_writable};
 use oven_store::{OvenProviderHookError, OvenProviderHooks};
 
 /// The running compiler's identity for Oven: its version and the generated-provider revision it emits.
