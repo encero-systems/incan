@@ -14,7 +14,7 @@ from rust_activation import (
     RustActivation,
     TargetConfiguration,
 )
-from provider_intake import provider_intake_evidence, ProviderIntakeEvidence
+from source_inventory import inert_build_script_warnings, package_source_inventory, PackageSourceInventory
 
 
 def require_ok[T](result: Result[T, IntakeError]) -> T:
@@ -26,7 +26,7 @@ def require_ok[T](result: Result[T, IntakeError]) -> T:
 
 def manifest_bytes() -> bytes:
     """
-    One authored manifest carrying both roles, so a build slot can be told from a normal one.
+    One authored manifest with an ordinary dependency and an inert build dependency.
 
     A bytes literal rather than a string, because bytes are what the authority retains: the str is derived from
     them exactly as `parse_document` derives it, and deriving it the other way round would let the fixture agree
@@ -70,16 +70,15 @@ def catalog_and_activation(raw: bytes, build_unit: bool) -> (RustDependencyCatal
     return (catalog, activation)
 
 
-def produced(raw: bytes, members: list[str], build_unit: bool) -> ProviderIntakeEvidence:
+def produced(raw: bytes, members: list[str], build_unit: bool) -> PackageSourceInventory:
     """Run the producer over one manifest, failing the test with its refusal rather than swallowing it."""
-    catalog, activation = catalog_and_activation(raw, build_unit)
+    _catalog, activation = catalog_and_activation(raw, build_unit)
     return require_ok(
-        provider_intake_evidence(
+        package_source_inventory(
             "incan-oven",
             "packages/probe",
             evidence_for(raw),
             members,
-            catalog,
             host_context(build_unit),
             activation,
         )
@@ -111,21 +110,18 @@ pub def test_the_manifest_is_removed_from_the_member_inventory() -> None:
         fail(f"the remaining members must keep the authority's order, got {evidence.members}")
 
 
-pub def test_a_build_dependency_is_recorded_by_its_declaration_index_and_alias() -> None:
+pub def test_a_selected_package_with_a_build_unit_gets_exactly_one_inert_warning() -> None:
     """
-    A build slot is named by where it was declared and what the manifest called it.
-
-    Both are properties of the authored catalog. A producer that reached for the resolved package name would
-    lose the distinction the moment a dependency is aliased, which is the case this pins.
+    Source inventory reports presence once without creating an executable candidate.
     """
-    evidence = produced(manifest_bytes(), ["Cargo.toml"], true)
-    if len(evidence.build_slots) != 1:
-        fail(f"exactly one build slot was declared, got {len(evidence.build_slots)}")
-    slot = evidence.build_slots[0]
-    if slot.alias != "cc":
-        fail(f"the slot keeps the authored alias, got {slot.alias}")
-    if slot.host_unit != "x86_64-unknown-linux-gnu":
-        fail(f"a build dependency activates against the context's host triple, got {slot.host_unit}")
+    first_unit = produced(manifest_bytes(), ["Cargo.toml"], true)
+    second_unit = produced(manifest_bytes(), ["Cargo.toml", "src/other.rs"], true)
+    warnings = inert_build_script_warnings([first_unit, second_unit])
+    if len(warnings) != 1:
+        fail(f"one selected package must produce one warning, got {len(warnings)}")
+    warning = warnings[0]
+    if warning.owner != "incan-oven" or warning.package_root != "packages/probe":
+        fail("the warning must identify the selected package")
 
 
 pub def test_build_unit_presence_is_carried_not_inferred_from_the_slots() -> None:
@@ -139,8 +135,9 @@ pub def test_build_unit_presence_is_carried_not_inferred_from_the_slots() -> Non
     evidence = produced(manifest_bytes(), ["Cargo.toml", "src/lib.rs"], false)
     if evidence.build_unit_present:
         fail("presence must follow the inventory, not the fact that a build dependency was declared")
-    if len(evidence.build_slots) != 1:
-        fail(f"the declared build slot is still recorded, got {len(evidence.build_slots)}")
+    warnings = inert_build_script_warnings([evidence])
+    if len(warnings) != 0:
+        fail(f"a package without a selected build unit must not warn, got {len(warnings)}")
 
 
 pub def test_inconsistent_evidence_is_refused_rather_than_repaired() -> None:
@@ -151,15 +148,15 @@ pub def test_inconsistent_evidence_is_refused_rather_than_repaired() -> None:
     digest it computed rather than one the authority retained, and the record would prove nothing.
     """
     raw = manifest_bytes()
-    catalog, activation = catalog_and_activation(raw, true)
+    _catalog, activation = catalog_and_activation(raw, true)
     tampered = ManifestEvidence(
         path="Cargo.toml",
         raw_bytes=raw,
         source=decoded(raw),
         sha256_digest=sha256.digest(b"not the manifest"),
     )
-    match provider_intake_evidence(
-        "incan-oven", "packages/probe", tampered, ["Cargo.toml"], catalog, host_context(true), activation
+    match package_source_inventory(
+        "incan-oven", "packages/probe", tampered, ["Cargo.toml"], host_context(true), activation
     ):
         Ok(_) => fail("evidence that disagrees with its own bytes must be refused")
         Err(error) =>
