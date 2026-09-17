@@ -1,10 +1,11 @@
 //! Identity and lifecycle of the SDK provider store: what makes one compiled-SDK tree distinct from another, the
 //! locks that serialize its preparation, and the digests that key it.
 //!
-//! The identity folds the compiler executable and the effect digest of the sources the compiler was built from, so
-//! a rebuilt frontend never reads yesterday's providers back.
+//! Checkout identities combine compiler effects with publication configuration; installed layouts instead use
+//! executable and source bytes. Both retain the resolved lock and publication profile so incompatible providers cannot
+//! share a store entry.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -221,6 +222,10 @@ fn hash_sdk_provider_source_tree(root: &Path, current: &Path, hasher: &mut Sha25
 /// of the store without changing any component's content, and that constant is the declared mechanism for saying
 /// so; the inventory already validates it on every cache hit, and folding it here means a bump also partitions the
 /// store rather than only rejecting what is in it.
+///
+/// Publication configuration is a separate input: the source catalog, component TOML files and owning workspace/crate
+/// manifests affect profiles and dependency selection without changing source meaning. Their bytes are conservatively
+/// hashed, including formatting-only edits, so restoring checkout reuse cannot serve an obsolete inventory.
 pub fn sdk_provider_store_identity(
     stdlib_root: &Path,
     executable: &Path,
@@ -228,7 +233,7 @@ pub fn sdk_provider_store_identity(
     distribution_profile: &str,
 ) -> ProviderResult<String> {
     let mut hasher = Sha256::new();
-    hasher.update(b"incan-sdk-provider-store-v4\0");
+    hasher.update(b"incan-sdk-provider-store-v5\0");
     hasher.update(b"compiler-version\0");
     hasher.update(incan_lang::version::INCAN_VERSION.as_bytes());
     hasher.update(b"provider-codegen-revision\0");
@@ -240,6 +245,7 @@ pub fn sdk_provider_store_identity(
     if let Some(checkout_root) = sdk_provider_compiler_checkout_root(stdlib_root) {
         hasher.update(b"compiler-effect\0");
         hasher.update(sdk_provider_effect_digest(&checkout_root)?.as_bytes());
+        hash_sdk_publication_configuration(&checkout_root, &mut hasher)?;
     } else {
         hash_sdk_provider_source_tree(stdlib_root, stdlib_root, &mut hasher)?;
         hasher.update(b"compiler-executable-content\0");
@@ -256,6 +262,71 @@ pub fn sdk_provider_store_identity(
         })?);
     }
     Ok(hex::encode(hasher.finalize()))
+}
+
+/// Fold publication policy omitted by the semantic source digest, with deterministic relative paths.
+///
+/// Component configuration lives under the stdlib tree. Rust effect roots additionally inherit crate/workspace
+/// manifests, so include their owning Cargo manifests without walking unrelated CLI or test source trees. Configuration
+/// is byte-exact; source comments still use the effect digest's semantic treatment.
+fn hash_sdk_publication_configuration(checkout_root: &Path, hasher: &mut Sha256) -> ProviderResult<()> {
+    let mut paths = BTreeSet::new();
+    collect_sdk_configuration_paths(&checkout_root.join(COMPILER_STDLIB_ROOT), &mut paths)?;
+    for (_, relative) in COMPILER_RUST_EFFECT_ROOTS {
+        let root = checkout_root.join(relative);
+        for ancestor in root.ancestors().take_while(|path| path.starts_with(checkout_root)) {
+            let manifest = ancestor.join("Cargo.toml");
+            if manifest.is_file() {
+                paths.insert(manifest);
+            }
+        }
+    }
+    hasher.update(b"publication-configuration\0");
+    for path in paths {
+        let relative = path
+            .strip_prefix(checkout_root)
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
+        let bytes = fs::read(&path).map_err(|error| {
+            ProviderError::failure(format!(
+                "failed to read SDK publication configuration {}: {error}",
+                path.display()
+            ))
+        })?;
+        hasher.update(relative.to_string_lossy().as_bytes());
+        hasher.update([0]);
+        hasher.update(
+            u64::try_from(bytes.len())
+                .map_err(|error| ProviderError::failure(error.to_string()))?
+                .to_le_bytes(),
+        );
+        hasher.update(bytes);
+    }
+    Ok(())
+}
+
+/// Collect authored TOML and nested Cargo lock inputs, excluding generated targets and directory symlinks.
+fn collect_sdk_configuration_paths(root: &Path, paths: &mut BTreeSet<PathBuf>) -> ProviderResult<()> {
+    let entries = fs::read_dir(root).map_err(|error| {
+        ProviderError::failure(format!(
+            "failed to enumerate SDK configuration {}: {error}",
+            root.display()
+        ))
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| ProviderError::failure(error.to_string()))?;
+        let path = entry.path();
+        let kind = entry
+            .file_type()
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
+        if kind.is_dir() {
+            if entry.file_name() != "target" {
+                collect_sdk_configuration_paths(&path, paths)?;
+            }
+        } else if path.extension().is_some_and(|extension| extension == "toml") || entry.file_name() == "Cargo.lock" {
+            paths.insert(path);
+        }
+    }
+    Ok(())
 }
 
 /// Digest what the compiler in `checkout_root` produces for its standard library, memoized on its inputs' bytes.
@@ -449,11 +520,17 @@ fn sdk_provider_compiler_checkout_root(stdlib_root: &Path) -> Option<PathBuf> {
 
 /// Check the exact source layout before treating a directory tree as compiler authority.
 fn is_sdk_provider_compiler_checkout(candidate: &Path, stdlib_root: &Path) -> bool {
-    if !candidate.join("Cargo.toml").is_file() || !candidate.join("src").is_dir() {
+    if !candidate.join("Cargo.toml").is_file()
+        || !candidate.join("loaves/compiler/incan_emit/Cargo.toml").is_file()
+        || !candidate.join("loaves/compiler/incan_emit/src").is_dir()
+    {
         return false;
     }
     let expected_stdlib_root = candidate.join("loaves/stdlib");
-    fs::canonicalize(&expected_stdlib_root).ok() == fs::canonicalize(stdlib_root).ok()
+    match (fs::canonicalize(&expected_stdlib_root), fs::canonicalize(stdlib_root)) {
+        (Ok(expected), Ok(actual)) => expected == actual,
+        _ => false,
+    }
 }
 
 /// Hash the running compiler once per process with SHA-256, the hash family every other identity in the toolchain uses,
@@ -770,11 +847,19 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let checkout = temp_dir.path().join("checkout");
         let stdlib_root = checkout.join("loaves/stdlib");
-        fs::create_dir_all(checkout.join("src"))?;
+        fs::create_dir_all(checkout.join("loaves/compiler/incan_emit/src"))?;
+        fs::create_dir_all(checkout.join("loaves/toolchain/incan-cli/src"))?;
+        fs::write(
+            checkout.join("loaves/compiler/incan_emit/Cargo.toml"),
+            "[package]\nname = \"incan_emit\"\n",
+        )?;
         fs::create_dir_all(stdlib_root.join("components"))?;
         fs::write(checkout.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
         fs::write(checkout.join("Cargo.lock"), "first lock closure")?;
-        fs::write(checkout.join("src/compiler.rs"), "pub fn compile() {}\n")?;
+        fs::write(
+            checkout.join("loaves/toolchain/incan-cli/src/commands.rs"),
+            "pub fn compile() {}\n",
+        )?;
         fs::write(
             stdlib_root.join("components/core.incn"),
             "pub def core() -> int:\n  return 1\n",
@@ -830,11 +915,11 @@ mod tests {
             "CI edits and administrative path changes must reuse SDK providers"
         );
 
-        // The seventeen minutes. `src/compiler.rs` stands for every subsystem outside the effect roots — the
+        // The seventeen minutes. The CLI source stands for every subsystem outside the effect roots — the
         // language server, an inspection module, a CLI command — none of which can change what a component
         // contains, and all of which rebuilt all ten components through v3.
         fs::write(
-            checkout.join("src/compiler.rs"),
+            checkout.join("loaves/toolchain/incan-cli/src/commands.rs"),
             "pub fn compile() { let changed = true; }\n",
         )?;
         let unreachable_subsystem =
@@ -898,6 +983,107 @@ mod tests {
             with_runtime, changed_runtime,
             "every component links the Rust runtime, so a change to it must invalidate"
         );
+        Ok(())
+    }
+
+    /// Catalog membership, component policy and inherited dependency manifests affect publication even when code
+    /// meaning is unchanged.
+    #[test]
+    fn sdk_provider_store_tracks_publication_configuration() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let checkout = temp.path();
+        let stdlib = checkout.join(COMPILER_STDLIB_ROOT);
+        let emitter = checkout.join("loaves/compiler/incan_emit");
+        fs::create_dir_all(emitter.join("src"))?;
+        fs::create_dir_all(stdlib.join("core/rust/src"))?;
+        fs::write(checkout.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
+        fs::write(emitter.join("Cargo.toml"), "[package]\nname = \"incan_emit\"\n")?;
+        let builder = checkout.join("unused-builder");
+        let identity = || sdk_provider_store_identity(&stdlib, &builder, None, "full");
+        let mut previous = identity()?;
+        for (relative, before, after) in [
+            (
+                "loaves/stdlib/sdk-components.toml",
+                "[profiles]\ndefault = [\"core\"]\n",
+                "[profiles]\ndefault = [\"core\", \"system\"]\n",
+            ),
+            (
+                "loaves/stdlib/core/loaf.toml",
+                "[project]\nversion = \"0.6.0\"\n",
+                "[project]\nversion = \"0.6.1\"\n",
+            ),
+            (
+                "loaves/stdlib/core/rust/Cargo.toml",
+                "[features]\ndefault = []\n",
+                "[features]\ndefault = [\"extra\"]\n",
+            ),
+            (
+                "loaves/compiler/incan_emit/Cargo.toml",
+                "[features]\ndefault = []\n",
+                "[features]\ndefault = [\"extra\"]\n",
+            ),
+            (
+                "Cargo.toml",
+                "[workspace.dependencies]\nserde = \"1.0.0\"\n",
+                "[workspace.dependencies]\nserde = \"1.0.1\"\n",
+            ),
+        ] {
+            let path = checkout.join(relative);
+            fs::write(&path, before)?;
+            let created = identity()?;
+            assert_ne!(
+                previous, created,
+                "adding/changing configuration {relative} must partition publication"
+            );
+            fs::write(&path, after)?;
+            let changed = identity()?;
+            assert_ne!(
+                created, changed,
+                "configuration change {relative} must invalidate publication"
+            );
+            previous = changed;
+        }
+        let companion = stdlib.join("interop/vocab_companion/src");
+        fs::create_dir_all(&companion)?;
+        fs::write(companion.join("lib.rs"), "pub fn vocab_revision() -> u8 { 1 }\n")?;
+        let original_companion = identity()?;
+        fs::write(companion.join("lib.rs"), "pub fn vocab_revision() -> u8 { 2 }\n")?;
+        previous = identity()?;
+        assert_ne!(
+            original_companion, previous,
+            "published vocab metadata depends on the Rust companion implementation"
+        );
+        let vocab = checkout.join("loaves/kernel/incan_vocab/src");
+        fs::create_dir_all(&vocab)?;
+        fs::write(vocab.join("lib.rs"), "pub fn contract_revision() -> u8 { 1 }\n")?;
+        let original_contract = identity()?;
+        fs::write(vocab.join("lib.rs"), "pub fn contract_revision() -> u8 { 2 }\n")?;
+        previous = identity()?;
+        assert_ne!(
+            original_contract, previous,
+            "the companion's compiled vocab dependency is a publication input"
+        );
+        let companion_lock = stdlib.join("interop/vocab_companion/Cargo.lock");
+        fs::write(&companion_lock, "first companion dependency closure")?;
+        let original_lock = identity()?;
+        fs::write(&companion_lock, "second companion dependency closure")?;
+        previous = identity()?;
+        assert_ne!(
+            original_lock, previous,
+            "standalone companion publication uses its own Cargo lock"
+        );
+        let generated = stdlib.join("target/generated");
+        fs::create_dir_all(&generated)?;
+        fs::write(generated.join("Cargo.toml"), "generated, not authored")?;
+        assert_eq!(
+            previous,
+            identity()?,
+            "generated manifests must not change their own publication key"
+        );
+        assert!(!is_sdk_provider_compiler_checkout(
+            checkout,
+            &checkout.join("missing-stdlib")
+        ));
         Ok(())
     }
 
