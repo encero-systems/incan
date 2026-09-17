@@ -52,6 +52,7 @@ def context(features: list[str], defaults: bool, purpose: ActivationPurpose, bui
         host=linux(),
         target=windows(),
         purpose=purpose,
+        domain=DependencyDomain.Target,
         requested_features=features,
         default_features=defaults,
         build_unit_present=build_unit,
@@ -128,8 +129,8 @@ pub def test_feature_cycles_terminate_and_default_flag_is_not_guessed() -> None:
     assert with_defaults.effective_features == ["a", "b", "default"]
 
 
-pub def test_host_target_dev_and_absent_build_unit_keep_separate_outcomes() -> None:
-    """Identical aliases in target and host tables retain distinct contexts and original slots."""
+pub def test_dev_target_and_inert_build_slots_keep_separate_outcomes() -> None:
+    """Build declarations remain inventoried but never become compilation demands."""
     source = "\n    [dev-dependencies]\n    helper='1'\n    [target.'cfg(unix)'.dependencies]\n    shared={version='1', features=['target']}\n    [target.'cfg(unix)'.build-dependencies]\n    shared={version='1', features=['host']}\n    "
     catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
     result = require_ok(activate_unit(catalog, context([], false, ActivationPurpose.Normal, true), "Cargo.toml"))
@@ -143,23 +144,21 @@ pub def test_host_target_dev_and_absent_build_unit_keep_separate_outcomes() -> N
             assert reason == InactiveReason.TargetConditionFalse
         _ => fail("target request used the host cfg")
     match result.slots[2].activation:
-        SlotActivation.Active(features, _, domain) =>
-            assert features == ["host"]
-            assert domain == DependencyDomain.Host
-        _ => fail("host build request used the target cfg")
+        SlotActivation.Inactive(reason) => assert reason == InactiveReason.InertBuildScript
+        _ => fail("inert build declaration became a compilation demand")
     test_result = require_ok(activate_unit(catalog, context([], false, ActivationPurpose.Test, false), "Cargo.toml"))
     match test_result.slots[0].activation:
         SlotActivation.Active(_, _, _) => pass
         _ => fail("test purpose dropped its dev slot")
     match test_result.slots[2].activation:
         SlotActivation.Inactive(reason) =>
-            assert reason == InactiveReason.BuildUnitAbsent
-        _ => fail("missing build unit activated a host dependency")
+            assert reason == InactiveReason.InertBuildScript
+        _ => fail("test purpose activated an inert build dependency")
 
 
 pub def test_cfg_uses_actual_supplied_values_and_exact_target_triple() -> None:
     """Evaluate nested cfg values and exact triple selectors through the declared domain."""
-    source = "\n    [target.'cfg(all(unix, target_arch = \"x86_64\", target_has_atomic = \"ptr\", not(target_os = \"windows\")))'.build-dependencies]\n    yes='1'\n    [target.x86_64-pc-windows-msvc.dependencies]\n    yes='1'\n    "
+    source = "\n    [target.'cfg(all(windows, target_os = \"windows\"))'.dependencies]\n    yes='1'\n    [target.x86_64-pc-windows-msvc.dependencies]\n    yes='1'\n    "
     catalog = require_ok(read_dependency_catalog(source, "Cargo.toml"))
     result = require_ok(activate_unit(catalog, context([], false, ActivationPurpose.Normal, true), "Cargo.toml"))
     for slot in result.slots:

@@ -1,0 +1,93 @@
+"""Focused closed-envelope tests for the selected Rust graph policy exchange."""
+
+from std.json import JsonValue
+from std.testing import fail, fail_t
+from core_engine import evaluate as evaluate_core
+from rust_policy_exchange import evaluate
+
+
+def request(
+    role: str = "library",
+    extra: str = "",
+    schema: str = "incan.oven.rust-policy-exchange/1",
+    operation: str = "validate_selected_rust_graph",
+) -> str:
+    """One exact selected leaf; the manifest digest is SHA-256 of empty bytes."""
+    mut document: Dict[str, JsonValue] = {"schema": JsonValue.string(schema), "operation": JsonValue.string(operation), "graph_digest": JsonValue.string(
+        "sha256:selected-graph",
+    ), "context": JsonValue.object(
+        {"host": JsonValue.object({"triple": JsonValue.string("x86_64-unknown-linux-gnu"), "cfg": JsonValue.null()}), "target": JsonValue.object(
+            {"triple": JsonValue.string("x86_64-unknown-linux-gnu"), "cfg": JsonValue.null()},
+        ), "selection_purpose": JsonValue.string("normal")},
+    ), "units": JsonValue.array(
+        [JsonValue.object(
+            {"identity": JsonValue.string("sha256:root-unit"), "package": JsonValue.object(
+                {"name": JsonValue.string("root"), "version": JsonValue.string("1.0.0"), "source": JsonValue.string(
+                    "path:root",
+                )},
+            ), "domain": JsonValue.string("target"), "role": JsonValue.string(role), "crate_kind": JsonValue.string(
+                "rlib",
+            ), "features": JsonValue.array([]), "default_features": JsonValue.bool(true)},
+        )],
+    ), "roots": JsonValue.array([JsonValue.object({"unit": JsonValue.string("sha256:root-unit")})]), "bindings": JsonValue.array(
+        [],
+    ), "catalogs": JsonValue.array(
+        [JsonValue.object(
+            {"package": JsonValue.object(
+                {"name": JsonValue.string("root"), "version": JsonValue.string("1.0.0"), "source": JsonValue.string(
+                    "path:root",
+                )},
+            ), "owner": JsonValue.string("sha256:project-owner"), "package_root": JsonValue.string("root"), "members": JsonValue.array(
+                [JsonValue.string("Cargo.toml"), JsonValue.string("src/lib.rs")],
+            ), "build_unit_present": JsonValue.bool(false), "manifest": JsonValue.object(
+                {"path": JsonValue.string("Cargo.toml"), "bytes_hex": JsonValue.string(""), "sha256_hex": JsonValue.string(
+                    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                )},
+            )},
+        )],
+    ), "max_rounds": JsonValue.int(8)}
+    if extra != "":
+        document["unexpected"] = JsonValue.bool(true)
+    match JsonValue.object(document).to_json():
+        Ok(value) => return value
+        Err(error) => return fail_t[str](error.message())
+
+
+def status(response: JsonValue) -> str:
+    match response.get("status"):
+        None => return "missing"
+        Some(value) =>
+            match value.as_str():
+                None => return "missing"
+                Some(name) => return name
+
+
+pub def test_selected_leaf_echoes_authenticated_graph_identity() -> None:
+    response = evaluate(request())
+    assert status(response) == "selected"
+    match response.get("graph_digest"):
+        None => fail("selected response omitted graph digest")
+        Some(value) =>
+            assert value.as_str() == Some("sha256:selected-graph")
+    match response.get("activations"):
+        None => fail("selected response omitted activations")
+        Some(value) =>
+            if value.as_array() == None:
+                fail("selected response activations were not an array")
+
+
+pub def test_core_engine_dispatches_the_rust_policy_schema() -> None:
+    assert status(evaluate_core(request())) == "selected"
+
+
+pub def test_unknown_top_level_field_refuses() -> None:
+    assert status(evaluate(request(extra=",\"unexpected\":true"))) == "refused"
+
+
+pub def test_selected_build_script_role_refuses() -> None:
+    assert status(evaluate(request(role="build_script"))) == "refused"
+
+
+pub def test_unknown_schema_and_operation_refuse() -> None:
+    assert status(evaluate(request(schema="incan.oven.rust-policy-exchange/2"))) == "refused"
+    assert status(evaluate(request(operation="select_again"))) == "refused"

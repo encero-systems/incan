@@ -13,7 +13,7 @@ from manifest_errors import IntakeError, IntakeErrorKind
 
 @derive(Eq)
 pub enum RustDependencyRole(str):
-    """Original declaration roles; build dependencies belong to a distinct host activation domain."""
+    """Original declaration roles; inert build dependencies remain inventory-only source facts."""
 
     Normal = "normal"
     Build = "build"

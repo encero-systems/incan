@@ -7,7 +7,19 @@ pub from native_compilation import evaluate_document, project
 pub from source_unit import select_source_units, SourceBatch, BatchSelection
 pub from rust_source import read_dependency_catalog
 pub from rust_activation import activate_unit, version_matches
-pub from rust_graph import propagate_features, GraphNode, GraphActivation, NodeDemand
+pub from rust_graph import (
+    propagate_features,
+    package_key,
+    AdmittedSelectedUnit,
+    GraphNode,
+    GraphActivation,
+    GraphRoot,
+    NodeDemand,
+    AdmittedSelectedEdge,
+    SelectedCrateKind,
+    SelectedPackageIdentity,
+    SelectedUnitRole,
+)
 pub from invocation import decide_invocation
 pub from source_inventory import (
     inert_build_script_warnings,
@@ -15,3 +27,4 @@ pub from source_inventory import (
     InertBuildScriptWarning,
     PackageSourceInventory,
 )
+pub from rust_policy_exchange import evaluate as evaluate_rust_policy_exchange

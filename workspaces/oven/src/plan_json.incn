@@ -127,7 +127,7 @@ pub def decode_request(source: str) -> Result[SelectionRequest, SelectionError]:
     )
 
 
-def exact_object(value: JsonValue, names: list[str], path: list[str]) -> Result[None, SelectionError]:
+pub def exact_object(value: JsonValue, names: list[str], path: list[str]) -> Result[None, SelectionError]:
     """Reject non-objects, unknown keys and omissions, including fields with typed defaults."""
     if not value.is_object():
         return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path))
@@ -139,14 +139,14 @@ def exact_object(value: JsonValue, names: list[str], path: list[str]) -> Result[
     return Ok(None)
 
 
-def field(value: JsonValue, name: str, path: list[str]) -> Result[JsonValue, SelectionError]:
+pub def field(value: JsonValue, name: str, path: list[str]) -> Result[JsonValue, SelectionError]:
     """Read a required field and preserve its literal diagnostic segment."""
     match value.get(name):
         Some(item) => return Ok(item)
         None => return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + [name]))
 
 
-def text_field(value: JsonValue, name: str, path: list[str]) -> Result[str, SelectionError]:
+pub def text_field(value: JsonValue, name: str, path: list[str]) -> Result[str, SelectionError]:
     """Read a string without coercing null, booleans or numbers."""
     item = field(value, name, path)?
     match item.as_str():
@@ -154,14 +154,14 @@ def text_field(value: JsonValue, name: str, path: list[str]) -> Result[str, Sele
         None => return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + [name]))
 
 
-def array(value: JsonValue, path: list[str]) -> Result[list[JsonValue], SelectionError]:
+pub def array(value: JsonValue, path: list[str]) -> Result[list[JsonValue], SelectionError]:
     """Require a JSON array before inspecting its elements."""
     match value.as_array():
         Some(values) => return Ok(values)
         None => return Err(SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path))
 
 
-def strings(value: JsonValue, path: list[str]) -> Result[list[str], SelectionError]:
+pub def strings(value: JsonValue, path: list[str]) -> Result[list[str], SelectionError]:
     """Decode string elements with decimal array-index diagnostic segments."""
     values = array(value, path)?
     mut result: list[str] = []
@@ -228,7 +228,7 @@ def decode_providers(value: JsonValue, path: list[str]) -> Result[list[ProviderC
     return Ok(providers)
 
 
-def boolean(value: JsonValue, path: list[str]) -> Result[bool, SelectionError]:
+pub def boolean(value: JsonValue, path: list[str]) -> Result[bool, SelectionError]:
     """Require a boolean; numeric and textual truth values are not wire booleans."""
     match value.as_bool():
         Some(flag) => return Ok(flag)
@@ -430,7 +430,7 @@ pub def decode_batch(document: JsonValue) -> Result[SourceBatch, SelectionError]
     ))
 
 
-def integer(value: JsonValue, path: list[str]) -> Result[int, SelectionError]:
+pub def integer(value: JsonValue, path: list[str]) -> Result[int, SelectionError]:
     """Require a nonnegative JSON integer for an original descriptor index or schema version."""
     if let Some(number) = value.as_int():
         if number >= 0:

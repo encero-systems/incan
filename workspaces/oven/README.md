@@ -21,6 +21,7 @@ The host and this project exchange JSON documents. The schemas this source curre
 | `incan.oven.selection/1`, `/2` | `plan_json.incn` | one native plan selection; `/2` requires the request's `build_unit_identity` and exact-unit evidence per candidate |
 | `incan.oven.source-unit-batch/1`, `/2`, `/3` | `plan_json.incn`, `source_unit.incn` | one selection serving a batch of source units; `/3` adds compiler-runtime needs and grants |
 | `incan.oven.native-compilation/2` | `native_compilation.incn` | one direct-`rustc` invocation to validate |
+| `incan.oven.rust-policy-exchange/1` | `rust_policy_exchange.incn` | validate one authenticated selected-Rust-graph projection and return exhaustive activations, source inventories and inert-script warnings |
 
 Every wire field is required; an unknown or absent field is a refusal, not a default.
 
@@ -31,7 +32,7 @@ loaf.toml               project manifest: two scripts, two Rust dependencies (cf
 src/*.incn              the modules above, plus lib.incn
 src/test_*.incn         one test module per source module
 src/acceptance.incn     runs every test module's contracts as one program
-src/plan_json_main.incn the `core_engine` script: REQUEST RESPONSE file paths, strict UTF-8 exchange
+src/plan_json_main.incn the sealed `core_engine` script: REQUEST RESPONSE file paths, strict UTF-8 exchange
 tests/fixtures/         manifests the intake tests read: a cycle, a collision, a plan missing its features, a Rust source tree
 ```
 

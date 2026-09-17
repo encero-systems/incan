@@ -1,0 +1,461 @@
+"""Strict Incan policy exchange over a host-authenticated selected Rust facet graph projection."""
+
+from rust::std::str import from_utf8
+from std.encoding.hex import hexlify, unhexlify
+from std.json import JsonValue, parse
+from intake import ManifestEvidence
+from manifest_errors import IntakeError
+from plan import SelectionError, SelectionErrorKind
+from plan_json import array, boolean, exact_object, field, integer, strings, text_field
+from rust_activation import ActivationContext, ActivationPurpose, CfgSnapshot, DependencyDomain, TargetConfiguration
+from rust_graph import (
+    package_key,
+    propagate_features,
+    AdmittedSelectedUnit,
+    GraphActivation,
+    GraphNode,
+    GraphRoot,
+    AdmittedSelectedEdge,
+    SelectedCrateKind,
+    SelectedPackageIdentity,
+    SelectedUnitRole,
+)
+from rust_source import read_dependency_catalog, RustDependencyCatalog
+from source_inventory import inert_build_script_warnings, package_source_inventory, PackageSourceInventory
+
+const SCHEMA: str = "incan.oven.rust-policy-exchange/1"
+const OPERATION: str = "validate_selected_rust_graph"
+
+
+model CatalogInput:
+    """Source-owned manifest evidence and inventory inputs for one selected Cargo package."""
+
+    identity: SelectedPackageIdentity
+    manifest: ManifestEvidence
+    owner: str
+    package_root: str
+    members: list[str]
+    build_unit_present: bool
+
+
+model ExchangeInput:
+    """Strict request decoded from a host-authenticated selected Rust facet graph projection."""
+
+    graph_digest: str
+    context: ActivationContext
+    units: list[AdmittedSelectedUnit]
+    roots: list[GraphRoot]
+    bindings: list[AdmittedSelectedEdge]
+    catalogs: list[CatalogInput]
+    max_rounds: int
+
+
+pub def evaluate(source: str) -> JsonValue:
+    """Decode one bounded request and return a selected or refused JSON response."""
+    match parse(source):
+        Err(_) => return refused(invalid([]))
+        Ok(document) =>
+            match produce(document):
+                Ok(response) => return response
+                Err(error) => return refused(error)
+
+
+def produce(document: JsonValue) -> Result[JsonValue, SelectionError]:
+    """Validate an exchange envelope, run Incan policy, and encode the bounded result."""
+    exact_object(
+        document,
+        ["schema", "operation", "graph_digest", "context", "units", "roots", "bindings", "catalogs", "max_rounds"],
+        [],
+    )?
+    if text_field(document, "schema", [])? != SCHEMA:
+        return Err(invalid(["schema"]))
+    if text_field(document, "operation", [])? != OPERATION:
+        return Err(invalid(["operation"]))
+    request = ExchangeInput(
+        graph_digest=nonempty(text_field(document, "graph_digest", [])?, ["graph_digest"])?,
+        context=decode_context(field(document, "context", [])?, ["context"])?,
+        units=decode_units(field(document, "units", [])?)?,
+        roots=decode_roots(field(document, "roots", [])?)?,
+        bindings=decode_bindings(field(document, "bindings", [])?)?,
+        catalogs=decode_catalogs(field(document, "catalogs", [])?)?,
+        max_rounds=integer(field(document, "max_rounds", [])?, ["max_rounds"])?,
+    )
+    if request.max_rounds <= 0:
+        return Err(invalid(["max_rounds"]))
+    mut catalogs: Dict[str, RustDependencyCatalog] = {}
+    for item in request.catalogs:
+        key = package_key(item.identity)
+        if key in catalogs:
+            return Err(invalid(["catalogs", key]))
+        catalogs[key] = read_dependency_catalog(item.manifest.source, item.manifest.path).map_err(
+            (error) => intake_refusal(["catalogs", key], error),
+        )?
+    activation = propagate_features(
+        catalogs,
+        request.context,
+        "selected-rust-facet-graph",
+        request.units,
+        request.roots,
+        request.bindings,
+        request.max_rounds,
+    ).map_err((error) => intake_refusal(["policy"], error))?
+    inventories = project_inventories(request.catalogs, request.context, activation)?
+    return Ok(selected(request.graph_digest, request.units, request.bindings, activation, inventories))
+
+
+def decode_units(value: JsonValue) -> Result[list[AdmittedSelectedUnit], SelectionError]:
+    """Decode the authenticated physical-unit projection without changing its activation facts."""
+    values = array(value, ["units"])?
+    mut units: list[AdmittedSelectedUnit] = []
+    for index in range(len(values)):
+        path = ["units", str(index)]
+        item = values[index]
+        exact_object(item, ["identity", "package", "domain", "role", "crate_kind", "features", "default_features"], path)?
+        units.append(
+            AdmittedSelectedUnit(
+                identity=nonempty(text_field(item, "identity", path)?, path + ["identity"])?,
+                node=GraphNode(
+                    package=decode_package(field(item, "package", path)?, path + ["package"])?,
+                    domain=decode_domain(text_field(item, "domain", path)?, path + ["domain"])?,
+                ),
+                role=decode_role(text_field(item, "role", path)?, path + ["role"])?,
+                crate_kind=decode_crate_kind(text_field(item, "crate_kind", path)?, path + ["crate_kind"])?,
+                features=strings(field(item, "features", path)?, path + ["features"])?,
+                default_features=boolean(field(item, "default_features", path)?, path + ["default_features"])?,
+            ),
+        )
+    return Ok(units)
+
+
+def decode_roots(value: JsonValue) -> Result[list[GraphRoot], SelectionError]:
+    """Decode the exact physical units selected as graph roots."""
+    values = array(value, ["roots"])?
+    mut roots: list[GraphRoot] = []
+    for index in range(len(values)):
+        path = ["roots", str(index)]
+        item = values[index]
+        exact_object(item, ["unit"], path)?
+        roots.append(GraphRoot(unit=nonempty(text_field(item, "unit", path)?, path + ["unit"])?))
+    return Ok(roots)
+
+
+def decode_bindings(value: JsonValue) -> Result[list[AdmittedSelectedEdge], SelectionError]:
+    """Decode raw physical graph edges for later source-policy classification."""
+    values = array(value, ["bindings"])?
+    mut bindings: list[AdmittedSelectedEdge] = []
+    for index in range(len(values)):
+        path = ["bindings", str(index)]
+        item = values[index]
+        exact_object(item, ["parent_unit", "alias", "child_unit"], path)?
+        bindings.append(
+            AdmittedSelectedEdge(
+                parent_unit=nonempty(text_field(item, "parent_unit", path)?, path + ["parent_unit"])?,
+                alias=nonempty(text_field(item, "alias", path)?, path + ["alias"])?,
+                child_unit=nonempty(text_field(item, "child_unit", path)?, path + ["child_unit"])?,
+            ),
+        )
+    return Ok(bindings)
+
+
+def decode_catalogs(value: JsonValue) -> Result[list[CatalogInput], SelectionError]:
+    """Decode source-owned package catalogs and their retained manifest evidence."""
+    values = array(value, ["catalogs"])?
+    mut catalogs: list[CatalogInput] = []
+    for index in range(len(values)):
+        path = ["catalogs", str(index)]
+        item = values[index]
+        exact_object(item, ["package", "manifest", "owner", "package_root", "members", "build_unit_present"], path)?
+        catalogs.append(
+            CatalogInput(
+                identity=decode_package(field(item, "package", path)?, path + ["package"])?,
+                manifest=decode_manifest(field(item, "manifest", path)?, path + ["manifest"])?,
+                owner=nonempty(text_field(item, "owner", path)?, path + ["owner"])?,
+                package_root=nonempty(text_field(item, "package_root", path)?, path + ["package_root"])?,
+                members=strings(field(item, "members", path)?, path + ["members"])?,
+                build_unit_present=boolean(field(item, "build_unit_present", path)?, path + ["build_unit_present"])?,
+            ),
+        )
+    return Ok(catalogs)
+
+
+def decode_package(value: JsonValue, path: list[str]) -> Result[SelectedPackageIdentity, SelectionError]:
+    """Decode one exact selected package coordinate."""
+    exact_object(value, ["name", "version", "source"], path)?
+    return Ok(
+        SelectedPackageIdentity(
+            package=nonempty(text_field(value, "name", path)?, path + ["name"])?,
+            version=nonempty(text_field(value, "version", path)?, path + ["version"])?,
+            source=nonempty(text_field(value, "source", path)?, path + ["source"])?,
+        ),
+    )
+
+
+def decode_manifest(value: JsonValue, path: list[str]) -> Result[ManifestEvidence, SelectionError]:
+    """Decode manifest bytes together with the digest supplied for source admission."""
+    exact_object(value, ["path", "bytes_hex", "sha256_hex"], path)?
+    raw = unhexlify(text_field(value, "bytes_hex", path)?).map_err((_) => invalid(path + ["bytes_hex"]))?
+    digest = unhexlify(text_field(value, "sha256_hex", path)?).map_err((_) => invalid(path + ["sha256_hex"]))?
+    source = from_utf8(raw).map_err((_) => invalid(path + ["bytes_hex"]))?
+    return Ok(
+        ManifestEvidence(
+            path=nonempty(text_field(value, "path", path)?, path + ["path"])?,
+            raw_bytes=raw,
+            source=str(source),
+            sha256_digest=digest,
+        ),
+    )
+
+
+def decode_context(value: JsonValue, path: list[str]) -> Result[ActivationContext, SelectionError]:
+    """Decode host, target, and global selection purpose used by source policy."""
+    exact_object(value, ["host", "target", "selection_purpose"], path)?
+    return Ok(
+        ActivationContext(
+            host=decode_target(field(value, "host", path)?, path + ["host"])?,
+            target=decode_target(field(value, "target", path)?, path + ["target"])?,
+            purpose=decode_purpose(text_field(value, "selection_purpose", path)?, path + ["selection_purpose"])?,
+            domain=DependencyDomain.Target,
+            requested_features=[],
+            default_features=false,
+            build_unit_present=false,
+        ),
+    )
+
+
+def decode_target(value: JsonValue, path: list[str]) -> Result[TargetConfiguration, SelectionError]:
+    """Decode one target triple and optional authenticated cfg snapshot."""
+    exact_object(value, ["triple", "cfg"], path)?
+    cfg = field(value, "cfg", path)?
+    if cfg.is_null():
+        triple = nonempty(text_field(value, "triple", path)?, path + ["triple"])?
+        return Ok(TargetConfiguration(triple=triple, cfg=None))
+    exact_object(cfg, ["flags", "values"], path + ["cfg"])?
+    values = field(cfg, "values", path + ["cfg"])?
+    if not values.is_object():
+        return Err(invalid(path + ["cfg", "values"]))
+    mut mapping: Dict[str, list[str]] = {}
+    for key in values.keys():
+        mapping[key] = strings(field(values, key, path + ["cfg", "values"])?, path + ["cfg", "values", key])?
+    flags = strings(field(cfg, "flags", path + ["cfg"])?, path + ["cfg", "flags"])?
+    return Ok(
+        TargetConfiguration(
+            triple=nonempty(text_field(value, "triple", path)?, path + ["triple"])?,
+            cfg=Some(CfgSnapshot(flags=flags, values=mapping)),
+        ),
+    )
+
+
+def decode_domain(value: str, path: list[str]) -> Result[DependencyDomain, SelectionError]:
+    """Decode the closed host-or-target dependency domain."""
+    if value == "host":
+        return Ok(DependencyDomain.Host)
+    if value == "target":
+        return Ok(DependencyDomain.Target)
+    return Err(invalid(path))
+
+
+def decode_purpose(value: str, path: list[str]) -> Result[ActivationPurpose, SelectionError]:
+    """Decode the closed normal-or-test selection purpose."""
+    if value == "normal":
+        return Ok(ActivationPurpose.Normal)
+    if value == "test":
+        return Ok(ActivationPurpose.Test)
+    return Err(invalid(path))
+
+
+def decode_role(value: str, path: list[str]) -> Result[SelectedUnitRole, SelectionError]:
+    """Decode a supported selected-unit role, refusing retired build-script roles."""
+    roles = {"library": SelectedUnitRole.Library, "binary": SelectedUnitRole.Binary, "unit_test": SelectedUnitRole.UnitTest, "integration_test": SelectedUnitRole.IntegrationTest, "example": SelectedUnitRole.Example, "doctest": SelectedUnitRole.Doctest, "benchmark": SelectedUnitRole.Benchmark, "proc_macro": SelectedUnitRole.ProcMacro, "compiler_support": SelectedUnitRole.CompilerSupport, "caller_projection": SelectedUnitRole.CallerProjection}
+    if value in roles:
+        return Ok(roles[value])
+    return Err(invalid(path))
+
+
+def decode_crate_kind(value: str, path: list[str]) -> Result[SelectedCrateKind, SelectionError]:
+    """Decode the physical crate kind copied from the selected graph."""
+    if value == "rlib":
+        return Ok(SelectedCrateKind.Rlib)
+    if value == "binary":
+        return Ok(SelectedCrateKind.Binary)
+    if value == "proc_macro":
+        return Ok(SelectedCrateKind.ProcMacro)
+    return Err(invalid(path))
+
+
+def catalog_for(
+    catalogs: list[CatalogInput],
+    identity: SelectedPackageIdentity,
+) -> Result[CatalogInput, SelectionError]:
+    """Require exactly one source catalog for a selected package identity."""
+    mut found: Option[CatalogInput] = None
+    for catalog in catalogs:
+        if catalog.identity == identity:
+            match found:
+                Some(_) => return Err(invalid(["catalogs", package_key(identity)]))
+                None =>
+                    found = Some(catalog)
+    if let Some(catalog) = found:
+        return Ok(catalog)
+    return Err(invalid(["catalogs", package_key(identity)]))
+
+
+def project_inventories(
+    catalogs: list[CatalogInput],
+    base: ActivationContext,
+    result: GraphActivation,
+) -> Result[list[PackageSourceInventory], SelectionError]:
+    """Project source facts from settled policy without discovering files or recomputing activation."""
+    mut inventories: list[PackageSourceInventory] = []
+    for index in range(len(result.nodes)):
+        node = result.nodes[index]
+        catalog = catalog_for(catalogs, node.package)?
+        context = ActivationContext(
+            host=base.host,
+            target=base.target,
+            purpose=result.purposes[index],
+            domain=node.domain,
+            requested_features=result.activations[index].effective_features,
+            default_features=false,
+            build_unit_present=catalog.build_unit_present,
+        )
+        inventory = package_source_inventory(
+            catalog.owner,
+            catalog.package_root,
+            catalog.manifest,
+            catalog.members,
+            context,
+            result.activations[index],
+        ).map_err((error) => intake_refusal(["inventories", package_key(node.package)], error))?
+        inventories.append(inventory)
+    return Ok(inventories)
+
+
+def encode_inventory(inventory: PackageSourceInventory) -> JsonValue:
+    """Encode retained package-source facts produced from settled policy."""
+    return JsonValue.object(
+        {"owner": JsonValue.string(inventory.owner), "package_root": JsonValue.string(inventory.package_root), "manifest": JsonValue.object(
+            {"path": JsonValue.string(inventory.manifest.path), "bytes_hex": JsonValue.string(
+                hexlify(inventory.manifest.raw_bytes),
+            ), "sha256_hex": JsonValue.string(hexlify(inventory.manifest.sha256_digest))},
+        ), "members": JsonValue.array([JsonValue.string(member) for member in inventory.members]), "build_unit_present": JsonValue.bool(
+            inventory.build_unit_present,
+        ), "effective_features": JsonValue.array([JsonValue.string(feature) for feature in inventory.effective_features])},
+    )
+
+
+def selected(
+    graph_digest: str,
+    units: list[AdmittedSelectedUnit],
+    bindings: list[AdmittedSelectedEdge],
+    result: GraphActivation,
+    inventories: list[PackageSourceInventory],
+) -> JsonValue:
+    """Encode the selected response while echoing authenticated physical identities and edges."""
+    mut activations: list[JsonValue] = []
+    for index in range(len(result.nodes)):
+        node = result.nodes[index]
+        purpose = "normal"
+        if result.purposes[index] == ActivationPurpose.Test:
+            purpose = "test"
+        domain = "target"
+        if node.domain == DependencyDomain.Host:
+            domain = "host"
+        activations.append(
+            JsonValue.object(
+                {"package": encode_package(node.package), "domain": JsonValue.string(domain), "purpose": JsonValue.string(
+                    purpose,
+                ), "effective_features": JsonValue.array(
+                    [JsonValue.string(feature) for feature in result.activations[index].effective_features],
+                )},
+            ),
+        )
+    mut physical_units: list[JsonValue] = []
+    for unit in units:
+        purpose = result.unit_purposes[unit.identity]
+        purpose_name = "normal"
+        if purpose == ActivationPurpose.Test:
+            purpose_name = "test"
+        physical_units.append(
+            JsonValue.object(
+                {"identity": JsonValue.string(unit.identity), "package": encode_package(unit.node.package), "domain": JsonValue.string(
+                    domain_name(unit.node.domain),
+                ), "purpose": JsonValue.string(purpose_name), "role": JsonValue.string(role_name(unit.role)), "crate_kind": JsonValue.string(
+                    crate_kind_name(unit.crate_kind),
+                ), "features": JsonValue.array([JsonValue.string(feature) for feature in unit.features]), "default_features": JsonValue.bool(
+                    unit.default_features,
+                )},
+            ),
+        )
+    return JsonValue.object(
+        {"schema": JsonValue.string(SCHEMA), "operation": JsonValue.string(OPERATION), "status": JsonValue.string(
+            "selected",
+        ), "graph_digest": JsonValue.string(graph_digest), "rounds": JsonValue.int(result.rounds), "activations": JsonValue.array(
+            activations,
+        ), "units": JsonValue.array(physical_units), "bindings": JsonValue.array(
+            [JsonValue.object(
+                {"parent_unit": JsonValue.string(binding.parent_unit), "alias": JsonValue.string(binding.alias), "child_unit": JsonValue.string(
+                    binding.child_unit,
+                )},
+            ) for binding in bindings],
+        ), "inventories": JsonValue.array([encode_inventory(inventory) for inventory in inventories]), "warnings": JsonValue.array(
+            [JsonValue.object(
+                {"owner": JsonValue.string(warning.owner), "package_root": JsonValue.string(warning.package_root)},
+            ) for warning in inert_build_script_warnings(inventories)],
+        )},
+    )
+
+
+def domain_name(domain: DependencyDomain) -> str:
+    """Return the stable wire name for a dependency domain."""
+    if domain == DependencyDomain.Host:
+        return "host"
+    return "target"
+
+
+def role_name(role: SelectedUnitRole) -> str:
+    """Return the stable wire name for a selected-unit role."""
+    return role.value()
+
+
+def crate_kind_name(kind: SelectedCrateKind) -> str:
+    """Return the stable wire name for a selected crate kind."""
+    return kind.value()
+
+
+def encode_package(identity: SelectedPackageIdentity) -> JsonValue:
+    """Encode one exact package coordinate for response validation."""
+    return JsonValue.object(
+        {"name": JsonValue.string(identity.package), "version": JsonValue.string(identity.version), "source": JsonValue.string(
+            identity.source,
+        )},
+    )
+
+
+def refused(error: SelectionError) -> JsonValue:
+    """Encode a fail-closed response without leaking unstable diagnostic prose."""
+    return JsonValue.object(
+        {"schema": JsonValue.string(SCHEMA), "operation": JsonValue.string(OPERATION), "status": JsonValue.string(
+            "refused",
+        ), "error": JsonValue.object(
+            {"kind": JsonValue.string(error.kind.value()), "fields": JsonValue.array(
+                [JsonValue.string(part) for part in error.fields],
+            )},
+        )},
+    )
+
+
+def intake_refusal(path: list[str], error: IntakeError) -> SelectionError:
+    """Attach exchange location to a source-intake refusal."""
+    return SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + error.field)
+
+
+def invalid(path: list[str]) -> SelectionError:
+    """Construct an invalid-input refusal at the supplied exchange path."""
+    return SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path)
+
+
+def nonempty(value: str, path: list[str]) -> Result[str, SelectionError]:
+    """Require a nonempty identity-bearing wire string."""
+    if value == "":
+        return Err(invalid(path))
+    return Ok(value)

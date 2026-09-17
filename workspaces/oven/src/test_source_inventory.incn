@@ -11,6 +11,7 @@ from rust_activation import (
     ActivationContext,
     ActivationPurpose,
     CfgSnapshot,
+    DependencyDomain,
     RustActivation,
     TargetConfiguration,
 )
@@ -57,6 +58,7 @@ def host_context(build_unit: bool) -> ActivationContext:
         host=unit,
         target=unit,
         purpose=ActivationPurpose.Normal,
+        domain=DependencyDomain.Target,
         requested_features=[],
         default_features=true,
         build_unit_present=build_unit,
