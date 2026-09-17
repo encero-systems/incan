@@ -298,7 +298,7 @@ def decode_linked_libraries(value: JsonValue, path: list[str]) -> Result[JsonVal
             member_path = artifact_path[len(prefix):len(artifact_path)]
             match members.get(member_path):
                 Some(member_digest) =>
-                    if member_digest != declared_digest:
+                    if str(member_digest) != declared_digest:
                         return Err(invalid(item_path + ["members"]))
                 None => return Err(invalid(item_path + ["members"]))
         else:
