@@ -196,11 +196,12 @@ def decode_manifest(value: JsonValue, path: list[str]) -> Result[ManifestEvidenc
     raw = unhexlify(text_field(value, "bytes_hex", path)?).map_err((_) => invalid(path + ["bytes_hex"]))?
     digest = unhexlify(text_field(value, "sha256_hex", path)?).map_err((_) => invalid(path + ["sha256_hex"]))?
     source = from_utf8(raw).map_err((_) => invalid(path + ["bytes_hex"]))?
+    owned_source = str(source)
     return Ok(
         ManifestEvidence(
             path=nonempty(text_field(value, "path", path)?, path + ["path"])?,
             raw_bytes=raw,
-            source=str(source),
+            source=owned_source,
             sha256_digest=digest,
         ),
     )

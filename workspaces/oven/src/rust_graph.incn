@@ -61,6 +61,7 @@ pub model NodeDemand:
     pub default_features: bool
 
 
+@derive(Eq)
 pub enum SelectedUnitRole(str):
     """Policy-relevant role copied from a host-validated selected Rust facet unit."""
 
@@ -76,6 +77,7 @@ pub enum SelectedUnitRole(str):
     CallerProjection = "caller_projection"
 
 
+@derive(Eq)
 pub enum SelectedCrateKind(str):
     """Exact crate kind copied from a host-validated selected Rust facet unit."""
 

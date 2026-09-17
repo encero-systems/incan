@@ -73,8 +73,9 @@ pub def test_selected_leaf_echoes_authenticated_graph_identity() -> None:
     match response.get("activations"):
         None => fail("selected response omitted activations")
         Some(value) =>
-            if value.as_array() == None:
-                fail("selected response activations were not an array")
+            match value.as_array():
+                None => fail("selected response activations were not an array")
+                Some(_) => pass
 
 
 pub def test_core_engine_dispatches_the_rust_policy_schema() -> None:
