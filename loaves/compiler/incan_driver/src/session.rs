@@ -226,6 +226,8 @@ pub struct CompilationSession {
     /// Collection, requirement discovery, and semantic analysis all need the same projection. Rebuilding it makes
     /// every command rehash provider source roots and, worse, lets a mutable local cache dominate the warm path.
     provider_plans_by_modules: ProviderPlanCache,
+    /// Semantic provider identities reused only within this checked compilation context.
+    provider_semantic_identities: Arc<incan_provider::lock_semantics::ProviderSemanticIdentitySession>,
     /// Integrity-checked active SDK catalog, when this toolchain is component-aware.
     pub sdk_inventory: Option<Arc<SdkInventory>>,
     /// Project-selected SDK component closure, when an inventory is active.
@@ -431,6 +433,9 @@ impl CompilationSession {
             library_manifest_index,
             provider_plan,
             provider_plans_by_modules,
+            provider_semantic_identities: Arc::new(
+                incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
+            ),
             sdk_inventory,
             sdk_components,
             package_feature_plan,
@@ -440,6 +445,17 @@ impl CompilationSession {
             library_imported_dsl_surfaces,
             contract_model_bundles,
         })
+    }
+
+    /// Return provider semantic identities after revalidating their exact physical and dependency context.
+    pub fn provider_semantic_identities(
+        &self,
+        provider_plan: &ProviderPlan,
+        sdk_path_dependencies: &[oven_model::manifest::DependencySpec],
+    ) -> CliResult<Arc<BTreeMap<String, String>>> {
+        self.provider_semantic_identities
+            .identities(provider_plan, sdk_path_dependencies)
+            .map_err(CliError::failure)
     }
 
     /// Resolve module participation from this session's immutable provider, feature, and SDK inputs.
@@ -737,6 +753,9 @@ mod tests {
                 BTreeSet::new(),
                 Arc::clone(&provider_plan),
             )]))),
+            provider_semantic_identities: Arc::new(
+                incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
+            ),
             provider_plan,
             sdk_inventory: None,
             sdk_components: None,

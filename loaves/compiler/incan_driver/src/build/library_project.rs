@@ -48,7 +48,7 @@ use crate::build_report::{
     BuildOvenReport, BuildReportDraft, BuildReportMode, cargo_report, dependencies_report, generated_project_report,
     incan_dependencies_report, interop_report, oven_generated_project_report, semantic_report,
 };
-use crate::build_unit::oven_build_unit_inputs;
+use crate::build_unit::oven_build_unit_inputs_with_provider_identities;
 use crate::cargo_policy::{CargoPolicy, cargo_command_flags, enforce_project_toolchain_constraint};
 use crate::diagnostics::render_module_warnings;
 use crate::error::{CliError, CliResult, oven_plan_error, oven_rustc_error};
@@ -89,7 +89,6 @@ use incan_frontend::{ParsedModule, diagnostics, typechecker};
 use incan_provider::compiled_sdk::CompiledSdkModules;
 use incan_provider::dependency_resolver::resolve_reachable_dependencies;
 use incan_provider::inventory::extend_requirements_with_provider_plan;
-use incan_provider::lock_semantics::semantic_lock_state;
 use incan_provider::requirements::{
     INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, collect_project_requirements, merge_project_requirement_dependencies,
     semantic_sdk_path_dependencies,
@@ -195,14 +194,16 @@ pub fn prepare_library_project(
     let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
     let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
-    let semantic = semantic_lock_state(
+    let provider_semantic_identities =
+        compilation_session.provider_semantic_identities(&provider_plan, &semantic_sdk_paths)?;
+    let semantic = incan_provider::lock_semantics::semantic_lock_state_with_provider_identities(
         &project_root,
         manifest.interop_c(),
         compilation_session.sdk_inventory.as_deref(),
         compilation_session.sdk_components.as_ref(),
         Some(&package_feature_plan),
         &provider_plan,
-        &semantic_sdk_paths,
+        &provider_semantic_identities,
     )
     .map_err(CliError::failure)?;
     let contract_model_bundles = read_project_model_bundles(&project_root, &manifest.contract_model_bundle_paths())
@@ -371,7 +372,14 @@ pub fn prepare_library_project(
     };
     record_timing(&mut timings_ms, "library_resolve_lock_payload", lock_start);
     let mut oven_build_inputs = normal_oven
-        .then(|| oven_build_unit_inputs(&provider_plan, &project_requirements, &resolved))
+        .then(|| {
+            oven_build_unit_inputs_with_provider_identities(
+                &provider_plan,
+                &project_requirements,
+                &resolved,
+                &provider_semantic_identities,
+            )
+        })
         .transpose()?;
     let source_compiler_vocab_support =
         normal_oven && manifest.vocab().is_some() && oven_cargo_compat::source_compiler_vocab_support_is_available();

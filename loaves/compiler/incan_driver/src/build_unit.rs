@@ -28,6 +28,25 @@ pub fn oven_build_unit_inputs(
     resolved: &ResolvedDependencies,
 ) -> CliResult<BTreeMap<String, String>> {
     let provider_records = oven_native_provider_records(provider_plan, &semantic_sdk_path_dependencies(requirements))?;
+    oven_build_unit_inputs_with_provider_records(requirements, resolved, provider_records)
+}
+
+/// Build unit inputs using provider records already checked by the current compilation session.
+pub fn oven_build_unit_inputs_with_provider_identities(
+    provider_plan: &ProviderPlan,
+    requirements: &ProjectRequirements,
+    resolved: &ResolvedDependencies,
+    semantic_identities: &BTreeMap<String, String>,
+) -> CliResult<BTreeMap<String, String>> {
+    let provider_records = oven_native_provider_records_with_identities(provider_plan, semantic_identities)?;
+    oven_build_unit_inputs_with_provider_records(requirements, resolved, provider_records)
+}
+
+fn oven_build_unit_inputs_with_provider_records(
+    requirements: &ProjectRequirements,
+    resolved: &ResolvedDependencies,
+    provider_records: Vec<String>,
+) -> CliResult<BTreeMap<String, String>> {
     let mut dependencies = resolved.dependencies.clone();
     dependencies.extend(resolved.dev_dependencies.clone());
     let dependency_digest = digest_dependency_specs(&dependencies, incan_oven_facet::provider_hooks().as_ref())
@@ -54,6 +73,14 @@ pub fn oven_native_provider_records(
 ) -> CliResult<Vec<String>> {
     let semantic_identities =
         provider_semantic_identities(provider_plan, sdk_path_dependencies).map_err(CliError::failure)?;
+    oven_native_provider_records_with_identities(provider_plan, &semantic_identities)
+}
+
+/// Encode selected native provider records from identities checked by the current compilation session.
+pub fn oven_native_provider_records_with_identities(
+    provider_plan: &ProviderPlan,
+    semantic_identities: &BTreeMap<String, String>,
+) -> CliResult<Vec<String>> {
     let direct_sdk_link_roots = provider_plan
         .sdk_link_roots()
         .into_iter()
