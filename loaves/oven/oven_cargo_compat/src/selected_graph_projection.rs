@@ -20,8 +20,8 @@ use oven_store::OvenReceipt;
 use serde::Serialize;
 
 use super::{
-    OvenLegacyCargoError, OvenLegacyCargoSelectedGeneratedOutput, OvenLegacyCargoSelectedUnit,
-    OvenLegacyCargoSelectedUnitCapture,
+    OvenLegacyCargoBuildScriptToolProbe, OvenLegacyCargoError, OvenLegacyCargoSelectedGeneratedOutput,
+    OvenLegacyCargoSelectedUnit, OvenLegacyCargoSelectedUnitCapture,
 };
 
 /// Receipt key binding the complete selected build-script closure to a final publisher transaction.
@@ -103,8 +103,6 @@ pub struct OvenLegacyCargoSelectedGraphProjection {
     pub generated: BTreeMap<(usize, usize), OvenLegacyCargoSelectedGeneratedBinding>,
     /// Environment and linked-library closures keyed by the same consuming build-script edge.
     pub build_scripts: BTreeMap<(usize, usize), OvenLegacyCargoSelectedBuildScriptBinding>,
-    /// Verified final receipt that binds the complete selected build-script observation-to-binding join.
-    pub build_script_authority_receipt: Option<OvenReceipt>,
 }
 
 /// Project one exact physical Cargo capture into a rootless selected Rust graph.
@@ -115,10 +113,11 @@ pub struct OvenLegacyCargoSelectedGraphProjection {
 pub fn project_legacy_cargo_selected_graph(
     capture: &OvenLegacyCargoSelectedUnitCapture,
     sealed: &OvenLegacyCargoSelectedGraphProjection,
+    final_receipt: Option<&OvenReceipt>,
 ) -> Result<OvenSelectedRustFacetGraph, OvenLegacyCargoError> {
     validate_projection_compiler(capture, sealed)?;
     validate_projection_bindings(capture, sealed)?;
-    validate_build_script_authority(capture, sealed)?;
+    validate_build_script_authority(capture, sealed, final_receipt)?;
 
     let mut pending = (0..capture.units.len())
         .filter(|index| !is_build_script_unit(&capture.units[*index]))
@@ -203,7 +202,7 @@ pub fn project_and_bind_compiler_support_selected_graph(
     capture_receipt: &OvenReceipt,
     final_receipt: &OvenReceipt,
 ) -> Result<ValidatedOvenSelectedRustFacetGraph, OvenLegacyCargoError> {
-    let graph = project_legacy_cargo_selected_graph(capture, sealed)?;
+    let graph = project_legacy_cargo_selected_graph(capture, sealed, Some(final_receipt))?;
     bind_compiler_support_root_intents(graph, authority, capture_receipt, final_receipt)
         .map_err(|error| projection_error("compiler-support selected graph", &error.to_string()))
 }
@@ -248,6 +247,7 @@ struct BuildScriptAuthorityRecord<'a> {
     environment: &'a BTreeMap<String, String>,
     linked_libraries: &'a [String],
     linked_paths: &'a [String],
+    tool_probes: Vec<&'a OvenLegacyCargoBuildScriptToolProbe>,
     output: Option<&'a OvenLegacyCargoSelectedGeneratedOutput>,
     binding: Option<&'a OvenLegacyCargoSelectedBuildScriptBinding>,
 }
@@ -273,6 +273,7 @@ pub fn legacy_cargo_build_script_closure_digest(
                 .build_script
                 .as_ref()
                 .ok_or_else(|| projection_error("selected build-script unit", "has no structured retained facts"))?;
+            let tool_probes = build_script_tool_probes(capture, build_unit, facts)?;
             records.push(BuildScriptAuthorityRecord {
                 consumer,
                 build_unit: dependency.unit_index,
@@ -281,6 +282,7 @@ pub fn legacy_cargo_build_script_closure_digest(
                 environment: &facts.environment,
                 linked_libraries: &facts.linked_libraries,
                 linked_paths: &facts.linked_paths,
+                tool_probes,
                 output: facts.output.as_ref(),
                 binding: bindings.get(&(consumer, dependency.unit_index)),
             });
@@ -291,24 +293,57 @@ pub fn legacy_cargo_build_script_closure_digest(
     Ok(oven_rustc::rustc::selected_graph_sha256(&bytes))
 }
 
+/// Bind every transient compiler probe to one exact captured run-custom-build record.
+fn build_script_tool_probes<'a>(
+    capture: &'a OvenLegacyCargoSelectedUnitCapture,
+    build_unit: &'a OvenLegacyCargoSelectedUnit,
+    facts: &'a super::OvenLegacyCargoBuildScriptFacts,
+) -> Result<Vec<&'a OvenLegacyCargoBuildScriptToolProbe>, OvenLegacyCargoError> {
+    let domain = build_unit
+        .platform
+        .as_deref()
+        .ok_or_else(|| projection_error("selected build-script unit", "has no captured target domain"))?;
+    let mut selected = Vec::new();
+    for probe in &capture.build_script_tool_probes {
+        let matches_unit =
+            probe.package_id == build_unit.package_id && probe.out_dir == facts.out_dir && probe.domain == domain;
+        if matches_unit {
+            selected.push(probe);
+        }
+        let matches = capture
+            .units
+            .iter()
+            .filter(|unit| {
+                is_build_script_unit(unit)
+                    && unit.package_id == probe.package_id
+                    && unit.platform.as_deref() == Some(probe.domain.as_str())
+                    && unit
+                        .build_script
+                        .as_ref()
+                        .is_some_and(|record| record.out_dir == probe.out_dir)
+            })
+            .count();
+        if matches != 1 {
+            return Err(projection_error(
+                "selected build-script tool probe",
+                "does not bind one exact selected run-custom-build unit",
+            ));
+        }
+    }
+    Ok(selected)
+}
+
 /// Require every selected build-script closure to be sealed by the verified final publisher receipt.
 fn validate_build_script_authority(
     capture: &OvenLegacyCargoSelectedUnitCapture,
     sealed: &OvenLegacyCargoSelectedGraphProjection,
+    final_receipt: Option<&OvenReceipt>,
 ) -> Result<(), OvenLegacyCargoError> {
     let has_build_script = capture.units.iter().any(is_build_script_unit);
     if !has_build_script {
-        if sealed.build_script_authority_receipt.is_some() {
-            return Err(projection_error(
-                "selected build-script closure",
-                "has a receipt without a selected build-script unit",
-            ));
-        }
         return Ok(());
     }
-    let receipt = sealed
-        .build_script_authority_receipt
-        .as_ref()
+    let receipt = final_receipt
         .ok_or_else(|| projection_error("selected build-script closure", "has no final receipt authority"))?;
     receipt
         .verify_identity()
@@ -973,17 +1008,16 @@ mod tests {
             )]),
             generated: BTreeMap::new(),
             build_scripts: BTreeMap::new(),
-            build_script_authority_receipt: None,
         })
     }
 
-    fn bind_build_script_authority(
+    fn closure_final_receipt(
         capture: &OvenLegacyCargoSelectedUnitCapture,
-        sealed: &mut OvenLegacyCargoSelectedGraphProjection,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+        sealed: &OvenLegacyCargoSelectedGraphProjection,
+    ) -> Result<OvenReceipt, Box<dyn std::error::Error>> {
         let directory = tempdir()?;
         let digest = legacy_cargo_build_script_closure_digest(capture, &sealed.build_scripts)?;
-        sealed.build_script_authority_receipt = Some(receipt_generated_project(
+        receipt_generated_project(
             &OvenGeneratedProjectRequest::new(
                 directory.path(),
                 "selected-graph-fixture",
@@ -994,15 +1028,14 @@ mod tests {
                 Vec::new(),
             )
             .with_build_unit_input(OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, digest),
-        )?);
-        Ok(())
+        )
     }
 
     #[test]
     fn projection_retains_observed_compiler_support_features_without_creating_roots()
     -> Result<(), Box<dyn std::error::Error>> {
         let capture = capture()?;
-        let graph = project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?)?;
+        let graph = project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?, None)?;
         assert!(graph.exposed_roots.is_empty());
         assert_eq!(graph.units[0].role, OvenSelectedRustFacetUnitRole::Library);
         assert_eq!(graph.units[0].features, ["derive"]);
@@ -1015,7 +1048,7 @@ mod tests {
         capture.units[0].target_name = "fixture-bin".to_string();
         capture.units[0].target_kinds = vec!["bin".to_string()];
         capture.units[0].crate_types = vec!["bin".to_string()];
-        let graph = project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?)?;
+        let graph = project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?, None)?;
         assert_eq!(graph.units[0].role, OvenSelectedRustFacetUnitRole::Binary);
         Ok(())
     }
@@ -1033,7 +1066,7 @@ mod tests {
             .ok_or("fixture registry catalog missing")?
             .source
             .checksum = "sha256:substituted".to_string();
-        assert!(project_legacy_cargo_selected_graph(&capture, &sealed).is_err());
+        assert!(project_legacy_cargo_selected_graph(&capture, &sealed, None).is_err());
         Ok(())
     }
 
@@ -1042,7 +1075,7 @@ mod tests {
         let capture = capture()?;
         let mut sealed = sealed(&capture)?;
         sealed.selection.target_cfg.flags.push("unix".to_string());
-        assert!(project_legacy_cargo_selected_graph(&capture, &sealed).is_err());
+        assert!(project_legacy_cargo_selected_graph(&capture, &sealed, None).is_err());
         Ok(())
     }
 
@@ -1050,7 +1083,7 @@ mod tests {
     fn projection_refuses_generic_capture_without_a_stable_trace() -> Result<(), Box<dyn std::error::Error>> {
         let mut capture = capture()?;
         capture.rustc_invocations_observed = false;
-        assert!(project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?).is_err());
+        assert!(project_legacy_cargo_selected_graph(&capture, &sealed(&capture)?, None).is_err());
         Ok(())
     }
 
@@ -1058,7 +1091,7 @@ mod tests {
     fn compiler_support_projection_binds_only_the_sealed_root_authority() -> Result<(), Box<dyn std::error::Error>> {
         let capture = capture()?;
         let sealed = sealed(&capture)?;
-        let raw = project_legacy_cargo_selected_graph(&capture, &sealed)?;
+        let raw = project_legacy_cargo_selected_graph(&capture, &sealed, None)?;
         let directory = tempdir()?;
         let capture_receipt = receipt_generated_project(&OvenGeneratedProjectRequest::new(
             directory.path(),
@@ -1166,8 +1199,8 @@ mod tests {
             },
         );
 
-        bind_build_script_authority(&capture, &mut sealed)?;
-        let graph = project_legacy_cargo_selected_graph(&capture, &sealed)?;
+        let final_receipt = closure_final_receipt(&capture, &sealed)?;
+        let graph = project_legacy_cargo_selected_graph(&capture, &sealed, Some(&final_receipt))?;
         assert_eq!(graph.units[0].cfg, ["has_bindings", "target_has_atomic=\"8\""]);
         assert_eq!(graph.units[0].generated_inputs.len(), 1);
         assert_eq!(graph.units[0].generated_inputs[0].name, "bindings");
@@ -1189,7 +1222,7 @@ mod tests {
                 digest: digest(b"unused"),
             },
         );
-        assert!(project_legacy_cargo_selected_graph(&capture, &sealed).is_err());
+        assert!(project_legacy_cargo_selected_graph(&capture, &sealed, None).is_err());
         Ok(())
     }
 
@@ -1268,9 +1301,34 @@ mod tests {
                 }),
             },
         );
-        assert!(project_legacy_cargo_selected_graph(&capture, &sealed).is_err());
-        bind_build_script_authority(&capture, &mut sealed)?;
-        let graph = project_legacy_cargo_selected_graph(&capture, &sealed)?;
+        capture
+            .build_script_tool_probes
+            .push(super::super::OvenLegacyCargoBuildScriptToolProbe {
+                package_id: capture.units[1].package_id.clone(),
+                out_dir: PathBuf::from("/transient/out"),
+                domain: "x86_64-unknown-linux-gnu".to_string(),
+                digest: digest(b"first bounded probe"),
+            });
+        let first_probe_digest = legacy_cargo_build_script_closure_digest(&capture, &sealed.build_scripts)?;
+        capture.build_script_tool_probes[0].digest = digest(b"changed bounded probe");
+        assert_ne!(
+            first_probe_digest,
+            legacy_cargo_build_script_closure_digest(&capture, &sealed.build_scripts)?
+        );
+        assert!(project_legacy_cargo_selected_graph(&capture, &sealed, None).is_err());
+        let wrong_receipt_directory = tempdir()?;
+        let wrong_final_receipt = receipt_generated_project(&OvenGeneratedProjectRequest::new(
+            wrong_receipt_directory.path(),
+            "selected-graph-fixture",
+            "1.0.0",
+            "x86_64-unknown-linux-gnu",
+            "rustc 1.98.0",
+            "release",
+            Vec::new(),
+        ))?;
+        assert!(project_legacy_cargo_selected_graph(&capture, &sealed, Some(&wrong_final_receipt)).is_err());
+        let final_receipt = closure_final_receipt(&capture, &sealed)?;
+        let graph = project_legacy_cargo_selected_graph(&capture, &sealed, Some(&final_receipt))?;
         assert_eq!(
             graph.units[0].environment["DEP_FIXTURE"],
             OvenSelectedRustFacetEnvironmentValue::Text {
