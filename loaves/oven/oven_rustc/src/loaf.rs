@@ -2047,6 +2047,8 @@ pub struct OvenHeldReleaseRuntimeFoundation {
     pub asset: crate::rustc::OvenMaterializedRuntimeFoundationAsset,
     /// Exact compiled Loaf manifest whose artifact catalogue the foundation matches.
     pub compiled_loaf: PathBuf,
+    /// Exact compiled Loaf identity bound by the runtime foundation descriptor.
+    pub compiled_loaf_identity: String,
     /// Exact retained compiler/sysroot closure used for runtime rebuilds.
     pub compiler: crate::rustc::OvenRuntimeCompilerClosure,
     /// Exact rebuilt dependency closure admitted from this same held generation.
@@ -2247,6 +2249,7 @@ pub fn acquire_committed_release_runtime_foundation(
         label: member.label.clone(),
         asset,
         compiled_loaf: loaf_root.join(&compiled.path),
+        compiled_loaf_identity: member.compiled_loaf_identity.clone(),
         compiler: crate::rustc::OvenRuntimeCompilerClosure::new(
             loaf_root
                 .join(generation_directory_path(&manifest.generation_identity))

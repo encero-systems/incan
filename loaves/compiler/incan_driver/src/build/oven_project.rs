@@ -719,6 +719,16 @@ pub fn prepare_oven_project(
                         )
                     })?
             };
+            let held_intent = &held.asset.foundation().selected_graph().graph().selection.intent;
+            if held.compiled_loaf_identity != native.loaf_identity
+                || held_intent.target != receipt.intent.target
+                || held_intent.toolchain != receipt.intent.toolchain
+                || held_intent.profile != receipt.intent.profile
+            {
+                return Err(CliError::failure(
+                    "selected ToolchainLoaf does not match its runtime foundation authority".to_string(),
+                ));
+            }
             if held.closure.is_none() {
                 return Err(CliError::failure(
                     "selected ToolchainLoaf release has no admitted runtime dependency closure".to_string(),
