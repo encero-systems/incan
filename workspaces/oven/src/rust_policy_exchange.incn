@@ -199,7 +199,7 @@ def validate_root_intents(
         mut selected: Option[AdmittedSelectedUnit] = None
         for unit in units:
             if unit.identity == root.unit:
-                if selected.is_some():
+                if let Some(_) = selected:
                     return Err(invalid(["roots", str(root_index), "unit"]))
                 selected = Some(unit)
         match selected:
