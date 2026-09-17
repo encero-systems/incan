@@ -27,6 +27,8 @@ INCAN_TEST_OVEN_COMPILER_SUITE_STORE ?= $(TARGET_DIR)/oven-compiler-suite-store
 # Caller-owned compiler-suite outputs are one-use. `test-oven` creates a fresh directory below this root and removes
 # it after reporting its physical disk use, so repeated local runs cannot reuse a stale test binary or accumulate it.
 INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT ?= $(TARGET_DIR)
+# Keep this absolute root short: nested Rust fixture tools have platform path-length limits.
+INCAN_TEST_TMP_ROOT ?= /tmp
 # Oven owns the release and compiler-suite storage profiles. Make supplies roots and deliberate test inputs only;
 # refusal tests pass explicit tiny CLI limits rather than redefining production policy here.
 INCAN_TEST_OVEN_BAKE_FORMAT ?= text
@@ -47,6 +49,7 @@ INCAN_TEST_FIXTURE_CARGO_TOOLCHAIN ?= $(INCAN_TEST_PUBLISHER_TOOLCHAIN)
 INCAN_TEST_LOAF_TOOLCHAIN ?= 1.98.0
 INCAN_TEST_SUITE_TOOLCHAIN ?= 1.98.0
 TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS) \
+	INCAN_TEST_TMP_ROOT="$(abspath $(INCAN_TEST_TMP_ROOT))" \
 	INCAN_GENERATED_CARGO_TARGET_DIR="$(INCAN_TEST_GENERATED_CARGO_TARGET_DIR)" \
 	INCAN_INTERNAL_SDK_PROVIDER_STORE="$(INCAN_TEST_SDK_PROVIDER_STORE)" \
 	INCAN_HOME="$(INCAN_TEST_OVEN_HOME)" \
@@ -367,16 +370,16 @@ test-oven-partition:
 		INCAN_TEST_OVEN_COMPILER_SUITE_PARTITION_ARGS='--partition-index $(INCAN_TEST_OVEN_PARTITION_INDEX) --partition-count $(INCAN_TEST_OVEN_PARTITION_COUNT)'
 
 # Rust-analyzer fixture metadata creates nested Cargo lockfile copies. The Unix-only Oven suite therefore owns a
-# short `/tmp` scratch directory instead of inheriting an arbitrarily deep worktree `TMPDIR`.
+# short scratch directory below INCAN_TEST_TMP_ROOT instead of an arbitrarily deep worktree TMPDIR.
 .PHONY: test-oven-replay
 test-oven-replay:
 	@echo "\033[1mRunning prepared compiler-suite replay through Oven...\033[0m"
 	@set -e; \
 		suite_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
 		command_started=0; \
-		mkdir -p "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)"; \
+		mkdir -p "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)" "$(INCAN_TEST_TMP_ROOT)"; \
 		suite_output="$$(mktemp -d "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)/oven-compiler-suite-output.XXXXXX")"; \
-		suite_tmp="$$(mktemp -d "/tmp/incan-oven-suite.XXXXXX")"; \
+		suite_tmp="$$(mktemp -d "$(INCAN_TEST_TMP_ROOT)/incan-oven-suite.XXXXXX")"; \
 		suite_succeeded=false; \
 		cleanup_suite_output() { \
 			suite_status=$$?; \
@@ -752,9 +755,9 @@ test-one: test-prewarm-oven-loafs
 	@set -e; \
 		root_started="$$(python3 scripts/retain_oven_suite_output.py --clock)"; \
 		command_started=0; \
-		mkdir -p "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)"; \
+		mkdir -p "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)" "$(INCAN_TEST_TMP_ROOT)"; \
 		root_output="$$(mktemp -d "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)/oven-test-one.XXXXXX")"; \
-		root_tmp="$$(mktemp -d "/tmp/incan-oven-root.XXXXXX")"; \
+		root_tmp="$$(mktemp -d "$(INCAN_TEST_TMP_ROOT)/incan-oven-root.XXXXXX")"; \
 		root_succeeded=false; \
 		cleanup_root_output() { \
 			root_status=$$?; \
