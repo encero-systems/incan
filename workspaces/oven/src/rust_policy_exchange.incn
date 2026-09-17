@@ -256,7 +256,9 @@ def decode_linked_libraries(value: JsonValue, path: list[str]) -> Result[JsonVal
             decode_members(members_value, item_path + ["members"], false)?
             artifact_path = text_field(artifact, "path", item_path + ["artifact"])?
             search_root_path = text_field(search_root, "path", item_path + ["search_root"])?
-            prefix = "" if search_root_path == "." else search_root_path + "/"
+            mut prefix = ""
+            if search_root_path != ".":
+                prefix = search_root_path + "/"
             if not artifact_path.startswith(prefix):
                 return Err(invalid(item_path + ["artifact"]))
             member_path = artifact_path[len(prefix):len(artifact_path)]
