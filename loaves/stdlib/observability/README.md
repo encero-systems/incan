@@ -15,4 +15,4 @@ stdlib/observability/
 
 Component-level tests are reserved under `loaves/stdlib/observability/tests/`; the directory is empty today.
 
-Rust and Incan live in the same directory because the component is the unit of versioning, ownership, testing, and runtime-dependency attribution. A project importing `std.logging` should pull this component's runtime crates and nothing else.
+Rust and Incan live in the same directory because the component is the unit of versioning, ownership, testing, and runtime-dependency attribution. A project importing `std.logging` should pull this component and its declared dependency closure, without unrelated components.
