@@ -1252,11 +1252,20 @@ pub fn prepare_direct_rustc_plan(
             &cargo_outputs,
         )?
     };
+    let mut materialized_directories = Vec::new();
     if let Some(selected_units) = selected_units.as_mut() {
         supporting_artifacts.extend(retain_legacy_cargo_selected_generated_outputs(
             selected_units,
             &staging,
         )?);
+        materialized_directories = retained_empty_generated_output_directories(
+            &staging,
+            selected_units
+                .units
+                .iter()
+                .filter_map(|unit| unit.build_script.as_ref())
+                .filter_map(|build_script| build_script.output.as_ref()),
+        );
     }
     let provider_entrypoints = provider_compilation_externs(
         request.provider_compilations,
@@ -1516,7 +1525,7 @@ pub fn prepare_direct_rustc_plan(
         kind,
         payload,
         materialized_files,
-        materialized_directories: Vec::new(),
+        materialized_directories,
     };
     let transient_reservation_bytes = conservative_directory_reservation(&staging)?;
     request
@@ -1535,6 +1544,23 @@ pub fn prepare_direct_rustc_plan(
         transient_reservation_bytes,
         reclaimed_store_entries,
     })
+}
+
+fn retained_empty_generated_output_directories<'a>(
+    staging: &Path,
+    outputs: impl IntoIterator<Item = &'a OvenLegacyCargoSelectedGeneratedOutput>,
+) -> Vec<OvenArtifactMaterializedDirectory> {
+    let mut directories = outputs
+        .into_iter()
+        .filter(|output| output.members.is_empty())
+        .map(|output| OvenArtifactMaterializedDirectory {
+            source_path: staging.join(&output.relative_root),
+            relative_path: output.relative_root.clone(),
+        })
+        .collect::<Vec<_>>();
+    directories.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    directories.dedup_by(|left, right| left.relative_path == right.relative_path);
+    directories
 }
 
 /// Return a reusable project extension only when its exact project receipt and selected standard-library base match.
@@ -4325,7 +4351,7 @@ mod tests {
             "generated-outputs/{}",
             empty_digest.strip_prefix("sha256:").unwrap_or(&empty_digest)
         );
-        fs::create_dir_all(staging.path().join(&relative_root))?;
+        fs::create_dir_all(staging.path().join("foundation").join(&relative_root))?;
         fs::write(staging.path().join("foundation.json"), b"{}")?;
         let materialized_files = materialized_files_from_directory(
             staging.path(),
@@ -4344,10 +4370,14 @@ mod tests {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: b"fixture plan".to_vec(),
             materialized_files,
-            materialized_directories: vec![OvenArtifactMaterializedDirectory {
-                source_path: staging.path().join(&relative_root),
-                relative_path: format!("foundation/{relative_root}"),
-            }],
+            materialized_directories: retained_empty_generated_output_directories(
+                staging.path(),
+                [&OvenLegacyCargoSelectedGeneratedOutput {
+                    relative_root: format!("foundation/{relative_root}"),
+                    digest: empty_digest,
+                    members: Vec::new(),
+                }],
+            ),
         })?;
 
         let local_root = tempfile::tempdir()?;

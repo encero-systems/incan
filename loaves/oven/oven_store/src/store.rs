@@ -2479,6 +2479,7 @@ fn validated_materialized_files(
     Ok(by_path.into_values().collect())
 }
 
+/// Validate explicit empty-directory leaves before they enter identity construction or store staging.
 fn validated_materialized_directories(
     directories: &[OvenArtifactMaterializedDirectory],
 ) -> Result<Vec<ValidatedMaterializedDirectory>, OvenStoreError> {
