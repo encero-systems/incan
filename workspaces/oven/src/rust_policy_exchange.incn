@@ -354,16 +354,10 @@ def selected(
     mut activations: list[JsonValue] = []
     for index in range(len(result.nodes)):
         node = result.nodes[index]
-        purpose = "normal"
-        if result.purposes[index] == ActivationPurpose.Test:
-            purpose = "test"
-        domain = "target"
-        if node.domain == DependencyDomain.Host:
-            domain = "host"
         activations.append(
             JsonValue.object(
-                {"package": encode_package(node.package), "domain": JsonValue.string(domain), "purpose": JsonValue.string(
-                    purpose,
+                {"package": encode_package(node.package), "domain": JsonValue.string(domain_name(node.domain)), "purpose": JsonValue.string(
+                    purpose_name(result.purposes[index]),
                 ), "effective_features": JsonValue.array(
                     [JsonValue.string(feature) for feature in result.activations[index].effective_features],
                 )},
@@ -372,14 +366,11 @@ def selected(
     mut physical_units: list[JsonValue] = []
     for unit in units:
         purpose = result.unit_purposes[unit.identity]
-        purpose_name = "normal"
-        if purpose == ActivationPurpose.Test:
-            purpose_name = "test"
         physical_units.append(
             JsonValue.object(
                 {"identity": JsonValue.string(unit.identity), "package": encode_package(unit.node.package), "domain": JsonValue.string(
                     domain_name(unit.node.domain),
-                ), "purpose": JsonValue.string(purpose_name), "role": JsonValue.string(role_name(unit.role)), "crate_kind": JsonValue.string(
+                ), "purpose": JsonValue.string(purpose_name(purpose)), "role": JsonValue.string(role_name(unit.role)), "crate_kind": JsonValue.string(
                     crate_kind_name(unit.crate_kind),
                 ), "features": JsonValue.array([JsonValue.string(feature) for feature in unit.features]), "default_features": JsonValue.bool(
                     unit.default_features,
@@ -410,6 +401,13 @@ def domain_name(domain: DependencyDomain) -> str:
     if domain == DependencyDomain.Host:
         return "host"
     return "target"
+
+
+def purpose_name(purpose: ActivationPurpose) -> str:
+    """Return the stable wire name for an activation purpose."""
+    if purpose == ActivationPurpose.Test:
+        return "test"
+    return "normal"
 
 
 def role_name(role: SelectedUnitRole) -> str:
