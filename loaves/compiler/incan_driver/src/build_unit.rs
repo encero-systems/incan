@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::{CliError, CliResult};
 use incan_provider::ProviderPlan;
 use incan_provider::dependency_resolver::ResolvedDependencies;
-use incan_provider::lock_semantics::provider_semantic_identities;
+use incan_provider::lock_semantics::{CheckedProviderSemanticIdentities, provider_semantic_identities};
 use incan_provider::requirements::{ProjectRequirements, semantic_sdk_path_dependencies};
 use oven_model::manifest::DependencySpec;
 use oven_rustc::loaf::runtime_build_unit_inputs;
@@ -36,12 +36,13 @@ pub fn oven_build_unit_inputs_with_provider_identities(
     provider_plan: &ProviderPlan,
     requirements: &ProjectRequirements,
     resolved: &ResolvedDependencies,
-    semantic_identities: &BTreeMap<String, String>,
+    semantic_identities: &CheckedProviderSemanticIdentities,
 ) -> CliResult<BTreeMap<String, String>> {
-    let provider_records = oven_native_provider_records_with_identities(provider_plan, semantic_identities)?;
+    let provider_records = oven_native_provider_records_with_checked_identities(provider_plan, semantic_identities)?;
     oven_build_unit_inputs_with_provider_records(requirements, resolved, provider_records)
 }
 
+/// Finish build-unit identity projection from provider records checked by either supported identity path.
 fn oven_build_unit_inputs_with_provider_records(
     requirements: &ProjectRequirements,
     resolved: &ResolvedDependencies,
@@ -73,11 +74,22 @@ pub fn oven_native_provider_records(
 ) -> CliResult<Vec<String>> {
     let semantic_identities =
         provider_semantic_identities(provider_plan, sdk_path_dependencies).map_err(CliError::failure)?;
-    oven_native_provider_records_with_identities(provider_plan, &semantic_identities)
+    oven_native_provider_records_from_map(provider_plan, &semantic_identities)
 }
 
 /// Encode selected native provider records from identities checked by the current compilation session.
-pub fn oven_native_provider_records_with_identities(
+pub fn oven_native_provider_records_with_checked_identities(
+    provider_plan: &ProviderPlan,
+    semantic_identities: &CheckedProviderSemanticIdentities,
+) -> CliResult<Vec<String>> {
+    let semantic_identities = semantic_identities
+        .for_plan(provider_plan)
+        .map_err(CliError::failure)?;
+    oven_native_provider_records_from_map(provider_plan, semantic_identities)
+}
+
+/// Encode provider records from a map already bound to this exact provider plan.
+fn oven_native_provider_records_from_map(
     provider_plan: &ProviderPlan,
     semantic_identities: &BTreeMap<String, String>,
 ) -> CliResult<Vec<String>> {

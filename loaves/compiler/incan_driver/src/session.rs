@@ -452,7 +452,7 @@ impl CompilationSession {
         &self,
         provider_plan: &ProviderPlan,
         sdk_path_dependencies: &[oven_model::manifest::DependencySpec],
-    ) -> CliResult<Arc<BTreeMap<String, String>>> {
+    ) -> CliResult<Arc<incan_provider::lock_semantics::CheckedProviderSemanticIdentities>> {
         self.provider_semantic_identities
             .identities(provider_plan, sdk_path_dependencies)
             .map_err(CliError::failure)

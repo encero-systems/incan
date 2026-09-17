@@ -42,7 +42,7 @@ pub fn semantic_lock_state(
     sdk_path_dependencies: &[DependencySpec],
 ) -> Result<SemanticLockState, String> {
     let provider_identity_map = provider_semantic_identities(provider_plan, sdk_path_dependencies)?;
-    semantic_lock_state_with_provider_identities(
+    semantic_lock_state_from_provider_identities(
         project_root,
         interop,
         sdk_inventory,
@@ -55,6 +55,28 @@ pub fn semantic_lock_state(
 
 /// Snapshot semantic lock state using identities already validated for this compilation session.
 pub fn semantic_lock_state_with_provider_identities(
+    project_root: &Path,
+    interop: Option<&InteropCSection>,
+    sdk_inventory: Option<&SdkInventory>,
+    sdk_components: Option<&ResolvedSdkComponents>,
+    package_features: Option<&PackageFeaturePlan>,
+    provider_plan: &ProviderPlan,
+    provider_identities: &CheckedProviderSemanticIdentities,
+) -> Result<SemanticLockState, String> {
+    let provider_identity_map = provider_identities.for_plan(provider_plan)?;
+    semantic_lock_state_from_provider_identities(
+        project_root,
+        interop,
+        sdk_inventory,
+        sdk_components,
+        package_features,
+        provider_plan,
+        provider_identity_map,
+    )
+}
+
+/// Assemble lock state from an identity map after its owning boundary has checked plan/context binding.
+fn semantic_lock_state_from_provider_identities(
     project_root: &Path,
     interop: Option<&InteropCSection>,
     sdk_inventory: Option<&SdkInventory>,
@@ -174,6 +196,7 @@ pub fn provider_semantic_identities(
     provider_semantic_identities_with_dependencies(provider_plan, &semantic_toolchain_dependencies)
 }
 
+/// Project provider identities from support roots whose recursive content identities were already checked.
 fn provider_semantic_identities_with_dependencies(
     provider_plan: &ProviderPlan,
     semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
@@ -197,10 +220,58 @@ fn provider_semantic_identities_with_dependencies(
         .collect()
 }
 
+/// Provider semantic identities bound to the exact checked plan that produced them.
+#[derive(Debug)]
+pub struct CheckedProviderSemanticIdentities {
+    plan_key: String,
+    identities: Arc<BTreeMap<String, String>>,
+}
+
+impl CheckedProviderSemanticIdentities {
+    /// Borrow identities only when the consumer presents the exact checked plan that produced them.
+    pub fn for_plan(&self, provider_plan: &ProviderPlan) -> Result<&BTreeMap<String, String>, String> {
+        let plan_key = provider_semantic_plan_key(provider_plan)?;
+        if plan_key != self.plan_key {
+            return Err("provider semantic identities belong to a different checked provider plan".to_string());
+        }
+        Ok(&self.identities)
+    }
+}
+
+/// Bind every provider fact consumed by final semantic projection, including checked in-memory manifest content.
+fn provider_semantic_plan_key(provider_plan: &ProviderPlan) -> Result<String, String> {
+    let mut key = String::new();
+    for provider in provider_plan.records() {
+        key.push('\u{1b}');
+        key.push_str(&provider.identity.stable_key());
+        key.push(if provider.manifest.is_some() { 'm' } else { '-' });
+        key.push(if provider.artifact.is_some() { 'a' } else { '-' });
+        key.push(if provider.available { 'v' } else { '-' });
+        key.push(match &provider.provenance {
+            ProviderProvenance::ProjectDependency { .. } => 'p',
+            ProviderProvenance::Sdk { .. } => 's',
+            ProviderProvenance::Compiler => 'c',
+        });
+        if let Some(artifact) = provider.artifact.as_ref() {
+            for path in [&artifact.crate_root, &artifact.manifest_path, &artifact.cargo_toml_path] {
+                key.push('\u{1a}');
+                key.push_str(&path.to_string_lossy());
+            }
+        }
+        if let Some(manifest) = provider.manifest.as_deref() {
+            let encoded = manifest.to_json_string().map_err(|error| error.to_string())?;
+            let mut hasher = Sha256::new();
+            hasher.update(encoded.as_bytes());
+            key.push_str(&format!("{:x}", hasher.finalize()));
+        }
+    }
+    Ok(key)
+}
+
 /// Session-bounded reuse of provider semantic identities after rechecking every mutable physical input.
 #[derive(Debug, Default)]
 pub struct ProviderSemanticIdentitySession {
-    identities: Mutex<BTreeMap<String, Arc<BTreeMap<String, String>>>>,
+    identities: Mutex<BTreeMap<String, Arc<CheckedProviderSemanticIdentities>>>,
 }
 
 impl ProviderSemanticIdentitySession {
@@ -213,7 +284,7 @@ impl ProviderSemanticIdentitySession {
         &self,
         provider_plan: &ProviderPlan,
         sdk_path_dependencies: &[DependencySpec],
-    ) -> Result<Arc<BTreeMap<String, String>>, String> {
+    ) -> Result<Arc<CheckedProviderSemanticIdentities>, String> {
         let semantic_toolchain_dependencies = semantic_toolchain_dependencies(sdk_path_dependencies)?;
         for provider in provider_plan.records() {
             let Some(artifact) = provider.artifact.as_ref() else {
@@ -228,19 +299,9 @@ impl ProviderSemanticIdentitySession {
                 ));
             }
         }
+        let plan_key = provider_semantic_plan_key(provider_plan)?;
         let mut key = provider_semantic_digest_key(provider_plan, &semantic_toolchain_dependencies);
-        for provider in provider_plan.records() {
-            key.push('\u{1b}');
-            key.push_str(&provider.identity.stable_key());
-            key.push(if provider.manifest.is_some() { 'm' } else { '-' });
-            key.push(if provider.artifact.is_some() { 'a' } else { '-' });
-            key.push(if provider.available { 'v' } else { '-' });
-            key.push(match &provider.provenance {
-                ProviderProvenance::ProjectDependency { .. } => 'p',
-                ProviderProvenance::Sdk { .. } => 's',
-                ProviderProvenance::Compiler => 'c',
-            });
-        }
+        key.push_str(&plan_key);
         if let Some(identities) = self
             .identities
             .lock()
@@ -250,10 +311,13 @@ impl ProviderSemanticIdentitySession {
         {
             return Ok(identities);
         }
-        let identities = Arc::new(provider_semantic_identities_with_dependencies(
-            provider_plan,
-            &semantic_toolchain_dependencies,
-        )?);
+        let identities = Arc::new(CheckedProviderSemanticIdentities {
+            plan_key,
+            identities: Arc::new(provider_semantic_identities_with_dependencies(
+                provider_plan,
+                &semantic_toolchain_dependencies,
+            )?),
+        });
         let mut cached = self
             .identities
             .lock()
@@ -1156,7 +1220,7 @@ mod tests {
         let (provider_plan, specs) = production_check_inputs.ok_or("representative measurement produced no inputs")?;
         let production_identities = provider_semantic_identities(&provider_plan, &specs)?;
         assert_eq!(
-            expected_identities.as_deref(),
+            expected_identities.as_ref(),
             Some(&production_identities),
             "representative instrumentation must preserve the production result"
         );
@@ -1314,7 +1378,7 @@ mod tests {
         assert!(Arc::ptr_eq(&first, &repeated), "an unchanged checked context must reuse one result");
         assert_eq!(session.entry_count()?, 1);
         assert_eq!(
-            first.as_ref(),
+            first.for_plan(&fixture.provider_plan)?,
             &provider_semantic_identities(&fixture.provider_plan, &fixture.specs)?,
             "session reuse must preserve the uncached production result"
         );
@@ -1352,8 +1416,54 @@ mod tests {
             "pub fn derive_marker() { changed(); }\n",
         )?;
         let changed = session.identities(&fixture.provider_plan, &fixture.specs)?;
-        assert_ne!(first, changed, "changed support content must produce a distinct semantic result");
+        assert_ne!(
+            first.for_plan(&fixture.provider_plan)?,
+            changed.for_plan(&fixture.provider_plan)?,
+            "changed support content must produce a distinct semantic result"
+        );
         assert_eq!(session.entry_count()?, 2, "the changed checked context must not reuse the earlier entry");
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_identity_session_binds_checked_in_memory_manifest_and_features() -> TestResult {
+        let temp = tempfile::tempdir()?;
+        let fixture = production_toolchain_semantic_fixture(&temp.path().join("checked-facts"))?;
+        let session = ProviderSemanticIdentitySession::default();
+        let first = session.identities(&fixture.provider_plan, &fixture.specs)?;
+
+        let mut changed_record = fixture
+            .provider_plan
+            .records()
+            .next()
+            .cloned()
+            .ok_or("fixture provider is missing")?;
+        let mut changed_manifest = changed_record
+            .manifest
+            .as_deref()
+            .cloned()
+            .ok_or("fixture manifest is missing")?;
+        changed_manifest.contract_metadata.provider.semantic_source_digest = Some(format!("sha256:{}", "b".repeat(64)));
+        changed_manifest
+            .contract_metadata
+            .provider
+            .active_features
+            .insert("checked-feature".to_string());
+        changed_record.manifest = Some(Arc::new(changed_manifest));
+        changed_record.identity.feature_projection.insert("checked-feature".to_string());
+        let changed_plan = ProviderPlan::new(
+            incan_frontend::library_manifest_index::LibraryManifestIndex::default(),
+            vec![changed_record],
+            std::iter::empty::<Vec<String>>(),
+        )?;
+        let changed = session.identities(&changed_plan, &fixture.specs)?;
+        assert_ne!(
+            first.for_plan(&fixture.provider_plan)?,
+            changed.for_plan(&changed_plan)?,
+            "checked manifest and feature facts must select a distinct result"
+        );
+        assert_eq!(session.entry_count()?, 2);
+        assert!(first.for_plan(&changed_plan).is_err(), "a result must refuse a different checked plan");
         Ok(())
     }
 
