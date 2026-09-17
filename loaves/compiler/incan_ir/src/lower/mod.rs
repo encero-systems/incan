@@ -4037,7 +4037,7 @@ model Consumer with Same:
             .check_program(&local)
             .map_err(|errors| format!("local typecheck failed: {errors:?}"))?;
         let mut type_info = checker.type_info().clone();
-        type_info.expr_types.insert(
+        type_info.expressions.expr_types.insert(
             (default_expr.span.start, default_expr.span.end),
             ResolvedType::Generic("Option".to_string(), vec![ResolvedType::Int]),
         );
