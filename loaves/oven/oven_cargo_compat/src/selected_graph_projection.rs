@@ -562,26 +562,65 @@ pub fn legacy_cargo_generated_archive_bindings(
                     .platform
                     .as_deref()
                     .ok_or_else(|| projection_error("selected linked library", "has no captured compilation target"))?;
+                if facts.linked_paths.iter().any(|path| !path.starts_with("native=")) {
+                    return Err(projection_error(
+                        "selected linked library",
+                        "contains an unsupported non-native search-path directive",
+                    ));
+                }
+                let compiler = capture
+                    .compiler
+                    .as_ref()
+                    .ok_or_else(|| projection_error("selected linked library", "has no captured compiler cfg"))?;
+                let cfg = if target == compiler.host {
+                    &compiler.host_cfg
+                } else if target == compiler.target {
+                    &compiler.target_cfg
+                } else {
+                    return Err(projection_error(
+                        "selected linked library",
+                        "uses a platform outside the captured host/target selection",
+                    ));
+                };
+                let target_os = cfg.values.get("target_os").and_then(|values| values.first());
+                let target_env = cfg.values.get("target_env").and_then(|values| values.first());
                 let (kind, name, expected_file) = if let Some(name) = directive.strip_prefix("static=") {
                     (
                         oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
                         name,
-                        if target.contains("windows") {
+                        if target_os.is_some_and(|value| value == "windows")
+                            && target_env.is_some_and(|value| value == "msvc")
+                        {
                             format!("{name}.lib")
-                        } else {
+                        } else if target_os.is_some_and(|value| value != "windows")
+                            || (target_os.is_some_and(|value| value == "windows")
+                                && target_env.is_some_and(|value| value == "gnu"))
+                        {
                             format!("lib{name}.a")
+                        } else {
+                            return Err(projection_error(
+                                "selected linked library",
+                                "has no supported target archive convention",
+                            ));
                         },
                     )
                 } else if let Some(name) = directive.strip_prefix("dylib=") {
                     (
                         oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Dynamic,
                         name,
-                        if target.contains("apple") || target.contains("darwin") {
+                        if target_os.is_some_and(|value| value == "macos") {
                             format!("lib{name}.dylib")
-                        } else if target.contains("windows") {
+                        } else if target_os.is_some_and(|value| value == "windows")
+                            && target_env.is_some_and(|value| value == "msvc")
+                        {
                             format!("{name}.lib")
-                        } else {
+                        } else if target_os.is_some_and(|value| value != "windows") {
                             format!("lib{name}.so")
+                        } else {
+                            return Err(projection_error(
+                                "selected linked library",
+                                "has no supported target dynamic-library convention",
+                            ));
                         },
                     )
                 } else {
@@ -1946,7 +1985,25 @@ mod tests {
             .as_mut()
             .ok_or("build-script facts missing")?
             .linked_paths = vec!["native=/transient/out/native".to_string()];
+        capture.units[0].platform = Some("x86_64-pc-windows-gnu".to_string());
+        let compiler = capture.compiler.as_mut().ok_or("fixture compiler context missing")?;
+        compiler.target = "x86_64-pc-windows-gnu".to_string();
+        compiler
+            .target_cfg
+            .values
+            .insert("target_os".to_string(), vec!["windows".to_string()]);
+        compiler
+            .target_cfg
+            .values
+            .insert("target_env".to_string(), vec!["gnu".to_string()]);
+        assert!(legacy_cargo_generated_archive_bindings(&capture, &generated).is_ok());
         capture.units[0].platform = Some("x86_64-pc-windows-msvc".to_string());
+        let compiler = capture.compiler.as_mut().ok_or("fixture compiler context missing")?;
+        compiler.target = "x86_64-pc-windows-msvc".to_string();
+        compiler
+            .target_cfg
+            .values
+            .insert("target_env".to_string(), vec!["msvc".to_string()]);
         assert!(legacy_cargo_generated_archive_bindings(&capture, &generated).is_err());
         Ok(())
     }
