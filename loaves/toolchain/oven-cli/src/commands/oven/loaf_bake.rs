@@ -368,7 +368,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         }
         stage_locked_loaf_fixture(&options.cargo, &generated_project, &compiler_lock).map_err(oven_error)?;
         let receipt = read_receipt(&receipt_path)?;
-        let result = prepare_loaf_from_generated_project(
+        let prepared = prepare_loaf_from_generated_project_with_selected_units(
             &staged_root,
             &OvenLoafBakerContext {
                 compiler: &incan_oven_facet::compiler_identity(),
@@ -389,6 +389,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             &generated_project,
         )
         .map_err(oven_error)?;
+        let result = prepared.preparation;
         let observed_transient = oven_cargo_compat::conservative_directory_reservation(&options.output)
             .and_then(|owned| {
                 oven_cargo_compat::conservative_directory_reservation(scratch.path())
@@ -431,6 +432,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             action: loaf_fixture_action_name(specification.action).to_string(),
             role: specification.role,
             result,
+            selected_units: Some(prepared.selected_units),
         });
     }
     phase_timing.fixture_preparation_elapsed_ms = fixture_preparation_started.elapsed().as_millis();

@@ -58,6 +58,12 @@ pub struct OvenLoafBakerContext<'a> {
     pub limits: oven_store::store::OvenStoreLimits,
 }
 
+/// One exported Loaf and the physical Cargo unit selection captured by the same publisher transaction.
+pub struct OvenPreparedLoafWithSelectedUnits {
+    pub preparation: OvenLoafPreparation,
+    pub selected_units: super::OvenLegacyCargoSelectedUnitCapture,
+}
+
 /// Export one compiler-owned Loaf from an already receipted generated Incan project.
 ///
 /// Release packaging first drives the compiler's ordinary Oven analysis for a small in-package Incan program. That
@@ -70,6 +76,17 @@ pub fn prepare_loaf_from_generated_project(
     receipt: OvenReceipt,
     generated_project: &Path,
 ) -> Result<OvenLoafPreparation, OvenLoafError> {
+    prepare_loaf_from_generated_project_with_selected_units(loaf_root, context, receipt, generated_project)
+        .map(|prepared| prepared.preparation)
+}
+
+/// Export one Loaf and retain its actual Cargo-selected physical unit capture for foundation publication.
+pub fn prepare_loaf_from_generated_project_with_selected_units(
+    loaf_root: &Path,
+    context: &OvenLoafBakerContext<'_>,
+    receipt: OvenReceipt,
+    generated_project: &Path,
+) -> Result<OvenPreparedLoafWithSelectedUnits, OvenLoafError> {
     if loaf_root.exists() && !loaf_root.is_dir() {
         return Err(OvenLoafError::Preparation {
             message: format!("loaf root is not a directory: {}", loaf_root.display()),
@@ -87,7 +104,7 @@ pub fn prepare_loaf_from_generated_project(
     let store = OvenStore::new(store_root.path(), context.limits);
     let generated_source = generated_project.join("src/main.rs");
     let compile_environment = direct_rustc_compile_environment(generated_project, &generated_source)?;
-    let publication = prepare_direct_rustc_plan(&OvenLegacyCargoPrepareRequest {
+    let mut publication = prepare_direct_rustc_plan(&OvenLegacyCargoPrepareRequest {
         compiler: context.compiler.clone(),
         provider_hooks: context.provider_hooks.clone(),
         store: &store,
@@ -122,6 +139,12 @@ pub fn prepare_loaf_from_generated_project(
             message: format!("loaf destination already exists: {}", output_directory.display()),
         });
     }
+    let selected_units = publication
+        .selected_units
+        .take()
+        .ok_or_else(|| OvenLoafError::Preparation {
+            message: "fresh Loaf publication omitted its Cargo-selected physical unit capture".to_string(),
+        })?;
     let result = export_loaf(
         &store,
         &publication.plan_identity,
@@ -148,7 +171,10 @@ pub fn prepare_loaf_from_generated_project(
         path: content_directory,
         source,
     })?;
-    Ok(result)
+    Ok(OvenPreparedLoafWithSelectedUnits {
+        preparation: result,
+        selected_units,
+    })
 }
 
 /// Copy a fully verified temporary store entry into the compiler-owned loaf layout and report its accounting.

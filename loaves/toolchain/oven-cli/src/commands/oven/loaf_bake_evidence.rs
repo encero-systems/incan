@@ -31,6 +31,8 @@ pub(crate) struct OvenLoafBakeEntryReport {
     pub(crate) action: String,
     pub(crate) role: OvenLoafMemberRole,
     pub(crate) result: OvenLoafPreparation,
+    #[serde(skip)]
+    pub(crate) selected_units: Option<OvenLegacyCargoSelectedUnitCapture>,
 }
 
 /// Complete result from the hidden, explicit `legacy_cargo` Loaf baker.
@@ -454,6 +456,7 @@ pub(crate) fn reuse_complete_loaf_envelope(
             action: entry.action.clone(),
             role: entry.role,
             result,
+            selected_units: None,
         });
     }
     let member_generation = output.join("generations").join(

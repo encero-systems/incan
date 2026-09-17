@@ -37,7 +37,7 @@ use crate::{CliError, CliResult, ExitCode, OvenInteropAdapterArgument, OvenLoafE
 use incan_driver::interop_plan::locked_interop_plan_target;
 use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
-use oven_cargo_compat::loaf_bake::{OvenLoafBakerContext, prepare_loaf_from_generated_project};
+use oven_cargo_compat::loaf_bake::{OvenLoafBakerContext, prepare_loaf_from_generated_project_with_selected_units};
 use oven_cargo_compat::{
     OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION,
     OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1,
@@ -46,9 +46,9 @@ use oven_cargo_compat::{
     OvenCompilerTestSuiteShardPayload, OvenCompilerTestSuiteShardReference, OvenCompilerTestSuiteToolchainDataPayload,
     OvenCompilerTestSuiteToolchainDataReference, OvenCompilerWorkspaceLibrary, OvenCompilerWorkspaceLibraryKey,
     OvenLegacyCargoCompilerSuiteResult, OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoInspectionSource,
-    OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind, legacy_cargo_inspection_sources,
-    legacy_cargo_resolved_registry_sources, prepare_compiler_test_suite, prepare_direct_rustc_plan,
-    stage_locked_loaf_fixture,
+    OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind, OvenLegacyCargoSelectedUnitCapture,
+    legacy_cargo_inspection_sources, legacy_cargo_resolved_registry_sources, prepare_compiler_test_suite,
+    prepare_direct_rustc_plan, stage_locked_loaf_fixture,
 };
 use oven_interop::{
     OvenInteropAdapter, OvenInteropAdapterStageRequest, OvenInteropCapabilitySelection, OvenInteropNativeBakeRequest,

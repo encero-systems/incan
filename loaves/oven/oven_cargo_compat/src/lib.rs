@@ -19,6 +19,7 @@ mod inspection_sources;
 mod lock;
 mod registry_sources;
 mod sdk_staging;
+mod selected_unit_capture;
 mod workspace_authority;
 
 pub use compiler_suite_catalog::*;
@@ -27,6 +28,7 @@ pub use inspection_sources::*;
 pub use lock::*;
 pub use registry_sources::*;
 pub use sdk_staging::*;
+pub use selected_unit_capture::*;
 pub use workspace_authority::*;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -404,6 +406,8 @@ pub struct OvenLegacyCargoPrepareResult {
     /// The Loaf exporter seals this small catalog beside the copied direct-Rustc closure. It is never a
     /// normal-command Cargo resolution result.
     pub registry_leaves: Vec<OvenRustcRegistryLeaf>,
+    /// Physical Cargo-selected units captured at this publisher boundary; absent only for exact store reuse.
+    pub selected_units: Option<OvenLegacyCargoSelectedUnitCapture>,
     /// Conservative transient publisher allocation high-water mark; this directory is removed before success returns.
     pub transient_reservation_bytes: u64,
     /// Inactive store entries evicted, oldest first, so this bake could reserve its staging floor (#1230). Empty when
@@ -991,6 +995,7 @@ fn reused_direct_rustc_plan_result(plan_identity: String) -> OvenLegacyCargoPrep
         cargo_manifest_digest: "not-run-existing-plan".to_string(),
         cargo_lock_digest: "not-run-existing-plan".to_string(),
         registry_leaves: Vec::new(),
+        selected_units: None,
         transient_reservation_bytes: 0,
         reclaimed_store_entries: Vec::new(),
     }
@@ -1144,6 +1149,34 @@ pub fn prepare_direct_rustc_plan(
     let target = staging.join("target");
     let transient_limit = publisher_reservation.transient_limit_bytes;
     let reclaimed_store_entries = publisher_reservation.prune_report.removed_entries;
+    let unit_graph_target = staging.join("selected-unit-graph-target");
+    let unit_graph_command = match request.publication_kind {
+        OvenLegacyCargoPublicationKind::Executable | OvenLegacyCargoPublicationKind::InteropBootstrap => "build",
+        OvenLegacyCargoPublicationKind::LibraryTests => "test",
+    };
+    let unit_graph_selection = match request.publication_kind {
+        OvenLegacyCargoPublicationKind::InteropBootstrap | OvenLegacyCargoPublicationKind::LibraryTests => {
+            OvenLegacyCargoInvocationTarget::PackageLibrary
+        }
+        OvenLegacyCargoPublicationKind::Executable => OvenLegacyCargoInvocationTarget::None,
+    };
+    let unit_graph_output = run_legacy_cargo_invocation(
+        &request.cargo,
+        &request.rustc,
+        &cargo_manifest,
+        &unit_graph_target,
+        &staging,
+        &request.receipt.intent.target,
+        &request.receipt.intent.profile,
+        &request.receipt.intent.features,
+        transient_limit,
+        unit_graph_command,
+        &unit_graph_selection,
+        true,
+        false,
+        request.base_loaf.is_some(),
+    )?;
+    let selected_unit_graph = parse_compiler_suite_unit_graph(&unit_graph_output)?;
     let cargo_outputs = run_legacy_cargo(
         &request.cargo,
         &request.rustc,
@@ -1198,6 +1231,7 @@ pub fn prepare_direct_rustc_plan(
         Some(metadata) => metadata,
         None => read_legacy_cargo_metadata(&request.cargo, &cargo_manifest, &request.receipt.intent.features)?,
     };
+    let selected_units = capture_legacy_cargo_selected_units(&selected_unit_graph, &metadata, &cargo_outputs)?;
     let resolved_direct_dependencies = resolve_direct_dependency_packages(&metadata, &direct_dependencies)?;
     let reported_artifact_files = publisher_output_artifact_paths(&cargo_outputs, &request.receipt.intent.profile)?;
     let (dependency_search_paths, externs, mut supporting_artifacts) = if reported_artifact_files.is_empty() {
@@ -1491,6 +1525,7 @@ pub fn prepare_direct_rustc_plan(
         cargo_manifest_digest: digest_bytes(&cargo_manifest_bytes),
         cargo_lock_digest: digest_bytes(&cargo_lock_bytes),
         registry_leaves,
+        selected_units: Some(selected_units),
         transient_reservation_bytes,
         reclaimed_store_entries,
     })
@@ -2322,6 +2357,17 @@ fn run_legacy_cargo(
 /// Captured output from one explicitly named Cargo publisher invocation.
 pub struct CargoInvocationOutput {
     stdout: Vec<u8>,
+}
+
+impl CargoInvocationOutput {
+    /// Decode physical selected-unit facts from this publisher's structured JSON stream.
+    pub fn selected_unit_facts(
+        &self,
+        graph: &CargoUnitGraph,
+        metadata: &CargoMetadata,
+    ) -> Result<OvenLegacyCargoSelectedUnitCapture, OvenLegacyCargoError> {
+        capture_legacy_cargo_selected_units(graph, metadata, std::slice::from_ref(self))
+    }
 }
 
 /// One publisher-only Cargo target selection used to bake a bounded compiler-suite build unit.

@@ -8,6 +8,22 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+/// Structured facts emitted after one compatibility build script finishes at the explicit publisher boundary.
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+pub(crate) struct CargoBuildScriptExecuted {
+    pub(crate) reason: String,
+    pub(crate) package_id: String,
+    #[serde(default)]
+    pub(crate) linked_libs: Vec<String>,
+    #[serde(default)]
+    pub(crate) linked_paths: Vec<String>,
+    #[serde(default)]
+    pub(crate) cfgs: Vec<String>,
+    #[serde(default)]
+    pub(crate) env: Vec<(String, String)>,
+    pub(crate) out_dir: PathBuf,
+}
+
 /// Minimal Cargo JSON message shape used to map publisher-built dependency artifacts back to unit-graph edges.
 #[derive(Clone, Deserialize)]
 pub(crate) struct CargoCompilerArtifact {
