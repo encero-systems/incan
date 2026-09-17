@@ -557,9 +557,9 @@ mod tests {
         OvenRustcArtifactManifest, OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
         OvenRustcSupportingArtifact,
     };
-    use oven_store::{OvenGeneratedProjectRequest, digest_bytes, digest_source_tree, receipt_generated_project};
+    use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project};
 
-    use crate::OvenLegacyCargoInspectionSource;
+    use crate::{OvenLegacyCargoInspectionSource, stage_registry_source_directory};
     fn runtime_receipt(
         source: &Path,
         providers: &str,
