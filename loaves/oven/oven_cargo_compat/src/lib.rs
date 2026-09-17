@@ -4368,7 +4368,16 @@ mod tests {
                 .is_dir(),
             "the admitted empty generated-output root must survive cold publication, mirror import and acquisition"
         );
-        fs::remove_dir(acquired.materialized_root().join("foundation").join(&relative_root))?;
+        let acquired_empty_root = acquired.materialized_root().join("foundation").join(&relative_root);
+        let unexpected = acquired_empty_root.join("unexpected.txt");
+        fs::write(&unexpected, b"tampered")?;
+        assert!(
+            acquired.verify_admitted_payload().is_err(),
+            "adding content beneath a declared empty generated-output root must invalidate the admitted entry"
+        );
+        fs::remove_file(unexpected)?;
+        acquired.verify_admitted_payload()?;
+        fs::remove_dir(acquired_empty_root)?;
         assert!(
             acquired.verify_admitted_payload().is_err(),
             "removing a declared empty generated-output root must invalidate the admitted entry"
