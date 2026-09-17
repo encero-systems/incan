@@ -45,11 +45,11 @@ pub model Duration:
 | `Duration(secs: int, nanos: int)` | Direct field construction. It does not clamp or normalize either field. |
 | `Duration.from_secs(secs: int) -> Duration` | Returns zero for `secs <= 0`; otherwise returns `(secs, 0)` exactly. |
 | `Duration.from_millis(millis: int) -> Duration` | Returns zero for `millis <= 0`; otherwise returns `secs = millis // 1000` and `nanos = (millis % 1000) * 1_000_000`. |
-| `Duration.from_secs_f64(secs: float) -> Duration` | Accepts finite values whose whole-second portion is representable by `int`. Nonpositive supported inputs return zero; positive supported inputs are split into whole seconds and fractional nanoseconds using floating-point precision. Non-finite and out-of-range inputs are outside this constructor's contract and are not validated. |
+| `Duration.from_secs_f64(secs: float) -> Duration` | Returns zero for nonpositive inputs and NaN. Positive inputs are split into whole seconds and fractional nanoseconds using floating-point arithmetic and saturating integer conversions. Positive infinity produces `secs = 9223372036854775807` and `nanos = 9223372036854775807`. |
 
 The integer constructors preserve the full positive `int` value without converting through `float`. Their results satisfy `secs >= 0` and `0 <= nanos < 1_000_000_000`.
 
-`from_secs_f64` does not use the timer functions' NaN and infinity clamping. Callers must supply a finite, representable value.
+`from_secs_f64` converts the input to integer seconds, then converts `(secs - float(whole_seconds)) * 1_000_000_000` to integer nanoseconds. Large positive inputs can saturate either integer conversion, so this constructor does not guarantee normalized nanoseconds. Unlike the timer functions, it does not clamp positive infinity to zero.
 
 ### `TimeoutError`
 
