@@ -4588,6 +4588,7 @@ mod tests {
                 evidence: BTreeMap::new(),
                 loafs: members,
                 release_store_member: None,
+                runtime_foundation: None,
             })?,
         )?;
         Ok(())

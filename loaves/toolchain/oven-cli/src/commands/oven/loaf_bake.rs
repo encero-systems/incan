@@ -156,6 +156,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         envelope,
         &evidence,
         release_store_member.as_ref(),
+        None,
     )?;
     if let Some(report) = reuse_complete_loaf_envelope(
         &options.output,
@@ -480,6 +481,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             })
             .collect(),
         release_store_member: release_store_member.clone(),
+        runtime_foundation: None,
     };
     let publication_lock = acquire_exclusive_loaf_generation_lock(&options.output).map_err(oven_error)?;
     let replacement_high_water = oven_cargo_compat::conservative_directory_reservation(&options.output)

@@ -21,8 +21,9 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use crate::loaf::{
-    OvenLoaf, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafMemberRole, OvenReleaseStoreMember,
-    commit_loaf_generation, prove_release_store_member_payload, validate_stored_loaf,
+    OvenLoaf, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafMemberRole, OvenReleaseRuntimeFoundationMember,
+    OvenReleaseStoreMember, commit_loaf_generation, prove_release_runtime_foundation_member,
+    prove_release_store_member_payload, validate_stored_loaf,
 };
 use oven_store::digest_source_tree;
 
@@ -41,6 +42,8 @@ pub struct LoafEnvelopeExpectation<'a> {
     pub members: &'a [LoafMemberExpectation],
     /// Optional exact generic store member the local publisher intends to bind into this generation.
     pub release_store_member: Option<&'a OvenReleaseStoreMember>,
+    /// Optional exact runtime-foundation carrier the local publisher intends to bind into this generation.
+    pub runtime_foundation: Option<&'a OvenReleaseRuntimeFoundationMember>,
 }
 
 /// The checked specification one envelope member must carry.
@@ -153,6 +156,7 @@ fn manifest_matches(
         || &manifest.evidence != expectation.evidence
         || manifest.loafs.len() != expectation.members.len()
         || manifest.release_store_member.as_ref() != expectation.release_store_member
+        || manifest.runtime_foundation.as_ref() != expectation.runtime_foundation
     {
         return false;
     }
@@ -205,6 +209,11 @@ fn stage_and_prove_generation(
     }
     if let Some(member) = &manifest.release_store_member {
         prove_release_store_member(&staged_generation, member)?;
+    }
+    if let Some(member) = &manifest.runtime_foundation {
+        prove_release_runtime_foundation_member(staging, manifest, member)
+            .map(|_| ())
+            .map_err(|error| io::Error::other(error.to_string()))?;
     }
     Ok(staged_generation)
 }
@@ -411,6 +420,7 @@ mod tests {
                 path: relative_directory.join("loaf.json"),
             }],
             release_store_member: None,
+            runtime_foundation: None,
         };
         fs::write(root.join("envelope.json"), serde_json::to_vec(&manifest)?)?;
         Ok(manifest)
@@ -434,6 +444,7 @@ mod tests {
                 evidence,
                 members: &members,
                 release_store_member: None,
+                runtime_foundation: None,
             },
             mirrors,
         ))
@@ -528,6 +539,7 @@ mod tests {
             evidence: &compatibility,
             members: &expected_members,
             release_store_member: Some(&member),
+            runtime_foundation: None,
         };
         import_loaf_envelope_from_mirrors(
             output.path(),
@@ -644,8 +656,44 @@ mod tests {
             evidence: &compatibility,
             members: &members,
             release_store_member: Some(&expected),
+            runtime_foundation: None,
         };
         assert!(!manifest_matches(&swapped, &expectation, &generation));
+        Ok(())
+    }
+
+    #[test]
+    fn a_different_runtime_foundation_cannot_match_the_expected_generation() -> TestResult {
+        let mirror = tempfile::tempdir()?;
+        let mut manifest = write_envelope(mirror.path(), &evidence())?;
+        let generation = generation_directory(&manifest.generation_identity);
+        let compiled = manifest.loafs.first().ok_or("fixture has no compiled Loaf")?;
+        let expected = OvenReleaseRuntimeFoundationMember {
+            schema_version: crate::loaf::OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION,
+            label: "rust-policy-foundation".to_string(),
+            foundation_relative_path: PathBuf::from("runtime-foundation/foundation"),
+            foundation_identity: digest_bytes(b"expected foundation"),
+            compiled_loaf_identity: compiled.loaf_identity.clone(),
+            compiled_plan_identity: compiled.plan_identity.clone(),
+            toolchain_owner_identity: digest_bytes(b"toolchain owner"),
+            toolchain_root_relative_path: PathBuf::from("runtime-foundation/toolchain"),
+        };
+        manifest.runtime_foundation = Some(OvenReleaseRuntimeFoundationMember {
+            foundation_identity: digest_bytes(b"swapped foundation"),
+            ..expected.clone()
+        });
+        let members = members();
+        let compatibility = evidence();
+        let expectation = LoafEnvelopeExpectation {
+            schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
+            envelope: "release",
+            generation_identity: &manifest.generation_identity,
+            evidence: &compatibility,
+            members: &members,
+            release_store_member: None,
+            runtime_foundation: Some(&expected),
+        };
+        assert!(!manifest_matches(&manifest, &expectation, &generation));
         Ok(())
     }
 

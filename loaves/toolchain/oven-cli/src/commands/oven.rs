@@ -60,8 +60,9 @@ use oven_model::oven_interop::{LockedInteropTarget, ToolchainRequirement};
 use oven_rustc::loaf::{
     LoafTemporaryDirectory, OVEN_LOAF_ENV, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLoafEnvelope,
     OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation,
-    OvenReleaseStoreMember, acquire_committed_loaf_generation, acquire_exclusive_loaf_generation_lock,
-    commit_loaf_generation, digest_runtime_crate_source, loaf_directory_byte_counts, loaf_envelope_inspection_packages,
+    OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember, acquire_committed_loaf_generation,
+    acquire_exclusive_loaf_generation_lock, bind_release_runtime_foundation_evidence, commit_loaf_generation,
+    digest_runtime_crate_source, loaf_directory_byte_counts, loaf_envelope_inspection_packages,
     loaf_envelope_specifications, loaf_raw_disk_bytes, retire_unreferenced_loaf_generations,
     validate_stored_loaf_for_reuse,
 };
@@ -3720,6 +3721,7 @@ mod tests {
             evidence: evidence.clone(),
             loafs: members,
             release_store_member,
+            runtime_foundation: None,
         };
         fs::write(root.join("envelope.json"), serde_json::to_vec(&manifest)?)?;
         Ok(manifest)
@@ -3774,6 +3776,7 @@ mod tests {
             OvenLoafEnvelope::Release,
             &evidence,
             None,
+            None,
             &[stale.path().to_path_buf()],
         )?;
         assert!(
@@ -3786,6 +3789,7 @@ mod tests {
             scratch.path(),
             OvenLoafEnvelope::Release,
             &evidence,
+            None,
             None,
             &[stale.path().to_path_buf(), mirror.path().to_path_buf()],
         )?;
@@ -3996,6 +4000,7 @@ mod tests {
                 evidence: BTreeMap::new(),
                 loafs: Vec::new(),
                 release_store_member: None,
+                runtime_foundation: None,
             })?,
         )?;
         let (receipt, _) = super::compiler_libtests_receipt(compiler_root.path(), &rustc, &[], Some(output.path()))?;
@@ -4199,6 +4204,7 @@ mod tests {
                     )]),
                     loafs: vec![member],
                     release_store_member: None,
+                    runtime_foundation: None,
                 })?,
             )?;
             Ok(())
@@ -4246,6 +4252,7 @@ mod tests {
             evidence: BTreeMap::new(),
             loafs: Vec::new(),
             release_store_member: None,
+            runtime_foundation: None,
         };
 
         let result = commit_loaf_generation(
@@ -4288,6 +4295,7 @@ mod tests {
                     evidence: BTreeMap::new(),
                     loafs: Vec::new(),
                     release_store_member: None,
+                    runtime_foundation: None,
                 };
                 barrier.wait();
                 let _lock = acquire_exclusive_loaf_generation_lock(&output).map_err(|error| error.to_string())?;

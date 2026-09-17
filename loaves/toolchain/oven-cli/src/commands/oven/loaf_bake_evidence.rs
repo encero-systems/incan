@@ -15,11 +15,12 @@ use serde::{Deserialize, Serialize};
 use super::{
     CliError, CliResult, INCAN_VERSION, Instant, LoafEnvelopeExpectation, LoafMemberExpectation, LoafMirrorMiss,
     OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLegacyCargoCompilerSuiteResult, OvenLoafEnvelope,
-    OvenLoafEnvelopeManifest, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation, OvenReleaseStoreMember,
-    OvenStore, OvenStoreInspection, OvenStoreLimits, announce_oven_progress, configured_mirrors, digest_bytes,
-    digest_runtime_crate_source, elapsed_detail, env, import_loaf_envelope_from_mirrors, loaf_directory_byte_counts,
-    loaf_envelope_inspection_packages, loaf_envelope_specifications, loaf_raw_disk_bytes, oven_error,
-    retire_unreferenced_loaf_generations, rustc_identity, validate_stored_loaf_for_reuse,
+    OvenLoafEnvelopeManifest, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation,
+    OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember, OvenStore, OvenStoreInspection, OvenStoreLimits,
+    announce_oven_progress, configured_mirrors, digest_bytes, digest_runtime_crate_source, elapsed_detail, env,
+    import_loaf_envelope_from_mirrors, loaf_directory_byte_counts, loaf_envelope_inspection_packages,
+    loaf_envelope_specifications, loaf_raw_disk_bytes, oven_error, retire_unreferenced_loaf_generations,
+    rustc_identity, validate_stored_loaf_for_reuse,
 };
 
 /// Result for one checked fixture in a built-in Loaf envelope.
@@ -211,6 +212,7 @@ pub(crate) fn import_loaf_envelope_from_configured_mirrors(
     envelope: OvenLoafEnvelope,
     evidence: &OvenLoafEnvelopeEvidence,
     release_store_member: Option<&OvenReleaseStoreMember>,
+    runtime_foundation: Option<&OvenReleaseRuntimeFoundationMember>,
 ) -> CliResult<()> {
     if output.join("envelope.json").is_file() {
         return Ok(());
@@ -219,7 +221,15 @@ pub(crate) fn import_loaf_envelope_from_configured_mirrors(
     if mirrors.is_empty() {
         return Ok(());
     }
-    import_loaf_envelope_from_mirror_roots(output, scratch, envelope, evidence, release_store_member, &mirrors)
+    import_loaf_envelope_from_mirror_roots(
+        output,
+        scratch,
+        envelope,
+        evidence,
+        release_store_member,
+        runtime_foundation,
+        &mirrors,
+    )
 }
 
 /// Commit the expected generation from the first of `mirrors` that proves in full; see the configured wrapper.
@@ -229,9 +239,14 @@ pub(crate) fn import_loaf_envelope_from_mirror_roots(
     envelope: OvenLoafEnvelope,
     evidence: &OvenLoafEnvelopeEvidence,
     release_store_member: Option<&OvenReleaseStoreMember>,
+    runtime_foundation: Option<&OvenReleaseRuntimeFoundationMember>,
     mirrors: &[PathBuf],
 ) -> CliResult<()> {
-    let compatibility_evidence = loaf_envelope_compatibility_map_with_release_member(evidence, release_store_member)?;
+    let mut compatibility_evidence =
+        loaf_envelope_compatibility_map_with_release_member(evidence, release_store_member)?;
+    if let Some(member) = runtime_foundation {
+        bind_release_runtime_foundation_evidence(&mut compatibility_evidence, member).map_err(oven_error)?;
+    }
     let generation_identity =
         loaf_generation_identity_with_release_member(envelope, &compatibility_evidence, release_store_member)?;
     let members = loaf_envelope_specifications(envelope)
@@ -250,6 +265,7 @@ pub(crate) fn import_loaf_envelope_from_mirror_roots(
         evidence: &compatibility_evidence,
         members: &members,
         release_store_member,
+        runtime_foundation,
     };
     let started = Instant::now();
     match import_loaf_envelope_from_mirrors(output, scratch, &expectation, mirrors) {
