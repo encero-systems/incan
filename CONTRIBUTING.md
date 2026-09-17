@@ -48,6 +48,10 @@ For an up-to-date module map, see:
 
 ## Key Development Tasks
 
+### Keeping test outputs in a managed directory
+
+For storage-budgeted runs, set `CARGO_TARGET_DIR` for builds and stores, `TMPDIR` for ordinary temporary files, and `INCAN_TEST_TMP_ROOT` for the compiler suite's fixture scratch. The latter defaults to `/tmp`; choose a short absolute directory because nested Rust tooling can hit platform path-length limits. Both `make test` and `make test-one` create their scratch below this root and pass it to the nested suite runner. When invoking `incan oven compiler-libtests` directly, export `INCAN_TEST_TMP_ROOT` and create that directory first; an invalid explicit root is an error, not a fallback.
+
 ### Bumping the Version
 
 The toolchain version lives in **one place**, the root `Cargo.toml`'s `[workspace.package] version`; the kernel, compiler and toolchain crates inherit it. Two rings ship on their own line — the Oven (`oven_model`, `oven_store`, `oven_rustc`) and the stdlib runtime (the `incan_std_*` facets, `incan_derive`, `incan_web_macros`) — and `incan_vocab`, the vocabulary registration contract, has carried its own since before the rings existed. Each of those declares an explicit `version` in its manifest, and the root `[workspace.dependencies]` entry for it repeats that line as a requirement beside its `path`; `scripts/check_ring_versions.py` (part of `make version-gate`) keeps the crates of a ring, and the table, in agreement.

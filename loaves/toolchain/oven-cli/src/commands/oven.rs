@@ -982,6 +982,10 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
         compiler_suite_environment_path(&cli_bake.output)?.display().to_string(),
     );
     let suite_temporary_directory = compiler_suite_temporary_directory()?;
+    // Nested suite invocations keep the same short owner root rather than returning to system scratch.
+    if let Some(root) = suite_temporary_directory.path().parent() {
+        environment.insert("INCAN_TEST_TMP_ROOT".to_string(), root.display().to_string());
+    }
     environment.insert(
         "TMPDIR".to_string(),
         suite_temporary_directory.path().display().to_string(),
@@ -5454,13 +5458,16 @@ mod tests {
         Ok(())
     }
 
-    /// Fixture metadata must not inherit an arbitrarily deep caller temporary directory.
+    /// Fixture metadata uses the explicit owner root when configured, retaining the short Unix default otherwise.
     #[cfg(unix)]
     #[test]
-    fn compiler_suite_temporary_directory_uses_the_short_system_root() -> Result<(), Box<dyn std::error::Error>> {
+    fn compiler_suite_temporary_directory_honors_owner_root() -> Result<(), Box<dyn std::error::Error>> {
         let temporary = compiler_suite_temporary_directory()?;
 
-        assert_eq!(temporary.path().parent(), Some(Path::new("/tmp")));
+        let root = std::env::var_os("INCAN_TEST_TMP_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/tmp"));
+        assert_eq!(temporary.path().parent(), Some(root.as_path()));
         assert!(temporary.path().is_dir());
         Ok(())
     }
