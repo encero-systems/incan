@@ -9707,6 +9707,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#investigation-consumers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Investigation consumers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#formats" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10205,10 +10216,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#one-graph-across-incan-and-rust_1" class="md-nav__link">
+  <a href="#cross-language-graph-progress" class="md-nav__link">
     <span class="md-ellipsis">
       
-        One graph across Incan and Rust
+        Cross-language graph progress
       
     </span>
   </a>
@@ -10216,10 +10227,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#semantic-digests_1" class="md-nav__link">
+  <a href="#semantic-digest-progress" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Semantic digests
+        Semantic digest progress
       
     </span>
   </a>
@@ -10580,6 +10591,9 @@ graph_summary(project_id)
 <li>explain why a node was included when requested</li>
 </ul>
 <p>Embedding-based re-ranking may be offered, but it must be optional and local/remote execution must be policy-visible under RFC 080 when models are involved.</p>
+<h3 id="investigation-consumers">Investigation consumers<a class="headerlink" href="#investigation-consumers" title="Permanent link">&para;</a></h3>
+<p>RFC 126 proposes an Oven-owned investigation service that connects compiler context to native execution and retained captures. Its observations must reference the exact source snapshot and executable through verified mappings; they must not be promoted into timeless checked source facts. Durable declaration identity, compilation-specific location, executable identity, and capture/stop identity remain distinct. Missing mappings remain unavailable rather than being reconstructed from matching names or lines.</p>
+<p>The graph service remains the semantic-context producer. Read-only task-context operations do not implicitly grant launch, resume, expression-evaluation, rerun, or mutation authority. Runtime evidence may be linked through its owning record contract without merging the graph and investigation lifecycles. The public mapping and provenance contract must preserve these identity and authority boundaries when compiler context is consumed by RFC 126 investigations.</p>
 <h3 id="formats">Formats<a class="headerlink" href="#formats" title="Permanent link">&para;</a></h3>
 <p>Graph export must support JSONL for streaming ingestion and should support pretty JSON for debugging. Agent context packing should support a compact text format designed for LLM consumption. The compact format should avoid repeated fully qualified names, preserve local IDs, expose edge direction, include provenance, and be deterministic.</p>
 <p>The compact format is not required to be stable in the same way as the graph JSONL schema until explicitly versioned.</p>
@@ -10852,14 +10866,14 @@ graph_summary(project_id)
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Graph-schema version on every export (schema 7).</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Strict checked export and tolerant export.</li>
 </ul>
-<h3 id="one-graph-across-incan-and-rust_1">One graph across Incan and Rust<a class="headerlink" href="#one-graph-across-incan-and-rust_1" title="Permanent link">&para;</a></h3>
+<h3 id="cross-language-graph-progress">Cross-language graph progress<a class="headerlink" href="#cross-language-graph-progress" title="Permanent link">&para;</a></h3>
 <ul class="task-list">
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Namespace nodes over the module graph (#1513).</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Rust items a module reaches, recorded as reference and call records with <code>canonical_owner</code> (#1524).</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Reference language derived from resolved identity rather than syntax.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>rust_item</code> and <code>uses_rust_item</code> retired.</li>
 </ul>
-<h3 id="semantic-digests_1">Semantic digests<a class="headerlink" href="#semantic-digests_1" title="Permanent link">&para;</a></h3>
+<h3 id="semantic-digest-progress">Semantic digest progress<a class="headerlink" href="#semantic-digest-progress" title="Permanent link">&para;</a></h3>
 <ul class="task-list">
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Per-declaration semantic digest excluding position, formatting, comments and documentation; documentation digest kept apart.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Closure digests over codegraph edges and MIR-backed Rust body digests (#1504).</li>

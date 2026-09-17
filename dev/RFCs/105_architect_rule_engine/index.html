@@ -9547,6 +9547,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#investigation-consumers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Investigation consumers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rule-categories" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9807,8 +9818,8 @@
 <li>RFC 118 (Incan and Oven command-line surfaces)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> https://github.com/encero-systems/incan/issues/663</li>
-<li><strong>RFC PR:</strong> -</li>
+<li><strong>Issue:</strong> <a href="https://github.com/encero-systems/incan/issues/663">#663</a></li>
+<li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> ~~v0.3~~ v0.5</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
@@ -9968,6 +9979,8 @@ Low: the rule is exploratory and should normally be hidden outside explicit prof
 <p>Suggestions must be phrased as advice, not certainty. Risks must name the common counterexamples that would make the suggestion wrong.</p>
 <p>Category, confidence, priority, profile, suppression, and baseline state shape presentation and policy. They must not be used as hidden reasons to drop evidence-backed findings before output unless the user selected a profile, suppression, or baseline that explicitly hides them.</p>
 <p>Findings must be de-duplicated before output. Identical findings produced through multiple import roots must appear once.</p>
+<h3 id="investigation-consumers">Investigation consumers<a class="headerlink" href="#investigation-consumers" title="Permanent link">&para;</a></h3>
+<p>RFC 126 proposes evidence-backed investigations that may reference Architect findings when forming and testing hypotheses. A finding remains advisory evidence about a rule match; its priority and confidence do not establish the cause of a runtime failure. An investigation must retain the finding's source snapshot, rule identity, evidence, and counterexample risks separately from its execution observations. Architect does not acquire process-control, experiment-execution, or automatic-repair responsibilities through this integration.</p>
 <h3 id="rule-categories">Rule categories<a class="headerlink" href="#rule-categories" title="Permanent link">&para;</a></h3>
 <p>Architecture rules describe design pressure across declarations, modules, domains, or boundaries. Repeated match dispatch, growing literal domains, registry source-of-truth drift, wrong-layer behavior, and operation-boundary pressure belong here.</p>
 <p>Safety rules describe recoverability, fail-fast behavior, partial handling, unchecked assumptions, or public-boundary hazards. A public function that can panic on caller-provided data belongs here.</p>
