@@ -2713,6 +2713,10 @@ mod tests {
         let held = acquire_committed_release_store_member(root.path(), "engine")?.ok_or("member not acquired")?;
         assert!(held.executable.is_file());
         assert_eq!(held.payload.manifest.kind, OvenArtifactKind::ProjectOutput);
+        let generation_lock = fs::File::open(root.path().join(OVEN_LOAF_ENVELOPE_LOCK_FILE))?;
+        assert!(matches!(generation_lock.try_lock(), Err(fs::TryLockError::WouldBlock)));
+        drop(held);
+        generation_lock.try_lock()?;
         Ok(())
     }
 
