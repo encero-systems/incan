@@ -1856,6 +1856,102 @@ mod tests {
     }
 
     #[test]
+    fn generated_archive_binding_requires_exact_search_root_target_and_member() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut capture = capture()?;
+        capture.units.push(OvenLegacyCargoSelectedUnit {
+            package_id: capture.units[0].package_id.clone(),
+            package: capture.units[0].package.clone(),
+            package_version: capture.units[0].package_version.clone(),
+            package_source: capture.units[0].package_source.clone(),
+            target_name: "build-script-build".to_string(),
+            target_kinds: vec!["custom-build".to_string()],
+            crate_types: vec!["bin".to_string()],
+            source_path: PathBuf::from("/transient/serde/build.rs"),
+            root_module: "build.rs".to_string(),
+            edition: "2021".to_string(),
+            mode: "run-custom-build".to_string(),
+            platform: Some("x86_64-unknown-linux-gnu".to_string()),
+            target_is_explicit: Some(false),
+            cfg: Vec::new(),
+            effective_features: Vec::new(),
+            dependencies: Vec::new(),
+            sysroot_externs: Vec::new(),
+            build_script: None,
+            registry_source: None,
+        });
+        let facts = super::super::OvenLegacyCargoBuildScriptFacts {
+            cfgs: Vec::new(),
+            environment: BTreeMap::new(),
+            linked_libraries: vec!["static=fixture".to_string()],
+            linked_paths: vec!["native=/transient/out/native".to_string()],
+            out_dir: PathBuf::from("/transient/out"),
+            output: Some(super::super::OvenLegacyCargoSelectedGeneratedOutput {
+                relative_root: "generated-outputs/fixture".to_string(),
+                digest: digest(b"generated tree"),
+                members: vec![
+                    super::super::OvenLegacyCargoInspectionSourceMember {
+                        path: "native/libfixture.a".to_string(),
+                        digest: digest(b"right archive"),
+                    },
+                    super::super::OvenLegacyCargoInspectionSourceMember {
+                        path: "other/libfixture.a".to_string(),
+                        digest: digest(b"wrong archive"),
+                    },
+                ],
+            }),
+        };
+        capture.units[0]
+            .dependencies
+            .push(super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 1,
+                extern_crate_name: None,
+                build_script: Some(facts.clone()),
+            });
+        let generated = BTreeMap::from([(
+            (0, 1),
+            OvenLegacyCargoSelectedGeneratedBinding {
+                name: "out_dir".to_string(),
+                source: OvenSelectedRustFacetPath {
+                    owner: digest(b"generated owner"),
+                    path: "generated-outputs/fixture".to_string(),
+                },
+                digest: digest(b"generated tree"),
+            },
+        )]);
+
+        let bindings = legacy_cargo_generated_archive_bindings(&capture, &generated)?;
+        let binding = bindings.get(&(0, 1)).ok_or("archive binding missing")?;
+        let [
+            OvenSelectedRustFacetLinkedLibrary::Archive {
+                artifact,
+                digest: archive_digest,
+                ..
+            },
+        ] = binding.libraries.as_slice()
+        else {
+            return Err(std::io::Error::other("archive binding shape changed").into());
+        };
+        assert_eq!(artifact.path, "generated-outputs/fixture/native/libfixture.a");
+        assert_eq!(archive_digest, &digest(b"right archive"));
+
+        capture.units[0].dependencies[0]
+            .build_script
+            .as_mut()
+            .ok_or("build-script facts missing")?
+            .linked_paths = vec!["native=/transient/out/missing".to_string()];
+        assert!(legacy_cargo_generated_archive_bindings(&capture, &generated).is_err());
+        capture.units[0].dependencies[0]
+            .build_script
+            .as_mut()
+            .ok_or("build-script facts missing")?
+            .linked_paths = vec!["native=/transient/out/native".to_string()];
+        capture.units[0].platform = Some("x86_64-pc-windows-msvc".to_string());
+        assert!(legacy_cargo_generated_archive_bindings(&capture, &generated).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn built_in_target_spec_binds_the_verified_compiler_and_cfg_snapshot() -> Result<(), Box<dyn std::error::Error>> {
         let capture = capture()?;
         let owner = digest(b"toolchain owner");
