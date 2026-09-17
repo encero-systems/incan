@@ -108,7 +108,7 @@ The `crate` dependencies are ordinary Rust ecosystem inputs. They default to cra
 
 ### Build-time work is visible before it runs
 
-Suppose `native-sys` needs a generated binding, a compiled C helper, and two compile-time flags that its `build.rs` used to probe for. Under Oven that script is inert: Oven does not compile it, run it, or read its directives, and reports its presence once as a warning. The Loaf states what the script would have discovered:
+Suppose `helper-sys` needs a generated binding, a compiled C helper, and two compile-time flags that its `build.rs` used to probe for. Under Oven that script is inert: Oven does not compile it, run it, or read its directives, and reports its presence once as a warning. The Loaf states what the script would have discovered:
 
 ```toml
 [rust]
@@ -117,10 +117,10 @@ out = "committed"
 
 [rust.link]
 sources = ["c/helper.c"]
-link = "static=native_sys_helper"
+link = "static=sys_helper"
 
 [rust.tool]
-bindgen = { inputs = ["include/native.h"], outputs = ["generated/bindings.rs"] }
+bindgen = { inputs = ["include/helper.h"], outputs = ["generated/bindings.rs"] }
 ```
 
 The example shows the semantic grouping; the authored TOML grammar must be fixed before implementation and documented in the manifest reference. Every field is plan-visible before anything runs. `cfg` and `out` are data: the plan shows normalized flags and owner-relative digests of the committed files or trees. `link` and `tool` are publisher-side bake work with complete declared input and output closures. Their products enter the same admitted selected-unit and store path as other generated and linked-library inputs; a consumer receives the finished archive and generated inputs and never executes either. A tool is a host-domain unit whose executable identity, inputs, outputs, selected target association, and receipt are part of the consuming closure.
