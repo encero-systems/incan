@@ -3298,6 +3298,7 @@ pub fn oven_run(options: OvenRunCommandOptions) -> CliResult<ExitCode> {
 
 #[cfg(test)]
 mod tests {
+    use super::CompleteLoafEnvelopeReuseInput;
     use super::loaf_bake::{
         import_release_policy_output, release_policy_publisher_input, validate_release_policy_project_output,
         verify_committed_release_policy_output,
