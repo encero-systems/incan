@@ -67,6 +67,7 @@ def request(
     operation: str = "validate_selected_rust_graph",
     intent_owner: str = "sha256:project-authority",
     closure_case: str = "empty",
+    environment_value: str = "hmac-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 ) -> str:
     """Build one selected leaf around a named physical-closure scenario."""
     a_digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -76,7 +77,13 @@ def request(
         selected_closure = JsonValue.object({"environment": JsonValue.object({})})
     elif closure_case == "sensitive_environment":
         selected_closure = closure([], [], [], {"DEP_TOKEN": JsonValue.object(
-            {"kind": JsonValue.string("sensitive_digest"), "hmac_sha256": JsonValue.string("sha256:token")},
+            {"kind": JsonValue.string("sensitive_digest"), "hmac_sha256": JsonValue.string(environment_value)},
+        )})
+    elif closure_case == "path_environment":
+        selected_closure = closure([], [], [], {"OUT_DIR": JsonValue.object(
+            {"kind": JsonValue.string("path"), "value": JsonValue.object(
+                {"owner": JsonValue.string("sha256:generated"), "path": JsonValue.string(environment_value)},
+            )},
         )})
     elif closure_case == "unsupported_sysroot_extern":
         selected_closure = closure([], [], [JsonValue.string("std")], {})
@@ -313,3 +320,21 @@ pub def test_compiler_release_root_uses_its_sealed_source_catalog() -> None:
 pub def test_compiler_release_root_refuses_a_detached_intent_owner() -> None:
     """Protects compiler-release policy from accepting feature intent outside its source-owned catalog."""
     assert status(evaluate(request(role="compiler_support", intent_owner="sha256:other-authority"))) == "refused"
+
+
+pub def test_sensitive_environment_requires_canonical_keyed_digest() -> None:
+    """Reject unkeyed, malformed and uppercase claims while retaining a valid opaque keyed digest."""
+    for value in ["sha256:token", "hmac-sha256:short", "hmac-sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]:
+        response = evaluate(request(closure_case="sensitive_environment", environment_value=value))
+        assert status(response) == "refused"
+        assert refusal_fields(response) == ["units", "0", "closure", "environment", "DEP_TOKEN", "hmac_sha256"]
+
+
+pub def test_environment_paths_remain_owner_relative() -> None:
+    """Accept portable held-owner locations and refuse absolute paths, traversal and platform separators."""
+    for value in [".", "generated/out"]:
+        assert status(evaluate(request(closure_case="path_environment", environment_value=value))) == "selected"
+    for value in ["/tmp/out", "C:/out", "../out", "a/../out", "a//out", "a/./out", "a\\out"]:
+        response = evaluate(request(closure_case="path_environment", environment_value=value))
+        assert status(response) == "refused"
+        assert refusal_fields(response) == ["units", "0", "closure", "environment", "OUT_DIR", "value", "path"]
