@@ -682,7 +682,7 @@ mod tests {
         OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetUnit,
         OvenSelectedRustFacetUnitRole,
     };
-    use oven_store::{OvenBuildIntent, digest_bytes};
+    use oven_store::{OvenBuildIntent, digest_bytes, digest_source_tree};
 
     use crate::loaf::{
         OVEN_LOAF_ENVELOPE_LOCK_FILE, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION,
@@ -1524,7 +1524,27 @@ mod tests {
         write_materialization_fixture(foundation_source.path(), &toolchain_root)?;
         write_foundation_materialization_fixture(&staged_compiled_root, compiled_toolchain.path())?;
 
-        let asset = foundation_asset()?;
+        let mut foundation = foundation()?;
+        for (relative_path, bytes) in [
+            ("registry-sources/serde-1.0.0/src/lib.rs", fixture_source_bytes("serde")),
+            (
+                "registry-sources/serde_derive-1.0.0/src/lib.rs",
+                fixture_source_bytes("serde_derive"),
+            ),
+        ] {
+            foundation
+                .artifacts
+                .supporting_artifacts
+                .push(OvenRustcSupportingArtifact {
+                    relative_path: relative_path.to_string(),
+                    digest: selected_graph_sha256(bytes.as_bytes()),
+                });
+        }
+        foundation
+            .artifacts
+            .supporting_artifacts
+            .sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+        let asset = OvenRuntimeFoundationAsset::sealed(foundation.clone(), source_inventories(&foundation)?)?;
         let plan = asset.foundation.artifacts.clone();
         let (payload_logical_bytes, payload_physical_bytes) =
             crate::loaf::loaf_directory_byte_counts(&staged_compiled_root)?;
@@ -1563,6 +1583,14 @@ mod tests {
         let validated = validate_stored_loaf(&compiled_root.join("loaf.json"), &loaf.build_unit_identity)?;
         assert_eq!(validated.loaf_identity, loaf_identity);
         assert_eq!(validated.plan_identity, plan_identity);
+        for source in &plan.registry_sources {
+            assert_eq!(
+                digest_source_tree(&compiled_root.join(&source.source.relative_root))?,
+                source.source.digest,
+                "compiled Loaf must carry the complete selected source tree for {}",
+                source.package
+            );
+        }
         let foundation_path = generation.join("runtime-foundation");
         let admitted = publish_runtime_foundation_asset(
             asset.clone(),
