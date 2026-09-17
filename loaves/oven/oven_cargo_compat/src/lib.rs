@@ -5276,12 +5276,17 @@ mod tests {
             "{\n  \"schema_version\": 2,\n  \"sdk_id\": \"fixture\",\n  \"sdk_version\": \"0.1.0\",\n  \"compiler_requirement\": \">=0.1.0\",\n  \"provider_codegen_revision\": 5,\n  \"components\": {},\n  \"profiles\": {\"default\": []}\n}\n",
         )?;
         fs::write(provider.path().join("components/core/provider.incnlib"), "provider")?;
+        fs::write(
+            provider.path().join("components.rs"),
+            "root file sorts before nested component",
+        )?;
 
         let files = materialized_files_from_directory(provider.path(), "providers", "SDK provider inventory")?;
         let relative_paths = files.into_iter().map(|file| file.relative_path).collect::<Vec<_>>();
         assert_eq!(
             relative_paths,
             vec![
+                "providers/components.rs".to_string(),
                 "providers/components/core/provider.incnlib".to_string(),
                 "providers/sdk-inventory.json".to_string(),
             ]

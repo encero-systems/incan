@@ -104,7 +104,7 @@ pub fn stage_registry_source_directory(
             "could not digest staged registry package `{package}` {version}: {error}"
         ))
     })?;
-    let mut members = materialized_files_from_directory(&staged_root, "", "staged registry package source")?
+    let members = materialized_files_from_directory(&staged_root, "", "staged registry package source")?
         .into_iter()
         .map(|file| {
             let path = file.relative_path.strip_prefix('/').ok_or_else(|| {
@@ -116,8 +116,6 @@ pub fn stage_registry_source_directory(
             })
         })
         .collect::<Result<Vec<_>, OvenLegacyCargoError>>()?;
-    // Directory traversal order differs from complete relative-path order (for example src.rs versus src/lib.rs).
-    members.sort_by(|left, right| left.path.cmp(&right.path));
     if members.is_empty()
         || members.windows(2).any(|pair| pair[0].path >= pair[1].path)
         || !members.iter().any(|member| member.path == "Cargo.toml")

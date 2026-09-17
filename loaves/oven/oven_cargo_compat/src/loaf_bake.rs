@@ -362,7 +362,7 @@ fn merge_loaf_inspection_sources(
         } else {
             copy_regular_directory_tree(&source.source_root, &destination, "registry inspection source")?;
         }
-        let mut actual_members = materialized_files_from_directory(&destination, "", "registry inspection source")?
+        let actual_members = materialized_files_from_directory(&destination, "", "registry inspection source")?
             .into_iter()
             .map(|file| {
                 let path = file
@@ -380,7 +380,6 @@ fn merge_loaf_inspection_sources(
                 ))
             })
             .collect::<Result<Vec<_>, OvenLoafError>>()?;
-        actual_members.sort_by(|left, right| left.0.cmp(&right.0));
         let expected_members = source
             .members
             .iter()
