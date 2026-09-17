@@ -331,8 +331,8 @@ fn provider_semantic_projection_persistent_key(records: &BTreeMap<String, Provid
     hasher.update(b"incan-provider-semantic-plan-v3\0");
     for (identity, record) in records {
         let manifest_digest = match (record.manifest.as_ref(), record.artifact.as_ref()) {
-            (Some(manifest), Some(artifact)) => Some(
-                retained_sdk_manifest_digest(manifest, &artifact.manifest_path)
+            (Some(manifest), Some(_artifact)) => Some(
+                retained_sdk_manifest_digest(manifest)
                     .map(Ok)
                     .unwrap_or_else(|| canonical_manifest_digest(manifest))?,
             ),
@@ -1727,17 +1727,18 @@ fn sdk_provider_records(
 }
 
 /// Describe one sealed SDK manifest well enough to notice it being rewritten underneath us.
-type SdkManifestFileStamp = (PathBuf, u64, Option<SystemTime>);
+type SdkManifestFileStamp = (PathBuf, u64, Option<SystemTime>, String);
 
 /// Reuse one already-parsed SDK provider manifest for as long as its file is observably unchanged.
 ///
 /// A plan build reads all ten sealed provider descriptors, and a bake builds the plan several times, so the same
-/// 6.6 MB provider surface is re-read and re-deserialized on each one. The `api_metadata` surface alone accounts for
+/// 6.6 MB provider surface is re-deserialized on each one. The `api_metadata` surface alone accounts for
 /// a measured 14% of a no-op bake.
 ///
-/// Only the parse is memoized. `validate_sdk_descriptor` still runs against every record, and every artifact digest
-/// is still taken at its own call site, so no check is skipped -- the reader simply stops turning the same bytes
-/// into the same structure repeatedly. That boundary is the point: an earlier attempt keyed this on the digest the
+/// Only the parse is memoized. Every lookup still reads and hashes the manifest bytes, `validate_sdk_descriptor`
+/// still runs against every record, and every artifact digest is still taken at its own call site, so no check is
+/// skipped -- the reader simply stops turning the same bytes into the same structure repeatedly. That boundary is
+/// the point: an earlier attempt keyed this on the digest the
 /// inventory *records* for a provider, which cannot notice the generated Rust behind that digest changing, and its
 /// own integrity test caught it. The key here is what the file system reports about the file that was read.
 struct SdkManifestMemoEntry {
@@ -1753,32 +1754,37 @@ fn sdk_manifest_memo() -> &'static Mutex<HashMap<SdkManifestFileStamp, SdkManife
     MEMO.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Observe one sealed manifest file, or report nothing when it cannot be stated.
+/// Observe one sealed manifest file and its current bytes, or report nothing when they cannot be stated.
 ///
 /// A manifest that cannot be stated is simply not memoized: the caller falls through to a full read, which produces
 /// the honest error rather than a stale structure.
-fn sdk_manifest_file_stamp(manifest_path: &Path) -> Option<SdkManifestFileStamp> {
+fn sdk_manifest_file_stamp(manifest_path: &Path, wire: &str) -> Option<SdkManifestFileStamp> {
     let metadata = std::fs::metadata(manifest_path).ok()?;
-    Some((manifest_path.to_path_buf(), metadata.len(), metadata.modified().ok()))
+    Some((
+        manifest_path.to_path_buf(),
+        metadata.len(),
+        metadata.modified().ok(),
+        format!("sha256:{}", hex::encode(Sha256::digest(wire.as_bytes()))),
+    ))
 }
 
 /// Read one sealed SDK provider manifest, reusing the parse when the file has not changed since it was read.
 fn read_sdk_provider_manifest(
     manifest_path: &Path,
 ) -> Result<Arc<LibraryManifest>, crate::library_manifest::LibraryManifestError> {
-    let stamp = sdk_manifest_file_stamp(manifest_path);
-    if let Some(stamp) = stamp.as_ref()
-        && let Ok(memo) = sdk_manifest_memo().lock()
-        && let Some(entry) = memo.get(stamp)
-    {
-        return Ok(Arc::clone(&entry.manifest));
-    }
     let wire = std::fs::read_to_string(manifest_path).map_err(|source| {
         crate::library_manifest::LibraryManifestError::Read {
             path: manifest_path.to_path_buf(),
             source,
         }
     })?;
+    let stamp = sdk_manifest_file_stamp(manifest_path, &wire);
+    if let Some(stamp) = stamp.as_ref()
+        && let Ok(memo) = sdk_manifest_memo().lock()
+        && let Some(entry) = memo.get(stamp)
+    {
+        return Ok(Arc::clone(&entry.manifest));
+    }
     let manifest = Arc::new(LibraryManifest::from_json_str(&wire)?);
     let canonical_digest = digest_canonical_json_wire(&wire)?;
     if let Some(stamp) = stamp
@@ -1834,11 +1840,11 @@ fn digest_canonical_json_wire(wire: &str) -> Result<String, crate::library_manif
 }
 
 /// Reuse a digest only when the current SDK manifest is the exact memoized parse of the current stamped file.
-fn retained_sdk_manifest_digest(manifest: &Arc<LibraryManifest>, manifest_path: &Path) -> Option<String> {
-    let stamp = sdk_manifest_file_stamp(manifest_path)?;
+fn retained_sdk_manifest_digest(manifest: &Arc<LibraryManifest>) -> Option<String> {
     let memo = sdk_manifest_memo().lock().ok()?;
-    let entry = memo.get(&stamp)?;
-    Arc::ptr_eq(manifest, &entry.manifest).then(|| entry.canonical_digest.clone())
+    memo.values()
+        .find(|entry| Arc::ptr_eq(manifest, &entry.manifest))
+        .map(|entry| entry.canonical_digest.clone())
 }
 
 /// Return active provider-local module claims, falling back to checked API metadata for pre-RFC-114 artifacts.
@@ -2104,11 +2110,17 @@ mod tests {
         let first = read_sdk_provider_manifest(&manifest_path)?;
         assert_eq!(first.name, "sealed_provider");
         assert_eq!(read_sdk_provider_manifest(&manifest_path)?.version, "1.0.0");
+        let first_len = fs::metadata(&manifest_path)?.len();
 
         // Rewriting the sealed file changes what the file system reports about it, so the memo cannot serve the
         // structure it parsed from the previous bytes. Keying on a digest the manifest records for itself is what
         // made an earlier attempt at this unsound.
         LibraryManifest::new("sealed_provider", "2.0.0").write_to_path(&manifest_path)?;
+        assert_eq!(
+            fs::metadata(&manifest_path)?.len(),
+            first_len,
+            "fixture rewrite must preserve length"
+        );
         assert_eq!(read_sdk_provider_manifest(&manifest_path)?.version, "2.0.0");
         Ok(())
     }
