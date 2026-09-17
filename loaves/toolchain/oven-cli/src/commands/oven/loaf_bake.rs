@@ -677,8 +677,30 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             None
         };
         if let Some((foundation_member, closure_member)) = reusable {
-            (Some(foundation_member), Some(closure_member))
-        } else {
+            let publication_lock = acquire_exclusive_loaf_generation_lock(&options.output).map_err(oven_error)?;
+            if let Some(report) = reuse_complete_loaf_envelope(CompleteLoafEnvelopeReuseInput {
+                output: &options.output,
+                scratch: scratch.path(),
+                envelope,
+                evidence: &evidence,
+                release_store_member: release_store_member.as_ref(),
+                runtime_foundation: Some(&foundation_member),
+                runtime_closure: Some(&closure_member),
+                limits,
+                started,
+            })? {
+                let report = finish_loaf_bake_after_publication(publication_lock, &options, envelope, report, started)?;
+                verify_committed_release_policy_output(
+                    &options.output,
+                    release_store_member.as_ref(),
+                    options.policy_engine_target.as_deref(),
+                )?;
+                print_loaf_bake_report(&report, options.format)?;
+                return Ok(ExitCode::SUCCESS);
+            }
+            drop(publication_lock);
+        }
+        {
             let toolchain_relative = PathBuf::from("runtime-foundations/rust-toolchain");
             let toolchain_root = staged_root.join(&toolchain_relative);
             let (compiler_closure_identity, mut toolchain_members) = stage_release_runtime_foundation_toolchain(
