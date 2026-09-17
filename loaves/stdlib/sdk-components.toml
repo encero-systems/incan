@@ -1,7 +1,7 @@
 [sdk]
 id = "incan"
-version = "0.6.0-dev.5"
-compiler-requirement = ">=0.6.0-dev.5,<0.7.0"
+version = "0.6.0-dev.6"
+compiler-requirement = ">=0.6.0-dev.6,<0.7.0"
 
 [profiles]
 minimal = ["stdlib-core", "stdlib-interop"]
