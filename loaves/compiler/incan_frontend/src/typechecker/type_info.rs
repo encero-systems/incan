@@ -3,7 +3,7 @@
 //! This module contains the reusable semantic metadata that later compiler stages consume after typechecking. It keeps
 //! the cross-phase snapshot surface separate from the main [`TypeChecker`](super::TypeChecker) orchestration state.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use sha2::{Digest, Sha256};
 
@@ -20,9 +20,10 @@ use incan_lang::lang::c_abi::{LinkCapabilityId, ScalarTypeId, link_capability_as
 use incan_lang::lang::surface::string_methods::StringMethodId;
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
 use incan_semantics_core::{
-    CanonicalSymbolId, CompilerNodeId, IncanCallableParam, IncanCallableParamKind, IncanPrimitiveType, IncanType,
-    SemanticFact, SemanticFactKind, SemanticFactStore, SemanticFactValue, SemanticRegistryEntry,
-    SemanticRegistrySubjectKind, SemanticRegistryValue, SemanticSourceTarget, SemanticSourceTargetKind,
+    CanonicalStableDeclarationContext, CanonicalSymbolId, CompilerNodeId, IncanCallableParam, IncanCallableParamKind,
+    IncanPrimitiveType, IncanType, SemanticFact, SemanticFactKind, SemanticFactStore, SemanticFactValue,
+    SemanticRegistryEntry, SemanticRegistrySubjectKind, SemanticRegistryValue, SemanticSourceTarget,
+    SemanticSourceTargetKind, SymbolNamespace,
 };
 
 use super::{ConstValue, const_eval};
@@ -910,6 +911,11 @@ pub struct DeclarationArtifacts {
     /// consumers. Binding-aware consumers use [`Self::hir_bindings_by_span`], which also represents imports and
     /// aliases carrying a target's identity.
     pub declaration_identities: HashMap<(usize, usize), CanonicalSymbolId>,
+    /// Canonical identities of source-owned declarations below module scope, keyed by declaration span.
+    ///
+    /// This is a complete checked declaration inventory, including bindings that have no reads. Stable identity
+    /// projection uses it so adding the first use of an existing sibling cannot change another binding's ordinal.
+    pub nested_declaration_identities: HashMap<(usize, usize), CanonicalSymbolId>,
     /// RFC 120 identities of accepted source-owned member declarations, keyed by their declaration span.
     ///
     /// Fields, methods, properties, and enum variants do not occupy the module's ordinary lexical declaration map,
@@ -1780,6 +1786,47 @@ impl TypeCheckInfo {
                 ));
             }
         }
+
+        let mut stable_context_groups = BTreeMap::<
+            (CanonicalSymbolId, SymbolNamespace, SemanticSourceTargetKind, String),
+            BTreeSet<CanonicalSymbolId>,
+        >::new();
+        for identity in self.declarations.nested_declaration_identities.values() {
+            if identity.scope_discriminant.is_none() {
+                continue;
+            }
+            let Some(owner) = incan_semantics_core::dependencies::closest_declaring_owner(
+                declarations.iter().copied(),
+                identity.declaration_span,
+            ) else {
+                continue;
+            };
+            stable_context_groups
+                .entry((
+                    owner.clone(),
+                    identity.namespace,
+                    identity.kind.clone(),
+                    identity.declaration_name.clone(),
+                ))
+                .or_default()
+                .insert(identity.clone());
+        }
+        let mut stable_contexts = BTreeMap::new();
+        for ((owner, _, _, _), identities) in stable_context_groups {
+            let mut identities = identities.into_iter().collect::<Vec<_>>();
+            identities.sort_by_key(|identity| (identity.declaration_span.start, identity.declaration_span.end));
+            for (binding_ordinal, identity) in identities.into_iter().enumerate() {
+                if let Ok(binding_ordinal) = u32::try_from(binding_ordinal) {
+                    stable_contexts.insert(
+                        identity,
+                        CanonicalStableDeclarationContext {
+                            owner: owner.clone(),
+                            binding_ordinal,
+                        },
+                    );
+                }
+            }
+        }
         for (&span, identity) in &self.references.resolved_identities {
             let subject = CompilerNodeId::expression_span(&module_identity, span.0, span.1);
             facts.push(SemanticFact::new(
@@ -1792,6 +1839,13 @@ impl TypeCheckInfo {
                 SemanticFactKind::SymbolIdentity,
                 SemanticFactValue::canonical_identity(identity.clone()),
             ));
+            if let Some(context) = stable_contexts.get(identity) {
+                facts.push(SemanticFact::new(
+                    subject.clone(),
+                    SemanticFactKind::StableDeclarationContext,
+                    SemanticFactValue::stable_declaration_context(context.clone()),
+                ));
+            }
             if let Some(owner) = self.calls.compiler_generated_member_identities.get(identity) {
                 facts.push(SemanticFact::new(
                     subject.clone(),

@@ -46,10 +46,10 @@ pub use emitted_symbol::{
 };
 pub use facts::{
     AuthorityDecision, AuthorityDenialReason, AuthorityGrantContext, AuthorityMode, AuthorityOutcome,
-    AuthorityProvenance, CanonicalSymbolId, CompilerNodeId, CompilerNodeKind, ScopeDiscriminant, SemanticFact,
-    SemanticFactKind, SemanticFactStore, SemanticFactValue, SemanticRegistryEntry, SemanticRegistrySubjectKind,
-    SemanticRegistryValue, SemanticSourceTarget, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
-    canonical_module_identity, module_identity_for_path, package_module_identity,
+    AuthorityProvenance, CanonicalStableDeclarationContext, CanonicalSymbolId, CompilerNodeId, CompilerNodeKind,
+    ScopeDiscriminant, SemanticFact, SemanticFactKind, SemanticFactStore, SemanticFactValue, SemanticRegistryEntry,
+    SemanticRegistrySubjectKind, SemanticRegistryValue, SemanticSourceTarget, SemanticSourceTargetKind,
+    SymbolNamespace, SymbolOrigin, canonical_module_identity, module_identity_for_path, package_module_identity,
 };
 pub use hir::{
     DeclarationVisibility, HirDeclaration, HirDeclarationKind, HirModule, HirSourceSpan, SemanticModuleSnapshot,
