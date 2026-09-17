@@ -561,10 +561,10 @@ def project_inventories(
     return Ok(inventories)
 
 
-def encode_inventory(inventory: PackageSourceInventory) -> JsonValue:
+def encode_inventory(inventory: PackageSourceInventory, node: GraphNode) -> JsonValue:
     """Encode retained package-source facts produced from settled policy."""
     return JsonValue.object(
-        {"owner": JsonValue.string(inventory.owner), "package_root": JsonValue.string(inventory.package_root), "manifest": JsonValue.object(
+        {"package": encode_package(node.package), "domain": JsonValue.string(domain_name(node.domain)), "owner": JsonValue.string(inventory.owner), "package_root": JsonValue.string(inventory.package_root), "manifest": JsonValue.object(
             {"path": JsonValue.string(inventory.manifest.path), "bytes_hex": JsonValue.string(
                 hexlify(inventory.manifest.raw_bytes),
             ), "sha256_hex": JsonValue.string(hexlify(inventory.manifest.sha256_digest))},
@@ -617,7 +617,7 @@ def selected(
                     binding.child_unit,
                 )},
             ) for binding in bindings],
-        ), "inventories": JsonValue.array([encode_inventory(inventory) for inventory in inventories]), "warnings": JsonValue.array(
+        ), "inventories": JsonValue.array([encode_inventory(inventories[index], result.nodes[index]) for index in range(len(inventories))]), "warnings": JsonValue.array(
             [JsonValue.object(
                 {"owner": JsonValue.string(warning.owner), "package_root": JsonValue.string(warning.package_root)},
             ) for warning in inert_build_script_warnings(inventories)],

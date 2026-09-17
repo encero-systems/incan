@@ -3,7 +3,7 @@
 //! The one place Cargo is allowed to build Incan's own runtime and compiler-suite closures. Everything it publishes
 //! is keyed on the evidence in `loaf_bake_evidence` and committed atomically as a generation.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -13,6 +13,7 @@ use std::time::Instant;
 
 use incan_driver::build::publication::stored_project_output_from_parts;
 use incan_driver::build::{OvenProjectOutputPayload, OvenStoredProjectOutput};
+use oven_model::manifest::ProjectManifest;
 use oven_rustc::loaf::{
     OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember,
 };
@@ -34,8 +35,10 @@ use super::{
     OvenLoafBakeReport, OvenLoafBakerContext, OvenLoafEnvelope, OvenLoafEnvelopeArgument, OvenLoafEnvelopeManifest,
     OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenOutputFormat, OvenStoreCommandOptions, OvenStoreLimits,
     acquire_exclusive_loaf_generation_lock, announce_oven_progress, commit_loaf_generation, compiler_libtests_receipt,
-    elapsed_detail, env, human_bytes, import_loaf_envelope_from_configured_mirrors,
-    isolate_loaf_fixture_toolchain_data, legacy_cargo_inspection_sources, legacy_cargo_resolved_registry_sources,
+    elapsed_detail, env, finalize_compiler_support_selected_graph, human_bytes,
+    import_loaf_envelope_from_configured_mirrors, isolate_loaf_fixture_toolchain_data,
+    legacy_cargo_foundation_projection, legacy_cargo_generated_archive_bindings,
+    legacy_cargo_generated_output_bindings, legacy_cargo_inspection_sources, legacy_cargo_resolved_registry_sources,
     loaf_compiler_lock_path, loaf_compiler_manifest_path, loaf_directory_byte_counts,
     loaf_envelope_compatibility_map_with_release_member, loaf_envelope_evidence, loaf_envelope_inspection_packages,
     loaf_envelope_name, loaf_envelope_specifications, loaf_fixture_action_name, loaf_fixture_probe_is_expected_miss,
@@ -414,7 +417,13 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 .clone()
                 .ok_or_else(|| CliError::failure("release stdlib publisher produced no exact selected-unit capture"))?;
             if release_foundation_capture
-                .replace((receipt.clone(), selected_units))
+                .replace((
+                    receipt.clone(),
+                    selected_units,
+                    inspection_sources.to_vec(),
+                    specification.manifest.to_string(),
+                    prepared.preparation.loaf_identity.clone(),
+                ))
                 .is_some()
             {
                 return Err(CliError::failure(
@@ -473,6 +482,36 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             "release envelope did not retain its runtime-foundation capture".to_string(),
         ));
     }
+    let _finalized_release_graph = if let Some((receipt, capture, sources, manifest_source, loaf_identity)) =
+        release_foundation_capture.as_ref()
+    {
+        let manifest = ProjectManifest::from_str(manifest_source, Path::new("incan.toml"))
+            .map_err(|error| CliError::failure(format!("release foundation manifest is invalid: {error}")))?;
+        let (_, generated) = legacy_cargo_generated_output_bindings(capture).map_err(oven_error)?;
+        let linked = legacy_cargo_generated_archive_bindings(capture, &generated).map_err(oven_error)?;
+        let projection = legacy_cargo_foundation_projection(
+            capture,
+            receipt,
+            sources,
+            loaf_identity,
+            &evidence.rustc_identity,
+            &linked,
+        )
+        .map_err(oven_error)?;
+        Some(
+            finalize_compiler_support_selected_graph(
+                capture,
+                &projection,
+                &manifest,
+                &BTreeSet::new(),
+                &evidence.rustc_identity,
+                receipt,
+            )
+            .map_err(oven_error)?,
+        )
+    } else {
+        None
+    };
 
     let logical_bytes = pending
         .iter()
@@ -698,7 +737,7 @@ fn run_release_rust_policy(
     exchange_root: &Path,
     request: &serde_json::Value,
 ) -> CliResult<serde_json::Value> {
-    fs::create_dir_all(exchange_root).map_err(|error| {
+    fs::create_dir(exchange_root).map_err(|error| {
         CliError::failure(format!(
             "could not create private Rust policy exchange directory {}: {error}",
             exchange_root.display()

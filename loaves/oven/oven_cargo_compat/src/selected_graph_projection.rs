@@ -223,7 +223,17 @@ struct PolicyManifestInventory {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct PolicyPackageIdentity {
+    name: String,
+    version: String,
+    source: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PolicySourceInventory {
+    package: PolicyPackageIdentity,
+    domain: OvenSelectedRustFacetDomain,
     owner: String,
     package_root: String,
     manifest: PolicyManifestInventory,
@@ -264,9 +274,17 @@ pub fn runtime_foundation_inventories_from_policy_response(
                 "bytes do not match its declared digest",
             ));
         }
+        let key = (
+            record.owner,
+            record.package_root,
+            record.package.name,
+            record.package.version,
+            record.package.source,
+            selected_domain_key(record.domain),
+        );
         if catalogs
             .insert(
-                (record.owner, record.package_root),
+                key,
                 (
                     record.manifest.path,
                     digest,
@@ -286,7 +304,14 @@ pub fn runtime_foundation_inventories_from_policy_response(
     let mut used = BTreeSet::new();
     let mut inventories = Vec::with_capacity(selected.graph().units.len());
     for unit in &selected.graph().units {
-        let key = (unit.source.owner.clone(), unit.source.root.clone());
+        let key = (
+            unit.source.owner.clone(),
+            unit.source.root.clone(),
+            unit.package.clone(),
+            unit.package_version.clone(),
+            unit.source.identity.clone(),
+            selected_domain_key(unit.domain),
+        );
         let (manifest_path, manifest_digest, member_paths, _, effective_features) = catalogs
             .get(&key)
             .ok_or_else(|| projection_error("Rust policy inventories", "omit one selected source"))?;
@@ -334,6 +359,13 @@ pub fn runtime_foundation_inventories_from_policy_response(
         ));
     }
     Ok(inventories)
+}
+
+fn selected_domain_key(domain: OvenSelectedRustFacetDomain) -> u8 {
+    match domain {
+        OvenSelectedRustFacetDomain::Host => 0,
+        OvenSelectedRustFacetDomain::Target => 1,
+    }
 }
 
 /// Complete the capture-to-final-receipt transition for one compiler-support selected graph.
@@ -2483,6 +2515,12 @@ mod tests {
             "status": "selected",
             "graph_digest": finalized.graph.digest(),
             "inventories": [{
+                "package": {
+                    "name": selected_unit.package,
+                    "version": selected_unit.package_version,
+                    "source": selected_unit.source.identity,
+                },
+                "domain": "target",
                 "owner": selected_unit.source.owner,
                 "package_root": selected_unit.source.root,
                 "manifest": {
