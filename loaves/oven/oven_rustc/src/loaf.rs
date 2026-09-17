@@ -282,8 +282,14 @@ pub fn validate_release_runtime_foundation_member(
     {
         return Err("runtime-foundation member has incomplete identity or unsafe paths".to_string());
     }
-    if member.foundation_relative_path == member.toolchain_root_relative_path {
-        return Err("runtime-foundation and Toolchain roots must be independently identified".to_string());
+    if member
+        .foundation_relative_path
+        .starts_with(&member.toolchain_root_relative_path)
+        || member
+            .toolchain_root_relative_path
+            .starts_with(&member.foundation_relative_path)
+    {
+        return Err("runtime-foundation and Toolchain roots must be disjoint".to_string());
     }
     let descriptor_digest =
         release_runtime_foundation_member_descriptor_digest(member).map_err(|error| error.to_string())?;
@@ -3026,6 +3032,12 @@ mod tests {
         let mut aliased_roots = member;
         aliased_roots.toolchain_root_relative_path = aliased_roots.foundation_relative_path.clone();
         assert!(validate_release_runtime_foundation_member(&manifest, &aliased_roots).is_err());
+        let mut toolchain_nested = aliased_roots.clone();
+        toolchain_nested.toolchain_root_relative_path = toolchain_nested.foundation_relative_path.join("toolchain");
+        assert!(validate_release_runtime_foundation_member(&manifest, &toolchain_nested).is_err());
+        let mut foundation_nested = aliased_roots;
+        foundation_nested.foundation_relative_path = foundation_nested.toolchain_root_relative_path.join("foundation");
+        assert!(validate_release_runtime_foundation_member(&manifest, &foundation_nested).is_err());
         Ok(())
     }
 

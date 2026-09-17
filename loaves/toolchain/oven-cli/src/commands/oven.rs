@@ -3523,6 +3523,7 @@ mod tests {
                 OvenLoafEnvelope::Release,
                 &evidence,
                 Some(&member),
+                None,
                 limits,
                 Instant::now(),
             )?
@@ -3807,6 +3808,7 @@ mod tests {
             OvenLoafEnvelope::Release,
             &evidence,
             None,
+            None,
             OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
             Instant::now(),
         )?
@@ -3900,6 +3902,7 @@ mod tests {
             OvenLoafEnvelope::Release,
             &output_churn_evidence,
             None,
+            None,
             OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
             Instant::now(),
         )?
@@ -3951,6 +3954,7 @@ mod tests {
                 scratch.path(),
                 OvenLoafEnvelope::Release,
                 &changed_runtime_evidence,
+                None,
                 None,
                 OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
                 Instant::now(),

@@ -390,6 +390,7 @@ pub(crate) fn reuse_complete_loaf_envelope(
     envelope: OvenLoafEnvelope,
     evidence: &OvenLoafEnvelopeEvidence,
     release_store_member: Option<&OvenReleaseStoreMember>,
+    runtime_foundation: Option<&OvenReleaseRuntimeFoundationMember>,
     limits: OvenStoreLimits,
     started: Instant,
 ) -> CliResult<Option<OvenLoafBakeReport>> {
@@ -409,11 +410,15 @@ pub(crate) fn reuse_complete_loaf_envelope(
             manifest_path.display()
         ))
     })?;
-    let expected_evidence = loaf_envelope_compatibility_map_with_release_member(evidence, release_store_member)?;
+    let mut expected_evidence = loaf_envelope_compatibility_map_with_release_member(evidence, release_store_member)?;
+    if let Some(member) = runtime_foundation {
+        bind_release_runtime_foundation_evidence(&mut expected_evidence, member).map_err(oven_error)?;
+    }
     if manifest.schema_version != OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION
         || manifest.envelope != loaf_envelope_name(envelope)
         || manifest.evidence != expected_evidence
         || manifest.release_store_member.as_ref() != release_store_member
+        || manifest.runtime_foundation.as_ref() != runtime_foundation
     {
         return Ok(None);
     }
@@ -459,16 +464,40 @@ pub(crate) fn reuse_complete_loaf_envelope(
     );
     let (member_logical_bytes, member_physical_bytes) =
         release_store_member_byte_counts(&member_generation, release_store_member, limits)?;
+    let (foundation_logical_bytes, foundation_physical_bytes) = if let Some(member) = runtime_foundation {
+        oven_rustc::loaf::prove_release_runtime_foundation_member(output, &manifest, member).map_err(oven_error)?;
+        let foundation = member_generation.join(&member.foundation_relative_path);
+        let toolchain = member_generation.join(&member.toolchain_root_relative_path);
+        let (foundation_logical, foundation_physical) = loaf_directory_byte_counts(&foundation).map_err(oven_error)?;
+        let (toolchain_logical, toolchain_physical) = loaf_directory_byte_counts(&toolchain).map_err(oven_error)?;
+        if foundation_logical > limits.max_domain_logical_bytes
+            || foundation_physical > limits.max_domain_physical_bytes
+            || toolchain_logical > limits.max_domain_logical_bytes
+            || toolchain_physical > limits.max_domain_physical_bytes
+        {
+            return Err(CliError::failure(
+                "stored runtime foundation exceeds the active compatibility-domain allowance".to_string(),
+            ));
+        }
+        (
+            foundation_logical.saturating_add(toolchain_logical),
+            foundation_physical.saturating_add(toolchain_physical),
+        )
+    } else {
+        (0, 0)
+    };
     let logical_bytes = reports
         .iter()
         .map(|entry| entry.result.logical_bytes)
         .sum::<u64>()
-        .saturating_add(member_logical_bytes);
+        .saturating_add(member_logical_bytes)
+        .saturating_add(foundation_logical_bytes);
     let physical_bytes = reports
         .iter()
         .map(|entry| entry.result.physical_bytes)
         .sum::<u64>()
-        .saturating_add(member_physical_bytes);
+        .saturating_add(member_physical_bytes)
+        .saturating_add(foundation_physical_bytes);
     if physical_bytes > limits.max_physical_bytes {
         return Err(CliError::failure(format!(
             "stored Loaf envelope uses {physical_bytes} physical bytes, exceeding its {}-byte allowance",

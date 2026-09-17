@@ -683,7 +683,18 @@ mod tests {
         OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetUnit,
         OvenSelectedRustFacetUnitRole,
     };
+    use fs2::FileExt;
     use oven_store::OvenBuildIntent;
+
+    use crate::loaf::{
+        OVEN_LOAF_ENVELOPE_LOCK_FILE, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION,
+        OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL, OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION, OvenLoaf,
+        OvenLoafAccounting, OvenLoafCompatibility, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember,
+        OvenLoafMemberRole, OvenLoafProvenance, OvenReleaseRuntimeFoundationMember,
+        acquire_committed_release_runtime_foundation, acquire_exclusive_loaf_generation_lock,
+        bind_release_runtime_foundation_evidence,
+    };
+    use crate::loaf_mirror::{LoafEnvelopeExpectation, LoafMemberExpectation, import_loaf_envelope_from_mirrors};
 
     const DIRECT_COMPILER: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -1466,6 +1477,133 @@ mod tests {
             1,
             "a completed asset leaves no visible staging sibling"
         );
+        Ok(())
+    }
+
+    /// The release carrier survives mirror admission and keeps the selected generation locked for its held lifetime.
+    #[test]
+    fn release_carrier_mirrors_and_acquires_a_real_runtime_foundation() -> Result<(), Box<dyn std::error::Error>> {
+        let mirror = tempfile::tempdir()?;
+        let generation_identity = digest_bytes(b"runtime foundation generation");
+        let generation_relative = Path::new("generations").join(
+            generation_identity
+                .strip_prefix("sha256:")
+                .ok_or("fixture generation identity is not canonical")?,
+        );
+        let generation = mirror.path().join(&generation_relative);
+        let compiled_root = generation.join("compiled.loaf");
+        let foundation_source = tempfile::tempdir()?;
+        let compiled_toolchain = tempfile::tempdir()?;
+        let toolchain_root = generation.join("toolchain");
+        fs::create_dir_all(&compiled_root)?;
+        fs::create_dir_all(&toolchain_root)?;
+        write_materialization_fixture(foundation_source.path(), &toolchain_root)?;
+        write_foundation_materialization_fixture(&compiled_root, compiled_toolchain.path())?;
+
+        let asset = foundation_asset()?;
+        let plan = asset.foundation.artifacts.clone();
+        let (payload_logical_bytes, payload_physical_bytes) = crate::loaf::loaf_directory_byte_counts(&compiled_root)?;
+        let loaf = OvenLoaf {
+            schema_version: OVEN_LOAF_SCHEMA_VERSION,
+            build_unit_identity: digest_bytes(b"runtime foundation build unit"),
+            provenance: OvenLoafProvenance {
+                compiler_version: "fixture".to_string(),
+                rust_toolchain: "fixture".to_string(),
+                sdk_provider_codegen_revision: "fixture".to_string(),
+                baker: "fixture".to_string(),
+            },
+            accounting: OvenLoafAccounting {
+                payload_logical_bytes,
+                payload_physical_bytes,
+            },
+            compatibility: OvenLoafCompatibility::default(),
+            registry_leaves: plan.registry_leaves.clone(),
+            plan: plan.clone(),
+        };
+        let loaf_path = compiled_root.join("loaf.json");
+        let loaf_bytes = serde_json::to_vec(&loaf)?;
+        fs::write(&loaf_path, &loaf_bytes)?;
+        let loaf_identity = digest_bytes(&loaf_bytes);
+        let plan_identity = digest_bytes(&serde_json::to_vec(&plan)?);
+        let foundation_path = generation.join("runtime-foundation");
+        let admitted = publish_runtime_foundation_asset(
+            asset.clone(),
+            foundation_source.path(),
+            &toolchain_root,
+            &foundation_path,
+        )?;
+        assert_eq!(admitted.foundation_identity(), asset.foundation_identity);
+
+        let envelope_member = OvenLoafEnvelopeMember {
+            label: "runtime-foundation-fixture".to_string(),
+            profile: "release".to_string(),
+            action: "build".to_string(),
+            role: OvenLoafMemberRole::CompiledClosure,
+            build_unit_identity: loaf.build_unit_identity.clone(),
+            loaf_identity: loaf_identity.clone(),
+            plan_identity: plan_identity.clone(),
+            logical_bytes: 0,
+            physical_bytes: 0,
+            path: generation_relative.join("compiled.loaf/loaf.json"),
+        };
+        let runtime_member = OvenReleaseRuntimeFoundationMember {
+            schema_version: OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION,
+            label: OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL.to_string(),
+            foundation_relative_path: "runtime-foundation".into(),
+            foundation_identity: asset.foundation_identity.clone(),
+            compiled_loaf_identity: loaf_identity,
+            compiled_plan_identity: plan_identity,
+            toolchain_owner_identity: toolchain_owner(),
+            toolchain_root_relative_path: "toolchain".into(),
+        };
+        let mut evidence = BTreeMap::new();
+        bind_release_runtime_foundation_evidence(&mut evidence, &runtime_member)?;
+        let manifest = OvenLoafEnvelopeManifest {
+            schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
+            envelope: "release".to_string(),
+            generation_identity: generation_identity.clone(),
+            evidence: evidence.clone(),
+            loafs: vec![envelope_member],
+            release_store_member: None,
+            runtime_foundation: Some(runtime_member.clone()),
+        };
+        fs::write(mirror.path().join("envelope.json"), serde_json::to_vec(&manifest)?)?;
+        drop(acquire_exclusive_loaf_generation_lock(mirror.path())?);
+
+        let output = tempfile::tempdir()?;
+        let scratch = tempfile::tempdir_in(output.path())?;
+        let expected_members = [LoafMemberExpectation {
+            label: "runtime-foundation-fixture".to_string(),
+            profile: "release".to_string(),
+            action: "build".to_string(),
+            role: OvenLoafMemberRole::CompiledClosure,
+        }];
+        import_loaf_envelope_from_mirrors(
+            output.path(),
+            scratch.path(),
+            &LoafEnvelopeExpectation {
+                schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
+                envelope: "release",
+                generation_identity: &generation_identity,
+                evidence: &evidence,
+                members: &expected_members,
+                release_store_member: None,
+                runtime_foundation: Some(&runtime_member),
+            },
+            &[mirror.path().to_path_buf()],
+        )
+        .map_err(|error| format!("mirror import failed: {error}"))?;
+        let held =
+            acquire_committed_release_runtime_foundation(output.path(), OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL)?
+                .ok_or("runtime foundation was not acquired")?;
+        assert_eq!(held.asset.foundation_identity(), asset.foundation_identity);
+        let exclusive = fs::File::open(output.path().join(OVEN_LOAF_ENVELOPE_LOCK_FILE))?;
+        assert!(matches!(
+            exclusive.try_lock_exclusive(),
+            Err(fs::TryLockError::WouldBlock)
+        ));
+        drop(held);
+        exclusive.try_lock_exclusive()?;
         Ok(())
     }
 

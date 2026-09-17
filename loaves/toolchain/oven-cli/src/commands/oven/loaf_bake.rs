@@ -164,6 +164,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         envelope,
         &evidence,
         release_store_member.as_ref(),
+        None,
         limits,
         started,
     )? {
