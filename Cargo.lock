@@ -1421,7 +1421,7 @@ dependencies = [
 
 [[package]]
 name = "incan-cli"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "blake2",
  "blake3",
@@ -1473,7 +1473,7 @@ dependencies = [
 
 [[package]]
 name = "incan-lsp"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "incan_driver",
  "incan_format",
@@ -1494,7 +1494,7 @@ dependencies = [
 
 [[package]]
 name = "incan_codegraph"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -1502,7 +1502,7 @@ dependencies = [
 
 [[package]]
 name = "incan_derive"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -1510,7 +1510,7 @@ dependencies = [
 
 [[package]]
 name = "incan_driver"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "clap",
  "hex",
@@ -1546,7 +1546,7 @@ dependencies = [
 
 [[package]]
 name = "incan_emit"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "hex",
  "incan_frontend",
@@ -1575,7 +1575,7 @@ dependencies = [
 
 [[package]]
 name = "incan_format"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "incan_lang",
  "incan_semantics_core",
@@ -1588,7 +1588,7 @@ dependencies = [
 
 [[package]]
 name = "incan_frontend"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "hex",
  "incan_format",
@@ -1617,7 +1617,7 @@ dependencies = [
 
 [[package]]
 name = "incan_ir"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "incan_frontend",
  "incan_lang",
@@ -1634,14 +1634,14 @@ dependencies = [
 
 [[package]]
 name = "incan_lang"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "incan_oven_facet"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "incan_frontend",
  "incan_lang",
@@ -1654,7 +1654,7 @@ dependencies = [
 
 [[package]]
 name = "incan_provider"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "hex",
  "incan_frontend",
@@ -1677,7 +1677,7 @@ dependencies = [
 
 [[package]]
 name = "incan_semantics_core"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "hex",
  "incan_lang",
@@ -1690,7 +1690,7 @@ dependencies = [
 
 [[package]]
 name = "incan_semantics_stdlib"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "incan_lang",
  "incan_semantics_core",
@@ -1698,14 +1698,14 @@ dependencies = [
 
 [[package]]
 name = "incan_std_async"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "tokio",
 ]
 
 [[package]]
 name = "incan_std_core"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "incan_derive",
  "incan_lang",
@@ -1713,7 +1713,7 @@ dependencies = [
 
 [[package]]
 name = "incan_std_data"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "incan_std_core",
  "serde",
@@ -1723,7 +1723,7 @@ dependencies = [
 
 [[package]]
 name = "incan_std_testing"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "incan_lang",
  "incan_std_core",
@@ -1731,7 +1731,7 @@ dependencies = [
 
 [[package]]
 name = "incan_std_web"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "axum",
  "inventory",
@@ -1740,7 +1740,7 @@ dependencies = [
 
 [[package]]
 name = "incan_syntax"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "incan_lang",
  "incan_semantics_core",
@@ -1752,7 +1752,7 @@ dependencies = [
 
 [[package]]
 name = "incan_test_support"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "incan_frontend",
  "incan_lang",
@@ -1779,7 +1779,7 @@ dependencies = [
 
 [[package]]
 name = "incan_web_macros"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "axum",
  "incan_std_web",
@@ -2285,7 +2285,7 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "oven_model"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "globset",
  "hex",
@@ -2301,7 +2301,7 @@ dependencies = [
 
 [[package]]
 name = "oven_rustc"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "hex",
  "oven_model",
@@ -2319,7 +2319,7 @@ dependencies = [
 
 [[package]]
 name = "oven_store"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "hex",
  "oven_model",
@@ -3375,7 +3375,7 @@ dependencies = [
 
 [[package]]
 name = "rust_inspect"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 dependencies = [
  "hex",
  "incan_lang",

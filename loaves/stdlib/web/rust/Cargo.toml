@@ -1,7 +1,7 @@
 [package]
 name = "incan_std_web"
 description = "Route registration and HTTP serving runtime: the Rust facet of the `web` standard library component"
-version = "0.6.0-dev.4"
+version = "0.6.0-dev.5"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

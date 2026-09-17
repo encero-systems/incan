@@ -9,7 +9,7 @@
 /// prereleases must match exactly. The compiler ring does not link the runtime it generates for, so this requirement
 /// is declared independently of the compiler's own package version. `scripts/check_ring_versions.py` keeps it equal
 /// to the stdlib ring version in the manifests, and a stdlib bump updates it in the same change.
-pub const GENERATED_FOR_STDLIB_VERSION: &str = "0.6.0-dev.4";
+pub const GENERATED_FOR_STDLIB_VERSION: &str = "0.6.0-dev.5";
 
 #[cfg(test)]
 mod checked_program;
