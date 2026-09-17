@@ -5,6 +5,7 @@
 //! rootless graph. The caller must bind roots with an admitted project or compiler-support authority afterwards.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::Path;
 
 use oven_model::manifest::ProjectManifest;
@@ -366,6 +367,136 @@ fn selected_domain_key(domain: OvenSelectedRustFacetDomain) -> u8 {
         OvenSelectedRustFacetDomain::Host => 0,
         OvenSelectedRustFacetDomain::Target => 1,
     }
+}
+
+/// Encode the strict Incan policy request from validated physical facts and retained package sources.
+pub fn encode_selected_graph_policy_request(
+    selected: &ValidatedOvenSelectedRustFacetGraph,
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sources: &[OvenLegacyCargoInspectionSource],
+    intent_owner: &str,
+) -> Result<serde_json::Value, OvenLegacyCargoError> {
+    let graph = selected.graph();
+    let units = graph
+        .units
+        .iter()
+        .map(|unit| {
+            Ok(serde_json::json!({
+                "identity": unit.identity,
+                "package": {"name": unit.package, "version": unit.package_version, "source": unit.source.identity},
+                "domain": serde_json::to_value(unit.domain).map_err(|error| projection_error("policy unit domain", &error.to_string()))?,
+                "role": serde_json::to_value(unit.role).map_err(|error| projection_error("policy unit role", &error.to_string()))?,
+                "crate_kind": serde_json::to_value(unit.crate_kind).map_err(|error| projection_error("policy crate kind", &error.to_string()))?,
+                "closure": {
+                    "environment": unit.environment,
+                    "generated_inputs": unit.generated_inputs,
+                    "linked_libraries": unit.linked_libraries,
+                    "sysroot_externs": unit.sysroot_externs,
+                },
+                "features": unit.features,
+            }))
+        })
+        .collect::<Result<Vec<_>, OvenLegacyCargoError>>()?;
+    let roots = graph
+        .exposed_roots
+        .values()
+        .map(|root| serde_json::to_value(root).map_err(|error| projection_error("policy root", &error.to_string())))
+        .collect::<Result<Vec<_>, _>>()?;
+    let bindings = graph
+        .units
+        .iter()
+        .flat_map(|unit| {
+            unit.dependencies.iter().map(move |dependency| {
+                serde_json::json!({
+                    "parent_unit": unit.identity,
+                    "alias": dependency.alias,
+                    "child_unit": dependency.unit,
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut catalogs = Vec::new();
+    let mut seen = BTreeSet::new();
+    for unit in &graph.units {
+        let key = (
+            unit.package.clone(),
+            unit.package_version.clone(),
+            unit.source.identity.clone(),
+            selected_domain_key(unit.domain),
+        );
+        if !seen.insert(key) {
+            continue;
+        }
+        let matched = sources
+            .iter()
+            .filter(|source| {
+                source.package == unit.package
+                    && source.version == unit.package_version
+                    && format!("{}#{}@{}", source.registry, source.package, source.version) == unit.source.identity
+            })
+            .collect::<Vec<_>>();
+        let [source] = matched.as_slice() else {
+            return Err(projection_error(
+                "policy catalog",
+                "does not bind exactly one retained source",
+            ));
+        };
+        let manifest_path = source.source_root.join("Cargo.toml");
+        let manifest_bytes = fs::read(&manifest_path)
+            .map_err(|error| projection_error("policy catalog manifest", &error.to_string()))?;
+        let manifest_digest = selected_graph_sha256(&manifest_bytes);
+        let declared_manifest = source
+            .members
+            .iter()
+            .find(|member| member.path == "Cargo.toml")
+            .ok_or_else(|| projection_error("policy catalog manifest", "is absent from retained members"))?;
+        if declared_manifest.digest != manifest_digest {
+            return Err(projection_error(
+                "policy catalog manifest",
+                "bytes differ from retained digest",
+            ));
+        }
+        let build_unit_present = capture.units.iter().enumerate().any(|(consumer_index, captured)| {
+            captured.package == unit.package
+                && captured.package_version == unit.package_version
+                && captured.dependencies.iter().any(|dependency| {
+                    capture
+                        .units
+                        .get(dependency.unit_index)
+                        .is_some_and(is_build_script_unit)
+                        && dependency.build_script.is_some()
+                        && consumer_index != dependency.unit_index
+                })
+        });
+        catalogs.push(serde_json::json!({
+            "package": {"name": unit.package, "version": unit.package_version, "source": unit.source.identity},
+            "manifest": {
+                "path": "Cargo.toml",
+                "bytes_hex": hex::encode(&manifest_bytes),
+                "sha256_hex": manifest_digest.trim_start_matches("sha256:"),
+            },
+            "owner": unit.source.owner,
+            "intent_owner": intent_owner,
+            "package_root": unit.source.root,
+            "members": source.members.iter().filter(|member| member.path != "Cargo.toml").map(|member| member.path.clone()).collect::<Vec<_>>(),
+            "build_unit_present": build_unit_present,
+        }));
+    }
+    Ok(serde_json::json!({
+        "schema": "incan.oven.rust-policy-exchange/5",
+        "operation": "validate_selected_rust_graph",
+        "graph_digest": selected.digest(),
+        "context": {
+            "host": {"triple": graph.selection.host, "cfg": graph.selection.host_cfg},
+            "target": {"triple": graph.selection.intent.target, "cfg": graph.selection.target_cfg},
+            "selection_purpose": serde_json::to_value(graph.selection.purpose).map_err(|error| projection_error("policy purpose", &error.to_string()))?,
+        },
+        "units": units,
+        "roots": roots,
+        "bindings": bindings,
+        "catalogs": catalogs,
+        "max_rounds": graph.units.len().saturating_mul(graph.units.len()).saturating_add(1),
+    }))
 }
 
 /// Complete the capture-to-final-receipt transition for one compiler-support selected graph.

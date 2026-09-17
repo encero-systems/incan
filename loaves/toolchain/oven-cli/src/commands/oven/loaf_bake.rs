@@ -35,7 +35,7 @@ use super::{
     OvenLoafBakeReport, OvenLoafBakerContext, OvenLoafEnvelope, OvenLoafEnvelopeArgument, OvenLoafEnvelopeManifest,
     OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenOutputFormat, OvenStoreCommandOptions, OvenStoreLimits,
     acquire_exclusive_loaf_generation_lock, announce_oven_progress, commit_loaf_generation, compiler_libtests_receipt,
-    elapsed_detail, env, finalize_compiler_support_selected_graph, human_bytes,
+    elapsed_detail, encode_selected_graph_policy_request, env, finalize_compiler_support_selected_graph, human_bytes,
     import_loaf_envelope_from_configured_mirrors, isolate_loaf_fixture_toolchain_data,
     legacy_cargo_foundation_projection, legacy_cargo_generated_archive_bindings,
     legacy_cargo_generated_output_bindings, legacy_cargo_inspection_sources, legacy_cargo_resolved_registry_sources,
@@ -45,7 +45,8 @@ use super::{
     loaf_generation_identity_with_release_member, loaf_raw_disk_bytes, open_store, oven_error, pin_loaf_fixture_rustc,
     prepare_compiler_test_suite, prepare_loaf_from_generated_project_with_selected_units, print_json, read_receipt,
     release_store_member_byte_counts, retire_unreferenced_loaf_generations, reuse_complete_loaf_envelope,
-    stage_locked_loaf_fixture, write_receipt, write_sealed_oven_inspection_source_authority,
+    runtime_foundation_inventories_from_policy_response, stage_locked_loaf_fixture, write_receipt,
+    write_sealed_oven_inspection_source_authority,
 };
 
 /// Bake or exactly reuse one complete compiler-owned Alpha Loaf envelope.
@@ -205,7 +206,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     let generations_root = options.output.join("generations");
     fs::create_dir_all(&generations_root)
         .map_err(|error| CliError::failure(format!("could not create Loaf generations root: {error}")))?;
-    let _release_policy_output = if let (Some((source_store, _, expected_target)), Some(member)) =
+    let release_policy_output = if let (Some((source_store, _, expected_target)), Some(member)) =
         (publisher_input, release_store_member.as_ref())
     {
         Some(import_release_policy_output(
@@ -565,6 +566,24 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             })?;
         }
     }
+    let release_policy_inventories = if let (Some(finalized), Some(policy), Some((_, capture, sources, _, _, _, _))) = (
+        finalized_release_graph.as_ref(),
+        release_policy_output.as_ref(),
+        release_foundation_capture.as_ref(),
+    ) {
+        let request =
+            encode_selected_graph_policy_request(&finalized.graph, capture, sources, &evidence.rustc_identity)
+                .map_err(oven_error)?;
+        let response = run_release_rust_policy(policy, &scratch.path().join("rust-policy-exchange"), &request)?;
+        Some(runtime_foundation_inventories_from_policy_response(&finalized.graph, &response).map_err(oven_error)?)
+    } else {
+        None
+    };
+    if envelope == OvenLoafEnvelope::Release && release_policy_inventories.is_none() {
+        return Err(CliError::failure(
+            "release envelope did not produce admitted Rust policy inventories".to_string(),
+        ));
+    }
 
     let logical_bytes = pending
         .iter()
@@ -837,8 +856,14 @@ fn run_release_rust_policy(
             "Rust policy response is not a bounded regular file".to_string(),
         ));
     }
-    let file = fs::File::open(&response_path)
-        .map_err(|error| CliError::failure(format!("could not open Rust policy response: {error}")))?;
+    let file = fs::File::from(
+        rustix::fs::open(
+            &response_path,
+            rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NOFOLLOW,
+            rustix::fs::Mode::empty(),
+        )
+        .map_err(|error| CliError::failure(format!("could not open Rust policy response: {error}")))?,
+    );
     if !file
         .metadata()
         .map_err(|error| CliError::failure(format!("could not inspect Rust policy response: {error}")))?
