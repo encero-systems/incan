@@ -12,7 +12,9 @@ use std::time::Instant;
 
 use incan_driver::build::publication::stored_project_output_from_parts;
 use incan_driver::build::{OvenProjectOutputPayload, OvenStoredProjectOutput};
-use oven_rustc::loaf::{OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenReleaseStoreMember};
+use oven_rustc::loaf::{
+    OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember,
+};
 use oven_store::process::{BoundedProcessLimits, BoundedProcessTermination, run_bounded_process};
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, PublishedOvenStore,
@@ -154,24 +156,31 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         store_relative_path: PathBuf::from("project-outputs/rust-policy-engine/oven/store/v2"),
         artifact_identity: identity.to_string(),
     });
-    import_loaf_envelope_from_configured_mirrors(
-        &options.output,
-        scratch.path(),
-        envelope,
-        &evidence,
-        release_store_member.as_ref(),
-        None,
-    )?;
-    if let Some(report) = reuse_complete_loaf_envelope(CompleteLoafEnvelopeReuseInput {
-        output: &options.output,
-        scratch: scratch.path(),
-        envelope,
-        evidence: &evidence,
-        release_store_member: release_store_member.as_ref(),
-        runtime_foundation: None,
-        limits,
-        started,
-    })? {
+    // Release generations bind a runtime-foundation descriptor that is known only after the explicit physical
+    // capture and source-policy exchange. Compiler-suite generations have no such member and retain the cheap early
+    // mirror/reuse path. Release reuse is checked below once the exact descriptor is available.
+    if envelope == OvenLoafEnvelope::CompilerSuite {
+        import_loaf_envelope_from_configured_mirrors(
+            &options.output,
+            scratch.path(),
+            envelope,
+            &evidence,
+            release_store_member.as_ref(),
+            None,
+        )?;
+    }
+    if envelope == OvenLoafEnvelope::CompilerSuite
+        && let Some(report) = reuse_complete_loaf_envelope(CompleteLoafEnvelopeReuseInput {
+            output: &options.output,
+            scratch: scratch.path(),
+            envelope,
+            evidence: &evidence,
+            release_store_member: release_store_member.as_ref(),
+            runtime_foundation: None,
+            limits,
+            started,
+        })?
+    {
         // Exact envelope validation and retirement require exclusive publication authority. Compiler-suite
         // completion then consumes the committed Loafs through a shared generation lease, so retaining the writer
         // lock across that transition would make this process wait on itself.
@@ -189,15 +198,6 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     // publisher's exclusive lock here would make the parent wait for a child that is waiting for the parent. The
     // staged generation is private and has no publication authority, so release exclusivity until the atomic commit.
     drop(publication_lock);
-    let compatibility_evidence =
-        loaf_envelope_compatibility_map_with_release_member(&evidence, release_store_member.as_ref())?;
-    let generation_identity =
-        loaf_generation_identity_with_release_member(envelope, &compatibility_evidence, release_store_member.as_ref())?;
-    let generation_name = generation_identity
-        .strip_prefix("sha256:")
-        .unwrap_or(&generation_identity);
-    let generation_relative = Path::new("generations").join(generation_name);
-    let generation_output = options.output.join(&generation_relative);
     let generations_root = options.output.join("generations");
     fs::create_dir_all(&generations_root)
         .map_err(|error| CliError::failure(format!("could not create Loaf generations root: {error}")))?;
@@ -468,6 +468,20 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     let prepared_count = pending.len();
     let envelope_publication_started = Instant::now();
     announce_oven_progress("PUBLISH", "Loaf envelope", Some(&format!("{prepared_count} Loaf(s)")));
+    let runtime_foundation: Option<OvenReleaseRuntimeFoundationMember> = None;
+    let mut compatibility_evidence =
+        loaf_envelope_compatibility_map_with_release_member(&evidence, release_store_member.as_ref())?;
+    if let Some(member) = runtime_foundation.as_ref() {
+        oven_rustc::loaf::bind_release_runtime_foundation_evidence(&mut compatibility_evidence, member)
+            .map_err(oven_error)?;
+    }
+    let generation_identity =
+        loaf_generation_identity_with_release_member(envelope, &compatibility_evidence, release_store_member.as_ref())?;
+    let generation_name = generation_identity
+        .strip_prefix("sha256:")
+        .unwrap_or(&generation_identity);
+    let generation_relative = Path::new("generations").join(generation_name);
+    let generation_output = options.output.join(&generation_relative);
     let manifest = OvenLoafEnvelopeManifest {
         schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
         envelope: loaf_envelope_name(envelope).to_string(),
@@ -496,7 +510,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             })
             .collect(),
         release_store_member: release_store_member.clone(),
-        runtime_foundation: None,
+        runtime_foundation,
     };
     let publication_lock = acquire_exclusive_loaf_generation_lock(&options.output).map_err(oven_error)?;
     let replacement_high_water = oven_cargo_compat::conservative_directory_reservation(&options.output)
