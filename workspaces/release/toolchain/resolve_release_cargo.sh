@@ -20,13 +20,19 @@ resolved_cargo=""
 saved_ifs="$IFS"
 IFS=':'
 for path_entry in $PATH; do
+  [ -n "$path_entry" ] || path_entry="."
+  candidate="$path_entry/cargo"
+  [ -x "$candidate" ] || continue
   case "$path_entry" in
+    /*) scan_dir="$path_entry" ;;
+    *) scan_dir="./$path_entry" ;;
+  esac
+  candidate_dir="$(CDPATH= cd -P "$scan_dir" 2>/dev/null && pwd -P)" || continue
+  case "/$candidate_dir/" in
     */target/*) continue ;;
   esac
-  if [ -x "$path_entry/cargo" ]; then
-    resolved_cargo="$path_entry/cargo"
-    break
-  fi
+  resolved_cargo="$candidate_dir/cargo"
+  break
 done
 IFS="$saved_ifs"
 [ -n "$resolved_cargo" ] || {

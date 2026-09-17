@@ -167,18 +167,24 @@ fn release_cargo_selector_preserves_explicit_and_uses_pinned_rustup_toolchain() 
     let fixture = tempfile::tempdir()?;
     let bin = fixture.path().join("bin");
     let guard_bin = fixture.path().join("target/guard");
+    let exact_target_bin = fixture.path().join("target");
     fs::create_dir_all(&bin)?;
     fs::create_dir_all(&guard_bin)?;
     let cargo = bin.join("cargo");
     let pinned = bin.join("cargo-1.98.0");
     let rustup = bin.join("rustup");
     let guard_cargo = guard_bin.join("cargo");
+    let exact_target_cargo = exact_target_bin.join("cargo");
     let log = fixture.path().join("rustup.log");
     let guard_log = fixture.path().join("guard.log");
     fs::write(&cargo, "#!/bin/sh\nexit 0\n")?;
     fs::write(&pinned, "#!/bin/sh\nexit 0\n")?;
     fs::write(
         &guard_cargo,
+        format!("#!/bin/sh\nprintf invoked > '{}'\nexit 97\n", guard_log.display()),
+    )?;
+    fs::write(
+        &exact_target_cargo,
         format!("#!/bin/sh\nprintf invoked > '{}'\nexit 97\n", guard_log.display()),
     )?;
     fs::write(
@@ -189,7 +195,7 @@ fn release_cargo_selector_preserves_explicit_and_uses_pinned_rustup_toolchain() 
             pinned.display(),
         ),
     )?;
-    for path in [&cargo, &pinned, &rustup, &guard_cargo] {
+    for path in [&cargo, &pinned, &rustup, &guard_cargo, &exact_target_cargo] {
         let mut permissions = fs::metadata(path)?.permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(path, permissions)?;
@@ -210,6 +216,24 @@ fn release_cargo_selector_preserves_explicit_and_uses_pinned_rustup_toolchain() 
     assert!(!guard_log.exists(), "the repository target guard must never execute");
 
     fs::remove_file(&log)?;
+    let relative_guard = Command::new(release_cargo_selector())
+        .current_dir(fixture.path())
+        .env("RUSTUP_TOOLCHAIN", "1.98.0")
+        .env("PATH", format!("target:target/guard:./target//guard:{}", bin.display()))
+        .arg("")
+        .output()?;
+    assert!(relative_guard.status.success());
+    assert_eq!(
+        String::from_utf8(relative_guard.stdout)?,
+        format!("{}\n", pinned.display())
+    );
+    assert_eq!(fs::read_to_string(&log)?, "which --toolchain 1.98.0 cargo\n");
+    assert!(
+        !guard_log.exists(),
+        "relative and exact target-directory guards must never execute"
+    );
+
+    fs::remove_file(&log)?;
     let active = Command::new(release_cargo_selector())
         .env_remove("RUSTUP_TOOLCHAIN")
         .env("PATH", &bin)
@@ -227,7 +251,7 @@ fn release_cargo_selector_preserves_explicit_and_uses_pinned_rustup_toolchain() 
     assert_eq!(String::from_utf8(explicit.stdout)?, format!("{}\n", cargo.display()));
     assert!(!log.exists(), "explicit Cargo must not invoke ambient Rustup selection");
 
-    let system_bin = fixture.path().join("system-bin");
+    let system_bin = fixture.path().join("target-tools");
     fs::create_dir_all(&system_bin)?;
     let system_cargo = system_bin.join("cargo");
     fs::write(&system_cargo, "#!/bin/sh\nexit 0\n")?;
