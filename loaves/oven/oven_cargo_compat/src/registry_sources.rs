@@ -501,7 +501,7 @@ pub fn publisher_registry_leaf_catalog(
 mod tests {
     use std::fs;
 
-    use super::stage_registry_source_directory;
+    use super::{digest_bytes, stage_registry_source_directory};
 
     #[test]
     fn staged_registry_source_retains_sorted_cargo_toml_and_member_digests() -> Result<(), Box<dyn std::error::Error>> {
@@ -527,7 +527,13 @@ mod tests {
             members.iter().map(|member| member.path.as_str()).collect::<Vec<_>>(),
             ["Cargo.toml", "src/lib.rs"],
         );
-        assert!(members.iter().all(|member| member.digest.starts_with("sha256:")));
+        assert_eq!(
+            members.iter().map(|member| member.digest.as_str()).collect::<Vec<_>>(),
+            [
+                digest_bytes(b"[package]\nname = \"fixture\"\nversion = \"1.0.0\"\n"),
+                digest_bytes(b"pub fn marker() {}\n"),
+            ],
+        );
         Ok(())
     }
 }

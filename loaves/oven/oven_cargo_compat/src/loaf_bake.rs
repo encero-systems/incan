@@ -559,7 +559,9 @@ mod tests {
     };
     use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project};
 
-    use crate::{OvenLegacyCargoInspectionSource, stage_registry_source_directory};
+    use crate::{
+        OvenLegacyCargoInspectionSource, OvenLegacyCargoInspectionSourceMember, stage_registry_source_directory,
+    };
     fn runtime_receipt(
         source: &Path,
         providers: &str,
@@ -725,6 +727,69 @@ mod tests {
                 .to_string()
                 .contains("disagrees with the generated-project authority")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn envelope_source_authority_refuses_incomplete_or_changed_member_inventory()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = tempfile::tempdir()?;
+        fs::create_dir_all(source.path().join("src"))?;
+        fs::write(
+            source.path().join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"1.0.0\"\n",
+        )?;
+        fs::write(source.path().join("src/lib.rs"), "pub fn sealed() {}\n")?;
+        let staged_sources = tempfile::tempdir()?;
+        let (source_root, source_digest, members) = stage_registry_source_directory(
+            staged_sources.path(),
+            "fixture",
+            "1.0.0",
+            "registry+https://example.invalid/index",
+            "fixture-checksum",
+            source.path(),
+        )?;
+        let authority = OvenLegacyCargoInspectionSource {
+            package: "fixture".to_string(),
+            version: "1.0.0".to_string(),
+            registry: "registry+https://example.invalid/index".to_string(),
+            checksum: "fixture-checksum".to_string(),
+            features: Vec::new(),
+            source_root,
+            source_digest,
+            members,
+        };
+
+        let assert_refused = |candidate: OvenLegacyCargoInspectionSource| -> Result<(), Box<dyn std::error::Error>> {
+            let staging = tempfile::tempdir()?;
+            let receipt = runtime_receipt_for_plan()?;
+            let mut plan = empty_manifest(&receipt);
+            let error = merge_loaf_inspection_sources(&mut plan, staging.path(), &[candidate])
+                .expect_err("changed source inventory must be refused");
+            assert!(error.to_string().contains("does not match its staged member inventory"));
+            Ok(())
+        };
+
+        let mut missing = authority.clone();
+        missing.members.pop();
+        assert_refused(missing)?;
+
+        let mut extra = authority.clone();
+        extra.members.push(OvenLegacyCargoInspectionSourceMember {
+            path: "src/not-staged.rs".to_string(),
+            digest: digest_bytes(b"not staged"),
+        });
+        assert_refused(extra)?;
+
+        let mut tampered = authority.clone();
+        tampered.members[0].digest = digest_bytes(b"different bytes");
+        assert_refused(tampered)?;
+
+        let staging = tempfile::tempdir()?;
+        let receipt = runtime_receipt_for_plan()?;
+        let mut plan = empty_manifest(&receipt);
+        merge_loaf_inspection_sources(&mut plan, staging.path(), &[authority])?;
+        assert_eq!(plan.registry_sources.len(), 1);
         Ok(())
     }
 
