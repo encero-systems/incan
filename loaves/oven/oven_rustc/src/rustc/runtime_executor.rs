@@ -492,6 +492,7 @@ fn compile_rebuild_unit(
     for (alias, path) in externs {
         command.arg("--extern").arg(format!("{alias}={}", path.display()));
     }
+    append_materialized_sysroot_extern_arguments(&mut command, &source.sysroot_externs);
     append_materialized_link_arguments(&mut command, &source.linked_libraries)?;
     let result = command.output().map_err(|source_error| OvenRustcError::Io {
         path: closure.rustc().to_path_buf(),
@@ -504,6 +505,13 @@ fn compile_rebuild_unit(
     }
     verified_regular_file(artifact, "runtime rebuild output")?;
     Ok(())
+}
+
+/// Append compiler-owned bare externs already admitted by the selected graph's verified toolchain contract.
+fn append_materialized_sysroot_extern_arguments(command: &mut Command, sysroot_externs: &[String]) {
+    for sysroot_extern in sysroot_externs {
+        command.arg("--extern").arg(sysroot_extern);
+    }
 }
 
 /// Append ordered physically admitted native link inputs to one rustc invocation.
@@ -655,6 +663,20 @@ pub(crate) mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn sysroot_extern_arguments_preserve_exact_bare_form() {
+        let mut command = Command::new("rustc");
+        append_materialized_sysroot_extern_arguments(&mut command, &["proc_macro".to_string()]);
+        assert_eq!(
+            command
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            ["--extern", "proc_macro"]
+        );
+    }
+
     use oven_store::OvenBuildIntent;
 
     /// Compiler closure identity the fixture binds to the retained host compiler.
@@ -861,7 +883,7 @@ pub(crate) mod tests {
             DEP_SOURCE_ROOT,
             Vec::new(),
         )?;
-        let core = library_unit(
+        let mut core = library_unit(
             &selection,
             "incan_lang",
             package_version,
@@ -873,6 +895,8 @@ pub(crate) mod tests {
                 unit: dep.identity.clone(),
             }],
         )?;
+        core.sysroot_externs = vec!["proc_macro".to_string()];
+        core.identity = selected_graph_unit_identity(&selection, &core)?;
         let stdlib = library_unit(
             &selection,
             "incan_std_core",

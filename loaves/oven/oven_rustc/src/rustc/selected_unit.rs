@@ -115,6 +115,8 @@ pub struct OvenMaterializedRustFacetUnit {
     pub exclude_dirs: Vec<PathBuf>,
     pub environment: BTreeMap<String, OvenMaterializedRustFacetEnvironmentValue>,
     pub generated_inputs: Vec<(String, PathBuf, String)>,
+    /// Compiler-owned bare externs admitted by the validated selected graph.
+    pub sysroot_externs: Vec<String>,
     /// Ordered native link inputs. Order and repeated entries are compiler-visible and are preserved exactly.
     pub linked_libraries: Vec<OvenMaterializedRustFacetLinkedLibrary>,
 }
@@ -279,6 +281,7 @@ pub fn materialize_selected_rust_facet_graph_with_supplemental_source_members(
                     exclude_dirs,
                     environment,
                     generated_inputs,
+                    sysroot_externs: unit.sysroot_externs.clone(),
                     linked_libraries,
                 },
             )
