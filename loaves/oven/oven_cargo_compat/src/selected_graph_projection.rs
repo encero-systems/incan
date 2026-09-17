@@ -558,17 +558,31 @@ pub fn legacy_cargo_generated_archive_bindings(
             })?;
             let mut libraries = Vec::new();
             for directive in &facts.linked_libraries {
-                let (kind, name, suffixes) = if let Some(name) = directive.strip_prefix("static=") {
+                let target = unit
+                    .platform
+                    .as_deref()
+                    .ok_or_else(|| projection_error("selected linked library", "has no captured compilation target"))?;
+                let (kind, name, expected_file) = if let Some(name) = directive.strip_prefix("static=") {
                     (
                         oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
                         name,
-                        [format!("lib{name}.a"), format!("{name}.lib")],
+                        if target.contains("windows") {
+                            format!("{name}.lib")
+                        } else {
+                            format!("lib{name}.a")
+                        },
                     )
                 } else if let Some(name) = directive.strip_prefix("dylib=") {
                     (
                         oven_rustc::rustc::OvenSelectedRustFacetLinkedLibraryKind::Dynamic,
                         name,
-                        [format!("lib{name}.so"), format!("lib{name}.dylib")],
+                        if target.contains("apple") || target.contains("darwin") {
+                            format!("lib{name}.dylib")
+                        } else if target.contains("windows") {
+                            format!("{name}.lib")
+                        } else {
+                            format!("lib{name}.so")
+                        },
                     )
                 } else {
                     return Err(projection_error(
@@ -576,14 +590,35 @@ pub fn legacy_cargo_generated_archive_bindings(
                         "requires a separately admitted system or framework provider",
                     ));
                 };
+                let search_roots = facts
+                    .linked_paths
+                    .iter()
+                    .filter_map(|path| path.strip_prefix("native="))
+                    .map(Path::new)
+                    .map(|path| path.strip_prefix(&facts.out_dir))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|_| {
+                        projection_error(
+                            "selected linked library",
+                            "search path is outside its retained generated-output directory",
+                        )
+                    })?;
+                if search_roots.is_empty() {
+                    return Err(projection_error(
+                        "selected linked library",
+                        "has no retained native search path",
+                    ));
+                }
                 let candidates = output
                     .members
                     .iter()
                     .filter(|member| {
-                        Path::new(&member.path)
+                        let member_path = Path::new(&member.path);
+                        member_path
                             .file_name()
                             .and_then(|file| file.to_str())
-                            .is_some_and(|file| suffixes.iter().any(|expected| file == expected))
+                            .is_some_and(|file| file == expected_file)
+                            && search_roots.iter().any(|root| member_path.parent() == Some(*root))
                     })
                     .collect::<Vec<_>>();
                 let [member] = candidates.as_slice() else {
