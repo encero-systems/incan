@@ -148,6 +148,12 @@ pub fn finalize_compiler_support_selected_graph(
         closure_digest,
     )
     .map_err(|error| projection_error("compiler-support capture receipt", &error.to_string()))?;
+    let projected = project_legacy_cargo_selected_graph(&capture, &sealed, Some(&capture_receipt))?;
+    let referenced_owners = selected_graph_referenced_owners(&projected);
+    let mut sealed = sealed;
+    sealed
+        .owners
+        .retain(|owner| referenced_owners.contains(owner.identity.as_str()));
     let authority = compiler_support_root_intent_authority(
         &capture,
         &sealed,
@@ -173,6 +179,43 @@ pub fn finalize_compiler_support_selected_graph(
         final_receipt,
         graph,
     })
+}
+
+/// Collect every physical owner referenced by compiler-visible selected graph facts.
+fn selected_graph_referenced_owners(graph: &OvenSelectedRustFacetGraph) -> BTreeSet<&str> {
+    let mut owners = BTreeSet::new();
+    match &graph.selection.target_spec {
+        OvenSelectedRustFacetTargetSpec::BuiltIn { toolchain_owner, .. } => {
+            owners.insert(toolchain_owner.as_str());
+        }
+        OvenSelectedRustFacetTargetSpec::Custom { source, .. } => {
+            owners.insert(source.owner.as_str());
+        }
+    }
+    for unit in &graph.units {
+        owners.insert(unit.source.owner.as_str());
+        owners.extend(unit.include_dirs.iter().map(|path| path.owner.as_str()));
+        owners.extend(unit.exclude_dirs.iter().map(|path| path.owner.as_str()));
+        owners.extend(unit.generated_inputs.iter().map(|input| input.source.owner.as_str()));
+        for value in unit.environment.values() {
+            if let OvenSelectedRustFacetEnvironmentValue::Path { value } = value {
+                owners.insert(value.owner.as_str());
+            }
+        }
+        for library in &unit.linked_libraries {
+            match library {
+                OvenSelectedRustFacetLinkedLibrary::Archive { artifact, .. } => {
+                    owners.insert(artifact.owner.as_str());
+                }
+                OvenSelectedRustFacetLinkedLibrary::Provider { details } => {
+                    owners.insert(details.provenance.owner.as_str());
+                    owners.insert(details.search_root.owner.as_str());
+                    owners.insert(details.artifact.owner.as_str());
+                }
+            }
+        }
+    }
+    owners
 }
 
 /// Remove the generated Cargo transport root while retaining exactly the authored dependency closure it selected.
@@ -474,6 +517,127 @@ pub fn legacy_cargo_generated_output_bindings(
         }
     }
     Ok((owners.into_values().collect(), bindings))
+}
+
+/// Assemble the portable projection facts already owned by the explicit release publisher.
+///
+/// Registry and generated-output bindings come from retained capture evidence. Native linked inputs remain an
+/// explicit argument because their typed archive/provider authority is established by the final Loaf publisher,
+/// never reconstructed from raw Cargo `-l`/`-L` strings here.
+pub fn legacy_cargo_foundation_projection(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    receipt: &OvenReceipt,
+    sources: &[OvenLegacyCargoInspectionSource],
+    foundation_owner: &str,
+    toolchain_owner: &str,
+    linked_libraries: &BTreeMap<(usize, usize), OvenLegacyCargoSelectedLinkedLibraryBinding>,
+) -> Result<OvenLegacyCargoSelectedGraphProjection, OvenLegacyCargoError> {
+    let compiler = capture
+        .compiler
+        .as_ref()
+        .ok_or_else(|| projection_error("selected compiler capture", "is absent"))?;
+    if receipt.intent.target != compiler.target || receipt.intent.toolchain != compiler.toolchain {
+        return Err(projection_error(
+            "foundation receipt intent",
+            "does not match the captured compiler target and toolchain",
+        ));
+    }
+    let toolchain_version = compiler
+        .toolchain
+        .split_whitespace()
+        .find(|part| semver::Version::parse(part.trim_start_matches('v')).is_ok())
+        .map(|part| part.trim_start_matches('v').to_string())
+        .ok_or_else(|| projection_error("selected compiler toolchain", "contains no exact semantic version"))?;
+    let mut owners = vec![
+        OvenSelectedRustFacetOwner {
+            identity: foundation_owner.to_string(),
+            kind: OvenSelectedRustFacetOwnerKind::Constituent,
+        },
+        OvenSelectedRustFacetOwner {
+            identity: toolchain_owner.to_string(),
+            kind: OvenSelectedRustFacetOwnerKind::Toolchain,
+        },
+    ];
+    let (generated_owners, generated) = legacy_cargo_generated_output_bindings(capture)?;
+    owners.extend(generated_owners);
+    owners.sort_by(|left, right| left.identity.cmp(&right.identity));
+    if owners.windows(2).any(|pair| pair[0].identity == pair[1].identity) {
+        return Err(projection_error("foundation owners", "contain a duplicate identity"));
+    }
+
+    let mut build_scripts = BTreeMap::new();
+    for (consumer, unit) in capture.units.iter().enumerate() {
+        for dependency in &unit.dependencies {
+            let Some(build_unit) = capture.units.get(dependency.unit_index) else {
+                return Err(projection_error(
+                    "selected build-script edge",
+                    "names an absent physical unit",
+                ));
+            };
+            if !is_build_script_unit(build_unit) {
+                continue;
+            }
+            let facts = dependency
+                .build_script
+                .as_ref()
+                .or(build_unit.build_script.as_ref())
+                .ok_or_else(|| projection_error("selected build-script edge", "has no retained facts"))?;
+            let edge = (consumer, dependency.unit_index);
+            let typed_linked = linked_libraries.get(&edge).cloned();
+            let has_linked = !facts.linked_libraries.is_empty() || !facts.linked_paths.is_empty();
+            if has_linked != typed_linked.is_some() {
+                return Err(projection_error(
+                    "selected linked-library closure",
+                    "does not have one exact final publisher binding",
+                ));
+            }
+            let environment = facts
+                .environment
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.clone(),
+                        OvenLegacyCargoSelectedEnvironmentBinding {
+                            observed_value: value.clone(),
+                            value: OvenSelectedRustFacetEnvironmentValue::Text { value: value.clone() },
+                        },
+                    )
+                })
+                .collect();
+            build_scripts.insert(
+                edge,
+                OvenLegacyCargoSelectedBuildScriptBinding {
+                    environment,
+                    linked_libraries: typed_linked,
+                },
+            );
+        }
+    }
+    if linked_libraries.keys().any(|edge| !build_scripts.contains_key(edge)) {
+        return Err(projection_error(
+            "selected linked-library closure",
+            "binds an absent build-script edge",
+        ));
+    }
+    Ok(OvenLegacyCargoSelectedGraphProjection {
+        selection: OvenSelectedRustFacetSelection {
+            intent: oven_rustc::rustc::OvenSelectedRustFacetIntent {
+                target: receipt.intent.target.clone(),
+                toolchain: receipt.intent.toolchain.clone(),
+                profile: receipt.intent.profile.clone(),
+            },
+            host: compiler.host.clone(),
+            host_cfg: compiler.host_cfg.clone(),
+            target_cfg: compiler.target_cfg.clone(),
+            purpose: OvenSelectedRustFacetPurpose::Normal,
+            toolchain_version,
+            target_spec: legacy_cargo_builtin_target_spec(capture, toolchain_owner)?,
+        },
+        owners,
+        units: legacy_cargo_registry_unit_bindings(capture, sources, foundation_owner)?,
+        generated,
+        build_scripts,
+    })
 }
 
 /// Identify the execution node that supplies retained build-script facts to a consumer edge.
