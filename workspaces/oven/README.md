@@ -50,6 +50,6 @@ incan test workspaces/oven/src/test_rust_policy_exchange.incn
 incan oven bake --project workspaces/oven
 ```
 
-The bake produces both declared scripts. `core_engine` takes exactly two arguments, `REQUEST RESPONSE`, and dispatches a recognized Rust-policy `/2` request to its strict policy decoder; other requests retain the native selection decoder.
+The bake produces both declared scripts. `core_engine` takes exactly two arguments, `REQUEST RESPONSE`, and dispatches a Rust-policy request using the exchange schema listed above to its strict policy decoder; other requests retain the native selection decoder.
 
 The two focused test commands exercise the Rust graph policy and its strict exchange envelope directly. The baked `acceptance` script runs only the ten local-intake contracts imported by `src/acceptance.incn`; it is not an aggregate runner for every `test_*.incn` module. The Rust host adapter that supplies authenticated production inputs remains separate from this Incan policy workspace.
