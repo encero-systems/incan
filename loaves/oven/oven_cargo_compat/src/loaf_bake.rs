@@ -24,7 +24,8 @@ use crate::{
     OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoError, OvenLegacyCargoInspectionPackage,
     OvenLegacyCargoInspectionSource, OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind,
     OvenLegacyCargoSelectedUnitCapture, canonicalize_supporting_artifacts, copy_regular_directory_tree,
-    direct_rustc_compile_environment, materialized_files_from_directory, prepare_direct_rustc_plan,
+    direct_rustc_compile_environment, legacy_cargo_selected_unit_capture_identity, materialized_files_from_directory,
+    prepare_direct_rustc_plan,
 };
 
 pub mod vocab_support;
@@ -205,20 +206,52 @@ pub fn prepare_loaf_from_generated_project_with_selected_unit_bindings(
 
 /// Bind every exported registry artifact to exactly one authenticated selected physical unit.
 fn bind_registry_leaf_selected_unit_identities(
-    leaves: &mut [OvenRustcRegistryLeaf],
-    _selected_units: &OvenLegacyCargoSelectedUnitCapture,
+    leaves: &mut Vec<OvenRustcRegistryLeaf>,
+    selected_units: &OvenLegacyCargoSelectedUnitCapture,
     bindings: &BTreeMap<String, String>,
 ) -> Result<(), OvenLoafError> {
+    // The units a consumer's compilation can reach: from the captured roots, stopping at run-custom-build units.
+    // A package Cargo compiled only to run a build script sits beyond that boundary; RFC 119 never selects it, so
+    // its artifact is not retained and needs no selected-unit binding.
+    let mut linked = BTreeSet::new();
+    let mut pending = selected_units.roots.clone();
+    while let Some(index) = pending.pop() {
+        if !linked.insert(index) {
+            continue;
+        }
+        let Some(unit) = selected_units.units.get(index) else {
+            return Err(OvenLoafError::Preparation {
+                message: "physical capture names an absent root or dependency".to_string(),
+            });
+        };
+        if unit.mode == "run-custom-build" {
+            continue;
+        }
+        pending.extend(unit.dependencies.iter().map(|dependency| dependency.unit_index));
+    }
+    let mut linked_identities = BTreeSet::new();
+    for index in &linked {
+        let identity = legacy_cargo_selected_unit_capture_identity(&selected_units.units[*index]).map_err(|error| {
+            OvenLoafError::Preparation {
+                message: error.to_string(),
+            }
+        })?;
+        linked_identities.insert(identity);
+    }
     let mut used = BTreeSet::new();
-    for leaf in leaves {
+    let mut retained = Vec::with_capacity(leaves.len());
+    for mut leaf in leaves.drain(..) {
         let capture_identity = leaf
             .selected_unit_identity
-            .as_ref()
+            .clone()
             .ok_or_else(|| OvenLoafError::Preparation {
                 message: "registry artifact lacks its traced physical-unit identity".to_string(),
             })?;
+        if !linked_identities.contains(&capture_identity) {
+            continue;
+        }
         let selected_identity = bindings
-            .get(capture_identity)
+            .get(&capture_identity)
             .ok_or_else(|| OvenLoafError::Preparation {
                 message: "registry artifact has no authenticated selected-unit binding".to_string(),
             })?;
@@ -228,12 +261,14 @@ fn bind_registry_leaf_selected_unit_identities(
             });
         }
         leaf.selected_unit_identity = Some(selected_identity.clone());
+        retained.push(leaf);
     }
     if used.len() != bindings.len() {
         return Err(OvenLoafError::Preparation {
             message: "selected-unit bindings contain an uncompiled physical unit".to_string(),
         });
     }
+    *leaves = retained;
     Ok(())
 }
 
@@ -737,8 +772,51 @@ mod tests {
             "sha256:uncompiled-capture".to_string(),
             "sha256:uncompiled-unit".to_string(),
         );
-        let mut extra = vec![leaf];
+        let mut extra = vec![leaf.clone()];
         assert!(bind_registry_leaf_selected_unit_identities(&mut extra, &variants, &bindings).is_err());
+
+        // A package compiled only to run a build script lies beyond the linked closure: its artifact is dropped
+        // from the publication rather than demanding a selected-unit binding it can never have.
+        let mut script = capture.units[0].clone();
+        script.target_name = "build-script-build".to_string();
+        script.target_kinds = vec!["custom-build".to_string()];
+        script.mode = "run-custom-build".to_string();
+        let mut script_only = capture.units[0].clone();
+        script_only.package = "cc".to_string();
+        script_only.target_name = "cc".to_string();
+        let script_only_identity = legacy_cargo_selected_unit_capture_identity(&script_only)?;
+        let mut linked = capture.units[0].clone();
+        linked.dependencies = vec![crate::OvenLegacyCargoSelectedDependency {
+            unit_index: 1,
+            extern_crate_name: None,
+            build_script: None,
+        }];
+        script.dependencies = vec![crate::OvenLegacyCargoSelectedDependency {
+            unit_index: 2,
+            extern_crate_name: Some("cc".to_string()),
+            build_script: None,
+        }];
+        let linked_identity = legacy_cargo_selected_unit_capture_identity(&linked)?;
+        let with_script = OvenLegacyCargoSelectedUnitCapture {
+            roots: vec![0],
+            units: vec![linked, script, script_only],
+            rustc_invocations_observed: true,
+            build_script_tool_probes: Vec::new(),
+            compiler: None,
+        };
+        let mut linked_leaf = registry_leaf();
+        linked_leaf.selected_unit_identity = Some(linked_identity.clone());
+        let mut script_leaf = registry_leaf();
+        script_leaf.package = "cc".to_string();
+        script_leaf.selected_unit_identity = Some(script_only_identity);
+        let mut leaves = vec![linked_leaf, script_leaf];
+        let bindings = BTreeMap::from([(linked_identity, "sha256:selected-unit".to_string())]);
+        bind_registry_leaf_selected_unit_identities(&mut leaves, &with_script, &bindings)?;
+        assert_eq!(leaves.len(), 1, "the script-only artifact is not retained");
+        assert_eq!(
+            leaves[0].selected_unit_identity.as_deref(),
+            Some("sha256:selected-unit")
+        );
         Ok(())
     }
     fn runtime_receipt(
