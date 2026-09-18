@@ -72,7 +72,8 @@ regex = "1"
 flate2 = "1"
 zstd = "0.13"
 bzip2 = "0.6"
-xz2 = "0.1"
+# Release-foundation capture must retain liblzma as a generated archive instead of accepting a host pkg-config path.
+xz2 = { version = "0.1", features = ["static"] }
 snap = "1"
 # Runtime crate used by std.checksum generated-project offline smoke tests.
 crc32fast = "1"
