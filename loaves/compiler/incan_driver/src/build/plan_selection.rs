@@ -866,6 +866,7 @@ mod tests {
                 supporting_artifacts: Vec::new(),
             })?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
 
         let selected = select_or_bake_generated_project_plan(

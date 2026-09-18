@@ -672,6 +672,7 @@ mod tests {
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&artifacts)?,
             materialized_files,
+            materialized_directories: Vec::new(),
         })?;
         let checked = CheckedPackagedProviderProfile {
             dependency_key: "provider".to_string(),

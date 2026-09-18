@@ -1469,6 +1469,7 @@ headers = ["interop/include/bridge.h"]
             kind: OvenArtifactKind::ProjectOutput,
             payload: b"malformed unrelated project output".to_vec(),
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let mut stale_payload = payload.clone();
         stale_payload.source_authority_digest = digest_bytes(b"stale authored source");
@@ -1493,6 +1494,7 @@ headers = ["interop/include/bridge.h"]
             kind: OvenArtifactKind::ProjectOutput,
             payload: b"malformed exact project output".to_vec(),
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let selected = select_current_debug_project_outputs(
             &store,
@@ -1678,6 +1680,7 @@ headers = ["interop/include/bridge.h"]
                 kind: OvenArtifactKind::ProjectPayload,
                 payload: format!("fixture-{profile}-payload").into_bytes(),
                 materialized_files: Vec::new(),
+                materialized_directories: Vec::new(),
             })?;
             let output = artifact_root.join(format!("oven/{profile}/libfixture.rlib"));
             fs::create_dir_all(output.parent().ok_or("library output has no parent")?)?;
@@ -1817,6 +1820,7 @@ headers = ["interop/include/bridge.h"]
                 kind: OvenArtifactKind::ProjectOutput,
                 payload: b"malformed candidate after cheap header gate".to_vec(),
                 materialized_files: Vec::new(),
+                materialized_directories: Vec::new(),
             })?;
         }
         let mut context = OvenProjectBakeAuthorityContext::default();

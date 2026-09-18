@@ -920,6 +920,7 @@ mod tests {
                     relative_path: file.output_relative_path.clone(),
                 })
                 .collect(),
+            materialized_directories: Vec::new(),
         })?;
         assert!(
             select_baked_project_output(

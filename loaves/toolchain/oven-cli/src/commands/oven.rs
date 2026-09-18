@@ -232,6 +232,7 @@ pub fn oven_publish_direct_rustc_plan(options: OvenPlanPublishCommandOptions) ->
             kind: OvenArtifactKind::DirectRustcPlan,
             payload,
             materialized_files,
+            materialized_directories: Vec::new(),
         })
         .map_err(oven_error)?;
     match options.format {
@@ -4089,6 +4090,7 @@ mod tests {
             kind: OvenArtifactKind::CompilerTestSuite,
             payload: serde_json::to_vec(&superseded_suite)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let current_manifest = store.publish(&OvenArtifactPublishRequest {
             receipt: receipt.clone(),
@@ -4096,6 +4098,7 @@ mod tests {
             kind: OvenArtifactKind::CompilerTestSuite,
             payload: serde_json::to_vec(&suite)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let selected = super::select_compiler_test_suite(&store, &receipt, compiler_root.path(), &rustc)?;
         assert_eq!(selected.manifest.identity, current_manifest.identity);
@@ -5420,6 +5423,7 @@ mod tests {
             kind: OvenArtifactKind::CompilerTestSuiteShard,
             payload: serde_json::to_vec(&shard)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let selected = select_compiler_suite_shards(
             &store,
