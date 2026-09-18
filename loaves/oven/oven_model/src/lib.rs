@@ -8,6 +8,7 @@
 pub mod compiler_identity;
 pub mod compiler_suite_env;
 pub mod digest;
+pub mod loaf_registry;
 pub mod lock;
 pub mod manifest;
 pub mod oven_interop;

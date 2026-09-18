@@ -503,6 +503,86 @@ pub struct RustSourceSection {
     pub root: String,
 }
 
+/// One RFC 119 declared-fact record: the build facts of this Loaf's Rust unit for one exact selection.
+///
+/// A build script is inert source inventory; what it would have discovered is declared here instead. A probe's
+/// answer is a constant only under one toolchain, target, profile and feature set, so every record binds all four
+/// and a consumer applies a record only when its own selection equals that binding exactly. Script-emitted
+/// environment has no key: a value no compilation observes is not a fact, and a value one does observe is a typed
+/// constant this record does not yet model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustFactRecord {
+    /// Exact compiler identity the answers were derived under (`rustc -vV` first line).
+    pub toolchain: String,
+    /// Target triple.
+    pub target: String,
+    /// `release` or `debug`.
+    pub profile: String,
+    /// Complete enabled Cargo feature set, sorted, including `default` when enabled.
+    #[serde(default)]
+    pub features: Vec<String>,
+    /// `--cfg` answers, sorted; an empty list is a stated fact rather than an omission.
+    pub cfg: Vec<String>,
+    /// Committed generated inputs that replace ambient `OUT_DIR` output.
+    #[serde(default)]
+    pub out: Vec<RustFactOut>,
+    /// Reserved for RFC 119 `[rust.link]` publisher-side work; refused until that grammar exists.
+    #[serde(default)]
+    pub link: Option<toml::Value>,
+    /// Reserved for RFC 119 `[rust.tool]` publisher-side work; refused until that grammar exists.
+    #[serde(default)]
+    pub tool: Option<toml::Value>,
+    /// The compatibility receipt identity whose capture proposed this record.
+    #[serde(rename = "harvested-from", default)]
+    pub harvested_from: Option<String>,
+}
+
+/// One committed generated input named by a [`RustFactRecord`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustFactOut {
+    /// The name the source includes it by (its `OUT_DIR` file name).
+    pub name: String,
+    /// Committed file, relative to the manifest directory.
+    pub path: String,
+    /// `sha256:` digest of the committed bytes.
+    pub digest: String,
+}
+
+/// The selection one consumer asks a [`RustFactRecord`] to bind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RustFactSelection {
+    pub toolchain: String,
+    pub target: String,
+    pub profile: String,
+    /// Enabled features, in any order; compared as a sorted set.
+    pub features: Vec<String>,
+}
+
+impl RustFactRecord {
+    /// Whether this record's binding equals the selection exactly.
+    pub fn binds(&self, selection: &RustFactSelection) -> bool {
+        let mut features = selection.features.clone();
+        features.sort();
+        features.dedup();
+        self.toolchain == selection.toolchain
+            && self.target == selection.target
+            && self.profile == selection.profile
+            && self.features == features
+    }
+}
+
+/// `[source]`: the registry publication this manifest describes, present only on a registry-published manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistrySourceSection {
+    /// The registry index the package comes from.
+    pub registry: String,
+    /// `sha256:` digest of the published archive, as the lock records it.
+    pub checksum: String,
+}
+
 /// Tool-owned configuration namespace from `[tool]`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToolSection {
@@ -676,6 +756,10 @@ pub struct ProjectManifest {
     pub interop: Option<InteropSection>,
     /// `[rust.source]`: where a mixed Loaf keeps its Rust facet (optional).
     pub rust_source: Option<RustSourceSection>,
+    /// `[[rust.facts]]`: RFC 119 declared build facts of the Rust unit, one record per bound selection.
+    pub rust_facts: Vec<RustFactRecord>,
+    /// `[source]`: the registry publication this manifest describes (registry-published manifests only).
+    pub source: Option<RegistrySourceSection>,
     /// `[workspace]` topology metadata when this manifest is a workspace root.
     pub workspace: Option<WorkspaceSection>,
     /// `[dependencies]` (Incan library dependencies).
@@ -1060,6 +1144,8 @@ struct RawManifest {
     legacy_dev_dependencies: Option<DependencyTable>,
     #[serde(default)]
     rust: Option<RustTables>,
+    #[serde(default)]
+    source: Option<RegistrySourceSection>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1071,6 +1157,8 @@ struct RustTables {
     dev_dependencies: Option<DependencyTable>,
     #[serde(default)]
     source: Option<RustSourceSection>,
+    #[serde(default)]
+    facts: Vec<RustFactRecord>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -1188,6 +1276,102 @@ fn manifest_parse_error<E: TomlSpanError>(path: &Path, content: &str, error: E) 
 }
 
 /// Construct one semantic manifest error with an optional source location.
+/// Whether one text is a canonical `sha256:` identity.
+pub fn is_sha256_identity(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|digest| {
+        digest.len() == 64
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    })
+}
+
+/// Refuse a declared-fact record set that is not closed, sorted, bound once, and free of reserved or foreign keys.
+fn validate_rust_fact_records(
+    records: &[RustFactRecord],
+    path: &Path,
+    spans: &ManifestSpans,
+) -> Result<(), ManifestError> {
+    let location = || spans.table_location(&["rust", "facts"]);
+    let invalid = |index: usize, message: String| {
+        manifest_invalid(path, location(), format!("[[rust.facts]][{index}] {message}"))
+    };
+    let sorted_unique = |values: &[String]| values.windows(2).all(|pair| pair[0] < pair[1]);
+    let mut bindings = Vec::with_capacity(records.len());
+    for (index, record) in records.iter().enumerate() {
+        if record.toolchain.trim().is_empty() || record.target.trim().is_empty() {
+            return Err(invalid(index, "must bind a toolchain and a target".to_string()));
+        }
+        if !matches!(record.profile.as_str(), "release" | "debug") {
+            return Err(invalid(index, "profile must be `release` or `debug`".to_string()));
+        }
+        if !sorted_unique(&record.features) {
+            return Err(invalid(index, "features must be sorted and unique".to_string()));
+        }
+        if !sorted_unique(&record.cfg) || record.cfg.iter().any(|cfg| cfg.trim().is_empty()) {
+            return Err(invalid(
+                index,
+                "cfg must be sorted, unique and non-empty answers".to_string(),
+            ));
+        }
+        let mut names = HashSet::new();
+        for out in &record.out {
+            let relative = Path::new(&out.path);
+            if out.name.trim().is_empty()
+                || out.path.trim().is_empty()
+                || relative.is_absolute()
+                || relative
+                    .components()
+                    .any(|component| !matches!(component, Component::Normal(_)))
+            {
+                return Err(invalid(
+                    index,
+                    format!("out `{}` must name a committed file by a plain relative path", out.name),
+                ));
+            }
+            if !is_sha256_identity(&out.digest) {
+                return Err(invalid(
+                    index,
+                    format!("out `{}` digest must be a `sha256:` identity", out.name),
+                ));
+            }
+            if !names.insert(out.name.as_str()) {
+                return Err(invalid(index, format!("out `{}` is declared twice", out.name)));
+            }
+        }
+        for (reserved, present) in [("link", record.link.is_some()), ("tool", record.tool.is_some())] {
+            if present {
+                return Err(invalid(
+                    index,
+                    format!("`{reserved}` is reserved until a publisher-side work grammar exists"),
+                ));
+            }
+        }
+        if let Some(harvested) = record.harvested_from.as_deref()
+            && !is_sha256_identity(harvested)
+        {
+            return Err(invalid(
+                index,
+                "harvested-from must be a `sha256:` receipt identity".to_string(),
+            ));
+        }
+        let binding = (
+            record.toolchain.as_str(),
+            record.target.as_str(),
+            record.profile.as_str(),
+            record.features.as_slice(),
+        );
+        if bindings.contains(&binding) {
+            return Err(invalid(
+                index,
+                "binds the same selection as an earlier record".to_string(),
+            ));
+        }
+        bindings.push(binding);
+    }
+    Ok(())
+}
+
 fn manifest_invalid(path: &Path, location: Option<ManifestLocation>, message: impl Into<String>) -> ManifestError {
     ManifestError::Invalid {
         path: path.to_path_buf(),
@@ -1339,6 +1523,25 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         }
     }
 
+    let rust_facts = raw.rust.as_ref().map(|rust| rust.facts.clone()).unwrap_or_default();
+    validate_rust_fact_records(&rust_facts, path, &spans)?;
+    if let Some(source) = raw.source.as_ref() {
+        if source.registry.trim().is_empty() {
+            return Err(manifest_invalid(
+                path,
+                spans.entry_location(&["source"], "registry"),
+                "[source].registry must name the registry index the package comes from",
+            ));
+        }
+        if !is_sha256_identity(&source.checksum) {
+            return Err(manifest_invalid(
+                path,
+                spans.entry_location(&["source"], "checksum"),
+                "[source].checksum must be `sha256:` followed by 64 lowercase hexadecimal digits",
+            ));
+        }
+    }
+
     Ok(ProjectManifest {
         path: path.to_path_buf(),
         project: raw.project,
@@ -1348,6 +1551,8 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         sdk: raw.sdk,
         interop: raw.interop,
         rust_source: raw.rust.as_ref().and_then(|rust| rust.source.clone()),
+        rust_facts,
+        source: raw.source,
         workspace: raw.workspace,
         library_dependencies: library_dependencies.specs,
         rust_dependencies: rust_dependencies.specs,
@@ -3210,6 +3415,157 @@ exclude-components = ["stdlib-web"]
         assert!(validate_cargo_version_req("~=1.2").is_err()); // PEP 440
         assert!(validate_cargo_version_req("==1.2.*").is_err()); // PEP 440
         assert!(validate_cargo_version_req("!=1.3").is_err()); // PEP 440
+    }
+
+    const LIBM_ADOPTION_MANIFEST: &str = r#"
+[project]
+name = "libm"
+version = "0.2.16"
+
+[source]
+registry = "https://github.com/rust-lang/crates.io-index"
+checksum = "sha256:b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+
+[[rust.facts]]
+toolchain = "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = ["arch", "default"]
+cfg = ["arch_enabled", "optimizations_enabled"]
+
+[[rust.facts]]
+toolchain = "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+target = "aarch64-apple-darwin"
+profile = "debug"
+features = ["arch", "default"]
+cfg = ["arch_enabled"]
+"#;
+
+    #[test]
+    fn declared_fact_records_parse_bind_and_select_exactly() -> TestResult {
+        let manifest = ProjectManifest::from_str(LIBM_ADOPTION_MANIFEST, Path::new("loaf.toml"))?;
+        assert_eq!(manifest.rust_facts.len(), 2);
+        let source = manifest
+            .source
+            .as_ref()
+            .ok_or("adoption manifest must carry [source]")?;
+        assert!(is_sha256_identity(&source.checksum));
+        let selection = RustFactSelection {
+            toolchain: "rustc 1.98.0 (88d9e12ae 2026-08-18)".to_string(),
+            target: "aarch64-apple-darwin".to_string(),
+            profile: "release".to_string(),
+            features: vec!["default".to_string(), "arch".to_string(), "arch".to_string()],
+        };
+        let record = manifest
+            .rust_facts
+            .iter()
+            .find(|record| record.binds(&selection))
+            .ok_or("release record must bind the unordered feature selection")?;
+        assert_eq!(record.cfg, ["arch_enabled", "optimizations_enabled"]);
+        let other_profile = RustFactSelection {
+            profile: "debug".to_string(),
+            ..selection.clone()
+        };
+        let debug = manifest
+            .rust_facts
+            .iter()
+            .find(|record| record.binds(&other_profile))
+            .ok_or("debug record must bind")?;
+        assert_eq!(debug.cfg, ["arch_enabled"]);
+        for changed in [
+            RustFactSelection {
+                toolchain: "rustc 1.99.0 (deadbeef 2026-10-01)".to_string(),
+                ..selection.clone()
+            },
+            RustFactSelection {
+                target: "x86_64-unknown-linux-gnu".to_string(),
+                ..selection.clone()
+            },
+            RustFactSelection {
+                features: vec!["arch".to_string()],
+                ..selection.clone()
+            },
+        ] {
+            assert!(
+                !manifest.rust_facts.iter().any(|record| record.binds(&changed)),
+                "a record must not bind a selection that differs in any key: {changed:?}"
+            );
+        }
+        let ordinary = ProjectManifest::from_str(
+            "[project]\nname = \"plain\"\nversion = \"0.1.0\"\n",
+            Path::new("loaf.toml"),
+        )?;
+        assert!(ordinary.rust_facts.is_empty());
+        assert!(ordinary.source.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn declared_fact_records_refuse_foreign_reserved_unsorted_and_duplicate_declarations() -> TestResult {
+        let base = LIBM_ADOPTION_MANIFEST;
+        type Mutation = Box<dyn Fn(&str) -> String>;
+        let refusals: [(&str, Mutation); 7] = [
+            (
+                "script-emitted environment",
+                Box::new(|s: &str| format!("{s}env = {{ CFG_OPT_LEVEL = \"3\" }}\n")),
+            ),
+            (
+                "reserved link",
+                Box::new(|s: &str| format!("{s}link = \"static=helper\"\n")),
+            ),
+            (
+                "unsorted cfg",
+                Box::new(|s: &str| {
+                    s.replace(
+                        "cfg = [\"arch_enabled\", \"optimizations_enabled\"]",
+                        "cfg = [\"optimizations_enabled\", \"arch_enabled\"]",
+                    )
+                }),
+            ),
+            (
+                "unsorted features",
+                Box::new(|s: &str| {
+                    s.replace(
+                        "features = [\"arch\", \"default\"]\ncfg = [\"arch_enabled\"]",
+                        "features = [\"default\", \"arch\"]\ncfg = [\"arch_enabled\"]",
+                    )
+                }),
+            ),
+            (
+                "duplicate binding",
+                Box::new(|s: &str| s.replace("profile = \"debug\"", "profile = \"release\"")),
+            ),
+            (
+                "unknown profile",
+                Box::new(|s: &str| s.replace("profile = \"debug\"", "profile = \"bench\"")),
+            ),
+            (
+                "bad out digest",
+                Box::new(|s: &str| {
+                    format!(
+                        "{s}out = [{{ name = \"private.rs\", path = \"out/private.rs\", digest = \"deadbeef\" }}]\n"
+                    )
+                }),
+            ),
+        ];
+        for (label, mutate) in refusals {
+            let text = mutate(base);
+            assert!(
+                ProjectManifest::from_str(&text, Path::new("loaf.toml")).is_err(),
+                "{label} must be refused"
+            );
+        }
+        let escaping = format!(
+            "{base}out = [{{ name = \"x\", path = \"../x.rs\", digest = \"sha256:{}\" }}]\n",
+            "0".repeat(64)
+        );
+        assert!(ProjectManifest::from_str(&escaping, Path::new("loaf.toml")).is_err());
+        let bad_source = base.replace(
+            "sha256:b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981",
+            "b6d2cec3",
+        );
+        assert!(ProjectManifest::from_str(&bad_source, Path::new("loaf.toml")).is_err());
+        Ok(())
     }
 
     #[test]
