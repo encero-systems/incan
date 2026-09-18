@@ -119,7 +119,17 @@ struct RuntimeClosureIdentityInput<'a> {
     schema_version: u32,
     compiler_closure_digest: &'a str,
     units: Vec<RuntimeClosureIdentityUnit<'a>>,
-    roots: &'a [OvenRuntimeClosureRoot],
+    roots: Vec<RuntimeClosureIdentityRoot<'a>>,
+}
+
+/// One public alias's compiler-input contribution to a closure identity.
+///
+/// The selected identity remains in the payload for exact admission, while the closure key binds the alias to the
+/// compiled unit that supplies it. This keeps package coordinates out of byte-identical closure reuse.
+#[derive(Serialize)]
+struct RuntimeClosureIdentityRoot<'a> {
+    alias: &'a str,
+    compiled_identity: &'a str,
 }
 
 /// One unit's compiler-input contribution to a closure identity.
@@ -153,7 +163,14 @@ impl OvenRuntimeClosurePayload {
                     dependencies: &unit.dependencies,
                 })
                 .collect(),
-            roots: &self.roots,
+            roots: self
+                .roots
+                .iter()
+                .map(|root| RuntimeClosureIdentityRoot {
+                    alias: &root.alias,
+                    compiled_identity: &root.compiled_identity,
+                })
+                .collect(),
         };
         let bytes = serde_json::to_vec(&input).map_err(|error| OvenRustcError::InvalidInput {
             field: "runtime closure identity",
@@ -688,7 +705,17 @@ mod tests {
         let mut owners = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
         let owner = owners.pop().ok_or("published closure has no retained owner")?;
         let mut selected = admit_runtime_closure(owner, &expected)?.ok_or("published closure failed admission")?;
-        selected.payload.roots[0].selected_identity = selected.payload.units[1].selected_identity.clone();
+        let root = selected.payload.roots[0].clone();
+        let substitute = selected
+            .payload
+            .units
+            .iter()
+            .find(|unit| {
+                unit.selected_identity != root.selected_identity && unit.compiled_identity != root.compiled_identity
+            })
+            .ok_or("fixture closure has no distinct retained unit")?;
+        selected.payload.roots[0].selected_identity = substitute.selected_identity.clone();
+        selected.payload.roots[0].compiled_identity = substitute.compiled_identity.clone();
         assert!(selected.root_libraries().is_err());
         Ok(())
     }
