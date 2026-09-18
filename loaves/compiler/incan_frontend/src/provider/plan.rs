@@ -2088,6 +2088,7 @@ fn render_module(module: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
+    use std::fs;
     use std::sync::Arc;
 
     use super::*;
@@ -2106,12 +2107,15 @@ mod tests {
         let first = read_sdk_provider_manifest(&manifest_path)?;
         assert_eq!(first.name, "sealed_provider");
         assert_eq!(read_sdk_provider_manifest(&manifest_path)?.version, "1.0.0");
-        let first_len = fs::metadata(&manifest_path)?.len();
+        let first_metadata = fs::metadata(&manifest_path)?;
+        let first_len = first_metadata.len();
+        let first_modified = first_metadata.modified()?;
 
-        // Rewriting the sealed file changes what the file system reports about it, so the memo cannot serve the
-        // structure it parsed from the previous bytes. Keying on a digest the manifest records for itself is what
-        // made an earlier attempt at this unsound.
+        // Equal-length bytes with the original timestamp must still invalidate the parsed manifest memo.
         LibraryManifest::new("sealed_provider", "2.0.0").write_to_path(&manifest_path)?;
+        fs::File::options().write(true).open(&manifest_path)?
+            .set_times(fs::FileTimes::new().set_modified(first_modified))?;
+        assert_eq!(fs::metadata(&manifest_path)?.modified()?, first_modified);
         assert_eq!(
             fs::metadata(&manifest_path)?.len(),
             first_len,
