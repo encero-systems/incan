@@ -2117,7 +2117,9 @@ mod tests {
 
         // Equal-length bytes with the original timestamp must still invalidate the parsed manifest memo.
         LibraryManifest::new("sealed_provider", "2.0.0").write_to_path(&manifest_path)?;
-        fs::File::options().write(true).open(&manifest_path)?
+        fs::File::options()
+            .write(true)
+            .open(&manifest_path)?
             .set_times(fs::FileTimes::new().set_modified(first_modified))?;
         assert_eq!(fs::metadata(&manifest_path)?.modified()?, first_modified);
         assert_eq!(

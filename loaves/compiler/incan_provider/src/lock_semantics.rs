@@ -54,7 +54,10 @@ pub fn semantic_lock_state(
 }
 
 /// Snapshot semantic lock state using identities already validated for this compilation session.
-#[allow(clippy::too_many_arguments, reason = "Mirrors semantic_lock_state with an additional checked session proof")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Mirrors semantic_lock_state with an additional checked session proof"
+)]
 pub fn semantic_lock_state_with_provider_identities(
     project_root: &Path,
     interop: Option<&InteropCSection>,
@@ -248,6 +251,7 @@ impl CheckedProviderSemanticIdentities {
     }
 }
 
+/// Revalidate provider bytes and recursive support content before deriving a reusable context identity.
 fn checked_provider_semantic_context(
     provider_plan: &ProviderPlan,
     sdk_path_dependencies: &[DependencySpec],
