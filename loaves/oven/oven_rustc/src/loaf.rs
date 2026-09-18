@@ -3268,15 +3268,15 @@ fn validate_registry_leaf_catalog(loaf: &OvenLoaf, loaf_path: &Path) -> Result<(
                 ),
             });
         }
-        if Path::new(&leaf.artifact.relative_path)
-            .extension()
-            .and_then(|extension| extension.to_str())
-            != Some("rlib")
-        {
+        if !leaf.crate_kind.admits_artifact_extension(
+            Path::new(&leaf.artifact.relative_path)
+                .extension()
+                .and_then(|extension| extension.to_str()),
+        ) {
             return Err(OvenLoafError::InvalidLoaf {
                 path: loaf_path.to_path_buf(),
                 message: format!(
-                    "registry leaf `{}` `{}` must reference an rlib",
+                    "registry leaf `{}` `{}` must reference an artifact of its declared kind",
                     leaf.package, leaf.version
                 ),
             });

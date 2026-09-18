@@ -1779,15 +1779,15 @@ impl OvenRustcArtifactManifest {
                     });
                 }
             }
-            if Path::new(&leaf.artifact.relative_path)
-                .extension()
-                .and_then(|extension| extension.to_str())
-                != Some("rlib")
-            {
+            if !leaf.crate_kind.admits_artifact_extension(
+                Path::new(&leaf.artifact.relative_path)
+                    .extension()
+                    .and_then(|extension| extension.to_str()),
+            ) {
                 return Err(OvenRustcError::InvalidInput {
                     field: "artifact manifest registry catalog",
                     message: format!(
-                        "registry leaf `{}` `{}` must reference an rlib",
+                        "registry leaf `{}` `{}` must reference an artifact of its declared kind",
                         leaf.package, leaf.version
                     ),
                 });

@@ -430,6 +430,14 @@ impl OvenRustcRegistryLeafKind {
     pub fn is_rlib(&self) -> bool {
         matches!(self, Self::Rlib)
     }
+
+    /// Whether an artifact path carries the file extension this kind of unit produces.
+    pub fn admits_artifact_extension(&self, extension: Option<&str>) -> bool {
+        match self {
+            Self::Rlib => extension == Some("rlib"),
+            Self::ProcMacro => matches!(extension, Some("dylib" | "so" | "dll")),
+        }
+    }
 }
 
 /// Publisher-sealed registry source corresponding to one compiled registry leaf.
