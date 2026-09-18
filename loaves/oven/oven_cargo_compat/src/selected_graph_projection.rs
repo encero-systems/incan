@@ -818,19 +818,19 @@ pub fn legacy_cargo_registry_unit_bindings(
     Ok(bindings)
 }
 
+/// Captured generated-output owners paired with their consumer/build-unit edge bindings.
+pub type OvenLegacyCargoGeneratedOutputBindings = (
+    Vec<OvenSelectedRustFacetOwner>,
+    BTreeMap<(usize, usize), OvenLegacyCargoSelectedGeneratedBinding>,
+);
+
 /// Construct generated-output owners and bindings from exact edge-scoped stable capture facts.
 ///
 /// Empty member inventories are preserved: their canonical digest and declared directory remain distinct from an
 /// absent output, allowing the foundation asset catalogue to reproduce the empty `OUT_DIR` after mirroring.
 pub fn legacy_cargo_generated_output_bindings(
     capture: &OvenLegacyCargoSelectedUnitCapture,
-) -> Result<
-    (
-        Vec<OvenSelectedRustFacetOwner>,
-        BTreeMap<(usize, usize), OvenLegacyCargoSelectedGeneratedBinding>,
-    ),
-    OvenLegacyCargoError,
-> {
+) -> Result<OvenLegacyCargoGeneratedOutputBindings, OvenLegacyCargoError> {
     let mut owners = BTreeMap::new();
     let mut bindings = BTreeMap::new();
     for (consumer, unit) in capture.units.iter().enumerate() {
