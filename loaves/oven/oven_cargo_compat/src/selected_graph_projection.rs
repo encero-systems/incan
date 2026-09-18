@@ -623,7 +623,25 @@ fn compiler_support_root_indices(
         if matches.len() != 1 {
             return Err(projection_error(
                 "compiler-support declaration",
-                &format!("alias `{alias}` does not bind exactly one captured physical unit"),
+                &format!(
+                    "alias `{alias}` binds {} direct physical units; captured roots: {}",
+                    matches.len(),
+                    capture
+                        .roots
+                        .iter()
+                        .filter_map(|index| capture.units.get(*index))
+                        .map(|root| {
+                            let aliases = root
+                                .dependencies
+                                .iter()
+                                .filter_map(|dependency| dependency.extern_crate_name.as_deref())
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            format!("{}@{} [{}]", root.package, root.package_version, aliases)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                ),
             ));
         }
         let index = matches
