@@ -5,6 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use oven_model::digest::digest_bytes;
 use oven_model::lock::{
@@ -40,9 +41,53 @@ pub fn semantic_lock_state(
     provider_plan: &ProviderPlan,
     sdk_path_dependencies: &[DependencySpec],
 ) -> Result<SemanticLockState, String> {
+    let provider_identity_map = provider_semantic_identities(provider_plan, sdk_path_dependencies)?;
+    semantic_lock_state_from_provider_identities(
+        project_root,
+        interop,
+        sdk_inventory,
+        sdk_components,
+        package_features,
+        provider_plan,
+        &provider_identity_map,
+    )
+}
+
+/// Snapshot semantic lock state using identities already validated for this compilation session.
+pub fn semantic_lock_state_with_provider_identities(
+    project_root: &Path,
+    interop: Option<&InteropCSection>,
+    sdk_inventory: Option<&SdkInventory>,
+    sdk_components: Option<&ResolvedSdkComponents>,
+    package_features: Option<&PackageFeaturePlan>,
+    provider_plan: &ProviderPlan,
+    sdk_path_dependencies: &[DependencySpec],
+    provider_identities: &CheckedProviderSemanticIdentities,
+) -> Result<SemanticLockState, String> {
+    let provider_identity_map = provider_identities.for_context(provider_plan, sdk_path_dependencies)?;
+    semantic_lock_state_from_provider_identities(
+        project_root,
+        interop,
+        sdk_inventory,
+        sdk_components,
+        package_features,
+        provider_plan,
+        provider_identity_map,
+    )
+}
+
+/// Assemble lock state from an identity map after its owning boundary has checked plan/context binding.
+fn semantic_lock_state_from_provider_identities(
+    project_root: &Path,
+    interop: Option<&InteropCSection>,
+    sdk_inventory: Option<&SdkInventory>,
+    sdk_components: Option<&ResolvedSdkComponents>,
+    package_features: Option<&PackageFeaturePlan>,
+    provider_plan: &ProviderPlan,
+    provider_identity_map: &BTreeMap<String, String>,
+) -> Result<SemanticLockState, String> {
     let interop = locked_interop_targets_from_section(project_root, interop)?;
     let oven = (!interop.is_empty()).then_some(LockedOvenState { interop });
-    let provider_identity_map = provider_semantic_identities(provider_plan, sdk_path_dependencies)?;
     let provider_semantic_identities = provider_plan
         .records()
         .map(|provider| {
@@ -149,8 +194,20 @@ pub fn provider_semantic_identities(
     sdk_path_dependencies: &[DependencySpec],
 ) -> Result<BTreeMap<String, String>, String> {
     let semantic_toolchain_dependencies = semantic_toolchain_dependencies(sdk_path_dependencies)?;
-    let dependency_semantic_digests =
-        provider_dependency_semantic_digests(provider_plan, &semantic_toolchain_dependencies)?;
+    provider_semantic_identities_with_dependencies(provider_plan, &semantic_toolchain_dependencies, None)
+}
+
+/// Project provider identities from support roots whose recursive content identities were already checked.
+fn provider_semantic_identities_with_dependencies(
+    provider_plan: &ProviderPlan,
+    semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
+    preliminary_context: Option<u64>,
+) -> Result<BTreeMap<String, String>, String> {
+    let dependency_semantic_digests = provider_dependency_semantic_digests_for_context(
+        provider_plan,
+        &semantic_toolchain_dependencies,
+        preliminary_context,
+    )?;
     let mut provider_digest_cache = BTreeMap::new();
     provider_plan
         .records()
@@ -166,6 +223,108 @@ pub fn provider_semantic_identities(
             ))
         })
         .collect()
+}
+
+/// Provider semantic identities bound to the exact checked plan that produced them.
+#[derive(Debug)]
+pub struct CheckedProviderSemanticIdentities {
+    context_key: String,
+    identities: Arc<BTreeMap<String, String>>,
+}
+
+impl CheckedProviderSemanticIdentities {
+    /// Borrow identities only after rechecking the exact provider and dependency context that produced them.
+    pub fn for_context(
+        &self,
+        provider_plan: &ProviderPlan,
+        sdk_path_dependencies: &[DependencySpec],
+    ) -> Result<&BTreeMap<String, String>, String> {
+        let (_, context_key) = checked_provider_semantic_context(provider_plan, sdk_path_dependencies)?;
+        if context_key != self.context_key {
+            return Err("provider semantic identities belong to a different checked provider context".to_string());
+        }
+        Ok(&self.identities)
+    }
+}
+
+fn checked_provider_semantic_context(
+    provider_plan: &ProviderPlan,
+    sdk_path_dependencies: &[DependencySpec],
+) -> Result<(Vec<ProviderSemanticToolchainDependency>, String), String> {
+    // Construction validates and canonicalizes the immutable record set once; every session consumer must still
+    // surface a retained construction error before using the process-local identity.
+    provider_plan.semantic_projection_persistent_key()?;
+    let semantic_toolchain_dependencies = semantic_toolchain_dependencies(sdk_path_dependencies)?;
+    for provider in provider_plan.records() {
+        let Some(artifact) = provider.artifact.as_ref() else {
+            continue;
+        };
+        let observed = incan_frontend::library_manifest::digest_provider_artifact(&artifact.crate_root)
+            .map_err(|error| error.to_string())?;
+        if observed != provider.identity.digest {
+            return Err(format!(
+                "provider artifact `{}` changed after admission",
+                provider.identity.stable_key()
+            ));
+        }
+    }
+    let plan_identity = provider_plan.semantic_projection_identity();
+    let mut context_key = provider_semantic_digest_key(provider_plan, &semantic_toolchain_dependencies);
+    context_key.push_str(&format!("\u{19}{plan_identity}"));
+    Ok((semantic_toolchain_dependencies, context_key))
+}
+
+/// Session-bounded reuse of provider semantic identities after rechecking every mutable physical input.
+#[derive(Debug, Default)]
+pub struct ProviderSemanticIdentitySession {
+    identities: Mutex<BTreeMap<String, Arc<CheckedProviderSemanticIdentities>>>,
+}
+
+impl ProviderSemanticIdentitySession {
+    /// Return semantic identities for one checked plan and dependency context.
+    ///
+    /// Every request rehashes support roots and validates provider artifact bytes before consulting the session cache.
+    /// The cache therefore removes only the repeated final semantic projection; it cannot turn recorded inventory
+    /// claims into authority or conceal source, manifest, dependency-context, or byte changes.
+    pub fn identities(
+        &self,
+        provider_plan: &ProviderPlan,
+        sdk_path_dependencies: &[DependencySpec],
+    ) -> Result<Arc<CheckedProviderSemanticIdentities>, String> {
+        let (semantic_toolchain_dependencies, key) =
+            checked_provider_semantic_context(provider_plan, sdk_path_dependencies)?;
+        if let Some(identities) = self
+            .identities
+            .lock()
+            .map_err(|_| "provider semantic identity session lock was poisoned".to_string())?
+            .get(&key)
+            .cloned()
+        {
+            return Ok(identities);
+        }
+        let identities = Arc::new(CheckedProviderSemanticIdentities {
+            context_key: key.clone(),
+            identities: Arc::new(provider_semantic_identities_with_dependencies(
+                provider_plan,
+                &semantic_toolchain_dependencies,
+                None,
+            )?),
+        });
+        let mut cached = self
+            .identities
+            .lock()
+            .map_err(|_| "provider semantic identity session lock was poisoned".to_string())?;
+        Ok(cached.entry(key).or_insert(identities).clone())
+    }
+
+    /// Return the number of checked input contexts retained by this session.
+    #[cfg(test)]
+    pub fn entry_count(&self) -> Result<usize, String> {
+        self.identities
+            .lock()
+            .map(|identities| identities.len())
+            .map_err(|_| "provider semantic identity session lock was poisoned".to_string())
+    }
 }
 
 /// Project a physical provider record into its path-independent semantic lock identity.
@@ -243,11 +402,26 @@ fn semantic_toolchain_dependencies(
 }
 
 /// Precompute path-independent identities for every locally available physical provider digest.
+#[cfg(test)]
 fn provider_dependency_semantic_digests(
     provider_plan: &ProviderPlan,
     semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
 ) -> Result<BTreeMap<String, String>, String> {
-    provider_dependency_semantic_digests_observed(provider_plan, semantic_toolchain_dependencies, None)
+    provider_dependency_semantic_digests_for_context(provider_plan, semantic_toolchain_dependencies, None)
+}
+
+/// Precompute dependency semantics under an immutable provider-plan identity.
+fn provider_dependency_semantic_digests_for_context(
+    provider_plan: &ProviderPlan,
+    semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
+    context: Option<u64>,
+) -> Result<BTreeMap<String, String>, String> {
+    provider_dependency_semantic_digests_observed_with_context(
+        provider_plan,
+        semantic_toolchain_dependencies,
+        context,
+        None,
+    )
 }
 
 #[derive(Default)]
@@ -258,12 +432,36 @@ struct ProviderSemanticDigestCounters {
 }
 
 /// Run the preliminary physical-to-semantic map while optionally counting its actual digest/cache path.
+#[cfg(test)]
 fn provider_dependency_semantic_digests_observed(
     provider_plan: &ProviderPlan,
     semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
+    counters: Option<&mut ProviderSemanticDigestCounters>,
+) -> Result<BTreeMap<String, String>, String> {
+    provider_dependency_semantic_digests_observed_with_context(
+        provider_plan,
+        semantic_toolchain_dependencies,
+        None,
+        counters,
+    )
+}
+
+/// Run the preliminary map with its plan-bound memo key and optional measurement counters.
+fn provider_dependency_semantic_digests_observed_with_context(
+    provider_plan: &ProviderPlan,
+    semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
+    context: Option<u64>,
     mut counters: Option<&mut ProviderSemanticDigestCounters>,
 ) -> Result<BTreeMap<String, String>, String> {
-    let key = provider_semantic_digest_key(provider_plan, semantic_toolchain_dependencies);
+    let persistent_key = provider_semantic_digest_key(provider_plan, semantic_toolchain_dependencies);
+    let key = if let Some(context) = context {
+        format!("{persistent_key}\u{19}{context}")
+    } else {
+        format!(
+            "{persistent_key}{}",
+            provider_plan.semantic_projection_persistent_key()?
+        )
+    };
     static DIGESTS: std::sync::OnceLock<std::sync::Mutex<BTreeMap<String, BTreeMap<String, String>>>> =
         std::sync::OnceLock::new();
     let memo = DIGESTS.get_or_init(|| std::sync::Mutex::new(BTreeMap::new()));
@@ -275,7 +473,12 @@ fn provider_dependency_semantic_digests_observed(
         }
         return Ok(digests.clone());
     }
-    let sealed = sealed_reading_path(provider_plan, &key);
+    // A process-local plan identity is sufficient only for this in-memory memo. Persisted readings must remain bound
+    // to the complete canonical provider-plan key because numeric plan identities repeat in another process.
+    let sealed = context
+        .is_none()
+        .then(|| sealed_reading_path(provider_plan, &key))
+        .flatten();
     if let Some(path) = sealed.as_ref()
         && let Some(digests) = read_sealed_semantic_digests(path)
     {
@@ -592,13 +795,13 @@ mod tests {
         final_provider_digest_calls: usize,
         final_unique_artifacts: usize,
         final_elapsed: Duration,
-        total_elapsed: Duration,
+        semantic_projection_elapsed: Duration,
     }
 
     impl ProviderSemanticMeasurement {
         fn render(&self) -> String {
             format!(
-                "fixture={} support_closure_roots_hashed={} support_closure_us={} physical_validation_calls={} physical_validation_us={} preliminary_provider_digest_calls={} preliminary_memory_hits={} preliminary_sealed_hits={} preliminary_us={} final_provider_digest_calls={} final_unique_artifacts={} final_us={} total_us={}",
+                "fixture={} support_closure_roots_hashed={} support_closure_us={} physical_validation_calls={} physical_validation_us={} preliminary_provider_digest_calls={} preliminary_memory_hits={} preliminary_sealed_hits={} preliminary_us={} final_provider_digest_calls={} final_unique_artifacts={} final_us={} semantic_projection_us={}",
                 self.fixture,
                 self.support_closure_roots_hashed,
                 self.support_closure_elapsed.as_micros(),
@@ -611,7 +814,7 @@ mod tests {
                 self.final_provider_digest_calls,
                 self.final_unique_artifacts,
                 self.final_elapsed.as_micros(),
-                self.total_elapsed.as_micros(),
+                self.semantic_projection_elapsed.as_micros(),
             )
         }
     }
@@ -635,8 +838,6 @@ mod tests {
         provider_plan: &ProviderPlan,
         specs: &[DependencySpec],
     ) -> Result<(BTreeMap<String, String>, ProviderSemanticMeasurement), String> {
-        let total_started = Instant::now();
-
         let support_closure_started = Instant::now();
         let semantic_toolchain_dependencies = semantic_toolchain_dependencies(specs)?;
         let support_closure_elapsed = support_closure_started.elapsed();
@@ -707,7 +908,7 @@ mod tests {
                 final_provider_digest_calls,
                 final_unique_artifacts: provider_digest_cache.len(),
                 final_elapsed,
-                total_elapsed: total_started.elapsed(),
+                semantic_projection_elapsed: support_closure_elapsed + preliminary_elapsed + final_elapsed,
             },
         ))
     }
@@ -947,8 +1148,8 @@ mod tests {
                 provider_semantic_identities(&fixture.provider_plan, &fixture.specs)?,
                 "instrumentation must reproduce the production projection"
             );
-            eprintln!("provider-semantic-measurement phase=cold {}", cold.render());
-            eprintln!("provider-semantic-measurement phase=warm {}", warm.render());
+            eprintln!("provider-semantic-measurement phase=first-pass {}", cold.render());
+            eprintln!("provider-semantic-measurement phase=repeated-pass {}", warm.render());
         }
         Ok(())
     }
@@ -983,6 +1184,37 @@ mod tests {
         ))
     }
 
+    /// Measure the former library-shaped pair of complete semantic identity requests.
+    fn measure_uncached_identity_pair(
+        provider_plan: &ProviderPlan,
+        specs: &[DependencySpec],
+    ) -> Result<(BTreeMap<String, String>, Duration), String> {
+        let started = Instant::now();
+        let first = provider_semantic_identities(provider_plan, specs)?;
+        let second = provider_semantic_identities(provider_plan, specs)?;
+        assert_eq!(first, second);
+        Ok((first, started.elapsed()))
+    }
+
+    /// Measure one session projection plus the two checked consumer validations that replace the former pair.
+    fn measure_session_identity_pair(
+        provider_plan: &ProviderPlan,
+        specs: &[DependencySpec],
+    ) -> Result<(BTreeMap<String, String>, Duration, Duration, Duration), String> {
+        let session = ProviderSemanticIdentitySession::default();
+        let session_started = Instant::now();
+        let checked = session.identities(provider_plan, specs)?;
+        let session_elapsed = session_started.elapsed();
+        let first_consumer_started = Instant::now();
+        let first = checked.for_context(provider_plan, specs)?.clone();
+        let first_consumer_elapsed = first_consumer_started.elapsed();
+        let second_consumer_started = Instant::now();
+        let second = checked.for_context(provider_plan, specs)?;
+        let second_consumer_elapsed = second_consumer_started.elapsed();
+        assert_eq!(&first, second);
+        Ok((first, session_elapsed, first_consumer_elapsed, second_consumer_elapsed))
+    }
+
     #[test]
     #[ignore = "serial #1633 representative SDK measurement; requires an explicit verified inventory"]
     fn measures_current_verified_sdk_provider_semantics_issue1633() -> TestResult {
@@ -1003,8 +1235,9 @@ mod tests {
         let mut physical_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
         let mut preliminary_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
         let mut final_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
-        let mut total_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut semantic_projection_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
         let mut expected_identities = None;
+        let mut production_check_inputs = None;
 
         for repeat in 0..REPRESENTATIVE_MEASUREMENT_REPEATS {
             let (provider_plan, specs, admission_elapsed) = load_verified_sdk_measurement_inputs(&inventory_path)?;
@@ -1030,7 +1263,8 @@ mod tests {
             physical_samples.push(measurement.physical_validation_elapsed.as_micros());
             preliminary_samples.push(measurement.preliminary_elapsed.as_micros());
             final_samples.push(measurement.final_elapsed.as_micros());
-            total_samples.push(measurement.total_elapsed.as_micros());
+            semantic_projection_samples.push(measurement.semantic_projection_elapsed.as_micros());
+            production_check_inputs = Some((provider_plan, specs));
             eprintln!(
                 "provider-semantic-measurement repeat={} providers={} admission_us={} {}",
                 repeat + 1,
@@ -1048,7 +1282,107 @@ mod tests {
             measurement_distribution("physical_validation", physical_samples)?,
             measurement_distribution("preliminary", preliminary_samples)?,
             measurement_distribution("final", final_samples)?,
-            measurement_distribution("total", total_samples)?,
+            measurement_distribution("semantic_projection", semantic_projection_samples)?,
+        );
+        let (provider_plan, specs) = production_check_inputs.ok_or("representative measurement produced no inputs")?;
+        let production_identities = provider_semantic_identities(&provider_plan, &specs)?;
+        assert_eq!(
+            expected_identities.as_ref(),
+            Some(&production_identities),
+            "representative instrumentation must preserve the production result"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "serial #1633 before/after measurement; requires an explicit verified inventory"]
+    fn measures_verified_sdk_session_reuse_issue1633() -> TestResult {
+        let inventory_path = env::var_os(REPRESENTATIVE_SDK_INVENTORY_ENV)
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| format!("set {REPRESENTATIVE_SDK_INVENTORY_ENV} to the verified SDK inventory path"))?;
+        if !inventory_path.is_file() {
+            return Err(format!(
+                "{REPRESENTATIVE_SDK_INVENTORY_ENV} points to missing inventory {}",
+                inventory_path.display()
+            )
+            .into());
+        }
+
+        let mut admission_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut uncached_pair_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut session_identity_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut first_consumer_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut second_consumer_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut optimized_pair_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut preliminary_prewarm_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut uncached_total_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut optimized_total_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+
+        for repeat in 0..REPRESENTATIVE_MEASUREMENT_REPEATS {
+            let (provider_plan, specs, admission_elapsed) = load_verified_sdk_measurement_inputs(&inventory_path)?;
+            if provider_plan.records().count() < 2 {
+                return Err("representative reuse measurement requires multiple admitted providers".into());
+            }
+
+            // Populate only the preliminary map before comparing the two final-projection shapes. The baseline still
+            // performs two complete public API requests, matching the former library preparation path.
+            let semantic_dependencies = semantic_toolchain_dependencies(&specs)?;
+            let prewarm_started = Instant::now();
+            let _ = provider_dependency_semantic_digests(&provider_plan, &semantic_dependencies)?;
+            let prewarm_elapsed = prewarm_started.elapsed();
+            let (uncached_first, uncached_elapsed, optimized) = if repeat % 2 == 0 {
+                let (uncached, elapsed) = measure_uncached_identity_pair(&provider_plan, &specs)?;
+                let optimized = measure_session_identity_pair(&provider_plan, &specs)?;
+                (uncached, elapsed, optimized)
+            } else {
+                let optimized = measure_session_identity_pair(&provider_plan, &specs)?;
+                let (uncached, elapsed) = measure_uncached_identity_pair(&provider_plan, &specs)?;
+                (uncached, elapsed, optimized)
+            };
+            let (optimized_identities, session_elapsed, first_consumer_elapsed, second_consumer_elapsed) = optimized;
+            assert_eq!(
+                optimized_identities, uncached_first,
+                "optimized and uncached identities must be exact peers"
+            );
+
+            let optimized_elapsed = session_elapsed + first_consumer_elapsed + second_consumer_elapsed;
+            admission_samples.push(admission_elapsed.as_micros());
+            uncached_pair_samples.push(uncached_elapsed.as_micros());
+            session_identity_samples.push(session_elapsed.as_micros());
+            first_consumer_samples.push(first_consumer_elapsed.as_micros());
+            second_consumer_samples.push(second_consumer_elapsed.as_micros());
+            optimized_pair_samples.push(optimized_elapsed.as_micros());
+            preliminary_prewarm_samples.push(prewarm_elapsed.as_micros());
+            uncached_total_samples.push((admission_elapsed + uncached_elapsed).as_micros());
+            optimized_total_samples.push((admission_elapsed + optimized_elapsed).as_micros());
+            eprintln!(
+                "provider-semantic-reuse repeat={} admission_us={} preliminary_prewarm_us={} warm_uncached_pair_us={} session_identity_us={} first_consumer_validation_us={} second_consumer_validation_us={} warm_optimized_pair_us={} admission_plus_warm_uncached_us={} admission_plus_warm_optimized_us={}",
+                repeat + 1,
+                admission_elapsed.as_micros(),
+                prewarm_elapsed.as_micros(),
+                uncached_elapsed.as_micros(),
+                session_elapsed.as_micros(),
+                first_consumer_elapsed.as_micros(),
+                second_consumer_elapsed.as_micros(),
+                optimized_elapsed.as_micros(),
+                (admission_elapsed + uncached_elapsed).as_micros(),
+                (admission_elapsed + optimized_elapsed).as_micros(),
+            );
+        }
+
+        eprintln!(
+            "provider-semantic-reuse-summary repeats={} {} {} {} {} {} {} {} {} {}",
+            REPRESENTATIVE_MEASUREMENT_REPEATS,
+            measurement_distribution("admission", admission_samples)?,
+            measurement_distribution("preliminary_prewarm", preliminary_prewarm_samples)?,
+            measurement_distribution("warm_uncached_pair", uncached_pair_samples)?,
+            measurement_distribution("session_identity", session_identity_samples)?,
+            measurement_distribution("first_consumer_validation", first_consumer_samples)?,
+            measurement_distribution("second_consumer_validation", second_consumer_samples)?,
+            measurement_distribution("warm_optimized_pair", optimized_pair_samples)?,
+            measurement_distribution("admission_plus_warm_uncached", uncached_total_samples)?,
+            measurement_distribution("admission_plus_warm_optimized", optimized_total_samples)?,
         );
         Ok(())
     }
@@ -1190,6 +1524,214 @@ mod tests {
             elsewhere.keys().collect::<Vec<_>>(),
             "a second SDK root is a separate reading, not a repeat of the first"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn one_semantic_identity_session_reuses_only_an_unchanged_checked_context() -> TestResult {
+        let temp = tempfile::tempdir()?;
+        let fixture = production_toolchain_semantic_fixture(&temp.path().join("session-reuse"))?;
+        let session = ProviderSemanticIdentitySession::default();
+
+        let first = session.identities(&fixture.provider_plan, &fixture.specs)?;
+        let repeated = session.identities(&fixture.provider_plan, &fixture.specs)?;
+        assert!(
+            Arc::ptr_eq(&first, &repeated),
+            "an unchanged checked context must reuse one result"
+        );
+        assert_eq!(session.entry_count()?, 1);
+        assert_eq!(
+            first.for_context(&fixture.provider_plan, &fixture.specs)?,
+            &provider_semantic_identities(&fixture.provider_plan, &fixture.specs)?,
+            "session reuse must preserve the uncached production result"
+        );
+        let uncached_lock = semantic_lock_state(
+            temp.path(),
+            None,
+            Some(&fixture.inventory),
+            Some(&fixture.components),
+            None,
+            &fixture.provider_plan,
+            &fixture.specs,
+        )?;
+        let cached_lock = semantic_lock_state_with_provider_identities(
+            temp.path(),
+            None,
+            Some(&fixture.inventory),
+            Some(&fixture.components),
+            None,
+            &fixture.provider_plan,
+            &fixture.specs,
+            &first,
+        )?;
+        assert_eq!(
+            cached_lock, uncached_lock,
+            "the session-aware lock seam must preserve exact lock state"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_identity_session_rekeys_changed_dependency_context() -> TestResult {
+        let temp = tempfile::tempdir()?;
+        let fixture = production_toolchain_semantic_fixture(&temp.path().join("dependency-context"))?;
+        let session = ProviderSemanticIdentitySession::default();
+
+        let first = session.identities(&fixture.provider_plan, &fixture.specs)?;
+        let first_identities = first.for_context(&fixture.provider_plan, &fixture.specs)?.clone();
+        fs::write(
+            temp.path().join("dependency-context/crates/incan_derive/src/lib.rs"),
+            "pub fn derive_marker() { changed(); }\n",
+        )?;
+        let changed = session.identities(&fixture.provider_plan, &fixture.specs)?;
+        assert_ne!(
+            &first_identities,
+            changed.for_context(&fixture.provider_plan, &fixture.specs)?,
+            "changed support content must produce a distinct semantic result"
+        );
+        assert_eq!(
+            session.entry_count()?,
+            2,
+            "the changed checked context must not reuse the earlier entry"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_identity_session_binds_checked_in_memory_manifest_and_features() -> TestResult {
+        let temp = tempfile::tempdir()?;
+        let fixture = production_toolchain_semantic_fixture(&temp.path().join("checked-facts"))?;
+        let session = ProviderSemanticIdentitySession::default();
+        let first = session.identities(&fixture.provider_plan, &fixture.specs)?;
+
+        let equivalent_records = fixture
+            .provider_plan
+            .records()
+            .cloned()
+            .map(|mut record| {
+                record.manifest = record.manifest.as_deref().cloned().map(Arc::new);
+                record
+            })
+            .collect();
+        let equivalent_plan = ProviderPlan::new(
+            incan_frontend::library_manifest_index::LibraryManifestIndex::default(),
+            equivalent_records,
+            std::iter::empty::<Vec<String>>(),
+        )?;
+        assert_eq!(
+            fixture.provider_plan.semantic_projection_persistent_key()?,
+            equivalent_plan.semantic_projection_persistent_key()?,
+            "equivalent admitted provider facts must reconstruct the same persisted key"
+        );
+
+        let mut changed_record = fixture
+            .provider_plan
+            .records()
+            .next()
+            .cloned()
+            .ok_or("fixture provider is missing")?;
+        let mut changed_manifest = changed_record
+            .manifest
+            .as_deref()
+            .cloned()
+            .ok_or("fixture manifest is missing")?;
+        changed_manifest.contract_metadata.provider.semantic_source_digest = Some(format!("sha256:{}", "b".repeat(64)));
+        changed_manifest.contract_metadata.provider.public_features.insert(
+            "checked-feature".to_string(),
+            incan_frontend::library_manifest::ProviderFeatureMetadata::default(),
+        );
+        changed_manifest
+            .contract_metadata
+            .provider
+            .active_features
+            .insert("checked-feature".to_string());
+        changed_manifest.contract_metadata.provider.implementation_facets[0].cargo_dependencies[0]
+            .features
+            .insert("changed-dependency-feature".to_string());
+        changed_record.manifest = Some(Arc::new(changed_manifest));
+        changed_record
+            .identity
+            .feature_projection
+            .insert("checked-feature".to_string());
+        let changed_plan = ProviderPlan::new(
+            incan_frontend::library_manifest_index::LibraryManifestIndex::default(),
+            vec![changed_record],
+            std::iter::empty::<Vec<String>>(),
+        )?;
+        assert_ne!(
+            fixture.provider_plan.semantic_projection_persistent_key(),
+            changed_plan.semantic_projection_persistent_key(),
+            "changed checked dependency facts must change persisted preliminary-map authority"
+        );
+        let semantic_dependencies = semantic_toolchain_dependencies(&fixture.specs)?;
+        let mut preliminary_counters = ProviderSemanticDigestCounters::default();
+        let _ = provider_dependency_semantic_digests_observed(
+            &changed_plan,
+            &semantic_dependencies,
+            Some(&mut preliminary_counters),
+        )?;
+        assert_eq!(
+            preliminary_counters.preliminary_provider_digest_calls, 1,
+            "a new immutable provider plan must recompute its preliminary map"
+        );
+        assert_eq!(preliminary_counters.preliminary_memory_hits, 0);
+        let changed = session.identities(&changed_plan, &fixture.specs)?;
+        assert_ne!(
+            first.for_context(&fixture.provider_plan, &fixture.specs)?,
+            changed.for_context(&changed_plan, &fixture.specs)?,
+            "checked manifest and feature facts must select a distinct result"
+        );
+        assert_eq!(session.entry_count()?, 2);
+        assert!(
+            first.for_context(&changed_plan, &fixture.specs).is_err(),
+            "a result must refuse a different checked plan"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_identity_session_refuses_provider_source_or_manifest_tampering() -> TestResult {
+        let temp = tempfile::tempdir()?;
+        for (name, relative, content) in [
+            ("source", "src/lib.rs", "pub fn support() { tampered(); }\n"),
+            ("manifest", "support_provider.incnlib", "{\"tampered\":true}\n"),
+        ] {
+            let fixture = production_toolchain_semantic_fixture(&temp.path().join(name))?;
+            let session = ProviderSemanticIdentitySession::default();
+            let checked = session.identities(&fixture.provider_plan, &fixture.specs)?;
+            fs::write(
+                temp.path()
+                    .join(name)
+                    .join("sdk/components/support-provider")
+                    .join(relative),
+                content,
+            )?;
+            assert!(
+                semantic_lock_state_with_provider_identities(
+                    temp.path(),
+                    None,
+                    Some(&fixture.inventory),
+                    Some(&fixture.components),
+                    None,
+                    &fixture.provider_plan,
+                    &fixture.specs,
+                    &checked,
+                )
+                .is_err(),
+                "{name} tampering must invalidate a retained checked bundle"
+            );
+            let error = session.identities(&fixture.provider_plan, &fixture.specs);
+            assert!(
+                error.is_err(),
+                "{name} tampering must be refused by the existing session"
+            );
+
+            let fresh = ProviderSemanticIdentitySession::default();
+            assert!(
+                fresh.identities(&fixture.provider_plan, &fixture.specs).is_err(),
+                "{name} tampering must also be refused by a fresh session"
+            );
+        }
         Ok(())
     }
 

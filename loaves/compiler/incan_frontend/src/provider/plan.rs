@@ -2,10 +2,12 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::library_manifest::{
     LibraryManifest, LibraryManifestError, ProviderCargoDependency, ProviderCargoDependencySource,
@@ -315,6 +317,58 @@ struct ResolvedArtifactGraph {
     public_dependencies: BTreeMap<PathBuf, Vec<(String, String)>>,
 }
 
+fn next_provider_semantic_projection_identity() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+fn provider_semantic_projection_persistent_key(records: &BTreeMap<String, ProviderRecord>) -> Result<String, String> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"incan-provider-semantic-plan-v3\0");
+    for (identity, record) in records {
+        let manifest_digest = match (record.manifest.as_ref(), record.artifact.as_ref()) {
+            (Some(manifest), Some(_artifact)) => Some(
+                retained_sdk_manifest_digest(manifest)
+                    .map(Ok)
+                    .unwrap_or_else(|| canonical_manifest_digest(manifest))?,
+            ),
+            (Some(manifest), None) => Some(canonical_manifest_digest(manifest)?),
+            (None, _) => None,
+        };
+        let artifact = record.artifact.as_ref().map(|artifact| {
+            serde_json::json!({
+                "dependency_key": artifact.dependency_key,
+                "manifest_name": artifact.manifest_name,
+                "manifest_path": artifact.manifest_path,
+                "crate_root": artifact.crate_root,
+                "cargo_toml_path": artifact.cargo_toml_path,
+                "crate_lib_path": artifact.crate_lib_path,
+                "kind": match artifact.kind {
+                    LibraryArtifactKind::Materialized => "materialized",
+                    LibraryArtifactKind::ParserSource => "parser_source",
+                    LibraryArtifactKind::StandardVocab => "standard_vocab",
+                },
+            })
+        });
+        let checked_record = serde_json::json!({
+            "identity_key": identity,
+            "identity": record.identity,
+            "provenance": record.provenance,
+            "authority": record.authority,
+            "namespace_claims": record.namespace_claims,
+            "available": record.available,
+            "enabled": record.enabled,
+            "manifest_digest": manifest_digest,
+            "artifact": artifact,
+            "implementation_facets": record.implementation_facets,
+        });
+        let encoded = serde_json::to_vec(&checked_record).map_err(|error| error.to_string())?;
+        hasher.update(encoded.len().to_le_bytes());
+        hasher.update(encoded);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
 /// Immutable provider catalog and active module projection shared by every compiler stage.
 #[derive(Debug, Clone, Default)]
 pub struct ProviderPlan {
@@ -332,6 +386,10 @@ pub struct ProviderPlan {
     /// This bootstrap-only grant disappears once the checked provider manifest is published and must never be
     /// populated by installed SDK consumers.
     bootstrap_sdk_namespace_roots: BTreeSet<String>,
+    /// Process-local identity assigned when this immutable record set is constructed.
+    semantic_projection_identity: u64,
+    /// Complete process-independent key derived once from the admitted immutable provider records.
+    semantic_projection_persistent_key: Option<Result<String, String>>,
 }
 
 impl ProviderPlan {
@@ -374,7 +432,7 @@ impl ProviderPlan {
             indexed_records.insert(key, record);
         }
         let artifact_graph = resolve_artifact_graph(&indexed_records)?;
-
+        let semantic_projection_persistent_key = provider_semantic_projection_persistent_key(&indexed_records);
         Ok(Self {
             library_manifest_index,
             records: indexed_records,
@@ -385,6 +443,8 @@ impl ProviderPlan {
             public_artifacts: artifact_graph.public_artifacts,
             public_dependencies: artifact_graph.public_dependencies,
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
+            semantic_projection_identity: next_provider_semantic_projection_identity(),
+            semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
         })
     }
 
@@ -806,9 +866,11 @@ impl ProviderPlan {
             .cloned()
             .map(|claim| (claim, key.clone()))
             .collect();
+        let records = BTreeMap::from([(key, record)]);
+        let semantic_projection_persistent_key = provider_semantic_projection_persistent_key(&records);
         Self {
             library_manifest_index,
-            records: BTreeMap::from([(key, record)]),
+            records,
             module_catalog,
             used_module_paths: BTreeSet::new(),
             sdk_dependency_rebindings: Vec::new(),
@@ -816,6 +878,8 @@ impl ProviderPlan {
             public_artifacts: BTreeMap::new(),
             public_dependencies: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
+            semantic_projection_identity: next_provider_semantic_projection_identity(),
+            semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
         }
     }
 
@@ -874,9 +938,11 @@ impl ProviderPlan {
             artifact: None,
             implementation_facets: Vec::new(),
         };
+        let records = BTreeMap::from([(key.clone(), record)]);
+        let semantic_projection_persistent_key = provider_semantic_projection_persistent_key(&records);
         Self {
             library_manifest_index,
-            records: BTreeMap::from([(key.clone(), record)]),
+            records,
             module_catalog: namespace_claims.into_iter().map(|claim| (claim, key.clone())).collect(),
             used_module_paths: BTreeSet::new(),
             sdk_dependency_rebindings: Vec::new(),
@@ -884,6 +950,8 @@ impl ProviderPlan {
             public_artifacts: BTreeMap::new(),
             public_dependencies: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
+            semantic_projection_identity: next_provider_semantic_projection_identity(),
+            semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
         }
     }
 
@@ -910,6 +978,23 @@ impl ProviderPlan {
     /// Iterate over every catalog provider in stable identity order.
     pub fn records(&self) -> impl Iterator<Item = &ProviderRecord> {
         self.records.values()
+    }
+
+    /// Return this immutable record set's process-local semantic-projection identity.
+    ///
+    /// This value scopes in-memory memoization only. It is never serialized or used as an artifact/content identity.
+    pub fn semantic_projection_identity(&self) -> u64 {
+        self.semantic_projection_identity
+    }
+
+    /// Return the process-independent key for the admitted immutable facts consumed by semantic projection.
+    pub fn semantic_projection_persistent_key(&self) -> Result<&str, String> {
+        match self.semantic_projection_persistent_key.as_ref() {
+            Some(Ok(key)) => Ok(key),
+            Some(Err(error)) => Err(error.clone()),
+            None if self.records.is_empty() => Ok(""),
+            None => Err("provider semantic projection key was not constructed".to_string()),
+        }
     }
 
     /// Return whether this plan carries an SDK-owned reserved-namespace catalog.
@@ -1638,51 +1723,124 @@ fn sdk_provider_records(
 }
 
 /// Describe one sealed SDK manifest well enough to notice it being rewritten underneath us.
-type SdkManifestFileStamp = (PathBuf, u64, Option<SystemTime>);
+type SdkManifestFileStamp = (PathBuf, u64, Option<SystemTime>, String);
 
 /// Reuse one already-parsed SDK provider manifest for as long as its file is observably unchanged.
 ///
 /// A plan build reads all ten sealed provider descriptors, and a bake builds the plan several times, so the same
-/// 6.6 MB provider surface is re-read and re-deserialized on each one. The `api_metadata` surface alone accounts for
+/// 6.6 MB provider surface is re-deserialized on each one. The `api_metadata` surface alone accounts for
 /// a measured 14% of a no-op bake.
 ///
-/// Only the parse is memoized. `validate_sdk_descriptor` still runs against every record, and every artifact digest
-/// is still taken at its own call site, so no check is skipped -- the reader simply stops turning the same bytes
-/// into the same structure repeatedly. That boundary is the point: an earlier attempt keyed this on the digest the
+/// Only the parse is memoized. Every lookup still reads and hashes the manifest bytes, `validate_sdk_descriptor`
+/// still runs against every record, and every artifact digest is still taken at its own call site, so no check is
+/// skipped -- the reader simply stops turning the same bytes into the same structure repeatedly. That boundary is
+/// the point: an earlier attempt keyed this on the digest the
 /// inventory *records* for a provider, which cannot notice the generated Rust behind that digest changing, and its
 /// own integrity test caught it. The key here is what the file system reports about the file that was read.
-fn sdk_manifest_memo() -> &'static Mutex<HashMap<SdkManifestFileStamp, Arc<LibraryManifest>>> {
-    static MEMO: OnceLock<Mutex<HashMap<SdkManifestFileStamp, Arc<LibraryManifest>>>> = OnceLock::new();
+struct SdkManifestMemoEntry {
+    /// Checked semantic manifest parsed from the retained transport.
+    manifest: Arc<LibraryManifest>,
+    /// Stable digest of the recursively key-sorted validated transport.
+    canonical_digest: String,
+}
+
+/// Return the process-local cache for stamped, checked SDK provider manifests.
+fn sdk_manifest_memo() -> &'static Mutex<HashMap<SdkManifestFileStamp, SdkManifestMemoEntry>> {
+    static MEMO: OnceLock<Mutex<HashMap<SdkManifestFileStamp, SdkManifestMemoEntry>>> = OnceLock::new();
     MEMO.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Observe one sealed manifest file, or report nothing when it cannot be stated.
+/// Observe one sealed manifest file and its current bytes, or report nothing when they cannot be stated.
 ///
 /// A manifest that cannot be stated is simply not memoized: the caller falls through to a full read, which produces
 /// the honest error rather than a stale structure.
-fn sdk_manifest_file_stamp(manifest_path: &Path) -> Option<SdkManifestFileStamp> {
+fn sdk_manifest_file_stamp(manifest_path: &Path, wire: &str) -> Option<SdkManifestFileStamp> {
     let metadata = std::fs::metadata(manifest_path).ok()?;
-    Some((manifest_path.to_path_buf(), metadata.len(), metadata.modified().ok()))
+    Some((
+        manifest_path.to_path_buf(),
+        metadata.len(),
+        metadata.modified().ok(),
+        format!("sha256:{}", hex::encode(Sha256::digest(wire.as_bytes()))),
+    ))
 }
 
 /// Read one sealed SDK provider manifest, reusing the parse when the file has not changed since it was read.
 fn read_sdk_provider_manifest(
     manifest_path: &Path,
 ) -> Result<Arc<LibraryManifest>, crate::library_manifest::LibraryManifestError> {
-    let stamp = sdk_manifest_file_stamp(manifest_path);
+    let wire = std::fs::read_to_string(manifest_path).map_err(|source| {
+        crate::library_manifest::LibraryManifestError::Read {
+            path: manifest_path.to_path_buf(),
+            source,
+        }
+    })?;
+    let stamp = sdk_manifest_file_stamp(manifest_path, &wire);
     if let Some(stamp) = stamp.as_ref()
         && let Ok(memo) = sdk_manifest_memo().lock()
-        && let Some(manifest) = memo.get(stamp)
+        && let Some(entry) = memo.get(stamp)
     {
-        return Ok(Arc::clone(manifest));
+        return Ok(Arc::clone(&entry.manifest));
     }
-    let manifest = Arc::new(LibraryManifest::read_from_path(manifest_path)?);
+    let manifest = Arc::new(LibraryManifest::from_json_str(&wire)?);
+    let canonical_digest = digest_canonical_json_wire(&wire)?;
     if let Some(stamp) = stamp
         && let Ok(mut memo) = sdk_manifest_memo().lock()
     {
-        memo.insert(stamp, Arc::clone(&manifest));
+        memo.insert(
+            stamp,
+            SdkManifestMemoEntry {
+                manifest: Arc::clone(&manifest),
+                canonical_digest,
+            },
+        );
     }
     Ok(manifest)
+}
+
+/// Normalize validated JSON into a compact, recursively key-sorted representation for stable hashing.
+fn canonical_json_wire(wire: &str) -> Result<String, crate::library_manifest::LibraryManifestError> {
+    /// Recursively sort JSON object keys while preserving array order and scalar values.
+    fn canonicalize(value: serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Array(values) => {
+                serde_json::Value::Array(values.into_iter().map(canonicalize).collect())
+            }
+            serde_json::Value::Object(values) => serde_json::Value::Object(
+                values
+                    .into_iter()
+                    .map(|(key, value)| (key, canonicalize(value)))
+                    .collect::<BTreeMap<_, _>>()
+                    .into_iter()
+                    .collect(),
+            ),
+            value => value,
+        }
+    }
+
+    let value = serde_json::from_str(wire)
+        .map_err(|error| crate::library_manifest::LibraryManifestError::Parse(error.to_string()))?;
+    serde_json::to_string(&canonicalize(value))
+        .map_err(|error| crate::library_manifest::LibraryManifestError::Serialize(error.to_string()))
+}
+
+/// Compute the stable digest used by plan fingerprints for a separately constructed checked manifest.
+fn canonical_manifest_digest(manifest: &LibraryManifest) -> Result<String, String> {
+    let wire = manifest.to_json_string().map_err(|error| error.to_string())?;
+    digest_canonical_json_wire(&wire).map_err(|error| error.to_string())
+}
+
+/// Canonicalize and digest already validated manifest transport without rebuilding its semantic publication model.
+fn digest_canonical_json_wire(wire: &str) -> Result<String, crate::library_manifest::LibraryManifestError> {
+    let canonical = canonical_json_wire(wire)?;
+    Ok(format!("sha256:{}", hex::encode(Sha256::digest(canonical.as_bytes()))))
+}
+
+/// Reuse a digest only when the current SDK manifest is the exact memoized parse of the current stamped file.
+fn retained_sdk_manifest_digest(manifest: &Arc<LibraryManifest>) -> Option<String> {
+    let memo = sdk_manifest_memo().lock().ok()?;
+    memo.values()
+        .find(|entry| Arc::ptr_eq(manifest, &entry.manifest))
+        .map(|entry| entry.canonical_digest.clone())
 }
 
 /// Return active provider-local module claims, falling back to checked API metadata for pre-RFC-114 artifacts.
@@ -1948,11 +2106,17 @@ mod tests {
         let first = read_sdk_provider_manifest(&manifest_path)?;
         assert_eq!(first.name, "sealed_provider");
         assert_eq!(read_sdk_provider_manifest(&manifest_path)?.version, "1.0.0");
+        let first_len = fs::metadata(&manifest_path)?.len();
 
         // Rewriting the sealed file changes what the file system reports about it, so the memo cannot serve the
         // structure it parsed from the previous bytes. Keying on a digest the manifest records for itself is what
         // made an earlier attempt at this unsound.
         LibraryManifest::new("sealed_provider", "2.0.0").write_to_path(&manifest_path)?;
+        assert_eq!(
+            fs::metadata(&manifest_path)?.len(),
+            first_len,
+            "fixture rewrite must preserve length"
+        );
         assert_eq!(read_sdk_provider_manifest(&manifest_path)?.version, "2.0.0");
         Ok(())
     }
