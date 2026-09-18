@@ -54,6 +54,7 @@ pub fn semantic_lock_state(
 }
 
 /// Snapshot semantic lock state using identities already validated for this compilation session.
+#[allow(clippy::too_many_arguments, reason = "Mirrors semantic_lock_state with an additional checked session proof")]
 pub fn semantic_lock_state_with_provider_identities(
     project_root: &Path,
     interop: Option<&InteropCSection>,
@@ -205,7 +206,7 @@ fn provider_semantic_identities_with_dependencies(
 ) -> Result<BTreeMap<String, String>, String> {
     let dependency_semantic_digests = provider_dependency_semantic_digests_for_context(
         provider_plan,
-        &semantic_toolchain_dependencies,
+        semantic_toolchain_dependencies,
         preliminary_context,
     )?;
     let mut provider_digest_cache = BTreeMap::new();
@@ -217,7 +218,7 @@ fn provider_semantic_identities_with_dependencies(
                 locked_provider_semantic_identity(
                     provider,
                     &dependency_semantic_digests,
-                    &semantic_toolchain_dependencies,
+                    semantic_toolchain_dependencies,
                     &mut provider_digest_cache,
                 )?,
             ))
