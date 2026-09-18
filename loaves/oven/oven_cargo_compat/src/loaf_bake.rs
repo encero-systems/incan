@@ -713,6 +713,8 @@ mod tests {
 
     fn registry_leaf() -> OvenRustcRegistryLeaf {
         OvenRustcRegistryLeaf {
+            domain: Default::default(),
+            crate_kind: Default::default(),
             selected_unit_identity: None,
             package: "blake2".to_string(),
             version: "0.10.6".to_string(),
@@ -872,6 +874,75 @@ mod tests {
         }
     }
 
+    /// One package version compiles once per domain and kind; the catalog keeps the target library, the host
+    /// library a macro depends on, and the macro itself apart, and still refuses two leaves of one domain and kind.
+    #[test]
+    fn a_catalog_seals_host_and_target_compilations_of_one_package_as_distinct_leaves()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use oven_rustc::rustc::{OvenRustcRegistryLeafDomain, OvenRustcRegistryLeafKind};
+        let receipt = runtime_receipt_for_plan()?;
+        let mut plan = empty_manifest(&receipt);
+        plan.registry_sources.push(OvenRustcRegistrySourcePackage {
+            package: "blake2".to_string(),
+            version: "0.10.6".to_string(),
+            features: vec!["std".to_string()],
+            source: OvenRustcRegistrySource {
+                registry: "registry+https://example.invalid/index".to_string(),
+                checksum: "blake2-checksum".to_string(),
+                relative_root: "registry-sources/blake2-0.10.6".to_string(),
+                digest: "sha256:blake2-source".to_string(),
+            },
+        });
+        // The plan must declare the retained source manifest and every leaf artifact it names.
+        plan.supporting_artifacts
+            .push(oven_rustc::rustc::OvenRustcSupportingArtifact {
+                relative_path: "registry-sources/blake2-0.10.6/Cargo.toml".to_string(),
+                digest: "sha256:blake2-manifest".to_string(),
+            });
+        let leaf = |relative_path: &str, domain, crate_kind| {
+            let mut leaf = registry_leaf();
+            leaf.domain = domain;
+            leaf.crate_kind = crate_kind;
+            leaf.artifact.relative_path = relative_path.to_string();
+            leaf.artifact.digest = format!("sha256:{relative_path}");
+            leaf
+        };
+        for relative_path in [
+            "target/x/release/deps/libblake2-t.rlib",
+            "target/release/deps/libblake2-h.rlib",
+            "target/x/release/deps/libblake2-t2.rlib",
+        ] {
+            plan.supporting_artifacts
+                .push(oven_rustc::rustc::OvenRustcSupportingArtifact {
+                    relative_path: relative_path.to_string(),
+                    digest: format!("sha256:{relative_path}"),
+                });
+        }
+        plan.registry_leaves = vec![
+            leaf(
+                "target/x/release/deps/libblake2-t.rlib",
+                OvenRustcRegistryLeafDomain::Target,
+                OvenRustcRegistryLeafKind::Rlib,
+            ),
+            leaf(
+                "target/release/deps/libblake2-h.rlib",
+                OvenRustcRegistryLeafDomain::Host,
+                OvenRustcRegistryLeafKind::Rlib,
+            ),
+        ];
+        plan.validate_shape(&receipt.intent)?;
+        plan.registry_leaves.push(leaf(
+            "target/x/release/deps/libblake2-t2.rlib",
+            OvenRustcRegistryLeafDomain::Target,
+            OvenRustcRegistryLeafKind::Rlib,
+        ));
+        assert!(
+            plan.validate_shape(&receipt.intent).is_err(),
+            "two target libraries of one package version remain a refusal"
+        );
+        Ok(())
+    }
+
     #[test]
     fn loaf_export_retains_the_publisher_registry_lock_for_registry_sources() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -960,6 +1031,8 @@ mod tests {
             digest: digest_bytes(artifact),
         });
         plan.registry_leaves.push(OvenRustcRegistryLeaf {
+            domain: Default::default(),
+            crate_kind: Default::default(),
             selected_unit_identity: None,
             package: authority.package.clone(),
             version: authority.version.clone(),

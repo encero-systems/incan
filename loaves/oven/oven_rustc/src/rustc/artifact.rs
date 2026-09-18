@@ -366,6 +366,13 @@ pub struct OvenRustcRegistryLeaf {
     /// publication refuses them because package coordinates cannot distinguish compiler-input variants.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_unit_identity: Option<String>,
+    /// Compilation domain of this artifact: a target library, or a host library or procedural macro the target
+    /// build ran on the build host. Legacy catalogs carried target libraries only and omit the field.
+    #[serde(default, skip_serializing_if = "OvenRustcRegistryLeafDomain::is_target")]
+    pub domain: OvenRustcRegistryLeafDomain,
+    /// What kind of compiled unit the artifact is. Legacy catalogs carried `rlib` leaves only and omit the field.
+    #[serde(default, skip_serializing_if = "OvenRustcRegistryLeafKind::is_rlib")]
+    pub crate_kind: OvenRustcRegistryLeafKind,
     /// Registry package name rather than a caller-local dependency alias.
     pub package: String,
     /// Exact publisher-resolved package version.
@@ -382,6 +389,47 @@ pub struct OvenRustcRegistryLeaf {
     pub source: OvenRustcRegistrySource,
     /// Digest-verified compiler artifact retained below the Loaf root.
     pub artifact: OvenRustcArtifactExtern,
+}
+
+/// The compilation domain of one registry leaf.
+///
+/// A package can be compiled twice in one closure: for the target, and for the build host when a procedural macro
+/// depends on it. Both are exact artifacts of distinct selected units; the catalog keeps them apart by domain rather
+/// than dropping the host copy, so a runtime foundation can bind every unit and a cross-target closure can name
+/// which side an artifact serves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OvenRustcRegistryLeafDomain {
+    /// Compiled for the selected target; the only domain legacy catalogs carried.
+    #[default]
+    Target,
+    /// Compiled for the build host, as a procedural macro or a library one depends on.
+    Host,
+}
+
+impl OvenRustcRegistryLeafDomain {
+    /// Whether this is the legacy default, omitted on the wire.
+    pub fn is_target(&self) -> bool {
+        matches!(self, Self::Target)
+    }
+}
+
+/// The kind of compiled unit one registry leaf holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OvenRustcRegistryLeafKind {
+    /// A Rust library archive a consumer names through `--extern`; the only kind legacy catalogs carried.
+    #[default]
+    Rlib,
+    /// A procedural-macro dynamic library rustc loads while compiling a consumer.
+    ProcMacro,
+}
+
+impl OvenRustcRegistryLeafKind {
+    /// Whether this is the legacy default, omitted on the wire.
+    pub fn is_rlib(&self) -> bool {
+        matches!(self, Self::Rlib)
+    }
 }
 
 /// Publisher-sealed registry source corresponding to one compiled registry leaf.

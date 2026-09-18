@@ -11,11 +11,11 @@ use std::path::{Path, PathBuf};
 use super::{
     CargoChecksumLock, CargoCompilerArtifact, CargoInvocationOutput, CargoMetadata, InspectionPackageScope,
     OvenBuildIntent, OvenLegacyCargoError, OvenLegacyCargoInspectionPackage, OvenLegacyCargoInspectionSourceMember,
-    OvenRustcArtifactExtern, OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
-    OvenRustcSupportingArtifact, PendingRegistryLeaf, canonical_directory, compiler_artifact_platform,
-    copy_regular_directory_tree, digest_bytes, digest_source_tree, inspection_package_closure_ids,
-    legacy_cargo_inspection_sources_from_metadata, materialized_files_from_directory, regular_file_bytes,
-    relative_path,
+    OvenRustcArtifactExtern, OvenRustcRegistryLeaf, OvenRustcRegistryLeafDomain, OvenRustcRegistryLeafKind,
+    OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact, PendingRegistryLeaf,
+    canonical_directory, compiler_artifact_platform, copy_regular_directory_tree, digest_bytes, digest_source_tree,
+    inspection_package_closure_ids, legacy_cargo_inspection_sources_from_metadata, materialized_files_from_directory,
+    regular_file_bytes, relative_path,
 };
 
 /// Decode exact registry checksums from the lock consumed by the named publisher.
@@ -290,7 +290,6 @@ pub struct PublisherRegistryLeafCatalogRequest<'a> {
     pub cargo_lock: &'a [u8],
     pub staging: &'a Path,
     pub intent: &'a OvenBuildIntent,
-    pub rustc_host: &'a str,
     pub externs: &'a [OvenRustcArtifactExtern],
     pub supporting_artifacts: &'a [OvenRustcSupportingArtifact],
     pub selected_units: Option<&'a super::OvenLegacyCargoSelectedUnitCapture>,
@@ -307,7 +306,6 @@ pub fn publisher_registry_leaf_catalog(
         cargo_lock,
         staging,
         intent,
-        rustc_host,
         externs,
         supporting_artifacts,
         selected_units,
@@ -369,35 +367,54 @@ pub fn publisher_registry_leaf_catalog(
                     super::legacy_cargo_selected_unit_capture_identity(selected)
                 })
                 .transpose()?;
+            // A procedural macro is a host dynamic library rustc loads while compiling its consumer; every other
+            // registry unit is a Rust library archive, compiled for the target or, when a macro depends on it, for
+            // the build host. Each is sealed as its own leaf, labelled by domain and kind, so the catalog keeps a
+            // package's host and target compilations apart instead of dropping one.
+            let proc_macro = artifact.target.kind.iter().any(|kind| kind == "proc-macro");
+            let crate_kind = if proc_macro {
+                OvenRustcRegistryLeafKind::ProcMacro
+            } else {
+                OvenRustcRegistryLeafKind::Rlib
+            };
             let mut artifacts = artifact
                 .filenames
                 .into_iter()
-                .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("rlib"))
+                .filter(|path| {
+                    let extension = path.extension().and_then(|extension| extension.to_str());
+                    if proc_macro {
+                        matches!(extension, Some("dylib" | "so" | "dll"))
+                    } else {
+                        extension == Some("rlib")
+                    }
+                })
                 .filter_map(|path| {
                     let canonical = fs::canonicalize(&path).ok()?;
-                    let target_artifact =
-                        compiler_artifact_platform(&canonical, &intent.target) == Some(intent.target.clone());
-                    // Cargo's host rlibs are required to direct-compile a host proc macro. They are admissible only
-                    // when the receipt target is the compiler host: this catalog has no target dimension, so a
-                    // cross-target consumer must keep failing closed rather than accidentally selecting host code.
-                    (target_artifact || rustc_host == intent.target).then_some((canonical, target_artifact))
+                    let target_artifact = !proc_macro
+                        && compiler_artifact_platform(&canonical, &intent.target) == Some(intent.target.clone());
+                    let domain = if target_artifact {
+                        OvenRustcRegistryLeafDomain::Target
+                    } else {
+                        OvenRustcRegistryLeafDomain::Host
+                    };
+                    Some((canonical, domain))
                 })
-                .filter_map(|(path, target_artifact)| {
+                .filter_map(|(path, domain)| {
                     let relative = relative_path(staging, &path).ok()?;
                     retained
                         .get(&relative)
                         .cloned()
-                        .map(|digest| (relative, digest, target_artifact))
+                        .map(|digest| (relative, digest, domain))
                 })
                 .collect::<Vec<_>>();
             artifacts.sort();
             artifacts.dedup();
-            let Some((relative_path, digest, target_artifact)) = artifacts.as_slice().first().cloned() else {
+            let Some((relative_path, digest, domain)) = artifacts.as_slice().first().cloned() else {
                 continue;
             };
             if artifacts.len() != 1 {
                 return Err(OvenLegacyCargoError::Plan(format!(
-                    "named Loaf publisher emitted multiple target rlibs for registry package `{}` {}",
+                    "named Loaf publisher emitted multiple retained artifacts for registry package `{}` {}",
                     package.name, package.version
                 )));
             }
@@ -436,38 +453,46 @@ pub fn publisher_registry_leaf_catalog(
                 registry: registry.to_string(),
                 checksum,
                 source_root,
-                target_artifact,
+                domain,
+                crate_kind,
             };
             candidates.push(leaf);
         }
     }
-    let target_keys = candidates
-        .iter()
-        .filter(|leaf| leaf.target_artifact)
-        .map(|leaf| (leaf.package.clone(), leaf.version.clone(), leaf.crate_name.clone()))
-        .collect::<BTreeSet<_>>();
     candidates.sort_by(|left, right| {
         (
             left.package.as_str(),
             left.version.as_str(),
             left.crate_name.as_str(),
-            !left.target_artifact,
+            left.domain,
+            left.crate_kind,
             left.artifact.relative_path.as_str(),
         )
             .cmp(&(
                 right.package.as_str(),
                 right.version.as_str(),
                 right.crate_name.as_str(),
-                !right.target_artifact,
+                right.domain,
+                right.crate_kind,
                 right.artifact.relative_path.as_str(),
             ))
     });
-    let mut leaves = BTreeMap::<(String, String, String), PendingRegistryLeaf>::new();
+    type LeafKey = (
+        String,
+        String,
+        String,
+        OvenRustcRegistryLeafDomain,
+        OvenRustcRegistryLeafKind,
+    );
+    let mut leaves = BTreeMap::<LeafKey, PendingRegistryLeaf>::new();
     for leaf in candidates {
-        let key = (leaf.package.clone(), leaf.version.clone(), leaf.crate_name.clone());
-        if !leaf.target_artifact && target_keys.contains(&key) {
-            continue;
-        }
+        let key = (
+            leaf.package.clone(),
+            leaf.version.clone(),
+            leaf.crate_name.clone(),
+            leaf.domain,
+            leaf.crate_kind,
+        );
         match leaves.get(&key) {
             Some(existing)
                 if existing.artifact == leaf.artifact
@@ -500,6 +525,8 @@ pub fn publisher_registry_leaf_catalog(
         )?;
         sealed.push(OvenRustcRegistryLeaf {
             selected_unit_identity: leaf.selected_unit_identity,
+            domain: leaf.domain,
+            crate_kind: leaf.crate_kind,
             package: leaf.package,
             version: leaf.version,
             crate_name: leaf.crate_name,

@@ -647,7 +647,15 @@ pub fn merge_packaged_provider_artifact_manifests(
         role_keys.insert("generated-root".to_string());
     }
     let mut entrypoint_search_paths = BTreeMap::<String, crate::rustc::OvenRustcSourceSearchClosure>::new();
-    let mut registry_leaves = BTreeMap::<(String, String), OvenRustcRegistryLeaf>::new();
+    let mut registry_leaves = BTreeMap::<
+        (
+            String,
+            String,
+            crate::rustc::OvenRustcRegistryLeafDomain,
+            crate::rustc::OvenRustcRegistryLeafKind,
+        ),
+        OvenRustcRegistryLeaf,
+    >::new();
     let mut registry_sources = BTreeMap::<(String, String, String), OvenRustcRegistrySourcePackage>::new();
     let mut compile_environment = BTreeMap::<String, String>::new();
     let vocabulary = first.vocab_auxiliary_targets.clone();
@@ -725,7 +733,7 @@ pub fn merge_packaged_provider_artifact_manifests(
                 .extend(names.iter().cloned());
         }
         for leaf in &manifest.registry_leaves {
-            let key = (leaf.package.clone(), leaf.version.clone());
+            let key = (leaf.package.clone(), leaf.version.clone(), leaf.domain, leaf.crate_kind);
             if let Some(existing) = registry_leaves.get(&key)
                 && existing != leaf
             {

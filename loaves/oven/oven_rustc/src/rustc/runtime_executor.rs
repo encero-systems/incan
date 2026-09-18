@@ -954,6 +954,8 @@ pub(crate) mod tests {
             externs: vec![dep_extern.clone()],
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: vec![OvenRustcRegistryLeaf {
+                domain: Default::default(),
+                crate_kind: Default::default(),
                 selected_unit_identity: None,
                 package: "fixture_dep".to_string(),
                 version: package_version.to_string(),

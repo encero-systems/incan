@@ -188,6 +188,7 @@ pub fn runtime_foundation_from_compiled_loaf(
             .filter(|leaf| {
                 leaf.package == unit.package
                     && leaf.selected_unit_identity.as_deref() == Some(unit.identity.as_str())
+                    && leaf_domain_matches(leaf, unit)
                     && leaf.version == unit.package_version
                     && leaf.crate_name == unit.crate_name
                     && leaf.features == unit.features
@@ -226,6 +227,20 @@ pub fn runtime_foundation_from_compiled_loaf(
         selected_graph: graph.clone(),
         units,
     })
+}
+
+/// Whether a sealed registry leaf serves the same domain and unit kind as a selected graph unit.
+fn leaf_domain_matches(leaf: &oven_rustc::rustc::OvenRustcRegistryLeaf, unit: &OvenSelectedRustFacetUnit) -> bool {
+    use oven_rustc::rustc::{OvenRustcRegistryLeafDomain, OvenRustcRegistryLeafKind};
+    let domain = match unit.domain {
+        OvenSelectedRustFacetDomain::Host => OvenRustcRegistryLeafDomain::Host,
+        OvenSelectedRustFacetDomain::Target => OvenRustcRegistryLeafDomain::Target,
+    };
+    let kind = match unit.crate_kind {
+        OvenSelectedRustFacetCrateKind::ProcMacro => OvenRustcRegistryLeafKind::ProcMacro,
+        _ => OvenRustcRegistryLeafKind::Rlib,
+    };
+    leaf.domain == domain && leaf.crate_kind == kind
 }
 
 #[derive(Deserialize)]

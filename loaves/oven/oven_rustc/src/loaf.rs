@@ -4265,6 +4265,8 @@ mod tests {
             digest: digest_bytes(registry_manifest),
         });
         let registry_leaf = OvenRustcRegistryLeaf {
+            domain: Default::default(),
+            crate_kind: Default::default(),
             selected_unit_identity: None,
             package: "fixture-registry".to_string(),
             version: "1.0.0".to_string(),

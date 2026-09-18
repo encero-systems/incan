@@ -69,9 +69,10 @@ use serde::Serialize;
 
 use oven_rustc::rustc::{
     OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, OvenRustcArtifactExtern,
-    OvenRustcArtifactManifest, OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
-    OvenRustcSupportingArtifact, clear_inherited_cargo_environment, rerooted_artifact_staging_source,
-    rustc_host_and_target_cfg_snapshots, rustc_host_target, rustc_identity, select_direct_rustc_plan_identity,
+    OvenRustcArtifactManifest, OvenRustcRegistryLeaf, OvenRustcRegistryLeafDomain, OvenRustcRegistryLeafKind,
+    OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact,
+    clear_inherited_cargo_environment, rerooted_artifact_staging_source, rustc_host_and_target_cfg_snapshots,
+    rustc_host_target, rustc_identity, select_direct_rustc_plan_identity,
     validate_project_extension_payload_against_base,
 };
 use oven_store::process::{isolate_process_group, terminate_process_group};
@@ -1282,7 +1283,6 @@ pub fn prepare_direct_rustc_plan(
             cargo_lock: &cargo_lock_bytes,
             staging: &staging,
             intent: &request.receipt.intent,
-            rustc_host: &rustc_host,
             externs: &externs,
             supporting_artifacts: &supporting_artifacts,
             selected_units: selected_units.as_ref(),
@@ -2264,7 +2264,8 @@ struct PendingRegistryLeaf {
     registry: String,
     checksum: String,
     source_root: PathBuf,
-    target_artifact: bool,
+    domain: OvenRustcRegistryLeafDomain,
+    crate_kind: OvenRustcRegistryLeafKind,
 }
 
 /// One external package selected by the frozen compiler unit graph for a sealed foundation publication.
