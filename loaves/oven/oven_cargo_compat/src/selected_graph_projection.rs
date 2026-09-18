@@ -154,6 +154,11 @@ pub struct OvenFinalizedCompilerSupportSelectedGraph {
     /// Run-custom-build units have no entry: they are not graph units. This is the only authenticated
     /// correspondence between a physical unit and its selected identity once the graph is canonicalized.
     pub unit_identities: BTreeMap<usize, String>,
+    /// For each pruned `capture` index, the index of the same physical unit in the capture the finalizer was given.
+    ///
+    /// Pruning renumbers dependency edges, so a pruned unit's capture identity differs from the original's; a
+    /// publisher that binds artifacts observed in a fresh capture must derive identities from the original units.
+    pub source_indices: Vec<usize>,
 }
 
 /// Bind every selected immutable registry unit to the exact artifact in its compiled Loaf.
@@ -542,7 +547,7 @@ pub fn finalize_compiler_support_selected_graph(
     intent_owner: &str,
     base_receipt: &OvenReceipt,
 ) -> Result<OvenFinalizedCompilerSupportSelectedGraph, OvenLegacyCargoError> {
-    let (capture, sealed, root_units) =
+    let (capture, sealed, root_units, source_indices) =
         compiler_support_capture(capture, sealed, manifest, active_optional_dependencies)?;
     if base_receipt
         .sources
@@ -594,6 +599,7 @@ pub fn finalize_compiler_support_selected_graph(
         final_receipt,
         graph,
         unit_identities,
+        source_indices,
     })
 }
 
@@ -700,20 +706,21 @@ fn compiler_support_root_indices(
     Ok(roots)
 }
 
+/// The pruned capture and projection, the authored root indices, and each pruned index's original index.
+type CompilerSupportCapture = (
+    OvenLegacyCargoSelectedUnitCapture,
+    OvenLegacyCargoSelectedGraphProjection,
+    BTreeMap<String, usize>,
+    Vec<usize>,
+);
+
 /// Remove the generated Cargo transport root while retaining exactly the authored dependency closure it selected.
 fn compiler_support_capture(
     capture: &OvenLegacyCargoSelectedUnitCapture,
     sealed: &OvenLegacyCargoSelectedGraphProjection,
     manifest: &ProjectManifest,
     active_optional_dependencies: &BTreeSet<String>,
-) -> Result<
-    (
-        OvenLegacyCargoSelectedUnitCapture,
-        OvenLegacyCargoSelectedGraphProjection,
-        BTreeMap<String, usize>,
-    ),
-    OvenLegacyCargoError,
-> {
+) -> Result<CompilerSupportCapture, OvenLegacyCargoError> {
     let root_units = compiler_support_root_indices(capture, manifest, active_optional_dependencies)?;
     let mut selected = root_units.values().copied().collect::<BTreeSet<_>>();
     let roots = selected.clone();
@@ -804,7 +811,7 @@ fn compiler_support_capture(
             })
         })
         .collect::<Result<BTreeMap<_, _>, _>>()?;
-    Ok((capture, projection, root_units))
+    Ok((capture, projection, root_units, old_indices))
 }
 
 /// Bind a verified stable-compiler capture to a built-in target description without inventing target-spec JSON.

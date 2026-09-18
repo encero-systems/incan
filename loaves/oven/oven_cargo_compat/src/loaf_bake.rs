@@ -240,6 +240,22 @@ fn bind_registry_leaf_selected_unit_identities(
     }
     let mut used = BTreeSet::new();
     let mut retained = Vec::with_capacity(leaves.len());
+    let emitted = leaves
+        .iter()
+        .map(|leaf| {
+            format!(
+                "{}@{} {:?} {:?} {}",
+                leaf.package,
+                leaf.version,
+                leaf.domain,
+                leaf.crate_kind,
+                leaf.selected_unit_identity
+                    .as_deref()
+                    .map(|identity| &identity[..23])
+                    .unwrap_or("-")
+            )
+        })
+        .collect::<Vec<_>>();
     for mut leaf in leaves.drain(..) {
         let capture_identity = leaf
             .selected_unit_identity
@@ -292,9 +308,11 @@ fn bind_registry_leaf_selected_unit_identities(
             .collect::<Vec<_>>();
         return Err(OvenLoafError::Preparation {
             message: format!(
-                "selected-unit bindings contain {} compiled physical unit(s) with no sealed registry artifact: {}",
+                "selected-unit bindings contain {} compiled physical unit(s) with no sealed registry artifact: {} | emitted leaves ({}): {}",
                 unbound.len(),
-                unbound.join("; ")
+                unbound.join("; "),
+                emitted.len(),
+                emitted.join("; ")
             ),
         });
     }

@@ -612,6 +612,8 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             .enumerate()
             .filter(|(_, unit)| unit.mode != "run-custom-build")
             .collect::<Vec<_>>();
+        // Identities come from the units as originally captured: pruning renumbers edges, and the final bake
+        // observes the unpruned closure again.
         let selected_unit_bindings = compiled_units
             .iter()
             .map(|(index, captured)| {
@@ -621,7 +623,17 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                         captured.package_id
                     ))
                 })?;
-                oven_cargo_compat::legacy_cargo_selected_unit_capture_identity(captured)
+                let original = finalized
+                    .source_indices
+                    .get(*index)
+                    .and_then(|source| expected_capture.units.get(*source))
+                    .ok_or_else(|| {
+                        CliError::failure(format!(
+                            "pruned physical unit `{}` has no source in the original capture",
+                            captured.package_id
+                        ))
+                    })?;
+                oven_cargo_compat::legacy_cargo_selected_unit_capture_identity(original)
                     .map(|identity| (identity, selected.clone()))
                     .map_err(oven_error)
             })
