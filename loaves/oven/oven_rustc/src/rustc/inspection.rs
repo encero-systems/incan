@@ -1846,6 +1846,43 @@ mod selected_rust_facet_graph_tests {
         Ok(())
     }
 
+    /// A build script that emits only cfgs leaves a checked empty `OUT_DIR`; the graph admits that inventory under
+    /// the generated-input digest rule rather than refusing it as source with no members.
+    #[test]
+    fn selected_graph_admits_a_checked_empty_generated_input() -> TestResult {
+        let mut graph = graph(b"pub fn use_dependency() {}\n")?;
+        let generated_owner = selected_graph_sha256(b"generated output owner");
+        graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: generated_owner.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+        });
+        let leaf = unit_index(&graph, "dependency-package")?;
+        graph.units[leaf]
+            .generated_inputs
+            .push(OvenSelectedRustFacetGeneratedInput {
+                name: "dependency-out-dir".to_string(),
+                source: OvenSelectedRustFacetPath {
+                    owner: generated_owner,
+                    path: "generated-outputs/dependency".to_string(),
+                },
+                digest: selected_graph_generated_input_digest(&[])?,
+                members: Vec::new(),
+            });
+        reidentify_unit(&mut graph, leaf)?;
+        let root = unit_index(&graph, "fixture")?;
+        reidentify_unit(&mut graph, root)?;
+        let validated = graph.validated()?;
+        let leaf = validated
+            .graph()
+            .units
+            .iter()
+            .find(|unit| unit.package == "dependency-package")
+            .ok_or("validated graph lost its leaf")?;
+        assert_eq!(leaf.generated_inputs.len(), 1);
+        assert!(leaf.generated_inputs[0].members.is_empty());
+        Ok(())
+    }
+
     #[test]
     fn selected_graph_eliminates_alpha_labels_and_normalizes_insertion_order() -> TestResult {
         let first = graph(b"pub fn use_dependency() {}\n")?.validated()?;

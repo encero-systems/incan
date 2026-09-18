@@ -946,8 +946,10 @@ impl OvenSelectedRustFacetGraph {
                         &format!("{field}.generated_inputs[{generated_index}].members[{member_index}].digest"),
                     )?;
                 }
+                // A generated inventory may be a checked empty directory; only authored source refuses an empty
+                // member set, and the executor materializes generated inputs under this same digest rule.
                 if generated.members.windows(2).any(|pair| pair[0].path >= pair[1].path)
-                    || selected_graph_source_digest(&generated.members)? != generated.digest
+                    || selected_graph_generated_input_digest(&generated.members)? != generated.digest
                 {
                     return Err(selected_graph_invalid(
                         format!("{field}.generated_inputs[{generated_index}].members"),
