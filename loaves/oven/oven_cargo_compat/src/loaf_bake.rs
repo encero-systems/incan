@@ -264,8 +264,38 @@ fn bind_registry_leaf_selected_unit_identities(
         retained.push(leaf);
     }
     if used.len() != bindings.len() {
+        // Name the compiled units that no sealed artifact carries, so the catalog gap is visible rather than counted.
+        let mut identities_by_capture = BTreeMap::new();
+        for index in &linked {
+            let unit = &selected_units.units[*index];
+            let identity =
+                legacy_cargo_selected_unit_capture_identity(unit).map_err(|error| OvenLoafError::Preparation {
+                    message: error.to_string(),
+                })?;
+            identities_by_capture.insert(
+                identity,
+                format!(
+                    "{}@{} {:?} {:?} explicit_target={:?}",
+                    unit.package, unit.package_version, unit.target_kinds, unit.crate_types, unit.target_is_explicit
+                ),
+            );
+        }
+        let unbound = bindings
+            .iter()
+            .filter(|(_, selected)| !used.contains(*selected))
+            .map(|(capture, _)| {
+                identities_by_capture
+                    .get(capture)
+                    .cloned()
+                    .unwrap_or_else(|| format!("unlinked capture {capture}"))
+            })
+            .collect::<Vec<_>>();
         return Err(OvenLoafError::Preparation {
-            message: "selected-unit bindings contain an uncompiled physical unit".to_string(),
+            message: format!(
+                "selected-unit bindings contain {} compiled physical unit(s) with no sealed registry artifact: {}",
+                unbound.len(),
+                unbound.join("; ")
+            ),
         });
     }
     *leaves = retained;
