@@ -1234,6 +1234,13 @@ pub fn prepare_direct_rustc_plan(
         None
     };
     let resolved_direct_dependencies = resolve_direct_dependency_packages(&metadata, &direct_dependencies)?;
+    // Host libraries a host procedural macro depends on are compiled units of the linked closure, so their
+    // artifacts are retained beside the target closure; a host library only a build script needs is not.
+    let linked_host_artifacts = selected_units
+        .as_ref()
+        .map(linked_host_library_artifacts)
+        .transpose()?
+        .unwrap_or_default();
     let reported_artifact_files = publisher_output_artifact_paths(&cargo_outputs, &request.receipt.intent.profile)?;
     let (dependency_search_paths, externs, mut supporting_artifacts) = if reported_artifact_files.is_empty() {
         // Cargo's JSON protocol is the normal authority for an explicit bake. Retain the directory reader only as
@@ -1253,6 +1260,7 @@ pub fn prepare_direct_rustc_plan(
             &resolved_direct_dependencies,
             request.publication_kind == OvenLegacyCargoPublicationKind::LibraryTests,
             &cargo_outputs,
+            &linked_host_artifacts,
         )?
     };
     let mut materialized_directories = Vec::new();
@@ -3211,6 +3219,40 @@ fn artifact_closure(
 /// stream is the stable publisher authority in both cases. Every path remains confined to private staging, must be
 /// a regular non-symlink file, and must have Cargo's crate-and-identity-shaped build-output form before it enters a
 /// Loaf.
+/// Canonical artifact paths of every host library the linked closure reaches without crossing a build script.
+///
+/// From the captured roots, follow dependency edges but stop at run-custom-build units: what lies beyond them is a
+/// script's own input. A host-domain library unit met on the way (a procedural macro's dependency compiled for the
+/// build host) contributes its traced outputs.
+fn linked_host_library_artifacts(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+) -> Result<BTreeSet<PathBuf>, OvenLegacyCargoError> {
+    let mut visited = BTreeSet::new();
+    let mut pending = capture.roots.clone();
+    let mut artifacts = BTreeSet::new();
+    while let Some(index) = pending.pop() {
+        if !visited.insert(index) {
+            continue;
+        }
+        let unit = capture
+            .units
+            .get(index)
+            .ok_or_else(|| OvenLegacyCargoError::Plan("physical capture names an absent unit".to_string()))?;
+        if unit.mode == "run-custom-build" {
+            continue;
+        }
+        if unit.target_is_explicit == Some(false) && !unit.crate_types.iter().any(|kind| kind == "proc-macro") {
+            for path in &unit.artifact_paths {
+                if let Ok(canonical) = fs::canonicalize(path) {
+                    artifacts.insert(canonical);
+                }
+            }
+        }
+        pending.extend(unit.dependencies.iter().map(|dependency| dependency.unit_index));
+    }
+    Ok(artifacts)
+}
+
 fn artifact_closure_from_reported_paths(
     staging: &Path,
     target_triple: &str,
@@ -3218,6 +3260,7 @@ fn artifact_closure_from_reported_paths(
     direct_dependencies: &BTreeMap<String, ResolvedDirectDependency>,
     permit_absent_declared_dependencies: bool,
     outputs: &[CargoInvocationOutput],
+    linked_host_artifacts: &BTreeSet<PathBuf>,
 ) -> Result<PublisherArtifactClosure, OvenLegacyCargoError> {
     let canonical_staging = canonical_directory(staging, "publisher staging")?;
     let mut target_artifacts = Vec::new();
@@ -3264,9 +3307,12 @@ fn artifact_closure_from_reported_paths(
                     });
                 }
                 let target_artifact = compiler_artifact_platform(&source_path, target_triple).is_some();
-                if !target_artifact && !is_dynamic_rustc_artifact(file_name) {
-                    // A cross-target direct-rustc plan must not accidentally retain a host `.rlib`. Host dynamic
-                    // artifacts are the only supported host-side inputs because procedural macros execute there.
+                if !target_artifact
+                    && !is_dynamic_rustc_artifact(file_name)
+                    && !linked_host_artifacts.contains(&source_path)
+                {
+                    // A host `.rlib` is retained only when the capture proves the linked closure reaches it, as a
+                    // procedural macro's dependency; anything else host-side is a script input or cross-target noise.
                     continue;
                 }
                 let parent = source_path.parent().ok_or_else(|| OvenLegacyCargoError::InvalidInput {
@@ -5227,6 +5273,7 @@ mod tests {
             &dependencies,
             false,
             &[output],
+            &std::collections::BTreeSet::new(),
         )?;
 
         assert_eq!(externs.len(), 1);
@@ -5267,6 +5314,7 @@ mod tests {
             &BTreeMap::new(),
             false,
             &[output],
+            &std::collections::BTreeSet::new(),
         )?;
 
         assert_eq!(

@@ -240,6 +240,7 @@ fn bind_registry_leaf_selected_unit_identities(
     }
     let mut used = BTreeSet::new();
     let mut retained = Vec::with_capacity(leaves.len());
+    let mut undeclared = Vec::new();
     let emitted = leaves
         .iter()
         .map(|leaf| {
@@ -266,14 +267,15 @@ fn bind_registry_leaf_selected_unit_identities(
         if !linked_identities.contains(&capture_identity) {
             continue;
         }
-        let selected_identity = bindings
-            .get(&capture_identity)
-            .ok_or_else(|| OvenLoafError::Preparation {
-                message: format!(
-                    "registry artifact `{}` {} ({:?} {:?}) is linked by the captured closure but has no authenticated selected-unit binding",
-                    leaf.package, leaf.version, leaf.domain, leaf.crate_kind
-                ),
-            })?;
+        let Some(selected_identity) = bindings.get(&capture_identity) else {
+            // Linked by the captured closure but outside the declared compiler-support surface: report every such
+            // package together, since each is a declaration the checked manifest still lacks.
+            undeclared.push(format!(
+                "{}@{} ({:?} {:?})",
+                leaf.package, leaf.version, leaf.domain, leaf.crate_kind
+            ));
+            continue;
+        };
         if !used.insert(selected_identity.clone()) {
             return Err(OvenLoafError::Preparation {
                 message: "selected unit is bound to more than one registry artifact".to_string(),
@@ -281,6 +283,15 @@ fn bind_registry_leaf_selected_unit_identities(
         }
         leaf.selected_unit_identity = Some(selected_identity.clone());
         retained.push(leaf);
+    }
+    if !undeclared.is_empty() {
+        return Err(OvenLoafError::Preparation {
+            message: format!(
+                "{} registry artifact(s) are linked by the captured closure but lie outside the declared compiler-support surface; declare them in the checked manifest or remove the edge: {}",
+                undeclared.len(),
+                undeclared.join("; ")
+            ),
+        });
     }
     if used.len() != bindings.len() {
         // Name the compiled units that no sealed artifact carries, so the catalog gap is visible rather than counted.
