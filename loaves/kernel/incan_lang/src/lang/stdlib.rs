@@ -756,7 +756,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
             StdlibExtraCrateDep {
                 crate_name: "xz2",
                 source: StdlibExtraCrateSource::Version("0.1"),
-                features: &[],
+                features: &["static"],
             },
             StdlibExtraCrateDep {
                 crate_name: "snap",
