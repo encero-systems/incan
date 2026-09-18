@@ -496,7 +496,8 @@ pub fn finalize_compiler_support_selected_graph(
     intent_owner: &str,
     base_receipt: &OvenReceipt,
 ) -> Result<OvenFinalizedCompilerSupportSelectedGraph, OvenLegacyCargoError> {
-    let (capture, sealed) = compiler_support_capture(capture, sealed, manifest, active_optional_dependencies)?;
+    let (capture, sealed, root_units) =
+        compiler_support_capture(capture, sealed, manifest, active_optional_dependencies)?;
     if base_receipt
         .sources
         .build_unit_inputs
@@ -520,7 +521,7 @@ pub fn finalize_compiler_support_selected_graph(
     sealed
         .owners
         .retain(|owner| referenced_owners.contains(owner.identity.as_str()));
-    let authority = compiler_support_root_intent_authority(
+    let authority = compiler_support_root_intent_authority_with_roots(
         &capture,
         &sealed,
         Some(&capture_receipt),
@@ -528,6 +529,7 @@ pub fn finalize_compiler_support_selected_graph(
         active_optional_dependencies,
         intent_owner,
         &capture_receipt,
+        &root_units,
     )?;
     let authority_digest = oven_rustc::rustc::compiler_support_root_intent_digest(&authority)
         .map_err(|error| projection_error("compiler-support root intent", &error.to_string()))?;
@@ -585,20 +587,13 @@ fn selected_graph_referenced_owners(graph: &OvenSelectedRustFacetGraph) -> BTree
     owners
 }
 
-/// Remove the generated Cargo transport root while retaining exactly the authored dependency closure it selected.
-fn compiler_support_capture(
+/// Preserve the authored alias of each exact direct edge before removing Cargo transport roots.
+fn compiler_support_root_indices(
     capture: &OvenLegacyCargoSelectedUnitCapture,
-    sealed: &OvenLegacyCargoSelectedGraphProjection,
     manifest: &ProjectManifest,
     active_optional_dependencies: &BTreeSet<String>,
-) -> Result<
-    (
-        OvenLegacyCargoSelectedUnitCapture,
-        OvenLegacyCargoSelectedGraphProjection,
-    ),
-    OvenLegacyCargoError,
-> {
-    let mut selected = BTreeSet::new();
+) -> Result<BTreeMap<String, usize>, OvenLegacyCargoError> {
+    let mut roots = BTreeMap::new();
     for (alias, declaration) in manifest.rust_dependencies() {
         let rust_alias = alias.replace('-', "_");
         let mut matches = BTreeSet::new();
@@ -631,8 +626,31 @@ fn compiler_support_capture(
                 &format!("alias `{alias}` does not bind exactly one captured physical unit"),
             ));
         }
-        selected.extend(matches);
+        let index = matches
+            .into_iter()
+            .next()
+            .ok_or_else(|| projection_error("compiler-support declaration", "lost its exact captured edge"))?;
+        roots.insert(alias.clone(), index);
     }
+    Ok(roots)
+}
+
+/// Remove the generated Cargo transport root while retaining exactly the authored dependency closure it selected.
+fn compiler_support_capture(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+    manifest: &ProjectManifest,
+    active_optional_dependencies: &BTreeSet<String>,
+) -> Result<
+    (
+        OvenLegacyCargoSelectedUnitCapture,
+        OvenLegacyCargoSelectedGraphProjection,
+        BTreeMap<String, usize>,
+    ),
+    OvenLegacyCargoError,
+> {
+    let root_units = compiler_support_root_indices(capture, manifest, active_optional_dependencies)?;
+    let mut selected = root_units.values().copied().collect::<BTreeSet<_>>();
     let roots = selected.clone();
     let mut pending = selected.iter().copied().collect::<Vec<_>>();
     while let Some(index) = pending.pop() {
@@ -700,7 +718,18 @@ fn compiler_support_capture(
         build_script_tool_probes: capture.build_script_tool_probes.clone(),
         compiler: capture.compiler.clone(),
     };
-    Ok((capture, projection))
+    let root_units = root_units
+        .into_iter()
+        .map(|(alias, old)| {
+            remap.get(&old).copied().map(|index| (alias, index)).ok_or_else(|| {
+                projection_error(
+                    "compiler-support root",
+                    "lost its authored alias during capture pruning",
+                )
+            })
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    Ok((capture, projection, root_units))
 }
 
 /// Bind a verified stable-compiler capture to a built-in target description without inventing target-spec JSON.
@@ -1301,6 +1330,31 @@ pub fn compiler_support_root_intent_authority(
     intent_owner: &str,
     capture_receipt: &OvenReceipt,
 ) -> Result<OvenCompilerSupportRootIntentAuthority, OvenLegacyCargoError> {
+    let roots = compiler_support_root_indices(capture, manifest, active_optional_dependencies)?;
+    compiler_support_root_intent_authority_with_roots(
+        capture,
+        sealed,
+        projection_receipt,
+        manifest,
+        active_optional_dependencies,
+        intent_owner,
+        capture_receipt,
+        &roots,
+    )
+}
+
+/// Bind retained direct-edge aliases; never search another authored root's transitive dependencies.
+#[allow(clippy::too_many_arguments)]
+fn compiler_support_root_intent_authority_with_roots(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+    projection_receipt: Option<&OvenReceipt>,
+    manifest: &ProjectManifest,
+    active_optional_dependencies: &BTreeSet<String>,
+    intent_owner: &str,
+    capture_receipt: &OvenReceipt,
+    root_units: &BTreeMap<String, usize>,
+) -> Result<OvenCompilerSupportRootIntentAuthority, OvenLegacyCargoError> {
     capture_receipt
         .verify_identity()
         .map_err(|error| projection_error("compiler-support capture receipt", &error.to_string()))?;
@@ -1328,28 +1382,7 @@ pub fn compiler_support_root_intent_authority(
 
     let mut roots = Vec::new();
     for (alias, declaration) in manifest.rust_dependencies() {
-        let rust_alias = alias.replace('-', "_");
-        let mut matches = Vec::new();
-        for root_index in &capture.roots {
-            let root = capture
-                .units
-                .get(*root_index)
-                .ok_or_else(|| projection_error("compiler-support capture root", "names an absent physical unit"))?;
-            for dependency in &root.dependencies {
-                if dependency.extern_crate_name.as_deref() == Some(rust_alias.as_str()) {
-                    matches.push(dependency.unit_index);
-                }
-            }
-            let declared_package = declaration
-                .package
-                .as_deref()
-                .unwrap_or(declaration.crate_name.as_str());
-            if root.package == declared_package {
-                matches.push(*root_index);
-            }
-        }
-        matches.sort_unstable();
-        matches.dedup();
+        let matches = root_units.get(alias).copied().into_iter().collect::<Vec<_>>();
         // Authored activation chooses optional roots. Physical edges must agree with that choice; their presence
         // never supplies missing feature intent.
         if declaration.optional {
@@ -2537,6 +2570,67 @@ mod tests {
             Vec::<String>::new()
         );
         assert_eq!(bound.graph().units[0].features, ["derive"]);
+        Ok(())
+    }
+
+    #[test]
+    fn compiler_support_root_alias_does_not_select_a_transitive_variant() -> Result<(), Box<dyn std::error::Error>> {
+        let mut capture = capture()?;
+        let mut sealed = sealed(&capture)?;
+        let mut direct = capture.units[0].clone();
+        direct.effective_features = vec!["alloc".to_string()];
+        direct
+            .dependencies
+            .push(super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 0,
+                extern_crate_name: Some("renamed_serde".to_string()),
+                build_script: None,
+            });
+        capture.units.push(direct.clone());
+        let mut binding = sealed.units.get(&0).cloned().ok_or("missing fixture source binding")?;
+        binding
+            .registry_source
+            .as_mut()
+            .ok_or("missing fixture registry source")?
+            .features = vec!["alloc".to_string()];
+        sealed.units.insert(1, binding);
+        let mut transport = direct;
+        transport.package = "transport".to_string();
+        transport.dependencies = vec![super::super::OvenLegacyCargoSelectedDependency {
+            unit_index: 1,
+            extern_crate_name: Some("renamed_serde".to_string()),
+            build_script: None,
+        }];
+        capture.units.push(transport);
+        capture.roots = vec![2];
+        let manifest = ProjectManifest::from_str(
+            "[project]\nname='root-alias'\nversion='1.0.0'\n[rust-dependencies]\nrenamed_serde={package='serde',version='1',features=['alloc'],default-features=false}\n",
+            Path::new("loaf.toml"),
+        )?;
+        let directory = tempdir()?;
+        let receipt = receipt_generated_project(&fixture_receipt_request(directory.path(), "root-alias")?)?;
+        let finalized = finalize_compiler_support_selected_graph(
+            &capture,
+            &sealed,
+            &manifest,
+            &BTreeSet::new(),
+            sealed.selection.target_spec.toolchain_owner(),
+            &receipt,
+        )?;
+        let graph = finalized.graph.graph();
+        let root = &graph.exposed_roots["renamed_serde"];
+        let selected = graph
+            .units
+            .iter()
+            .find(|unit| unit.identity == root.unit)
+            .ok_or("missing selected root")?;
+        assert_eq!(selected.features, ["alloc"]);
+        assert_eq!(
+            graph.units.len(),
+            2,
+            "the transitive variant remains in the physical closure"
+        );
+        assert_ne!(selected.dependencies[0].unit, root.unit);
         Ok(())
     }
 
