@@ -702,6 +702,12 @@ fn compiler_support_capture(
             .units
             .get(index)
             .ok_or_else(|| projection_error("compiler-support closure", "names an absent physical unit"))?;
+        // A run-custom-build unit is retained as the endpoint of its consumer's edge, for the facts sealed there.
+        // Its own dependencies are inputs to an inert script Oven never selects or executes, not units the
+        // consumer's compilation links, so the closure stops at the script.
+        if is_build_script_unit(unit) {
+            continue;
+        }
         for dependency in &unit.dependencies {
             if selected.insert(dependency.unit_index) {
                 pending.push(dependency.unit_index);
@@ -717,6 +723,10 @@ fn compiler_support_capture(
     let mut units = Vec::with_capacity(old_indices.len());
     for old in &old_indices {
         let mut unit = capture.units[*old].clone();
+        if is_build_script_unit(&unit) {
+            // The script's own edges name its inputs, which the closure deliberately stopped at.
+            unit.dependencies.clear();
+        }
         for dependency in &mut unit.dependencies {
             dependency.unit_index = *remap.get(&dependency.unit_index).ok_or_else(|| {
                 projection_error(
@@ -2511,10 +2521,12 @@ mod tests {
             &linked,
             authority,
         )?;
-        assert_eq!(
-            projection.units.keys().copied().collect::<Vec<_>>(),
-            vec![1],
-            "the binder seals the registry library only: the transport root is pruned later and the build script is an edge"
+        assert!(
+            projection.units.contains_key(&1)
+                && !projection.units.contains_key(&0)
+                && !projection.units.contains_key(&2),
+            "the binder seals registry units: the transport root is pruned later and the build script is an edge, got {:?}",
+            projection.units.keys().collect::<Vec<_>>()
         );
         Ok(finalize_compiler_support_selected_graph(
             capture,
@@ -2527,17 +2539,36 @@ mod tests {
     }
 
     /// The Release runtime-foundation publisher seals its capture with the production binder, never a hand-made
-    /// projection. This walks that exact sequence for a transport root, one registry library and its build script.
+    /// projection. This walks that exact sequence for a transport root, one registry library and its build script,
+    /// plus a package the script alone depends on, which Cargo compiled to run the script and Oven never links.
     #[test]
     fn foundation_projection_of_a_registry_closure_finalizes_through_the_production_binder()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (capture, sources) = release_shaped_capture("sha256:fixture", BTreeMap::new())?;
+        let (mut capture, mut sources) = release_shaped_capture("sha256:fixture", BTreeMap::new())?;
+        let mut script_only = capture.units[1].clone();
+        script_only.package_id = "registry+https://example.invalid/index#cc@1.0.0".to_string();
+        script_only.package = "cc".to_string();
+        script_only.target_name = "cc".to_string();
+        script_only.source_path = PathBuf::from("/transient/cc/src/lib.rs");
+        script_only.dependencies = Vec::new();
+        capture.units.push(script_only);
+        capture.units[2]
+            .dependencies
+            .push(super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 3,
+                extern_crate_name: Some("cc".to_string()),
+                build_script: None,
+            });
+        let mut cc_source = sources[0].clone();
+        cc_source.package = "cc".to_string();
+        cc_source.source_root = PathBuf::from("/staged/registry-sources/cc-1.0.0");
+        sources.push(cc_source);
         let finalized = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
         let graph = finalized.graph.graph();
         assert_eq!(
             graph.units.len(),
             1,
-            "the transport root leaves and the build script is not a graph unit"
+            "the transport root leaves, the build script is not a graph unit, and the script's own dependency never enters the closure"
         );
         assert_eq!(graph.units[0].source.identity, "registry:serde@1.0.0");
         assert_eq!(graph.exposed_roots["serde"].unit, graph.units[0].identity);
