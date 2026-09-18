@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
-use semver::VersionReq;
+use semver::{Comparator, Op, VersionReq};
 use serde::{Deserialize, Serialize};
 use toml_edit::{Array as EditArray, Document, DocumentMut, Item, Table, Value as EditValue};
 
@@ -154,6 +154,158 @@ impl DependencySpec {
         self.features.sort();
         self.features.dedup();
         self
+    }
+
+    /// Return the typed requirement this spec declares, or `None` when it names no version.
+    pub fn version_requirement(&self) -> Result<Option<RustVersionRequirement>, String> {
+        self.version.as_deref().map(RustVersionRequirement::parse).transpose()
+    }
+
+    /// Whether both specs admit the same versions.
+    ///
+    /// See [`rust_version_requirements_match`]; every other identity field still compares structurally.
+    pub fn same_version_requirement(&self, other: &DependencySpec) -> bool {
+        rust_version_requirements_match(self.version.as_deref(), other.version.as_deref())
+    }
+}
+
+// ============================================================================
+// Rust version requirements
+// ============================================================================
+
+/// One release version boundary of a canonical requirement range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct ReleaseVersion {
+    major: u64,
+    minor: u64,
+    patch: u64,
+}
+
+impl ReleaseVersion {
+    const ZERO: Self = Self {
+        major: 0,
+        minor: 0,
+        patch: 0,
+    };
+
+    const fn new(major: u64, minor: u64, patch: u64) -> Self {
+        Self { major, minor, patch }
+    }
+}
+
+/// The canonical admitted set of one requirement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AdmittedVersions {
+    /// Every release version `v` with `lower <= v` and, when `upper` is present, `v < upper`.
+    Range {
+        lower: ReleaseVersion,
+        upper: Option<ReleaseVersion>,
+    },
+    /// Comparators that contradict each other admit nothing, however they are spelled.
+    Empty,
+    /// A requirement naming a pre-release keeps its parsed comparators and compares structurally.
+    Prerelease(VersionReq),
+}
+
+/// One Cargo version requirement compared by the versions it admits rather than by its spelling.
+///
+/// Cargo treats `"1"`, `"1.0"` and `"^1.0.0"` as one requirement and unifies a graph that declares all three;
+/// comparing their text would refuse that same agreement as a conflict. The canonical form is the half-open
+/// release-version range `[lower, upper)` the requirement admits, which is exact for every requirement without a
+/// pre-release tag because such a requirement never admits a pre-release. A requirement that names a pre-release
+/// admits a set that is not a plain range, so it keeps its parsed comparators and compares structurally: the
+/// fail-closed answer for that rare spelling. The declared text is still what reaches a generated Cargo manifest;
+/// this type only decides whether two declarations agree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RustVersionRequirement(AdmittedVersions);
+
+impl RustVersionRequirement {
+    /// Parse one Cargo requirement into its canonical admitted set.
+    pub fn parse(requirement: &str) -> Result<Self, String> {
+        let parsed = VersionReq::parse(requirement)
+            .map_err(|error| format!("invalid Cargo SemVer requirement `{requirement}`: {error}"))?;
+        if parsed.comparators.iter().any(|comparator| !comparator.pre.is_empty()) {
+            return Ok(Self(AdmittedVersions::Prerelease(parsed)));
+        }
+        let mut lower = ReleaseVersion::ZERO;
+        let mut upper: Option<ReleaseVersion> = None;
+        for comparator in &parsed.comparators {
+            let Some((comparator_lower, comparator_upper)) = comparator_release_range(comparator) else {
+                // A comparator this canonical form does not model compares structurally rather than by guess.
+                return Ok(Self(AdmittedVersions::Prerelease(parsed)));
+            };
+            lower = lower.max(comparator_lower);
+            upper = match (upper, comparator_upper) {
+                (Some(current), Some(next)) => Some(current.min(next)),
+                (current, next) => current.or(next),
+            };
+        }
+        if upper.is_some_and(|upper| upper <= lower) {
+            return Ok(Self(AdmittedVersions::Empty));
+        }
+        Ok(Self(AdmittedVersions::Range { lower, upper }))
+    }
+}
+
+/// The release-version range one comparator admits, following Cargo's documented expansion of each operator.
+fn comparator_release_range(comparator: &Comparator) -> Option<(ReleaseVersion, Option<ReleaseVersion>)> {
+    let major = comparator.major;
+    let minor = comparator.minor;
+    let patch = comparator.patch;
+    let next = |value: u64| value.saturating_add(1);
+    let floor = ReleaseVersion::new(major, minor.unwrap_or(0), patch.unwrap_or(0));
+    // The first release version above the named prefix: `I.J.K` -> `I.J.(K+1)`, `I.J` -> `I.(J+1).0`, `I` ->
+    // `(I+1).0.0`.
+    let after_prefix = match (minor, patch) {
+        (Some(minor), Some(patch)) => ReleaseVersion::new(major, minor, next(patch)),
+        (Some(minor), None) => ReleaseVersion::new(major, next(minor), 0),
+        (None, _) => ReleaseVersion::new(next(major), 0, 0),
+    };
+    // The first release version above the named minor line: `I.J[.K]` -> `I.(J+1).0`, `I` -> `(I+1).0.0`.
+    let after_minor = match minor {
+        Some(minor) => ReleaseVersion::new(major, next(minor), 0),
+        None => ReleaseVersion::new(next(major), 0, 0),
+    };
+    Some(match comparator.op {
+        Op::Exact => (floor, Some(after_prefix)),
+        Op::Greater => (after_prefix, None),
+        Op::GreaterEq => (floor, None),
+        Op::Less => (ReleaseVersion::ZERO, Some(floor)),
+        Op::LessEq => (ReleaseVersion::ZERO, Some(after_prefix)),
+        Op::Tilde => (floor, Some(after_minor)),
+        Op::Caret => {
+            let upper = if major > 0 {
+                ReleaseVersion::new(next(major), 0, 0)
+            } else {
+                match (minor, patch) {
+                    (Some(minor), _) if minor > 0 => ReleaseVersion::new(0, next(minor), 0),
+                    (Some(_), Some(patch)) => ReleaseVersion::new(0, 0, next(patch)),
+                    (Some(_), None) => ReleaseVersion::new(0, 1, 0),
+                    (None, _) => ReleaseVersion::new(1, 0, 0),
+                }
+            };
+            (floor, Some(upper))
+        }
+        Op::Wildcard => (floor, Some(after_minor)),
+        _ => return None,
+    })
+}
+
+/// Whether two optional requirement texts admit the same versions.
+///
+/// Two absent requirements agree; an absent and a present one never do. A text that does not parse compares by its
+/// exact spelling, so an invalid declaration can only ever agree with itself.
+pub fn rust_version_requirements_match(left: Option<&str>, right: Option<&str>) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => match (
+            RustVersionRequirement::parse(left),
+            RustVersionRequirement::parse(right),
+        ) {
+            (Ok(left), Ok(right)) => left == right,
+            _ => left == right,
+        },
+        _ => false,
     }
 }
 
@@ -3058,5 +3210,80 @@ exclude-components = ["stdlib-web"]
         assert!(validate_cargo_version_req("~=1.2").is_err()); // PEP 440
         assert!(validate_cargo_version_req("==1.2.*").is_err()); // PEP 440
         assert!(validate_cargo_version_req("!=1.3").is_err()); // PEP 440
+    }
+
+    #[test]
+    fn version_requirements_compare_by_admitted_versions_not_spelling() -> TestResult {
+        let same = |left: &str, right: &str| -> Result<bool, String> {
+            Ok(RustVersionRequirement::parse(left)? == RustVersionRequirement::parse(right)?)
+        };
+        for (left, right) in [
+            ("1", "1.0"),
+            ("1", "^1.0.0"),
+            ("1.0", ">=1.0.0, <2.0.0"),
+            ("0.8", "^0.8.0"),
+            ("0.8", ">=0.8, <0.9"),
+            ("0.0.3", ">=0.0.3, <0.0.4"),
+            ("~1.2", ">=1.2.0, <1.3.0"),
+            ("~1.2.3", ">=1.2.3, <1.3.0"),
+            ("=1.3.2", ">=1.3.2, <1.3.3"),
+            ("=1.3", "~1.3"),
+            ("1.*", "^1"),
+            ("1.2.*", "~1.2"),
+            ("*", ">=0.0.0"),
+            (">1.2.3", ">=1.2.4"),
+            (">1.2", ">=1.3.0"),
+            ("<=1.2", "<1.3.0"),
+            (">=2, <1", ">=5, <3"),
+        ] {
+            assert!(same(left, right)?, "`{left}` and `{right}` admit the same versions");
+        }
+        for (left, right) in [
+            ("1", "1.2"),
+            ("1", "2"),
+            ("=1.3.2", "1.3.2"),
+            ("0.8", "0.9"),
+            ("0.8", "0.8.1"),
+            ("~1.2", "^1.2"),
+            (">=1.0", "1.0"),
+            ("1.0.0-alpha", "1.0.0"),
+            ("1.0.0-alpha", "1.0.0-beta"),
+        ] {
+            assert!(!same(left, right)?, "`{left}` and `{right}` admit different versions");
+        }
+        assert!(
+            same("1.0.0-alpha", "1.0.0-alpha")?,
+            "a pre-release requirement still agrees with itself"
+        );
+        assert!(RustVersionRequirement::parse("banana").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn dependency_specs_agree_on_version_by_meaning() {
+        assert!(rust_version_requirements_match(Some("1"), Some("1.0")));
+        assert!(rust_version_requirements_match(None, None));
+        assert!(!rust_version_requirements_match(Some("1"), None));
+        assert!(!rust_version_requirements_match(Some("1"), Some("1.1")));
+        // An unparsable declaration can only agree with its own exact spelling.
+        assert!(rust_version_requirements_match(Some("banana"), Some("banana")));
+        assert!(!rust_version_requirements_match(Some("banana"), Some("1")));
+        let spec = |version: &str| DependencySpec {
+            crate_name: "regex".to_string(),
+            version: Some(version.to_string()),
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: None,
+        };
+        assert!(spec("1").same_version_requirement(&spec("1.0")));
+        assert!(!spec("1").same_version_requirement(&spec("1.2")));
+        assert_eq!(
+            spec("1").version_requirement(),
+            Ok(Some(
+                RustVersionRequirement::parse("^1.0.0").unwrap_or_else(|error| panic!("{error}"))
+            ))
+        );
     }
 }

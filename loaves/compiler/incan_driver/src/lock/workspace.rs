@@ -256,7 +256,7 @@ fn merge_workspace_dependency(
 
 /// Merge only Cargo-unifiable member refinements; source, version, rename, and identity remain exact.
 fn merge_workspace_dependency_spec(existing: &mut DependencySpec, candidate: &DependencySpec) -> CliResult<()> {
-    if existing.version != candidate.version
+    if !existing.same_version_requirement(candidate)
         || existing.source != candidate.source
         || existing.package != candidate.package
     {
