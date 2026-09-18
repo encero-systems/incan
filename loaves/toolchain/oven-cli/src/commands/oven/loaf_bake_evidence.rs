@@ -236,7 +236,10 @@ pub(crate) fn import_loaf_envelope_from_configured_mirrors(
 }
 
 /// Commit the expected generation from the first of `mirrors` that proves in full; see the configured wrapper.
-#[allow(clippy::too_many_arguments, reason = "Adds explicit mirror roots to the configured envelope import boundary")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Adds explicit mirror roots to the configured envelope import boundary"
+)]
 pub(crate) fn import_loaf_envelope_from_mirror_roots(
     output: &Path,
     scratch: &Path,
