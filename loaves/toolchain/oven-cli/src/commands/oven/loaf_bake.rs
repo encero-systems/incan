@@ -603,22 +603,36 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         Some((_, expected_capture, sources, _, capture_loaf_identity, generated_project, inspection_packages)),
     ) = (finalized_release_graph.as_ref(), release_foundation_capture.as_ref())
     {
-        let selected_unit_bindings = finalized
+        // Bind each compiled physical unit to the selected identity projected from it. Run-custom-build units are
+        // edge endpoints, not graph units; every other unit must map to exactly one distinct identity.
+        let compiled_units = finalized
             .capture
             .units
             .iter()
-            .zip(&finalized.graph.graph().units)
-            .map(|(captured, selected)| {
+            .enumerate()
+            .filter(|(_, unit)| unit.mode != "run-custom-build")
+            .collect::<Vec<_>>();
+        let selected_unit_bindings = compiled_units
+            .iter()
+            .map(|(index, captured)| {
+                let selected = finalized.unit_identities.get(index).ok_or_else(|| {
+                    CliError::failure(format!(
+                        "final selected graph has no unit for compiled physical unit `{}`",
+                        captured.package_id
+                    ))
+                })?;
                 oven_cargo_compat::legacy_cargo_selected_unit_capture_identity(captured)
-                    .map(|identity| (identity, selected.identity.clone()))
+                    .map(|identity| (identity, selected.clone()))
+                    .map_err(oven_error)
             })
-            .collect::<Result<BTreeMap<_, _>, _>>()
-            .map_err(oven_error)?;
-        if selected_unit_bindings.len() != finalized.capture.units.len()
-            || finalized.capture.units.len() != finalized.graph.graph().units.len()
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let distinct_identities = selected_unit_bindings.values().collect::<BTreeSet<_>>();
+        if selected_unit_bindings.len() != compiled_units.len()
+            || distinct_identities.len() != compiled_units.len()
+            || finalized.graph.graph().units.len() != compiled_units.len()
         {
             return Err(CliError::failure(
-                "final selected graph does not correspond one-to-one with its physical capture".to_string(),
+                "final selected graph does not correspond one-to-one with its compiled physical units".to_string(),
             ));
         }
         let final_prepared = prepare_loaf_from_generated_project_with_selected_unit_bindings(

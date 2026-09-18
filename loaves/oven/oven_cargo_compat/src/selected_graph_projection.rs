@@ -141,14 +141,19 @@ pub struct OvenLegacyCargoSelectedGraphProjection {
 
 /// Final receipt and selected graph produced by one physical capture and one authored compiler-support declaration.
 pub struct OvenFinalizedCompilerSupportSelectedGraph {
-    /// Pruned physical capture in the exact order used to project `graph.units`.
+    /// Pruned physical capture the graph was projected from; run-custom-build units stay as edge endpoints.
     pub capture: OvenLegacyCargoSelectedUnitCapture,
     /// Receipt retaining the physical build-script closure before authored roots are attached.
     pub capture_receipt: OvenReceipt,
     /// Distinct final receipt binding the exact compiler-support root authority.
     pub final_receipt: OvenReceipt,
-    /// Rooted graph validated against both receipts.
+    /// Rooted graph validated against both receipts; its units are in canonical identity order.
     pub graph: ValidatedOvenSelectedRustFacetGraph,
+    /// The selected unit identity projected from each compiled `capture` unit, by capture index.
+    ///
+    /// Run-custom-build units have no entry: they are not graph units. This is the only authenticated
+    /// correspondence between a physical unit and its selected identity once the graph is canonicalized.
+    pub unit_identities: BTreeMap<usize, String>,
 }
 
 /// Bind every selected immutable registry unit to the exact artifact in its compiled Loaf.
@@ -561,7 +566,7 @@ pub fn finalize_compiler_support_selected_graph(
         .map_err(|error| projection_error("compiler-support root intent", &error.to_string()))?;
     let final_receipt = receipt_with_compiler_support_root_intent(&capture_receipt, authority_digest)
         .map_err(|error| projection_error("compiler-support final receipt", &error.to_string()))?;
-    let graph = project_and_bind_compiler_support_selected_graph(
+    let (graph, unit_identities) = project_and_bind_compiler_support_selected_graph(
         &capture,
         &sealed,
         &authority,
@@ -573,6 +578,7 @@ pub fn finalize_compiler_support_selected_graph(
         capture_receipt,
         final_receipt,
         graph,
+        unit_identities,
     })
 }
 
@@ -1325,6 +1331,15 @@ pub fn project_legacy_cargo_selected_graph(
     sealed: &OvenLegacyCargoSelectedGraphProjection,
     final_receipt: Option<&OvenReceipt>,
 ) -> Result<OvenSelectedRustFacetGraph, OvenLegacyCargoError> {
+    project_legacy_cargo_selected_graph_with_identities(capture, sealed, final_receipt).map(|(graph, _)| graph)
+}
+
+/// Project the graph and return, beside it, the selected identity of each compiled capture unit by index.
+pub fn project_legacy_cargo_selected_graph_with_identities(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    sealed: &OvenLegacyCargoSelectedGraphProjection,
+    final_receipt: Option<&OvenReceipt>,
+) -> Result<(OvenSelectedRustFacetGraph, BTreeMap<usize, String>), OvenLegacyCargoError> {
     validate_projection_compiler(capture, sealed)?;
     validate_projection_bindings(capture, sealed)?;
     validate_build_script_authority(capture, sealed, final_receipt)?;
@@ -1392,6 +1407,10 @@ pub fn project_legacy_cargo_selected_graph(
         }
     }
 
+    let unit_identities = units
+        .iter()
+        .map(|(index, unit)| (*index, unit.identity.clone()))
+        .collect::<BTreeMap<_, _>>();
     let graph = OvenSelectedRustFacetGraph {
         schema_version: oven_rustc::rustc::OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION,
         selection: sealed.selection.clone(),
@@ -1399,7 +1418,7 @@ pub fn project_legacy_cargo_selected_graph(
         units: units.into_values().collect(),
         exposed_roots: BTreeMap::new(),
     };
-    Ok(graph)
+    Ok((graph, unit_identities))
 }
 
 /// Project physical capture and bind compiler-release roots under the verified final receipt.
@@ -1412,10 +1431,29 @@ pub fn project_and_bind_compiler_support_selected_graph(
     authority: &OvenCompilerSupportRootIntentAuthority,
     capture_receipt: &OvenReceipt,
     final_receipt: &OvenReceipt,
-) -> Result<ValidatedOvenSelectedRustFacetGraph, OvenLegacyCargoError> {
-    let graph = project_legacy_cargo_selected_graph(capture, sealed, Some(final_receipt))?;
-    bind_compiler_support_root_intents(graph, authority, capture_receipt, final_receipt)
-        .map_err(|error| projection_error("compiler-support selected graph", &error.to_string()))
+) -> Result<(ValidatedOvenSelectedRustFacetGraph, BTreeMap<usize, String>), OvenLegacyCargoError> {
+    let (graph, unit_identities) =
+        project_legacy_cargo_selected_graph_with_identities(capture, sealed, Some(final_receipt))?;
+    let bound = bind_compiler_support_root_intents(graph, authority, capture_receipt, final_receipt)
+        .map_err(|error| projection_error("compiler-support selected graph", &error.to_string()))?;
+    // Root binding and validation canonicalize the graph; a unit's identity is content-derived and must survive.
+    let identities = bound
+        .graph()
+        .units
+        .iter()
+        .map(|unit| unit.identity.as_str())
+        .collect::<BTreeSet<_>>();
+    if unit_identities.len() != identities.len()
+        || unit_identities
+            .values()
+            .any(|identity| !identities.contains(identity.as_str()))
+    {
+        return Err(projection_error(
+            "compiler-support selected graph",
+            "does not preserve the projected identity of every compiled physical unit",
+        ));
+    }
+    Ok((bound, unit_identities))
 }
 
 /// Bind authored compiler-support declarations to the exact physical units reached from captured Cargo roots.
@@ -2992,7 +3030,7 @@ mod tests {
             compiler_support_root_intent_digest(&authority)?,
         )?;
 
-        let bound = project_and_bind_compiler_support_selected_graph(
+        let (bound, _) = project_and_bind_compiler_support_selected_graph(
             &capture,
             &sealed,
             &authority,
