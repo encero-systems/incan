@@ -935,6 +935,33 @@ mod tests {
             published.identity,
             "the second coordinate selects the entry the first one published"
         );
+        let root = selected
+            .payload()
+            .roots
+            .first()
+            .ok_or("published closure has no policy root")?;
+        let libraries = selected.root_libraries()?;
+        let library = libraries
+            .iter()
+            .find(|library| library.expose_extern)
+            .ok_or("reused closure has no public root library")?;
+        assert_eq!(library.crate_name, root.alias);
+        assert_eq!(
+            &library.output,
+            selected
+                .artifact(&root.compiled_identity)
+                .ok_or("reused policy root lost its compiled artifact")?
+        );
+        let mut plan = OvenRustcArtifactPlan {
+            source_path_projection: None,
+            dependency_search_paths: Vec::new(),
+            native_search_paths: Vec::new(),
+            externs: Vec::new(),
+            compile_environment: BTreeMap::new(),
+            caller_owned_library_digests: BTreeMap::new(),
+        };
+        selected.compose_artifact_plan(&mut plan)?;
+        assert_eq!(plan.externs, [(root.alias.clone(), library.output.clone())]);
         Ok(())
     }
 
