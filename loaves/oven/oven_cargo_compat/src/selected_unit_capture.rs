@@ -1061,12 +1061,16 @@ struct PortableSelectedUnitKey<'a> {
 }
 
 /// Build-script facts without the staging directory they were observed under.
+///
+/// A script's linked search paths name staging directories; the archives they point at live in the script's
+/// retained output, whose member inventory and digest are part of the key. The names it links are portable and
+/// stay.
 #[derive(Serialize)]
 struct PortableBuildScriptKey<'a> {
     cfgs: &'a [String],
     environment: &'a BTreeMap<String, String>,
     linked_libraries: &'a [String],
-    linked_paths: &'a [String],
+    linked_path_count: usize,
     output: Option<(&'a str, &'a [OvenLegacyCargoInspectionSourceMember])>,
 }
 
@@ -1076,7 +1080,7 @@ impl<'a> PortableBuildScriptKey<'a> {
             cfgs: &facts.cfgs,
             environment: &facts.environment,
             linked_libraries: &facts.linked_libraries,
-            linked_paths: &facts.linked_paths,
+            linked_path_count: facts.linked_paths.len(),
             output: facts
                 .output
                 .as_ref()
