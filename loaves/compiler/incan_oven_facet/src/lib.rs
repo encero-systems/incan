@@ -233,7 +233,8 @@ mod tests {
     use std::fs;
 
     use incan_lang::lang::stdlib::{self, StdlibExtraCrateSource};
-    use oven_model::manifest::{DependencySource, DependencySpec};
+    use incan_provider::requirements::{dependency_spec_from_stdlib_dep, dependency_specs_match};
+    use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
     use oven_rustc::loaf::{
         OvenLoafEnvelope, OvenLoafMemberRole, loaf_envelope_inspection_packages, loaf_envelope_specifications,
     };
@@ -418,6 +419,43 @@ mod tests {
             specification.role == OvenLoafMemberRole::CompiledClosureAndSourceAuthority
                 && specification.retain_complete_registry_leaves
         }));
+        Ok(())
+    }
+
+    /// The Loaf publisher declares every checked `[rust-dependencies]` entry on its generated root, where the
+    /// standard-library facet requirements for the same crates join it. That merge refuses any identity
+    /// disagreement, so the checked manifests must agree with the registry by meaning for every shared crate.
+    #[test]
+    fn checked_stdlib_manifests_agree_with_the_registry_for_every_shared_crate()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for envelope in [OvenLoafEnvelope::Release, OvenLoafEnvelope::CompilerSuite] {
+            for specification in loaf_envelope_specifications(envelope) {
+                let path = std::path::Path::new("loaves/oven/oven_rustc/src/fixtures")
+                    .join(format!("{}.toml", specification.project_name));
+                let manifest = ProjectManifest::from_str(specification.manifest, &path)?;
+                let mut shared = 0;
+                for (alias, declared) in manifest.rust_dependencies() {
+                    let Some(registry) = stdlib::find_extra_crate_dep(alias) else {
+                        continue;
+                    };
+                    shared += 1;
+                    let registry = dependency_spec_from_stdlib_dep(registry);
+                    let declared = declared.clone().normalized();
+                    assert!(
+                        dependency_specs_match(&declared, &registry),
+                        "{envelope:?}/{}/{} declares `{alias}` as {declared:?} but the standard-library registry requires {registry:?}",
+                        specification.label,
+                        specification.profile
+                    );
+                }
+                assert!(
+                    shared > 0,
+                    "{envelope:?}/{}/{} shares no crate with the standard-library registry; this test proves nothing",
+                    specification.label,
+                    specification.profile
+                );
+            }
+        }
         Ok(())
     }
 }

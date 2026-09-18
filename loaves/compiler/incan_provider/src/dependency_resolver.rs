@@ -13,8 +13,8 @@ use incan_frontend::ast::Span;
 use incan_frontend::diagnostics::CompileError;
 use incan_lang::lang::stdlib::{self, StdlibExtraCrateSource};
 use oven_model::lock::CargoFeatureSelection;
-use oven_model::manifest::validate_cargo_version_req;
 use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
+use oven_model::manifest::{rust_version_requirements_match, validate_cargo_version_req};
 
 #[derive(Debug, Clone)]
 pub struct InlineRustImport {
@@ -420,8 +420,7 @@ fn inline_spec_from_import(import: &InlineRustImport) -> DependencySpec {
 }
 
 fn merge_inline_spec(existing: &mut InlineMergedSpec, next: &InlineRustImport) -> Result<(), String> {
-    let next_version = next.version.clone();
-    if existing.spec.version != next_version {
+    if !rust_version_requirements_match(existing.spec.version.as_deref(), next.version.as_deref()) {
         return Err(format!(
             "conflicting inline dependency specifications for `{}`",
             existing.spec.crate_name
@@ -463,7 +462,7 @@ fn merge_overlapping_dev_dependencies(
             continue;
         };
 
-        if dep.version != dev.version
+        if !dep.same_version_requirement(&dev)
             || dep.source != dev.source
             || dep.default_features != dev.default_features
             || dep.optional != dev.optional
