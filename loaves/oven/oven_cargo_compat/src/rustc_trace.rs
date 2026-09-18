@@ -37,6 +37,19 @@ pub struct OvenLegacyRustcInvocation {
     /// Digest of bounded source bytes forwarded unchanged when rustc reads its input from stdin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stdin_digest: Option<String>,
+    /// Metadata output verified before the invoking build script can remove or overwrite its probe.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdin_probe_output: Option<OvenLegacyStdinProbeOutput>,
+}
+
+/// Physical evidence captured immediately after a successful metadata-only stdin probe.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenLegacyStdinProbeOutput {
+    /// Output path relative to the verified build-script OUT_DIR.
+    pub relative_path: String,
+    /// Digest of the regular metadata file before control returns to the build script.
+    pub digest: String,
 }
 
 /// Run the current executable as Cargo's stable `RUSTC_WRAPPER`, returning `None` for every ordinary invocation.
@@ -97,14 +110,16 @@ fn run_marked_rustc_trace_wrapper() -> Result<i32, ()> {
     {
         return Ok(exit_code);
     }
-    let record = OvenLegacyRustcInvocation {
+    let mut record = OvenLegacyRustcInvocation {
         reason: "incan-rustc-invocation".to_string(),
         rustc: rustc.clone(),
         working_directory,
         arguments: arguments.clone(),
         environment,
         stdin_digest,
+        stdin_probe_output: None,
     };
+    record.stdin_probe_output = super::selected_unit_capture::capture_stdin_probe_output(&record);
     let encoded = serde_json::to_vec(&record).map_err(|_| ())?;
     if encoded.len() > MAX_RUSTC_TRACE_RECORD_BYTES {
         return Err(());
@@ -392,6 +407,7 @@ mod tests {
             arguments: vec!["--crate-name".to_string(), "fixture".to_string()],
             environment: BTreeMap::new(),
             stdin_digest: None,
+            stdin_probe_output: None,
         })?;
         maximum.resize(MAX_RUSTC_TRACE_RECORD_BYTES, b' ');
         maximum.push(b'\n');

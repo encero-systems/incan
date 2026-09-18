@@ -214,6 +214,12 @@ pub fn capture_legacy_cargo_selected_units_from_trace(
         .filter(|(index, _)| !used_invocations[*index])
     {
         let Some(probe_digest) = build_script_tool_probe_digest(invocation) else {
+            #[cfg(not(unix))]
+            if super::rustc_trace::rustc_positional_source(&invocation.arguments) == Some("-") {
+                return Err(OvenLegacyCargoError::Plan(
+                    "stdin build-script probe capture requires directory-relative no-follow file handles; this platform is not yet supported".to_string(),
+                ));
+            }
             let crate_name = argument_value(&invocation.arguments, "--crate-name").unwrap_or("<absent>");
             let cargo_crate = invocation
                 .environment
@@ -595,7 +601,11 @@ fn stdin_tool_probe_digest(invocation: &OvenLegacyRustcInvocation, out_root: &Pa
     if !lexically_beneath(output, out_root) || output == out_root {
         return None;
     }
-    let relative = verified_probe_output(output, out_root)?;
+    let relative = output.strip_prefix(out_root).ok()?;
+    let captured = invocation.stdin_probe_output.as_ref()?;
+    if captured.relative_path != relative.to_string_lossy() || !valid_probe_digest(&captured.digest) {
+        return None;
+    }
     let arguments = invocation
         .arguments
         .iter()
@@ -616,26 +626,98 @@ fn stdin_tool_probe_digest(invocation: &OvenLegacyRustcInvocation, out_root: &Pa
         "arguments": arguments,
         "environment": environment,
         "source_digest": source_digest,
+        "output_digest": captured.digest,
     }))
     .ok()?;
     Some(digest_bytes(&encoded))
 }
 
-/// Prove one successful probe output is a regular non-symlink file physically contained by its OUT_DIR.
-fn verified_probe_output(output: &Path, out_root: &Path) -> Option<PathBuf> {
-    let metadata = std::fs::symlink_metadata(output).ok()?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
+fn valid_probe_digest(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
+}
+
+const MAX_STDIN_PROBE_OUTPUT_BYTES: u64 = 1024 * 1024;
+
+/// Capture ephemeral metadata while rustc has completed but the build script is still waiting on the wrapper.
+pub(crate) fn capture_stdin_probe_output(
+    invocation: &OvenLegacyRustcInvocation,
+) -> Option<super::rustc_trace::OvenLegacyStdinProbeOutput> {
+    let out_root = Path::new(invocation.environment.get("OUT_DIR")?);
+    let output = argument_value(&invocation.arguments, "-o").map(Path::new)?;
+    if super::rustc_trace::rustc_positional_source(&invocation.arguments) != Some("-")
+        || comma_separated_argument_values(&invocation.arguments, "--emit") != ["metadata"]
+        || !valid_probe_digest(invocation.stdin_digest.as_deref()?)
+        || !lexically_beneath(output, out_root)
+        || output == out_root
+    {
         return None;
     }
-    let canonical_root = std::fs::canonicalize(out_root).ok()?;
-    let canonical_output = std::fs::canonicalize(output).ok()?;
-    if !canonical_output.starts_with(&canonical_root) {
+    let relative = output.strip_prefix(out_root).ok()?;
+    let mut file = open_probe_output(out_root, relative)?;
+    // Feature probes are small. Bound the read even if the captured file is replaced or grows concurrently.
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take(MAX_STDIN_PROBE_OUTPUT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > MAX_STDIN_PROBE_OUTPUT_BYTES {
         return None;
     }
-    canonical_output
-        .strip_prefix(canonical_root)
-        .ok()
-        .map(Path::to_path_buf)
+    Some(super::rustc_trace::OvenLegacyStdinProbeOutput {
+        relative_path: relative.to_string_lossy().into_owned(),
+        digest: digest_bytes(&bytes),
+    })
+}
+
+/// Open every component relative to a held OUT_DIR, refusing symlinks before hashing the same file handle.
+#[cfg(unix)]
+fn open_probe_output(out_root: &Path, relative: &Path) -> Option<File> {
+    use rustix::fs::{Mode, OFlags, open, openat};
+    use std::path::Component;
+
+    let mut directory = open(
+        out_root,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .ok()?;
+    let components = relative.components().collect::<Vec<_>>();
+    let (last, parents) = components.split_last()?;
+    for component in parents {
+        let Component::Normal(name) = component else {
+            return None;
+        };
+        directory = openat(
+            &directory,
+            *name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .ok()?;
+    }
+    let Component::Normal(name) = last else {
+        return None;
+    };
+    let descriptor = openat(
+        &directory,
+        *name,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .ok()?;
+    let file = File::from(descriptor);
+    file.metadata().ok()?.is_file().then_some(file)
+}
+
+/// Without a directory-relative no-follow open, ephemeral probe evidence cannot be admitted safely.
+#[cfg(not(unix))]
+fn open_probe_output(_out_root: &Path, _relative: &Path) -> Option<File> {
+    None
 }
 
 /// Check lexical containment while rejecting parent traversal and mismatched absolute roots.
@@ -1801,6 +1883,7 @@ mod tests {
         fs::write(&alias, b"exact executable bytes")?;
         let invocation = OvenLegacyRustcInvocation {
             stdin_digest: None,
+            stdin_probe_output: None,
             reason: "incan-rustc-invocation".to_string(),
             rustc: "/verified/rustc".to_string(),
             working_directory: scratch.path().to_string_lossy().to_string(),
@@ -1843,6 +1926,7 @@ mod tests {
         fs::write(&source, b"pub fn probe() {}\n")?;
         let invocation = OvenLegacyRustcInvocation {
             stdin_digest: None,
+            stdin_probe_output: None,
             reason: "incan-rustc-invocation".to_string(),
             rustc: "/verified/rustc".to_string(),
             working_directory: scratch.path().to_string_lossy().to_string(),
@@ -1875,55 +1959,106 @@ mod tests {
             .environment
             .insert("CARGO_CRATE_NAME".to_string(), "probe_package".to_string());
         assert!(build_script_tool_probe_digest(&cargo_unit).is_none());
-        let mut stdin_probe = invocation.clone();
-        stdin_probe.arguments = vec![
-            "--crate-type=rlib".to_string(),
-            "--emit=metadata".to_string(),
-            "-o".to_string(),
-            out_root.join("probe.rmeta").to_string_lossy().to_string(),
-            "-".to_string(),
-        ];
-        fs::write(out_root.join("probe.rmeta"), b"metadata")?;
-        assert!(build_script_tool_probe_digest(&stdin_probe).is_none());
-        stdin_probe.stdin_digest = Some(digest_bytes(b"pub fn probe() {}"));
-        let original = build_script_tool_probe_digest(&stdin_probe).ok_or("bounded stdin probe refused")?;
-        stdin_probe.stdin_digest = Some(digest_bytes(b"pub fn changed() {}"));
-        assert_ne!(
-            build_script_tool_probe_digest(&stdin_probe).ok_or("changed stdin probe refused")?,
-            original
-        );
-        stdin_probe.arguments[3] = scratch.path().join("outside.rmeta").to_string_lossy().to_string();
-        assert!(build_script_tool_probe_digest(&stdin_probe).is_none());
-        stdin_probe.arguments[3] = out_root.join("probe.rmeta").to_string_lossy().to_string();
-        stdin_probe.stdin_digest =
-            Some("sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string());
-        assert!(build_script_tool_probe_digest(&stdin_probe).is_none());
-        stdin_probe.stdin_digest = Some(digest_bytes(b"pub fn probe() {}"));
-        stdin_probe.arguments[1] = "--emit=link".to_string();
-        assert!(build_script_tool_probe_digest(&stdin_probe).is_none());
-
         #[cfg(unix)]
         {
-            stdin_probe.arguments[1] = "--emit=metadata".to_string();
-            let outside = scratch.path().join("outside-metadata");
-            fs::write(&outside, b"outside")?;
+            let mut stdin_probe = invocation.clone();
+            stdin_probe.arguments = vec![
+                "--crate-type=rlib".to_string(),
+                "--emit=metadata".to_string(),
+                "-o".to_string(),
+                out_root.join("probe.rmeta").to_string_lossy().to_string(),
+                "-".to_string(),
+            ];
+            fs::write(out_root.join("probe.rmeta"), b"metadata")?;
+            assert!(build_script_tool_probe_digest(&stdin_probe).is_none());
+            stdin_probe.stdin_digest = Some(digest_bytes(b"pub fn probe() {}"));
+            assert!(build_script_tool_probe_digest(&stdin_probe).is_none());
+            stdin_probe.stdin_probe_output = capture_stdin_probe_output(&stdin_probe);
+            let original = build_script_tool_probe_digest(&stdin_probe).ok_or("bounded stdin probe refused")?;
+            let oversized = File::create(out_root.join("probe.rmeta"))?;
+            oversized.set_len(MAX_STDIN_PROBE_OUTPUT_BYTES + 1)?;
+            assert!(capture_stdin_probe_output(&stdin_probe).is_none());
+            drop(oversized);
+            fs::write(out_root.join("probe.rmeta"), b"metadata")?;
+            let mut mismatched_output = stdin_probe.clone();
+            mismatched_output
+                .stdin_probe_output
+                .as_mut()
+                .ok_or("probe output missing")?
+                .relative_path = "another.rmeta".to_string();
+            assert!(build_script_tool_probe_digest(&mismatched_output).is_none());
+            let mut changed_output = stdin_probe.clone();
+            changed_output
+                .stdin_probe_output
+                .as_mut()
+                .ok_or("probe output missing")?
+                .digest = digest_bytes(b"other metadata");
+            assert_ne!(
+                build_script_tool_probe_digest(&changed_output).as_ref(),
+                Some(&original)
+            );
             fs::remove_file(out_root.join("probe.rmeta"))?;
-            symlink(&outside, out_root.join("probe.rmeta"))?;
+            assert_eq!(build_script_tool_probe_digest(&stdin_probe).as_ref(), Some(&original));
+            let uncaptured = capture_stdin_probe_output(&stdin_probe);
+            assert!(uncaptured.is_none());
+            fs::write(out_root.join("probe.rmeta"), b"metadata")?;
+            #[cfg(unix)]
+            {
+                let mut held = open_probe_output(&out_root, Path::new("probe.rmeta")).ok_or("probe file refused")?;
+                fs::remove_file(out_root.join("probe.rmeta"))?;
+                let replacement = scratch.path().join("replacement-metadata");
+                fs::write(&replacement, b"outside replacement")?;
+                symlink(&replacement, out_root.join("probe.rmeta"))?;
+                let mut bytes = Vec::new();
+                held.read_to_end(&mut bytes)?;
+                assert_eq!(bytes, b"metadata");
+                assert!(capture_stdin_probe_output(&stdin_probe).is_none());
+                fs::remove_file(out_root.join("probe.rmeta"))?;
+                fs::write(out_root.join("probe.rmeta"), b"metadata")?;
+            }
+            stdin_probe.stdin_digest = Some(digest_bytes(b"pub fn changed() {}"));
+            assert_ne!(
+                build_script_tool_probe_digest(&stdin_probe).ok_or("changed stdin probe refused")?,
+                original
+            );
+            stdin_probe.arguments[3] = scratch.path().join("outside.rmeta").to_string_lossy().to_string();
+            assert!(build_script_tool_probe_digest(&stdin_probe).is_none());
+            stdin_probe.arguments[3] = out_root.join("probe.rmeta").to_string_lossy().to_string();
+            stdin_probe.stdin_digest =
+                Some("sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string());
+            assert!(build_script_tool_probe_digest(&stdin_probe).is_none());
+            stdin_probe.stdin_digest = Some(digest_bytes(b"pub fn probe() {}"));
+            stdin_probe.arguments[1] = "--emit=link".to_string();
             assert!(build_script_tool_probe_digest(&stdin_probe).is_none());
 
-            fs::remove_file(out_root.join("probe.rmeta"))?;
-            let outside_directory = scratch.path().join("outside-directory");
-            fs::create_dir(&outside_directory)?;
-            symlink(&outside_directory, out_root.join("escaped"))?;
-            stdin_probe.arguments[3] = out_root.join("escaped/probe.rmeta").to_string_lossy().to_string();
-            fs::write(outside_directory.join("probe.rmeta"), b"outside")?;
-            assert!(build_script_tool_probe_digest(&stdin_probe).is_none());
+            #[cfg(unix)]
+            {
+                stdin_probe.arguments[1] = "--emit=metadata".to_string();
+                let outside = scratch.path().join("outside-metadata");
+                fs::write(&outside, b"outside")?;
+                fs::remove_file(out_root.join("probe.rmeta"))?;
+                symlink(&outside, out_root.join("probe.rmeta"))?;
+                assert!(capture_stdin_probe_output(&stdin_probe).is_none());
+
+                fs::remove_file(out_root.join("probe.rmeta"))?;
+                let outside_directory = scratch.path().join("outside-directory");
+                fs::create_dir(&outside_directory)?;
+                symlink(&outside_directory, out_root.join("escaped"))?;
+                stdin_probe.arguments[3] = out_root.join("escaped/probe.rmeta").to_string_lossy().to_string();
+                fs::write(outside_directory.join("probe.rmeta"), b"outside")?;
+                assert!(capture_stdin_probe_output(&stdin_probe).is_none());
+            }
         }
-
         let mut escaped = invocation;
         escaped.arguments[5] = scratch.path().join("outside").to_string_lossy().to_string();
         assert!(build_script_tool_probe_digest(&escaped).is_none());
         Ok(())
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn stdin_probe_output_refuses_without_supported_handle_capture() {
+        assert!(open_probe_output(Path::new("out"), Path::new("probe.rmeta")).is_none());
     }
 
     #[test]
