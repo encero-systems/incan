@@ -793,6 +793,11 @@ pub fn legacy_cargo_registry_unit_bindings(
     }
     let mut bindings = BTreeMap::new();
     for (index, unit) in capture.units.iter().enumerate() {
+        // A run-custom-build unit is an execution node, not an inspection crate: its registry source authenticates
+        // the build-script closure sealed on each consumer edge, and it must not receive a graph unit binding.
+        if is_build_script_unit(unit) {
+            continue;
+        }
         let Some(captured) = unit.registry_source.as_ref() else {
             continue;
         };
@@ -2235,6 +2240,63 @@ mod tests {
                 }),
             }],
         })
+    }
+
+    /// A registry package with a build script captures two registry-backed units: the library and the
+    /// run-custom-build execution node. Only the library is an inspection crate.
+    #[test]
+    fn registry_unit_bindings_never_model_a_build_script_as_an_inspection_crate()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut capture = capture()?;
+        let library = capture.units[0].clone();
+        let registry = library
+            .registry_source
+            .clone()
+            .ok_or("fixture library must carry a registry source")?;
+        let mut build_script = library.clone();
+        build_script.target_name = "build-script-build".to_string();
+        build_script.target_kinds = vec!["custom-build".to_string()];
+        build_script.crate_types = vec!["bin".to_string()];
+        build_script.source_path = PathBuf::from("/transient/serde/build.rs");
+        build_script.root_module = "build.rs".to_string();
+        build_script.mode = "run-custom-build".to_string();
+        build_script.registry_source = Some(super::super::OvenLegacyCargoSelectedRegistrySource {
+            root_module: "build.rs".to_string(),
+            ..registry.clone()
+        });
+        capture.units.push(build_script);
+        capture.units[0]
+            .dependencies
+            .push(super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 1,
+                extern_crate_name: None,
+                build_script: None,
+            });
+        let members = registry
+            .members
+            .iter()
+            .map(|member| super::super::OvenLegacyCargoInspectionSourceMember {
+                path: member.path.clone(),
+                digest: member.digest.clone(),
+            })
+            .collect::<Vec<_>>();
+        let source = super::super::OvenLegacyCargoInspectionSource {
+            package: library.package.clone(),
+            version: library.package_version.clone(),
+            registry: registry.registry.clone(),
+            checksum: registry.checksum.clone(),
+            features: vec!["derive".to_string()],
+            source_root: PathBuf::from("/staged/registry-sources/serde-1.0.0"),
+            source_digest: registry.digest.clone(),
+            members,
+        };
+        let bindings = legacy_cargo_registry_unit_bindings(&capture, std::slice::from_ref(&source), "sha256:owner")?;
+        assert_eq!(
+            bindings.keys().copied().collect::<Vec<_>>(),
+            vec![0],
+            "only the library unit is an inspection crate; the run-custom-build unit is sealed on its consumer edge"
+        );
+        Ok(())
     }
 
     fn sealed(
