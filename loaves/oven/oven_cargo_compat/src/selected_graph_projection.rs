@@ -842,7 +842,8 @@ pub fn legacy_cargo_registry_unit_bindings(
             OvenLegacyCargoSelectedGraphUnitBinding {
                 source: OvenSelectedRustFacetSource {
                     kind: OvenSelectedRustFacetSourceKind::Registry,
-                    identity: unit.package_id.clone(),
+                    // The portable `registry:` coordinate, never Cargo's machine-facing package-id URL.
+                    identity: format!("registry:{}@{}", unit.package, unit.package_version),
                     owner: foundation_owner.to_string(),
                     root: relative_root.clone(),
                     digest: source.source_digest.clone(),
@@ -2296,6 +2297,14 @@ mod tests {
             vec![0],
             "only the library unit is an inspection crate; the run-custom-build unit is sealed on its consumer edge"
         );
+        let binding = bindings.get(&0).ok_or("library binding must exist")?;
+        assert_eq!(binding.source.identity, "registry:serde@1.0.0");
+        // The binder's own output must satisfy the registry validation the projection later applies to it.
+        let owners = vec![OvenSelectedRustFacetOwner {
+            identity: "sha256:owner".to_string(),
+            kind: OvenSelectedRustFacetOwnerKind::Constituent,
+        }];
+        validate_registry_binding(&capture.units[0], binding, &owners)?;
         Ok(())
     }
 
