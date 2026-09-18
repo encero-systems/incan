@@ -65,7 +65,9 @@ use incan_frontend::{ParsedModule, diagnostics};
 use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
 use incan_provider::compiled_sdk::CompiledSdkModules;
-use incan_provider::dependency_resolver::resolve_reachable_dependencies;
+use incan_provider::dependency_resolver::{
+    DependencyError, InlineRustImport, ResolvedDependencies, resolve_dependencies, resolve_reachable_dependencies,
+};
 use incan_provider::inventory::extend_requirements_with_provider_plan;
 use incan_provider::requirements::{collect_project_requirements, merge_project_requirement_dependencies};
 use oven_cargo_compat::cargo_process::resolved_cargo_executable;
@@ -75,7 +77,7 @@ use oven_cargo_compat::{
     prepare_direct_rustc_plan, provider_compilation_requirements_digest,
 };
 use oven_model::lock::CargoFeatureSelection;
-use oven_model::manifest::DependencySpec;
+use oven_model::manifest::{DependencySpec, ProjectManifest};
 use oven_rustc::loaf::{
     OVEN_DEPENDENCY_MISS_SUMMARY, OVEN_LOAF_ENV, OVEN_LOAF_MISS_GUIDANCE, OVEN_NESTED_DEPENDENCY_MISS_SUMMARY,
     OVEN_NO_IMPLICIT_DEPENDENCY_BUILD, OvenToolchainLoaf, acquire_active_release_runtime_foundation,
@@ -278,8 +280,9 @@ pub fn prepare_oven_project(
         cargo_all_features,
     }
     .normalized();
-    let mut resolved = resolve_reachable_dependencies(manifest.as_ref(), &inline_imports, true, &cargo_features)
-        .map_err(|errors| {
+    let mut resolved =
+        resolve_generated_root_dependencies(manifest.as_ref(), &inline_imports, &cargo_features, loaf_codegen_mode())
+            .map_err(|errors| {
             let sources = build_source_map(&modules);
             let message = errors
                 .iter()
@@ -873,6 +876,26 @@ fn loaf_codegen_mode() -> bool {
     std::env::var_os(OVEN_LOAF_ENV).is_some_and(|value| value == "1")
 }
 
+/// Resolve the manifest dependencies one generated root declares to Cargo.
+///
+/// An ordinary root declares only the manifest dependencies its source reaches. The explicit Loaf publisher declares
+/// every checked `[rust-dependencies]` entry instead: a compiler-owned standard-library closure is sealed once per
+/// profile rather than shaped by its small fixture root, and the runtime-foundation finalizer later binds each checked
+/// alias to exactly one direct `rustc --extern` edge of this root (`retain_checked_direct_dependencies`). Declaring
+/// the complete surface here is what gives Cargo that edge to trace; it never widens a normal command's closure.
+fn resolve_generated_root_dependencies(
+    manifest: Option<&ProjectManifest>,
+    inline_imports: &[InlineRustImport],
+    cargo_features: &CargoFeatureSelection,
+    retain_checked_declared: bool,
+) -> Result<ResolvedDependencies, Vec<DependencyError>> {
+    if retain_checked_declared {
+        resolve_dependencies(manifest, inline_imports, true, cargo_features)
+    } else {
+        resolve_reachable_dependencies(manifest, inline_imports, true, cargo_features)
+    }
+}
+
 /// Preserve public implementation items whenever the Oven projection emits dependency source.
 ///
 /// A dependency's public protocol methods can construct sibling public adapter models that the root source does not
@@ -1257,6 +1280,42 @@ mod tests {
             }
         };
         assert!(error.to_string().contains("provide an explicit base receipt"));
+        Ok(())
+    }
+
+    #[test]
+    fn loaf_publisher_root_declares_every_checked_rust_dependency() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let manifest = ProjectManifest::from_str(
+            "[project]\nname = \"checked_closure\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\nitoa = \"1\"\nryu = \"1\"\n",
+            &project.path().join("loaf.toml"),
+        )?;
+        let cargo_features = CargoFeatureSelection::default();
+        let declared = |resolved: &ResolvedDependencies| {
+            let mut names = resolved
+                .dependencies
+                .iter()
+                .map(|dependency| dependency.crate_name.clone())
+                .collect::<Vec<_>>();
+            names.sort();
+            names
+        };
+
+        let ordinary = resolve_generated_root_dependencies(Some(&manifest), &[], &cargo_features, false)
+            .map_err(|errors| format!("{errors:?}"))?;
+        assert!(
+            declared(&ordinary).is_empty(),
+            "an ordinary root must not declare unreachable manifest crates, but declared {:?}",
+            declared(&ordinary)
+        );
+
+        let publisher = resolve_generated_root_dependencies(Some(&manifest), &[], &cargo_features, true)
+            .map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(
+            declared(&publisher),
+            vec!["itoa".to_string(), "ryu".to_string()],
+            "the explicit Loaf publisher must declare every checked rust dependency as a direct root edge"
+        );
         Ok(())
     }
 }
