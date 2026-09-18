@@ -66,6 +66,18 @@ use super::{
     write_sealed_oven_inspection_source_authority,
 };
 
+/// The bounded compiler/sysroot closure one release generation retains as its selected graph's Toolchain owner.
+struct StagedReleaseToolchain {
+    /// Safe generation-relative directory holding the retained members.
+    relative_path: PathBuf,
+    /// Staged location of that directory.
+    root: PathBuf,
+    /// Closure digest: the Toolchain owner identity the selected graph declares.
+    compiler_closure_identity: String,
+    /// Exact retained members below `root`.
+    members: Vec<OvenReleaseToolchainMember>,
+}
+
 /// Bake or exactly reuse one complete compiler-owned Alpha Loaf envelope.
 ///
 /// The command is hidden beneath `legacy_cargo` because Cargo may run only for a genuine Loaf miss. Normal
@@ -504,50 +516,70 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             "release envelope did not retain its runtime-foundation capture".to_string(),
         ));
     }
-    let finalized_release_graph = if let Some((receipt, capture, sources, manifest_source, _loaf_identity, _, _)) =
-        release_foundation_capture.as_ref()
-    {
-        let manifest = ProjectManifest::from_str(manifest_source, Path::new("incan.toml"))
-            .map_err(|error| CliError::failure(format!("release foundation manifest is invalid: {error}")))?;
-        let (_, generated) = legacy_cargo_generated_output_bindings(capture).map_err(oven_error)?;
-        let linked = legacy_cargo_generated_archive_bindings(capture, &generated).map_err(oven_error)?;
-        let provisional = legacy_cargo_foundation_projection(
-            capture,
-            receipt,
-            sources,
-            &receipt.identity,
-            &evidence.rustc_identity,
-            &linked,
-        )
-        .map_err(oven_error)?;
-        let closure_digest =
-            legacy_cargo_build_script_closure_digest(capture, &provisional.build_scripts).map_err(oven_error)?;
-        let capture_receipt =
-            receipt_with_build_unit_input(receipt, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, closure_digest)
+    // The selected graph names its Toolchain owner by the bounded compiler/sysroot closure digest, which is the
+    // identity of the physical members the generation retains for that owner. Stage that closure first so the graph
+    // is sealed against exactly what will ship, rather than against the compiler's version string.
+    let release_toolchain = if let Some((receipt, ..)) = release_foundation_capture.as_ref() {
+        let relative_path = PathBuf::from("runtime-foundations/rust-toolchain");
+        let root = staged_root.join(&relative_path);
+        let (compiler_closure_identity, members) =
+            stage_release_runtime_foundation_toolchain(&options.rustc, &receipt.intent.target, &root)
                 .map_err(oven_error)?;
-        let projection = legacy_cargo_foundation_projection(
-            capture,
-            receipt,
-            sources,
-            &capture_receipt.identity,
-            &evidence.rustc_identity,
-            &linked,
-        )
-        .map_err(oven_error)?;
-        Some(
-            finalize_compiler_support_selected_graph(
-                capture,
-                &projection,
-                &manifest,
-                &BTreeSet::new(),
-                &evidence.rustc_identity,
-                receipt,
-            )
-            .map_err(oven_error)?,
-        )
+        Some(StagedReleaseToolchain {
+            relative_path,
+            root,
+            compiler_closure_identity,
+            members,
+        })
     } else {
         None
     };
+    let finalized_release_graph =
+        if let (Some((receipt, capture, sources, manifest_source, _loaf_identity, _, _)), Some(toolchain)) =
+            (release_foundation_capture.as_ref(), release_toolchain.as_ref())
+        {
+            let toolchain_owner = toolchain.compiler_closure_identity.as_str();
+            let manifest = ProjectManifest::from_str(manifest_source, Path::new("incan.toml"))
+                .map_err(|error| CliError::failure(format!("release foundation manifest is invalid: {error}")))?;
+            let (_, generated) = legacy_cargo_generated_output_bindings(capture).map_err(oven_error)?;
+            let linked = legacy_cargo_generated_archive_bindings(capture, &generated).map_err(oven_error)?;
+            let provisional = legacy_cargo_foundation_projection(
+                capture,
+                receipt,
+                sources,
+                &receipt.identity,
+                toolchain_owner,
+                &linked,
+            )
+            .map_err(oven_error)?;
+            let closure_digest =
+                legacy_cargo_build_script_closure_digest(capture, &provisional.build_scripts).map_err(oven_error)?;
+            let capture_receipt =
+                receipt_with_build_unit_input(receipt, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, closure_digest)
+                    .map_err(oven_error)?;
+            let projection = legacy_cargo_foundation_projection(
+                capture,
+                receipt,
+                sources,
+                &capture_receipt.identity,
+                toolchain_owner,
+                &linked,
+            )
+            .map_err(oven_error)?;
+            Some(
+                finalize_compiler_support_selected_graph(
+                    capture,
+                    &projection,
+                    &manifest,
+                    &BTreeSet::new(),
+                    toolchain_owner,
+                    receipt,
+                )
+                .map_err(oven_error)?,
+            )
+        } else {
+            None
+        };
     if let (
         Some(finalized),
         Some((_, expected_capture, sources, _, capture_loaf_identity, generated_project, inspection_packages)),
@@ -618,27 +650,35 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             })?;
         }
     }
-    let release_policy_inventories = if let (Some(finalized), Some(policy), Some((_, capture, sources, _, _, _, _))) = (
-        finalized_release_graph.as_ref(),
-        release_policy_output.as_ref(),
-        release_foundation_capture.as_ref(),
-    ) {
-        let request =
-            encode_selected_graph_policy_request(&finalized.graph, capture, sources, &evidence.rustc_identity)
-                .map_err(oven_error)?;
-        let response = run_release_rust_policy(policy, &scratch.path().join("rust-policy-exchange"), &request)?;
-        Some(runtime_foundation_inventories_from_policy_response(&finalized.graph, &response).map_err(oven_error)?)
-    } else {
-        None
-    };
+    let release_policy_inventories =
+        if let (Some(finalized), Some(policy), Some((_, capture, sources, _, _, _, _)), Some(toolchain)) = (
+            finalized_release_graph.as_ref(),
+            release_policy_output.as_ref(),
+            release_foundation_capture.as_ref(),
+            release_toolchain.as_ref(),
+        ) {
+            let request = encode_selected_graph_policy_request(
+                &finalized.graph,
+                capture,
+                sources,
+                &toolchain.compiler_closure_identity,
+            )
+            .map_err(oven_error)?;
+            let response = run_release_rust_policy(policy, &scratch.path().join("rust-policy-exchange"), &request)?;
+            Some(runtime_foundation_inventories_from_policy_response(&finalized.graph, &response).map_err(oven_error)?)
+        } else {
+            None
+        };
     if envelope == OvenLoafEnvelope::Release && release_policy_inventories.is_none() {
         return Err(CliError::failure(
             "release envelope did not produce admitted Rust policy inventories".to_string(),
         ));
     }
-    let (runtime_foundation, runtime_closure) = if let (Some(finalized), Some(inventories)) =
-        (finalized_release_graph.as_ref(), release_policy_inventories)
-    {
+    let (runtime_foundation, runtime_closure) = if let (Some(finalized), Some(inventories), Some(toolchain)) = (
+        finalized_release_graph.as_ref(),
+        release_policy_inventories,
+        release_toolchain,
+    ) {
         let final_entry = pending
             .iter()
             .find(|entry| entry.label == "stdlib" && entry.profile == "release")
@@ -670,7 +710,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             let exact = foundation_member.foundation_identity == candidate_asset.foundation_identity()
                 && foundation_member.compiled_loaf_identity == final_entry.result.loaf_identity
                 && foundation_member.compiled_plan_identity == final_entry.result.plan_identity
-                && foundation_member.toolchain_owner_identity == evidence.rustc_identity
+                && foundation_member.toolchain_owner_identity == toolchain.compiler_closure_identity
                 && closure_member.foundation_identity == foundation_member.foundation_identity
                 && closure_member.compiler_closure_identity == foundation_member.compiler_closure_identity;
             exact.then_some((foundation_member, closure_member))
@@ -702,14 +742,12 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             drop(publication_lock);
         }
         {
-            let toolchain_relative = PathBuf::from("runtime-foundations/rust-toolchain");
-            let toolchain_root = staged_root.join(&toolchain_relative);
-            let (compiler_closure_identity, mut toolchain_members) = stage_release_runtime_foundation_toolchain(
-                &options.rustc,
-                &finalized.graph.graph().selection.intent.target,
-                &toolchain_root,
-            )
-            .map_err(oven_error)?;
+            let StagedReleaseToolchain {
+                relative_path: toolchain_relative,
+                root: toolchain_root,
+                compiler_closure_identity,
+                members: mut toolchain_members,
+            } = toolchain;
             let retained_selection = PathBuf::from("selection.json");
             let selection_bytes = serde_json::to_vec(&finalized.graph.graph().selection)
                 .map_err(|error| CliError::failure(format!("could not encode retained Rust selection: {error}")))?;
@@ -744,7 +782,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 foundation_identity: admitted.foundation_identity().to_string(),
                 compiled_loaf_identity: final_entry.result.loaf_identity.clone(),
                 compiled_plan_identity: final_entry.result.plan_identity.clone(),
-                toolchain_owner_identity: evidence.rustc_identity.clone(),
+                toolchain_owner_identity: compiler_closure_identity.clone(),
                 compiler_closure_identity: compiler_closure_identity.clone(),
                 toolchain_root_relative_path: toolchain_relative,
                 toolchain_members,
