@@ -14,6 +14,6 @@ stdlib/interop/
   vocab_companion/ the component's vocabulary companion crate (`[vocab] crate` in `loaf.toml`), the Rust it does have
 ```
 
-Component-level tests are reserved under `loaves/stdlib/interop/tests/`; the directory is empty today.
+Component-level tests belong under `loaves/stdlib/interop/tests/`.
 
 Rust and Incan live in the same directory because the component is the unit of versioning, ownership, testing, and runtime-dependency attribution. A project importing `std.interop` should pull this component and its declared dependency closure, without unrelated components.

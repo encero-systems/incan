@@ -13,6 +13,6 @@ stdlib/codecs/
   rust/src/        reserved for an `incan_std_codecs` facet; this component has no Rust of its own today
 ```
 
-Component-level tests are reserved under `loaves/stdlib/codecs/tests/`; the directory is empty today.
+Component-level tests belong under `loaves/stdlib/codecs/tests/`.
 
 Rust and Incan live in the same directory because the component is the unit of versioning, ownership, testing, and runtime-dependency attribution. A project importing `std.checksum` should pull this component and its declared dependency closure, without unrelated components.

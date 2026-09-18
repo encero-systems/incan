@@ -13,6 +13,6 @@ stdlib/async/
   rust/            the `incan_std_async` facet: the Rust half of this component, declared by `[rust.source]` in `loaf.toml`
 ```
 
-Component-level tests are reserved under `loaves/stdlib/async/tests/`; the directory is empty today.
+Component-level tests belong under `loaves/stdlib/async/tests/`.
 
 Rust and Incan live in the same directory because the component is the unit of versioning, ownership, testing, and runtime-dependency attribution. A project importing `std.async` should pull this component and its declared dependency closure, without unrelated components.
