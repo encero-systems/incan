@@ -1883,7 +1883,8 @@ fn projected_generated_input(
         .collect::<Vec<_>>();
     if binding.digest != output.digest
         || binding.source.path != output.relative_root
-        || oven_rustc::rustc::selected_graph_source_digest(&captured_members)
+        // A generated inventory may be a checked empty directory; only authored source refuses an empty member set.
+        || oven_rustc::rustc::selected_graph_generated_input_digest(&captured_members)
             .map_err(|error| projection_error("selected generated output", &error.to_string()))?
             != output.digest
     {
@@ -2305,6 +2306,135 @@ mod tests {
             kind: OvenSelectedRustFacetOwnerKind::Constituent,
         }];
         validate_registry_binding(&capture.units[0], binding, &owners)?;
+        Ok(())
+    }
+
+    /// The Release runtime-foundation publisher seals its capture with the production binder, never a hand-made
+    /// projection. This walks that exact sequence for a transport root, one registry library and its build script.
+    #[test]
+    fn foundation_projection_of_a_registry_closure_finalizes_through_the_production_binder()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut capture = capture()?;
+        let library = capture.units[0].clone();
+        let registry = library
+            .registry_source
+            .clone()
+            .ok_or("fixture library must carry a registry source")?;
+        let mut build_script = library.clone();
+        build_script.target_name = "build-script-build".to_string();
+        build_script.target_kinds = vec!["custom-build".to_string()];
+        build_script.crate_types = vec!["bin".to_string()];
+        build_script.source_path = PathBuf::from("/transient/serde/build.rs");
+        build_script.root_module = "build.rs".to_string();
+        build_script.mode = "run-custom-build".to_string();
+        build_script.registry_source = Some(super::super::OvenLegacyCargoSelectedRegistrySource {
+            root_module: "build.rs".to_string(),
+            ..registry.clone()
+        });
+        let mut root = library.clone();
+        root.package_id = "path+file:///fixture#oven_release_stdlib@0.1.0".to_string();
+        root.package = "oven_release_stdlib".to_string();
+        root.package_version = "0.1.0".to_string();
+        root.package_source = None;
+        root.target_name = "oven_release_stdlib".to_string();
+        root.registry_source = None;
+        root.dependencies = vec![super::super::OvenLegacyCargoSelectedDependency {
+            unit_index: 1,
+            extern_crate_name: Some("serde".to_string()),
+            build_script: None,
+        }];
+        // Indices are pre-shift: the root is inserted at 0 below, moving the library to 1 and its edge target to 2.
+        capture.units[0]
+            .dependencies
+            .push(super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 1,
+                extern_crate_name: None,
+                build_script: Some(super::super::OvenLegacyCargoBuildScriptFacts {
+                    cfgs: Vec::new(),
+                    environment: BTreeMap::new(),
+                    linked_libraries: Vec::new(),
+                    linked_paths: Vec::new(),
+                    out_dir: PathBuf::from("/transient/serde/out"),
+                    output: None,
+                }),
+            });
+        capture.units.insert(0, root);
+        for edge in &mut capture.units[1].dependencies {
+            edge.unit_index += 1;
+        }
+        capture.units.push(build_script);
+        capture.roots = vec![0];
+
+        let members = registry
+            .members
+            .iter()
+            .map(|member| super::super::OvenLegacyCargoInspectionSourceMember {
+                path: member.path.clone(),
+                digest: member.digest.clone(),
+            })
+            .collect::<Vec<_>>();
+        let sources = vec![super::super::OvenLegacyCargoInspectionSource {
+            package: library.package.clone(),
+            version: library.package_version.clone(),
+            registry: registry.registry.clone(),
+            checksum: registry.checksum.clone(),
+            features: vec!["derive".to_string()],
+            source_root: PathBuf::from("/staged/registry-sources/serde-1.0.0"),
+            source_digest: registry.digest.clone(),
+            members,
+        }];
+        let directory = tempdir()?;
+        let receipt = receipt_generated_project(&fixture_receipt_request(directory.path(), "release-stdlib")?)?;
+        let toolchain_owner = digest(b"release toolchain owner");
+        let manifest = ProjectManifest::from_str(
+            "[project]\nname = \"oven_release_stdlib\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\n",
+            Path::new("loaf.toml"),
+        )?;
+
+        // The publisher's own sequence: provisional projection, closure digest, capture receipt, sealed projection.
+        let (_, generated) = legacy_cargo_generated_output_bindings(&capture)?;
+        let linked = legacy_cargo_generated_archive_bindings(&capture, &generated)?;
+        let provisional = legacy_cargo_foundation_projection(
+            &capture,
+            &receipt,
+            &sources,
+            &receipt.identity,
+            &toolchain_owner,
+            &linked,
+        )?;
+        let closure_digest = legacy_cargo_build_script_closure_digest(&capture, &provisional.build_scripts)?;
+        let capture_receipt =
+            receipt_with_build_unit_input(&receipt, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, closure_digest)?;
+        let projection = legacy_cargo_foundation_projection(
+            &capture,
+            &receipt,
+            &sources,
+            &capture_receipt.identity,
+            &toolchain_owner,
+            &linked,
+        )?;
+        assert_eq!(
+            projection.units.keys().copied().collect::<Vec<_>>(),
+            vec![1],
+            "the binder seals the registry library only: the transport root is pruned later and the build script is an edge"
+        );
+
+        let finalized = finalize_compiler_support_selected_graph(
+            &capture,
+            &projection,
+            &manifest,
+            &BTreeSet::new(),
+            &toolchain_owner,
+            &receipt,
+        )?;
+        let graph = finalized.graph.graph();
+        assert_eq!(
+            graph.units.len(),
+            1,
+            "the transport root leaves and the build script is not a graph unit"
+        );
+        assert_eq!(graph.units[0].source.identity, "registry:serde@1.0.0");
+        assert_eq!(graph.exposed_roots["serde"].unit, graph.units[0].identity);
         Ok(())
     }
 
@@ -2880,19 +3010,41 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn projection_attaches_only_the_exact_retained_generated_output() -> Result<(), Box<dyn std::error::Error>> {
+    /// One consumer whose build script retained the given generated inventory, sealed with a matching binding.
+    fn generated_output_fixture(
+        members: Vec<OvenSelectedRustFacetSourceMember>,
+    ) -> Result<
+        (
+            OvenLegacyCargoSelectedUnitCapture,
+            OvenLegacyCargoSelectedGraphProjection,
+        ),
+        Box<dyn std::error::Error>,
+    > {
         let mut capture = capture()?;
-        let generated_digest = selected_graph_source_digest(&[OvenSelectedRustFacetSourceMember {
-            path: "bindings.rs".to_string(),
-            digest: digest(b"pub const BINDING: u32 = 1;\n"),
-        }])?;
+        let generated_digest = oven_rustc::rustc::selected_graph_generated_input_digest(&members)?;
         capture.units[0]
             .dependencies
             .push(super::super::OvenLegacyCargoSelectedDependency {
                 unit_index: 1,
                 extern_crate_name: None,
-                build_script: None,
+                build_script: Some(super::super::OvenLegacyCargoBuildScriptFacts {
+                    cfgs: vec!["has_bindings".to_string()],
+                    environment: BTreeMap::new(),
+                    linked_libraries: Vec::new(),
+                    linked_paths: Vec::new(),
+                    out_dir: PathBuf::from("/transient/out"),
+                    output: Some(super::super::OvenLegacyCargoSelectedGeneratedOutput {
+                        relative_root: "generated-outputs/bindings".to_string(),
+                        digest: generated_digest.clone(),
+                        members: members
+                            .iter()
+                            .map(|member| super::super::OvenLegacyCargoInspectionSourceMember {
+                                path: member.path.clone(),
+                                digest: member.digest.clone(),
+                            })
+                            .collect(),
+                    }),
+                }),
             });
         capture.units.push(OvenLegacyCargoSelectedUnit {
             package_id: "registry+https://example.invalid/index#serde@1.0.0".to_string(),
@@ -2913,29 +3065,9 @@ mod tests {
             effective_features: Vec::new(),
             dependencies: Vec::new(),
             sysroot_externs: Vec::new(),
-            build_script: Some(super::super::OvenLegacyCargoBuildScriptFacts {
-                cfgs: vec!["has_bindings".to_string()],
-                environment: BTreeMap::new(),
-                linked_libraries: Vec::new(),
-                linked_paths: Vec::new(),
-                out_dir: PathBuf::from("/transient/out"),
-                output: Some(super::super::OvenLegacyCargoSelectedGeneratedOutput {
-                    relative_root: "generated-outputs/bindings".to_string(),
-                    digest: generated_digest.clone(),
-                    members: vec![super::super::OvenLegacyCargoInspectionSourceMember {
-                        path: "bindings.rs".to_string(),
-                        digest: digest(b"pub const BINDING: u32 = 1;\n"),
-                    }],
-                }),
-            }),
+            build_script: None,
             registry_source: None,
         });
-        let facts = capture.units[1].build_script.take();
-        capture.units[0]
-            .dependencies
-            .last_mut()
-            .ok_or("selected consumer lost its build-script edge")?
-            .build_script = facts;
         let mut sealed = sealed(&capture)?;
         let generated_owner = digest(b"generated owner");
         sealed.owners.push(OvenSelectedRustFacetOwner {
@@ -2953,12 +3085,36 @@ mod tests {
                 digest: generated_digest,
             },
         );
+        Ok((capture, sealed))
+    }
 
+    #[test]
+    fn projection_attaches_only_the_exact_retained_generated_output() -> Result<(), Box<dyn std::error::Error>> {
+        let (capture, sealed) = generated_output_fixture(vec![OvenSelectedRustFacetSourceMember {
+            path: "bindings.rs".to_string(),
+            digest: digest(b"pub const BINDING: u32 = 1;\n"),
+        }])?;
         let final_receipt = closure_final_receipt(&capture, &sealed)?;
         let graph = project_legacy_cargo_selected_graph(&capture, &sealed, Some(&final_receipt))?;
         assert_eq!(graph.units[0].cfg, ["has_bindings", "target_has_atomic=\"8\""]);
         assert_eq!(graph.units[0].generated_inputs.len(), 1);
         assert_eq!(graph.units[0].generated_inputs[0].name, "bindings");
+        Ok(())
+    }
+
+    /// A build script that emits only cfgs leaves a checked empty `OUT_DIR`, which the capture retains as an empty
+    /// inventory distinct from an absent output. The projection must admit it under the same digest rule.
+    #[test]
+    fn projection_attaches_a_checked_empty_generated_output() -> Result<(), Box<dyn std::error::Error>> {
+        let (capture, sealed) = generated_output_fixture(Vec::new())?;
+        let final_receipt = closure_final_receipt(&capture, &sealed)?;
+        let graph = project_legacy_cargo_selected_graph(&capture, &sealed, Some(&final_receipt))?;
+        assert_eq!(graph.units[0].generated_inputs.len(), 1);
+        assert!(graph.units[0].generated_inputs[0].members.is_empty());
+        assert_eq!(
+            graph.units[0].generated_inputs[0].digest,
+            oven_rustc::rustc::selected_graph_generated_input_digest(&[])?
+        );
         Ok(())
     }
 
