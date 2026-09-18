@@ -200,6 +200,8 @@ pub struct OvenLoafBakeCommandOptions {
     pub max_domain_logical_bytes: Option<u64>,
     /// Requested rendering format.
     pub format: OvenOutputFormat,
+    /// Registered Loaf registry checkout whose adoption manifests govern captured registry units (release only).
+    pub loaf_registry: Option<PathBuf>,
 }
 
 /// Inputs for the direct-rustc compiler workspace-test consumer.

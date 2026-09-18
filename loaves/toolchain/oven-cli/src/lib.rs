@@ -130,6 +130,7 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
                 max_domain_physical_bytes,
                 max_domain_logical_bytes,
                 format,
+                loaf_registry,
             } => commands::oven_legacy_cargo_bake_loafs(commands::OvenLoafBakeCommandOptions {
                 compiler_root,
                 output,
@@ -145,6 +146,7 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
                 max_domain_physical_bytes,
                 max_domain_logical_bytes,
                 format,
+                loaf_registry,
             }),
         },
         OvenCommand::CompilerLibtests {

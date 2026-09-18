@@ -49,6 +49,9 @@ INCAN_TEST_PREWARM_TOOLCHAIN ?= 1.98.0
 INCAN_TEST_PUBLISHER_TOOLCHAIN ?= nightly-2026-03-24
 INCAN_TEST_FIXTURE_CARGO_TOOLCHAIN ?= $(INCAN_TEST_PUBLISHER_TOOLCHAIN)
 INCAN_TEST_LOAF_TOOLCHAIN ?= 1.98.0
+# Registered Loaf registry checkout (incan.pub) whose adoption manifests govern captured registry units in the
+# release bake; unset, the release publisher keeps every unit observation-governed.
+INCAN_TEST_LOAF_REGISTRY ?=
 INCAN_TEST_SUITE_TOOLCHAIN ?= 1.98.0
 TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS) \
 	INCAN_TEST_TMP_ROOT="$(abspath $(INCAN_TEST_TMP_ROOT))" \
@@ -555,7 +558,8 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 			--rustc "$$rustc_bin" \
 			--policy-engine-store "$$policy_engine_store" \
 			--policy-engine-identity "$$policy_engine_identity" \
-			--policy-engine-target "$$target"
+			--policy-engine-target "$$target" \
+			$(if $(INCAN_TEST_LOAF_REGISTRY),--loaf-registry "$(INCAN_TEST_LOAF_REGISTRY)",)
 
 .PHONY: test-oven-focused
 test-oven-focused:

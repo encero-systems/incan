@@ -18,7 +18,7 @@ use oven_cargo_compat::loaf_bake::{
     prepare_loaf_from_generated_project_with_selected_units,
 };
 use oven_cargo_compat::{
-    OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, encode_selected_graph_policy_request,
+    LoafRegistryAuthority, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, encode_selected_graph_policy_request,
     finalize_compiler_support_selected_graph, legacy_cargo_build_script_closure_digest,
     legacy_cargo_foundation_projection, legacy_cargo_generated_archive_bindings,
     legacy_cargo_generated_output_bindings, runtime_foundation_from_compiled_loaf,
@@ -65,6 +65,9 @@ use super::{
     retire_unreferenced_loaf_generations, reuse_complete_loaf_envelope, stage_locked_loaf_fixture, write_receipt,
     write_sealed_oven_inspection_source_authority,
 };
+
+/// Generation evidence key binding the exact registry content whose declarations governed adopted units.
+const OVEN_LOAF_REGISTRY_AUTHORITY_EVIDENCE: &str = "loaf_registry_authority_digest";
 
 /// The bounded compiler/sysroot closure one release generation retains as its selected graph's Toolchain owner.
 struct StagedReleaseToolchain {
@@ -541,6 +544,16 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             let toolchain_owner = toolchain.compiler_closure_identity.as_str();
             let manifest = ProjectManifest::from_str(manifest_source, Path::new("incan.toml"))
                 .map_err(|error| CliError::failure(format!("release foundation manifest is invalid: {error}")))?;
+            // A registered Loaf registry supplies RFC 119 declarations for captured registry units; where one binds
+            // the exact captured source and selection it governs that unit, and the observation must agree with it.
+            let registry_authority = match options.loaf_registry.as_deref() {
+                Some(root) => {
+                    let registry = oven_model::loaf_registry::LoafRegistry::open(root)
+                        .map_err(|error| CliError::failure(error.to_string()))?;
+                    LoafRegistryAuthority::resolve(capture, &registry, &receipt.intent.profile).map_err(oven_error)?
+                }
+                None => LoafRegistryAuthority::none(),
+            };
             let (_, generated) = legacy_cargo_generated_output_bindings(capture).map_err(oven_error)?;
             let linked = legacy_cargo_generated_archive_bindings(capture, &generated).map_err(oven_error)?;
             let provisional = legacy_cargo_foundation_projection(
@@ -550,6 +563,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 &receipt.identity,
                 toolchain_owner,
                 &linked,
+                &registry_authority,
             )
             .map_err(oven_error)?;
             let closure_digest =
@@ -564,22 +578,26 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 &capture_receipt.identity,
                 toolchain_owner,
                 &linked,
+                &registry_authority,
             )
             .map_err(oven_error)?;
-            Some(
-                finalize_compiler_support_selected_graph(
-                    capture,
-                    &projection,
-                    &manifest,
-                    &BTreeSet::new(),
-                    toolchain_owner,
-                    receipt,
-                )
-                .map_err(oven_error)?,
+            let finalized = finalize_compiler_support_selected_graph(
+                capture,
+                &projection,
+                &manifest,
+                &BTreeSet::new(),
+                toolchain_owner,
+                receipt,
             )
+            .map_err(oven_error)?;
+            Some((finalized, registry_authority.evidence_digest()))
         } else {
             None
         };
+    let (finalized_release_graph, loaf_registry_evidence) = match finalized_release_graph {
+        Some((finalized, evidence)) => (Some(finalized), evidence),
+        None => (None, None),
+    };
     if let (
         Some(finalized),
         Some((_, expected_capture, sources, _, capture_loaf_identity, generated_project, inspection_packages)),
@@ -904,6 +922,9 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     if let Some(member) = runtime_closure.as_ref() {
         oven_rustc::loaf::bind_release_runtime_closure_evidence(&mut compatibility_evidence, member)
             .map_err(oven_error)?;
+    }
+    if let Some(digest) = loaf_registry_evidence.as_ref() {
+        compatibility_evidence.insert(OVEN_LOAF_REGISTRY_AUTHORITY_EVIDENCE.to_string(), digest.clone());
     }
     let generation_identity =
         loaf_generation_identity_with_release_member(envelope, &compatibility_evidence, release_store_member.as_ref())?;

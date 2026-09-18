@@ -27,6 +27,7 @@ use oven_store::OvenReceipt;
 use oven_store::{receipt_with_build_unit_input, receipt_with_compiler_support_root_intent};
 use serde::{Deserialize, Serialize};
 
+use super::LoafRegistryAuthority;
 use super::{
     OvenLegacyCargoBuildScriptToolProbe, OvenLegacyCargoError, OvenLegacyCargoInspectionSource,
     OvenLegacyCargoSelectedGeneratedOutput, OvenLegacyCargoSelectedUnit, OvenLegacyCargoSelectedUnitCapture,
@@ -93,6 +94,31 @@ pub struct OvenLegacyCargoSelectedBuildScriptBinding {
     pub environment: BTreeMap<String, OvenLegacyCargoSelectedEnvironmentBinding>,
     /// The exact typed linked-library closure, when the build script emitted link facts.
     pub linked_libraries: Option<OvenLegacyCargoSelectedLinkedLibraryBinding>,
+    /// The registry declaration that governs this edge in place of its observation, when one was adopted.
+    ///
+    /// Absent for an observation-governed edge, so such edges keep their closure identity unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declaration: Option<OvenLegacyCargoDeclaredBuildScriptFacts>,
+}
+
+/// The registry declaration one adopted build-script edge is sealed under.
+///
+/// The declaration names the exact registry content it came from, so the build-script closure digest, and with it
+/// the capture receipt, binds which published facts replaced the observation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OvenLegacyCargoDeclaredBuildScriptFacts {
+    /// Package name as the registry publishes it.
+    pub package: String,
+    /// Exact version.
+    pub version: String,
+    /// Canonical checksum of the source both the capture and the registry describe.
+    pub checksum: String,
+    /// Identity of the exact index line the declaration was selected from.
+    pub index_line_digest: String,
+    /// Declared `cfg` answers, which the observation was required to match.
+    pub cfg: Vec<String>,
+    /// Declared generated inputs by name and digest, which the observation was required to match.
+    pub out: BTreeMap<String, String>,
 }
 
 /// All non-Cargo physical facts needed to turn one capture into a portable raw graph.
@@ -1123,6 +1149,7 @@ pub fn legacy_cargo_foundation_projection(
     foundation_owner: &str,
     toolchain_owner: &str,
     linked_libraries: &BTreeMap<(usize, usize), OvenLegacyCargoSelectedLinkedLibraryBinding>,
+    authority: &LoafRegistryAuthority,
 ) -> Result<OvenLegacyCargoSelectedGraphProjection, OvenLegacyCargoError> {
     let compiler = capture
         .compiler
@@ -1157,6 +1184,24 @@ pub fn legacy_cargo_foundation_projection(
         return Err(projection_error("foundation owners", "contain a duplicate identity"));
     }
 
+    // An adopted unit without a build-script edge still has a declaration to hold to: it must state no answers.
+    for (index, adoption) in authority.adoptions() {
+        let Some(unit) = capture.units.get(index) else {
+            return Err(projection_error(
+                "Loaf registry adoption",
+                "names an absent physical unit",
+            ));
+        };
+        let has_build_script = unit.dependencies.iter().any(|dependency| {
+            capture
+                .units
+                .get(dependency.unit_index)
+                .is_some_and(is_build_script_unit)
+        });
+        if !has_build_script {
+            LoafRegistryAuthority::check_observation(adoption, None)?;
+        }
+    }
     let mut build_scripts = BTreeMap::new();
     for (consumer, unit) in capture.units.iter().enumerate() {
         for dependency in &unit.dependencies {
@@ -1174,6 +1219,12 @@ pub fn legacy_cargo_foundation_projection(
                 .as_ref()
                 .or(build_unit.build_script.as_ref())
                 .ok_or_else(|| projection_error("selected build-script edge", "has no retained facts"))?;
+            // Where a registry declaration governs this consumer, the observation must agree with it, and the
+            // projection carries the declaration: nothing the script emitted outside it, environment included.
+            let adoption = authority.adoption(consumer);
+            if let Some(adoption) = adoption {
+                LoafRegistryAuthority::check_observation(adoption, Some(facts))?;
+            }
             let edge = (consumer, dependency.unit_index);
             let typed_linked = linked_libraries.get(&edge).cloned();
             let has_linked = !facts.linked_libraries.is_empty() || !facts.linked_paths.is_empty();
@@ -1183,24 +1234,41 @@ pub fn legacy_cargo_foundation_projection(
                     "does not have one exact final publisher binding",
                 ));
             }
-            let environment = facts
-                .environment
-                .iter()
-                .map(|(name, value)| {
-                    (
-                        name.clone(),
-                        OvenLegacyCargoSelectedEnvironmentBinding {
-                            observed_value: value.clone(),
-                            value: OvenSelectedRustFacetEnvironmentValue::Text { value: value.clone() },
-                        },
-                    )
-                })
-                .collect();
+            let environment = if adoption.is_some() {
+                BTreeMap::new()
+            } else {
+                facts
+                    .environment
+                    .iter()
+                    .map(|(name, value)| {
+                        (
+                            name.clone(),
+                            OvenLegacyCargoSelectedEnvironmentBinding {
+                                observed_value: value.clone(),
+                                value: OvenSelectedRustFacetEnvironmentValue::Text { value: value.clone() },
+                            },
+                        )
+                    })
+                    .collect()
+            };
             build_scripts.insert(
                 edge,
                 OvenLegacyCargoSelectedBuildScriptBinding {
                     environment,
                     linked_libraries: typed_linked,
+                    declaration: adoption.map(|adoption| OvenLegacyCargoDeclaredBuildScriptFacts {
+                        package: adoption.package.clone(),
+                        version: adoption.version.clone(),
+                        checksum: adoption.checksum.clone(),
+                        index_line_digest: adoption.index_line_digest.clone(),
+                        cfg: adoption.record.cfg.clone(),
+                        out: adoption
+                            .record
+                            .out
+                            .iter()
+                            .map(|out| (out.name.clone(), out.digest.clone()))
+                            .collect(),
+                    }),
                 },
             );
         }
@@ -1776,10 +1844,17 @@ fn projected_build_script_facts(
         let edge = (consumer, dependency.unit_index);
         let binding = sealed.build_scripts.get(&edge).cloned().unwrap_or_default();
         for (name, observed) in &facts.environment {
-            let bound = binding
-                .environment
-                .get(name)
-                .ok_or_else(|| projection_error("selected build-script environment", "has no typed sealed binding"))?;
+            let Some(bound) = binding.environment.get(name) else {
+                // A registry declaration governs this edge: what the script emitted outside the declaration is
+                // provenance in the capture, not a fact of the unit.
+                if binding.declaration.is_some() {
+                    continue;
+                }
+                return Err(projection_error(
+                    "selected build-script environment",
+                    "has no typed sealed binding",
+                ));
+            };
             match &bound.value {
                 OvenSelectedRustFacetEnvironmentValue::Text { value } if value == observed => {}
                 OvenSelectedRustFacetEnvironmentValue::Text { .. } => {
@@ -1809,7 +1884,11 @@ fn projected_build_script_facts(
                 ));
             }
         }
-        if binding.environment.len() != facts.environment.len() {
+        // Every sealed key was matched to an observation above; a declared edge legitimately binds fewer keys than
+        // the script emitted, an observed edge binds exactly as many.
+        let bound_keys = binding.environment.len();
+        let observed_keys = facts.environment.len();
+        if bound_keys > observed_keys || (binding.declaration.is_none() && bound_keys != observed_keys) {
             return Err(projection_error(
                 "selected build-script environment",
                 "binds an unobserved environment key",
@@ -2309,17 +2388,27 @@ mod tests {
         Ok(())
     }
 
-    /// The Release runtime-foundation publisher seals its capture with the production binder, never a hand-made
-    /// projection. This walks that exact sequence for a transport root, one registry library and its build script.
-    #[test]
-    fn foundation_projection_of_a_registry_closure_finalizes_through_the_production_binder()
-    -> Result<(), Box<dyn std::error::Error>> {
+    /// A transport root, one registry library with a build script, and the catalog that describes it: the shape
+    /// the Release publisher captures. `checksum` is the registry source both the capture and a registry name.
+    fn release_shaped_capture(
+        checksum: &str,
+        script_environment: BTreeMap<String, String>,
+    ) -> Result<
+        (
+            OvenLegacyCargoSelectedUnitCapture,
+            Vec<super::super::OvenLegacyCargoInspectionSource>,
+        ),
+        Box<dyn std::error::Error>,
+    > {
         let mut capture = capture()?;
-        let library = capture.units[0].clone();
-        let registry = library
+        let mut library = capture.units[0].clone();
+        let mut registry = library
             .registry_source
             .clone()
             .ok_or("fixture library must carry a registry source")?;
+        registry.checksum = checksum.to_string();
+        library.registry_source = Some(registry.clone());
+        capture.units[0] = library.clone();
         let mut build_script = library.clone();
         build_script.target_name = "build-script-build".to_string();
         build_script.target_kinds = vec!["custom-build".to_string()];
@@ -2351,7 +2440,7 @@ mod tests {
                 extern_crate_name: None,
                 build_script: Some(super::super::OvenLegacyCargoBuildScriptFacts {
                     cfgs: Vec::new(),
-                    environment: BTreeMap::new(),
+                    environment: script_environment,
                     linked_libraries: Vec::new(),
                     linked_paths: Vec::new(),
                     out_dir: PathBuf::from("/transient/serde/out"),
@@ -2364,7 +2453,6 @@ mod tests {
         }
         capture.units.push(build_script);
         capture.roots = vec![0];
-
         let members = registry
             .members
             .iter()
@@ -2383,6 +2471,16 @@ mod tests {
             source_digest: registry.digest.clone(),
             members,
         }];
+        Ok((capture, sources))
+    }
+
+    /// The publisher's own sequence: provisional projection, closure digest, capture receipt, sealed projection,
+    /// then compiler-support finalization under the given registry authority.
+    fn finalize_release_shaped(
+        capture: &OvenLegacyCargoSelectedUnitCapture,
+        sources: &[super::super::OvenLegacyCargoInspectionSource],
+        authority: &LoafRegistryAuthority,
+    ) -> Result<OvenFinalizedCompilerSupportSelectedGraph, Box<dyn std::error::Error>> {
         let directory = tempdir()?;
         let receipt = receipt_generated_project(&fixture_receipt_request(directory.path(), "release-stdlib")?)?;
         let toolchain_owner = digest(b"release toolchain owner");
@@ -2390,43 +2488,51 @@ mod tests {
             "[project]\nname = \"oven_release_stdlib\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\n",
             Path::new("loaf.toml"),
         )?;
-
-        // The publisher's own sequence: provisional projection, closure digest, capture receipt, sealed projection.
-        let (_, generated) = legacy_cargo_generated_output_bindings(&capture)?;
-        let linked = legacy_cargo_generated_archive_bindings(&capture, &generated)?;
+        let (_, generated) = legacy_cargo_generated_output_bindings(capture)?;
+        let linked = legacy_cargo_generated_archive_bindings(capture, &generated)?;
         let provisional = legacy_cargo_foundation_projection(
-            &capture,
+            capture,
             &receipt,
-            &sources,
+            sources,
             &receipt.identity,
             &toolchain_owner,
             &linked,
+            authority,
         )?;
-        let closure_digest = legacy_cargo_build_script_closure_digest(&capture, &provisional.build_scripts)?;
+        let closure_digest = legacy_cargo_build_script_closure_digest(capture, &provisional.build_scripts)?;
         let capture_receipt =
             receipt_with_build_unit_input(&receipt, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, closure_digest)?;
         let projection = legacy_cargo_foundation_projection(
-            &capture,
+            capture,
             &receipt,
-            &sources,
+            sources,
             &capture_receipt.identity,
             &toolchain_owner,
             &linked,
+            authority,
         )?;
         assert_eq!(
             projection.units.keys().copied().collect::<Vec<_>>(),
             vec![1],
             "the binder seals the registry library only: the transport root is pruned later and the build script is an edge"
         );
-
-        let finalized = finalize_compiler_support_selected_graph(
-            &capture,
+        Ok(finalize_compiler_support_selected_graph(
+            capture,
             &projection,
             &manifest,
             &BTreeSet::new(),
             &toolchain_owner,
             &receipt,
-        )?;
+        )?)
+    }
+
+    /// The Release runtime-foundation publisher seals its capture with the production binder, never a hand-made
+    /// projection. This walks that exact sequence for a transport root, one registry library and its build script.
+    #[test]
+    fn foundation_projection_of_a_registry_closure_finalizes_through_the_production_binder()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (capture, sources) = release_shaped_capture("sha256:fixture", BTreeMap::new())?;
+        let finalized = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
         let graph = finalized.graph.graph();
         assert_eq!(
             graph.units.len(),
@@ -2435,6 +2541,84 @@ mod tests {
         );
         assert_eq!(graph.units[0].source.identity, "registry:serde@1.0.0");
         assert_eq!(graph.exposed_roots["serde"].unit, graph.units[0].identity);
+        Ok(())
+    }
+
+    fn adoption_registry(
+        checksum: &str,
+        cfg: &str,
+    ) -> Result<(tempfile::TempDir, oven_model::loaf_registry::LoafRegistry), Box<dyn std::error::Error>> {
+        let root = tempdir()?;
+        let manifest_dir = root.path().join("crates-io/serde/1.0.0");
+        fs::create_dir_all(&manifest_dir)?;
+        fs::write(
+            manifest_dir.join("loaf.toml"),
+            format!(
+                "[project]\nname = \"serde\"\nversion = \"1.0.0\"\n\n[source]\nregistry = \"https://github.com/rust-lang/crates.io-index\"\nchecksum = \"{checksum}\"\n\n[[rust.facts]]\ntoolchain = \"rustc 1.98.0\"\ntarget = \"x86_64-unknown-linux-gnu\"\nprofile = \"release\"\nfeatures = [\"derive\"]\ncfg = [{cfg}]\n"
+            ),
+        )?;
+        let index_dir = root.path().join("index/se/rd");
+        fs::create_dir_all(&index_dir)?;
+        fs::write(
+            index_dir.join("serde"),
+            format!(
+                "{{\"cksum\":\"{checksum}\",\"manifest\":\"crates-io/serde/1.0.0/loaf.toml\",\"name\":\"serde\",\"source\":\"crates-io\",\"vers\":\"1.0.0\"}}\n"
+            ),
+        )?;
+        let registry = oven_model::loaf_registry::LoafRegistry::open(root.path())?;
+        Ok((root, registry))
+    }
+
+    /// A build script that reemits configuration through `rustc-env` gives the graph no admissible value: the
+    /// validator refuses an unregistered name carried as text. A registry declaration for the exact source and
+    /// selection is the RFC 119 answer: the projection carries the declared facts and nothing else.
+    #[test]
+    fn a_registry_declaration_governs_an_adopted_unit_and_must_agree_with_its_observation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let checksum = format!("sha256:{}", "a".repeat(64));
+        let script_environment = BTreeMap::from([("CFG_OPT_LEVEL".to_string(), "3".to_string())]);
+        let (capture, sources) = release_shaped_capture(&checksum, script_environment)?;
+
+        let unadopted = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none());
+        assert!(
+            unadopted
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.to_string().contains("CFG_OPT_LEVEL")),
+            "without a declaration the script-emitted environment has no admissible representation: {:?}",
+            unadopted.as_ref().err().map(ToString::to_string)
+        );
+
+        let (_root, registry) = adoption_registry(&checksum, "")?;
+        let authority = LoafRegistryAuthority::resolve(&capture, &registry, "release")?;
+        assert!(
+            authority.adoption(1).is_some(),
+            "the registry library is adopted for the captured selection"
+        );
+        assert!(authority.adoption(0).is_none() && authority.adoption(2).is_none());
+        let finalized = finalize_release_shaped(&capture, &sources, &authority)?;
+        let unit = &finalized.graph.graph().units[0];
+        assert!(
+            unit.environment.is_empty(),
+            "the declaration carries no environment, so neither does the graph"
+        );
+        assert!(authority.evidence_digest().is_some());
+
+        let (_root, disagreeing) = adoption_registry(&checksum, "\"has_answer\"")?;
+        let authority = LoafRegistryAuthority::resolve(&capture, &disagreeing, "release")?;
+        let refused = finalize_release_shaped(&capture, &sources, &authority);
+        assert!(
+            refused
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.to_string().contains("disagrees with the observed build script")),
+            "a declaration the observation contradicts is a refusal: {:?}",
+            refused.as_ref().err().map(ToString::to_string)
+        );
+
+        let (_root, other_profile) = adoption_registry(&checksum, "")?;
+        let authority = LoafRegistryAuthority::resolve(&capture, &other_profile, "debug")?;
+        assert!(authority.is_empty(), "a record bound to another profile adopts nothing");
         Ok(())
     }
 
@@ -3220,6 +3404,7 @@ mod tests {
                         },
                     ],
                 }),
+                declaration: None,
             },
         );
         capture

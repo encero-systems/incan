@@ -4160,6 +4160,7 @@ mod tests {
                 max_domain_physical_bytes: Some(10_000_000),
                 max_domain_logical_bytes: Some(10_000_000),
                 format: OvenOutputFormat::Json,
+                loaf_registry: None,
             },
             OvenLoafEnvelope::CompilerSuite,
             report,

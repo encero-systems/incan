@@ -462,6 +462,9 @@ pub enum OvenLegacyCargoCommand {
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
+        /// Registered Loaf registry checkout whose adoption manifests govern captured registry units
+        #[arg(long = "loaf-registry", value_name = "PATH")]
+        loaf_registry: Option<PathBuf>,
     },
 }
 
