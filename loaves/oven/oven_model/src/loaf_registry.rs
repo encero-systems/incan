@@ -291,6 +291,46 @@ mod tests {
         Ok(())
     }
 
+    /// Read the real registry checkout named by `INCAN_PUB_ROOT`, so the client is proven against the projection
+    /// the registry actually renders rather than only against this module's fixtures.
+    #[test]
+    #[ignore = "needs INCAN_PUB_ROOT pointing at an incan.pub checkout"]
+    fn the_real_registry_projection_is_readable() -> TestResult {
+        let root = std::env::var_os("INCAN_PUB_ROOT").ok_or("INCAN_PUB_ROOT is unset")?;
+        let registry = LoafRegistry::open(Path::new(&root))?;
+        let package = registry
+            .package(
+                "libm",
+                "0.2.16",
+                "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981",
+            )?
+            .ok_or("the registry must describe libm 0.2.16")?;
+        let release = package
+            .fact_record(&RustFactSelection {
+                toolchain: "rustc 1.98.0 (88d9e12ae 2026-08-18)".to_string(),
+                target: "aarch64-apple-darwin".to_string(),
+                profile: "release".to_string(),
+                features: vec!["default".to_string(), "arch".to_string()],
+            })
+            .ok_or("the release record must bind")?;
+        assert_eq!(release.cfg, ["arch_enabled", "optimizations_enabled"]);
+        let serde_core = registry
+            .package(
+                "serde_core",
+                "1.0.228",
+                "sha256:41d385c7d4ca58e59fc732af25c3983b67ac852c1a25000afe1175de458b67ad",
+            )?
+            .ok_or("the registry must describe serde_core 1.0.228")?;
+        assert!(
+            serde_core
+                .manifest
+                .rust_facts
+                .iter()
+                .all(|record| { record.out.iter().all(|out| serde_core.committed_out(out).is_file()) })
+        );
+        Ok(())
+    }
+
     #[test]
     fn sparse_index_paths_follow_the_crates_io_scheme() {
         assert_eq!(sparse_index_path("a"), Path::new("index/1/a"));
