@@ -4319,7 +4319,7 @@ fn round_physical(bytes: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use crate::{retained_empty_generated_output_directories, OvenLegacyCargoSelectedGeneratedOutput};
+    use crate::{OvenLegacyCargoSelectedGeneratedOutput, retained_empty_generated_output_directories};
     use std::sync::Arc;
 
     use oven_model::compiler_identity::CompilerIdentity;
