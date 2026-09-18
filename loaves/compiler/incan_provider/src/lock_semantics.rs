@@ -247,6 +247,22 @@ fn provider_dependency_semantic_digests(
     provider_plan: &ProviderPlan,
     semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
 ) -> Result<BTreeMap<String, String>, String> {
+    provider_dependency_semantic_digests_observed(provider_plan, semantic_toolchain_dependencies, None)
+}
+
+#[derive(Default)]
+struct ProviderSemanticDigestCounters {
+    preliminary_provider_digest_calls: usize,
+    preliminary_memory_hits: usize,
+    preliminary_sealed_hits: usize,
+}
+
+/// Run the preliminary physical-to-semantic map while optionally counting its actual digest/cache path.
+fn provider_dependency_semantic_digests_observed(
+    provider_plan: &ProviderPlan,
+    semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
+    mut counters: Option<&mut ProviderSemanticDigestCounters>,
+) -> Result<BTreeMap<String, String>, String> {
     let key = provider_semantic_digest_key(provider_plan, semantic_toolchain_dependencies);
     static DIGESTS: std::sync::OnceLock<std::sync::Mutex<BTreeMap<String, BTreeMap<String, String>>>> =
         std::sync::OnceLock::new();
@@ -254,12 +270,18 @@ fn provider_dependency_semantic_digests(
     if let Ok(cached) = memo.lock()
         && let Some(digests) = cached.get(&key)
     {
+        if let Some(counters) = counters.as_deref_mut() {
+            counters.preliminary_memory_hits += 1;
+        }
         return Ok(digests.clone());
     }
     let sealed = sealed_reading_path(provider_plan, &key);
     if let Some(path) = sealed.as_ref()
         && let Some(digests) = read_sealed_semantic_digests(path)
     {
+        if let Some(counters) = counters.as_deref_mut() {
+            counters.preliminary_sealed_hits += 1;
+        }
         if let Ok(mut cached) = memo.lock() {
             cached.insert(key, digests.clone());
         }
@@ -271,6 +293,9 @@ fn provider_dependency_semantic_digests(
         let (Some(manifest), Some(artifact)) = (provider.manifest.as_deref(), provider.artifact.as_ref()) else {
             continue;
         };
+        if let Some(counters) = counters.as_deref_mut() {
+            counters.preliminary_provider_digest_calls += 1;
+        }
         let semantic_digest = digest_provider_semantic_artifact_with_context_and_cache(
             &artifact.crate_root,
             &artifact.manifest_path,
@@ -510,16 +535,22 @@ fn backend_requirement_name(requirement: &BackendImplementationRequirement) -> S
 mod tests {
     use super::*;
     use std::collections::{BTreeMap, BTreeSet};
+    use std::env;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+    use std::time::{Duration, Instant};
 
     use oven_model::lock::{
         CargoFeatureSelection, compute_resolved_fingerprint, compute_resolved_fingerprint_with_sdk_paths,
     };
 
+    use crate::inventory::{extend_requirements_with_provider_plan, resolve_sdk_component_selection};
+    use crate::requirements::ProjectRequirements;
     use crate::{
-        ComponentSelectionReason, ProviderPlan, ProviderProvenance, ProviderRecord, ResolvedSdkComponents, SdkInventory,
+        ComponentSelectionReason, ProviderPlan, ProviderProvenance, ProviderRecord, ResolvedSdkComponents,
+        SdkComponentSelection, SdkInventory,
     };
+    use incan_frontend::library_manifest_index::LibraryManifestIndex;
     use oven_model::manifest::{DependencySource, DependencySpec};
     use oven_model::oven_interop::InteropCSection;
 
@@ -545,6 +576,140 @@ mod tests {
         provider_plan: ProviderPlan,
         inventory: SdkInventory,
         components: ResolvedSdkComponents,
+    }
+
+    #[derive(Debug)]
+    struct ProviderSemanticMeasurement {
+        fixture: &'static str,
+        support_closure_roots_hashed: usize,
+        support_closure_elapsed: Duration,
+        physical_validation_calls: usize,
+        physical_validation_elapsed: Duration,
+        preliminary_provider_digest_calls: usize,
+        preliminary_memory_hits: usize,
+        preliminary_sealed_hits: usize,
+        preliminary_elapsed: Duration,
+        final_provider_digest_calls: usize,
+        final_unique_artifacts: usize,
+        final_elapsed: Duration,
+        total_elapsed: Duration,
+    }
+
+    impl ProviderSemanticMeasurement {
+        fn render(&self) -> String {
+            format!(
+                "fixture={} support_closure_roots_hashed={} support_closure_us={} physical_validation_calls={} physical_validation_us={} preliminary_provider_digest_calls={} preliminary_memory_hits={} preliminary_sealed_hits={} preliminary_us={} final_provider_digest_calls={} final_unique_artifacts={} final_us={} total_us={}",
+                self.fixture,
+                self.support_closure_roots_hashed,
+                self.support_closure_elapsed.as_micros(),
+                self.physical_validation_calls,
+                self.physical_validation_elapsed.as_micros(),
+                self.preliminary_provider_digest_calls,
+                self.preliminary_memory_hits,
+                self.preliminary_sealed_hits,
+                self.preliminary_elapsed.as_micros(),
+                self.final_provider_digest_calls,
+                self.final_unique_artifacts,
+                self.final_elapsed.as_micros(),
+                self.total_elapsed.as_micros(),
+            )
+        }
+    }
+
+    fn measurement_distribution(label: &str, mut values: Vec<u128>) -> Result<String, String> {
+        if values.is_empty() {
+            return Err(format!("the `{label}` distribution has no samples"));
+        }
+        values.sort_unstable();
+        let median = values[values.len() / 2];
+        Ok(format!(
+            "{label}_min_us={} {label}_median_us={} {label}_max_us={}",
+            values[0],
+            median,
+            values[values.len() - 1]
+        ))
+    }
+
+    fn measure_provider_semantic_identity_pass(
+        fixture: &'static str,
+        provider_plan: &ProviderPlan,
+        specs: &[DependencySpec],
+    ) -> Result<(BTreeMap<String, String>, ProviderSemanticMeasurement), String> {
+        let total_started = Instant::now();
+
+        let support_closure_started = Instant::now();
+        let semantic_toolchain_dependencies = semantic_toolchain_dependencies(specs)?;
+        let support_closure_elapsed = support_closure_started.elapsed();
+
+        // Admission performs this byte-exact check before semantic projection. Keep it visible as a separate phase:
+        // any future optimization must leave integrity validation intact even when a semantic reading is reusable.
+        let physical_validation_started = Instant::now();
+        let mut physical_validation_calls = 0;
+        for provider in provider_plan.records() {
+            let Some(artifact) = provider.artifact.as_ref() else {
+                continue;
+            };
+            physical_validation_calls += 1;
+            let observed = incan_frontend::library_manifest::digest_provider_artifact(&artifact.crate_root)
+                .map_err(|error| error.to_string())?;
+            if observed != provider.identity.digest {
+                return Err(format!(
+                    "physical provider digest changed during measurement for `{}`",
+                    provider.identity.stable_key()
+                ));
+            }
+        }
+        let physical_validation_elapsed = physical_validation_started.elapsed();
+
+        let preliminary_started = Instant::now();
+        let mut preliminary_counters = ProviderSemanticDigestCounters::default();
+        let dependency_semantic_digests = provider_dependency_semantic_digests_observed(
+            provider_plan,
+            &semantic_toolchain_dependencies,
+            Some(&mut preliminary_counters),
+        )?;
+        let preliminary_elapsed = preliminary_started.elapsed();
+
+        let final_started = Instant::now();
+        let mut final_provider_digest_calls = 0;
+        let mut provider_digest_cache = BTreeMap::new();
+        let identities = provider_plan
+            .records()
+            .map(|provider| {
+                if provider.manifest.is_some() && provider.artifact.is_some() {
+                    final_provider_digest_calls += 1;
+                }
+                Ok((
+                    provider.identity.stable_key(),
+                    locked_provider_semantic_identity(
+                        provider,
+                        &dependency_semantic_digests,
+                        &semantic_toolchain_dependencies,
+                        &mut provider_digest_cache,
+                    )?,
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>, String>>()?;
+        let final_elapsed = final_started.elapsed();
+
+        Ok((
+            identities,
+            ProviderSemanticMeasurement {
+                fixture,
+                support_closure_roots_hashed: semantic_toolchain_dependencies.len(),
+                support_closure_elapsed,
+                physical_validation_calls,
+                physical_validation_elapsed,
+                preliminary_provider_digest_calls: preliminary_counters.preliminary_provider_digest_calls,
+                preliminary_memory_hits: preliminary_counters.preliminary_memory_hits,
+                preliminary_sealed_hits: preliminary_counters.preliminary_sealed_hits,
+                preliminary_elapsed,
+                final_provider_digest_calls,
+                final_unique_artifacts: provider_digest_cache.len(),
+                final_elapsed,
+                total_elapsed: total_started.elapsed(),
+            },
+        ))
     }
 
     fn production_toolchain_semantic_fixture(
@@ -683,6 +848,209 @@ mod tests {
             inventory,
             components,
         })
+    }
+
+    /// Add a second provider that depends on the same compiler support crate.
+    ///
+    /// The measured consumer therefore reaches two provider branches that converge on one support root. This is the
+    /// smallest representative diamond for distinguishing repeated support traversal from provider-local hashing.
+    fn shared_provider_diamond_fixture(
+        checkout: &Path,
+    ) -> Result<ProductionToolchainSemanticFixture, Box<dyn std::error::Error>> {
+        let mut fixture = production_toolchain_semantic_fixture(checkout)?;
+        let derive_root = checkout.join("crates/incan_derive");
+        let sibling_root = checkout.join("sdk/components/support-provider-sibling");
+        fs::create_dir_all(sibling_root.join("src"))?;
+        fs::write(
+            sibling_root.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"support_provider_sibling\"\nversion = \"0.5.0\"\n\n[dependencies]\nincan_derive = {{ path = \"{}\" }}\n",
+                derive_root.display()
+            ),
+        )?;
+        fs::write(sibling_root.join("src/lib.rs"), "pub fn sibling_support() {}\n")?;
+
+        let original = fixture
+            .provider_plan
+            .records()
+            .next()
+            .cloned()
+            .ok_or("the production fixture must contain its provider")?;
+        let mut sibling_manifest = original
+            .manifest
+            .as_deref()
+            .cloned()
+            .ok_or("the production fixture provider must contain a manifest")?;
+        sibling_manifest.name = "support_provider_sibling".to_string();
+        let sibling_manifest_path = sibling_root.join("support_provider_sibling.incnlib");
+        sibling_manifest.write_to_path(&sibling_manifest_path)?;
+        let sibling_digest = incan_frontend::library_manifest::digest_provider_artifact(&sibling_root)?;
+        let sibling = ProviderRecord {
+            identity: crate::ProviderIdentity {
+                name: sibling_manifest.name.clone(),
+                version: sibling_manifest.version.clone(),
+                digest: sibling_digest,
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: ProviderProvenance::Sdk {
+                sdk_identity: "incan@0.5.0".to_string(),
+                component_id: "support-sibling".to_string(),
+                inventory_path: None,
+            },
+            authority: crate::NamespaceAuthority::SdkReserved,
+            namespace_claims: BTreeSet::new(),
+            available: true,
+            enabled: true,
+            manifest: Some(std::sync::Arc::new(sibling_manifest)),
+            artifact: Some(
+                incan_frontend::library_manifest_index::LibraryArtifactMetadata::from_manifest_path(
+                    "support_provider_sibling",
+                    "support_provider_sibling",
+                    sibling_manifest_path,
+                    sibling_root,
+                ),
+            ),
+            implementation_facets: Vec::new(),
+        };
+        fixture.provider_plan = ProviderPlan::new(
+            incan_frontend::library_manifest_index::LibraryManifestIndex::default(),
+            vec![original, sibling],
+            std::iter::empty::<Vec<String>>(),
+        )?;
+        Ok(fixture)
+    }
+
+    #[test]
+    #[ignore = "serial #1633 measurement; run explicitly on a quiet host"]
+    fn measures_provider_semantic_identity_phases_issue1633() -> TestResult {
+        let temp = tempfile::tempdir()?;
+        let checked = production_toolchain_semantic_fixture(&temp.path().join("checked-fixture"))?;
+        let diamond = shared_provider_diamond_fixture(&temp.path().join("shared-provider-diamond"))?;
+        assert_eq!(diamond.provider_plan.records().count(), 2);
+        assert_eq!(
+            diamond.specs.len(),
+            1,
+            "both provider branches must converge on one support root"
+        );
+
+        for (name, fixture) in [("checked", checked), ("shared-provider-diamond", diamond)] {
+            let (cold_identities, cold) =
+                measure_provider_semantic_identity_pass(name, &fixture.provider_plan, &fixture.specs)?;
+            let (warm_identities, warm) =
+                measure_provider_semantic_identity_pass(name, &fixture.provider_plan, &fixture.specs)?;
+            assert_eq!(
+                cold_identities, warm_identities,
+                "measurement passes must preserve identity results"
+            );
+            assert_eq!(
+                cold_identities,
+                provider_semantic_identities(&fixture.provider_plan, &fixture.specs)?,
+                "instrumentation must reproduce the production projection"
+            );
+            eprintln!("provider-semantic-measurement phase=cold {}", cold.render());
+            eprintln!("provider-semantic-measurement phase=warm {}", warm.render());
+        }
+        Ok(())
+    }
+
+    const REPRESENTATIVE_SDK_INVENTORY_ENV: &str = "INCAN_PROVIDER_SEMANTIC_MEASURE_SDK_INVENTORY";
+    const REPRESENTATIVE_MEASUREMENT_REPEATS: usize = 9;
+
+    fn load_verified_sdk_measurement_inputs(
+        inventory_path: &Path,
+    ) -> Result<(ProviderPlan, Vec<DependencySpec>, Duration), Box<dyn std::error::Error>> {
+        let admission_started = Instant::now();
+        let inventory = SdkInventory::read_from_path(inventory_path)?;
+        inventory.validate_compiler_compatibility(
+            incan_lang::version::INCAN_VERSION,
+            incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION,
+        )?;
+        let components =
+            resolve_sdk_component_selection(&inventory, &SdkComponentSelection::default(), None, None, true)?;
+        let provider_plan = ProviderPlan::from_resolved_inputs(
+            LibraryManifestIndex::default(),
+            None,
+            Some(&inventory),
+            Some(&components),
+            std::iter::empty::<Vec<String>>(),
+        )?;
+        let mut requirements = ProjectRequirements::default();
+        extend_requirements_with_provider_plan(&mut requirements, &provider_plan)?;
+        Ok((
+            provider_plan,
+            requirements.sdk_path_dependencies,
+            admission_started.elapsed(),
+        ))
+    }
+
+    #[test]
+    #[ignore = "serial #1633 representative SDK measurement; requires an explicit verified inventory"]
+    fn measures_current_verified_sdk_provider_semantics_issue1633() -> TestResult {
+        let inventory_path = env::var_os(REPRESENTATIVE_SDK_INVENTORY_ENV)
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| format!("set {REPRESENTATIVE_SDK_INVENTORY_ENV} to the verified SDK inventory path"))?;
+        if !inventory_path.is_file() {
+            return Err(format!(
+                "{REPRESENTATIVE_SDK_INVENTORY_ENV} points to missing inventory {}",
+                inventory_path.display()
+            )
+            .into());
+        }
+
+        let mut admission_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut support_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut physical_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut preliminary_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut final_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut total_samples = Vec::with_capacity(REPRESENTATIVE_MEASUREMENT_REPEATS);
+        let mut expected_identities = None;
+
+        for repeat in 0..REPRESENTATIVE_MEASUREMENT_REPEATS {
+            let (provider_plan, specs, admission_elapsed) = load_verified_sdk_measurement_inputs(&inventory_path)?;
+            let provider_count = provider_plan.records().count();
+            if provider_count < 2 {
+                return Err(format!(
+                    "representative SDK measurement requires multiple providers, but the default profile admitted {provider_count}"
+                )
+                .into());
+            }
+            let (identities, measurement) =
+                measure_provider_semantic_identity_pass("verified-sdk", &provider_plan, &specs)?;
+            if let Some(expected) = expected_identities.as_ref() {
+                assert_eq!(
+                    expected, &identities,
+                    "repeated SDK measurements must preserve identities"
+                );
+            } else {
+                expected_identities = Some(identities);
+            }
+            admission_samples.push(admission_elapsed.as_micros());
+            support_samples.push(measurement.support_closure_elapsed.as_micros());
+            physical_samples.push(measurement.physical_validation_elapsed.as_micros());
+            preliminary_samples.push(measurement.preliminary_elapsed.as_micros());
+            final_samples.push(measurement.final_elapsed.as_micros());
+            total_samples.push(measurement.total_elapsed.as_micros());
+            eprintln!(
+                "provider-semantic-measurement repeat={} providers={} admission_us={} {}",
+                repeat + 1,
+                provider_count,
+                admission_elapsed.as_micros(),
+                measurement.render()
+            );
+        }
+
+        eprintln!(
+            "provider-semantic-measurement-summary repeats={} {} {} {} {} {} {}",
+            REPRESENTATIVE_MEASUREMENT_REPEATS,
+            measurement_distribution("admission", admission_samples)?,
+            measurement_distribution("support_closure", support_samples)?,
+            measurement_distribution("physical_validation", physical_samples)?,
+            measurement_distribution("preliminary", preliminary_samples)?,
+            measurement_distribution("final", final_samples)?,
+            measurement_distribution("total", total_samples)?,
+        );
+        Ok(())
     }
 
     #[test]
