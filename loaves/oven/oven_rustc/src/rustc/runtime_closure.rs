@@ -715,7 +715,6 @@ mod tests {
             })
             .ok_or("fixture closure has no distinct retained unit")?;
         selected.payload.roots[0].selected_identity = substitute.selected_identity.clone();
-        selected.payload.roots[0].compiled_identity = substitute.compiled_identity.clone();
         assert!(selected.root_libraries().is_err());
         Ok(())
     }
