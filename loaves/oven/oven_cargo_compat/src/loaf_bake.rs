@@ -269,7 +269,10 @@ fn bind_registry_leaf_selected_unit_identities(
         let selected_identity = bindings
             .get(&capture_identity)
             .ok_or_else(|| OvenLoafError::Preparation {
-                message: "registry artifact has no authenticated selected-unit binding".to_string(),
+                message: format!(
+                    "registry artifact `{}` {} ({:?} {:?}) is linked by the captured closure but has no authenticated selected-unit binding",
+                    leaf.package, leaf.version, leaf.domain, leaf.crate_kind
+                ),
             })?;
         if !used.insert(selected_identity.clone()) {
             return Err(OvenLoafError::Preparation {
