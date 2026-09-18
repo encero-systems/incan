@@ -992,7 +992,10 @@ pub fn legacy_cargo_generated_archive_bindings(
                 } else {
                     return Err(projection_error(
                         "selected linked library",
-                        "requires a separately admitted system or framework provider",
+                        &format!(
+                            "directive `{directive}` from package `{}` for target `{target}` requires a separately admitted system or framework provider",
+                            unit.package
+                        ),
                     ));
                 };
                 let search_roots = facts
