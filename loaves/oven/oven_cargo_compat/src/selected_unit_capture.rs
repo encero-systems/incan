@@ -4,7 +4,7 @@
 //! units to staged source inventories, cfg snapshots, toolchain ownership and the sealed project inspection authority
 //! before constructing a selected Rust facet graph.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -1031,13 +1031,133 @@ pub struct OvenLegacyCargoSelectedUnit {
     pub registry_source: Option<OvenLegacyCargoSelectedRegistrySource>,
 }
 
-/// Hash every retained physical fact for one selected unit without interpreting package policy.
+/// The portable facts of one selected unit: what its compilation was, independent of where it ran.
+///
+/// The publisher captures a closure more than once (a provisional bake, then the final bake under the final
+/// receipt), and joins each captured unit to the artifact it produced and the selected identity it projected to.
+/// That join must survive the second bake, so the identity excludes everything a fresh bake changes without
+/// changing the compilation: staging paths, the position of a unit in Cargo's message order and therefore the
+/// indices of its edges, and derived evidence such as the registry source bound after the fact. Dependencies enter
+/// by their own portable identity under their alias, so the identity still distinguishes one crate compiled against
+/// two dependency closures.
+#[derive(Serialize)]
+struct PortableSelectedUnitKey<'a> {
+    package: &'a str,
+    package_version: &'a str,
+    package_source: Option<&'a str>,
+    target_name: &'a str,
+    target_kinds: &'a [String],
+    crate_types: &'a [String],
+    root_module: &'a str,
+    edition: &'a str,
+    mode: &'a str,
+    platform: Option<&'a str>,
+    target_is_explicit: Option<bool>,
+    cfg: &'a [String],
+    effective_features: &'a [String],
+    sysroot_externs: &'a [String],
+    build_script: Option<PortableBuildScriptKey<'a>>,
+    dependencies: Vec<(Option<&'a str>, String, Option<PortableBuildScriptKey<'a>>)>,
+}
+
+/// Build-script facts without the staging directory they were observed under.
+#[derive(Serialize)]
+struct PortableBuildScriptKey<'a> {
+    cfgs: &'a [String],
+    environment: &'a BTreeMap<String, String>,
+    linked_libraries: &'a [String],
+    linked_paths: &'a [String],
+    output: Option<(&'a str, &'a [OvenLegacyCargoInspectionSourceMember])>,
+}
+
+impl<'a> PortableBuildScriptKey<'a> {
+    fn new(facts: &'a OvenLegacyCargoBuildScriptFacts) -> Self {
+        Self {
+            cfgs: &facts.cfgs,
+            environment: &facts.environment,
+            linked_libraries: &facts.linked_libraries,
+            linked_paths: &facts.linked_paths,
+            output: facts
+                .output
+                .as_ref()
+                .map(|output| (output.digest.as_str(), output.members.as_slice())),
+        }
+    }
+}
+
+/// Hash the portable physical facts of one captured unit, including its dependencies' identities.
 pub fn legacy_cargo_selected_unit_capture_identity(
-    unit: &OvenLegacyCargoSelectedUnit,
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    index: usize,
 ) -> Result<String, OvenLegacyCargoError> {
-    serde_json::to_vec(&("incan.oven.legacy-cargo-selected-unit/1", unit))
+    let mut memo = BTreeMap::new();
+    let mut visiting = BTreeSet::new();
+    selected_unit_portable_identity(capture, index, &mut memo, &mut visiting)
+}
+
+/// The portable identity of every unit in capture order.
+pub fn legacy_cargo_selected_unit_capture_identities(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+) -> Result<Vec<String>, OvenLegacyCargoError> {
+    let mut memo = BTreeMap::new();
+    let mut visiting = BTreeSet::new();
+    (0..capture.units.len())
+        .map(|index| selected_unit_portable_identity(capture, index, &mut memo, &mut visiting))
+        .collect()
+}
+
+fn selected_unit_portable_identity(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    index: usize,
+    memo: &mut BTreeMap<usize, String>,
+    visiting: &mut BTreeSet<usize>,
+) -> Result<String, OvenLegacyCargoError> {
+    if let Some(identity) = memo.get(&index) {
+        return Ok(identity.clone());
+    }
+    if !visiting.insert(index) {
+        return Err(OvenLegacyCargoError::Plan(
+            "selected-unit capture has a dependency cycle".to_string(),
+        ));
+    }
+    let unit = capture
+        .units
+        .get(index)
+        .ok_or_else(|| OvenLegacyCargoError::Plan(format!("selected-unit capture names absent unit {index}")))?;
+    let mut dependencies = Vec::with_capacity(unit.dependencies.len());
+    for dependency in &unit.dependencies {
+        let child = selected_unit_portable_identity(capture, dependency.unit_index, memo, visiting)?;
+        dependencies.push((
+            dependency.extern_crate_name.as_deref(),
+            child,
+            dependency.build_script.as_ref().map(PortableBuildScriptKey::new),
+        ));
+    }
+    dependencies.sort_by(|left, right| (left.0, &left.1).cmp(&(right.0, &right.1)));
+    let key = PortableSelectedUnitKey {
+        package: &unit.package,
+        package_version: &unit.package_version,
+        package_source: unit.package_source.as_deref(),
+        target_name: &unit.target_name,
+        target_kinds: &unit.target_kinds,
+        crate_types: &unit.crate_types,
+        root_module: &unit.root_module,
+        edition: &unit.edition,
+        mode: &unit.mode,
+        platform: unit.platform.as_deref(),
+        target_is_explicit: unit.target_is_explicit,
+        cfg: &unit.cfg,
+        effective_features: &unit.effective_features,
+        sysroot_externs: &unit.sysroot_externs,
+        build_script: unit.build_script.as_ref().map(PortableBuildScriptKey::new),
+        dependencies,
+    };
+    let identity = serde_json::to_vec(&("incan.oven.legacy-cargo-selected-unit/2", key))
         .map(|bytes| digest_bytes(&bytes))
-        .map_err(|error| OvenLegacyCargoError::Plan(format!("could not encode selected-unit capture: {error}")))
+        .map_err(|error| OvenLegacyCargoError::Plan(format!("could not encode selected-unit capture: {error}")))?;
+    visiting.remove(&index);
+    memo.insert(index, identity.clone());
+    Ok(identity)
 }
 
 /// Registry source evidence joined by exact Cargo package coordinates before the transient publisher is released.

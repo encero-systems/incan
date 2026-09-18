@@ -364,7 +364,7 @@ pub fn publisher_registry_leaf_catalog(
                             package.name, package.version
                         )));
                     };
-                    super::legacy_cargo_selected_unit_capture_identity(selected)
+                    super::legacy_cargo_selected_unit_capture_identity(selected_units, *selected)
                 })
                 .transpose()?;
             // A procedural macro is a host dynamic library rustc loads while compiling its consumer; every other
@@ -541,10 +541,10 @@ pub fn publisher_registry_leaf_catalog(
 }
 
 /// Find physical units whose exact traced output set intersects one Cargo artifact record.
-fn traced_units_for_registry_artifact<'a>(
-    selected_units: &'a super::OvenLegacyCargoSelectedUnitCapture,
+fn traced_units_for_registry_artifact(
+    selected_units: &super::OvenLegacyCargoSelectedUnitCapture,
     artifact: &CargoCompilerArtifact,
-) -> Vec<&'a super::OvenLegacyCargoSelectedUnit> {
+) -> Vec<usize> {
     let reported_paths = artifact
         .filenames
         .iter()
@@ -553,7 +553,8 @@ fn traced_units_for_registry_artifact<'a>(
     selected_units
         .units
         .iter()
-        .filter(|unit| {
+        .enumerate()
+        .filter(|(_, unit)| {
             unit.package_id == artifact.package_id
                 && unit.target_name == artifact.target.name
                 && unit.artifact_paths.iter().any(|path| {
@@ -562,6 +563,7 @@ fn traced_units_for_registry_artifact<'a>(
                         .is_some_and(|path| reported_paths.contains(&path))
                 })
         })
+        .map(|(index, _)| index)
         .collect()
 }
 

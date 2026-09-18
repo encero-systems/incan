@@ -231,7 +231,7 @@ fn bind_registry_leaf_selected_unit_identities(
     }
     let mut linked_identities = BTreeSet::new();
     for index in &linked {
-        let identity = legacy_cargo_selected_unit_capture_identity(&selected_units.units[*index]).map_err(|error| {
+        let identity = legacy_cargo_selected_unit_capture_identity(selected_units, *index).map_err(|error| {
             OvenLoafError::Preparation {
                 message: error.to_string(),
             }
@@ -284,10 +284,11 @@ fn bind_registry_leaf_selected_unit_identities(
         let mut identities_by_capture = BTreeMap::new();
         for index in &linked {
             let unit = &selected_units.units[*index];
-            let identity =
-                legacy_cargo_selected_unit_capture_identity(unit).map_err(|error| OvenLoafError::Preparation {
+            let identity = legacy_cargo_selected_unit_capture_identity(selected_units, *index).map_err(|error| {
+                OvenLoafError::Preparation {
                     message: error.to_string(),
-                })?;
+                }
+            })?;
             identities_by_capture.insert(
                 identity,
                 format!(
@@ -785,7 +786,6 @@ mod tests {
     #[test]
     fn registry_leaf_binding_requires_exact_unambiguous_physical_capture() -> Result<(), Box<dyn std::error::Error>> {
         let unit = selected_registry_unit(&["target_has_atomic=\"64\""]);
-        let capture_identity = legacy_cargo_selected_unit_capture_identity(&unit)?;
         let capture = OvenLegacyCargoSelectedUnitCapture {
             roots: vec![0],
             units: vec![unit.clone()],
@@ -793,6 +793,7 @@ mod tests {
             build_script_tool_probes: Vec::new(),
             compiler: None,
         };
+        let capture_identity = legacy_cargo_selected_unit_capture_identity(&capture, 0)?;
         let mut bindings = BTreeMap::from([(capture_identity.clone(), "sha256:selected-unit".to_string())]);
         let mut leaf = registry_leaf();
         leaf.selected_unit_identity = Some(capture_identity.clone());
@@ -809,11 +810,15 @@ mod tests {
 
         let mut variant = unit;
         variant.cfg.push("target_feature=\"neon\"".to_string());
-        let variant_identity = legacy_cargo_selected_unit_capture_identity(&variant)?;
         let variants = OvenLegacyCargoSelectedUnitCapture {
             units: vec![capture.units[0].clone(), variant],
             ..capture
         };
+        let variant_identity = legacy_cargo_selected_unit_capture_identity(&variants, 1)?;
+        assert_ne!(
+            variant_identity, capture_identity,
+            "a cfg change is a different physical unit"
+        );
         let mut variant_only = vec![leaf.clone()];
         let variant_bindings = BTreeMap::from([(variant_identity, "sha256:wrong-variant".to_string())]);
         assert!(bind_registry_leaf_selected_unit_identities(&mut variant_only, &variants, &variant_bindings).is_err());
@@ -834,7 +839,6 @@ mod tests {
         let mut script_only = capture.units[0].clone();
         script_only.package = "cc".to_string();
         script_only.target_name = "cc".to_string();
-        let script_only_identity = legacy_cargo_selected_unit_capture_identity(&script_only)?;
         let mut linked = capture.units[0].clone();
         linked.dependencies = vec![crate::OvenLegacyCargoSelectedDependency {
             unit_index: 1,
@@ -846,7 +850,6 @@ mod tests {
             extern_crate_name: Some("cc".to_string()),
             build_script: None,
         }];
-        let linked_identity = legacy_cargo_selected_unit_capture_identity(&linked)?;
         let with_script = OvenLegacyCargoSelectedUnitCapture {
             roots: vec![0],
             units: vec![linked, script, script_only],
@@ -854,6 +857,24 @@ mod tests {
             build_script_tool_probes: Vec::new(),
             compiler: None,
         };
+        let linked_identity = legacy_cargo_selected_unit_capture_identity(&with_script, 0)?;
+        let script_only_identity = legacy_cargo_selected_unit_capture_identity(&with_script, 2)?;
+        // The identity is portable: reordering the capture or renumbering its edges changes nothing.
+        let reordered = OvenLegacyCargoSelectedUnitCapture {
+            roots: vec![2],
+            units: {
+                let mut linked = with_script.units[0].clone();
+                linked.dependencies[0].unit_index = 0;
+                let mut script = with_script.units[1].clone();
+                script.dependencies[0].unit_index = 1;
+                vec![script, with_script.units[2].clone(), linked]
+            },
+            ..with_script.clone()
+        };
+        assert_eq!(
+            legacy_cargo_selected_unit_capture_identity(&reordered, 2)?,
+            linked_identity
+        );
         let mut linked_leaf = registry_leaf();
         linked_leaf.selected_unit_identity = Some(linked_identity.clone());
         let mut script_leaf = registry_leaf();

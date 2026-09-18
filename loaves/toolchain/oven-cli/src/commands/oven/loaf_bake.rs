@@ -626,14 +626,15 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 let original = finalized
                     .source_indices
                     .get(*index)
-                    .and_then(|source| expected_capture.units.get(*source))
+                    .copied()
+                    .filter(|source| *source < expected_capture.units.len())
                     .ok_or_else(|| {
                         CliError::failure(format!(
                             "pruned physical unit `{}` has no source in the original capture",
                             captured.package_id
                         ))
                     })?;
-                oven_cargo_compat::legacy_cargo_selected_unit_capture_identity(original)
+                oven_cargo_compat::legacy_cargo_selected_unit_capture_identity(expected_capture, original)
                     .map(|identity| (identity, selected.clone()))
                     .map_err(oven_error)
             })
@@ -669,7 +670,19 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             Some(&selected_unit_bindings),
         )
         .map_err(oven_error)?;
-        if final_prepared.selected_units.as_ref() != Some(expected_capture) {
+        // The final bake observes the closure again under fresh staging; it must be the same closure by every
+        // portable fact, not the same bytes.
+        let final_capture = final_prepared
+            .selected_units
+            .as_ref()
+            .ok_or_else(|| CliError::failure("final receipt produced no exact selected-unit capture".to_string()))?;
+        let mut expected_identities =
+            oven_cargo_compat::legacy_cargo_selected_unit_capture_identities(expected_capture).map_err(oven_error)?;
+        let mut final_identities =
+            oven_cargo_compat::legacy_cargo_selected_unit_capture_identities(final_capture).map_err(oven_error)?;
+        expected_identities.sort();
+        final_identities.sort();
+        if expected_identities != final_identities {
             return Err(CliError::failure(
                 "final receipt changed the captured physical Rust selection".to_string(),
             ));
