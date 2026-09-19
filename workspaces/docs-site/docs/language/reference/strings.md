@@ -1,238 +1,83 @@
 # Strings and bytes
 
-Incan has two core “string-like” types:
+| Type | Holds | Generated Rust |
+| --- | --- | --- |
+| `str` | Unicode text | `String` |
+| `bytes` | A sequence of bytes | `Vec<u8>` |
 
-- `str`: text (Unicode). The current backend compiles this to Rust `String`.
-- `bytes`: binary data. The current backend compiles this to Rust `Vec<u8>`.
+Both have frozen forms, `FrozenStr` and `FrozenBytes`, which offer the same methods.
 
-`str` is for user-facing text. `bytes` is for file/network/crypto data where you want raw bytes.
+## Literals
 
-!!! note "Coming from Python?"
-    Method names are intentionally familiar (`upper`, `lower`, `strip`, `split`, `replace`, …), but Incan is statically typed and `contains()` is a method (rather than Python’s `in` operator).
+| Literal | Value |
+| --- | --- |
+| `"text"`, `'text'` | A `str`; the quote style does not change the value. |
+| `"""text"""` | A multi-line `str`; line breaks inside the quotes are part of the value. |
+| `f"…{expr}…"` | An f-string: a `str` with each `{expr}` replaced by the formatted value of `expr`. |
+| `b"…"` | A `bytes` literal. Only ASCII characters and the escapes below are accepted; a non-ASCII character is a compile-time error. |
 
-!!! note "Coming from Rust?"
-    Incan hides most ownership/borrowing details. You write `str` and the compiler handles Rust interop details in generated code.
+Escape sequences in `bytes` literals:
 
-## Quick reference
-
-| Incan                | Notes                             |
-| -------------------- | --------------------------------- |
-| `s.upper()`          | Uppercase string                  |
-| `s.lower()`          | Lowercase string                  |
-| `s.strip()`          | Trim whitespace on both sides     |
-| `s.split(",")`       | Split into `list[str]`            |
-| `", ".join(xs)`      | Join `list[str]` with a separator |
-| `s.contains("x")`    | Substring check (`bool`)          |
-| `s.replace("a", "b")`| Replace all occurrences           |
-| `s.encode()`         | UTF-8 `bytes` of the text         |
-| `b.decode()`         | `str` from UTF-8 `bytes`          |
+| Escape | Byte |
+| --- | --- |
+| `\n` | 0x0A |
+| `\t` | 0x09 |
+| `\r` | 0x0D |
+| `\\` | 0x5C |
+| `\0` | 0x00 |
+| `\xNN` | The byte with hexadecimal value `NN` |
 
 ## Indexing and slicing
 
-Incan supports Python-style indexing and slicing for strings and lists.
+| Form | Result |
+| --- | --- |
+| `s[i]` | The Unicode scalar at position `i`; negative `i` counts from the end. Out of range raises `IndexError: string index out of range`. |
+| `s[start:end:step]` | A new `str` of the scalars selected by the Python slice rules; each part is optional and `step` defaults to `1`. A negative `step` walks backwards (`s[::-1]` reverses). `step == 0` raises `ValueError: slice step cannot be zero`. |
 
-- **Indexing**: `s[i]`
-    - Supports **negative indices** (e.g. `s[-1]` is the last character).
-    - Indexing is based on **Unicode scalars** (Rust `char`), not bytes.
-    - Out-of-range panics with `IndexError: string index out of range`.
-- **Slicing**: `s[start:end:step]`
-    - Each component is optional (e.g. `s[:3]`, `s[1:]`, `s[::2]`, `s[::-1]`).
-    - `step` defaults to `1`.
-    - `step == 0` panics with `ValueError: slice step cannot be zero`.
-    - Negative `step` is supported (e.g. `s[::-1]` reverses a string).
+Positions and lengths count Unicode scalars, not bytes. The same forms apply to `list[T]`.
 
-```incan
-def main() -> None:
-    s = "héllo"
-    print(s[1])     # "é"
-    print(s[-1])    # "o"
-    print(s[1:4])   # "éll"
-    print(s[::2])   # "hlo"
-    print(s[::-1])  # "olléh"
-```
+## `str` methods
 
-The same slicing rules apply to `list[T]`:
+| Signature | Contract |
+| --- | --- |
+| `upper() -> str` | Uppercase copy. |
+| `lower() -> str` | Lowercase copy. |
+| `strip() -> str` | Copy without leading and trailing whitespace. There is no `lstrip` or `rstrip`. |
+| `replace(old: str, new: str) -> str` | Copy with every occurrence of `old` replaced by `new`. |
+| `split(separator: str) -> list[str]` | Pieces between occurrences of `separator`, in order. |
+| `split_whitespace() -> list[str]` | Pieces separated by runs of Unicode whitespace; no empty pieces. |
+| `join(parts: list[str]) -> str` | `parts` concatenated with the receiver between each pair: `", ".join(names)`. |
+| `contains(needle: str) -> bool` | Whether `needle` occurs in the receiver. |
+| `startswith(prefix: str) -> bool` | Whether the receiver starts with `prefix`. |
+| `endswith(suffix: str) -> bool` | Whether the receiver ends with `suffix`. |
+| `len() -> int` | The number of Unicode scalars; `len(s)` is the same value. |
+| `is_empty() -> bool` | Whether `len()` is zero. |
+| `to_string() -> str` | The receiver itself. |
+| `encode(encoding: str = "utf-8") -> bytes` | The text's UTF-8 bytes. `encoding` accepts `"utf-8"` and `"utf8"`, compared case-insensitively with `_` read as `-`. A literal label naming any other codec is a compile-time error; a run-time label naming another codec raises `ValueError`. |
 
-```incan
-def main() -> None:
-    xs: list[int] = [1, 2, 3]
-    for x in xs[::-1]:
-        print(x)
-```
+Membership uses the method, not the `in` operator: `s.contains("x")`.
 
-## Common string methods
+## `bytes` methods
 
-### Case conversion
+| Signature | Contract |
+| --- | --- |
+| `len() -> int` | The number of bytes; `len(b)` is the same value. |
+| `decode(encoding: str = "utf-8", errors: str = "strict") -> str` | The bytes read as UTF-8 text. `encoding` follows the same rule as `str.encode`. `errors` is `"strict"`, which raises `ValueError` on the first malformed sequence, or `"replace"`, which substitutes U+FFFD for each malformed sequence; any other literal policy is a compile-time error, any other run-time policy raises `ValueError`. |
 
-```incan
-text = "Hello World"
-println(text.upper())  # HELLO WORLD
-println(text.lower())  # hello world
-```
+## F-strings
 
-### Whitespace trimming
+An f-string interpolates any expression between `{` and `}`; the value is formatted through `Display`. A format spec after `:` selects another formatting:
 
-```incan
-padded = "  hello  "
-println(padded.strip())  # "hello"
-```
+| Spec | Formatting |
+| --- | --- |
+| `{value}` | `Display` |
+| `{value:?}` | `Debug`: the value's structure, for example `Point { x: 10, y: 20 }` |
 
-> Note: Incan currently only has `strip()` (both sides). Python’s `lstrip()` / `rstrip()` are not yet implemented.
-
-### Splitting strings
-
-```incan
-csv = "alice,bob,carol"
-names = csv.split(",")  # ["alice", "bob", "carol"]
-
-first = names[0]  # "alice"
-```
-
-### Joining strings
-
-```incan
-names = ["alice", "bob", "carol"]
-result = ", ".join(names)  # "alice, bob, carol"
-```
-
-> Note: The separator is the receiver and the list is the argument: `", ".join(names)`.
-
-### Substring check
-
-```incan
-sentence = "the quick brown fox"
-
-if sentence.contains("quick"):
-    println("Found it!")
-```
-
-### String replacement
-
-```incan
-text = "hello world"
-result = text.replace("world", "incan")  # "hello incan"
-```
-
-### Text to bytes and back
-
-`str.encode(encoding: str = "utf-8") -> bytes` returns the UTF-8 encoding of the text, and `bytes.decode(encoding: str = "utf-8", errors: str = "strict") -> str` is the return trip. Both are available on the frozen forms (`FrozenStr`, `FrozenBytes`) as well.
-
-```incan
-payload: bytes = "héllo".encode()
-println(len(payload))                      # 6
-println(payload.decode())                  # héllo
-println(b"\xff".decode(errors="replace"))  # U+FFFD replacement character
-```
-
-Only UTF-8 is supported in this release. A literal `encoding` that names another codec (for example `"latin-1"`) is a compile-time error; a label that is only known at run time raises `ValueError`. Labels are matched case-insensitively with `_` read as `-`, so `"UTF-8"`, `"utf_8"`, and `"utf8"` are all accepted. Other codecs are available through `std.fs` (`read_text` / `write_text`) and `std.encoding`.
-
-`errors` selects what `decode` does with malformed input. `"strict"` (the default) raises `ValueError`, the builtin conversion failure convention that `int("x")` also follows and the counterpart of Python's `UnicodeDecodeError`; `"replace"` substitutes U+FFFD for each malformed sequence and never fails. Any other literal policy is a compile-time error, and a run-time policy outside the pair raises `ValueError`.
-
-## F-strings (formatted strings)
-
-Incan supports Python-style f-strings:
-
-```incan
-name = "Alice"
-age = 30
-println(f"Name: {name}, Age: {age}")
-```
-
-### Debug formatting
-
-Use `:?` for debug output (shows type structure):
-
-```incan
-model Point:
-    x: int
-    y: int
-
-p = Point(x=10, y=20)
-println(f"Debug: {p:?}")  # Point { x: 10, y: 20 }
-```
-
-See [String Representation](./derives/string_representation.md) for details on Debug vs Display formatting.
-
-## String literals
-
-```incan
-# Single or double quotes
-s1 = "hello"
-s2 = 'hello'
-
-# Multiline strings (triple quotes)
-multi = """
-This is a
-multiline string
-"""
-
-# F-strings
-formatted = f"Value: {x}"
-```
-
-## Bytes (binary data)
-
-The `bytes` type represents binary data as a sequence of bytes (current backend: Rust `Vec<u8>`).
-
-### Byte string literals
-
-Use the `b"..."` prefix for byte strings:
-
-```incan
-# ASCII byte string
-data = b"Hello"
-
-# Hex escapes for arbitrary bytes
-binary = b"\x00\x01\x02\xff"
-
-# Common escapes
-newline = b"\n"
-tab = b"\t"
-null = b"\0"
-```
-
-Supported escape sequences:
-
-| Escape | Meaning                       |
-| ------ | ----------------------------- |
-| `\n`   | Newline                       |
-| `\t`   | Tab                           |
-| `\r`   | Carriage return               |
-| `\\`   | Backslash                     |
-| `\0`   | Null byte                     |
-| `\xNN` | Hex byte (e.g. `\xff` = 255)  |
-
-> Note: Byte strings only accept ASCII characters. Non-ASCII characters produce an error.
-
-### Type annotation
-
-```incan
-def process_binary(data: bytes) -> bytes:
-    return data
-```
-
-!!! note "Coming from Python?"
-    Python’s `bytes` is immutable. Incan’s `bytes` currently lowers to Rust `Vec<u8>`, which is mutable.
-
-### When to use `bytes` vs `str`
-
-| Use case                    | Type    |
-| --------------------------- | ------- |
-| Text, user-facing content   | `str`   |
-| File contents (text)        | `str`   |
-| Binary files (images, etc.) | `bytes` |
-| Network protocols           | `bytes` |
-| Cryptographic operations    | `bytes` |
-| Raw file I/O                | `bytes` |
+See [String representation](./derives/string_representation.md) for how a type provides `Display` and `Debug`.
 
 ## See also
 
-- [String Representation](./derives/string_representation.md) — Debug and Display formatting
-- [String processing (How-to)](../how-to/string_processing.md) — practical recipes (split/join/cleaning)
-- [Strings and formatting (Tutorial)](../tutorials/book/07_strings_and_formatting.md)
-- [File I/O (How-to)](../how-to/file_io.md) — reading text vs bytes
-- [Examples: Strings][examples-strings] — string method examples
-- [Examples: Bytes I/O][examples-bytes-io] — binary data examples
-
-[examples-strings]: https://github.com/encero-systems/incan/blob/main/examples/simple/strings.incn
-[examples-bytes-io]: https://github.com/encero-systems/incan/blob/main/examples/advanced/bytes_io.incn
+- [String processing](../how-to/string_processing.md) — recipes for splitting, joining, cleaning and encoding text.
+- [Binary-text encoding](../how-to/binary_text_encoding.md) — moving bytes through text formats and decoding at boundaries.
+- [Rust types for Python developers](../how-to/rust_types_for_python_devs.md) — how `str` and `bytes` differ from Python's.
+- [Strings and formatting (tutorial)](../tutorials/book/07_strings_and_formatting.md)

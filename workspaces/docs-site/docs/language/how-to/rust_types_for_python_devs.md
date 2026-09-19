@@ -54,7 +54,22 @@ match my_dict.get("key"):
     case None: println("missing")
 ```
 
+## `str` and `bytes`
+
+Method names on `str` are the familiar ones — `upper`, `lower`, `strip`, `split`, `replace`, `join` — but Incan is statically typed and substring membership is a method, `s.contains("x")`, not Python's `in` operator. Incan hides the `String` / `&str` split: write `str` and the compiler decides ownership in the generated Rust.
+
+Python's `bytes` is immutable; Incan's `bytes` lowers to `Vec<u8>`, which is not. Choose the type by what the data is, not by where it came from:
+
+| Use case | Type |
+| --- | --- |
+| Text, user-facing content | `str` |
+| File contents that are text | `str` |
+| Binary files, network protocols, cryptographic inputs, raw file I/O | `bytes` |
+
+`str.encode()` and `bytes.decode()` convert between them, UTF-8 only; a malformed strict decode raises `ValueError` where Python raises `UnicodeDecodeError`.
+
 ## See also
 
 - [Rust interop (how-to)](rust_interop.md)
 - [Error handling (concepts)](../explanation/error_handling.md)
+- [Strings and bytes (Reference)](../reference/strings.md)
