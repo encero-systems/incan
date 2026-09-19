@@ -406,7 +406,7 @@
       "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/access.rs",
       "category": "method/type access, contextual Rust receiver specialization, public modules, checked registry, and C output-slot boundary classification",
       "expected_count": 51,
-      "expected_fingerprint": "0x880792af30221e0b"
+      "expected_fingerprint": "0x4ff4ae22e446964c"
     },
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/basics.rs",

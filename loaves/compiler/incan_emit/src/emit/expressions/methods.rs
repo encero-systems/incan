@@ -35,7 +35,7 @@ mod string_methods;
 use collection_methods::emit_collection_method;
 use fast_paths::emit_registered_method_fast_path;
 use iterator_methods::emit_iterator_method;
-use string_methods::emit_string_method;
+use string_methods::{emit_bytes_method, emit_string_method};
 
 /// Shared settings for emitting one method call's argument list.
 #[derive(Clone, Copy)]
@@ -892,7 +892,8 @@ impl<'a> IrEmitter<'a> {
         let info = ReceiverInfo::new(&receiver.ty, r0);
         let arg_exprs: Vec<TypedExpr> = args.iter().map(|a| a.expr.clone()).collect();
         match kind {
-            MethodKind::String(kind) => emit_string_method(self, &info, kind, &arg_exprs),
+            MethodKind::String(kind) => emit_string_method(self, &info, kind, &arg_exprs, args),
+            MethodKind::Bytes(kind) => emit_bytes_method(self, &info, kind, args),
             MethodKind::Collection(kind) => emit_collection_method(self, receiver, &info, kind, &arg_exprs),
             MethodKind::Iterator(kind) => emit_iterator_method(self, receiver, &info, kind, &arg_exprs),
             MethodKind::Result(ResultMethodId::Unwrap) => {

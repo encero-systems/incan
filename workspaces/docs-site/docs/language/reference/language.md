@@ -594,6 +594,7 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 | EndsWith | `endswith` | `ends_with` | Return true if the string ends with a suffix. | RFC 009 | 0.1 | Stable |
 | Len | `len` |  | Return the length (in Unicode scalars). | RFC 009 | 0.1 | Stable |
 | IsEmpty | `is_empty` |  | Return true if the length is zero. | RFC 009 | 0.1 | Stable |
+| Encode | `encode` |  | Return the text encoded as bytes; only UTF-8 is supported (`encoding="utf-8"` is the default). | RFC 009 | 0.6 | Stable |
 
 ## Surface types
 
@@ -673,6 +674,7 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 | Values | `values` |  | Return an iterable/list of values. | RFC 009 | 0.1 | Stable |
 | Get | `get` |  | Get a value by key, optionally with a default. | RFC 009 | 0.1 | Stable |
 | Insert | `insert` |  | Insert or overwrite a key/value pair. | RFC 009 | 0.1 | Stable |
+| ContainsKey | `contains_key` |  | Return true if the dict contains a key. | RFC 009 | 0.6 | Stable |
 
 
 ### Set methods
@@ -757,6 +759,13 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 | Len | `len` |  | Return the number of elements. | RFC 009 | 0.1 | Stable |
 | IsEmpty | `is_empty` |  | Return true if the set is empty. | RFC 009 | 0.1 | Stable |
 | Contains | `contains` |  | Return true if the set contains a value. | RFC 009 | 0.1 | Stable |
+
+
+### Bytes methods
+
+| Id | Canonical | Aliases | Description | RFC | Since | Stability |
+|---|---|---|---|---|---|---|
+| Decode | `decode` |  | Return `Result[str, ValidationError]`: the bytes decoded as UTF-8 text, or an error whose `code` is `invalid-utf8` (under `errors="strict"`, the default), `unknown-encoding`, or `unknown-errors-policy`; `errors="replace"` substitutes U+FFFD and always succeeds. | RFC 009 | 0.6 | Stable |
 
 
 ### FrozenBytes methods

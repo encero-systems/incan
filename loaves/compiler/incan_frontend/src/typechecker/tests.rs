@@ -14369,6 +14369,253 @@ def foo() -> bool:
 }
 
 #[test]
+fn test_str_encode_and_bytes_decode_accept_utf8_round_trip_issue1668() {
+    let source = r#"
+const GREETING: FrozenStr = "héllo"
+const RAW: FrozenBytes = b"raw"
+
+def encode_forms(text: str, label: str) -> int:
+    plain: bytes = text.encode()
+    explicit: bytes = text.encode("utf-8")
+    named: bytes = text.encode(encoding="UTF_8")
+    runtime: bytes = text.encode(label)
+    frozen: bytes = GREETING.encode()
+    return len(plain) + len(explicit) + len(named) + len(runtime) + len(frozen)
+
+def decode_forms(data: bytes, label: str, policy: str) -> Result[str, ValidationError]:
+    plain: str = data.decode()?
+    lossy: str = data.decode(errors="replace")?
+    positional: str = data.decode("utf8", "strict")?
+    runtime: str = data.decode(label, errors=policy)?
+    frozen: str = RAW.decode()?
+    attempt: Result[str, ValidationError] = data.decode()
+    match attempt:
+        Ok(text) => println(text)
+        Err(error) => println(f"{error}")
+    return Ok(plain + lossy + positional + runtime + frozen)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_bytes_decode_returns_result_not_str_issue1668() {
+    let errors = check_str_err(
+        r#"
+def text(data: bytes) -> str:
+    decoded: str = data.decode()
+    return decoded
+"#,
+        "bytes.decode() returns Result[str, ValidationError], not str",
+    );
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("expected 'str', found 'Result[str, ValidationError]'")),
+        "expected a Result mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_str_encode_rejects_unsupported_literal_encoding_issue1668() {
+    let errors = check_str_err(
+        r#"
+def payload(text: str) -> bytes:
+    return text.encode("latin-1")
+"#,
+        "str.encode with a non-UTF-8 literal must fail typechecking",
+    );
+    assert!(
+        errors.iter().any(
+            |error| error.message.contains("str.encode() supports only UTF-8") && error.message.contains("latin-1")
+        ),
+        "expected an unsupported-encoding diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_bytes_decode_rejects_unsupported_literal_encoding_issue1668() {
+    let errors = check_str_err(
+        r#"
+def text(data: bytes) -> str:
+    return data.decode("latin-1")
+"#,
+        "bytes.decode with a non-UTF-8 literal must fail typechecking",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("bytes.decode() supports only UTF-8")
+                && error.message.contains("latin-1")),
+        "expected an unsupported-encoding diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_text_codec_calls_reject_foreign_keyword_and_duplicate_label_issue1668() {
+    let keyword_errors = check_str_err(
+        r#"
+def payload(text: str) -> bytes:
+    return text.encode(errors="strict")
+"#,
+        "str.encode has no errors policy",
+    );
+    assert!(
+        keyword_errors
+            .iter()
+            .any(|error| error.message.contains("Unexpected keyword argument 'errors'")),
+        "expected an unknown-keyword diagnostic, got: {:?}",
+        keyword_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let duplicate_errors = check_str_err(
+        r#"
+def text(data: bytes) -> str:
+    return data.decode("utf-8", encoding="utf-8")
+"#,
+        "bytes.decode must not bind encoding twice",
+    );
+    assert!(
+        duplicate_errors
+            .iter()
+            .any(|error| error.message.contains("Duplicate argument 'encoding'")),
+        "expected a duplicate-argument diagnostic, got: {:?}",
+        duplicate_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_bytes_decode_rejects_bad_policy_keyword_and_arity_issue1668() {
+    let policy_errors = check_str_err(
+        r#"
+def text(data: bytes) -> str:
+    return data.decode(errors="ignore")
+"#,
+        "bytes.decode with an unsupported errors policy must fail typechecking",
+    );
+    assert!(
+        policy_errors
+            .iter()
+            .any(|error| error.message.contains("errors must be") && error.message.contains("ignore")),
+        "expected an unsupported-policy diagnostic, got: {:?}",
+        policy_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let keyword_errors = check_str_err(
+        r#"
+def text(data: bytes) -> str:
+    return data.decode(codec="utf-8")
+"#,
+        "bytes.decode with an unknown keyword must fail typechecking",
+    );
+    assert!(
+        keyword_errors
+            .iter()
+            .any(|error| error.message.contains("Unexpected keyword argument 'codec'")),
+        "expected an unknown-keyword diagnostic, got: {:?}",
+        keyword_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let arity_errors = check_str_err(
+        r#"
+def payload(text: str) -> bytes:
+    return text.encode("utf-8", "strict")
+"#,
+        "str.encode takes at most one argument",
+    );
+    assert!(
+        arity_errors.iter().any(|error| error
+            .message
+            .contains("str.encode() expects at most 1 argument(s), got 2")),
+        "expected a max-arity diagnostic, got: {:?}",
+        arity_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let type_errors = check_str_err(
+        r#"
+def payload(text: str) -> bytes:
+    return text.encode(8)
+"#,
+        "str.encode requires a text encoding label",
+    );
+    assert!(
+        type_errors.iter().any(|error| error
+            .message
+            .contains("Argument 'encoding' of 'str.encode' has type mismatch")),
+        "expected an argument type diagnostic, got: {:?}",
+        type_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_dict_contains_key_typechecks_on_mutable_dict_issue1668() {
+    let source = r#"
+def has_manifest(files: Dict[str, str]) -> bool:
+    return files.contains_key("loaf.toml")
+
+def has_id(mut counts: Dict[int, int], id: int) -> bool:
+    return counts.contains_key(id)
+
+def keys_outside_comprehension(d: Dict[str, int]) -> int:
+    names: list[str] = sorted(d.keys())
+    present: bool = "a" in d.keys()
+    values: list[int] = d.values()
+    return len(names) + len(values)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_dict_contains_key_rejects_arity_and_key_type_issue1668() {
+    let arity_errors = check_str_err(
+        r#"
+def has_manifest(files: Dict[str, str]) -> bool:
+    return files.contains_key()
+"#,
+        "Dict.contains_key requires exactly one key argument",
+    );
+    assert!(
+        arity_errors.iter().any(|error| error
+            .message
+            .contains("Dict.contains_key() expects 1 argument(s), got 0")),
+        "expected an arity diagnostic, got: {:?}",
+        arity_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let type_errors = check_str_err(
+        r#"
+def has_manifest(files: Dict[str, str]) -> bool:
+    return files.contains_key(7)
+"#,
+        "Dict.contains_key rejects a probe outside the key type",
+    );
+    assert!(
+        type_errors.iter().any(|error| error
+            .message
+            .contains("Argument to 'Dict.contains_key' has type mismatch")),
+        "expected a key type diagnostic, got: {:?}",
+        type_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let named_errors = check_str_err(
+        r#"
+def has_manifest(files: Dict[str, str]) -> bool:
+    return files.contains_key(key="loaf.toml")
+"#,
+        "Dict.contains_key takes its probe positionally",
+    );
+    assert!(
+        named_errors
+            .iter()
+            .any(|error| error.message.contains("Unexpected keyword argument 'key'")),
+        "expected an unknown-keyword diagnostic, got: {:?}",
+        named_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_frozen_unknown_method_errors() {
     let source = r#"
 const NUMS: FrozenList[int] = [1, 2]
@@ -19659,6 +19906,62 @@ def accept_user_id(value: UserId) -> UserId:
   return accept_key(value)
 "#;
     assert_check_ok(source);
+}
+
+#[test]
+fn test_std_environ_args_returns_result_of_list_of_str_issue1668() {
+    let source = r#"
+from std.environ import EnvironError, args
+
+def subcommand() -> Result[str, EnvironError]:
+    arguments: list[str] = args()?
+    if len(arguments) < 2:
+        return Ok("help")
+    return Ok(arguments[1])
+
+def main() -> Result[None, EnvironError]:
+    for argument in args()?[1:]:
+        println(argument)
+    match args():
+        Ok(arguments) => println(len(arguments))
+        Err(error) => println(f"{error.kind_name()}:{error.key}")
+    return Ok(None)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_environ_args_rejects_arguments_and_non_list_bindings_issue1668() {
+    let arity_errors = check_str_err(
+        r#"
+from std.environ import args
+
+def main() -> None:
+    arguments = args("extra")
+"#,
+        "args() takes no arguments",
+    );
+    assert!(
+        !arity_errors.is_empty(),
+        "expected an arity diagnostic for args(\"extra\"), got none"
+    );
+
+    let type_errors = check_str_err(
+        r#"
+from std.environ import args
+
+def main() -> None:
+    arguments: list[str] = args()
+"#,
+        "args() returns Result[list[str], EnvironError], not list[str]",
+    );
+    assert!(
+        type_errors.iter().any(|error| error
+            .message
+            .contains("expected 'List[str]', found 'Result[List[str], EnvironError]'")),
+        "expected a Result mismatch diagnostic, got: {:?}",
+        type_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
 }
 
 #[test]

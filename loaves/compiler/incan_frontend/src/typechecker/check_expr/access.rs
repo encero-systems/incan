@@ -10,8 +10,9 @@ use crate::diagnostics::{CompileError, errors};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::*;
 use crate::typechecker::helpers::{
-    collection_name, collection_type_id, generator_ty, is_frozen_bytes, is_frozen_str, is_intlike_for_index, list_ty,
-    option_ty, render_resolved_type_as_rust_arg, runtime_string_method_identity_and_return, string_method_return,
+    collection_name, collection_type_id, generator_ty, is_frozen_bytes, is_frozen_str, is_intlike_for_index,
+    is_str_like, list_ty, option_ty, render_resolved_type_as_rust_arg, runtime_string_method_identity_and_return,
+    string_method_return,
 };
 use crate::typechecker::type_info::{
     CBindingEnumAccess, RustArgCoercionInfo, RustArgCoercionKind, RustMethodTraitImportUse, RustTraitImportInfo,
@@ -28,9 +29,10 @@ use incan_lang::lang::surface::string_methods::{self, SelectedStringMethodArgume
 use incan_lang::lang::surface::types as surface_types;
 use incan_lang::lang::surface::types::{SEMAPHORE_ACQUIRE_ERROR_TYPE_NAME, SEMAPHORE_PERMIT_TYPE_NAME, SurfaceTypeId};
 use incan_lang::lang::surface::{
-    dict_methods, float_methods, frozen_bytes_methods, frozen_dict_methods, frozen_list_methods, frozen_set_methods,
-    iterator_methods, list_methods, result_methods, set_methods,
+    bytes_methods, dict_methods, float_methods, frozen_bytes_methods, frozen_dict_methods, frozen_list_methods,
+    frozen_set_methods, iterator_methods, list_methods, result_methods, set_methods,
 };
+use incan_lang::lang::text_codecs::{self, DecodeErrorsPolicy};
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::types::numerics::NumericFamily;
@@ -938,6 +940,142 @@ impl TypeChecker {
         valid
     }
 
+    /// Validate `dict.contains_key(key)` (#1668): exactly one positional probe whose type is compatible with the key
+    /// type, so a mistyped probe fails here instead of as a rustc `Borrow` error in the generated `contains_key`. The
+    /// probe has no parameter name, so a named or unpacked argument is refused with the ordinary call diagnostics.
+    fn validate_dict_contains_key_call(
+        &mut self,
+        key_ty: &ResolvedType,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) {
+        const CALLEE: &str = "Dict.contains_key";
+        let [arg] = args else {
+            self.errors.push(errors::builtin_arity(CALLEE, 1, args.len(), span));
+            return;
+        };
+        let expr = match arg {
+            CallArg::Positional(expr) => expr,
+            CallArg::Named(name, _) => {
+                self.errors
+                    .push(errors::unknown_keyword_argument(CALLEE, &name.node, name.span));
+                return;
+            }
+            CallArg::PositionalUnpack(expr) => {
+                self.errors
+                    .push(errors::call_unpack_without_rest(CALLEE, "*", expr.span));
+                return;
+            }
+            CallArg::KeywordUnpack(expr) => {
+                self.errors
+                    .push(errors::call_unpack_without_rest(CALLEE, "**", expr.span));
+                return;
+            }
+        };
+        if let Some(actual) = arg_types.first()
+            && !matches!(key_ty, ResolvedType::Unknown)
+            && !self.types_compatible(actual, key_ty)
+        {
+            self.errors.push(errors::call_argument_type_mismatch(
+                CALLEE,
+                None,
+                &key_ty.to_string(),
+                &actual.to_string(),
+                expr.span,
+            ));
+        }
+    }
+
+    /// Validate the arguments of a builtin text-codec call (`str.encode` / `bytes.decode`, #1668).
+    ///
+    /// Both methods take an optional `encoding` and `bytes.decode` also takes an optional `errors`, positionally or
+    /// by name. Every argument must be text. A literal label is checked against the `text_codecs` tables here so an
+    /// unsupported codec or error policy is a compile-time error; a label that is only known at run time is left to
+    /// the emitter's runtime guard, which reads the same tables.
+    fn validate_text_codec_call(
+        &mut self,
+        callee: &str,
+        accepts_errors_policy: bool,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) {
+        const ENCODING: &str = "encoding";
+        const ERRORS: &str = "errors";
+        let parameters: &[&str] = if accepts_errors_policy {
+            &[ENCODING, ERRORS]
+        } else {
+            &[ENCODING]
+        };
+
+        // ---- Bind each argument to its parameter, rejecting shapes the surface does not offer ----
+        let mut bound: Vec<(&str, &Spanned<Expr>, &ResolvedType)> = Vec::new();
+        let mut positional_count = 0usize;
+        for (arg, actual) in args.iter().zip(arg_types.iter()) {
+            match arg {
+                CallArg::Positional(expr) => {
+                    let Some(parameter) = parameters.get(positional_count) else {
+                        self.errors
+                            .push(errors::builtin_max_arity(callee, parameters.len(), args.len(), span));
+                        return;
+                    };
+                    positional_count += 1;
+                    bound.push((parameter, expr, actual));
+                }
+                CallArg::Named(name, expr) => {
+                    let Some(parameter) = parameters.iter().find(|parameter| **parameter == name.node) else {
+                        self.errors
+                            .push(errors::unknown_keyword_argument(callee, &name.node, name.span));
+                        return;
+                    };
+                    if let Some((_, first, _)) = bound.iter().find(|(seen, _, _)| seen == parameter) {
+                        self.errors.push(errors::duplicate_call_argument(
+                            callee, parameter, first.span, name.span,
+                        ));
+                        return;
+                    }
+                    bound.push((parameter, expr, actual));
+                }
+                CallArg::PositionalUnpack(expr) => {
+                    self.errors
+                        .push(errors::call_unpack_without_rest(callee, "*", expr.span));
+                    return;
+                }
+                CallArg::KeywordUnpack(expr) => {
+                    self.errors
+                        .push(errors::call_unpack_without_rest(callee, "**", expr.span));
+                    return;
+                }
+            }
+        }
+
+        // ---- Each bound label must be text, and a literal label must name a supported codec or policy ----
+        for (parameter, expr, actual) in bound {
+            if !is_str_like(actual) {
+                self.errors.push(errors::call_argument_type_mismatch(
+                    callee,
+                    Some(parameter),
+                    &ResolvedType::Str.to_string(),
+                    &actual.to_string(),
+                    expr.span,
+                ));
+                continue;
+            }
+            let Expr::Literal(Literal::String(label)) = &expr.node else {
+                continue;
+            };
+            if parameter == ENCODING && !text_codecs::is_utf8_encoding_label(label) {
+                self.errors
+                    .push(errors::unsupported_text_encoding(callee, label, expr.span));
+            }
+            if parameter == ERRORS && DecodeErrorsPolicy::from_label(label).is_none() {
+                self.errors
+                    .push(errors::unsupported_decode_errors_policy(label, expr.span));
+            }
+        }
+    }
+
     /// Build a resolved callable type from parameter and return types for adapter diagnostics.
     fn iterator_callback_ty(params: Vec<ResolvedType>, ret: ResolvedType) -> ResolvedType {
         ResolvedType::Function(
@@ -1371,9 +1509,11 @@ impl TypeChecker {
                 ),
                 string_methods::from_str(method).map(string_methods::as_str)?,
             ),
-            ResolvedType::Bytes if method == "as_slice" => (
+            ResolvedType::Bytes => (
                 incan_lang::lang::types::stringlike::as_str(incan_lang::lang::types::stringlike::StringLikeId::Bytes),
-                "as_slice",
+                bytes_methods::from_str(method)
+                    .map(bytes_methods::as_str)
+                    .or_else(|| (method == "as_slice").then_some("as_slice"))?,
             ),
             ResolvedType::FrozenBytes => (
                 incan_lang::lang::types::stringlike::as_str(
@@ -5341,6 +5481,26 @@ impl TypeChecker {
             return ResolvedType::Bytes;
         }
 
+        // The builtin text return trip (#1668): `str.encode` and `bytes.decode` accept optional codec labels that are
+        // validated against the shared `text_codecs` tables when they are literals.
+        if (matches!(base_ty, ResolvedType::Str) || is_frozen_str(&base_ty))
+            && string_methods::from_str(method) == Some(StringMethodId::Encode)
+        {
+            self.validate_text_codec_call("str.encode", false, args, &arg_types, span);
+            return ResolvedType::Bytes;
+        }
+        if (matches!(base_ty, ResolvedType::Bytes) || is_frozen_bytes(&base_ty))
+            && bytes_methods::from_str(method) == Some(bytes_methods::BytesMethodId::Decode)
+        {
+            self.validate_text_codec_call("bytes.decode", true, args, &arg_types, span);
+            // Malformed input is a data failure the caller handles, so the result is a `Result` over the prelude
+            // validation error (#1668); `str.encode` cannot fail on valid text and stays a plain `bytes`.
+            return ResolvedType::Generic(
+                "Result".to_string(),
+                vec![ResolvedType::Str, ResolvedType::Named("ValidationError".to_string())],
+            );
+        }
+
         if matches!(base_ty, ResolvedType::Str)
             && let Some((id, ret)) = runtime_string_method_identity_and_return(method)
         {
@@ -5589,6 +5749,10 @@ impl TypeChecker {
                         // typecheck consistently with codegen.
                         M::Get => return option_ty(ResolvedType::Ref(Box::new(val.clone()))),
                         M::Insert => return ResolvedType::Unit,
+                        M::ContainsKey => {
+                            self.validate_dict_contains_key_call(&key, args, &arg_types, span);
+                            return ResolvedType::Bool;
+                        }
                     }
                 }
             }

@@ -3301,8 +3301,8 @@ pub fn oven_run(options: OvenRunCommandOptions) -> CliResult<ExitCode> {
 mod tests {
     use super::CompleteLoafEnvelopeReuseInput;
     use super::loaf_bake::{
-        import_release_policy_output, release_policy_publisher_input, validate_release_policy_project_output,
-        verify_committed_release_policy_output,
+        foundation_stage_line, import_release_policy_output, release_policy_publisher_input,
+        validate_release_policy_project_output, verify_committed_release_policy_output,
     };
     use super::{
         CompilerSuiteChildrenReport, CompilerSuiteFixtureCargoProxy, CompilerSuiteNativeTestRootReport,
@@ -5311,11 +5311,65 @@ mod tests {
     }
 
     #[test]
-    fn compiler_suite_schema_fifteen_composes_its_leased_foundations() {
+    fn compiler_suite_indexed_schemas_compose_their_leased_foundations() {
         assert!(!compiler_suite_uses_indexed_foundations(9));
         for schema_version in 10..=OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION {
             assert!(compiler_suite_uses_indexed_foundations(schema_version));
         }
+    }
+
+    /// The text bake report names the foundation stage the way the JSON report records it (#1564).
+    #[test]
+    fn bake_report_names_the_foundation_stage_and_its_cargo_use() -> Result<(), Box<dyn std::error::Error>> {
+        use oven_cargo_compat::{
+            OvenLegacyCargoCompilerSuiteResult, OvenLegacyCargoCompilerSuiteTiming, OvenLegacyCargoFoundationReport,
+            OvenLegacyCargoFoundationSelection,
+        };
+        let existing = OvenLegacyCargoCompilerSuiteResult {
+            suite_identity: "sha256:suite".to_string(),
+            cargo_version: "not-run-existing-suite".to_string(),
+            cargo_manifest_digest: "not-run-existing-suite".to_string(),
+            cargo_lock_digest: "not-run-existing-suite".to_string(),
+            transient_reservation_bytes: 0,
+            foundation: OvenLegacyCargoFoundationReport {
+                key: None,
+                selection: OvenLegacyCargoFoundationSelection::ExistingSuite,
+                cargo_process_started: false,
+                entries: 0,
+            },
+            timing: OvenLegacyCargoCompilerSuiteTiming::default(),
+        };
+        assert_eq!(foundation_stage_line(&existing), None);
+
+        let mut reused = existing.clone();
+        reused.cargo_version = "cargo 1.98.0".to_string();
+        reused.foundation = OvenLegacyCargoFoundationReport {
+            key: serde_json::from_str("\"sha256:foundation\"")?,
+            selection: OvenLegacyCargoFoundationSelection::ReusedFromStore,
+            cargo_process_started: false,
+            entries: 1,
+        };
+        reused.timing.foundation_selection_elapsed_ms = 42;
+        let line = foundation_stage_line(&reused).ok_or("a reused foundation has a stage line")?;
+        assert!(line.contains("reused by key from the store"), "{line}");
+        assert!(line.contains("Cargo not started"), "{line}");
+        assert!(line.contains("build 0 ms"), "{line}");
+        assert!(line.contains("selection 42 ms"), "{line}");
+        assert!(line.contains("sha256:foundation"), "{line}");
+        let rendered = serde_json::to_value(&reused)?;
+        assert_eq!(rendered["foundation"]["selection"], "reused-from-store");
+        assert_eq!(rendered["foundation"]["cargo_process_started"], false);
+        assert_eq!(rendered["timing"]["foundation_build_elapsed_ms"], 0);
+
+        let mut built = reused.clone();
+        built.foundation.selection = OvenLegacyCargoFoundationSelection::Built;
+        built.foundation.cargo_process_started = true;
+        built.timing.foundation_build_elapsed_ms = 34_292;
+        let line = foundation_stage_line(&built).ok_or("a built foundation has a stage line")?;
+        assert!(line.contains("built by Cargo"), "{line}");
+        assert!(line.contains("Cargo started"), "{line}");
+        assert!(line.contains("build 34292 ms"), "{line}");
+        Ok(())
     }
 
     #[test]

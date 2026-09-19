@@ -1,42 +1,40 @@
 # `std.environ`
 
-`std.environ` provides read-only runtime access to current-process environment variables as Unicode strings or typed values converted through `TryFrom[str]`. Structured errors distinguish missing, invalid, non-Unicode, and malformed values without exposing observed environment contents.
+`std.environ` reads the current process's environment variables, as Unicode strings or as typed values converted through `TryFrom[str]`, and its argument vector. It never mutates the environment and never exposes an observed environment value in an error.
 
 ```incan
-from std.environ import get, get_optional, get_or, get_as
+from std.environ import EnvironError, EnvironErrorKind
+from std.environ import args, get, get_as, get_optional, get_or
+```
+
+## Functions
+
+| Signature | Contract |
+| --- | --- |
+| `args() -> Result[list[str], EnvironError]` | Returns the process argument vector: the program name first, exactly as the host supplied it, then each argument in order. Every entry is Unicode text; the first argument that is not valid Unicode returns `not_unicode` with `key` set to its position, `argv[2]`, and the observed bytes never appear in the error. |
+| `get(key: str) -> Result[str, EnvironError]` | Returns the present Unicode value of `key`. A missing key, an invalid key, and a non-Unicode host value return distinct error kinds. |
+| `get_optional(key: str) -> Option[str]` | Returns `Some(value)` for a present Unicode value and `None` for a missing key, an invalid key, or a non-Unicode value. Use `get` when the failure category matters. |
+| `get_or(key: str, default: str) -> str` | Returns the present Unicode value, or `default` whenever `get_optional` would return `None`. |
+| `get_as[T with TryFrom[str]](key: str) -> Result[Option[T], EnvironError]` | Returns `Ok(None)` when `key` is absent. A present value is converted through `TryFrom[str]`; a conversion or validation failure returns `invalid_value`. |
+| `get_as[T with TryFrom[str]](key: str, default: T) -> Result[T, EnvironError]` | Returns `default` only when `key` is absent; the default may be passed positionally or as `default=`. A present value that fails conversion returns `invalid_value` even when a default is supplied. |
+
+A key is invalid when it is empty or contains `=` or NUL.
+
+```incan
+from std.environ import args, get, get_as, get_optional, get_or
 
 token = get("API_TOKEN")?
 mode = get_optional("APP_MODE").unwrap_or("dev")
 region = get_or("APP_REGION", "eu-west-1")
 port = get_as[int]("PORT", default=8080)?
+command = args()?[1:]
 ```
 
-## String reads
+## Conversions for `get_as`
 
-`get(key: str) -> Result[str, EnvironError]` returns a required Unicode value. Missing keys, invalid keys, and non-Unicode host values return distinct errors. A key is invalid when it is empty or contains `=` or NUL.
+The compiler provides `TryFrom[str]` for `str`, `bool`, `int`, `float`, and the exact signed, unsigned, and binary floating-point numeric types. Boolean values use the spellings `true` and `false`. Numeric values follow the lexical and range rules of the target type.
 
-`get_optional(key: str) -> Option[str]` returns `Some(value)` for a present Unicode value and `None` for missing, invalid-key, or non-Unicode reads. Use `get()` when code needs the precise failure category.
-
-`get_or(key: str, default: str) -> str` returns the present Unicode value or `default` when no Unicode value is available. It has the same deliberately lossy error behavior as `get_optional()`.
-
-## Typed reads
-
-`get_as[T with TryFrom[str]](key: str) -> Result[Option[T], EnvironError]` returns `Ok(None)` when the key is absent. A present value is converted through `TryFrom[str]`; parse or validation failure returns `invalid_value`.
-
-`get_as[T with TryFrom[str]](key: str, default: T) -> Result[T, EnvironError]` returns the default only when the key is absent. The default can be positional or named:
-
-```incan
-from std.environ import get_as
-
-port = get_as[int]("PORT", 8080)?
-timeout = get_as[float]("TIMEOUT", default=2.5)?
-```
-
-A malformed present value never falls back to the default. For example, `PORT=not-a-number` returns `invalid_value` even when a default is supplied.
-
-The compiler provides `TryFrom[str]` conversion for `str`, `bool`, `int`, `float`, and the exact signed, unsigned, and binary floating-point numeric types. Boolean values use the canonical `true` and `false` spellings. Numeric values follow the lexical and range rules of their target type.
-
-User-defined models, classes, enums, and newtypes can opt in by implementing `TryFrom[str]` explicitly:
+A model, class, enum, or newtype can be read with `get_as` by implementing `TryFrom[str]`:
 
 ```incan
 from std.environ import get_as
@@ -55,9 +53,7 @@ model Deployment with TryFrom[str]:
 deployment = get_as[Deployment]("DEPLOYMENT")?
 ```
 
-## Validated newtypes
-
-Newtype instantiations compose automatically when their underlying type supports `TryFrom[str]`. If a newtype defines `from_underlying`, typed reads use that checked constructor after parsing:
+A newtype over a convertible underlying type is converted through that type. When the newtype defines `from_underlying`, the parsed value passes through that checked constructor, and so does a supplied default when the key is absent:
 
 ```incan
 from std.environ import get_as
@@ -72,24 +68,31 @@ type Port = newtype int:
 port = get_as[Port]("PORT", default=8080)?
 ```
 
-`PORT=70000` fails validation. When `PORT` is absent, the integer default is converted through the ordinary checked newtype coercion path, so an invalid default does not bypass `from_underlying`.
+`PORT=70000` returns `invalid_value`; an absent `PORT` returns `Port(8080)`.
 
-## Errors
+## `EnvironError`
 
-`EnvironError` exposes `kind()` and `kind_name()`, the requested `key`, and a redacted `detail` message. The stable categories are:
+`EnvironError` implements `Error`.
 
-- `missing`: the key is not present.
-- `invalid_key`: the key is empty or contains `=` or NUL.
-- `invalid_value`: a typed read could not parse or validate the present value.
-- `not_unicode`: the host value cannot be represented as Unicode text.
-- `other`: an unexpected host failure.
+| Member | Contract |
+| --- | --- |
+| `key: str` | The key the read was asked for; for `args`, the position of the refused argument as `argv[N]`. |
+| `detail: str` | A redacted description; it may name the key and the expected target type, never the observed value. |
+| `kind(self) -> EnvironErrorKind` | The stable category. |
+| `kind_name(self) -> str` | The category's lowercase spelling, as listed below. |
+| `message(self) -> str` | `detail`. |
 
-`kind() -> EnvironErrorKind` returns the typed value enum. Its variants are `Missing`, `InvalidKey`, `InvalidValue`, `NotUnicode`, and `Other`. `kind_name() -> str` returns the corresponding lowercase spelling shown above when text output or serialization is more convenient.
+## `EnvironErrorKind`
 
-Error details may include the key and expected target type. They never include the observed environment value.
+| Variant | `kind_name()` | Returned when |
+| --- | --- | --- |
+| `Missing` | `missing` | The key is not present. |
+| `InvalidKey` | `invalid_key` | The key is empty or contains `=` or NUL. |
+| `InvalidValue` | `invalid_value` | A typed read could not convert or validate the present value. |
+| `NotUnicode` | `not_unicode` | The host value, or a process argument, cannot be represented as Unicode text. |
+| `Other` | `other` | An unexpected host failure. |
 
-## Runtime scope
+## Constraints
 
-Environment reads are runtime operations and are rejected in `const` initializers. The module does not mutate the current process environment and does not expose a byte-oriented host environment API.
-
-Use `std.environ` for direct ambient reads. Structured application configuration belongs to the planned `ctx` surface, while planned `std.ci.env` helpers may add CI-specific policy without becoming the only environment namespace. Child-process environment construction belongs to the planned `std.process` command API rather than current-process reads.
+- Every read is a runtime operation; a call to any function of this module in a `const` initializer is a type error.
+- The module reads the process environment and argument vector only. It does not set variables, does not parse arguments, and does not expose bytes for values that are not Unicode.
