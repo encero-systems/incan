@@ -62,6 +62,8 @@ The repository suite has one explicit preparation boundary and one Cargo-guarded
 1. `make test-prewarm-oven-loafs` invokes the internal compiler-suite publisher once to create or exactly reuse the typed Loaf envelope and receipt-bound compiler-suite store.
 2. `incan oven compiler-libtests` compiles and executes every discovered root from the prepared store with Cargo guarded out.
 
+The publisher's one Cargo compilation is the third-party foundation every suite root links, and it is reused by its own key across compiler edits (see [Oven Alpha](../../tooling/explanation/oven_alpha.md) for why). To confirm a reuse, read the bake report: `compiler_suite.prepare.foundation.selection` is `reused-from-store` or `reused-from-mirror` and `compiler_suite.prepare.timing.foundation_build_elapsed_ms` is `0`; a cold or changed foundation reports `built` with its build time. The text report prints the same on its `Third-party foundation:` line. A mirror on `INCAN_OVEN_MIRRORS` is consulted after the local compiler-suite store and before Cargo.
+
 The Makefile owns only this command composition. Oven owns Loaf identity, contents, admission, storage policy, selection, root inventory, and reporting. `make test-one TEST_ROOT=loaves/toolchain/incan-cli/tests/cli_surface_tests.rs` is the fast failure-isolation path; `make test-oven` is the complete local gate. Both pin the explicit publisher to `nightly-2026-03-24`, while the consumer remains direct `rustc`.
 
 ```bash

@@ -262,14 +262,17 @@ pub struct CompilerSuiteTargetPlanCoverage {
 }
 
 /// Stable lookup key joining Cargo's unit graph dependency edge to its JSON compiler artifact record.
+///
+/// The fields are crate-visible so the foundation family record (`compiler_suite_foundation`) can render an index
+/// entry portably at publication and rebuild it from a stored foundation on a later machine.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CargoUnitArtifactKey {
-    package_id: String,
-    target_name: String,
-    source_path: PathBuf,
-    features: Vec<String>,
-    test_profile: bool,
-    platform: Option<String>,
+    pub(crate) package_id: String,
+    pub(crate) target_name: String,
+    pub(crate) source_path: PathBuf,
+    pub(crate) features: Vec<String>,
+    pub(crate) test_profile: bool,
+    pub(crate) platform: Option<String>,
 }
 
 /// Scan the bounded publisher target once and retain every compiler/linker input as an immutable shared closure.
