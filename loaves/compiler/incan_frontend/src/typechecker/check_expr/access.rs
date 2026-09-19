@@ -5206,7 +5206,12 @@ impl TypeChecker {
             && bytes_methods::from_str(method) == Some(bytes_methods::BytesMethodId::Decode)
         {
             self.validate_text_codec_call("bytes.decode", true, args, &arg_types, span);
-            return ResolvedType::Str;
+            // Malformed input is a data failure the caller handles, so the result is a `Result` over the prelude
+            // validation error (#1668); `str.encode` cannot fail on valid text and stays a plain `bytes`.
+            return ResolvedType::Generic(
+                "Result".to_string(),
+                vec![ResolvedType::Str, ResolvedType::Named("ValidationError".to_string())],
+            );
         }
 
         if matches!(base_ty, ResolvedType::Str)

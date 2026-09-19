@@ -14,27 +14,33 @@ def runtime_label(text: str, label: str) -> bytes:
     return text.encode(label)
 
 
-def round_trip(data: bytes) -> str:
+def round_trip(data: bytes) -> Result[str, ValidationError]:
     return data.decode()
 
 
 def lossy(data: bytes) -> str:
-    return data.decode(errors="replace")
+    match data.decode(errors="replace"):
+        Ok(text) => return text
+        Err(_) => return "?"
 
 
-def runtime_policy(data: bytes, policy: str) -> str:
+def runtime_policy(data: bytes, policy: str) -> Result[str, ValidationError]:
     return data.decode("utf-8", policy)
 
 
-def frozen_round_trip() -> str:
-    return RAW.decode() + GREETING.encode().decode()
+def frozen_round_trip() -> Result[str, ValidationError]:
+    return Ok(RAW.decode()? + GREETING.encode().decode()?)
 
 
-def main() -> None:
+def main() -> Result[None, ValidationError]:
     payload = utf8_bytes("héllo")
     println(len(payload))
-    println(round_trip(payload))
+    println(round_trip(payload)?)
     println(lossy(b"\xff"))
     println(len(utf8_bytes_named("b")) + len(runtime_label("c", "utf8")))
-    println(runtime_policy(b"ok", "strict"))
-    println(frozen_round_trip())
+    println(runtime_policy(b"ok", "strict")?)
+    println(frozen_round_trip()?)
+    match b"\xff".decode():
+        Ok(text) => println(text)
+        Err(error) => println(f"{error}")
+    return Ok(None)

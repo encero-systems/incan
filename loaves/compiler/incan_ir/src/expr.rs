@@ -800,7 +800,8 @@ pub enum MethodKind {
 /// Known `bytes`-method variants handled by the compiler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BytesMethodKind {
-    /// `data.decode(encoding="utf-8", errors="strict")` → UTF-8 decoding with a `ValueError` or replacement policy.
+    /// `data.decode(encoding="utf-8", errors="strict")` → `Result[str, ValidationError]` UTF-8 decoding, strict or
+    /// replacing.
     Decode,
 }
 

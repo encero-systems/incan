@@ -765,7 +765,7 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
 |---|---|---|---|---|---|---|
-| Decode | `decode` |  | Return the bytes decoded as text; only UTF-8 is supported, and `errors` is `strict` (raise `ValueError` on malformed input) or `replace`. | RFC 009 | 0.6 | Stable |
+| Decode | `decode` |  | Return `Result[str, ValidationError]`: the bytes decoded as UTF-8 text, or an error whose `code` is `invalid-utf8` (under `errors="strict"`, the default), `unknown-encoding`, or `unknown-errors-policy`; `errors="replace"` substitutes U+FFFD and always succeeds. | RFC 009 | 0.6 | Stable |
 
 
 ### FrozenBytes methods

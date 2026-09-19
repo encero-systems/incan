@@ -14382,15 +14382,38 @@ def encode_forms(text: str, label: str) -> int:
     frozen: bytes = GREETING.encode()
     return len(plain) + len(explicit) + len(named) + len(runtime) + len(frozen)
 
-def decode_forms(data: bytes, label: str, policy: str) -> str:
-    plain: str = data.decode()
-    lossy: str = data.decode(errors="replace")
-    positional: str = data.decode("utf8", "strict")
-    runtime: str = data.decode(label, errors=policy)
-    frozen: str = RAW.decode()
-    return plain + lossy + positional + runtime + frozen
+def decode_forms(data: bytes, label: str, policy: str) -> Result[str, ValidationError]:
+    plain: str = data.decode()?
+    lossy: str = data.decode(errors="replace")?
+    positional: str = data.decode("utf8", "strict")?
+    runtime: str = data.decode(label, errors=policy)?
+    frozen: str = RAW.decode()?
+    attempt: Result[str, ValidationError] = data.decode()
+    match attempt:
+        Ok(text) => println(text)
+        Err(error) => println(f"{error}")
+    return Ok(plain + lossy + positional + runtime + frozen)
 "#;
     assert_check_ok(source);
+}
+
+#[test]
+fn test_bytes_decode_returns_result_not_str_issue1668() {
+    let errors = check_str_err(
+        r#"
+def text(data: bytes) -> str:
+    decoded: str = data.decode()
+    return decoded
+"#,
+        "bytes.decode() returns Result[str, ValidationError], not str",
+    );
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("expected 'str', found 'Result[str, ValidationError]'")),
+        "expected a Result mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
 }
 
 #[test]

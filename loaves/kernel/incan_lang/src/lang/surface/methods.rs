@@ -871,7 +871,7 @@ pub mod bytes_methods {
         BytesMethodId::Decode,
         "decode",
         &[],
-        "Return the bytes decoded as text; only UTF-8 is supported, and `errors` is `strict` (raise `ValueError` on malformed input) or `replace`.",
+        "Return `Result[str, ValidationError]`: the bytes decoded as UTF-8 text, or an error whose `code` is `invalid-utf8` (under `errors=\"strict\"`, the default), `unknown-encoding`, or `unknown-errors-policy`; `errors=\"replace\"` substitutes U+FFFD and always succeeds.",
         RFC::_009,
         Since(0, 6),
     )];

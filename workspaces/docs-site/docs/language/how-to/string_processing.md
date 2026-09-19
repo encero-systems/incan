@@ -54,16 +54,22 @@ println(text.replace("world", "incan"))  # hello incan
 
 ## Move between text and bytes
 
-`encode` gives the UTF-8 bytes of a `str`; `decode` reads UTF-8 bytes back. Keep `decode` strict at the point where bytes enter the program, and use `errors="replace"` only for text you copy for display:
+`encode` gives the UTF-8 bytes of a `str`; `decode` reads UTF-8 bytes back and returns `Result[str, ValidationError]`, so malformed input is handled where the bytes enter the program rather than crashing it. Keep `decode` strict there, and use `errors="replace"` only for text you copy for display:
 
 ```incan
+def greet(payload: bytes) -> Result[str, ValidationError]:
+    text = payload.decode()?
+    return Ok(f"hello, {text}")
+
 payload: bytes = "héllo".encode()
-println(len(payload))                      # 6
-println(payload.decode())                  # héllo
-println(b"\xff".decode(errors="replace"))  # U+FFFD replacement character
+println(len(payload))                       # 6
+match greet(payload):
+    Ok(line) => println(line)               # hello, héllo
+    Err(error) => println(f"{error}")       # invalid-utf8: 'utf-8' codec can't decode bytes: …
+println(b"\xff".decode(errors="replace")?)  # U+FFFD replacement character
 ```
 
-Strict decoding of malformed input raises `ValueError`, the same failure `int("x")` raises. Other codecs are not built into `str` and `bytes`: files use `std.fs` (`read_text` / `write_text`), and hexadecimal, base64 and similar text formats live in [`std.encoding`](binary_text_encoding.md).
+The error's `code` is `invalid-utf8` for malformed input, `unknown-encoding` for a run-time label naming another codec, and `unknown-errors-policy` for a run-time policy other than `"strict"` or `"replace"`. Other codecs are not built into `str` and `bytes`: files use `std.fs` (`read_text` / `write_text`), and hexadecimal, base64 and similar text formats live in [`std.encoding`](binary_text_encoding.md).
 
 ## See also
 

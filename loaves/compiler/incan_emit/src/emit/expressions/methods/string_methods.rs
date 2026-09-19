@@ -51,14 +51,37 @@ fn literal_label(expr: Option<&TypedExpr>) -> Option<&str> {
     }
 }
 
+/// How a text codec call reports a label or input it cannot handle.
+#[derive(Clone, Copy)]
+enum CodecFailure {
+    /// `str.encode`: an unknown run-time label is a programming error and raises `ValueError`, as `int("x")` does.
+    Raise,
+    /// `bytes.decode`: every failure is an `Err(ValidationError)` the caller handles (#1668).
+    Err,
+}
+
+/// The `Result` type `bytes.decode` returns, spelled in full so each arm's `Ok`/`Err` infers without a binding.
+fn decode_result_type() -> TokenStream {
+    quote! { ::std::result::Result<String, incan_std_core::validation::ValidationError> }
+}
+
+/// Emit the `Err` arm of a decode failure: a `ValidationError` whose `code` names the failure category.
+fn decode_failure(message: TokenStream, code: &str) -> TokenStream {
+    let result_type = decode_result_type();
+    quote! {
+        <#result_type>::Err(incan_std_core::validation::ValidationError::with_code(#message, #code))
+    }
+}
+
 /// Wrap `body` in the runtime UTF-8 label guard when the encoding is not a literal the typechecker already accepted.
 ///
-/// The guard normalizes the label exactly like `text_codecs::normalize_encoding_label` and raises `ValueError` for
-/// anything else, which is the builtin-conversion failure convention (`int("x")`) rather than a `Result`.
+/// The guard normalizes the label exactly like `text_codecs::normalize_encoding_label`; anything else is reported
+/// the way `failure` says the callee reports it.
 fn guard_runtime_encoding_label(
     emitter: &IrEmitter,
     callee: &str,
     encoding: Option<&TypedExpr>,
+    failure: CodecFailure,
     body: TokenStream,
 ) -> Result<TokenStream, EmitError> {
     let Some(encoding) = encoding else {
@@ -71,6 +94,10 @@ fn guard_runtime_encoding_label(
     let label = emitter.emit_expr(encoding)?;
     let utf8_labels = text_codecs::UTF8_ENCODING_LABELS;
     let message = format!("{callee}() supports only utf-8 in this release, got encoding '{{__incan_encoding}}'");
+    let unknown = match failure {
+        CodecFailure::Raise => quote! { incan_std_core::errors::raise_value_error(&format!(#message)) },
+        CodecFailure::Err => decode_failure(quote! { format!(#message) }, "unknown-encoding"),
+    };
     Ok(quote! {
         match <_ as AsRef<str>>::as_ref(&#label)
             .trim()
@@ -79,7 +106,7 @@ fn guard_runtime_encoding_label(
             .as_str()
         {
             #(#utf8_labels)|* => #body,
-            __incan_encoding => incan_std_core::errors::raise_value_error(&format!(#message)),
+            __incan_encoding => #unknown,
         }
     })
 }
@@ -92,32 +119,38 @@ fn emit_str_encode(emitter: &IrEmitter, info: &ReceiverInfo, args: &[IrCallArg])
         emitter,
         "str.encode",
         bound.encoding,
+        CodecFailure::Raise,
         quote! { (#r).as_bytes().to_vec() },
     )
 }
 
-/// Emit the strict UTF-8 decode of a byte view: valid input becomes an owned `String`, malformed input raises
-/// `ValueError` the way Python's `UnicodeDecodeError` (a `ValueError`) does.
+/// Emit the strict UTF-8 decode of a byte view: valid input is `Ok` of an owned `String`, malformed input is `Err`
+/// of a `ValidationError` coded `invalid-utf8` whose message names the offending offset.
 fn strict_decode(view: &TokenStream) -> TokenStream {
+    let result_type = decode_result_type();
+    let failure = decode_failure(
+        quote! { format!("'utf-8' codec can't decode bytes: {__incan_error}") },
+        "invalid-utf8",
+    );
     quote! {
         match ::std::str::from_utf8(#view) {
-            Ok(__incan_text) => __incan_text.to_string(),
-            Err(__incan_error) => incan_std_core::errors::raise_value_error(
-                &format!("'utf-8' codec can't decode input: {__incan_error}"),
-            ),
+            Ok(__incan_text) => <#result_type>::Ok(__incan_text.to_string()),
+            Err(__incan_error) => #failure,
         }
     }
 }
 
-/// Emit the replacing UTF-8 decode of a byte view; malformed sequences become U+FFFD and decoding never fails.
+/// Emit the replacing UTF-8 decode of a byte view; malformed sequences become U+FFFD, so the result is always `Ok`.
 fn replace_decode(view: &TokenStream) -> TokenStream {
-    quote! { String::from_utf8_lossy(#view).into_owned() }
+    let result_type = decode_result_type();
+    quote! { <#result_type>::Ok(String::from_utf8_lossy(#view).into_owned()) }
 }
 
 /// Emit `data.decode(encoding="utf-8", errors="strict")` for `bytes`, `FrozenBytes`, and static byte receivers.
 ///
 /// The receiver is read through `AsRef<[u8]>`, which every byte representation the IR carries implements, so one
-/// emission covers `Vec<u8>`, `&'static [u8]`, and the frozen wrapper.
+/// emission covers `Vec<u8>`, `&'static [u8]`, and the frozen wrapper. The value is `Result[str, ValidationError]`
+/// whatever the policy: `replace` never fails, but an unknown run-time label or policy still has to be reported.
 pub fn emit_bytes_method(
     emitter: &IrEmitter,
     info: &ReceiverInfo,
@@ -141,19 +174,23 @@ pub fn emit_bytes_method(
                         let replace = DecodeErrorsPolicy::Replace.as_str();
                         let strict_body = strict_decode(&view);
                         let replace_body = replace_decode(&view);
+                        let unknown_policy = decode_failure(
+                            quote! {
+                                format!("bytes.decode() errors must be \"strict\" or \"replace\", got '{__incan_policy}'")
+                            },
+                            "unknown-errors-policy",
+                        );
                         quote! {
                             match <_ as AsRef<str>>::as_ref(&#policy_tokens) {
                                 #strict => #strict_body,
                                 #replace => #replace_body,
-                                __incan_policy => incan_std_core::errors::raise_value_error(
-                                    &format!("bytes.decode() errors must be \"strict\" or \"replace\", got '{__incan_policy}'"),
-                                ),
+                                __incan_policy => #unknown_policy,
                             }
                         }
                     }
                 },
             };
-            guard_runtime_encoding_label(emitter, "bytes.decode", bound.encoding, decoded)
+            guard_runtime_encoding_label(emitter, "bytes.decode", bound.encoding, CodecFailure::Err, decoded)
         }
     }
 }

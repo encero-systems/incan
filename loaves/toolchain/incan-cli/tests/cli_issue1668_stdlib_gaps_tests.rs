@@ -69,11 +69,20 @@ def main() -> Result[None, EnvironError]:
     println(describe(Verdict.Admitted))
     println(describe(Verdict.Rejected("no manifest")))
 
-    payload = arguments[1].encode()
+    match text_round_trip(arguments[1]):
+        Ok(_) => println("round-trip ok")
+        Err(error) => println(f"{error}")
+    return Ok(None)
+
+def text_round_trip(word: str) -> Result[None, ValidationError]:
+    payload = word.encode()
     println(len(payload))
-    println(payload.decode())
-    println(b"\xff".decode(errors="replace"))
-    println("UTF_8".encode("utf8").decode("UTF-8", "strict"))
+    println(payload.decode()?)
+    println(b"\xff".decode(errors="replace")?)
+    println("UTF_8".encode("utf8").decode("UTF-8", "strict")?)
+    match b"\xff".decode():
+        Ok(text) => println(text)
+        Err(error) => println(f"{error}")
     return Ok(None)
 "#;
 
@@ -134,11 +143,14 @@ fn stdlib_gaps_argv_text_codecs_and_dict_surfaces_issue1668() -> Result<(), Box<
             // mut str local reassigned inside match arms.
             "admitted",
             "no manifest",
-            // str.encode / bytes.decode: "admit" is five UTF-8 bytes; U+FFFD replaces the lone 0xff.
+            // str.encode / bytes.decode: "admit" is five UTF-8 bytes; U+FFFD replaces the lone 0xff under
+            // errors="replace", and the strict default reports it as an Err whose message names the offset.
             "5",
             "admit",
             "\u{FFFD}",
             "UTF_8",
+            "invalid-utf8: 'utf-8' codec can't decode bytes: invalid utf-8 sequence of 1 bytes from index 0",
+            "round-trip ok",
         ],
         "the #1668 program must print every surface's expected value"
     );

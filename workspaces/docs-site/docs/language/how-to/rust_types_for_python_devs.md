@@ -66,7 +66,7 @@ Python's `bytes` is immutable; Incan's `bytes` lowers to `Vec<u8>`, which is not
 | File contents that are text | `str` |
 | Binary files, network protocols, cryptographic inputs, raw file I/O | `bytes` |
 
-`str.encode()` and `bytes.decode()` convert between them, UTF-8 only; a malformed strict decode raises `ValueError` where Python raises `UnicodeDecodeError`.
+`str.encode()` and `bytes.decode()` convert between them, UTF-8 only; where Python's `decode` raises `UnicodeDecodeError`, Incan's returns `Result[str, ValidationError]`, so a malformed input is an `Err` you match on or pass up with `?`.
 
 ## See also
 

@@ -62,7 +62,7 @@ Membership uses the method, not the `in` operator: `s.contains("x")`.
 
 | Signature | Contract |
 | --- | --- |
-| `decode(encoding: str = "utf-8", errors: str = "strict") -> str` | The bytes read as UTF-8 text. `encoding` follows the same rule as `str.encode`. `errors` is `"strict"`, which raises `ValueError` on the first malformed sequence, or `"replace"`, which substitutes U+FFFD for each malformed sequence; any other literal policy is a compile-time error, any other run-time policy raises `ValueError`. |
+| `decode(encoding: str = "utf-8", errors: str = "strict") -> Result[str, ValidationError]` | `Ok` of the bytes read as UTF-8 text. `encoding` follows the same rule as `str.encode`, except that a run-time label naming another codec returns `Err` with `code` `unknown-encoding`. `errors` is `"strict"`, which returns `Err` with `code` `invalid-utf8` at the first malformed sequence (the message names its byte offset), or `"replace"`, which substitutes U+FFFD for each malformed sequence and always returns `Ok`; any other literal policy is a compile-time error, any other run-time policy returns `Err` with `code` `unknown-errors-policy`. |
 
 ## F-strings
 
