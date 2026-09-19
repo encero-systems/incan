@@ -451,21 +451,16 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             && envelope == OvenLoafEnvelope::Release
             && specification.label == "stdlib"
         {
-            let harvest = harvest_registry_build_script_facts(
+            let records = harvest_registry_build_script_facts(
                 selected_units,
                 specification.profile,
                 &receipt.identity,
                 ambient_harvest_hazards(),
             )
             .map_err(oven_error)?;
-            let written = write_harvest_proposals(harvest_dir, &harvest.records).map_err(oven_error)?;
-            let deferred = if harvest.deferred_for_link_facts.is_empty() {
-                "none".to_string()
-            } else {
-                harvest.deferred_for_link_facts.join(", ")
-            };
+            let written = write_harvest_proposals(harvest_dir, &records).map_err(oven_error)?;
             let note = format!(
-                "Harvested {} registry build-script record(s) for the {} profile into {}; deferred for link facts: {deferred}.",
+                "Harvested {} registry build-script record(s) for the {} profile into {}.",
                 written.len(),
                 specification.profile,
                 harvest_dir.display()

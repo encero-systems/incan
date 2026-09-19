@@ -84,18 +84,6 @@ pub struct HarvestEvidence {
     pub hazards: Vec<String>,
 }
 
-/// A harvest: the records that can be proposed today, and the units whose observation the record vocabulary
-/// cannot yet state.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Harvest {
-    /// One proposal per package version and binding.
-    pub records: Vec<HarvestedRecord>,
-    /// `<package> <version>` of every unit whose script emitted link facts, which RFC 119's `[rust.link]` grammar
-    /// will carry and the record vocabulary does not yet; proposing a record without them would declare less than
-    /// the script does, so these are deferred rather than harvested.
-    pub deferred_for_link_facts: Vec<String>,
-}
-
 /// One harvested record: the proposal and the generated inputs to place beside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HarvestedRecord {
@@ -137,7 +125,7 @@ pub fn harvest_registry_build_script_facts(
     profile: &str,
     receipt_identity: &str,
     hazards: Vec<String>,
-) -> Result<Harvest, OvenLegacyCargoError> {
+) -> Result<Vec<HarvestedRecord>, OvenLegacyCargoError> {
     let compiler = capture
         .compiler
         .as_ref()
@@ -148,7 +136,6 @@ pub fn harvest_registry_build_script_facts(
         is_sha256_identity(&canonical).then_some(canonical)
     };
     let mut records: BTreeMap<(String, String, String), HarvestedRecord> = BTreeMap::new();
-    let mut deferred = BTreeSet::new();
     for unit in &capture.units {
         if unit.mode == "run-custom-build" {
             continue;
@@ -159,10 +146,6 @@ pub fn harvest_registry_build_script_facts(
         let Some(facts) = build_script_facts(capture, unit) else {
             continue;
         };
-        if !facts.linked_libraries.is_empty() || !facts.linked_paths.is_empty() {
-            deferred.insert(format!("{} {}", unit.package, unit.package_version));
-            continue;
-        }
         let mut features = unit.effective_features.clone();
         features.sort();
         features.dedup();
@@ -243,10 +226,7 @@ pub fn harvest_registry_build_script_facts(
             }
         }
     }
-    Ok(Harvest {
-        records: records.into_values().collect(),
-        deferred_for_link_facts: deferred.into_iter().collect(),
-    })
+    Ok(records.into_values().collect())
 }
 
 /// The observed build-script facts governing `unit`, from its edge to the script unit or from the script unit itself.
@@ -414,10 +394,8 @@ mod tests {
             out_dir.path(),
             Some(("private.rs", "sha256:priv")),
         );
-        let harvest = harvest_registry_build_script_facts(&capture, "release", "abc", Vec::new())?;
-        let records = &harvest.records;
+        let records = harvest_registry_build_script_facts(&capture, "release", "abc", Vec::new())?;
         assert_eq!(records.len(), 1);
-        assert!(harvest.deferred_for_link_facts.is_empty());
         let proposal = &records[0].proposal;
         assert_eq!(proposal.project.name, "serde_core");
         assert_eq!(proposal.source.registry, CRATES_IO_INDEX);
@@ -442,7 +420,7 @@ mod tests {
         );
         assert!(proposal.evidence.hazards.is_empty());
         let harvest_root = out_dir.path().join("harvest");
-        let written = write_harvest_proposals(&harvest_root, records)?;
+        let written = write_harvest_proposals(&harvest_root, &records)?;
         assert_eq!(written, [harvest_root.join("serde_core-1.0.228-release/proposal.json")]);
         let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(&written[0])?)?;
         assert_eq!(json["rust"]["facts"][0]["out"][0]["path"], "out/private.rs");
@@ -460,8 +438,7 @@ mod tests {
         let capture = capture_with_script(&[], out_dir.path(), None);
         let receipt = format!("sha256:{}", "a".repeat(64));
         let records =
-            harvest_registry_build_script_facts(&capture, "debug", &receipt, vec!["RUSTC_BOOTSTRAP".to_string()])?
-                .records;
+            harvest_registry_build_script_facts(&capture, "debug", &receipt, vec!["RUSTC_BOOTSTRAP".to_string()])?;
         let proposal = &records[0].proposal;
         assert_eq!(proposal.evidence.receipt.as_deref(), Some(receipt.as_str()));
         assert_eq!(proposal.evidence.hazards, ["RUSTC_BOOTSTRAP"]);
@@ -496,22 +473,6 @@ mod tests {
                 .contains("two captured units under one binding observed different facts"),
             "{error}"
         );
-        Ok(())
-    }
-
-    #[test]
-    fn a_script_that_emits_link_facts_is_deferred_rather_than_declared_short() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let out_dir = tempfile::tempdir()?;
-        let mut capture = capture_with_script(&["a_cfg"], out_dir.path(), None);
-        capture.units[1]
-            .build_script
-            .as_mut()
-            .ok_or("fixture script has facts")?
-            .linked_libraries = vec!["zstd".to_string()];
-        let harvest = harvest_registry_build_script_facts(&capture, "release", "r", Vec::new())?;
-        assert!(harvest.records.is_empty());
-        assert_eq!(harvest.deferred_for_link_facts, ["serde_core 1.0.228"]);
         Ok(())
     }
 }
