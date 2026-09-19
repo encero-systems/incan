@@ -1,15 +1,35 @@
 # `std.environ`
 
-`std.environ` provides read-only runtime access to current-process environment variables as Unicode strings or typed values converted through `TryFrom[str]`. Structured errors distinguish missing, invalid, non-Unicode, and malformed values without exposing observed environment contents.
+`std.environ` provides read-only runtime access to current-process environment variables as Unicode strings or typed values converted through `TryFrom[str]`, and to the process argument vector. Structured errors distinguish missing, invalid, non-Unicode, and malformed values without exposing observed environment contents.
 
 ```incan
-from std.environ import get, get_optional, get_or, get_as
+from std.environ import args, get, get_optional, get_or, get_as
 
 token = get("API_TOKEN")?
 mode = get_optional("APP_MODE").unwrap_or("dev")
 region = get_or("APP_REGION", "eu-west-1")
 port = get_as[int]("PORT", default=8080)?
+arguments = args()
 ```
+
+## Argument vector
+
+`args() -> list[str]` returns the current process argument vector: the program name first, exactly as the host supplied it, followed by each argument in order. Slice from index 1 to skip the program name.
+
+```incan
+from std.environ import args
+
+def main() -> None:
+    arguments = args()
+    if len(arguments) < 2:
+        println("usage: tool <command> [options]")
+        return
+    command = arguments[1]
+    for option in arguments[2:]:
+        println(f"{command}: {option}")
+```
+
+Every entry is Unicode text. Like `get()`, the module never converts a non-Unicode host value silently: an argument that is not valid Unicode is refused rather than replaced or dropped. Because the argument vector is read as a whole, that refusal ends the process with a panic instead of returning an `EnvironError`. Argument parsing (flags, subcommands, help text) is not part of this module.
 
 ## String reads
 
@@ -90,6 +110,6 @@ Error details may include the key and expected target type. They never include t
 
 ## Runtime scope
 
-Environment reads are runtime operations and are rejected in `const` initializers. The module does not mutate the current process environment and does not expose a byte-oriented host environment API.
+Environment and argument-vector reads are runtime operations and are rejected in `const` initializers. The module does not mutate the current process environment and does not expose a byte-oriented host environment API.
 
 Use `std.environ` for direct ambient reads. Structured application configuration belongs to the planned `ctx` surface, while planned `std.ci.env` helpers may add CI-specific policy without becoming the only environment namespace. Child-process environment construction belongs to the planned `std.process` command API rather than current-process reads.

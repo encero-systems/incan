@@ -57,6 +57,8 @@ pub mod string_methods {
         EndsWith,
         Len,
         IsEmpty,
+        /// `text.encode(encoding="utf-8")` returns the UTF-8 bytes of the text (#1668).
+        Encode,
     }
 
     /// One positional argument shape shared by the selected canonical string-helper subset.
@@ -115,7 +117,12 @@ pub mod string_methods {
                     positional_arguments: ONE_STR,
                     required_positional_arguments: 1,
                 }),
-                Self::ToString | Self::SplitWhitespace | Self::StartsWith | Self::EndsWith | Self::IsEmpty => None,
+                Self::ToString
+                | Self::SplitWhitespace
+                | Self::StartsWith
+                | Self::EndsWith
+                | Self::IsEmpty
+                | Self::Encode => None,
             }
         }
     }
@@ -227,6 +234,14 @@ pub mod string_methods {
             "Return true if the length is zero.",
             RFC::_009,
             Since(0, 1),
+        ),
+        info(
+            StringMethodId::Encode,
+            "encode",
+            &[],
+            "Return the text encoded as bytes; only UTF-8 is supported (`encoding=\"utf-8\"` is the default).",
+            RFC::_009,
+            Since(0, 6),
         ),
     ];
 
@@ -508,6 +523,8 @@ pub mod dict_methods {
         Values,
         Get,
         Insert,
+        /// `d.contains_key(key)` answers membership like `FrozenDict.contains_key` (#1668).
+        ContainsKey,
     }
 
     pub type DictMethodInfo = LangItemInfo<DictMethodId>;
@@ -545,6 +562,14 @@ pub mod dict_methods {
             "Insert or overwrite a key/value pair.",
             RFC::_009,
             Since(0, 1),
+        ),
+        info(
+            DictMethodId::ContainsKey,
+            "contains_key",
+            &[],
+            "Return true if the dict contains a key.",
+            RFC::_009,
+            Since(0, 6),
         ),
     ];
 
@@ -811,6 +836,73 @@ pub mod frozen_dict_methods {
         introduced_in_rfc: RfcId,
         since: Since,
     ) -> FrozenDictMethodInfo {
+        LangItemInfo {
+            id,
+            canonical,
+            aliases,
+            description,
+            introduced_in_rfc,
+            since,
+            stability: Stability::Stable,
+            examples: &[],
+        }
+    }
+}
+
+pub mod bytes_methods {
+    //! `bytes` method surface vocabulary.
+    //!
+    //! Runtime `bytes` values expose the text return trip here; byte-level helpers stay on the `FrozenBytes` and
+    //! builtin surfaces.
+
+    use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
+
+    /// Stable identifier for a runtime `bytes` method.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum BytesMethodId {
+        /// `data.decode(encoding="utf-8", errors="strict")` returns the bytes as text (#1668).
+        Decode,
+    }
+
+    pub type BytesMethodInfo = LangItemInfo<BytesMethodId>;
+
+    /// Registry of all runtime `bytes` methods.
+    pub const BYTES_METHODS: &[BytesMethodInfo] = &[info(
+        BytesMethodId::Decode,
+        "decode",
+        &[],
+        "Return the bytes decoded as text; only UTF-8 is supported, and `errors` is `strict` (raise `ValueError` on malformed input) or `replace`.",
+        RFC::_009,
+        Since(0, 6),
+    )];
+
+    /// Resolve a `bytes` method spelling to its stable id.
+    pub fn from_str(name: &str) -> Option<BytesMethodId> {
+        super::from_str_impl(BYTES_METHODS, name)
+    }
+
+    /// Return the canonical spelling for a `bytes` method.
+    pub fn as_str(id: BytesMethodId) -> &'static str {
+        info_for(id).canonical
+    }
+
+    /// Return the full metadata entry for a `bytes` method.
+    ///
+    /// ## Panics
+    /// - If the registry is missing an entry for `id` (this indicates a programming error).
+    pub fn info_for(id: BytesMethodId) -> &'static BytesMethodInfo {
+        super::info_for_impl(BYTES_METHODS, id, "bytes method info missing")
+    }
+
+    /// Build one stable `bytes` method registry entry; every entry is `Stable` and carries no examples yet.
+    const fn info(
+        id: BytesMethodId,
+        canonical: &'static str,
+        aliases: &'static [&'static str],
+        description: &'static str,
+        introduced_in_rfc: RfcId,
+        since: Since,
+    ) -> BytesMethodInfo {
         LangItemInfo {
             id,
             canonical,

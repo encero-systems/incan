@@ -18,7 +18,7 @@ use super::{FunctionSignature, IrSpan, IrType, Ownership};
 use incan_lang::interop::CoercionPolicy;
 use incan_lang::lang::builtins::{self as core_builtins, BuiltinFnId};
 use incan_lang::lang::surface::{
-    dict_methods, iterator_methods, list_methods, result_methods, set_methods, string_methods,
+    bytes_methods, dict_methods, iterator_methods, list_methods, result_methods, set_methods, string_methods,
 };
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
@@ -791,8 +791,17 @@ pub enum MethodKind {
     Iterator(IteratorMethodKind),
     /// Result combinators recognized for `Result[T, E]` receivers.
     Result(result_methods::ResultMethodId),
+    /// Runtime `bytes` methods that route through the text-codec emitter.
+    Bytes(BytesMethodKind),
     /// Internal helper methods that lower to dedicated runtime support.
     Internal(InternalMethodKind),
+}
+
+/// Known `bytes`-method variants handled by the compiler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BytesMethodKind {
+    /// `data.decode(encoding="utf-8", errors="strict")` → UTF-8 decoding with a `ValueError` or replacement policy.
+    Decode,
 }
 
 /// Known string-method variants handled by the compiler.
@@ -818,6 +827,8 @@ pub enum StringMethodKind {
     EndsWith,
     /// `s.contains(needle)` → `str_contains(s, needle)`
     Contains,
+    /// `s.encode(encoding="utf-8")` → `s.as_bytes().to_vec()` behind a UTF-8 label guard
+    Encode,
 }
 
 /// Known collection-method variants handled by the compiler.
@@ -852,6 +863,12 @@ pub enum CollectionMethodKind {
     Reserve,
     /// `list.reserve_exact(n)` → `list.reserve_exact(n as usize)`
     ReserveExact,
+    /// `dict.keys()` → `dict.keys().cloned().collect::<Vec<_>>()` in value position; `for` loops and
+    /// comprehensions iterate `dict.keys().cloned()` directly (#1668).
+    Keys,
+    /// `dict.values()` → `dict.values().cloned().collect::<Vec<_>>()` in value position; `for` loops and
+    /// comprehensions iterate `dict.values().cloned()` directly (#1668).
+    Values,
 }
 
 /// Known iterator-method variants handled by the compiler.
@@ -951,8 +968,15 @@ impl MethodKind {
                     S::StartsWith => StringMethodKind::StartsWith,
                     S::EndsWith => StringMethodKind::EndsWith,
                     S::Contains => StringMethodKind::Contains,
+                    S::Encode => StringMethodKind::Encode,
                     // The rest are either typechecker-only (return types) or normal method calls:
                     _ => return None,
+                }))
+            }
+            IrType::Bytes | IrType::StaticBytes | IrType::FrozenBytes => {
+                use bytes_methods::BytesMethodId as B;
+                Some(Self::Bytes(match bytes_methods::from_str(name)? {
+                    B::Decode => BytesMethodKind::Decode,
                 }))
             }
             IrType::List(_) => {
@@ -981,8 +1005,10 @@ impl MethodKind {
                 Some(Self::Collection(match id {
                     D::Get => CollectionMethodKind::Get,
                     D::Insert => CollectionMethodKind::Insert,
-                    // keys/values are emitted as normal method calls.
-                    D::Keys | D::Values => return None,
+                    // A dict receiver spells membership `contains_key`, the same emission `key in dict` takes.
+                    D::ContainsKey => CollectionMethodKind::Contains,
+                    D::Keys => CollectionMethodKind::Keys,
+                    D::Values => CollectionMethodKind::Values,
                 }))
             }
             IrType::Set(_) => {

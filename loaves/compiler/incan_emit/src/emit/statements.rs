@@ -14,7 +14,8 @@ use crate::emit::expressions::{
     method_dispatch_uses_mutable_receiver, method_kind_uses_mutable_receiver, method_name_uses_mutable_receiver,
 };
 use crate::ownership::{
-    LoopIterationPlan, ValueUseSite, list_index_assignment_element_type, plan_for_loop_iteration, plan_value_use,
+    LoopIterationPlan, ValueUseSite, dict_entry_types, list_index_assignment_element_type, plan_for_loop_iteration,
+    plan_value_use,
 };
 use incan_ir::expr::{
     BuiltinFn, IrCallArgKind, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, MatchArm, Pattern, TypedExpr,
@@ -1188,15 +1189,15 @@ impl<'a> IrEmitter<'a> {
                     return self.emit_storage_rooted_assignment(target, value);
                 }
 
-                // For Dict index assignment, use .insert() instead of []=
-                // because HashMap's IndexMut doesn't work with owned keys
+                // For Dict index assignment, use .insert() instead of []= because HashMap has no IndexMut. The
+                // projection sees through a `mut Dict` parameter's `RefMut` wrapper so it takes the same route (#1668).
                 if let AssignTarget::Index { object, index } = target
-                    && matches!(&object.ty, IrType::Dict(_, _) | IrType::Unknown)
+                    && (matches!(&object.ty, IrType::Unknown) || dict_entry_types(&object.ty).is_some())
                 {
                     let o = self.emit_expr(object)?;
-                    let (key_target_ty, value_target_ty) = match &object.ty {
-                        IrType::Dict(key_ty, value_ty) => (Some(key_ty.as_ref()), Some(value_ty.as_ref())),
-                        _ => (None, None),
+                    let (key_target_ty, value_target_ty) = match dict_entry_types(&object.ty) {
+                        Some((key_ty, value_ty)) => (Some(key_ty), Some(value_ty)),
+                        None => (None, None),
                     };
                     let k = self.emit_expr_for_use(
                         index,
@@ -1611,6 +1612,9 @@ impl<'a> IrEmitter<'a> {
                 _ => {}
             }
             if let Some(iter) = self.emit_incan_iterator_source(iterable)? {
+                return Ok(iter);
+            }
+            if let Some(iter) = self.emit_direct_dict_view_iter(iterable)? {
                 return Ok(iter);
             }
         }
