@@ -197,7 +197,7 @@ pub fn runtime_foundation_from_compiled_loaf(
                     && leaf.version == unit.package_version
                     && leaf.crate_name == unit.crate_name
                     && leaf.features == unit.features
-                    && format!("{}#{}@{}", leaf.source.registry, leaf.package, leaf.version) == unit.source.identity
+                    && registry_source_identity(&leaf.package, &leaf.version) == unit.source.identity
                     && leaf.source.digest == unit.source.digest
             })
             .collect::<Vec<_>>();
@@ -232,6 +232,14 @@ pub fn runtime_foundation_from_compiled_loaf(
         selected_graph: graph.clone(),
         units,
     })
+}
+
+/// The one portable identity a registry-backed selected unit's source carries: the `registry:` coordinate.
+///
+/// Every consumer of a selected graph — its validator, the policy exchange, the runtime foundation and executor —
+/// names a registry source this way; the registry URL and checksum stay in the sealed catalog beside it.
+pub fn registry_source_identity(package: &str, version: &str) -> String {
+    format!("registry:{package}@{version}")
 }
 
 /// Whether a sealed registry leaf serves the same domain and unit kind as a selected graph unit.
@@ -467,7 +475,7 @@ pub fn encode_selected_graph_policy_request(
             .filter(|source| {
                 source.package == unit.package
                     && source.version == unit.package_version
-                    && format!("{}#{}@{}", source.registry, source.package, source.version) == unit.source.identity
+                    && registry_source_identity(&source.package, &source.version) == unit.source.identity
             })
             .collect::<Vec<_>>();
         let [source] = matched.as_slice() else {
@@ -907,7 +915,7 @@ pub fn legacy_cargo_registry_unit_bindings(
                 source: OvenSelectedRustFacetSource {
                     kind: OvenSelectedRustFacetSourceKind::Registry,
                     // The portable `registry:` coordinate, never Cargo's machine-facing package-id URL.
-                    identity: format!("registry:{}@{}", unit.package, unit.package_version),
+                    identity: registry_source_identity(&unit.package, &unit.package_version),
                     owner: foundation_owner.to_string(),
                     root: relative_root.clone(),
                     digest: source.source_digest.clone(),
@@ -2123,7 +2131,7 @@ fn validate_registry_binding(
             .registry_source
             .as_ref()
             .ok_or_else(|| projection_error("selected registry source", "has no sealed registry catalog record"))?;
-        let expected_identity = format!("registry:{}@{}", unit.package, unit.package_version);
+        let expected_identity = registry_source_identity(&unit.package, &unit.package_version);
         if unit.package_source.as_deref() != Some(registry.registry.as_str())
             || catalog.package != unit.package
             || catalog.version != unit.package_version
