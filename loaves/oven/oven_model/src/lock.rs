@@ -96,6 +96,32 @@ pub struct SemanticLockState {
     pub oven: Option<LockedOvenState>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workspace_members: Vec<LockedWorkspaceMember>,
+    /// The Loaf registry record that governed each registry unit a declaration was applied to (RFC 125).
+    ///
+    /// Absent from a lock whose bake adopted nothing, and from every lock written before registry adoption
+    /// existed; the field reads back empty either way.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub registry_records: Vec<RegistryRecord>,
+}
+
+/// One Loaf registry record that satisfied a registry unit of the locked graph.
+///
+/// The consumer's exact selection bound this record's fact; the lock keeps the coordinates a later reader needs to
+/// find the same statement again (package, version, source checksum, the identity of the index line it was
+/// selected from) and the binding's status as the registry published it. Consumer policy on `harvested` versus
+/// `attested` is not decided here; the lock only records what governed the unit.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct RegistryRecord {
+    /// Package name as the registry publishes it.
+    pub package: String,
+    /// Exact version.
+    pub version: String,
+    /// `sha256:` checksum of the source the record describes.
+    pub checksum: String,
+    /// `sha256:` identity of the exact index line the package was selected from.
+    pub index_line_digest: String,
+    /// `harvested` or `attested`, as the index line states it for this binding.
+    pub status: String,
 }
 
 /// One workspace member's independently resolved semantic graph inside the canonical root lock.
@@ -1749,6 +1775,50 @@ lock = "payload"
             }],
             oven: None,
             workspace_members: Vec::new(),
+            registry_records: Vec::new(),
         }
+    }
+
+    #[test]
+    fn registry_records_round_trip_and_are_absent_from_older_locks() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("oven.lock");
+        let semantic = SemanticLockState {
+            registry_records: vec![RegistryRecord {
+                package: "serde_core".to_string(),
+                version: "1.0.228".to_string(),
+                checksum: format!("sha256:{}", "a".repeat(64)),
+                index_line_digest: format!("sha256:{}", "b".repeat(64)),
+                status: "harvested".to_string(),
+            }],
+            ..SemanticLockState::default()
+        };
+        IncanLock::new_with_semantic(
+            "0.6.0",
+            "fingerprint".to_string(),
+            CargoFeatureSelection::default(),
+            semantic.clone(),
+            "# Cargo.lock\n".to_string(),
+        )
+        .write(&path)?;
+        let text = fs::read_to_string(&path)?;
+        assert!(
+            text.contains("[[semantic.registry_records]]") && text.contains("index_line_digest"),
+            "the record is written as its own table: {text}"
+        );
+        assert_eq!(IncanLock::load(&path)?.semantic, semantic);
+
+        // A lock with no records writes no table, which is also what a lock from before the field looks like.
+        IncanLock::new(
+            "0.6.0",
+            "fingerprint".to_string(),
+            CargoFeatureSelection::default(),
+            String::new(),
+        )
+        .write(&path)?;
+        let plain = fs::read_to_string(&path)?;
+        assert!(!plain.contains("registry_records"));
+        assert!(IncanLock::load(&path)?.semantic.registry_records.is_empty());
+        Ok(())
     }
 }

@@ -6,6 +6,7 @@
 //! may grant a logged Cargo proxy only to roots whose tests explicitly verify Cargo compatibility.
 
 mod case_partition;
+mod harvest;
 mod loaf_bake;
 mod loaf_bake_evidence;
 mod options;
@@ -13,6 +14,7 @@ mod suite_environment;
 mod suite_execution;
 mod support;
 
+pub use harvest::oven_harvest;
 pub use loaf_bake::oven_legacy_cargo_bake_loafs;
 #[cfg(test)]
 use loaf_bake::{finish_loaf_bake_after_publication, loaf_envelope_default_limits};
@@ -4141,6 +4143,8 @@ mod tests {
             evidence,
             loafs: Vec::new(),
             compiler_suite: None,
+            harvest: None,
+            registry_records: Vec::new(),
         };
         let publication_lock = acquire_exclusive_loaf_generation_lock(output.path())?;
         let report = super::finish_loaf_bake_after_publication(
@@ -4161,6 +4165,8 @@ mod tests {
                 max_domain_logical_bytes: Some(10_000_000),
                 format: OvenOutputFormat::Json,
                 loaf_registry: None,
+                loaf_registry_commit: None,
+                harvest_dir: None,
             },
             OvenLoafEnvelope::CompilerSuite,
             report,

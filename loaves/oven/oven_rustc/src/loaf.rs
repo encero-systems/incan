@@ -354,6 +354,19 @@ pub struct OvenReleaseToolchainMember {
     pub digest: String,
 }
 
+/// The identity of the bounded compiler/sysroot closure `rustc` uses for `target`, without retaining it.
+///
+/// This is the same digest [`stage_release_runtime_foundation_toolchain`] reports as the retained Toolchain owner,
+/// so evidence recorded against it (a harvest proposal's `rustc_identity`) names exactly the compiler bytes a
+/// release generation later ships.
+pub fn direct_rustc_compiler_closure_identity(rustc: &Path, target: &str) -> Result<String, OvenLoafError> {
+    crate::rustc::direct_compiler::retention::direct_rustc_compiler_evidence(rustc, target)
+        .map(|evidence| evidence.closure_digest)
+        .map_err(|error| OvenLoafError::Preparation {
+            message: error.to_string(),
+        })
+}
+
 /// Retain the exact bounded compiler/sysroot closure used for one runtime-foundation target.
 pub fn stage_release_runtime_foundation_toolchain(
     rustc: &Path,

@@ -22,6 +22,10 @@ pub struct LoafRegistry {
     root: PathBuf,
 }
 
+/// The status the registry publishes for one bound fact: `harvested` until an attestation proves the Oven-baked
+/// unit equivalent to the Cargo-built one, then `attested`.
+pub const LOAF_REGISTRY_STATUS_HARVESTED: &str = "harvested";
+
 /// One package version the registry describes, with its manifest verified against the source it names.
 #[derive(Debug, Clone)]
 pub struct LoafRegistryPackage {
@@ -37,6 +41,20 @@ pub struct LoafRegistryPackage {
     pub manifest_root: PathBuf,
     /// The exact index line this package was selected from.
     pub index_line: String,
+    /// The bindings the index line lists, each with the status the registry publishes for it.
+    pub index_facts: Vec<LoafRegistryIndexFact>,
+}
+
+/// One binding as the sparse index line states it, beside the record the manifest carries for it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct LoafRegistryIndexFact {
+    pub toolchain: String,
+    pub target: String,
+    pub profile: String,
+    #[serde(default)]
+    pub features: Vec<String>,
+    /// `harvested` or `attested`.
+    pub status: String,
 }
 
 /// Why a registry lookup refused.
@@ -64,15 +82,20 @@ pub enum LoafRegistryError {
         version: String,
         message: String,
     },
+    /// The checkout is not at the commit the caller pinned, or its revision could not be read.
+    #[error("Loaf registry checkout {path} is not at the pinned index commit: {message}")]
+    Pin { path: PathBuf, message: String },
 }
 
-/// One index line, as `scripts/registry.py` in the registry writes it.
+/// One index line, as `incan-pub build` renders it. Keys this reader does not consume are ignored.
 #[derive(Debug, Deserialize)]
 struct IndexEntry {
     name: String,
     vers: String,
     cksum: String,
     manifest: String,
+    #[serde(default)]
+    facts: Vec<LoafRegistryIndexFact>,
 }
 
 /// The crates.io sparse-index location for one package name.
@@ -113,6 +136,29 @@ impl LoafRegistry {
         Ok(Self {
             root: root.to_path_buf(),
         })
+    }
+
+    /// Open a registry checkout only if its git `HEAD` resolves to `index_commit`.
+    ///
+    /// The toolchain manifest pins the `index` commit a release was settled against; a consumer with the same pin
+    /// resolves the same records. The revision is read from the checkout's own `.git` metadata (a directory, or the
+    /// `gitdir:` file a worktree carries) without running git, so the check is the same on a host without it.
+    pub fn open_pinned(root: &Path, index_commit: &str) -> Result<Self, LoafRegistryError> {
+        let expected = index_commit.trim().to_ascii_lowercase();
+        if !is_commit_id(&expected) {
+            return Err(LoafRegistryError::Pin {
+                path: root.to_path_buf(),
+                message: format!("`{index_commit}` is not a commit id"),
+            });
+        }
+        let actual = checkout_head_commit(root)?;
+        if actual != expected {
+            return Err(LoafRegistryError::Pin {
+                path: root.to_path_buf(),
+                message: format!("HEAD is {actual}, the pin is {expected}"),
+            });
+        }
+        Self::open(root)
     }
 
     /// The checkout root.
@@ -240,14 +286,144 @@ impl LoafRegistry {
             manifest,
             manifest_root,
             index_line,
+            index_facts: entry.facts,
         }))
     }
+}
+
+/// The `HEAD` commit of the nearest git checkout enclosing `path`, or `None` when no ancestor is one.
+///
+/// A harvest notes the checkout it ran from; a path outside any checkout notes nothing rather than guessing.
+pub fn enclosing_checkout_head_commit(path: &Path) -> Option<String> {
+    path.ancestors()
+        .find(|ancestor| ancestor.join(".git").exists())
+        .and_then(|root| checkout_head_commit(root).ok())
+}
+
+/// Whether `value` is a lowercase hex git object id (SHA-1 or SHA-256 repositories).
+fn is_commit_id(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Resolve the commit a checkout's `HEAD` names by reading its git metadata, never by running git.
+///
+/// `.git` is a directory in an ordinary clone and a `gitdir: <path>` file in a worktree; a worktree keeps `HEAD`
+/// in its own directory and shares refs through the `commondir` it names. A symbolic `HEAD` is followed to its
+/// loose ref, then to `packed-refs`; a detached `HEAD` is the commit itself. `root` must be the checkout root
+/// itself; see [`enclosing_checkout_head_commit`] for a path somewhere inside one.
+pub fn checkout_head_commit(root: &Path) -> Result<String, LoafRegistryError> {
+    let pin_error = |message: String| LoafRegistryError::Pin {
+        path: root.to_path_buf(),
+        message,
+    };
+    let read = |path: &Path| -> Result<String, LoafRegistryError> {
+        fs::read_to_string(path).map_err(|source| LoafRegistryError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
+    };
+    let dot_git = root.join(".git");
+    let git_dir = if dot_git.is_dir() {
+        dot_git
+    } else if dot_git.is_file() {
+        let pointer = read(&dot_git)?;
+        let target = pointer
+            .trim()
+            .strip_prefix("gitdir:")
+            .map(str::trim)
+            .filter(|target| !target.is_empty())
+            .ok_or_else(|| pin_error("`.git` names no gitdir".to_string()))?;
+        let target = Path::new(target);
+        if target.is_absolute() {
+            target.to_path_buf()
+        } else {
+            root.join(target)
+        }
+    } else {
+        return Err(pin_error(
+            "no `.git` directory or file; the registry must be a git checkout".to_string(),
+        ));
+    };
+    let head = read(&git_dir.join("HEAD"))?;
+    let head = head.trim();
+    let Some(reference) = head.strip_prefix("ref:").map(str::trim) else {
+        let detached = head.to_ascii_lowercase();
+        return if is_commit_id(&detached) {
+            Ok(detached)
+        } else {
+            Err(pin_error(format!("HEAD `{head}` is neither a ref nor a commit")))
+        };
+    };
+    // ---- A symbolic HEAD: loose ref in this git dir, then the shared common dir, then packed-refs ----
+    let common_dir = match fs::read_to_string(git_dir.join("commondir")) {
+        Ok(common) => {
+            let common = Path::new(common.trim());
+            if common.is_absolute() {
+                common.to_path_buf()
+            } else {
+                git_dir.join(common)
+            }
+        }
+        Err(_) => git_dir.clone(),
+    };
+    for candidate in [git_dir.join(reference), common_dir.join(reference)] {
+        if candidate.is_file() {
+            let commit = read(&candidate)?.trim().to_ascii_lowercase();
+            if is_commit_id(&commit) {
+                return Ok(commit);
+            }
+            return Err(pin_error(format!("ref `{reference}` holds `{commit}`, not a commit")));
+        }
+    }
+    let packed = common_dir.join("packed-refs");
+    if packed.is_file() {
+        for line in read(&packed)?.lines() {
+            let line = line.trim();
+            if line.starts_with('#') || line.starts_with('^') {
+                continue;
+            }
+            if let Some((commit, name)) = line.split_once(' ')
+                && name.trim() == reference
+            {
+                let commit = commit.trim().to_ascii_lowercase();
+                if is_commit_id(&commit) {
+                    return Ok(commit);
+                }
+            }
+        }
+    }
+    Err(pin_error(format!(
+        "HEAD names `{reference}`, which resolves to no commit"
+    )))
 }
 
 impl LoafRegistryPackage {
     /// The record whose binding equals the selection exactly, if the package is adopted for it.
     pub fn fact_record(&self, selection: &RustFactSelection) -> Option<&RustFactRecord> {
         self.manifest.rust_facts.iter().find(|record| record.binds(selection))
+    }
+
+    /// The status the index line publishes for the binding equal to `selection`.
+    ///
+    /// A line that lists the binding says `harvested` or `attested`; a line that does not list it has attested
+    /// nothing about it, which is `harvested`, the status every admitted fact starts with.
+    pub fn binding_status(&self, selection: &RustFactSelection) -> String {
+        let mut features = selection.features.clone();
+        features.sort();
+        features.dedup();
+        self.index_facts
+            .iter()
+            .find(|fact| {
+                let mut listed = fact.features.clone();
+                listed.sort();
+                listed.dedup();
+                fact.toolchain == selection.toolchain
+                    && fact.target == selection.target
+                    && fact.profile == selection.profile
+                    && listed == features
+            })
+            .map(|fact| fact.status.clone())
+            .unwrap_or_else(|| LOAF_REGISTRY_STATUS_HARVESTED.to_string())
     }
 
     /// The committed file one `out` entry names.
@@ -285,18 +461,46 @@ mod tests {
         fs::write(
             index_dir.join("serde"),
             format!(
-                "{{\"cksum\":\"{CHECKSUM}\",\"manifest\":\"crates-io/serde/1.0.228/loaf.toml\",\"name\":\"serde\",\"source\":\"crates-io\",\"vers\":\"1.0.228\"}}\n"
+                "{{\"adopter\":\"fixture\",\"assets\":0,\"cksum\":\"{CHECKSUM}\",\"facts\":[{{\"features\":[\"default\",\"std\"],\"profile\":\"release\",\"status\":\"attested\",\"target\":\"aarch64-apple-darwin\",\"toolchain\":\"rustc 1.98.0 (88d9e12ae 2026-08-18)\"}}],\"manifest\":\"crates-io/serde/1.0.228/loaf.toml\",\"name\":\"serde\",\"source\":\"crates-io\",\"vers\":\"1.0.228\",\"yanked\":false}}\n"
             ),
         )?;
         Ok(())
     }
 
+    /// Lay out the git metadata of a checkout whose `HEAD` is `commit`, as a clone (`symbolic`) or detached.
+    fn git_checkout(root: &Path, commit: &str, symbolic: bool, packed: bool) -> TestResult {
+        let git_dir = root.join(".git");
+        fs::create_dir_all(git_dir.join("refs/heads"))?;
+        if symbolic {
+            fs::write(git_dir.join("HEAD"), "ref: refs/heads/index\n")?;
+            if packed {
+                fs::write(
+                    git_dir.join("packed-refs"),
+                    format!("# pack-refs with: peeled fully-peeled sorted\n{commit} refs/heads/index\n"),
+                )?;
+            } else {
+                fs::write(git_dir.join("refs/heads/index"), format!("{commit}\n"))?;
+            }
+        } else {
+            fs::write(git_dir.join("HEAD"), format!("{commit}\n"))?;
+        }
+        Ok(())
+    }
+
     /// Read the real registry checkout named by `INCAN_PUB_ROOT`, so the client is proven against the projection
-    /// the registry actually renders rather than only against this module's fixtures.
+    /// the registry actually renders rather than only against this module's fixtures. With `INCAN_PUB_COMMIT` set
+    /// to the checkout's `HEAD`, the pinned open is proven against real git metadata (a worktree, in practice).
     #[test]
     #[ignore = "needs INCAN_PUB_ROOT pointing at an incan.pub checkout"]
     fn the_real_registry_projection_is_readable() -> TestResult {
         let root = std::env::var_os("INCAN_PUB_ROOT").ok_or("INCAN_PUB_ROOT is unset")?;
+        if let Some(commit) = std::env::var_os("INCAN_PUB_COMMIT") {
+            LoafRegistry::open_pinned(Path::new(&root), &commit.to_string_lossy())?;
+            assert!(matches!(
+                LoafRegistry::open_pinned(Path::new(&root), &"0".repeat(40)),
+                Err(LoafRegistryError::Pin { .. })
+            ));
+        }
         let registry = LoafRegistry::open(Path::new(&root))?;
         let package = registry
             .package(
@@ -332,6 +536,64 @@ mod tests {
     }
 
     #[test]
+    fn a_pinned_registry_opens_only_at_its_index_commit() -> TestResult {
+        let commit = "8d40e1d".to_string() + &"0".repeat(33);
+        let other = "f".repeat(40);
+        for (symbolic, packed) in [(true, false), (true, true), (false, false)] {
+            let root = tempfile::tempdir()?;
+            registry_fixture(root.path(), b"#[doc(hidden)]\npub mod __private228 {}\n", CHECKSUM)?;
+            git_checkout(root.path(), &commit, symbolic, packed)?;
+            assert!(LoafRegistry::open_pinned(root.path(), &commit).is_ok());
+            assert!(
+                LoafRegistry::open_pinned(root.path(), &commit.to_ascii_uppercase()).is_ok(),
+                "a pin is compared as an object id, not as text"
+            );
+            assert!(matches!(
+                LoafRegistry::open_pinned(root.path(), &other),
+                Err(LoafRegistryError::Pin { .. })
+            ));
+            assert!(matches!(
+                LoafRegistry::open_pinned(root.path(), "not-a-commit"),
+                Err(LoafRegistryError::Pin { .. })
+            ));
+        }
+        // A worktree: `.git` is a file naming the worktree's git dir, whose refs live in the common dir.
+        let main = tempfile::tempdir()?;
+        git_checkout(main.path(), &commit, true, false)?;
+        let worktree_git = main.path().join(".git/worktrees/index");
+        fs::create_dir_all(&worktree_git)?;
+        fs::write(worktree_git.join("HEAD"), "ref: refs/heads/index\n")?;
+        fs::write(worktree_git.join("commondir"), "../..\n")?;
+        let worktree = tempfile::tempdir()?;
+        registry_fixture(worktree.path(), b"#[doc(hidden)]\npub mod __private228 {}\n", CHECKSUM)?;
+        fs::write(
+            worktree.path().join(".git"),
+            format!("gitdir: {}\n", worktree_git.display()),
+        )?;
+        assert!(LoafRegistry::open_pinned(worktree.path(), &commit).is_ok());
+        assert!(matches!(
+            LoafRegistry::open_pinned(worktree.path(), &other),
+            Err(LoafRegistryError::Pin { .. })
+        ));
+        // The nearest enclosing checkout is found from a path inside it, and nothing is found outside one.
+        let inside = main.path().join("crates-io/serde/1.0.228");
+        fs::create_dir_all(&inside)?;
+        assert_eq!(
+            enclosing_checkout_head_commit(&inside).as_deref(),
+            Some(commit.as_str())
+        );
+        assert_eq!(enclosing_checkout_head_commit(Path::new("/")), None);
+        // Not a checkout at all.
+        let plain = tempfile::tempdir()?;
+        registry_fixture(plain.path(), b"#[doc(hidden)]\npub mod __private228 {}\n", CHECKSUM)?;
+        assert!(matches!(
+            LoafRegistry::open_pinned(plain.path(), &commit),
+            Err(LoafRegistryError::Pin { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn sparse_index_paths_follow_the_crates_io_scheme() {
         assert_eq!(sparse_index_path("a"), Path::new("index/1/a"));
         assert_eq!(sparse_index_path("io"), Path::new("index/2/io"));
@@ -357,6 +619,19 @@ mod tests {
         };
         let record = package.fact_record(&selection).ok_or("the release record must bind")?;
         assert_eq!(record.cfg, ["if_docsrs_then_no_serde_core"]);
+        assert_eq!(
+            package.binding_status(&selection),
+            "attested",
+            "the index line's status for the exact binding"
+        );
+        assert_eq!(
+            package.binding_status(&RustFactSelection {
+                profile: "debug".to_string(),
+                ..selection.clone()
+            }),
+            LOAF_REGISTRY_STATUS_HARVESTED,
+            "a binding the line does not list has been attested by nothing"
+        );
         assert!(package.committed_out(&record.out[0]).is_file());
         assert!(
             package

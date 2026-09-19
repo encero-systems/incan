@@ -9,6 +9,7 @@
 use std::collections::BTreeMap;
 
 use oven_model::loaf_registry::LoafRegistry;
+use oven_model::lock::RegistryRecord;
 use oven_model::manifest::{RustFactRecord, RustFactSelection};
 
 use super::{OvenLegacyCargoBuildScriptFacts, OvenLegacyCargoError, OvenLegacyCargoSelectedUnitCapture};
@@ -24,6 +25,8 @@ pub struct LoafRegistryAdoption {
     pub checksum: String,
     /// Identity of the exact index line the package was selected from.
     pub index_line_digest: String,
+    /// `harvested` or `attested`, as the index line states it for this binding.
+    pub status: String,
     /// The bound record.
     pub record: RustFactRecord,
 }
@@ -82,6 +85,7 @@ impl LoafRegistryAuthority {
                     version: package.version.clone(),
                     checksum: package.checksum.clone(),
                     index_line_digest: package.index_line_digest(),
+                    status: package.binding_status(&selection),
                     record: record.clone(),
                 },
             );
@@ -102,6 +106,27 @@ impl LoafRegistryAuthority {
     /// Every adoption in capture order.
     pub fn adoptions(&self) -> impl Iterator<Item = (usize, &LoafRegistryAdoption)> {
         self.adoptions.iter().map(|(index, adoption)| (*index, adoption))
+    }
+
+    /// The `oven.lock` record of every adoption: what governed each registry unit, ordered by package and version.
+    ///
+    /// Two units of one package version (a host and a target compilation, say) that the same record governs
+    /// collapse into one entry, since the lock records the statement, not the unit count.
+    pub fn registry_records(&self) -> Vec<RegistryRecord> {
+        let mut records = self
+            .adoptions
+            .values()
+            .map(|adoption| RegistryRecord {
+                package: adoption.package.clone(),
+                version: adoption.version.clone(),
+                checksum: adoption.checksum.clone(),
+                index_line_digest: adoption.index_line_digest.clone(),
+                status: adoption.status.clone(),
+            })
+            .collect::<Vec<_>>();
+        records.sort();
+        records.dedup();
+        records
     }
 
     /// Canonical identity of the registry content this authority applied, for generation evidence.
