@@ -13,6 +13,6 @@ stdlib/observability/
   rust/src/        reserved for an `incan_std_observability` facet; this component has no Rust of its own today
 ```
 
-Component-level tests are reserved under `loaves/stdlib/observability/tests/`; the directory is empty today.
+Component-level tests belong under `loaves/stdlib/observability/tests/`.
 
 Rust and Incan live in the same directory because the component is the unit of versioning, ownership, testing, and runtime-dependency attribution. A project importing `std.logging` should pull this component and its declared dependency closure, without unrelated components.
