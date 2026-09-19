@@ -69,13 +69,9 @@ pub fn emit_collection_method(
         CollectionMethodKind::Values => Ok(quote! { #r.values().cloned().collect::<Vec<_>>() }),
         CollectionMethodKind::Insert => {
             if args.len() >= 2 {
-                let (key_target_ty, value_target_ty) = match &receiver.ty {
-                    IrType::Dict(key_ty, value_ty) => (Some(key_ty.as_ref()), Some(value_ty.as_ref())),
-                    IrType::Ref(inner) | IrType::RefMut(inner) => match inner.as_ref() {
-                        IrType::Dict(key_ty, value_ty) => (Some(key_ty.as_ref()), Some(value_ty.as_ref())),
-                        _ => (None, None),
-                    },
-                    _ => (None, None),
+                let (key_target_ty, value_target_ty) = match dict_entry_types(&receiver.ty) {
+                    Some((key_ty, value_ty)) => (Some(key_ty), Some(value_ty)),
+                    None => (None, None),
                 };
                 let k = emitter.emit_expr_for_use(
                     &args[0],

@@ -14412,6 +14412,58 @@ def payload(text: str) -> bytes:
 }
 
 #[test]
+fn test_bytes_decode_rejects_unsupported_literal_encoding_issue1668() {
+    let errors = check_str_err(
+        r#"
+def text(data: bytes) -> str:
+    return data.decode("latin-1")
+"#,
+        "bytes.decode with a non-UTF-8 literal must fail typechecking",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("bytes.decode() supports only UTF-8")
+                && error.message.contains("latin-1")),
+        "expected an unsupported-encoding diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_text_codec_calls_reject_foreign_keyword_and_duplicate_label_issue1668() {
+    let keyword_errors = check_str_err(
+        r#"
+def payload(text: str) -> bytes:
+    return text.encode(errors="strict")
+"#,
+        "str.encode has no errors policy",
+    );
+    assert!(
+        keyword_errors
+            .iter()
+            .any(|error| error.message.contains("Unexpected keyword argument 'errors'")),
+        "expected an unknown-keyword diagnostic, got: {:?}",
+        keyword_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let duplicate_errors = check_str_err(
+        r#"
+def text(data: bytes) -> str:
+    return data.decode("utf-8", encoding="utf-8")
+"#,
+        "bytes.decode must not bind encoding twice",
+    );
+    assert!(
+        duplicate_errors
+            .iter()
+            .any(|error| error.message.contains("Duplicate argument 'encoding'")),
+        "expected a duplicate-argument diagnostic, got: {:?}",
+        duplicate_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_bytes_decode_rejects_bad_policy_keyword_and_arity_issue1668() {
     let policy_errors = check_str_err(
         r#"
@@ -14522,6 +14574,21 @@ def has_manifest(files: Dict[str, str]) -> bool:
             .contains("Argument to 'Dict.contains_key' has type mismatch")),
         "expected a key type diagnostic, got: {:?}",
         type_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let named_errors = check_str_err(
+        r#"
+def has_manifest(files: Dict[str, str]) -> bool:
+    return files.contains_key(key="loaf.toml")
+"#,
+        "Dict.contains_key takes its probe positionally",
+    );
+    assert!(
+        named_errors
+            .iter()
+            .any(|error| error.message.contains("Unexpected keyword argument 'key'")),
+        "expected an unknown-keyword diagnostic, got: {:?}",
+        named_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
     );
 }
 
