@@ -720,6 +720,10 @@ pub fn write_harvest_report(
             path: proposal_dir.clone(),
             source,
         })?;
+        // The binding is checked before any member is copied, so a refused rewrite leaves the directory exactly as
+        // the earlier harvest wrote it rather than with a stray member no proposal names.
+        let proposal_path = proposal_dir.join(HARVEST_PROPOSAL_FILE);
+        let already_bound = proposal_already_bound(&proposal_path, proposal, &name)?;
         // ---- Generated inputs, verified against the digests the proposal names ----
         for fact in &proposal.rust.facts {
             for out in &fact.out {
@@ -754,8 +758,9 @@ pub fn write_harvest_report(
                 written.push(destination);
             }
         }
-        let proposal_path = proposal_dir.join(HARVEST_PROPOSAL_FILE);
-        write_proposal_idempotently(&proposal_path, proposal, &name)?;
+        if !already_bound {
+            write_new_file(&proposal_path, &canonical_proposal_bytes(proposal)?)?;
+        }
         written.push(proposal_path);
     }
     let refusals_name = harvest_refusals_file_name(&report.profile);
@@ -783,20 +788,18 @@ fn safe_relative(value: &str) -> Option<PathBuf> {
     Some(path.to_path_buf())
 }
 
-/// Write a proposal unless the one already there binds the same facts.
+/// Whether a proposal binding the same facts is already at `path`; a proposal binding different facts refuses.
 ///
 /// Idempotence is over the binding — project, source and the fact — not over provenance: the note names the
 /// checkout the harvest ran at and the evidence names its receipt and publisher, and those move with every commit
 /// without the freeze changing. A proposal already present with the same binding is left as it is (its
 /// provenance is the earlier, equally valid observation); a different binding is a changed freeze and refuses.
-fn write_proposal_idempotently(
+fn proposal_already_bound(
     path: &Path,
     proposal: &HarvestProposal,
     subject: &str,
-) -> Result<(), OvenLegacyCargoError> {
-    let bytes = canonical_proposal_bytes(proposal)?;
+) -> Result<bool, OvenLegacyCargoError> {
     match fs::read(path) {
-        Ok(existing) if existing == bytes => return Ok(()),
         Ok(existing) => {
             let previous: HarvestProposal = serde_json::from_slice(&existing).map_err(|error| {
                 OvenLegacyCargoError::Plan(format!(
@@ -808,22 +811,19 @@ fn write_proposal_idempotently(
                 && previous.source == proposal.source
                 && previous.rust == proposal.rust
             {
-                return Ok(());
+                return Ok(true);
             }
-            return Err(OvenLegacyCargoError::Plan(format!(
+            Err(OvenLegacyCargoError::Plan(format!(
                 "harvest output {} for `{subject}` already binds different facts; a changed freeze needs a new output directory",
                 path.display()
-            )));
+            )))
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(source) => {
-            return Err(OvenLegacyCargoError::Io {
-                path: path.to_path_buf(),
-                source,
-            });
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(OvenLegacyCargoError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
     }
-    write_new_file(path, &bytes)
 }
 
 /// Write `bytes` at `path` unless identical bytes are already there; different bytes are a refusal.
@@ -1634,8 +1634,19 @@ mod tests {
             fs::read_to_string(output.path().join("quote-1.0.0-release/proposal.json"))?,
             "the earlier observation stays as written"
         );
+        // The changed answer also retains one more member; the refusal must come before that member is copied, so
+        // the directory stays exactly what the earlier harvest wrote.
+        fs::write(
+            retained.path().join("generated-outputs/abc/extra.rs"),
+            b"pub mod extra {}\n",
+        )?;
         let mut changed = report.clone();
-        changed.proposals[0].rust.facts[0].cfg.push("new_answer".to_string());
+        changed.proposals[1].rust.facts[0].cfg.push("new_answer".to_string());
+        changed.proposals[1].rust.facts[0].out.push(RustFactOut {
+            name: "extra.rs".to_string(),
+            path: "out/extra.rs".to_string(),
+            digest: digest_bytes(b"pub mod extra {}\n"),
+        });
         let refused = write_harvest_report(&changed, output.path(), retained.path());
         assert!(
             refused
@@ -1644,6 +1655,10 @@ mod tests {
                 .is_some_and(|error| error.to_string().contains("binds different facts")),
             "a changed answer for the same directory is refused: {:?}",
             refused.as_ref().err().map(ToString::to_string)
+        );
+        assert!(
+            !output.path().join("serde_core-1.0.228-release/out/extra.rs").exists(),
+            "a refused rewrite copies no member the earlier proposal does not name"
         );
 
         // ---- A retained member that no longer matches its digest is refused before anything is copied ----
