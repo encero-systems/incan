@@ -5556,6 +5556,67 @@ def first(result: Result[int, int]) -> int:
     assert!(check_str(source).is_ok());
 }
 
+/// The checked type of every pattern node is recorded at that node's span (#1245), so lowering can read a
+/// destructured binding's declared payload type back instead of re-deriving it. One test covers the three
+/// constructs that share the pattern walk plus the `assert value is P` subset, which defines its binding apart.
+#[test]
+fn pattern_nodes_record_their_checked_type_at_their_span_issue1245() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+enum Shape:
+  Circle(int)
+  Label(str)
+
+def size(s: Shape, o: Option[str]) -> int:
+  match s:
+    case Shape.Circle(radius):
+      return radius
+    case Shape.Label(text):
+      return len(text)
+  if let Some(found) = o:
+    return len(found)
+  assert o is Some(asserted)
+  return len(asserted)
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+
+    let binding_span = |name: &str| -> Result<Span, Box<dyn std::error::Error>> {
+        let needle = format!("({name})");
+        let start = source
+            .find(&needle)
+            .ok_or_else(|| format!("fixture must spell `{needle}`"))?
+            + 1;
+        Ok(Span::new(start, start + name.len()))
+    };
+    for (name, expected) in [
+        ("radius", ResolvedType::Int),
+        ("text", ResolvedType::Str),
+        ("found", ResolvedType::Str),
+        ("asserted", ResolvedType::Str),
+    ] {
+        assert_eq!(
+            info.expr_type(binding_span(name)?),
+            Some(&expected),
+            "the checked payload type must be recorded at `{name}`'s own span"
+        );
+    }
+    // The constructor node itself carries the scrutinee type, so nested sub-patterns can be checked against it.
+    let circle_start = source
+        .find("Shape.Circle(radius)")
+        .ok_or("fixture must spell the Circle pattern")?;
+    assert_eq!(
+        info.expr_type(Span::new(circle_start, circle_start + "Shape.Circle(radius)".len())),
+        Some(&ResolvedType::Named("Shape".to_string())),
+        "a constructor pattern node records the type it was checked against"
+    );
+    Ok(())
+}
+
 #[test]
 fn test_pattern_alternation_rejects_missing_binding() {
     let source = r#"
