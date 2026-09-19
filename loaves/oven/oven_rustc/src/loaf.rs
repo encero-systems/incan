@@ -1911,6 +1911,27 @@ fn committed_loaf_metadata_paths_with_role(
 }
 
 /// Read and validate the one atomically committed typed envelope manifest.
+/// Read which built-in family a committed envelope belongs to, without validating its members.
+fn committed_loaf_envelope_name(loaf_root: &Path) -> Result<String, OvenLoafError> {
+    let manifest_path = loaf_root.join("envelope.json");
+    let bytes = fs::read(&manifest_path).map_err(|source| OvenLoafError::Io {
+        path: manifest_path.clone(),
+        source,
+    })?;
+    let manifest =
+        serde_json::from_slice::<OvenLoafEnvelopeManifest>(&bytes).map_err(|error| OvenLoafError::InvalidLoaf {
+            path: manifest_path.clone(),
+            message: format!("invalid committed envelope manifest: {error}"),
+        })?;
+    if manifest.schema_version != OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION {
+        return Err(OvenLoafError::InvalidLoaf {
+            path: manifest_path,
+            message: format!("unsupported envelope manifest schema {}", manifest.schema_version),
+        });
+    }
+    Ok(manifest.envelope)
+}
+
 fn committed_loaf_envelope_manifest(
     loaf_root: &Path,
     expected_envelope: &str,
@@ -2180,7 +2201,9 @@ pub fn acquire_committed_release_store_member(
 /// Acquire and prove one labelled runtime foundation under the committed release-generation lock.
 ///
 /// This resolves only descriptor-bound paths below the held generation and performs physical identity, file-set,
-/// owner and compiled-Loaf checks. It does not interpret package policy.
+/// owner and compiled-Loaf checks. It does not interpret package policy. A committed envelope of another family
+/// at `loaf_root` (the compiler-suite family a test host publishes there) is an absence, not a refusal: it holds no
+/// release foundation to acquire, the same way [`OvenToolchainLoaf::release_envelope_root`] answers it.
 pub fn acquire_committed_release_runtime_foundation(
     loaf_root: &Path,
     label: &str,
@@ -2189,6 +2212,9 @@ pub fn acquire_committed_release_runtime_foundation(
         return Ok(None);
     }
     let generation_lock = acquire_loaf_generation_lock(loaf_root)?;
+    if committed_loaf_envelope_name(loaf_root)? != "release" {
+        return Ok(None);
+    }
     let (manifest, manifest_path) = committed_loaf_envelope_manifest(loaf_root, "release")?;
     let Some(member) = manifest.runtime_foundation.as_ref() else {
         return Ok(None);
@@ -3866,6 +3892,30 @@ mod tests {
             committed_loaf_paths(root.path()),
             Err(OvenLoafError::InvalidLoaf { .. })
         ));
+        Ok(())
+    }
+
+    /// A test host publishes the compiler-suite family at the toolchain data root; a normal command's probe for
+    /// the active release foundation must read that as no foundation, not as a broken release.
+    #[test]
+    fn a_compiler_suite_envelope_holds_no_release_runtime_foundation() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        fs::write(root.path().join(OVEN_LOAF_ENVELOPE_LOCK_FILE), b"")?;
+        fs::write(
+            root.path().join("envelope.json"),
+            serde_json::to_vec(&OvenLoafEnvelopeManifest {
+                schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
+                envelope: "compiler-suite".to_string(),
+                generation_identity: digest_bytes(b"suite-generation"),
+                evidence: BTreeMap::new(),
+                loafs: Vec::new(),
+                release_store_member: None,
+                runtime_foundation: None,
+                runtime_closure: None,
+            })?,
+        )?;
+        assert!(super::acquire_committed_release_runtime_foundation(root.path(), "rust-policy-foundation")?.is_none());
+        assert!(super::committed_release_runtime_members(root.path())?.is_none());
         Ok(())
     }
 
