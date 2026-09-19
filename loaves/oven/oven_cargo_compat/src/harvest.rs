@@ -370,8 +370,8 @@ pub fn harvest_registry_units(
     let mut observations: BTreeMap<(String, String, Vec<String>), Vec<Observation>> = BTreeMap::new();
 
     // ---- Classify every unit: refuse, or record its observation ----
-    for (index, unit) in capture.units.iter().enumerate() {
-        match observe_unit(capture, compiler, unit, index, profile) {
+    for unit in &capture.units {
+        match observe_unit(capture, compiler, unit, profile) {
             Ok(observation) => {
                 let key = (
                     unit.package.clone(),
@@ -437,7 +437,6 @@ fn observe_unit(
     capture: &OvenLegacyCargoSelectedUnitCapture,
     compiler: &OvenLegacyCargoSelectedCompilerContext,
     unit: &OvenLegacyCargoSelectedUnit,
-    index: usize,
     profile: &str,
 ) -> Result<Observation, HarvestRefusal> {
     let refuse = |reason: HarvestRefusalReason, detail: String| HarvestRefusal {
@@ -447,9 +446,11 @@ fn observe_unit(
         detail,
     };
     if is_build_script_unit(unit) {
+        // Named by what it is, never by its position: Cargo orders the unit graph differently between runs, and a
+        // refusal list must be the same bytes for the same closure.
         return Err(refuse(
             HarvestRefusalReason::BuildScriptUnit,
-            format!("run-custom-build unit {index}"),
+            "run-custom-build execution node; the package's library unit is harvested on its own".to_string(),
         ));
     }
     let Some(registry_source) = unit.registry_source.as_ref() else {
@@ -1170,6 +1171,46 @@ mod tests {
             proposal_directory_names(&report)?,
             ["alpha-1.0.0-release", "alpha-2.0.0-release", "zeta-1.0.0-release"],
             "one proposal per selection, sorted; the two alpha 2.0.0 units are one selection"
+        );
+        Ok(())
+    }
+
+    /// Cargo orders the unit graph differently between runs; the report, refusals included, must not.
+    #[test]
+    fn a_reordered_capture_yields_byte_identical_proposals_and_refusals() -> TestResult {
+        let empty_output = || {
+            Some(OvenLegacyCargoSelectedGeneratedOutput {
+                relative_root: "generated-outputs/empty".to_string(),
+                digest: selected_graph_sha256(b"empty"),
+                members: Vec::new(),
+            })
+        };
+        let forward = capture(vec![
+            (library("alpha", "1.0.0", &[]), Some(facts(&["one"], empty_output()))),
+            (library("beta", "1.0.0", &[]), None),
+            (library("gamma", "1.0.0", &[]), Some(facts(&["two"], empty_output()))),
+        ]);
+        let backward = capture(vec![
+            (library("gamma", "1.0.0", &[]), Some(facts(&["two"], empty_output()))),
+            (library("beta", "1.0.0", &[]), None),
+            (library("alpha", "1.0.0", &[]), Some(facts(&["one"], empty_output()))),
+        ]);
+        let first = harvest_registry_units(&forward, &evidence(), "release")?;
+        let second = harvest_registry_units(&backward, &evidence(), "release")?;
+        assert_eq!(
+            serde_json::to_vec(&first.proposals)?,
+            serde_json::to_vec(&second.proposals)?
+        );
+        assert_eq!(
+            serde_json::to_vec(&first.refusals)?,
+            serde_json::to_vec(&second.refusals)?
+        );
+        assert!(
+            first
+                .refusals
+                .iter()
+                .any(|refusal| refusal.reason == HarvestRefusalReason::BuildScriptUnit),
+            "the script execution nodes are refused by what they are"
         );
         Ok(())
     }
