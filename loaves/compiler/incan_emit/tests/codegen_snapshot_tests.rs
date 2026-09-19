@@ -6098,6 +6098,18 @@ fn test_trait_bound_explicit_codegen() {
     assert_codegen_snapshot!("trait_bound_explicit", rust_code);
 }
 
+/// #1427: a source trait inherits an imported Rust trait, and the generated declaration keeps the foreign bound.
+#[test]
+fn test_rust_supertrait_imported_codegen() {
+    let source = load_test_file("rust_supertrait_imported");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("pub trait Labeled: ::std::fmt::Display"),
+        "the imported supertrait must survive as an absolute Rust bound:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("rust_supertrait_imported", rust_code);
+}
+
 /// #1374: a `Default` bound must name the Rust `Default` trait that `@derive(Default)` implements.
 ///
 /// The bound comes from the trait-bound registry, so the generic function compiles against the derived
