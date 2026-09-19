@@ -17,11 +17,11 @@ use oven_cargo_compat::loaf_bake::{
     prepare_loaf_from_generated_project_with_selected_units, republish_loaf_under_final_receipt,
 };
 use oven_cargo_compat::{
-    LoafRegistryAuthority, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, encode_selected_graph_policy_request,
-    finalize_compiler_support_selected_graph, legacy_cargo_build_script_closure_digest,
-    legacy_cargo_foundation_projection, legacy_cargo_generated_archive_bindings,
-    legacy_cargo_generated_output_bindings, runtime_foundation_from_compiled_loaf,
-    runtime_foundation_inventories_from_policy_response,
+    LoafRegistryAuthority, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, OvenLegacyCargoCompilerSuiteResult,
+    OvenLegacyCargoFoundationSelection, encode_selected_graph_policy_request, finalize_compiler_support_selected_graph,
+    legacy_cargo_build_script_closure_digest, legacy_cargo_foundation_projection,
+    legacy_cargo_generated_archive_bindings, legacy_cargo_generated_output_bindings,
+    runtime_foundation_from_compiled_loaf, runtime_foundation_inventories_from_policy_response,
 };
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::loaf::{
@@ -1483,6 +1483,33 @@ pub(crate) fn loaf_envelope_default_limits(envelope: OvenLoafEnvelope) -> OvenSt
     }
 }
 
+/// The one-line text rendering of the third-party foundation stage, or `None` when an existing suite made the stage
+/// unnecessary.
+///
+/// The JSON report carries the same facts under `compiler_suite.prepare.foundation` and `.timing`; this line is
+/// what a developer reads after `make test-prewarm-oven-loafs` to see whether a compiler edit cost a Cargo build.
+pub(crate) fn foundation_stage_line(prepare: &OvenLegacyCargoCompilerSuiteResult) -> Option<String> {
+    let key = prepare.foundation.key.as_ref()?;
+    let origin = match prepare.foundation.selection {
+        OvenLegacyCargoFoundationSelection::ExistingSuite => return None,
+        OvenLegacyCargoFoundationSelection::ReusedFromStore => "reused by key from the store",
+        OvenLegacyCargoFoundationSelection::ReusedFromMirror => "reused by key from a mirror",
+        OvenLegacyCargoFoundationSelection::Built => "built by Cargo",
+    };
+    Some(format!(
+        "  Third-party foundation: {origin} ({} partition(s), key {}; Cargo {}, build {} ms, selection {} ms).",
+        prepare.foundation.entries,
+        key.as_str(),
+        if prepare.foundation.cargo_process_started {
+            "started"
+        } else {
+            "not started"
+        },
+        prepare.timing.foundation_build_elapsed_ms,
+        prepare.timing.foundation_selection_elapsed_ms,
+    ))
+}
+
 /// Resolve the compiler-suite store owned by one typed envelope and reject overlapping policy roots.
 pub(crate) fn compiler_suite_store_path(options: &OvenLoafBakeCommandOptions) -> CliResult<PathBuf> {
     let suite_store = match &options.suite_store {
@@ -1532,6 +1559,9 @@ pub(crate) fn print_loaf_bake_report(report: &OvenLoafBakeReport, format: OvenOu
                     human_bytes(suite.store.logical_bytes),
                     human_bytes(suite.store.physical_bytes),
                 );
+                if let Some(line) = foundation_stage_line(&suite.prepare) {
+                    println!("{line}");
+                }
             }
         }
         OvenOutputFormat::Json => print_json(report)?,
