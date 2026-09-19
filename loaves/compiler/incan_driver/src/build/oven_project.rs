@@ -723,11 +723,7 @@ pub fn prepare_oven_project(
                     })?
             };
             let held_intent = &held.asset.foundation().selected_graph().graph().selection.intent;
-            if held.compiled_loaf_identity != native.loaf_identity
-                || held_intent.target != receipt.intent.target
-                || held_intent.toolchain != receipt.intent.toolchain
-                || held_intent.profile != receipt.intent.profile
-            {
+            if held_intent.target != receipt.intent.target || held_intent.toolchain != receipt.intent.toolchain {
                 return Err(CliError::failure(
                     "selected ToolchainLoaf does not match its runtime foundation authority".to_string(),
                 ));
@@ -744,7 +740,15 @@ pub fn prepare_oven_project(
                 ));
             }
             rustc = held.compiler.rustc().to_path_buf();
-            Some(held)
+            // The foundation and its closure describe exactly one compiled Loaf of the generation. A consumer of
+            // that Loaf composes the closure into its plan; a consumer of the generation's other profile shares the
+            // retained compiler and the generation lock its own selection holds, but links nothing rebuilt above
+            // a different profile's artifacts.
+            if held.compiled_loaf_identity == native.loaf_identity && held_intent.profile == receipt.intent.profile {
+                Some(held)
+            } else {
+                None
+            }
         }
         _ => {
             if active_runtime_foundation.is_some() {
