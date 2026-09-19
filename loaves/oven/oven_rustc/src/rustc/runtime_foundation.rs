@@ -1123,21 +1123,26 @@ mod tests {
     #[test]
     fn foundation_refuses_registry_features_that_disagree_with_selected_unit() -> Result<(), Box<dyn std::error::Error>>
     {
-        let mut foundation = foundation()?;
-        let source = foundation
+        // The source record is the publisher's unified feature set; a unit may use fewer, never more.
+        let mut wider = foundation()?;
+        let source = wider
             .artifacts
             .registry_sources
             .iter_mut()
             .find(|source| source.package == "serde")
             .ok_or("fixture lost serde registry source")?;
         source.features = vec!["derive".to_string()];
-        assert!(matches!(
-            foundation.validated(),
-            Err(OvenRustcError::InvalidInput {
-                field: "runtime foundation prebuilt source",
-                ..
-            })
-        ));
+        wider.validated()?;
+
+        let mut narrower = foundation()?;
+        edit_serde_unit(&mut narrower, |unit| unit.features = vec!["derive".to_string()])?;
+        match narrower.validated() {
+            Err(OvenRustcError::InvalidInput { field, .. }) => {
+                assert_eq!(field, "runtime foundation prebuilt source");
+            }
+            Err(error) => return Err(format!("unexpected refusal: {error}").into()),
+            Ok(_) => return Err("a unit feature outside the unified set must refuse".into()),
+        }
         Ok(())
     }
 
@@ -1401,10 +1406,10 @@ mod tests {
         Ok(())
     }
 
-    /// Re-own the fixture's generated input and re-derive every identity that depends on the changed unit.
-    fn reown_generated_input(
+    /// Apply `edit` to the fixture's serde unit and re-derive every identity that depends on the changed unit.
+    fn edit_serde_unit(
         foundation: &mut OvenRuntimeFoundation,
-        owner: &str,
+        edit: impl FnOnce(&mut OvenSelectedRustFacetUnit),
     ) -> Result<(), Box<dyn std::error::Error>> {
         let graph = &mut foundation.selected_graph;
         let index = graph
@@ -1412,9 +1417,7 @@ mod tests {
             .iter()
             .position(|unit| unit.crate_name == "serde")
             .ok_or("fixture lost its serde unit")?;
-        for input in &mut graph.units[index].generated_inputs {
-            input.source.owner = owner.to_string();
-        }
+        edit(&mut graph.units[index]);
         // A unit's identity covers its edges, so dependents change too; settle them in as many passes as it takes.
         loop {
             let mut renamed = Vec::new();
@@ -1458,7 +1461,11 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let mut foundation = foundation()?;
         let generated_owner = selected_graph_sha256(b"generated-output\0generated/serde\0digest");
-        reown_generated_input(&mut foundation, &generated_owner)?;
+        edit_serde_unit(&mut foundation, |unit| {
+            for input in &mut unit.generated_inputs {
+                input.source.owner = generated_owner.clone();
+            }
+        })?;
         // The graph itself refuses a path whose owner its table does not name.
         assert!(foundation.clone().validated().is_err());
         foundation.selected_graph.owners.push(OvenSelectedRustFacetOwner {

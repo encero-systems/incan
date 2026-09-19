@@ -283,6 +283,10 @@ pub(crate) fn validate_runtime_unit_policy(
                     ));
                 }
             }
+            // A source record carries the publisher's unified feature set for the package, which is what Cargo
+            // resolved across every activation of it; a unit's effective features are one activation and must lie
+            // within it. The exact per-unit feature binding is the registry leaf's, checked when the leaf is bound.
+            let unit_features = unit.features.iter().collect::<BTreeSet<_>>();
             let source_matches = artifacts
                 .registry_sources
                 .iter()
@@ -290,14 +294,14 @@ pub(crate) fn validate_runtime_unit_policy(
                     source.package == unit.package
                         && source.version == unit.package_version
                         && source.source.digest == unit.source.digest
-                        && source.features == unit.features
+                        && unit_features.is_subset(&source.features.iter().collect())
                 })
                 .collect::<Vec<_>>();
             let [source] = source_matches.as_slice() else {
                 return Err(runtime_foundation_invalid(
                     "runtime foundation prebuilt source",
                     format!(
-                        "unit {} must match exactly one sealed registry-source record with its effective features, found {}",
+                        "unit {} must match exactly one sealed registry-source record whose unified features cover its effective features, found {}",
                         unit.crate_name,
                         source_matches.len()
                     ),
