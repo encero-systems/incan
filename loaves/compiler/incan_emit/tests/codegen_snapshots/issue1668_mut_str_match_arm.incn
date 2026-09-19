@@ -2,6 +2,7 @@ enum Verdict:
     Admitted
     Rejected(str)
 
+
 def describe(verdict: Verdict) -> str:
     mut label = "pending"
     match verdict:
@@ -9,10 +10,12 @@ def describe(verdict: Verdict) -> str:
         Verdict.Rejected(reason) => label = reason
     return label
 
+
 def classify(code: str, strict: bool) -> str:
     mut kind: str = "other"
     match code:
-        "a" => kind = "alpha"
+        "a" =>
+            kind = "alpha"
         "b" =>
             if strict:
                 kind = "beta-strict"
@@ -20,6 +23,7 @@ def classify(code: str, strict: bool) -> str:
                 kind = "beta"
         _ => pass
     return kind
+
 
 def main() -> None:
     println(describe(Verdict.Admitted))

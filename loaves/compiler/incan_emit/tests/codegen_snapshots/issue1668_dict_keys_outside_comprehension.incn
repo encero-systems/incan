@@ -1,12 +1,15 @@
 def names(d: Dict[str, int]) -> list[str]:
     return sorted(d.keys())
 
+
 def has(d: Dict[str, int], key: str) -> bool:
     return key in d.keys()
+
 
 def count_keys(d: Dict[str, int]) -> int:
     keys = d.keys()
     return len(keys)
+
 
 def total(d: Dict[str, int]) -> int:
     mut sum = 0
@@ -14,17 +17,21 @@ def total(d: Dict[str, int]) -> int:
         sum += value
     return sum
 
+
 def collect_keys(d: Dict[str, int]) -> list[str]:
     mut out: list[str] = []
     for key in d.keys():
         out.append(key)
     return out
 
+
 def doubled(d: Dict[str, int]) -> list[int]:
     return sorted([value * 2 for value in d.values()])
 
+
 def ordered_values(d: Dict[str, int]) -> list[int]:
     return sorted(d.values())
+
 
 def main() -> None:
     mut d: Dict[str, int] = {}

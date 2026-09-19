@@ -894,6 +894,7 @@ pub mod bytes_methods {
         super::info_for_impl(BYTES_METHODS, id, "bytes method info missing")
     }
 
+    /// Build one stable `bytes` method registry entry; every entry is `Stable` and carries no examples yet.
     const fn info(
         id: BytesMethodId,
         canonical: &'static str,

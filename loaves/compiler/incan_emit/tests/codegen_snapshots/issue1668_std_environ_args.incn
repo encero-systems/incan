@@ -1,9 +1,11 @@
 from std.environ import args
 
+
 def subcommand(arguments: list[str]) -> str:
     if len(arguments) < 2:
         return "help"
     return arguments[1]
+
 
 def main() -> None:
     arguments = args()

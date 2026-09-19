@@ -1,19 +1,23 @@
 def record(mut files: Dict[str, str], key: str, value: str) -> None:
     files[key] = value
 
+
 def seen(mut files: Dict[str, int], key: str) -> bool:
     if key in files:
         return true
     files[key] = 1
     return false
 
+
 def lookup(mut files: Dict[str, int], key: str) -> int:
     return files.get(key).copied().unwrap_or(0)
+
 
 def tally(mut counts: Dict[int, int], id: int) -> bool:
     if id not in counts:
         counts[id] = 0
     return id in counts
+
 
 def main() -> None:
     mut files: Dict[str, str] = {}
