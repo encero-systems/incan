@@ -100,7 +100,8 @@ pub struct OvenRuntimeClosurePayload {
     pub schema_version: u32,
     /// Exact direct-Rustc compiler closure that produced every unit below.
     pub compiler_closure_digest: String,
-    /// Content identity of the sealed runtime foundation this closure was rebuilt above.
+    /// Identity of the sealed runtime foundation asset this closure was rebuilt above: the identity the release
+    /// envelope binds its foundation member under, and the one a consumer holds when it meets this closure.
     pub foundation_identity: String,
     /// Rebuilt units in the foundation's declared order.
     pub units: Vec<OvenRuntimeClosureUnit>,
@@ -354,9 +355,13 @@ pub fn runtime_foundation_identity(foundation: &ValidatedOvenRuntimeFoundation) 
 }
 
 /// Project one completed rebuild into its immutable published description.
+///
+/// `foundation_identity` is the sealed asset identity the closure is published against, which is what every
+/// consumer compares it with; the foundation's own content identity is a different digest and is not the binding.
 pub fn runtime_closure_payload(
     foundation: &ValidatedOvenRuntimeFoundation,
     build: &OvenRuntimeFoundationBuild,
+    foundation_identity: &str,
 ) -> Result<OvenRuntimeClosurePayload, OvenRustcError> {
     // A foundation whose every unit is prebuilt has nothing to rebuild, and its closure says so: no units, no
     // roots, still bound to the foundation and compiler it was settled for. What is refused is a foundation that
@@ -419,7 +424,7 @@ pub fn runtime_closure_payload(
     Ok(OvenRuntimeClosurePayload {
         schema_version: OVEN_RUNTIME_CLOSURE_SCHEMA_VERSION,
         compiler_closure_digest: foundation.compiler_closure_digest().to_string(),
-        foundation_identity: runtime_foundation_identity(foundation)?,
+        foundation_identity: foundation_identity.to_string(),
         units,
         roots,
     })
@@ -435,8 +440,9 @@ pub fn publish_runtime_closure(
     receipt: &OvenReceipt,
     foundation: &ValidatedOvenRuntimeFoundation,
     build: &OvenRuntimeFoundationBuild,
+    foundation_identity: &str,
 ) -> Result<OvenArtifactManifest, OvenRustcError> {
-    let payload = runtime_closure_payload(foundation, build)?;
+    let payload = runtime_closure_payload(foundation, build, foundation_identity)?;
     let materialized_files = build
         .outputs()
         .iter()
@@ -638,8 +644,18 @@ mod tests {
             OvenStoreLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024),
         );
 
-        let manifest = publish_runtime_closure(&store, &receipt, &fixture.foundation, &build)?;
-        let expected = runtime_closure_payload(&fixture.foundation, &build)?;
+        let manifest = publish_runtime_closure(
+            &store,
+            &receipt,
+            &fixture.foundation,
+            &build,
+            &runtime_foundation_identity(&fixture.foundation)?,
+        )?;
+        let expected = runtime_closure_payload(
+            &fixture.foundation,
+            &build,
+            &runtime_foundation_identity(&fixture.foundation)?,
+        )?;
 
         assert_eq!(manifest.kind, OvenArtifactKind::NativeRuntimeClosure);
         assert_eq!(manifest.domain, expected.domain()?);
@@ -694,7 +710,11 @@ mod tests {
     fn declared_rebuild_units_refuse_an_empty_build() -> Result<(), Box<dyn std::error::Error>> {
         let fixture = fixture()?;
         assert!(fixture.foundation.rebuild_units().count() > 0);
-        let refused = runtime_closure_payload(&fixture.foundation, &OvenRuntimeFoundationBuild::empty());
+        let refused = runtime_closure_payload(
+            &fixture.foundation,
+            &OvenRuntimeFoundationBuild::empty(),
+            "sha256:asset",
+        );
         assert!(matches!(
             refused,
             Err(OvenRustcError::InvalidInput {
@@ -723,8 +743,18 @@ mod tests {
             store_root.path(),
             OvenStoreLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024),
         );
-        let manifest = publish_runtime_closure(&store, &receipt, &fixture.foundation, &build)?;
-        let expected = runtime_closure_payload(&fixture.foundation, &build)?;
+        let manifest = publish_runtime_closure(
+            &store,
+            &receipt,
+            &fixture.foundation,
+            &build,
+            &runtime_foundation_identity(&fixture.foundation)?,
+        )?;
+        let expected = runtime_closure_payload(
+            &fixture.foundation,
+            &build,
+            &runtime_foundation_identity(&fixture.foundation)?,
+        )?;
         let mut owners = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
         let owner = owners.pop().ok_or("published closure has no retained owner")?;
         let mut selected = admit_runtime_closure(owner, &expected)?.ok_or("published closure failed admission")?;
@@ -770,8 +800,16 @@ mod tests {
             second.outputs()[0].artifact,
             "the two builds really did use different physical roots"
         );
-        let first_payload = runtime_closure_payload(&fixture.foundation, &first)?;
-        let second_payload = runtime_closure_payload(&fixture.foundation, &second)?;
+        let first_payload = runtime_closure_payload(
+            &fixture.foundation,
+            &first,
+            &runtime_foundation_identity(&fixture.foundation)?,
+        )?;
+        let second_payload = runtime_closure_payload(
+            &fixture.foundation,
+            &second,
+            &runtime_foundation_identity(&fixture.foundation)?,
+        )?;
         assert_eq!(
             first_payload.identity()?,
             second_payload.identity()?,
@@ -831,12 +869,14 @@ mod tests {
             &publication_receipt("first_project", "0.1.0", &intent.target, &intent.toolchain)?,
             &fixture.foundation,
             &build,
+            &runtime_foundation_identity(&fixture.foundation)?,
         )?;
         let second = publish_runtime_closure(
             &store,
             &publication_receipt("second_project", "9.9.9", &intent.target, &intent.toolchain)?,
             &fixture.foundation,
             &build,
+            &runtime_foundation_identity(&fixture.foundation)?,
         )?;
 
         assert_eq!(
@@ -869,7 +909,11 @@ mod tests {
             &closure,
             output_root.path(),
         )?;
-        let expected = runtime_closure_payload(&fixture.foundation, &build)?;
+        let expected = runtime_closure_payload(
+            &fixture.foundation,
+            &build,
+            &runtime_foundation_identity(&fixture.foundation)?,
+        )?;
         let intent = &fixture.foundation.selected_graph().graph().selection.intent;
         let receipt = publication_receipt("fixture_project", "0.1.0", &intent.target, &intent.toolchain)?;
 
@@ -918,13 +962,18 @@ mod tests {
         let first_build =
             execute_runtime_foundation_rebuild(&first.foundation, &first.materialized, &closure, output_root.path())?;
         assert_eq!(first_build.compiler_launches(), 2, "the first coordinate compiles");
-        let first_payload = runtime_closure_payload(&first.foundation, &first_build)?;
+        let first_payload = runtime_closure_payload(
+            &first.foundation,
+            &first_build,
+            &runtime_foundation_identity(&first.foundation)?,
+        )?;
         let intent = &first.foundation.selected_graph().graph().selection.intent;
         let published = publish_runtime_closure(
             &store,
             &publication_receipt("fixture_project", "0.1.0", &intent.target, &intent.toolchain)?,
             &first.foundation,
             &first_build,
+            &runtime_foundation_identity(&first.foundation)?,
         )?;
 
         // Only the package coordinate moves. Every compiler input is byte-identical.
@@ -944,7 +993,11 @@ mod tests {
             2,
             "a cold root compiles; reuse is the Store's decision, not the scratch directory's"
         );
-        let second_payload = runtime_closure_payload(&second.foundation, &second_build)?;
+        let second_payload = runtime_closure_payload(
+            &second.foundation,
+            &second_build,
+            &runtime_foundation_identity(&second.foundation)?,
+        )?;
         assert_eq!(
             second_payload.identity()?,
             first_payload.identity()?,
@@ -1001,7 +1054,11 @@ mod tests {
             &closure,
             output_root.path(),
         )?;
-        let payload = runtime_closure_payload(&fixture.foundation, &build)?;
+        let payload = runtime_closure_payload(
+            &fixture.foundation,
+            &build,
+            &runtime_foundation_identity(&fixture.foundation)?,
+        )?;
         let store = OvenStore::new(
             store_root.path(),
             OvenStoreLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024),

@@ -834,10 +834,15 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 &finalized.final_receipt,
                 materialized.foundation(),
                 &build,
+                &foundation_member.foundation_identity,
             )
             .map_err(oven_error)?;
-            let closure_payload =
-                oven_rustc::rustc::runtime_closure_payload(materialized.foundation(), &build).map_err(oven_error)?;
+            let closure_payload = oven_rustc::rustc::runtime_closure_payload(
+                materialized.foundation(),
+                &build,
+                &foundation_member.foundation_identity,
+            )
+            .map_err(oven_error)?;
             let closure_member = OvenReleaseRuntimeClosureMember {
                 schema_version: OVEN_RELEASE_RUNTIME_CLOSURE_MEMBER_SCHEMA_VERSION,
                 label: "rust-policy-closure".to_string(),
