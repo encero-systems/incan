@@ -73,11 +73,11 @@ pub(crate) struct OvenLoafBakeReport {
 /// Where the release bake wrote its harvest and what it held.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct OvenLoafHarvestReport {
-    /// Directory holding `<name>-<version>/proposal.json` entries and `refusals.json`.
+    /// Directory holding `<name>-<version>-<profile>/proposal.json` entries and `refusals-<profile>.json`.
     pub(crate) output: PathBuf,
     /// Proposal directories, in report order.
     pub(crate) proposals: Vec<String>,
-    /// Number of refused units; the reasons are in `refusals.json`.
+    /// Number of refused units; the reasons are in `refusals-<profile>.json`.
     pub(crate) refused: usize,
     /// Ambient hazard variables recorded on every proposal; non-empty means admission will refuse them all.
     pub(crate) hazards: Vec<String>,

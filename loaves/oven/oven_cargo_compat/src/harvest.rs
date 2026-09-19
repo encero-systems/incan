@@ -44,8 +44,13 @@ pub const HARVEST_HAZARD_NIGHTLY_CARGO: &str = "nightly-cargo";
 /// Ambient variables whose presence in the publisher environment is a hazard, with the token each records.
 const HARVEST_HAZARD_VARIABLES: &[(&str, &str)] = &[("RUSTC_BOOTSTRAP", HARVEST_HAZARD_RUSTC_BOOTSTRAP)];
 
-/// File name of the refusal list `write_harvest_report` writes beside the proposal directories.
-pub const HARVEST_REFUSALS_FILE: &str = "refusals.json";
+/// File name of the refusal list `write_harvest_report` writes beside the proposal directories for one profile.
+///
+/// A harvest is one profile's observation; a release bake writes its debug and release harvests into one
+/// directory, so each profile keeps its own list rather than contending for one file.
+pub fn harvest_refusals_file_name(profile: &str) -> String {
+    format!("refusals-{profile}.json")
+}
 
 /// File name of the proposal inside each `<name>-<version>-<profile>` directory.
 pub const HARVEST_PROPOSAL_FILE: &str = "proposal.json";
@@ -213,6 +218,8 @@ pub struct HarvestReport {
     /// The hazard tokens every proposal of this harvest carries (see [`HarvestEvidence::hazards`]); recorded
     /// here too so a harvest that proposed nothing still says what it ran under.
     pub hazards: Vec<String>,
+    /// The profile this harvest observed; names the refusal list on disk.
+    pub profile: String,
 }
 
 /// The publisher facts a proposal records as evidence, taken from the preparation that produced the capture.
@@ -424,6 +431,7 @@ pub fn harvest_registry_units(
         proposals,
         refusals: refusals.into_iter().collect(),
         hazards,
+        profile: profile.to_string(),
     })
 }
 
@@ -689,7 +697,7 @@ pub fn proposal_directory_names(report: &HarvestReport) -> Result<Vec<String>, O
 }
 
 /// Write the report under `dir`: one `<name>-<version>-<profile>/proposal.json` per proposal with its `out/`
-/// members copied beside it, and `refusals.json` at the root. Returns every file written, in order.
+/// members copied beside it, and `refusals-<profile>.json` at the root. Returns every file written, in order.
 ///
 /// `out_dir_sources` is the root the captured `output.relative_root` paths resolve under: the publisher staging
 /// during a bake, or the published artifact's materialized root once the staging is gone. Each member's bytes are
@@ -752,11 +760,12 @@ pub fn write_harvest_report(
         write_idempotently(&proposal_path, &canonical_proposal_bytes(proposal)?, &name)?;
         written.push(proposal_path);
     }
-    let refusals_path = dir.join(HARVEST_REFUSALS_FILE);
+    let refusals_name = harvest_refusals_file_name(&report.profile);
+    let refusals_path = dir.join(&refusals_name);
     write_idempotently(
         &refusals_path,
         &canonical_refusals_bytes(&report.refusals)?,
-        HARVEST_REFUSALS_FILE,
+        &refusals_name,
     )?;
     written.push(refusals_path);
     Ok(written)
@@ -1472,7 +1481,7 @@ mod tests {
                 output.path().join("serde_core-1.0.228-release/out/nested/generated.rs"),
                 output.path().join("serde_core-1.0.228-release/out/private.rs"),
                 output.path().join("serde_core-1.0.228-release/proposal.json"),
-                output.path().join("refusals.json"),
+                output.path().join("refusals-release.json"),
             ]
         );
         let proposal_text = fs::read_to_string(output.path().join("serde_core-1.0.228-release/proposal.json"))?;
@@ -1504,7 +1513,8 @@ mod tests {
             fs::read(output.path().join("serde_core-1.0.228-release/out/private.rs"))?,
             b"pub mod private {}\n"
         );
-        let refusals: Vec<HarvestRefusal> = serde_json::from_slice(&fs::read(output.path().join("refusals.json"))?)?;
+        let refusals: Vec<HarvestRefusal> =
+            serde_json::from_slice(&fs::read(output.path().join("refusals-release.json"))?)?;
         assert_eq!(refusals, report.refusals);
         let script_refusal = refusals
             .iter()
@@ -1519,6 +1529,11 @@ mod tests {
         // ---- Idempotence: the same report rewrites nothing and refuses a changed answer ----
         let again = write_harvest_report(&report, output.path(), retained.path())?;
         assert_eq!(again, written);
+        // ---- The other profile's harvest shares the directory without contending for the refusal list ----
+        let debug = harvest_registry_units(&capture, &evidence(), "debug")?;
+        let debug_written = write_harvest_report(&debug, output.path(), retained.path())?;
+        assert!(debug_written.contains(&output.path().join("serde_core-1.0.228-debug/proposal.json")));
+        assert!(debug_written.contains(&output.path().join("refusals-debug.json")));
         let mut changed = report.clone();
         changed.proposals[0].rust.facts[0].cfg.push("new_answer".to_string());
         let refused = write_harvest_report(&changed, output.path(), retained.path());

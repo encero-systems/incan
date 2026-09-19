@@ -215,7 +215,8 @@ pub enum OvenCommand {
         /// resolves the closure afresh
         #[arg(long = "cargo-lock", value_name = "PATH")]
         cargo_lock: Option<PathBuf>,
-        /// Directory receiving `<name>-<version>/proposal.json`, its `out/` members, and `refusals.json`
+        /// Directory receiving `<name>-<version>-<profile>/proposal.json`, its `out/` members, and
+        /// `refusals-<profile>.json`
         #[arg(long, value_name = "PATH")]
         output: PathBuf,
         /// Output format
