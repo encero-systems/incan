@@ -91,7 +91,9 @@ fn a_module_qualified_return_annotation_emits_a_type_path_issue1437() -> Result<
 /// The qualified spelling works wherever an annotation can appear, not only in a return position.
 ///
 /// A parameter, a local binding annotation, and a model field each lower through the same type path, and each
-/// used to reach the emitter as a dotted identifier.
+/// used to reach the emitter as a dotted identifier. The model's reflection metadata is checked as well: the Rust
+/// path is what the field's type must be spelled as, but `FieldInfo.type_name` is a user-facing Incan name and has
+/// to stay the declaration name the direct import reflects, inside a generic argument too.
 #[test]
 fn a_module_qualified_type_is_a_path_in_every_annotation_position_issue1437() -> Result<(), Box<dyn std::error::Error>>
 {
@@ -100,24 +102,34 @@ fn a_module_qualified_type_is_a_path_in_every_annotation_position_issue1437() ->
         "\n",
         "pub model Report:\n",
         "    pub failure: errors.TomlError\n",
+        "    pub maybe: Option[errors.TomlError]\n",
         "\n",
         "pub def describe(failure: errors.TomlError) -> str:\n",
         "    held: errors.TomlError = failure\n",
         "    return held.message\n",
         "\n",
         "def main() -> None:\n",
-        "    report = Report(failure=errors.make())\n",
+        "    report = Report(failure=errors.make(), maybe=None)\n",
         "    println(describe(report.failure))\n",
     ))?;
     let compact_rust = compact(&rust);
     for (position, shape) in [
         ("model field", "pubfailure:crate::errors::TomlError,"),
+        ("optional model field", "pubmaybe:Option<crate::errors::TomlError>,"),
         ("parameter", "(failure:crate::errors::TomlError,)->String"),
         ("local binding", "letheld:crate::errors::TomlError=failure;"),
     ] {
         assert!(
             compact_rust.contains(shape),
             "the {position} annotation must emit the module path:\n{rust}"
+        );
+    }
+    for (field, reflected) in [("failure", "TomlError"), ("maybe", "Option[TomlError]")] {
+        assert!(
+            compact_rust.contains(&format!(
+                "name:incan_std_core::frozen::FrozenStr::new(\"{field}\"),alias:None,description:None,wire_name:incan_std_core::frozen::FrozenStr::new(\"{field}\"),type_name:incan_std_core::frozen::FrozenStr::new(\"{reflected}\"),"
+            )),
+            "the `{field}` field must reflect `{reflected}`, the declaration name, not a Rust path:\n{rust}"
         );
     }
     assert!(
