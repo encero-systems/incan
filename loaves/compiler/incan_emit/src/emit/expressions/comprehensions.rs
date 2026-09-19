@@ -14,7 +14,8 @@ use crate::ownership::{
     plan_list_comprehension_iteration, plan_owned_iterator_source,
 };
 use incan_ir::expr::{
-    BuiltinFn, FormatPart, IrCallArg, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, Pattern, TypedExpr,
+    BuiltinFn, CollectionMethodKind, FormatPart, IrCallArg, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry,
+    MethodKind, Pattern, TypedExpr,
 };
 use incan_ir::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use incan_ir::types::IrType;
@@ -358,14 +359,35 @@ impl<'a> IrEmitter<'a> {
                 func: BuiltinFn::Enumerate,
                 args,
             } => self.emit_owned_enumerate_iter(args).map(Some),
-            IrExprKind::MethodCall {
-                receiver, method, args, ..
-            } if method == "keys" && args.is_empty() && matches!(receiver.ty, IrType::Dict(_, _)) => {
-                let receiver_tokens = self.emit_expr(receiver)?;
-                Ok(Some(quote! { (#receiver_tokens).keys().cloned() }))
-            }
-            _ => Ok(None),
+            _ => self.emit_direct_dict_view_iter(iterable),
         }
+    }
+
+    /// Emit `dict.keys()` / `dict.values()` as a direct owned-item iterator for a loop or comprehension source.
+    ///
+    /// In value position those calls materialize the `list` the typechecker reports (see `emit_collection_method`);
+    /// a loop or comprehension does not need the allocation, only owned items that match the typechecker's `K` / `V`
+    /// item typing, so the borrowed view is cloned per item instead of collected (#1668).
+    pub(in crate::emit) fn emit_direct_dict_view_iter(
+        &self,
+        iterable: &TypedExpr,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        let IrExprKind::KnownMethodCall {
+            receiver,
+            kind: MethodKind::Collection(kind @ (CollectionMethodKind::Keys | CollectionMethodKind::Values)),
+            args,
+        } = &iterable.kind
+        else {
+            return Ok(None);
+        };
+        if !args.is_empty() {
+            return Ok(None);
+        }
+        let receiver_tokens = self.emit_expr(receiver)?;
+        Ok(Some(match kind {
+            CollectionMethodKind::Keys => quote! { (#receiver_tokens).keys().cloned() },
+            _ => quote! { (#receiver_tokens).values().cloned() },
+        }))
     }
 
     /// Emit `enumerate(xs)` for comprehension closures, cloning values to match the typechecker's owned tuple item

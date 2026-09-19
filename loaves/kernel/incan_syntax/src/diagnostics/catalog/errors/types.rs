@@ -171,6 +171,26 @@ pub fn call_unpack_without_rest(callee: &str, unpack: &str, span: Span) -> Compi
     )
 }
 
+/// Report a text encoding label outside the builtin `str.encode` / `bytes.decode` contract (#1668).
+///
+/// The builtin text return trip supports UTF-8 only; a literal label is rejected here, while a label that is only
+/// known at run time raises `ValueError` from the generated program instead.
+pub fn unsupported_text_encoding(callee: &str, encoding: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("{callee}() supports only UTF-8 in this release, got encoding '{encoding}'"),
+        span,
+    )
+    .with_hint("Omit the argument or pass \"utf-8\"; std.fs and std.encoding cover other codecs")
+}
+
+/// Report a `bytes.decode` `errors` policy that is neither `strict` nor `replace` (#1668).
+pub fn unsupported_decode_errors_policy(policy: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("bytes.decode() errors must be \"strict\" or \"replace\", got '{policy}'"),
+        span,
+    )
+}
+
 /// Build the diagnostic for omitting a required call argument.
 pub fn missing_required_argument(callee: &str, name: &str, span: Span) -> CompileError {
     CompileError::type_error(

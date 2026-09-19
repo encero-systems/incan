@@ -1,0 +1,46 @@
+const GREETING: FrozenStr = "héllo"
+const RAW: FrozenBytes = b"raw"
+
+
+def utf8_bytes(text: str) -> bytes:
+    return text.encode()
+
+
+def utf8_bytes_named(text: str) -> bytes:
+    return text.encode(encoding="UTF_8")
+
+
+def runtime_label(text: str, label: str) -> bytes:
+    return text.encode(label)
+
+
+def round_trip(data: bytes) -> Result[str, ValidationError]:
+    return data.decode()
+
+
+def lossy(data: bytes) -> str:
+    match data.decode(errors="replace"):
+        Ok(text) => return text
+        Err(_) => return "?"
+
+
+def runtime_policy(data: bytes, policy: str) -> Result[str, ValidationError]:
+    return data.decode("utf-8", policy)
+
+
+def frozen_round_trip() -> Result[str, ValidationError]:
+    return Ok(RAW.decode()? + GREETING.encode().decode()?)
+
+
+def main() -> Result[None, ValidationError]:
+    payload = utf8_bytes("héllo")
+    println(len(payload))
+    println(round_trip(payload)?)
+    println(lossy(b"\xff"))
+    println(len(utf8_bytes_named("b")) + len(runtime_label("c", "utf8")))
+    println(runtime_policy(b"ok", "strict")?)
+    println(frozen_round_trip()?)
+    match b"\xff".decode():
+        Ok(text) => println(text)
+        Err(error) => println(f"{error}")
+    return Ok(None)
