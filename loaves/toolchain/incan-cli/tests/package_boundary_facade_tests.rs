@@ -562,3 +562,83 @@ fn child_module_derive_is_available_when_only_a_function_crosses_the_package_bou
     }
     Ok(())
 }
+
+/// An explicitly typed decorator keeps a published union alias on the provider's representation through native
+/// baking, and a consumer runs the decorated function across the boundary.
+///
+/// Issue #1453: `def preserve(func: (Answer) -> Answer) -> ((Answer) -> Answer)` checked, but the decorated static
+/// was typed with a consumer-local union wrapper while the decorator returned a function pointer over the provider's,
+/// so the library failed to bake with E0308. The generic pass-through form of #1426 is a different contract and
+/// does not cover this declaration.
+#[test]
+fn explicitly_typed_decorator_keeps_the_provider_union_representation_issue1453() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let provider = temporary.path().join("provider");
+    write_fixture_file(
+        &provider,
+        "loaf.toml",
+        "[project]\nname = \"typed_union_provider\"\nversion = \"1.2.3\"\n",
+    )?;
+    write_fixture_file(
+        &provider,
+        "src/lib.incn",
+        "pub type Answer = int | str\n\npub def select(value: int) -> Answer:\n    return value\n",
+    )?;
+    assert_success(&run_explicit_oven_bake(&provider)?, "union provider bake");
+
+    let library = temporary.path().join("library");
+    write_fixture_file(
+        &library,
+        "loaf.toml",
+        "[project]\nname = \"typed_union_library\"\nversion = \"1.2.3\"\n\n[dependencies]\nprovider = { path = \"../provider\" }\n",
+    )?;
+    write_fixture_file(
+        &library,
+        "src/lib.incn",
+        r#"from pub::provider import Answer
+
+def preserve(func: (Answer) -> Answer) -> ((Answer) -> Answer):
+    return func
+
+@preserve
+pub def echo(value: Answer) -> Answer:
+    return value
+"#,
+    )?;
+    let check = run_incan(&library, &["check", "src/lib.incn"])?;
+    assert_success(&check, "explicitly typed decorator check");
+    assert_success(
+        &run_explicit_oven_bake(&library)?,
+        "explicitly typed decorator native library bake",
+    );
+    let generated = fs::read_to_string(library.join("target/lib/src/lib.rs"))?;
+    assert!(
+        !generated.contains("pub enum __IncanUnion"),
+        "the library must not re-own the provider's union wrapper, got:\n{generated}"
+    );
+
+    let consumer = temporary.path().join("consumer");
+    write_fixture_file(
+        &consumer,
+        "loaf.toml",
+        "[project]\nname = \"typed_union_consumer\"\nversion = \"1.2.3\"\n\n[dependencies]\nprovider = { path = \"../provider\" }\nlibrary = { path = \"../library\" }\n",
+    )?;
+    write_fixture_file(
+        &consumer,
+        "src/main.incn",
+        r#"from pub::provider import select
+from pub::library import echo
+
+
+def main() -> None:
+    match echo(select(42)):
+        int(number) => println(number)
+        str(text) => println(text)
+"#,
+    )?;
+    assert_success(&run_explicit_oven_bake(&consumer)?, "decorated union consumer bake");
+    let output = run_incan(&consumer, &["run", "--locked", "src/main.incn"])?;
+    assert_success(&output, "decorated union consumer run");
+    assert_eq!(String::from_utf8(output.stdout)?.trim(), "42");
+    Ok(())
+}
