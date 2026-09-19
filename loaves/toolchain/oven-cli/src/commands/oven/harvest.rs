@@ -54,7 +54,7 @@ pub(crate) struct OvenHarvestSummary {
     pub(crate) notes: Option<String>,
     /// Directory the report was written under.
     pub(crate) output: PathBuf,
-    /// `<name>-<version>` directory of every proposal, in report order.
+    /// `<name>-<version>-<profile>` directory of every proposal, in report order.
     pub(crate) proposals: Vec<String>,
     /// Every refusal, in report order.
     pub(crate) refusals: Vec<oven_cargo_compat::HarvestRefusal>,

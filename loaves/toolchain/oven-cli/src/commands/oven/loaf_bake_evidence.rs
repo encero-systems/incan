@@ -79,7 +79,7 @@ pub(crate) struct OvenLoafHarvestReport {
     pub(crate) proposals: Vec<String>,
     /// Number of refused units; the reasons are in `refusals-<profile>.json`.
     pub(crate) refused: usize,
-    /// Ambient hazard variables recorded on every proposal; non-empty means admission will refuse them all.
+    /// Hazard tokens recorded on every proposal; non-empty means admission will refuse them all.
     pub(crate) hazards: Vec<String>,
 }
 
