@@ -297,9 +297,12 @@ fn payload_carries_foundation_key(payload: &[u8], key: &OvenCompilerSuiteFoundat
 /// Candidates are every current-schema foundation for this intent whose payload names the key. A family is complete
 /// when partitions `0..partition_count` are all present and carry one identical family record; an incomplete or
 /// contradictory set — an interrupted batch, or two publications that disagree — is a miss, never an error, because
-/// Cargo can still produce the foundation. When one partition index has several admitted entries (the same family
-/// re-published under later receipts, sharing its files by hard link) the smallest identity is taken, so the choice is
-/// deterministic across runs.
+/// Cargo can still produce the foundation. Partitions are grouped by the family's closure digest before anything else,
+/// so two builds that share a key (one reclaimed halfway, one imported halfway from a mirror) are two candidate
+/// families, and a partition of each can never be paired. Within one family, when a partition index has several
+/// admitted entries (the same build re-published under later receipts, sharing its files by hard link) the smallest
+/// identity is taken, so the choice is deterministic across runs; between complete families the smallest closure
+/// digest wins for the same reason.
 pub(crate) fn select_compiler_suite_foundation_family(
     store: &OvenStore,
     receipt: &OvenReceipt,
@@ -309,8 +312,8 @@ pub(crate) fn select_compiler_suite_foundation_family(
         manifest.kind == OvenArtifactKind::CompilerTestSuiteFoundation && manifest.intent == receipt.intent
     })?;
 
-    // ---- Group the current-schema partitions of this key by partition index ----
-    let mut by_index = BTreeMap::<u32, Vec<SelectedCompilerSuiteFoundationPartition>>::new();
+    // ---- Group the current-schema partitions of this key by build, then by partition index ----
+    let mut by_build = BTreeMap::<String, BTreeMap<u32, Vec<SelectedCompilerSuiteFoundationPartition>>>::new();
     for stored in candidates {
         let Ok(payload) = serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(&stored.payload) else {
             continue;
@@ -325,52 +328,57 @@ pub(crate) fn select_compiler_suite_foundation_family(
         {
             continue;
         }
-        by_index
+        by_build
+            .entry(family.closure_digest.clone())
+            .or_default()
             .entry(family.partition_index)
             .or_default()
             .push(SelectedCompilerSuiteFoundationPartition { stored, payload });
     }
-    if by_index.is_empty() {
+    if by_build.is_empty() {
         return Ok(None);
     }
 
-    // ---- Require every partition, agreeing on one family record ----
-    let mut partitions = Vec::with_capacity(by_index.len());
-    for (_, mut entries) in by_index {
-        entries.sort_by(|left, right| left.stored.manifest.identity.cmp(&right.stored.manifest.identity));
-        if let Some(chosen) = entries.into_iter().next() {
-            partitions.push(chosen);
+    // ---- Take the first build whose every partition is present and agrees on one family record ----
+    for by_index in by_build.into_values() {
+        let mut partitions = Vec::with_capacity(by_index.len());
+        for (_, mut entries) in by_index {
+            entries.sort_by(|left, right| left.stored.manifest.identity.cmp(&right.stored.manifest.identity));
+            if let Some(chosen) = entries.into_iter().next() {
+                partitions.push(chosen);
+            }
+        }
+        let Some(family) = partitions
+            .first()
+            .and_then(|partition| partition.payload.family.clone())
+        else {
+            continue;
+        };
+        let complete = partitions.len() == usize::try_from(family.partition_count).unwrap_or(usize::MAX)
+            && partitions.iter().enumerate().all(|(position, partition)| {
+                partition.payload.family.as_ref().is_some_and(|record| {
+                    usize::try_from(record.partition_index).ok() == Some(position)
+                        && record.partition_count == family.partition_count
+                        && record.key == family.key
+                        && record.closure_digest == family.closure_digest
+                        && record.dependency_search_paths == family.dependency_search_paths
+                        && record.native_search_paths == family.native_search_paths
+                        && record.artifact_index == family.artifact_index
+                })
+            });
+        if complete {
+            return Ok(Some(SelectedCompilerSuiteFoundationFamily {
+                family,
+                partitions,
+                selection: OvenLegacyCargoFoundationSelection::ReusedFromStore,
+            }));
         }
     }
-    let Some(family) = partitions
-        .first()
-        .and_then(|partition| partition.payload.family.clone())
-    else {
-        return Ok(None);
-    };
-    let complete = partitions.len() == usize::try_from(family.partition_count).unwrap_or(usize::MAX)
-        && partitions.iter().enumerate().all(|(position, partition)| {
-            partition.payload.family.as_ref().is_some_and(|record| {
-                usize::try_from(record.partition_index).ok() == Some(position)
-                    && record.partition_count == family.partition_count
-                    && record.key == family.key
-                    && record.dependency_search_paths == family.dependency_search_paths
-                    && record.native_search_paths == family.native_search_paths
-                    && record.artifact_index == family.artifact_index
-            })
-        });
-    if !complete {
-        tracing::debug!(
-            "compiler-suite foundation family {} is incomplete or inconsistent in the store; Cargo will rebuild it",
-            key.as_str()
-        );
-        return Ok(None);
-    }
-    Ok(Some(SelectedCompilerSuiteFoundationFamily {
-        family,
-        partitions,
-        selection: OvenLegacyCargoFoundationSelection::ReusedFromStore,
-    }))
+    tracing::debug!(
+        "compiler-suite foundation family {} is incomplete or inconsistent in the store; Cargo will rebuild it",
+        key.as_str()
+    );
+    Ok(None)
 }
 
 /// The catalog and artifact index a selected family stands in for, as the shard planner consumes them.
@@ -1388,6 +1396,56 @@ mod tests {
         assert!(
             select_compiler_suite_foundation_family(&local, &consumer, &fixture.key)?.is_none(),
             "the stray partition never forms a family on a later lookup either"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn partitions_of_two_builds_under_one_key_are_never_paired() -> TestResult {
+        // Build A and build B share the key (same inputs) but not the bytes: B's patched artifact was compiled again.
+        let build_a = Fixture::new()?;
+        let build_b = Fixture::new()?;
+        // The same size keeps the two-partition split; only the bytes differ.
+        fs::write(build_b.staging.path().join(&build_b.patched_file), vec![b'q'; 2048])?;
+        assert_ne!(
+            super::super::compiler_suite_foundation_closure_digest(&build_a.closure()?),
+            super::super::compiler_suite_foundation_closure_digest(&build_b.closure()?),
+            "the fixture builds differ by content"
+        );
+        let producer_a = receipt(build_a.root())?;
+        let producer_b = receipt(build_b.root())?;
+        let store_a_root = tempfile::tempdir()?;
+        let store_a = OvenStore::new(store_a_root.path(), limits());
+        let identities_a = build_a.publish_family(&store_a, &producer_a, &build_a.key)?;
+        let store_b_root = tempfile::tempdir()?;
+        let store_b = OvenStore::new(store_b_root.path(), limits());
+        let identities_b = build_b.publish_family(&store_b, &producer_b, &build_a.key)?;
+
+        // ---- Partition 0 of A beside partition 1 of B: every index is present, and it is still not a family ----
+        let mixed_root = tempfile::tempdir()?;
+        let mixed = OvenStore::new(mixed_root.path(), limits());
+        republish_one_partition(&store_a, &identities_a, 0, &mixed, &producer_a)?;
+        republish_one_partition(&store_b, &identities_b, 1, &mixed, &producer_b)?;
+        assert!(
+            select_compiler_suite_foundation_family(&mixed, &producer_a, &build_a.key)?.is_none(),
+            "one partition of each build under one key is two incomplete families, not one complete one"
+        );
+
+        // ---- A complete build beside a stray partition of the other: the complete build, whole ----
+        republish_one_partition(&store_a, &identities_a, 1, &mixed, &producer_a)?;
+        let selected = select_compiler_suite_foundation_family(&mixed, &producer_a, &build_a.key)?
+            .ok_or("build A is complete in the store")?;
+        let digest_a = super::super::compiler_suite_foundation_closure_digest(&build_a.closure()?);
+        assert_eq!(selected.family.closure_digest, digest_a);
+        assert!(
+            selected.partitions.iter().all(|partition| {
+                partition
+                    .payload
+                    .family
+                    .as_ref()
+                    .is_some_and(|record| record.closure_digest == digest_a)
+            }),
+            "every selected partition comes from build A"
         );
         Ok(())
     }

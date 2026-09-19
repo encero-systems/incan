@@ -319,12 +319,17 @@ pub struct OvenCompilerTestSuiteFoundationPayload {
 /// What identifies one compiler-suite foundation family and lets a later suite publication plan against it (#1564).
 ///
 /// Every partition of a family carries the same record, so a family is complete when every `partition_index` below
-/// `partition_count` is present under one `key`. The search paths and the artifact index describe the unpartitioned
-/// closure: partition payloads narrow `artifact_closure` to the files they own, and a consumer reunites them here.
+/// `partition_count` is present under one `key` and one `closure_digest`. The search paths and the artifact index
+/// describe the unpartitioned closure: partition payloads narrow `artifact_closure` to the files they own, and a
+/// consumer reunites them here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OvenCompilerTestSuiteFoundationFamily {
     /// The foundation key, `sha256:` over the foundation's own inputs only — never the compiler's source digests.
     pub key: String,
+    /// `sha256:` over the complete closure's files (path and content digest), identical on every partition of one
+    /// build. Two builds under one key are two families: after a reclaim or a partial mirror import, a partition of
+    /// each can sit in the store at once, and the digest is what keeps a consumer from pairing them.
+    pub closure_digest: String,
     /// Zero-based position of this partition within the family.
     pub partition_index: u32,
     /// Number of partitions the family was split into.

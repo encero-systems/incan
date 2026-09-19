@@ -564,9 +564,11 @@ fn compiler_suite_foundation_plans(
     let partition_count = u32::try_from(foundations.len()).map_err(|_| {
         OvenLegacyCargoError::Plan("compiler foundation closure splits into too many partitions".to_string())
     })?;
+    let closure_digest = compiler_suite_foundation_closure_digest(closure);
     for (partition_index, foundation) in (0_u32..).zip(foundations.iter_mut()) {
         foundation.payload.family = Some(OvenCompilerTestSuiteFoundationFamily {
             key: key.as_str().to_string(),
+            closure_digest: closure_digest.clone(),
             partition_index,
             partition_count,
             dependency_search_paths: closure.dependency_search_paths.clone(),
@@ -575,6 +577,20 @@ fn compiler_suite_foundation_plans(
         });
     }
     Ok(foundations)
+}
+
+/// The digest one build's family stamps on every partition: the complete closure's files by path and content.
+///
+/// Paths are sorted so the value does not depend on the order Cargo listed the artifacts in, and the search paths
+/// are left out because the family record already compares them field by field.
+fn compiler_suite_foundation_closure_digest(closure: &OvenCompilerTestSuiteArtifactClosure) -> String {
+    let mut lines = closure
+        .supporting_artifacts
+        .iter()
+        .map(|artifact| format!("{}\0{}\n", artifact.relative_path, artifact.digest))
+        .collect::<Vec<_>>();
+    lines.sort();
+    digest_bytes(lines.concat().as_bytes())
 }
 
 /// Split installed compiler-Loaf directories into deterministic schema-13 suite inputs.
