@@ -3095,6 +3095,34 @@ pub root = math.sqrt
         }
     }
 
+    /// #1431: a facade that re-exports a compiled-SDK `std.serde.json` trait still hands the consumer the stdlib
+    /// trait identity, so the serde derive is forwarded and the backend `to_json` default is emitted, while the
+    /// facade itself re-exports the SDK projection the consumer's `use` resolves through.
+    #[test]
+    fn sdk_facade_reexported_serde_json_trait_keeps_its_protocol() -> Result<(), Box<dyn std::error::Error>> {
+        let facade = parse_program("from std.serde.json import Serialize\n");
+        let main = parse_program(
+            "from facade import Serialize\n\nmodel Payload with Serialize:\n  value: int\n\ndef main() -> None:\n  println(Payload(value=1).to_json())\n",
+        );
+        let mut codegen = IrCodegen::new();
+        codegen.set_sdk_provider_module_paths(vec![vec!["serde".to_string(), "json".to_string()]]);
+        codegen.add_module("facade", &facade);
+        let (main_code, modules) = codegen.try_generate_multi_file(&main, &["facade"])?;
+        let compact = compact_rust(&main_code);
+        assert!(compact.contains("serde::Serialize,"), "{main_code}");
+        assert!(
+            compact.contains("implSerializeforPayload{fnto_json(&self)->String"),
+            "{main_code}"
+        );
+        assert!(compact.contains("usecrate::facade::Serialize;"), "{main_code}");
+        let facade_code = modules.get("facade").ok_or("missing facade output")?;
+        assert!(
+            compact_rust(facade_code).contains("pubusecrate::__incan_std::serde::json::Serialize;"),
+            "{facade_code}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn rust_std_root_module_import_keeps_rust_namespace() {
         let code =

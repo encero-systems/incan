@@ -518,9 +518,10 @@ impl AstLowering {
 
     /// Return which `std.serde.json` protocol an adopted trait spelling names, by canonical trait identity.
     ///
-    /// The visible spelling is resolved through the module's checked import bindings exactly as trait impl lowering
-    /// resolves it, so an alias (`JsonSerialize`), a module-qualified form (`json.Serialize`), and the bare import all
-    /// identify the stdlib trait, while an unrelated trait with the same basename does not.
+    /// The visible spelling is resolved exactly as trait impl lowering resolves it: through the import identity the
+    /// frontend proved (which follows a facade re-export to the declaring module) and otherwise through the written
+    /// import alias. An alias (`JsonSerialize`), a module-qualified form (`json.Serialize`), the bare import, and a
+    /// facade re-export all identify the stdlib trait, while an unrelated trait with the same basename does not.
     pub(in crate::lower) fn stdlib_json_protocol_for_adopted_trait(
         &self,
         visible_name: &str,

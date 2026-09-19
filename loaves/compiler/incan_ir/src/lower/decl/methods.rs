@@ -549,10 +549,24 @@ impl AstLowering {
     }
 
     /// Resolve a visible trait spelling to its canonical source identity.
+    ///
+    /// The checked import identity is consulted first: it names the module that *declares* the trait even when the
+    /// spelling was imported through a facade re-export, where the written import path only names the facade. The
+    /// syntactic import alias remains the fallback for spellings the frontend recorded no identity for, such as a
+    /// module-qualified `json.Serialize`, whose alias resolves the module exactly.
     pub(in crate::lower) fn canonical_trait_identity(
         &self,
         visible_name: &str,
     ) -> (Option<Vec<String>>, Option<String>) {
+        if let Some(identity) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.resolved_import_identity(visible_name))
+            && identity.kind == incan_semantics_core::SemanticSourceTargetKind::Trait
+            && let incan_semantics_core::SymbolOrigin::Module(declaring_module) = &identity.origin
+        {
+            return (Some(declaring_module.clone()), Some(identity.declaration_name.clone()));
+        }
         if let Some(path) = self.import_aliases.get(visible_name)
             && let Some((source_name, module_path)) = path.split_last()
         {
