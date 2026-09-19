@@ -14,6 +14,7 @@ pub mod loaf_bake;
 use cargo_json::*;
 
 mod compiler_suite_catalog;
+mod compiler_suite_foundation;
 mod compiler_suite_targets;
 mod inspection_sources;
 mod loaf_registry_authority;
@@ -26,6 +27,12 @@ mod selected_unit_capture;
 mod workspace_authority;
 
 pub use compiler_suite_catalog::*;
+pub use compiler_suite_foundation::{OvenCompilerSuiteFoundationKey, OvenLegacyCargoFoundationSelection};
+use compiler_suite_foundation::{
+    OvenCompilerSuiteFoundationKeyInputs, SelectedCompilerSuiteFoundationFamily,
+    compiler_suite_foundation_artifact_records, rehydrate_compiler_suite_foundation,
+    select_or_import_compiler_suite_foundation_family, selected_partition_materialized_files,
+};
 pub use compiler_suite_targets::*;
 pub use inspection_sources::*;
 pub use loaf_registry_authority::*;
@@ -56,7 +63,8 @@ pub use oven_rustc::native_contract::{
     OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION,
     OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1,
     OVEN_COMPILER_TEST_SUITE_TOOLCHAIN_DATA_SCHEMA_VERSION, OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION,
-    OVEN_PROVIDER_COMPILATION_KEY, OvenCompilerTestSuiteArtifactClosure, OvenCompilerTestSuiteFoundationPayload,
+    OVEN_PROVIDER_COMPILATION_KEY, OvenCompilerTestSuiteArtifactClosure, OvenCompilerTestSuiteFoundationArtifactRecord,
+    OvenCompilerTestSuiteFoundationFamily, OvenCompilerTestSuiteFoundationPayload,
     OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload, OvenCompilerTestSuiteShardPayload,
     OvenCompilerTestSuiteShardReference, OvenCompilerTestSuiteTarget, OvenCompilerTestSuiteTargetKey,
     OvenCompilerTestSuiteToolchainDataPayload, OvenCompilerTestSuiteToolchainDataReference,
@@ -442,10 +450,16 @@ struct OvenCompilerTestSuiteToolchainDataPlan {
 /// receive only these exact foundations at execution time; they never recover a Cargo target or a copied composite
 /// directory. Partitions retain their parent suite's one compatibility domain, so the store refuses the complete
 /// closure when its aggregate exceeds the configured allowance rather than treating each label as a separate cache.
+///
+/// Every partition carries the same family record — the foundation key, the complete closure's search paths and the
+/// portable artifact index — with its own partition coordinates, so a later publication can select the family by key
+/// and prove it complete (#1564).
 fn compiler_suite_foundation_plans(
     closure: &OvenCompilerTestSuiteArtifactClosure,
     materialized_files: &[OvenArtifactMaterializedFile],
     max_domain_logical_bytes: u64,
+    key: &OvenCompilerSuiteFoundationKey,
+    artifact_index: Vec<OvenCompilerTestSuiteFoundationArtifactRecord>,
 ) -> Result<Vec<OvenCompilerTestSuiteFoundationPlan>, OvenLegacyCargoError> {
     let content_limit = max_domain_logical_bytes
         .checked_sub(COMPILER_TEST_SUITE_FOUNDATION_METADATA_HEADROOM_BYTES)
@@ -510,6 +524,7 @@ fn compiler_suite_foundation_plans(
                         closure,
                         std::mem::take(&mut current_artifacts),
                     ),
+                    family: None,
                 },
                 materialized_files: std::mem::take(&mut current_files),
             });
@@ -540,9 +555,25 @@ fn compiler_suite_foundation_plans(
             schema_version: OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION,
             label: format!("foundation-{:04}", foundations.len()),
             artifact_closure: compiler_suite_foundation_closure(closure, current_artifacts),
+            family: None,
         },
         materialized_files: current_files,
     });
+
+    // ---- The family record every partition carries ----
+    let partition_count = u32::try_from(foundations.len()).map_err(|_| {
+        OvenLegacyCargoError::Plan("compiler foundation closure splits into too many partitions".to_string())
+    })?;
+    for (partition_index, foundation) in (0_u32..).zip(foundations.iter_mut()) {
+        foundation.payload.family = Some(OvenCompilerTestSuiteFoundationFamily {
+            key: key.as_str().to_string(),
+            partition_index,
+            partition_count,
+            dependency_search_paths: closure.dependency_search_paths.clone(),
+            native_search_paths: closure.native_search_paths.clone(),
+            artifact_index: artifact_index.clone(),
+        });
+    }
     Ok(foundations)
 }
 
@@ -878,8 +909,35 @@ pub struct OvenLegacyCargoCompilerSuiteResult {
     /// Conservative transient publisher allocation high-water mark; the Cargo target is removed before success
     /// returns.
     pub transient_reservation_bytes: u64,
+    /// How the third-party foundation was obtained: by its own key from the store or a mirror, or built by Cargo.
+    pub foundation: OvenLegacyCargoFoundationReport,
     /// Product-owned phase timing for the compiler-suite publisher.
     pub timing: OvenLegacyCargoCompilerSuiteTiming,
+}
+
+/// The third-party foundation stage of one compiler-suite completion, as the timing report shows it (#1564).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OvenLegacyCargoFoundationReport {
+    /// The foundation key derived from the foundation's inputs; `None` when an existing suite made it unnecessary.
+    pub key: Option<OvenCompilerSuiteFoundationKey>,
+    /// Where the foundation came from.
+    pub selection: OvenLegacyCargoFoundationSelection,
+    /// Whether Cargo was started to compile the foundation. `false` on every reuse.
+    pub cargo_process_started: bool,
+    /// Number of foundation partitions the suite index references.
+    pub entries: usize,
+}
+
+impl OvenLegacyCargoFoundationReport {
+    /// The report for a completion that selected an existing suite and never reached the foundation stage.
+    fn existing_suite() -> Self {
+        Self {
+            key: None,
+            selection: OvenLegacyCargoFoundationSelection::ExistingSuite,
+            cargo_process_started: false,
+            entries: 0,
+        }
+    }
 }
 
 /// Attribution for the explicit compiler-suite publisher after its enclosing Loaf family is available.
@@ -889,7 +947,12 @@ pub struct OvenLegacyCargoCompilerSuiteTiming {
     pub preflight_and_sdk_elapsed_ms: u128,
     /// Locked Cargo unit-graph discovery only; Cargo does not compile roots in this phase.
     pub unit_graph_elapsed_ms: u128,
-    /// The one permitted third-party foundation compilation.
+    /// Foundation dependency selection, private manifest staging, key derivation, and the store and mirror lookup by
+    /// that key.
+    #[serde(default)]
+    pub foundation_selection_elapsed_ms: u128,
+    /// The one permitted third-party foundation compilation and the scan of what it produced; zero when the
+    /// foundation was reused by key.
     pub foundation_build_elapsed_ms: u128,
     /// Direct-Rustc root planning, foundation partitioning, and immutable request construction.
     pub direct_plan_elapsed_ms: u128,
@@ -1697,6 +1760,7 @@ pub fn prepare_compiler_test_suite(
             cargo_manifest_digest: "not-run-existing-suite".to_string(),
             cargo_lock_digest: "not-run-existing-suite".to_string(),
             transient_reservation_bytes: 0,
+            foundation: OvenLegacyCargoFoundationReport::existing_suite(),
             timing: OvenLegacyCargoCompilerSuiteTiming {
                 preflight_and_sdk_elapsed_ms: suite_started.elapsed().as_millis(),
                 ..OvenLegacyCargoCompilerSuiteTiming::default()
@@ -1783,7 +1847,9 @@ pub fn prepare_compiler_test_suite(
     // planning evidence only; it is never compiled through Cargo as the ordinary test substrate.
     validate_compiler_suite_unit_graph(&generated_project, &unit_graph)?;
     let metadata = read_legacy_cargo_metadata(&request.cargo, &cargo_manifest, &request.receipt.intent.features)?;
-    let foundation_build_started = Instant::now();
+
+    // ---- Foundation identity: the third-party closure's own inputs, nothing of the compiler's source ----
+    let foundation_selection_started = Instant::now();
     let foundation_dependencies = compiler_suite_foundation_dependencies(&generated_project, &unit_graph, &metadata)?;
     let foundation_manifest = compiler_suite_foundation_manifest(&foundation_dependencies)?;
     let third_party_foundation_manifest = stage_compiler_suite_foundation_manifest(
@@ -1793,46 +1859,42 @@ pub fn prepare_compiler_test_suite(
         &foundation_dependencies,
     )?;
     reclaim_unmaterialized_compiler_suite_target_files(&unit_graph_target, &[])?;
+    let foundation_lock = staged_foundation_lock_path(&third_party_foundation_manifest)?;
+    let foundation_key = OvenCompilerSuiteFoundationKey::derive(&OvenCompilerSuiteFoundationKeyInputs {
+        compiler_root: &generated_project,
+        dependencies: &foundation_dependencies,
+        lock: &regular_file_bytes(&foundation_lock)?,
+        target: &request.receipt.intent.target,
+        profile: &request.receipt.intent.profile,
+        toolchain: &request.receipt.intent.toolchain,
+        cargo_version: &cargo_version,
+    })?;
 
-    // The only compilation Cargo is authorized to perform is this sealed third-party foundation. Its copied lock
-    // file preserves the compiler workspace's exact registry resolution, while its private root has no path
-    // dependency on the compiler workspace. Every compiler library, proc macro, CLI and test root below is then
-    // rebuilt from receipt-authorized source by the direct-Rustc scheduler.
-    let foundation_target = staging.join("third-party-foundation-target");
-    let foundation_output = run_legacy_cargo_invocation(
-        &request.cargo,
-        &request.rustc,
-        &third_party_foundation_manifest,
-        &foundation_target,
-        &staging,
-        &request.receipt.intent.target,
-        &request.receipt.intent.profile,
-        &[],
-        publisher_transient_limit,
-        "build",
-        &OvenLegacyCargoInvocationTarget::PackageLibrary,
-        false,
-        false,
-        false,
-    )?;
-    // This phase is the one explicitly permitted Cargo compilation.  Keep the manifest preparation and the child
-    // process under one clock: reporting only the setup above would misleadingly classify Cargo's actual foundation
-    // work as unaccounted suite time.
-    let foundation_build_elapsed_ms = foundation_build_started.elapsed().as_millis();
-    let profile_directory = cargo_profile_directory(&request.receipt.intent.profile)?;
-    let target_deps = foundation_target
-        .join(&request.receipt.intent.target)
-        .join(profile_directory)
-        .join("deps");
-    let host_deps = foundation_target.join(profile_directory).join("deps");
-    let dependency_directories = compiler_suite_dependency_directories(target_deps, host_deps);
-    // The private foundation root itself may be the only Cargo-reported direct-Rustc artifact on a compatible
-    // host/profile layout. Keep every exact compiler-artifact path that Cargo reported, rather than relying on
-    // the conventional `deps/` directories to exist. The catalog still rejects paths outside publisher staging.
-    let foundation_direct_artifact_files = compiler_suite_output_artifact_paths(&foundation_output)?;
-    let foundation_catalog =
-        compiler_suite_artifact_catalog(&staging, &dependency_directories, &foundation_direct_artifact_files)?;
-    let foundation_artifact_index = compiler_suite_artifact_index(&foundation_output, &request.receipt.intent.target)?;
+    // ---- Foundation selection by key: the local store, then mirrors, before Cargo builds anything ----
+    let mirrors = oven_store::store_mirror::configured_mirrors(|name| std::env::var_os(name));
+    let selected_foundation =
+        select_or_import_compiler_suite_foundation_family(request.store, &request.receipt, &foundation_key, &mirrors)?;
+    let foundation_selection_elapsed_ms = foundation_selection_started.elapsed().as_millis();
+    let foundation = match selected_foundation {
+        Some(family) => reused_compiler_suite_foundation(family, &metadata, &generated_project)?,
+        None => build_compiler_suite_foundation(
+            request,
+            &staging,
+            &third_party_foundation_manifest,
+            &metadata,
+            &generated_project,
+            publisher_transient_limit,
+            &foundation_key,
+        )?,
+    };
+    let PreparedCompilerSuiteFoundation {
+        catalog: foundation_catalog,
+        artifact_index: foundation_artifact_index,
+        plans: foundation_plans,
+        selection: foundation_selection,
+        build_elapsed_ms: foundation_build_elapsed_ms,
+        _leases: foundation_leases,
+    } = foundation;
     let mut root_indices = Vec::new();
     for root_index in &unit_graph.roots {
         let root = unit_graph.units.get(*root_index).ok_or_else(|| {
@@ -1856,11 +1918,7 @@ pub fn prepare_compiler_test_suite(
     let mut foundation_references = Vec::new();
     let mut foundation_requests = Vec::new();
     let mut shard_requests = Vec::new();
-    for foundation in compiler_suite_foundation_plans(
-        &foundation_catalog.closure,
-        &foundation_catalog.materialized_files,
-        request.store.limits().max_domain_logical_bytes,
-    )? {
+    for foundation in foundation_plans {
         let foundation_payload =
             serde_json::to_vec(&foundation.payload).map_err(|error| OvenLegacyCargoError::Plan(error.to_string()))?;
         let foundation_request = OvenArtifactPublishRequest {
@@ -1880,6 +1938,12 @@ pub fn prepare_compiler_test_suite(
     }
     foundation_references.sort();
     foundation_references.dedup();
+    let foundation_report = OvenLegacyCargoFoundationReport {
+        key: Some(foundation_key),
+        selection: foundation_selection,
+        cargo_process_started: foundation_selection == OvenLegacyCargoFoundationSelection::Built,
+        entries: foundation_references.len(),
+    };
     for root_index in root_indices {
         let (mut shard, _materialized_files) = compiler_suite_direct_target_shard_from_catalog(
             &generated_project,
@@ -2033,6 +2097,9 @@ pub fn prepare_compiler_test_suite(
             OvenLegacyCargoError::Plan("compiler-suite batch publication returned no index manifest".to_string())
         })?;
     let store_publication_elapsed_ms = store_publication_started.elapsed().as_millis();
+    // A reused family's partitions stayed leased while the batch adopted their files; the new entries are visible
+    // now, so the leases can go with the staging and the publisher lock.
+    drop(foundation_leases);
     drop(cleanup);
     drop(publisher_lock);
     Ok(OvenLegacyCargoCompilerSuiteResult {
@@ -2041,14 +2108,147 @@ pub fn prepare_compiler_test_suite(
         cargo_manifest_digest: digest_bytes(&cargo_manifest_bytes),
         cargo_lock_digest: digest_bytes(&cargo_lock_bytes),
         transient_reservation_bytes,
+        foundation: foundation_report,
         timing: OvenLegacyCargoCompilerSuiteTiming {
             preflight_and_sdk_elapsed_ms: unit_graph_started.duration_since(suite_started).as_millis(),
             unit_graph_elapsed_ms,
+            foundation_selection_elapsed_ms,
             foundation_build_elapsed_ms,
             direct_plan_elapsed_ms,
             store_publication_elapsed_ms,
         },
     })
+}
+
+/// The shard planner's foundation inputs, however the completion obtained them.
+///
+/// A built foundation's files live in publisher staging; a reused one's live below admitted store entries, held
+/// under lease until the batch that adopts them has been published. Either way the catalog, index and publication
+/// plans are what the rest of the completion consumes.
+struct PreparedCompilerSuiteFoundation {
+    /// The complete closure, every file located.
+    catalog: CompilerSuiteArtifactCatalog,
+    /// Cargo's artifact index against the current unit graph.
+    artifact_index: BTreeMap<CargoUnitArtifactKey, Vec<PathBuf>>,
+    /// The partition payloads and files to publish in the suite batch.
+    plans: Vec<OvenCompilerTestSuiteFoundationPlan>,
+    /// How the foundation was obtained.
+    selection: OvenLegacyCargoFoundationSelection,
+    /// Cargo compilation time, zero on reuse.
+    build_elapsed_ms: u128,
+    /// Execution leases on reused partitions, dropped after publication.
+    _leases: Vec<oven_store::store::OvenStoreExecutionPayload>,
+}
+
+/// Stand a selected family in for a Cargo build: rehydrate the planner inputs and plan the same partitions for
+/// re-publication under this receipt.
+///
+/// The partition payloads are published as decoded and re-encoded, so their family record travels unchanged; every
+/// materialized file is sourced from the admitted entry's artifact root, which the store adopts by hard link after
+/// reading and re-digesting it. The scheduler later selects these new entries by the running receipt's build unit
+/// and intent exactly as it selects built ones.
+fn reused_compiler_suite_foundation(
+    family: SelectedCompilerSuiteFoundationFamily,
+    metadata: &CargoMetadata,
+    compiler_root: &Path,
+) -> Result<PreparedCompilerSuiteFoundation, OvenLegacyCargoError> {
+    let rehydrated = rehydrate_compiler_suite_foundation(&family, metadata, compiler_root)?;
+    let selection = family.selection;
+    let mut plans = Vec::with_capacity(family.partitions.len());
+    let mut leases = Vec::with_capacity(family.partitions.len());
+    for partition in family.partitions {
+        plans.push(OvenCompilerTestSuiteFoundationPlan {
+            payload: partition.payload.clone(),
+            materialized_files: selected_partition_materialized_files(&partition),
+        });
+        leases.push(partition.stored);
+    }
+    Ok(PreparedCompilerSuiteFoundation {
+        catalog: rehydrated.catalog,
+        artifact_index: rehydrated.artifact_index,
+        plans,
+        selection,
+        build_elapsed_ms: 0,
+        _leases: leases,
+    })
+}
+
+/// Compile the third-party foundation through the one permitted Cargo build and catalog what it produced.
+///
+/// The staged manifest's copied lock file preserves the compiler workspace's exact registry resolution, while its
+/// private root has no path dependency on the compiler workspace. Every compiler library, proc macro, CLI and test
+/// root is then rebuilt from receipt-authorized source by the direct-Rustc scheduler, never by Cargo. The resulting
+/// partitions carry `key` and the portable index so the next completion can select them without this build.
+fn build_compiler_suite_foundation(
+    request: &OvenLegacyCargoPrepareRequest<'_>,
+    staging: &Path,
+    third_party_foundation_manifest: &Path,
+    metadata: &CargoMetadata,
+    compiler_root: &Path,
+    publisher_transient_limit: u64,
+    key: &OvenCompilerSuiteFoundationKey,
+) -> Result<PreparedCompilerSuiteFoundation, OvenLegacyCargoError> {
+    let foundation_build_started = Instant::now();
+    let foundation_target = staging.join("third-party-foundation-target");
+    let foundation_output = run_legacy_cargo_invocation(
+        &request.cargo,
+        &request.rustc,
+        third_party_foundation_manifest,
+        &foundation_target,
+        staging,
+        &request.receipt.intent.target,
+        &request.receipt.intent.profile,
+        &[],
+        publisher_transient_limit,
+        "build",
+        &OvenLegacyCargoInvocationTarget::PackageLibrary,
+        false,
+        false,
+        false,
+    )?;
+    let profile_directory = cargo_profile_directory(&request.receipt.intent.profile)?;
+    let target_deps = foundation_target
+        .join(&request.receipt.intent.target)
+        .join(profile_directory)
+        .join("deps");
+    let host_deps = foundation_target.join(profile_directory).join("deps");
+    let dependency_directories = compiler_suite_dependency_directories(target_deps, host_deps);
+    // The private foundation root itself may be the only Cargo-reported direct-Rustc artifact on a compatible
+    // host/profile layout. Keep every exact compiler-artifact path that Cargo reported, rather than relying on
+    // the conventional `deps/` directories to exist. The catalog still rejects paths outside publisher staging.
+    let foundation_direct_artifact_files = compiler_suite_output_artifact_paths(&foundation_output)?;
+    let catalog = compiler_suite_artifact_catalog(staging, &dependency_directories, &foundation_direct_artifact_files)?;
+    let artifact_index = compiler_suite_artifact_index(&foundation_output, &request.receipt.intent.target)?;
+    // This phase is the one explicitly permitted Cargo compilation. Keep the child process and the scan of its
+    // output under one clock, so Cargo's actual foundation work is never classified as unaccounted suite time.
+    let build_elapsed_ms = foundation_build_started.elapsed().as_millis();
+    let records = compiler_suite_foundation_artifact_records(&artifact_index, metadata, compiler_root, staging)?;
+    let plans = compiler_suite_foundation_plans(
+        &catalog.closure,
+        &catalog.materialized_files,
+        request.store.limits().max_domain_logical_bytes,
+        key,
+        records,
+    )?;
+    Ok(PreparedCompilerSuiteFoundation {
+        catalog,
+        artifact_index,
+        plans,
+        selection: OvenLegacyCargoFoundationSelection::Built,
+        build_elapsed_ms,
+        _leases: Vec::new(),
+    })
+}
+
+/// The lock file staged beside the private foundation manifest.
+fn staged_foundation_lock_path(manifest: &Path) -> Result<PathBuf, OvenLegacyCargoError> {
+    manifest
+        .parent()
+        .map(|root| root.join("Cargo.lock"))
+        .ok_or_else(|| OvenLegacyCargoError::InvalidInput {
+            field: "third-party foundation manifest",
+            message: format!("{} has no package directory", manifest.display()),
+        })
 }
 
 /// Map the explicit publisher's supported receipt profiles to Cargo's output directory names.
@@ -4525,14 +4725,16 @@ mod tests {
         CargoInvocationOutput, CargoMetadata, CargoMetadataPackage, CargoMetadataResolve,
         CargoMetadataResolveDependency, CargoMetadataResolveNode, CargoUnitGraph, CargoUnitGraphDependency,
         CargoUnitGraphTarget, CargoUnitGraphUnit, CompilerSuiteArtifactCatalog, InspectionPackageScope,
-        OVEN_COMPILER_TEST_PROFILE, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION,
-        OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION, OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION,
-        OvenCompilerTestSuiteArtifactClosure, OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload,
-        OvenCompilerTestSuiteShardPayload, OvenCompilerTestSuiteShardReference, OvenCompilerTestSuiteTarget,
+        OVEN_COMPILER_TEST_PROFILE, OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION,
+        OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION,
+        OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION, OvenCompilerSuiteFoundationKey,
+        OvenCompilerTestSuiteArtifactClosure, OvenCompilerTestSuiteFoundationArtifactRecord,
+        OvenCompilerTestSuiteFoundationReference, OvenCompilerTestSuitePayload, OvenCompilerTestSuiteShardPayload,
+        OvenCompilerTestSuiteShardReference, OvenCompilerTestSuiteTarget,
         OvenCompilerTestSuiteToolchainLoafGenerationReference, OvenLegacyCargoBaseLoaf,
-        OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoInspectionPackage, OvenLegacyCargoInvocationTarget,
-        OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind, OvenProjectExtensionPayload,
-        ResolvedDirectDependency, artifact_closure, artifact_closure_from_reported_paths,
+        OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoFoundationSelection, OvenLegacyCargoInspectionPackage,
+        OvenLegacyCargoInvocationTarget, OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind,
+        OvenProjectExtensionPayload, ResolvedDirectDependency, artifact_closure, artifact_closure_from_reported_paths,
         canonicalize_supporting_artifacts, compiler_suite_artifact_catalog, compiler_suite_artifact_index,
         compiler_suite_cargo_build_output, compiler_suite_cli_target_from_artifact_index,
         compiler_suite_dependency_artifact, compiler_suite_dependency_directories, compiler_suite_direct_cli_plan,
@@ -6896,6 +7098,19 @@ version = "1.0.0"
                 },
             ],
             100_000,
+            &OvenCompilerSuiteFoundationKey::fixture("sha256:partition-fixture"),
+            vec![OvenCompilerTestSuiteFoundationArtifactRecord {
+                package: "a".to_string(),
+                version: "1.0.0".to_string(),
+                source: Some("registry+https://example.invalid".to_string()),
+                package_relative_path: None,
+                target_name: "a".to_string(),
+                source_relative_path: "src/lib.rs".to_string(),
+                features: Vec::new(),
+                test_profile: false,
+                platform: Some("aarch64-apple-darwin".to_string()),
+                files: vec!["deps/a.rlib".to_string()],
+            }],
         )?;
 
         assert_eq!(plans.len(), 2);
@@ -6904,6 +7119,24 @@ version = "1.0.0"
         assert_eq!(plans[0].materialized_files[0].relative_path, "deps/a.rlib");
         assert_eq!(plans[1].materialized_files[0].relative_path, "deps/b.rlib");
         assert!(plans.iter().all(|plan| plan.materialized_files.len() == 1));
+        // Every partition carries the family record with its own coordinates and the complete closure's shape.
+        for (index, plan) in plans.iter().enumerate() {
+            assert_eq!(
+                plan.payload.schema_version,
+                OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION
+            );
+            let family = plan
+                .payload
+                .family
+                .as_ref()
+                .ok_or("partition without a family record")?;
+            assert_eq!(family.key, "sha256:partition-fixture");
+            assert_eq!(usize::try_from(family.partition_index)?, index);
+            assert_eq!(family.partition_count, 2);
+            assert_eq!(family.dependency_search_paths, ["deps"]);
+            assert_eq!(family.artifact_index.len(), 1);
+            assert_eq!(family.artifact_index[0].files, ["deps/a.rlib"]);
+        }
         Ok(())
     }
 
@@ -7479,11 +7712,20 @@ version = "1.0.0"
         assert_eq!(result.cargo_lock_digest, "not-run-existing-suite");
         assert_eq!(result.transient_reservation_bytes, 0);
         assert_eq!(result.timing.unit_graph_elapsed_ms, 0);
+        assert_eq!(result.timing.foundation_selection_elapsed_ms, 0);
         assert_eq!(result.timing.foundation_build_elapsed_ms, 0);
         assert_eq!(result.timing.direct_plan_elapsed_ms, 0);
         assert_eq!(result.timing.store_publication_elapsed_ms, 0);
+        assert_eq!(result.foundation.key, None);
+        assert_eq!(
+            result.foundation.selection,
+            OvenLegacyCargoFoundationSelection::ExistingSuite
+        );
+        assert!(!result.foundation.cargo_process_started);
         let timing = serde_json::to_value(&result)?;
         assert!(timing["timing"].get("preflight_and_sdk_elapsed_ms").is_some());
+        assert_eq!(timing["foundation"]["selection"], "existing-suite");
+        assert_eq!(timing["foundation"]["cargo_process_started"], false);
         assert!(
             !cargo_marker.exists(),
             "a compatible stored suite must return before invoking the supplied Cargo executable"

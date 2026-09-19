@@ -42,10 +42,17 @@ pub const OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1: u32 = 1;
 ///
 /// Version 15 records a digest-verified source footprint for every independently admitted root. Consumers use that
 /// receipt-bound evidence to distribute roots without a mutable timing profile or a test-name scheduling table.
-pub const OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION: u32 = 15;
+/// Version 16 references schema-2 foundations only, which carry their own key and portable artifact index (#1564); a
+/// schema-15 index is never reused, so its schema-1 foundations are never leased by a current scheduler.
+pub const OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION: u32 = 16;
 
 /// Wire schema for one independently admitted compiler-suite dependency foundation.
-pub const OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION: u32 = 1;
+///
+/// Version 2 records the family record described by [`OvenCompilerTestSuiteFoundationFamily`]: the foundation's own
+/// key, its partition coordinates and a portable Cargo artifact index. A later suite publication selects the
+/// foundation by that key and plans its shards from the index, so a compiler source edit no longer asks Cargo to
+/// compile the third-party closure again (#1564).
+pub const OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION: u32 = 2;
 
 /// Wire schema for one independently admitted compiler-Loaf data partition.
 pub const OVEN_COMPILER_TEST_SUITE_TOOLCHAIN_DATA_SCHEMA_VERSION: u32 = 1;
@@ -303,6 +310,69 @@ pub struct OvenCompilerTestSuiteFoundationPayload {
     pub label: String,
     /// The exact fragment of the direct-rustc closure materialized by this foundation.
     pub artifact_closure: OvenCompilerTestSuiteArtifactClosure,
+    /// Schema-2 family record: the foundation's own key and everything a later publication needs to reuse the family
+    /// without Cargo. `None` only on a schema-1 entry, which no current suite index references.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<OvenCompilerTestSuiteFoundationFamily>,
+}
+
+/// What identifies one compiler-suite foundation family and lets a later suite publication plan against it (#1564).
+///
+/// Every partition of a family carries the same record, so a family is complete when every `partition_index` below
+/// `partition_count` is present under one `key`. The search paths and the artifact index describe the unpartitioned
+/// closure: partition payloads narrow `artifact_closure` to the files they own, and a consumer reunites them here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OvenCompilerTestSuiteFoundationFamily {
+    /// The foundation key, `sha256:` over the foundation's own inputs only — never the compiler's source digests.
+    pub key: String,
+    /// Zero-based position of this partition within the family.
+    pub partition_index: u32,
+    /// Number of partitions the family was split into.
+    pub partition_count: u32,
+    /// Staging-relative `-L dependency` directories of the complete closure, in publisher order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependency_search_paths: Vec<String>,
+    /// Staging-relative `-L native` directories of the complete closure, in publisher order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub native_search_paths: Vec<String>,
+    /// Cargo's compiler-artifact records for the complete family, in a form that survives another machine.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifact_index: Vec<OvenCompilerTestSuiteFoundationArtifactRecord>,
+}
+
+/// One Cargo compiler-artifact record of a foundation, keyed so a later unit graph on any machine can find it.
+///
+/// Cargo's JSON stream names a unit by an opaque package ID and the absolute path of its crate root. A registry
+/// package ID is stable, but a checked-in third-party patch carries the checkout path, and the crate root lives under
+/// whichever Cargo home built it. The record therefore names the package the way its lock does — name, version and
+/// registry source, or the patch root relative to the compiler root — and the crate root relative to the package root.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct OvenCompilerTestSuiteFoundationArtifactRecord {
+    /// Cargo package name.
+    pub package: String,
+    /// Exact package version.
+    pub version: String,
+    /// Registry source URL, or `None` for a checked-in third-party patch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// For a patch, the package root relative to the compiler root; `None` for a registry package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_relative_path: Option<String>,
+    /// Cargo target name of the compiled unit.
+    pub target_name: String,
+    /// Crate root source relative to the package root, with `/` separators.
+    pub source_relative_path: String,
+    /// Sorted feature set the unit was compiled with.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<String>,
+    /// Whether Cargo compiled the unit under its test profile.
+    #[serde(default)]
+    pub test_profile: bool,
+    /// The receipt target when the unit was compiled for it, `None` for a host-side unit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+    /// Staging-relative artifact files, spelled exactly as the closure's `supporting_artifacts` name them.
+    pub files: Vec<String>,
 }
 
 /// One immutable compiler-Loaf partition selected by a schema-13 suite before any child starts.

@@ -19,7 +19,7 @@
 //! without inspecting a single artifact.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::OvenReceipt;
 use super::store::{
@@ -101,30 +101,14 @@ where
             let admitted_files = candidate.admitted_materialized_files().to_vec();
             let admitted_directories = candidate.admitted_materialized_directories().to_vec();
             let (manifest, artifact_root, payload, _lease) = candidate.into_parts();
-            let materialized_files = manifest
-                .materialized_files
-                .iter()
-                .map(|file| OvenArtifactMaterializedFile {
-                    source_path: artifact_root.join(&file.relative_path),
-                    relative_path: file.relative_path.clone(),
-                })
-                .collect();
-            let materialized_directories = manifest
-                .materialized_directories
-                .iter()
-                .map(|directory| OvenArtifactMaterializedDirectory {
-                    source_path: artifact_root.join(&directory.relative_path),
-                    relative_path: directory.relative_path.clone(),
-                })
-                .collect();
             let published = store.publish_verified_import(
                 &OvenArtifactPublishRequest {
                     receipt,
                     domain: manifest.domain.clone(),
                     kind: manifest.kind,
                     payload,
-                    materialized_files,
-                    materialized_directories,
+                    materialized_files: materialized_files_of(&manifest, &artifact_root),
+                    materialized_directories: materialized_directories_of(&manifest, &artifact_root),
                 },
                 &admitted_files,
                 &admitted_directories,
@@ -139,6 +123,95 @@ where
         }
     }
     Ok(Vec::new())
+}
+
+/// Import every entry of `kind` for `receipt`'s intent whose verified payload satisfies `matches`, publishing each
+/// under `receipt`, from the first mirror that has any.
+///
+/// This is the seam for an entry that is reusable by its own key rather than by the receipt it was published under:
+/// the compiler-suite third-party foundation (#1564) carries a key over its own inputs in its payload, and a caller
+/// that derived the same key from the same inputs may adopt the entry for its receipt. Everything else is exactly
+/// [`import_matching_from_mirrors`]: mirrors are consulted in order, only the first with a match is used, an
+/// unreadable mirror is an error, the candidate's admitted record is revalidated under the mirror's lock and lease,
+/// and it enters the local store only through the verifying publication that reads and proves every file. The
+/// payload predicate sees verified bytes; it decides reuse, never trust.
+pub fn import_keyed_from_mirrors<F>(
+    store: &OvenStore,
+    mirrors: &[PathBuf],
+    receipt: &OvenReceipt,
+    kind: OvenArtifactKind,
+    matches: F,
+) -> Result<Vec<MirrorImport>, OvenStoreError>
+where
+    F: Fn(&OvenArtifactManifest, &[u8]) -> bool,
+{
+    for mirror in mirrors {
+        if !mirror.join("entries").is_dir() {
+            continue;
+        }
+        let candidates = PublishedOvenStore::new(mirror)
+            .select_payloads_matching_for_execution(|manifest| {
+                manifest.kind == kind && manifest.intent == receipt.intent
+            })?
+            .into_iter()
+            .filter(|candidate| matches(&candidate.manifest, &candidate.payload))
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            continue;
+        }
+        let mut imported = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            candidate.verify_admitted_record()?;
+            let admitted_files = candidate.admitted_materialized_files().to_vec();
+            let admitted_directories = candidate.admitted_materialized_directories().to_vec();
+            let (manifest, artifact_root, payload, _lease) = candidate.into_parts();
+            let published = store.publish_verified_import(
+                &OvenArtifactPublishRequest {
+                    receipt: receipt.clone(),
+                    domain: manifest.domain.clone(),
+                    kind: manifest.kind,
+                    payload,
+                    materialized_files: materialized_files_of(&manifest, &artifact_root),
+                    materialized_directories: materialized_directories_of(&manifest, &artifact_root),
+                },
+                &admitted_files,
+                &admitted_directories,
+            )?;
+            imported.push(MirrorImport {
+                mirror: mirror.clone(),
+                manifest: published,
+            });
+        }
+        return Ok(imported);
+    }
+    Ok(Vec::new())
+}
+
+/// Name one admitted entry's materialized files as publication sources below its artifact root.
+fn materialized_files_of(manifest: &OvenArtifactManifest, artifact_root: &Path) -> Vec<OvenArtifactMaterializedFile> {
+    manifest
+        .materialized_files
+        .iter()
+        .map(|file| OvenArtifactMaterializedFile {
+            source_path: artifact_root.join(&file.relative_path),
+            relative_path: file.relative_path.clone(),
+        })
+        .collect()
+}
+
+/// Name one admitted entry's retained empty directories as publication sources below its artifact root.
+fn materialized_directories_of(
+    manifest: &OvenArtifactManifest,
+    artifact_root: &Path,
+) -> Vec<OvenArtifactMaterializedDirectory> {
+    manifest
+        .materialized_directories
+        .iter()
+        .map(|directory| OvenArtifactMaterializedDirectory {
+            source_path: artifact_root.join(&directory.relative_path),
+            relative_path: directory.relative_path.clone(),
+        })
+        .collect()
 }
 
 /// The receipt to publish one mirror entry under, or `None` when there is no honest choice.
@@ -323,6 +396,124 @@ mod tests {
             !envelope_root.path().join("entries").exists(),
             "a skipped root is never touched"
         );
+        Ok(())
+    }
+
+    /// A mirror foundation published under another project's receipt, with the payload its key lives in.
+    fn publish_keyed_foundation_into_mirror(
+        mirror_root: &Path,
+        project: &Path,
+        payload: &[u8],
+    ) -> Result<OvenArtifactManifest, Box<dyn std::error::Error>> {
+        let staged = project.join("foundation.rlib");
+        fs::write(&staged, b"foundation artifact")?;
+        let mut publication = request(project, "compiler-suite", payload)?;
+        publication.kind = OvenArtifactKind::CompilerTestSuiteFoundation;
+        publication.materialized_files.push(OvenArtifactMaterializedFile {
+            source_path: staged,
+            relative_path: "deps/libfoundation.rlib".to_string(),
+        });
+        Ok(OvenStore::new(mirror_root, limits()).publish(&publication)?)
+    }
+
+    #[test]
+    fn a_keyed_entry_imports_under_an_unrelated_receipt_by_its_payload() -> TestResult {
+        let mirror_root = tempfile::tempdir()?;
+        let local_root = tempfile::tempdir()?;
+        let producer = tempfile::tempdir()?;
+        write_project(producer.path())?;
+        let published = publish_keyed_foundation_into_mirror(mirror_root.path(), producer.path(), br#"{"key":"k1"}"#)?;
+        let other = publish_keyed_foundation_into_mirror(mirror_root.path(), producer.path(), br#"{"key":"k2"}"#)?;
+        assert_ne!(published.identity, other.identity);
+
+        // The consumer's project has different sources, so its receipt and build unit are unrelated to the
+        // producer's; only the payload key relates the two.
+        let consumer = tempfile::tempdir()?;
+        write_project(consumer.path())?;
+        fs::write(
+            consumer.path().join("Cargo.toml"),
+            "[package]\nname = \"consumer_fixture\"\nversion = \"0.2.0\"\n",
+        )?;
+        let receipt = request(consumer.path(), "compiler-suite", b"unused")?.receipt;
+        assert_ne!(receipt.identity, published.receipt_identity);
+        assert_eq!(receipt.intent, published.intent, "same intent is required for reuse");
+
+        let local = OvenStore::new(local_root.path(), limits());
+        let imported = import_keyed_from_mirrors(
+            &local,
+            &[mirror_root.path().to_path_buf()],
+            &receipt,
+            OvenArtifactKind::CompilerTestSuiteFoundation,
+            |_, payload| payload == br#"{"key":"k1"}"#,
+        )?;
+        assert_eq!(imported.len(), 1, "only the entry whose payload matched is imported");
+        let admitted = &imported[0].manifest;
+        assert_eq!(admitted.kind, OvenArtifactKind::CompilerTestSuiteFoundation);
+        assert_eq!(
+            admitted.receipt_identity, receipt.identity,
+            "published under the caller's receipt"
+        );
+        assert_eq!(admitted.build_unit_identity, receipt.build_unit_identity);
+        assert_ne!(
+            admitted.identity, published.identity,
+            "a different receipt is a different entry"
+        );
+        assert_eq!(
+            admitted.payload, published.payload,
+            "the payload bytes are the mirror's"
+        );
+        assert!(
+            local
+                .entry_root_for_tests(&admitted.identity)
+                .join("artifacts/deps/libfoundation.rlib")
+                .is_file(),
+            "the materialized closure was copied"
+        );
+        let selected = local.select_payloads_matching_for_execution(|m| m.identity == admitted.identity)?;
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].payload, br#"{"key":"k1"}"#);
+
+        // A mismatched intent is never a candidate, whatever the payload says.
+        let mut other_intent = receipt.clone();
+        other_intent.intent.profile = "debug".to_string();
+        let none = import_keyed_from_mirrors(
+            &local,
+            &[mirror_root.path().to_path_buf()],
+            &other_intent,
+            OvenArtifactKind::CompilerTestSuiteFoundation,
+            |_, _| true,
+        )?;
+        assert!(none.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_tampered_keyed_entry_is_refused_at_import() -> TestResult {
+        let mirror_root = tempfile::tempdir()?;
+        let local_root = tempfile::tempdir()?;
+        let producer = tempfile::tempdir()?;
+        write_project(producer.path())?;
+        let published = publish_keyed_foundation_into_mirror(mirror_root.path(), producer.path(), br#"{"key":"k1"}"#)?;
+        let artifact = OvenStore::new(mirror_root.path(), limits())
+            .entry_root_for_tests(&published.identity)
+            .join("artifacts/deps/libfoundation.rlib");
+        fs::remove_file(&artifact)?;
+        fs::write(&artifact, b"altered on the mirror")?;
+        let receipt = request(producer.path(), "compiler-suite", b"unused")?.receipt;
+        let local = OvenStore::new(local_root.path(), limits());
+        let result = import_keyed_from_mirrors(
+            &local,
+            &[mirror_root.path().to_path_buf()],
+            &receipt,
+            OvenArtifactKind::CompilerTestSuiteFoundation,
+            |_, _| true,
+        );
+        assert!(
+            matches!(result, Err(OvenStoreError::Integrity { .. })),
+            "got {result:?}"
+        );
+        let after = local.select_payloads_matching_for_execution(|_| true)?;
+        assert!(after.is_empty(), "a refused import leaves no entry behind");
         Ok(())
     }
 
