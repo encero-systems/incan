@@ -94,10 +94,13 @@ fn stdlib_gaps_argv_text_codecs_and_dict_surfaces_issue1668() -> Result<(), Box<
     write_minimal_project(tmp.path(), project_name, "")?;
     fs::write(tmp.path().join("src/main.incn"), MAIN_SOURCE)?;
 
-    // Outside the compiler suite a fresh project has no inspection authority until it is baked once; under the suite
-    // the bake is the same explicit publisher boundary every other build-based root crosses.
-    let bake = run_explicit_oven_bake(tmp.path())?;
-    assert_success(&bake, "prepare the #1668 stdlib-gaps fixture");
+    // Under the compiler suite the build resolves through the suite's stdlib Loaf and needs no Cargo; this root is
+    // deliberately not in the explicit-bake registry (`OvenCompilerSuiteTargetCapabilities`). Outside the suite a
+    // fresh project has no inspection authority until it is baked once, so the standalone run bakes first.
+    if !incan_test_support::oven_compiler_suite_is_active() {
+        let bake = run_explicit_oven_bake(tmp.path())?;
+        assert_success(&bake, "prepare the #1668 stdlib-gaps fixture");
+    }
     let build = run_incan(tmp.path(), &["build", "src/main.incn"])?;
     assert_success(&build, "build the #1668 stdlib-gaps program");
 
