@@ -1068,6 +1068,54 @@ def use_all() -> None:
     Ok(())
 }
 
+/// A facade republishing a stdlib function no provider serves binds the declaration a direct import binds.
+///
+/// Issue #1435: the re-export hop resolved `std.*` members from source metadata without carrying their identity,
+/// so a consumer importing through the facade held an identity-less binding while the direct spelling was proven.
+#[test]
+fn stdlib_facade_reexport_shares_the_direct_import_identity_issue1435() -> Result<(), String> {
+    let facade = parse("pub from std.regex import compile\n", "stdlib facade")?;
+    let consumer_source = r#"
+from std.regex import compile
+from codec import compile as facade_compile
+
+def use_all() -> None:
+  a = compile
+  b = facade_compile
+"#;
+    let consumer = parse(consumer_source, "stdlib facade consumer")?;
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["consumer".to_string()]));
+    checker.register_dependency_module_path_segments("codec", vec!["codec".to_string()]);
+    checker
+        .check_with_imports(&consumer, &[("codec", &facade)])
+        .map_err(|errors| format!("stdlib facade consumer should typecheck: {errors:?}"))?;
+
+    // Reference-side recording is the proof lowering consumes: both spellings must name one declaration.
+    let direct = identity_at(
+        &checker,
+        nth_span(consumer_source, "a = compile", 0).map(|span| Span::new(span.end - "compile".len(), span.end))?,
+        "direct stdlib reference",
+    )?;
+    let reexported = identity_at(
+        &checker,
+        nth_span(consumer_source, "facade_compile", 1)?,
+        "facade re-export reference",
+    )?;
+    assert_eq!(
+        direct, reexported,
+        "the facade binds the declaration, never a facade-minted identity"
+    );
+    assert_eq!(direct.declaration_name, "compile");
+    assert_eq!(direct.kind, SemanticSourceTargetKind::Function);
+    assert!(
+        matches!(&direct.origin, SymbolOrigin::Module(path) if path.first().map(String::as_str) == Some("std")),
+        "a source-served stdlib declaration is owned by its std module: {:?}",
+        direct.origin
+    );
+    Ok(())
+}
+
 /// Static imports keep the provider declaration identity even though statics are not codegraph source targets.
 #[test]
 fn static_import_alias_and_reexport_share_the_declaration_identity() -> Result<(), String> {

@@ -304,6 +304,15 @@ impl StdlibAstCache {
     /// Look up the source declaration identity exported by a stdlib module member.
     pub fn lookup_identity(&mut self, module_path: &[String], name: &str) -> Option<CanonicalSymbolId> {
         self.ensure_loaded(module_path);
+        self.loaded_identity(module_path, name)
+    }
+
+    /// Read a stdlib member's declaration identity from a module this cache has already loaded.
+    ///
+    /// Unlike [`Self::lookup_identity`] this never loads source: it serves callers that hold the cache immutably and
+    /// only ask about a module an earlier symbol lookup already brought in, such as the identity behind a facade
+    /// re-export whose symbol was resolved while the facade was cached.
+    pub fn loaded_identity(&self, module_path: &[String], name: &str) -> Option<CanonicalSymbolId> {
         self.cache.get(&module_path.join("."))?.identities.get(name).cloned()
     }
 

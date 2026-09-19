@@ -14946,17 +14946,22 @@ fn provider_plan_for_sdk_modules(
     .map(Arc::new)
 }
 
-#[test]
-fn sdk_provider_import_retains_manifest_canonical_identity() -> Result<(), String> {
-    let package_name = "incan_stdlib_fixture";
+/// Build one in-memory SDK provider plan publishing `std.helpers` from a checked provider source.
+///
+/// The plan carries the provider's checked API and identity graph exactly as an installed artifact would, so a
+/// consumer test proves what an import binds against the compiled provider rather than against provider source.
+fn sdk_provider_plan_for_helpers_module(
+    package_name: &str,
+    provider_source: &str,
+) -> Result<ProviderPlan, Box<dyn std::error::Error>> {
     let module_path = vec!["helpers".to_string()];
-    let provider_ast = parse_program("pub def helper() -> int:\n  return 42\n", "canonical SDK provider");
+    let provider_ast = parse_program(provider_source, "checked SDK provider");
     let mut provider_checker = TypeChecker::new();
     provider_checker.set_current_package_identity(Some(package_name.to_string()));
     provider_checker.set_current_module_path(Some(module_path.clone()));
     provider_checker
         .check_program(&provider_ast)
-        .map_err(|errors| format!("canonical SDK provider should typecheck: {errors:?}"))?;
+        .map_err(|errors| format!("checked SDK provider should typecheck: {errors:?}"))?;
     let checked_exports = collect_checked_public_exports(&provider_ast, &provider_checker);
     let mut api = CheckedApiMetadataPackage {
         schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
@@ -14968,24 +14973,23 @@ fn sdk_provider_import_retains_manifest_canonical_identity() -> Result<(), Strin
         )],
         public_namespaces: Vec::new(),
     };
-    materialize_checked_api_public_namespaces(&mut api).map_err(|error| error.to_string())?;
+    materialize_checked_api_public_namespaces(&mut api)?;
     let mut identity_graph = LibraryIdentityGraph::from_checked_exports(package_name, &[]);
-    identity_graph
-        .extend_checked_api_exports(package_name, &api, &[(module_path.clone(), checked_exports)])
-        .map_err(|error| error.to_string())?;
+    identity_graph.extend_checked_api_exports(package_name, &api, &[(module_path, checked_exports)])?;
     let public_path = vec![package_name.to_string(), "helpers".to_string(), "helper".to_string()];
     if identity_graph.canonical_for_public_path(&public_path).is_none() {
         return Err(format!(
             "fixture identity graph did not retain {public_path:?}: {:?}",
             identity_graph.exports
-        ));
+        )
+        .into());
     }
     let mut manifest = LibraryManifest::new(package_name, "0.5.0");
     manifest.contract_metadata.api = Some(api);
     manifest.contract_metadata.identity_graph = identity_graph;
 
     let namespace_claims = BTreeSet::from([vec!["std".to_string(), "helpers".to_string()]]);
-    let plan = ProviderPlan::new(
+    Ok(ProviderPlan::new(
         LibraryManifestIndex::default(),
         vec![ProviderRecord {
             identity: ProviderIdentity {
@@ -15008,8 +15012,14 @@ fn sdk_provider_import_retains_manifest_canonical_identity() -> Result<(), Strin
             implementation_facets: Vec::new(),
         }],
         namespace_claims,
-    )
-    .map_err(|error| error.to_string())?;
+    )?)
+}
+
+#[test]
+fn sdk_provider_import_retains_manifest_canonical_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let package_name = "incan_stdlib_fixture";
+    let module_path = vec!["helpers".to_string()];
+    let plan = sdk_provider_plan_for_helpers_module(package_name, "pub def helper() -> int:\n  return 42\n")?;
     let consumer_source = "from std.helpers import helper\n\ndef run() -> int:\n  return helper()\n";
     let consumer_ast = parse_program(consumer_source, "canonical SDK consumer");
     let mut consumer_checker = TypeChecker::new();
@@ -15048,6 +15058,54 @@ fn sdk_provider_import_retains_manifest_canonical_identity() -> Result<(), Strin
         .resolved_identity(Span::new(call_start, call_start + "helper".len()))
         .ok_or("SDK call must retain its manifest canonical identity")?;
     assert_eq!(called, imported);
+    Ok(())
+}
+
+/// A source facade republishing a compiled SDK function binds the provider's declaration, identity included.
+///
+/// Issue #1435: the facade hop used to resolve `std.*` through the source stdlib cache while a direct import went
+/// through the provider registry, so the consumer's binding carried no identity and lowering could never reach
+/// the compiled signature that owns the omitted default.
+#[test]
+fn sdk_provider_facade_reexport_retains_manifest_canonical_identity_issue1435() -> Result<(), Box<dyn std::error::Error>>
+{
+    let package_name = "incan_stdlib_fixture";
+    let plan = sdk_provider_plan_for_helpers_module(
+        package_name,
+        "pub def helper(pretty: bool = false) -> int:\n  return 42\n",
+    )?;
+    let facade_ast = parse_program("pub from std.helpers import helper\n", "SDK facade");
+    let consumer_source = "from codec import helper\n\ndef run() -> int:\n  return helper()\n";
+    let consumer_ast = parse_program(consumer_source, "SDK facade consumer");
+    let mut consumer_checker = TypeChecker::new();
+    consumer_checker.set_current_module_path(Some(vec!["consumer".to_string()]));
+    consumer_checker.register_dependency_module_path_segments("codec", vec!["codec".to_string()]);
+    consumer_checker.set_provider_plan(Arc::new(plan));
+    consumer_checker
+        .check_with_imports(&consumer_ast, &[("codec", &facade_ast)])
+        .map_err(|errors| format!("SDK facade consumer should typecheck: {errors:?}"))?;
+
+    let expected_origin = SymbolOrigin::Package {
+        library: package_name.to_string(),
+        module_path: vec!["helpers".to_string()],
+    };
+    let imported = consumer_checker
+        .type_info()
+        .resolved_import_identity("helper")
+        .ok_or("facade import of an SDK function must retain the provider's canonical identity")?;
+    assert_eq!(imported.origin, expected_origin);
+    assert_eq!(imported.declaration_name, "helper");
+    let call_start = consumer_source.rfind("helper").ok_or("missing helper call")?;
+    let called = consumer_checker
+        .type_info()
+        .resolved_identity(Span::new(call_start, call_start + "helper".len()))
+        .ok_or("facade-bound SDK call must retain the provider's canonical identity")?;
+    assert_eq!(called, imported);
+    assert_eq!(
+        consumer_checker.import_binding_path("helper"),
+        Some(["codec".to_string(), "helper".to_string()].as_slice()),
+        "the checked binding path keeps naming the facade the consumer imported from"
+    );
     Ok(())
 }
 

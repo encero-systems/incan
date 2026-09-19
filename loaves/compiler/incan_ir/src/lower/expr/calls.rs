@@ -556,6 +556,51 @@ impl AstLowering {
         }
     }
 
+    /// Return the `std.*` declaration path the checked identity of a facade-bound SDK provider callable names.
+    ///
+    /// A source facade such as `pub from std.regex import compile` binds the provider's function under the facade's
+    /// own path (`codec.compile`). That path names where the consumer imported the callable from, never a
+    /// declaration, so signature lookup keyed on it finds nothing and the compiled defaults are lost. The checked
+    /// identity proves which provider module and declaration the binding selected, and the provider's checked API is
+    /// keyed on exactly that spelling. Only semantic lookup crosses here; physical linking keeps the facade path.
+    /// Bindings already spelled through `std.*` or `pub::` own their signature route and are left alone.
+    fn facade_bound_sdk_provider_declaration_path(
+        &self,
+        callee_span: ast::Span,
+        checked_import_path: &[String],
+    ) -> Option<Vec<String>> {
+        if checked_import_path
+            .first()
+            .is_some_and(|root| root == "pub" || root == stdlib::STDLIB_ROOT)
+        {
+            return None;
+        }
+        let identity = self.type_info.as_ref()?.resolved_identity(callee_span)?;
+        if !matches!(
+            identity.kind,
+            SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Partial
+        ) {
+            return None;
+        }
+        let SymbolOrigin::Package { library, module_path } = &identity.origin else {
+            return None;
+        };
+        let declared_by_sdk_provider = self.provider_plan.as_deref()?.active_sdk_records().any(|provider| {
+            provider.identity.name == *library
+                || provider
+                    .manifest
+                    .as_deref()
+                    .is_some_and(|manifest| manifest.name == *library)
+        });
+        if !declared_by_sdk_provider {
+            return None;
+        }
+        let mut path = vec![stdlib::STDLIB_ROOT.to_string()];
+        path.extend(module_path.iter().cloned());
+        path.push(identity.declaration_name.clone());
+        Some(path)
+    }
+
     /// Restore the public `std.*` spelling for semantic lookup inside an SDK provider source build.
     ///
     /// Provider modules are emitted at physical paths such as `fs.path`, but their checked language imports and
@@ -3307,24 +3352,30 @@ impl AstLowering {
         // is exported under its own name, so its path is left exactly as resolved: substituting there would defeat
         // the emitter's compiled-provider metadata lookup, which is keyed on the source-shaped path.
         let checked_import_path = self.imported_callee_path_for_expr(f);
+        let facade_bound_provider_path = checked_import_path
+            .as_deref()
+            .and_then(|path| self.facade_bound_sdk_provider_declaration_path(f.span, path));
         let imported_source_callee_path = checked_import_path
             .as_deref()
             .map(|path| self.semantic_imported_callee_path(path));
-        let imported_callee_path = checked_import_path.map(|path| {
-            canonical_path_naming_selected_overload(
-                path,
-                selected_reference_name
-                    .as_deref()
-                    .filter(|_| selected_emitted_name.is_some()),
-            )
-        });
+        let selected_overload_name = selected_reference_name
+            .as_deref()
+            .filter(|_| selected_emitted_name.is_some());
+        let imported_callee_path =
+            checked_import_path.map(|path| canonical_path_naming_selected_overload(path, selected_overload_name));
         // Public artifact lookup selects overloads from retained canonical identities. Preserve the existing
-        // source/SDK path contract for other providers, whose signature reader has separate selection rules.
+        // source/SDK path contract for other providers, whose signature reader has separate selection rules. A
+        // facade-bound SDK provider callable takes the declaration path its checked identity proves, under the same
+        // overload naming the direct `std.*` route applies.
         let imported_source_callee_path = match imported_source_callee_path {
             Some(path) if path.first().is_some_and(|root| root == "pub") => Some(path),
-            _ => imported_callee_path
-                .as_deref()
-                .map(|path| self.semantic_imported_callee_path(path)),
+            _ => facade_bound_provider_path
+                .map(|path| canonical_path_naming_selected_overload(path, selected_overload_name))
+                .or_else(|| {
+                    imported_callee_path
+                        .as_deref()
+                        .map(|path| self.semantic_imported_callee_path(path))
+                }),
         };
         // Keep this path source-shaped. The emitter resolves its exact physical symbol from compiler-owned package
         // metadata; replacing the declaration segment here with a source-stub projection would make that lookup miss
