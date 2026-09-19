@@ -473,6 +473,15 @@ fn export_loaf(
             source: source_error,
         })?;
     }
+    // An empty build-script OUT_DIR has no file to carry it, but the selected graph declares the directory and
+    // digests its empty inventory; the store entry names it, and the Loaf must reproduce it for the same reason.
+    for directory in &entry.manifest.materialized_directories {
+        let destination = staging.path().join(&directory.relative_path);
+        fs::create_dir_all(&destination).map_err(|source_error| OvenLoafError::Io {
+            path: destination,
+            source: source_error,
+        })?;
+    }
     merge_loaf_inspection_sources(&mut plan, staging.path(), context.inspection_sources)?;
     seal_registry_lock_from_temporary_store(&mut plan, &artifact_root, staging.path())?;
     let vocab_transient_peak = bake_compiler_vocab_support(&mut plan, staging.path(), context)?;

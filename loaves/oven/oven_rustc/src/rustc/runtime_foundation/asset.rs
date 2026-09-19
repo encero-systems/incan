@@ -354,6 +354,14 @@ fn runtime_foundation_asset_member_paths(
     let foundation = asset.foundation();
     let graph = foundation.selected_graph().graph();
     let foundation_owner = foundation.artifact_owner();
+    // Build-script outputs live below the asset root under their own GeneratedOutput owners, the same root the
+    // owner table maps them to; the asset must carry them beside what the constituent owns directly.
+    let sealed_below_root = |owner: &str| {
+        owner == foundation_owner
+            || graph.owners.iter().any(|candidate| {
+                candidate.identity == owner && candidate.kind == OvenSelectedRustFacetOwnerKind::GeneratedOutput
+            })
+    };
     let mut members = RuntimeFoundationAssetMemberCatalog::default();
     record_runtime_foundation_asset_file(
         &mut members,
@@ -396,7 +404,7 @@ fn runtime_foundation_asset_member_paths(
         }
         for environment in unit.environment.values() {
             if let OvenSelectedRustFacetEnvironmentValue::Path { value } = environment
-                && value.owner == foundation_owner
+                && sealed_below_root(&value.owner)
             {
                 // Foundation-owned path environment values are directories in v1 (such as OUT_DIR). A file-valued
                 // environment input needs its own digest-bearing schema rather than becoming an untracked exception.
@@ -408,7 +416,7 @@ fn runtime_foundation_asset_member_paths(
             }
         }
         for generated in &unit.generated_inputs {
-            if generated.source.owner == foundation_owner {
+            if sealed_below_root(&generated.source.owner) {
                 record_runtime_foundation_asset_directory(
                     &mut members,
                     &generated.source.path,

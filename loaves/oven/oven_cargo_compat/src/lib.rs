@@ -1271,11 +1271,17 @@ pub fn prepare_direct_rustc_plan(
         )?);
         materialized_directories = retained_empty_generated_output_directories(
             &staging,
-            selected_units
-                .units
-                .iter()
-                .filter_map(|unit| unit.build_script.as_ref())
-                .filter_map(|build_script| build_script.output.as_ref()),
+            selected_units.units.iter().flat_map(|unit| {
+                // Facts are retained per unit and per consumer edge; an edge-scoped empty output is a directory too.
+                unit.build_script
+                    .iter()
+                    .chain(
+                        unit.dependencies
+                            .iter()
+                            .filter_map(|dependency| dependency.build_script.as_ref()),
+                    )
+                    .filter_map(|build_script| build_script.output.as_ref())
+            }),
         );
     }
     let provider_entrypoints = provider_compilation_externs(

@@ -1662,6 +1662,41 @@ mod tests {
         Ok(())
     }
 
+    /// A generated input sealed under its own GeneratedOutput owner is published into the asset like one the
+    /// constituent owns directly, so the asset can materialize it again after mirroring.
+    #[test]
+    fn runtime_foundation_asset_publisher_carries_generated_output_owned_inputs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut foundation = foundation()?;
+        let generated_owner = selected_graph_sha256(b"generated-output\0generated/serde\0digest");
+        edit_serde_unit(&mut foundation, |unit| {
+            for input in &mut unit.generated_inputs {
+                input.source.owner = generated_owner.clone();
+            }
+        })?;
+        foundation.selected_graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: generated_owner,
+            kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+        });
+        foundation
+            .selected_graph
+            .owners
+            .sort_by(|left, right| left.identity.cmp(&right.identity));
+        let asset = OvenRuntimeFoundationAsset::sealed(foundation.clone(), source_inventories(&foundation)?)?;
+        let source_root = tempfile::tempdir()?;
+        let toolchain_root = tempfile::tempdir()?;
+        let install_root = tempfile::tempdir()?;
+        write_materialization_fixture(source_root.path(), toolchain_root.path())?;
+        let destination = install_root.path().join("runtime-foundation");
+
+        let admitted =
+            publish_runtime_foundation_asset(asset.clone(), source_root.path(), toolchain_root.path(), &destination)?;
+        assert_eq!(admitted.foundation_identity(), asset.foundation_identity);
+        assert!(destination.join("generated/serde/private.rs").is_file());
+        let _ = admitted.materialize_asset_for_publication()?;
+        Ok(())
+    }
+
     /// The release carrier survives mirror admission and keeps the selected generation locked for its held lifetime.
     #[test]
     fn release_carrier_mirrors_and_acquires_a_real_runtime_foundation() -> Result<(), Box<dyn std::error::Error>> {
