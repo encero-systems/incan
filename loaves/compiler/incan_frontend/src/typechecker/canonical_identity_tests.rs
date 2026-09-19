@@ -2989,3 +2989,122 @@ def is_ready(signal: Signal) -> bool:
     );
     Ok(())
 }
+
+/// A module-qualified type annotation (`errors.TomlError`) resolves to the declaration a direct import of the same
+/// name binds, and records that proof for lowering (#1437).
+///
+/// The two spellings must agree in both facts a consumer reads: the resolved type of the annotated signature, so a
+/// value checked against one spelling is compatible with the other, and the canonical identity at the reference
+/// site, so nothing downstream has to re-resolve the dotted spelling. The recorded fact carries the module path the
+/// spelling walked, which is what places the type in generated code without an import binding for its bare name.
+#[test]
+fn a_module_qualified_type_annotation_resolves_like_the_direct_import_issue1437() -> Result<(), String> {
+    let errors = parse(
+        "pub model TomlError:\n  pub message: str\n",
+        "qualified type annotation provider",
+    )?;
+    let qualified_source = "import errors\n\npub def result() -> Result[None, errors.TomlError]:\n  return Ok(None)\n";
+    let direct_source =
+        "from errors import TomlError\n\npub def result() -> Result[None, TomlError]:\n  return Ok(None)\n";
+
+    let mut qualified = TypeChecker::new();
+    qualified.set_current_module_path(Some(vec!["consumer".to_string()]));
+    qualified
+        .check_with_imports(
+            &parse(qualified_source, "qualified type annotation consumer")?,
+            &[("errors", &errors)],
+        )
+        .map_err(|errors| format!("the qualified annotation should typecheck: {errors:?}"))?;
+    let mut direct = TypeChecker::new();
+    direct.set_current_module_path(Some(vec!["consumer".to_string()]));
+    direct
+        .check_with_imports(&parse(direct_source, "direct import consumer")?, &[("errors", &errors)])
+        .map_err(|errors| format!("the direct import control should typecheck: {errors:?}"))?;
+
+    let return_type = |checker: &TypeChecker, context: &str| {
+        checker
+            .type_info()
+            .declarations
+            .function_bindings
+            .get("result")
+            .map(|binding| binding.return_type.clone())
+            .ok_or_else(|| format!("{context}: `result` must record a checked signature"))
+    };
+    assert_eq!(
+        return_type(&qualified, "qualified")?,
+        return_type(&direct, "direct")?,
+        "both spellings must resolve the signature to the same checked type"
+    );
+
+    let reference = qualified
+        .type_info()
+        .qualified_type_reference("errors.TomlError")
+        .ok_or("the checker must record the proof under the dotted spelling")?;
+    let imported = direct
+        .type_info()
+        .resolved_import_identity("TomlError")
+        .ok_or("the direct import must prove an identity")?;
+    assert_eq!(&reference.identity, imported, "both spellings select one declaration");
+    assert_eq!(reference.identity.kind, SemanticSourceTargetKind::Model);
+    assert_eq!(
+        reference.identity.origin,
+        SymbolOrigin::Module(vec!["errors".to_string()])
+    );
+    assert_eq!(reference.module_path, vec!["errors".to_string()]);
+    assert_eq!(
+        identity_at(
+            &qualified,
+            nth_span(qualified_source, "errors.TomlError", 0)?,
+            "qualified annotation reference"
+        )?,
+        *imported,
+        "the reference site carries the same identity"
+    );
+    Ok(())
+}
+
+/// A dotted type spelling the checker cannot prove is refused at the annotation instead of resolving to `Unknown`.
+///
+/// Before #1437 such a spelling passed the checker silently and reached Rust emission as a dotted identifier, which
+/// panicked. Each unsupported shape names what was wrong: a module that declares no such type, a module member that
+/// is a function rather than a type, and a root that is not a module at all.
+#[test]
+fn a_module_qualified_spelling_that_names_no_type_is_refused_issue1437() -> Result<(), String> {
+    let errors = parse(
+        "pub model TomlError:\n  pub message: str\n\npub def make() -> TomlError:\n  return TomlError(message=\"x\")\n",
+        "refused qualified type provider",
+    )?;
+    let cases = [
+        (
+            "import errors\n\ndef result() -> Result[None, errors.Missing]:\n  return Ok(None)\n",
+            "`errors.Missing` is not a type: module `errors` declares no type or trait named `Missing`",
+        ),
+        (
+            "import errors\n\ndef result() -> errors.make:\n  return errors.make()\n",
+            "`errors.make` is not a type: module `errors` declares no type or trait named `make`",
+        ),
+        (
+            "model Config:\n  value: int\n\ndef result() -> Config.Value:\n  return 1\n",
+            "`Config.Value` is not a type: `Config` is not a module binding",
+        ),
+    ];
+    for (source, expected) in cases {
+        let program = parse(source, "refused qualified type consumer")?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["consumer".to_string()]));
+        let diagnostics = match checker.check_with_imports(&program, &[("errors", &errors)]) {
+            Ok(()) => return Err(format!("the annotation must be refused:\n{source}")),
+            Err(diagnostics) => diagnostics,
+        };
+        assert!(
+            diagnostics.iter().any(|error| error.message == expected),
+            "expected the refusal `{expected}`, got {diagnostics:?}"
+        );
+        assert_eq!(
+            diagnostics.iter().filter(|error| error.message == expected).count(),
+            1,
+            "the refusal is reported once per annotation: {diagnostics:?}"
+        );
+    }
+    Ok(())
+}

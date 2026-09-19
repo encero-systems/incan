@@ -22,6 +22,7 @@ use incan_frontend::symbols::ResolvedType;
 use incan_frontend::typechecker::split_canonical_public_library_type_name;
 use incan_lang::lang::c_abi;
 use incan_lang::lang::conventions;
+use incan_lang::lang::stdlib;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 use incan_lang::lang::types::stringlike::{self, StringLikeId};
@@ -1175,7 +1176,7 @@ impl AstLowering {
     ) -> IrType {
         match ty {
             ast::Type::Qualified(segments) => IrType::Struct(segments.join("::")),
-            ast::Type::Dotted(segments) => IrType::Struct(segments.join(".")),
+            ast::Type::Dotted(segments) => self.lower_qualified_type_reference(segments, Vec::new()),
             ast::Type::Simple(name) => {
                 let n = name.as_str();
 
@@ -1275,13 +1276,13 @@ impl AstLowering {
                     ),
                 }
             }
-            ast::Type::DottedGeneric(segments, params) => IrType::NamedGeneric(
-                segments.join("."),
-                params
+            ast::Type::DottedGeneric(segments, params) => {
+                let args = params
                     .iter()
                     .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
-                    .collect(),
-            ),
+                    .collect();
+                self.lower_qualified_type_reference(segments, args)
+            }
             ast::Type::Function(params, ret) => IrType::Function {
                 params: params
                     .iter()
@@ -1306,6 +1307,46 @@ impl AstLowering {
             ast::Type::IntLiteral(_) => IrType::Unknown,
             ast::Type::Infer => IrType::Unknown,
         }
+    }
+
+    /// Lower a module-qualified type spelling (`mod.Type`, `mod.Box[T]`) to the nominal type at the module it names.
+    ///
+    /// The checker proved which declaration the spelling selects and recorded that proof under the spelling
+    /// ([`incan_frontend::typechecker::TypeCheckInfo::qualified_type_reference`]); this reads the proof and never
+    /// rebuilds a placement from the written segments. A public-library type already resolves to its
+    /// provider-qualified spelling, so it lowers like any other checked type. A source or stdlib module type has no
+    /// import binding of its own name in this module, so it is placed at the module the spelling walked --
+    /// `crate::<module>::<Type>` -- the path a call through the same module binding is emitted against, with the
+    /// stdlib's public root mapped to the generated `__incan_std` module exactly as `std.*` imports are. A spelling
+    /// without a proof was refused by the checker; lowering an unchecked program yields `Unknown` rather than a
+    /// dotted name the Rust emitter cannot spell (#1437).
+    fn lower_qualified_type_reference(&self, segments: &[String], args: Vec<IrType>) -> IrType {
+        let Some((member, reference)) = segments.last().and_then(|member| {
+            let reference = self.type_info.as_ref()?.qualified_type_reference(&segments.join("."))?;
+            Some((member, reference))
+        }) else {
+            return IrType::Unknown;
+        };
+        let apply_args = |nominal: IrType| match (nominal, args.is_empty()) {
+            (nominal, true) => nominal,
+            (IrType::Struct(name), false) => IrType::NamedGeneric(name, args),
+            (other, false) => other,
+        };
+        if reference.module_path.first().map(String::as_str) == Some("pub") {
+            return apply_args(self.lower_resolved_type(&reference.resolved));
+        }
+        let mut path = vec!["crate".to_string()];
+        path.extend(reference.module_path.iter().enumerate().map(|(index, segment)| {
+            if index == 0 && segment == stdlib::STDLIB_ROOT {
+                stdlib::INCAN_STD_NAMESPACE.to_string()
+            } else {
+                segment.clone()
+            }
+        }));
+        // The member is spelled the way the module exports it, which is the name the generated module binds; a
+        // facade may export a declaration under another name, so the declaration's own name is not the one to use.
+        path.push(member.clone());
+        apply_args(IrType::Struct(path.join("::")))
     }
 
     /// Lower an AST type to an IR type.

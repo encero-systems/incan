@@ -2257,24 +2257,33 @@ fn resolve_qualified_rust_type_path(segments: &[String], symbols: &SymbolTable) 
 }
 
 /// Resolve an AST type annotation into the canonical semantic type representation.
+///
+/// A module-qualified spelling (`mod.Type`) resolves through registries this table does not hold, so it stays
+/// `Unknown` here; the typechecker supplies that resolution through [`resolve_type_with_rust_arg_renderer`].
 pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
-    resolve_type_with_rust_arg_renderer(ty, symbols, &render_resolved_type_as_rust_arg, &|_| {})
+    resolve_type_with_rust_arg_renderer(ty, symbols, &render_resolved_type_as_rust_arg, &|_| {}, &|_| None)
 }
 
 /// Resolve an AST type while allowing the typechecker to preserve provider identity inside opaque Rust applications.
-pub fn resolve_type_with_rust_arg_renderer<F, G>(
+///
+/// `resolve_qualified_type` answers a module-qualified spelling (`mod.Type`, or the constructor of `mod.Box[T]`) with
+/// the nominal type the typechecker proved for it, or `None` when it proved nothing; the symbol table alone cannot
+/// see into a module's members, so the resolver never derives a type from the written segments itself.
+pub fn resolve_type_with_rust_arg_renderer<F, G, Q>(
     ty: &Type,
     symbols: &SymbolTable,
     render_rust_arg: &F,
     qualify_structured_rust_arg: &G,
+    resolve_qualified_type: &Q,
 ) -> ResolvedType
 where
     F: Fn(&ResolvedType) -> String,
     G: Fn(&mut ResolvedType),
+    Q: Fn(&[String]) -> Option<ResolvedType>,
 {
     match ty {
         Type::Qualified(segments) => resolve_qualified_rust_type_path(segments, symbols),
-        Type::Dotted(_) => ResolvedType::Unknown,
+        Type::Dotted(segments) => resolve_qualified_type(segments).unwrap_or(ResolvedType::Unknown),
         Type::Simple(name) => {
             if let Some(id) = numerics::from_str(name.as_str()) {
                 return match name.as_str() {
@@ -2329,7 +2338,13 @@ where
         }
         Type::ConstrainedPrimitive(name, _) => {
             let base = Type::Simple(name.clone());
-            resolve_type_with_rust_arg_renderer(&base, symbols, render_rust_arg, qualify_structured_rust_arg)
+            resolve_type_with_rust_arg_renderer(
+                &base,
+                symbols,
+                render_rust_arg,
+                qualify_structured_rust_arg,
+                resolve_qualified_type,
+            )
         }
         Type::Generic(name, args) => {
             let mut resolved_args: Vec<_> = args
@@ -2340,6 +2355,7 @@ where
                         symbols,
                         render_rust_arg,
                         qualify_structured_rust_arg,
+                        resolve_qualified_type,
                     )
                 })
                 .collect();
@@ -2389,19 +2405,26 @@ where
                 _ => ResolvedType::Generic(normalized_name, resolved_args),
             }
         }
-        Type::DottedGeneric(segments, args) => ResolvedType::Generic(
-            segments.join("."),
-            args.iter()
+        Type::DottedGeneric(segments, args) => {
+            let resolved_args = args
+                .iter()
                 .map(|arg| {
                     resolve_type_with_rust_arg_renderer(
                         &arg.node,
                         symbols,
                         render_rust_arg,
                         qualify_structured_rust_arg,
+                        resolve_qualified_type,
                     )
                 })
-                .collect(),
-        ),
+                .collect();
+            // A proven constructor applies its declaration's name; an unproven one keeps the dotted spelling it
+            // always had, so nothing downstream sees a new shape for a spelling the checker did not prove.
+            match resolve_qualified_type(segments) {
+                Some(ResolvedType::Named(name)) => ResolvedType::Generic(name, resolved_args),
+                _ => ResolvedType::Generic(segments.join("."), resolved_args),
+            }
+        }
         Type::IntLiteral(value) => ResolvedType::TypeVar(value.repr.clone()),
         Type::Function(params, ret) => {
             let resolved_params: Vec<_> = params
@@ -2412,11 +2435,17 @@ where
                         symbols,
                         render_rust_arg,
                         qualify_structured_rust_arg,
+                        resolve_qualified_type,
                     ))
                 })
                 .collect();
-            let resolved_ret =
-                resolve_type_with_rust_arg_renderer(&ret.node, symbols, render_rust_arg, qualify_structured_rust_arg);
+            let resolved_ret = resolve_type_with_rust_arg_renderer(
+                &ret.node,
+                symbols,
+                render_rust_arg,
+                qualify_structured_rust_arg,
+                resolve_qualified_type,
+            );
             ResolvedType::Function(resolved_params, Box::new(resolved_ret))
         }
         Type::Ref(inner) => ResolvedType::Ref(Box::new(resolve_type_with_rust_arg_renderer(
@@ -2424,12 +2453,14 @@ where
             symbols,
             render_rust_arg,
             qualify_structured_rust_arg,
+            resolve_qualified_type,
         ))),
         Type::RefMut(inner) => ResolvedType::RefMut(Box::new(resolve_type_with_rust_arg_renderer(
             &inner.node,
             symbols,
             render_rust_arg,
             qualify_structured_rust_arg,
+            resolve_qualified_type,
         ))),
         Type::Unit => ResolvedType::Unit,
         Type::Tuple(elems) => {
@@ -2441,6 +2472,7 @@ where
                         symbols,
                         render_rust_arg,
                         qualify_structured_rust_arg,
+                        resolve_qualified_type,
                     )
                 })
                 .collect();

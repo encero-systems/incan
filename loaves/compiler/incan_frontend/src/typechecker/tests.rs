@@ -16760,6 +16760,7 @@ fn test_rust_generic_argument_retains_imported_public_provider_identity_issue885
             &checker.symbols,
             &|arg| checker.render_provider_aware_rust_arg(arg),
             &|arg| checker.canonicalize_public_library_nominals(arg),
+            &|_| None,
         ),
         ResolvedType::RustPath("rust_shadow::Envelope<compiled_parent::Payload>".to_string())
     );
@@ -16774,6 +16775,7 @@ fn test_rust_generic_argument_retains_imported_public_provider_identity_issue885
             &checker.symbols,
             &|arg| checker.render_provider_aware_rust_arg(arg),
             &|arg| checker.canonicalize_public_library_nominals(arg),
+            &|_| None,
         ),
         ResolvedType::Generic(
             "Box".to_string(),

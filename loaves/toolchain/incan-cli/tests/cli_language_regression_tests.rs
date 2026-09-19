@@ -47,6 +47,50 @@ fn nested_empty_first_list_runs_without_a_caller_annotation_issue1471() -> Resul
     Ok(())
 }
 
+/// `Result[None, toml.TomlError]` reaches Rust as a type path when `toml` is a stdlib module binding (#1437).
+///
+/// The unit-level reproducers cover a project-local module. This is the shape the issue reports, and the only one
+/// that resolves the member through the SDK provider inventory rather than the source module registry. The generated
+/// Rust is inspected first, because the defect was an emitter panic on the dotted spelling; the program is then baked
+/// and run so the emitted path is proven to link against the provider.
+#[test]
+fn module_qualified_stdlib_type_annotation_emits_and_runs_issue1437() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "qualified_stdlib_type", "")?;
+    fs::write(
+        &main_path,
+        r#"from std import toml
+
+pub def result() -> Result[None, toml.TomlError]:
+    return Ok(None)
+
+def main() -> None:
+    match result():
+        Ok(_) => println("qualified ok")
+        Err(_) => println("qualified err")
+"#,
+    )?;
+
+    let emitted = run_incan(tmp.path(), &["--emit-rust", "src/main.incn"])?;
+    assert_success(&emitted, "emit-rust with a module-qualified stdlib type annotation");
+    let rust = String::from_utf8(emitted.stdout)?;
+    assert!(
+        rust.contains("__incan_std::toml::TomlError"),
+        "the qualified annotation must emit the provider type by its module path:\n{rust}"
+    );
+    assert!(
+        !rust.contains("toml.TomlError"),
+        "no dotted spelling may survive into generated Rust:\n{rust}"
+    );
+
+    let bake = run_explicit_oven_bake(tmp.path())?;
+    assert_success(&bake, "bake a module-qualified stdlib type annotation");
+    let run = run_incan(tmp.path(), &["run", "src/main.incn"])?;
+    assert_success(&run, "run a module-qualified stdlib type annotation");
+    assert_eq!(String::from_utf8(run.stdout)?, "qualified ok\n");
+    Ok(())
+}
+
 /// `{{` and `}}` are the f-string escapes for one literal brace, as in Python, so `f"{{{name}}}"` renders `{x}`. The
 /// lexer collapsed them correctly; emission then brace-escaped every literal segment again for a `format!` string it
 /// no longer builds, and both characters reached the output.

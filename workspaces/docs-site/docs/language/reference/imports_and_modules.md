@@ -50,6 +50,18 @@ import models::User
 import utils::format_currency as fmt
 ```
 
+### Module bindings: `import module` and `module.Member`
+
+```incan
+import models
+from std import toml
+
+def load(path: str) -> Result[models.Config, toml.TomlError]:
+    return models.parse(path)
+```
+
+A plain `import module` binds the module itself, and its public members are reached with dot syntax. That applies to types in annotations as well as to calls: `models.Config` in any annotation position (a parameter, a return type, a local binding, a field, or a generic argument) denotes the same declaration as `from models import Config` followed by `Config`, and values checked against either spelling are interchangeable. The root must be a module binding and the member must be a type or trait the module declares; any other qualified spelling in type position is a compile-time error at the annotation.
+
 ### Imported names and core builtin functions
 
 An explicit import creates a normal binding in the importing module. If it has the same spelling as an ordinary ambient core builtin function, the import wins for unqualified calls. This lets a domain library use a natural name without an alias solely to avoid a builtin collision. The output spellings `print` and `println` are immutable language functions rather than fallback bindings, so a declaration or import cannot replace either one.

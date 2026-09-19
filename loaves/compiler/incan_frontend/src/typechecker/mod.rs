@@ -63,11 +63,11 @@ pub use type_info::{
     CheckedSourceBinding, ComputedPropertyAccessInfo, DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo,
     FixedUnpackPlan, FunctionBindingInfo, IdentKind, ImportedRegistryDefinitionInfo, MutableRustTypeArgumentProjection,
     PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind, ProtocolIterationInfo,
-    ProviderOperationDeclarationInfo, RegistryArtifacts, RegistryDefinitionInfo, RegistryDescriptionRegistry,
-    RegistryExplicitEntryInfo, ResolvedMethodCall, ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind,
-    RustArgCoercionInfo, RustArgCoercionKind, SourceTargetInfo, StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
-    ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode, ValidatedNewtypeCoercionStep,
-    c_binding_descriptor_identity,
+    ProviderOperationDeclarationInfo, QualifiedTypeReferenceInfo, RegistryArtifacts, RegistryDefinitionInfo,
+    RegistryDescriptionRegistry, RegistryExplicitEntryInfo, ResolvedMethodCall, ResolvedMethodDispatch,
+    ResolvedOperatorCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind, SourceTargetInfo,
+    StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo, ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode,
+    ValidatedNewtypeCoercionStep, c_binding_descriptor_identity,
 };
 pub use type_info::{ClassFieldDefaultInfo, semantic_type_from_resolved};
 #[cfg(test)]
@@ -4640,56 +4640,149 @@ impl TypeChecker {
     }
 
     /// Record one type reached through an already-resolved Incan module binding.
+    ///
+    /// The spelling was resolved by [`Self::resolve_qualified_type_annotations`] before this walk; this only attaches
+    /// that proven identity to the reference site's own span.
     fn record_dotted_type_reference_identity(&mut self, segments: &[String], span: Span) {
-        let Some((root, remainder)) = segments.split_first() else {
-            return;
-        };
-        let Some((name, nested_module)) = remainder.split_last() else {
-            return;
-        };
-        let Some(mut module_path) = self.lookup_symbol(root).and_then(|symbol| match &symbol.kind {
-            SymbolKind::Module(info) if !info.is_python => Some(info.path.clone()),
-            _ => None,
-        }) else {
-            return;
-        };
-        module_path.extend(nested_module.iter().cloned());
-
-        let identity = if module_path.len() >= 2 && module_path.first().is_some_and(|part| part == "pub") {
-            self.resolve_pub_library_module_symbol_member(&module_path[1], &module_path[2..], name)
-                .ok()
-                .flatten()
-                .and_then(|resolved| {
-                    matches!(resolved.kind, SymbolKind::Type(_) | SymbolKind::Trait(_)).then_some(resolved.canonical)?
-                })
-        } else {
-            let import = ImportPath::simple(module_path.clone());
-            let type_like = self
-                .dependency_member_symbol_for_path(&import, name)
-                .is_some_and(|kind| matches!(kind, SymbolKind::Type(_) | SymbolKind::Trait(_)));
-            if type_like {
-                self.dependency_member_identity(&import, name)
-                    .or_else(|| self.stdlib_cache.lookup_identity(&module_path, name))
-            } else {
-                self.stdlib_cache
-                    .lookup_identity(&module_path, name)
-                    .filter(|identity| {
-                        matches!(
-                            identity.kind,
-                            SemanticSourceTargetKind::Model
-                                | SemanticSourceTargetKind::Class
-                                | SemanticSourceTargetKind::Newtype
-                                | SemanticSourceTargetKind::Rusttype
-                                | SemanticSourceTargetKind::Enum
-                                | SemanticSourceTargetKind::TypeAlias
-                                | SemanticSourceTargetKind::Trait
-                        )
-                    })
-            }
-        };
-        if let Some(identity) = identity {
+        let spelling = segments.join(".");
+        if let Some(identity) = self
+            .type_info
+            .qualified_type_reference(&spelling)
+            .map(|reference| reference.identity.clone())
+        {
             self.type_info.record_resolved_identity(span, identity);
         }
+    }
+
+    /// Resolve every module-qualified spelling (`mod.Type`, `mod.Box[T]`) inside one annotation before the
+    /// annotation itself is resolved.
+    ///
+    /// The shared type resolver only sees the symbol table, while a qualified spelling resolves through the module
+    /// member registry, the stdlib cache, or a public library's checked manifest. So the checker proves each spelling
+    /// here first and records the result keyed by the spelling; the resolver then reads that fact, and so does
+    /// lowering when it places the nominal type. Nothing is reported here: the validation walk owns the diagnostic
+    /// for a spelling that did not resolve, so it fires once in the checking pass like the other annotation
+    /// diagnostics, while the facts are needed during declaration collection as well.
+    fn resolve_qualified_type_annotations(&mut self, ty: &Spanned<Type>) {
+        match &ty.node {
+            Type::Dotted(segments) => self.resolve_qualified_type_annotation(segments),
+            Type::DottedGeneric(segments, args) => {
+                self.resolve_qualified_type_annotation(segments);
+                for arg in args {
+                    self.resolve_qualified_type_annotations(arg);
+                }
+            }
+            Type::Generic(_, args) | Type::Tuple(args) => {
+                for arg in args {
+                    self.resolve_qualified_type_annotations(arg);
+                }
+            }
+            Type::Function(params, ret) => {
+                for param in params {
+                    self.resolve_qualified_type_annotations(param);
+                }
+                self.resolve_qualified_type_annotations(ret);
+            }
+            Type::Ref(inner) | Type::RefMut(inner) => self.resolve_qualified_type_annotations(inner),
+            Type::Simple(_)
+            | Type::Qualified(_)
+            | Type::ConstrainedPrimitive(..)
+            | Type::IntLiteral(_)
+            | Type::Unit
+            | Type::SelfType
+            | Type::Infer => {}
+        }
+    }
+
+    /// Resolve one module-qualified type spelling and retain the proof under that spelling.
+    ///
+    /// A spelling is a module-scope fact -- its root is a module binding and its tail names a member of that module --
+    /// so every occurrence in one module resolves the same way. It is still resolved afresh each time rather than
+    /// memoized: dependency interfaces are collected through this same path before the consumer's facts are reset,
+    /// and two dependencies can spell `errors.T` against different `errors` bindings, so a remembered answer could
+    /// outlive the binding it was proven against. A failed resolution removes any earlier entry for the same reason.
+    fn resolve_qualified_type_annotation(&mut self, segments: &[String]) {
+        let spelling = segments.join(".");
+        match self.qualified_type_declaration(segments) {
+            Some(reference) => {
+                self.type_info
+                    .declarations
+                    .qualified_type_references
+                    .insert(spelling, reference);
+            }
+            None => {
+                self.type_info.declarations.qualified_type_references.remove(&spelling);
+            }
+        }
+    }
+
+    /// Resolve the declaration a module-qualified type spelling names, if the checker can prove one.
+    ///
+    /// The root must be an Incan module binding; the remaining segments walk nested modules and end at a member that
+    /// declares a type or trait. Three registries can own that member, and each is consulted the way the matching
+    /// direct import would be: a public library through its checked manifest, a source dependency through the module
+    /// member registry, and a stdlib module through its cache. The resolved type is the one that direct import would
+    /// have bound -- the declaration's own name, or the provider-qualified spelling for a public library -- so values
+    /// checked against either spelling of the same declaration are compatible. `None` means no type was proven; it
+    /// never means "assume the written path".
+    fn qualified_type_declaration(&mut self, segments: &[String]) -> Option<QualifiedTypeReferenceInfo> {
+        let (root, remainder) = segments.split_first()?;
+        let (name, nested_module) = remainder.split_last()?;
+        let mut module_path = self.lookup_symbol(root).and_then(|symbol| match &symbol.kind {
+            SymbolKind::Module(info) if !info.is_python => Some(info.path.clone()),
+            _ => None,
+        })?;
+        module_path.extend(nested_module.iter().cloned());
+
+        // ---- Public library module: the checked manifest owns both the identity and the qualified type name ----
+        if module_path.len() >= 2 && module_path.first().is_some_and(|part| part == "pub") {
+            let resolved = self
+                .resolve_pub_library_module_symbol_member(&module_path[1], &module_path[2..], name)
+                .ok()
+                .flatten()?;
+            if !matches!(resolved.kind, SymbolKind::Type(_) | SymbolKind::Trait(_)) {
+                return None;
+            }
+            let identity = resolved.canonical?;
+            let mut source_type_path = resolved.source_module_path.iter().skip(2).cloned().collect::<Vec<_>>();
+            source_type_path.push(resolved.source_name);
+            let canonical_name = canonical_public_library_type_name(&module_path[1], &source_type_path.join("::"));
+            return Some(QualifiedTypeReferenceInfo {
+                identity,
+                module_path,
+                resolved: ResolvedType::Named(canonical_name),
+            });
+        }
+
+        // ---- Source dependency or stdlib module: the member registry proves the kind, the caches the identity ----
+        let import = ImportPath::simple(module_path.clone());
+        let type_like = self
+            .dependency_member_symbol_for_path(&import, name)
+            .is_some_and(|kind| matches!(kind, SymbolKind::Type(_) | SymbolKind::Trait(_)));
+        let identity = if type_like {
+            self.dependency_member_identity(&import, name)
+                .or_else(|| self.stdlib_cache.lookup_identity(&module_path, name))
+        } else {
+            self.stdlib_cache
+                .lookup_identity(&module_path, name)
+                .filter(|identity| {
+                    matches!(
+                        identity.kind,
+                        SemanticSourceTargetKind::Model
+                            | SemanticSourceTargetKind::Class
+                            | SemanticSourceTargetKind::Newtype
+                            | SemanticSourceTargetKind::Rusttype
+                            | SemanticSourceTargetKind::Enum
+                            | SemanticSourceTargetKind::TypeAlias
+                            | SemanticSourceTargetKind::Trait
+                    )
+                })
+        }?;
+        Some(QualifiedTypeReferenceInfo {
+            identity,
+            module_path,
+            resolved: ResolvedType::Named(name.clone()),
+        })
     }
 
     /// Record one type-like lexical binding without guessing an identity from its source spelling.
@@ -4894,6 +4987,7 @@ impl TypeChecker {
 
     /// Resolve a type annotation and emit diagnostics for reserved or invalid type spellings.
     fn resolve_type_checked(&mut self, ty: &Spanned<Type>) -> ResolvedType {
+        self.resolve_qualified_type_annotations(ty);
         if self.validate_source_type_names {
             self.validate_source_type_annotation_names(&ty.node, ty.span);
             self.record_type_reference_identities(ty);
@@ -4927,9 +5021,20 @@ impl TypeChecker {
             &self.symbols,
             &|arg| self.render_provider_aware_rust_arg(arg),
             &|arg| self.canonicalize_public_library_nominals(arg),
+            &|segments| self.qualified_type_annotation_resolved_type(segments),
         );
         self.record_mutable_rust_type_argument_projection(ty);
         self.expand_type_aliases(resolved)
+    }
+
+    /// Return the nominal type a module-qualified spelling was proven to name, for the shared type resolver.
+    ///
+    /// The proof was recorded by [`Self::resolve_qualified_type_annotations`]; an unproven spelling stays `None` so
+    /// the resolver yields `Unknown` and the validation walk reports it.
+    fn qualified_type_annotation_resolved_type(&self, segments: &[String]) -> Option<ResolvedType> {
+        self.type_info
+            .qualified_type_reference(&segments.join("."))
+            .map(|reference| reference.resolved.clone())
     }
 
     /// Preserve a metadata-directed mutable-reference projection for one imported Rust generic annotation.
@@ -4964,6 +5069,7 @@ impl TypeChecker {
                     &self.symbols,
                     &|arg| self.render_provider_aware_rust_arg(arg),
                     &|arg| self.canonicalize_public_library_nominals(arg),
+                    &|segments| self.qualified_type_annotation_resolved_type(segments),
                 )
             })
             .collect::<Vec<_>>();
@@ -5373,13 +5479,42 @@ impl TypeChecker {
         }
     }
 
-    /// Validate a namespace-qualified type such as `c.i32`.
+    /// Reject a module-qualified type annotation (`mod.Type`) the checker could not resolve to a declaration.
+    ///
+    /// An unbound root is an unknown symbol like any other. A bound root that is not a module, or a module that
+    /// declares no such type, is refused with its own message: the spelling would otherwise resolve to `Unknown`
+    /// and reach lowering as a dotted name, which the Rust emitter cannot spell (#1437). A spelling that resolved
+    /// has its proof recorded under [`DeclarationArtifacts::qualified_type_references`] and needs nothing here.
     fn validate_source_dotted_type_annotation(&mut self, segments: &[String], span: Span) {
-        if let Some(root) = segments.first()
-            && self.symbols.lookup(root).is_none()
-        {
+        let Some((root, remainder)) = segments.split_first() else {
+            return;
+        };
+        if self.symbols.lookup(root).is_none() {
             self.emit_unknown_source_type_annotation_name(root, span);
+            return;
         }
+        let spelling = segments.join(".");
+        if self.type_info.qualified_type_reference(&spelling).is_some() {
+            return;
+        }
+        let key = (spelling.clone(), span.start, span.end);
+        if !self.unknown_source_type_names_emitted.insert(key) {
+            return;
+        }
+        let root_is_module = self
+            .lookup_symbol(root)
+            .is_some_and(|symbol| matches!(&symbol.kind, SymbolKind::Module(info) if !info.is_python));
+        let error = match (root_is_module, remainder.split_last()) {
+            (true, Some((member, nested))) => {
+                let module = std::iter::once(root.as_str())
+                    .chain(nested.iter().map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join(".");
+                errors::qualified_type_not_declared(&spelling, &module, member, span)
+            }
+            _ => errors::qualified_type_root_not_a_module(&spelling, root, span),
+        };
+        self.errors.push(error);
     }
 
     /// Emit one diagnostic when a simple source annotation name has no declaration in the active scope.
