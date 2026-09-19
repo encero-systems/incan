@@ -13,12 +13,12 @@ Example:
     ```incan
     token = get("API_TOKEN")?
     port = get_as[int]("PORT", default=8080)?
-    for argument in args()[1:]:
+    for argument in args()?[1:]:
         println(argument)
     ```
 """
 
-from rust::std::env import VarError, args as env_args, var as env_var
+from rust::std::env import VarError, args_os, var as env_var
 from std.traits.error import Error
 from std.traits.convert import TryFrom
 
@@ -233,33 +233,42 @@ pub def get_as[T with TryFrom[str]](key: str, default: T) -> Result[T, EnvironEr
     return Ok(get_as[T](key)?.unwrap_or(default))
 
 
-pub def args() -> list[str]:
+pub def args() -> Result[list[str], EnvironError]:
     """
     Return the current process argument vector.
 
     The program name comes first, exactly as the host supplied it, followed by each argument in order. Slice from
     index 1 to skip the program name.
 
-    Every entry is Unicode text. Like `get()`, this module never converts a non-Unicode host value silently: an
-    argument that is not valid Unicode is refused rather than replaced or dropped. Because the argument vector is read
-    as a whole, that refusal ends the process with a panic instead of returning an `EnvironError`.
+    Every entry is Unicode text. Like `get()`, this function never converts a non-Unicode host value silently: the
+    first argument that is not valid Unicode is reported as a `NotUnicode` error whose key names its position
+    (`argv[2]`), and the observed bytes never appear in the error.
 
     Returns:
-        The program name followed by the process arguments, each as a `str`.
+        `Ok(arguments)` with the program name followed by the process arguments, each as a `str`, or
+        `Err(EnvironError)` with kind `NotUnicode` when an argument cannot be represented as text.
 
     Example:
         Treat the first argument as a subcommand:
 
         ```incan
-        arguments = args()
+        arguments = args()?
         if len(arguments) < 2:
             println("usage: tool <command>")
         ```
     """
     mut out: list[str] = []
-    for argument in env_args():
-        out.append(argument)
-    return out
+    for argument in args_os():
+        match argument.into_string():
+            Ok(text) => out.append(text)
+            Err(_) =>
+                position = len(out)
+                return Err(EnvironError.from_kind(
+                    EnvironErrorKind.NotUnicode,
+                    f"argv[{position}]",
+                    f"argument {position} cannot be represented as Unicode text",
+                ))
+    return Ok(out)
 
 
 def _error_from_raw_kind(key: str, kind: EnvironErrorKind) -> EnvironError:

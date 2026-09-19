@@ -19886,19 +19886,23 @@ def accept_user_id(value: UserId) -> UserId:
 }
 
 #[test]
-fn test_std_environ_args_returns_list_of_str_issue1668() {
+fn test_std_environ_args_returns_result_of_list_of_str_issue1668() {
     let source = r#"
-from std.environ import args
+from std.environ import EnvironError, args
 
-def subcommand() -> str:
-    arguments: list[str] = args()
+def subcommand() -> Result[str, EnvironError]:
+    arguments: list[str] = args()?
     if len(arguments) < 2:
-        return "help"
-    return arguments[1]
+        return Ok("help")
+    return Ok(arguments[1])
 
-def main() -> None:
-    for argument in args()[1:]:
+def main() -> Result[None, EnvironError]:
+    for argument in args()?[1:]:
         println(argument)
+    match args():
+        Ok(arguments) => println(len(arguments))
+        Err(error) => println(f"{error.kind_name()}:{error.key}")
+    return Ok(None)
 "#;
     assert_check_ok(source);
 }
@@ -19924,15 +19928,15 @@ def main() -> None:
 from std.environ import args
 
 def main() -> None:
-    first: str = args()
+    arguments: list[str] = args()
 "#,
-        "args() returns list[str], not str",
+        "args() returns Result[list[str], EnvironError], not list[str]",
     );
     assert!(
-        type_errors
-            .iter()
-            .any(|error| error.message.contains("expected 'str', found 'List[str]'")),
-        "expected a list[str] mismatch diagnostic, got: {:?}",
+        type_errors.iter().any(|error| error
+            .message
+            .contains("expected 'List[str]', found 'Result[List[str], EnvironError]'")),
+        "expected a Result mismatch diagnostic, got: {:?}",
         type_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
     );
 }

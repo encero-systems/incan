@@ -8,7 +8,7 @@ expression: rust_code
 
 incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use ::std::env::VarError;
-use ::std::env::args as env_args;
+use ::std::env::args_os;
 use ::std::env::var as env_var;
 pub use crate::__incan_std::traits::error::Error;
 pub use crate::__incan_std::traits::convert::TryFrom;
@@ -583,30 +583,58 @@ pub use get_as as get_as_overload_4b1ac1f4d4e08f1f;
 /// The program name comes first, exactly as the host supplied it, followed by each argument in order. Slice from
 /// index 1 to skip the program name.
 ///
-/// Every entry is Unicode text. Like `get()`, this module never converts a non-Unicode host value silently: an
-/// argument that is not valid Unicode is refused rather than replaced or dropped. Because the argument vector is read
-/// as a whole, that refusal ends the process with a panic instead of returning an `EnvironError`.
+/// Every entry is Unicode text. Like `get()`, this function never converts a non-Unicode host value silently: the
+/// first argument that is not valid Unicode is reported as a `NotUnicode` error whose key names its position
+/// (`argv[2]`), and the observed bytes never appear in the error.
 ///
 /// Returns:
-///     The program name followed by the process arguments, each as a `str`.
+///     `Ok(arguments)` with the program name followed by the process arguments, each as a `str`, or
+///     `Err(EnvironError)` with kind `NotUnicode` when an argument cannot be represented as text.
 ///
 /// Example:
 ///     Treat the first argument as a subcommand:
 ///
 ///     ```ignore
-///     arguments = args()
+///     arguments = args()?
 ///     if len(arguments) < 2:
 ///         println("usage: tool <command>")
 ///     ```
-pub fn args() -> Vec<
-    String,
+pub fn args() -> Result<
+    Vec<String>,
+    EnvironError,
 > {
-    let _ = "\n    Return the current process argument vector.\n\n    The program name comes first, exactly as the host supplied it, followed by each argument in order. Slice from\n    index 1 to skip the program name.\n\n    Every entry is Unicode text. Like `get()`, this module never converts a non-Unicode host value silently: an\n    argument that is not valid Unicode is refused rather than replaced or dropped. Because the argument vector is read\n    as a whole, that refusal ends the process with a panic instead of returning an `EnvironError`.\n\n    Returns:\n        The program name followed by the process arguments, each as a `str`.\n\n    Example:\n        Treat the first argument as a subcommand:\n\n        ```incan\n        arguments = args()\n        if len(arguments) < 2:\n            println(\"usage: tool <command>\")\n        ```\n    ";
+    let _ = "\n    Return the current process argument vector.\n\n    The program name comes first, exactly as the host supplied it, followed by each argument in order. Slice from\n    index 1 to skip the program name.\n\n    Every entry is Unicode text. Like `get()`, this function never converts a non-Unicode host value silently: the\n    first argument that is not valid Unicode is reported as a `NotUnicode` error whose key names its position\n    (`argv[2]`), and the observed bytes never appear in the error.\n\n    Returns:\n        `Ok(arguments)` with the program name followed by the process arguments, each as a `str`, or\n        `Err(EnvironError)` with kind `NotUnicode` when an argument cannot be represented as text.\n\n    Example:\n        Treat the first argument as a subcommand:\n\n        ```incan\n        arguments = args()?\n        if len(arguments) < 2:\n            println(\"usage: tool <command>\")\n        ```\n    ";
     let mut out: Vec<String> = Vec::<String>::new();
-    for argument in env_args() {
-        let _ = out.push(argument.clone());
+    for argument in args_os() {
+        let _ = match argument.into_string() {
+            Ok(text) => out.push(text.clone()),
+            Err(_) => {
+                let position = ::std::convert::identity(out.len() as i64);
+                return Err::<
+                    Vec<String>,
+                    EnvironError,
+                >(
+                    EnvironError::from_kind(
+                        EnvironErrorKind::NotUnicode.clone(),
+                        {
+                            let __parts: [&str; 2usize] = ["argv[", "]"];
+                            let __args: Vec<String> = vec![format!("{}", position)];
+                            incan_std_core::strings::fstring(&__parts, &__args)
+                        },
+                        {
+                            let __parts: [&str; 2usize] = [
+                                "argument ",
+                                " cannot be represented as Unicode text",
+                            ];
+                            let __args: Vec<String> = vec![format!("{}", position)];
+                            incan_std_core::strings::fstring(&__parts, &__args)
+                        },
+                    ),
+                );
+            }
+        };
     }
-    return out.clone();
+    return Ok::<Vec<String>, EnvironError>(out);
 }
 pub use args as args;
 fn _error_from_raw_kind(

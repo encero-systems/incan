@@ -12,7 +12,7 @@ use std::process::Command;
 use incan_test_support::cli_project::{assert_success, run_explicit_oven_bake, run_incan, write_minimal_project};
 
 /// The program under test; every line of its output is asserted below.
-const MAIN_SOURCE: &str = r#"from std.environ import args
+const MAIN_SOURCE: &str = r#"from std.environ import EnvironError, args
 
 enum Verdict:
     Admitted
@@ -42,8 +42,8 @@ def describe(verdict: Verdict) -> str:
 def sorted_keys(files: Dict[str, str]) -> list[str]:
     return sorted(files.keys())
 
-def main() -> None:
-    arguments = args()
+def main() -> Result[None, EnvironError]:
+    arguments = args()?
     println(len(arguments) - 1)
     for argument in arguments[1:]:
         println(argument)
@@ -74,6 +74,7 @@ def main() -> None:
     println(payload.decode())
     println(b"\xff".decode(errors="replace"))
     println("UTF_8".encode("utf8").decode("UTF-8", "strict"))
+    return Ok(None)
 "#;
 
 /// Build the program through Oven and run the executable with real arguments.

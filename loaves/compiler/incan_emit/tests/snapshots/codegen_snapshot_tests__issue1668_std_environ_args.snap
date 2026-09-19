@@ -7,6 +7,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 // __INCAN_INSERT_MODS__
 
 incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+pub use crate::__incan_std::environ::EnvironError;
 pub use crate::__incan_std::environ::args;
 fn subcommand(arguments: Vec<String>) -> String {
     if ::std::convert::identity(arguments.len() as i64) < 2 {
@@ -14,7 +15,7 @@ fn subcommand(arguments: Vec<String>) -> String {
     }
     return incan_std_core::collections::list_get(&arguments, (1) as i64).clone();
 }
-fn main() {
+fn main() -> Result<(), EnvironError> {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {
             if let Some(message) = panic_info.payload().downcast_ref::<&str>() {
@@ -26,7 +27,7 @@ fn main() {
             }
         }),
     );
-    let arguments = crate::__incan_std::environ::args();
+    let arguments = crate::__incan_std::environ::args()?;
     let _ = println!("{}", subcommand(arguments.clone()));
     for argument in incan_std_core::collections::list_slice(
         &arguments,
@@ -36,4 +37,5 @@ fn main() {
     ) {
         let _ = println!("{}", argument);
     }
+    return Ok::<(), EnvironError>(());
 }
