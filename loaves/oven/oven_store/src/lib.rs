@@ -202,6 +202,9 @@ pub const OVEN_RECEIPT_SCHEMA_VERSION: u32 = 3;
 
 /// Build-unit input key that binds one compiler-release root-intent authority to its final receipt.
 pub const OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT: &str = "compiler-support-root-intent";
+/// Build-unit input key that binds the compatibility publisher's selected build-script closure to its capture
+/// receipt, from which the final receipt above is derived.
+pub const OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_BUILD_UNIT_INPUT: &str = "legacy-cargo-build-script-closure";
 /// Compiler-owned, project-relative destination for a default Oven receipt.
 pub const DEFAULT_RECEIPT_RELATIVE_PATH: &str = ".incan/oven/receipt.json";
 

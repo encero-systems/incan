@@ -34,7 +34,8 @@ use super::{
 };
 
 /// Receipt key binding the complete selected build-script closure to a final publisher transaction.
-pub const OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT: &str = "legacy-cargo-build-script-closure";
+pub const OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT: &str =
+    oven_store::OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_BUILD_UNIT_INPUT;
 
 /// Publisher-retained physical binding for one Cargo-selected unit.
 ///

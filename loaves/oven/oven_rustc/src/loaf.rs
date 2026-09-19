@@ -25,7 +25,10 @@ use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
 use oven_model::oven_interop::{OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, OVEN_INTEROP_PLAN_SCHEMA_INPUT};
 use oven_store::closure_proof::OvenClosureProof;
 use oven_store::store::{OvenArtifactKind, OvenStoreError, OvenStoreExecutionPayload, PublishedOvenStore};
-use oven_store::{OvenReceipt, digest_bytes, receipt_without_build_unit_input};
+use oven_store::{
+    OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_BUILD_UNIT_INPUT,
+    OvenReceipt, digest_bytes, receipt_without_build_unit_input,
+};
 
 pub mod native_candidates;
 
@@ -1181,6 +1184,12 @@ impl OvenLoafCompatibility {
         // it as a Loaf compatibility key would require one shipped Loaf per consumer package.
         let _ = runtime_inputs.remove(OVEN_INTEROP_EXECUTION_RECEIPT_INPUT);
         let _ = runtime_inputs.remove(OVEN_INTEROP_PLAN_SCHEMA_INPUT);
+        // A release Loaf is published under the publisher's final receipt, which carries the two inputs of its
+        // capture-to-final lineage: the selected build-script closure and the authored root intent. They seal the
+        // publication and are already bound into the envelope's evidence; no consumer receipt can carry them, so
+        // they are lineage, not a compatibility key.
+        let _ = runtime_inputs.remove(OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_BUILD_UNIT_INPUT);
+        let _ = runtime_inputs.remove(OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT);
         // A consumer records the macro set its own providers must compile against; a compiler-owned Loaf is sealed
         // before any consumer exists and so can never carry one. Treating it as a compatibility key therefore asks
         // the shipped Loaf for a fact only the caller has, which is the same bargain the interop inputs above
@@ -4314,6 +4323,31 @@ mod tests {
         };
         assert!(matches!(error, OvenLoafError::InvalidLoaf { .. }));
         assert!(error.to_string().contains("sealed direct-rustc plan does not declare"));
+        Ok(())
+    }
+
+    /// A release Loaf is published under the publisher's final receipt, whose lineage inputs no consumer receipt
+    /// carries; compatibility must compare the runtime inputs both sides can have.
+    #[test]
+    fn publisher_lineage_inputs_do_not_enter_loaf_compatibility() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let source = project.path().join("main.rs");
+        fs::write(&source, "fn main() {}\n")?;
+        let consumer = runtime_receipt(&source, "", "empty-rust-dependencies", "empty-stdlib-facets")?;
+        let capture = oven_store::receipt_with_build_unit_input(
+            &consumer,
+            oven_store::OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_BUILD_UNIT_INPUT,
+            digest_bytes(b"selected build-script closure"),
+        )?;
+        let published =
+            oven_store::receipt_with_compiler_support_root_intent(&capture, digest_bytes(b"authored root intent"))?;
+        assert_ne!(published.build_unit_identity, consumer.build_unit_identity);
+        let compatibility = OvenLoafCompatibility::from_receipt(&published)?;
+        assert_eq!(
+            compatibility.runtime_inputs,
+            OvenLoafCompatibility::from_receipt(&consumer)?.runtime_inputs
+        );
+        assert!(compatibility.authorizes_provider_subset(&consumer)?);
         Ok(())
     }
 
