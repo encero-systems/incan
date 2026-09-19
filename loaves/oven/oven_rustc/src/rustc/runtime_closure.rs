@@ -358,10 +358,16 @@ pub fn runtime_closure_payload(
     foundation: &ValidatedOvenRuntimeFoundation,
     build: &OvenRuntimeFoundationBuild,
 ) -> Result<OvenRuntimeClosurePayload, OvenRustcError> {
-    if build.outputs().is_empty() {
+    // A foundation whose every unit is prebuilt has nothing to rebuild, and its closure says so: no units, no
+    // roots, still bound to the foundation and compiler it was settled for. What is refused is a foundation that
+    // declares rebuild units and a build that produced none of them.
+    let declared_rebuilds = foundation.rebuild_units().count();
+    if build.outputs().is_empty() && declared_rebuilds > 0 {
         return Err(OvenRustcError::InvalidInput {
             field: "runtime closure",
-            message: "a published closure must retain at least one rebuilt unit".to_string(),
+            message: format!(
+                "the foundation declares {declared_rebuilds} rebuild unit(s) but the build retained none of them"
+            ),
         });
     }
     let units = build
@@ -682,6 +688,23 @@ mod tests {
     }
 
     /// Public aliases refuse a selected-unit substitution even when the closure retains another valid artifact.
+    /// A foundation that declares rebuild units cannot publish a closure that rebuilt none of them; the empty
+    /// closure is reserved for a foundation whose every unit is prebuilt.
+    #[test]
+    fn declared_rebuild_units_refuse_an_empty_build() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = fixture()?;
+        assert!(fixture.foundation.rebuild_units().count() > 0);
+        let refused = runtime_closure_payload(&fixture.foundation, &OvenRuntimeFoundationBuild::empty());
+        assert!(matches!(
+            refused,
+            Err(OvenRustcError::InvalidInput {
+                field: "runtime closure",
+                ..
+            })
+        ));
+        Ok(())
+    }
+
     #[test]
     fn policy_root_refuses_a_different_retained_unit() -> Result<(), Box<dyn std::error::Error>> {
         let fixture = fixture()?;

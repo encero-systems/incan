@@ -112,6 +112,15 @@ pub struct OvenRuntimeFoundationBuild {
 }
 
 impl OvenRuntimeFoundationBuild {
+    /// A build that produced nothing, for tests of what a closure may claim about one.
+    #[cfg(test)]
+    pub(crate) fn empty() -> Self {
+        Self {
+            outputs: Vec::new(),
+            compiler_launches: 0,
+        }
+    }
+
     /// Iterate produced outputs in the foundation's declared rebuild order.
     pub fn outputs(&self) -> &[OvenRuntimeRebuildOutput] {
         &self.outputs
