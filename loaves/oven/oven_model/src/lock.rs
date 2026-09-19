@@ -632,7 +632,7 @@ pub fn compute_resolved_fingerprint_with_sdk_paths(
     let input = FingerprintInput {
         cargo_feature_selection: CargoFeatureSelectionFingerprint::from_selection(cargo_features),
         specs,
-        semantic,
+        semantic: SemanticFingerprint::of(semantic),
     };
     let json = serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_string());
     let mut hasher = Sha256::new();
@@ -715,7 +715,42 @@ struct RawCargoLock {
 struct FingerprintInput<'a> {
     cargo_feature_selection: CargoFeatureSelectionFingerprint,
     specs: Vec<SpecFingerprint>,
-    semantic: &'a SemanticLockState,
+    semantic: SemanticFingerprint<'a>,
+}
+
+/// The fingerprint view of the semantic state: every resolution input, and not the registry records.
+///
+/// A registry record names which incan.pub statement governed an adopted unit. That is an outcome of resolving the
+/// inputs already hashed here, not an input of its own, so a lock that gains records must keep hashing to the same
+/// fingerprint; otherwise recording an adoption would read as the graph having changed.
+#[derive(Debug, Serialize)]
+struct SemanticFingerprint<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sdk: &'a Option<LockedSdkState>,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    packages: &'a [LockedPackageFeatures],
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    feature_edges: &'a [LockedFeatureEdge],
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    providers: &'a [LockedProvider],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    oven: &'a Option<LockedOvenState>,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    workspace_members: &'a [LockedWorkspaceMember],
+}
+
+impl<'a> SemanticFingerprint<'a> {
+    /// Borrow the resolution inputs of one semantic state, leaving its registry records out.
+    fn of(semantic: &'a SemanticLockState) -> Self {
+        Self {
+            sdk: &semantic.sdk,
+            packages: &semantic.packages,
+            feature_edges: &semantic.feature_edges,
+            providers: &semantic.providers,
+            oven: &semantic.oven,
+            workspace_members: &semantic.workspace_members,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -1777,6 +1812,39 @@ lock = "payload"
             workspace_members: Vec::new(),
             registry_records: Vec::new(),
         }
+    }
+
+    #[test]
+    fn registry_records_do_not_move_the_resolved_fingerprint() {
+        let selection = CargoFeatureSelection::default();
+        let plain = SemanticLockState::default();
+        let mut recorded = SemanticLockState::default();
+        recorded.registry_records.push(RegistryRecord {
+            package: "serde_core".to_string(),
+            version: "1.0.228".to_string(),
+            checksum: format!("sha256:{}", "a".repeat(64)),
+            index_line_digest: format!("sha256:{}", "b".repeat(64)),
+            status: "harvested".to_string(),
+        });
+        assert_eq!(
+            compute_resolved_fingerprint(&[], &[], &selection, None, &plain),
+            compute_resolved_fingerprint(&[], &[], &selection, None, &recorded),
+            "a record of what governed a unit is an outcome of resolution, not one of its inputs"
+        );
+        let mut re_resolved = SemanticLockState::default();
+        re_resolved.workspace_members.push(LockedWorkspaceMember {
+            member_root: "member".to_string(),
+            sdk: None,
+            packages: Vec::new(),
+            feature_edges: Vec::new(),
+            providers: Vec::new(),
+            oven: None,
+        });
+        assert_ne!(
+            compute_resolved_fingerprint(&[], &[], &selection, None, &plain),
+            compute_resolved_fingerprint(&[], &[], &selection, None, &re_resolved),
+            "every other semantic field still moves the fingerprint"
+        );
     }
 
     #[test]

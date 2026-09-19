@@ -25,7 +25,6 @@ use oven_cargo_compat::{
     runtime_foundation_from_compiled_loaf, runtime_foundation_inventories_from_policy_response, write_harvest_report,
 };
 use oven_model::loaf_registry::{LoafRegistry, checkout_head_commit};
-use oven_model::lock::{IncanLock, LOCK_FILENAME, RegistryRecord};
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::loaf::{
     OVEN_RELEASE_RUNTIME_CLOSURE_MEMBER_SCHEMA_VERSION, OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION,
@@ -85,8 +84,6 @@ struct ReleaseFoundationCapture {
     manifest_source: String,
     /// Identity of the provisional Loaf the capture was exported into (`<staged root>/<identity>.loaf`).
     loaf_identity: String,
-    /// The checked fixture project whose `oven.lock` the bake records registry adoptions into.
-    project_root: PathBuf,
 }
 
 /// The bounded compiler/sysroot closure one release generation retains as its selected graph's Toolchain owner.
@@ -523,7 +520,6 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                     sources: inspection_sources.to_vec(),
                     manifest_source: specification.manifest.to_string(),
                     loaf_identity: prepared.preparation.loaf_identity.clone(),
-                    project_root: project_root.clone(),
                 })
                 .is_some()
             {
@@ -619,7 +615,6 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             capture,
             sources,
             manifest_source,
-            project_root,
             ..
         } = foundation;
         let toolchain_owner = toolchain.compiler_closure_identity.as_str();
@@ -644,7 +639,6 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             (None, _) => LoafRegistryAuthority::none(),
         };
         let registry_records = registry_authority.registry_records();
-        record_registry_adoptions_in_lock(project_root, &registry_records)?;
         let (_, generated) = legacy_cargo_generated_output_bindings(capture).map_err(oven_error)?;
         let linked = legacy_cargo_generated_archive_bindings(capture, &generated).map_err(oven_error)?;
         let provisional = legacy_cargo_foundation_projection(
@@ -1596,24 +1590,6 @@ pub(crate) fn compiler_suite_store_path(options: &OvenLoafBakeCommandOptions) ->
     Ok(suite_store)
 }
 
-/// Record in the fixture project's `oven.lock` which registry record governed each adopted unit (RFC 125).
-///
-/// The lock is the one `incan build` wrote for the checked fixture before the publisher ran; it is rewritten with
-/// the same content plus the records. A fixture that left no lock behind has nothing to record into, and a bake
-/// that adopted nothing leaves an existing lock untouched.
-fn record_registry_adoptions_in_lock(project_root: &Path, records: &[RegistryRecord]) -> CliResult<()> {
-    if records.is_empty() {
-        return Ok(());
-    }
-    let lock_path = project_root.join(LOCK_FILENAME);
-    if !lock_path.is_file() {
-        return Ok(());
-    }
-    let mut lock = IncanLock::load(&lock_path).map_err(oven_error)?;
-    lock.semantic.registry_records = records.to_vec();
-    lock.write(&lock_path).map_err(oven_error)
-}
-
 /// Harvest incan.pub proposals from one release entry's capture into `harvest_dir`.
 ///
 /// The evidence names the receipt the publisher ran under, the compiler closure identity the generation will
@@ -1723,50 +1699,4 @@ pub(crate) fn print_loaf_bake_report(report: &OvenLoafBakeReport, format: OvenOu
         OvenOutputFormat::Json => print_json(report)?,
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use oven_model::lock::{CargoFeatureSelection, IncanLock, RegistryRecord};
-
-    use super::record_registry_adoptions_in_lock;
-
-    type TestResult = Result<(), Box<dyn std::error::Error>>;
-
-    fn record() -> RegistryRecord {
-        RegistryRecord {
-            package: "serde_core".to_string(),
-            version: "1.0.228".to_string(),
-            checksum: format!("sha256:{}", "a".repeat(64)),
-            index_line_digest: format!("sha256:{}", "b".repeat(64)),
-            status: "harvested".to_string(),
-        }
-    }
-
-    /// The fixture lock `incan build` left behind gains the adoption records and keeps everything else; a bake
-    /// that adopted nothing, or a fixture that left no lock, changes nothing.
-    #[test]
-    fn registry_adoptions_are_recorded_in_the_fixture_lock() -> TestResult {
-        let project = tempfile::tempdir()?;
-        assert!(record_registry_adoptions_in_lock(project.path(), &[record()]).is_ok());
-        assert!(!project.path().join("oven.lock").exists(), "no lock is invented");
-
-        let lock_path = project.path().join("oven.lock");
-        IncanLock::new(
-            "0.6.0",
-            "fingerprint".to_string(),
-            CargoFeatureSelection::default(),
-            "# Cargo.lock\n".to_string(),
-        )
-        .write(&lock_path)?;
-        let untouched = std::fs::read_to_string(&lock_path)?;
-        record_registry_adoptions_in_lock(project.path(), &[])?;
-        assert_eq!(std::fs::read_to_string(&lock_path)?, untouched);
-
-        record_registry_adoptions_in_lock(project.path(), &[record()])?;
-        let lock = IncanLock::load(&lock_path)?;
-        assert_eq!(lock.semantic.registry_records, [record()]);
-        assert_eq!(lock.deps_fingerprint, "fingerprint");
-        Ok(())
-    }
 }

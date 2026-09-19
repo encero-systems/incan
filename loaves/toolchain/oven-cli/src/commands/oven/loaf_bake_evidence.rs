@@ -64,8 +64,8 @@ pub(crate) struct OvenLoafBakeReport {
     /// incan.pub harvest written from the release runtime-foundation capture, when `--harvest-dir` asked for it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) harvest: Option<OvenLoafHarvestReport>,
-    /// The Loaf registry record that governed each adopted registry unit of the release capture; what the fixture's
-    /// `oven.lock` records under `semantic.registry_records`.
+    /// The Loaf registry record that governed each adopted registry unit of the release capture, in the shape a
+    /// consumer lock will carry under `semantic.registry_records` once the resolver records adoptions (RFC 125).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) registry_records: Vec<oven_model::lock::RegistryRecord>,
 }

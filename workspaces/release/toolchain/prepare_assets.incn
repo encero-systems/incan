@@ -156,13 +156,12 @@ def is_commit_id(value: str) -> bool:
 
 
 def resolve_loaf_registry_pin(dist_dir: str) -> Result[Option[JsonValue], str]:
-    """The incan.pub `index` commit this release was settled against, when packaging recorded one.
+    """The incan.pub `index` commit this release was settled against, when the packaging run names one.
 
-    The release gate bakes the runtime foundation under `--loaf-registry-commit`, and packaging records that commit
-    as `INCAN_LOAF_REGISTRY_INDEX_COMMIT` or in `loaf-registry-index-commit.txt` beside the archives. The compiler
-    opens the registry only at this revision, so a consumer with the same manifest resolves the same records. A
-    release that was not settled against a registry pins nothing, and the manifest omits the field rather than
-    inventing one.
+    The release gate bakes the runtime foundation under `--loaf-registry-commit`; the run that packages the archives
+    hands the same commit to this step as `INCAN_LOAF_REGISTRY_INDEX_COMMIT`, or leaves it as the first line of
+    `loaf-registry-index-commit.txt` beside the archives. The manifest then pins that revision for consumers. A run
+    that names no commit pins nothing, and the manifest omits the field rather than inventing one.
     """
     mut commit = env_or("INCAN_LOAF_REGISTRY_INDEX_COMMIT", "")
     if len(commit) == 0:
@@ -202,6 +201,11 @@ def manifest_json(
     assets: list[HostAsset],
     loaf_registry: Option[JsonValue],
 ) -> JsonValue:
+    """The release manifest: schema, toolchain and release identity, the host archives, and the registry pin.
+
+    `loaf_registry` is written only when the packaging run named an index commit, so a manifest without the field
+    is a release that was not settled against a registry, not a malformed one.
+    """
     mut fields: Dict[str, JsonValue] = {
         "schema_version": JsonValue.int(1),
         "toolchain_version": JsonValue.str(version),
