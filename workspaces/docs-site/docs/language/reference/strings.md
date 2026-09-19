@@ -5,7 +5,7 @@
 | `str` | Unicode text | `String` |
 | `bytes` | A sequence of bytes | `Vec<u8>` |
 
-Both have frozen forms, `FrozenStr` and `FrozenBytes`, which offer the same methods.
+Both have frozen forms for constants, `FrozenStr` and `FrozenBytes`. `FrozenStr` has every `str` method and also `is_empty() -> bool`; `FrozenBytes` has `decode` and also `len() -> int` and `is_empty() -> bool`.
 
 ## Literals
 
@@ -44,14 +44,13 @@ Positions and lengths count Unicode scalars, not bytes. The same forms apply to 
 | `lower() -> str` | Lowercase copy. |
 | `strip() -> str` | Copy without leading and trailing whitespace. There is no `lstrip` or `rstrip`. |
 | `replace(old: str, new: str) -> str` | Copy with every occurrence of `old` replaced by `new`. |
-| `split(separator: str) -> list[str]` | Pieces between occurrences of `separator`, in order. |
+| `split(separator: str) -> list[str]` | Pieces between occurrences of `separator`, in order. The separator may be omitted, in which case the result is a one-item list holding the receiver; use `split_whitespace()` for Python's `split()` with no argument. |
 | `split_whitespace() -> list[str]` | Pieces separated by runs of Unicode whitespace; no empty pieces. |
 | `join(parts: list[str]) -> str` | `parts` concatenated with the receiver between each pair: `", ".join(names)`. |
 | `contains(needle: str) -> bool` | Whether `needle` occurs in the receiver. |
 | `startswith(prefix: str) -> bool` | Whether the receiver starts with `prefix`. |
 | `endswith(suffix: str) -> bool` | Whether the receiver ends with `suffix`. |
 | `len() -> int` | The number of Unicode scalars; `len(s)` is the same value. |
-| `is_empty() -> bool` | Whether `len()` is zero. |
 | `to_string() -> str` | The receiver itself. |
 | `encode(encoding: str = "utf-8") -> bytes` | The text's UTF-8 bytes. `encoding` accepts `"utf-8"` and `"utf8"`, compared case-insensitively with `_` read as `-`. A literal label naming any other codec is a compile-time error; a run-time label naming another codec raises `ValueError`. |
 
@@ -59,9 +58,10 @@ Membership uses the method, not the `in` operator: `s.contains("x")`.
 
 ## `bytes` methods
 
+`len(b)` is the number of bytes.
+
 | Signature | Contract |
 | --- | --- |
-| `len() -> int` | The number of bytes; `len(b)` is the same value. |
 | `decode(encoding: str = "utf-8", errors: str = "strict") -> str` | The bytes read as UTF-8 text. `encoding` follows the same rule as `str.encode`. `errors` is `"strict"`, which raises `ValueError` on the first malformed sequence, or `"replace"`, which substitutes U+FFFD for each malformed sequence; any other literal policy is a compile-time error, any other run-time policy raises `ValueError`. |
 
 ## F-strings
