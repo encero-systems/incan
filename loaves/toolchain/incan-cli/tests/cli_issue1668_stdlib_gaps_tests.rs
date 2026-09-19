@@ -9,7 +9,7 @@
 use std::fs;
 use std::process::Command;
 
-use incan_test_support::cli_project::*;
+use incan_test_support::cli_project::{assert_success, run_explicit_oven_bake, run_incan, write_minimal_project};
 
 /// The program under test; every line of its output is asserted below.
 const MAIN_SOURCE: &str = r#"from std.environ import args
@@ -84,7 +84,10 @@ fn stdlib_gaps_argv_text_codecs_and_dict_surfaces_issue1668() -> Result<(), Box<
     write_minimal_project(tmp.path(), project_name, "")?;
     fs::write(tmp.path().join("src/main.incn"), MAIN_SOURCE)?;
 
-    // A stdlib-only program builds through the scheduler's Loaf family; it has no dependency delta to bake.
+    // Outside the compiler suite a fresh project has no inspection authority until it is baked once; under the suite
+    // the bake is the same explicit publisher boundary every other build-based root crosses.
+    let bake = run_explicit_oven_bake(tmp.path())?;
+    assert_success(&bake, "prepare the #1668 stdlib-gaps fixture");
     let build = run_incan(tmp.path(), &["build", "src/main.incn"])?;
     assert_success(&build, "build the #1668 stdlib-gaps program");
 

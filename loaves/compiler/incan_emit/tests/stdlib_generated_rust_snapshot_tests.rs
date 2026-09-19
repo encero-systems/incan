@@ -318,8 +318,8 @@ fn std_result_source_snapshot() -> TestResult {
     assert_stdlib_source_snapshot("std_result_source", "loaves/stdlib/core/src/result.incn")
 }
 
-#[test]
 /// `std.environ` reads the argument vector through `std::env::args` (#1668); the snapshot pins that host call.
+#[test]
 fn std_environ_source_snapshot() -> TestResult {
     assert_stdlib_source_snapshot("std_environ_source", "loaves/stdlib/system/src/environ.incn")
 }
