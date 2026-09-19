@@ -1860,11 +1860,14 @@ pub fn prepare_compiler_test_suite(
     )?;
     reclaim_unmaterialized_compiler_suite_target_files(&unit_graph_target, &[])?;
     let foundation_lock = staged_foundation_lock_path(&third_party_foundation_manifest)?;
+    let rustc_host = rustc_host_target(&request.rustc)
+        .map_err(|error| OvenLegacyCargoError::Plan(format!("cannot identify publisher Rust host target: {error}")))?;
     let foundation_key = OvenCompilerSuiteFoundationKey::derive(&OvenCompilerSuiteFoundationKeyInputs {
         compiler_root: &generated_project,
         dependencies: &foundation_dependencies,
         lock: &regular_file_bytes(&foundation_lock)?,
         target: &request.receipt.intent.target,
+        host: &rustc_host,
         profile: &request.receipt.intent.profile,
         toolchain: &request.receipt.intent.toolchain,
         cargo_version: &cargo_version,

@@ -45,9 +45,10 @@ const FOUNDATION_ROOT_TARGET_NAME: &str = "oven_compiler_foundation";
 /// Content identity of one third-party foundation family, derived from the foundation's inputs only.
 ///
 /// Two publications that would hand Cargo the same private manifest, the same lock, the same patch sources and the
-/// same intent under the same Cargo and rustc produce the same key. A compiler source edit changes none of those, so it
-/// keeps the key; a changed lock, manifest, patch, target, profile, toolchain or Cargo release changes it. The key
-/// deliberately never folds a `compiler-suite-source:*` digest or the compiler Loaf's compatibility identity.
+/// same intent under the same Cargo and rustc on the same host produce the same key. A compiler source edit changes
+/// none of those, so it keeps the key; a changed lock, manifest, patch, target, host, profile, toolchain or Cargo
+/// release changes it. The key deliberately never folds a `compiler-suite-source:*` digest or the compiler Loaf's
+/// compatibility identity.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct OvenCompilerSuiteFoundationKey(String);
@@ -70,8 +71,10 @@ impl OvenCompilerSuiteFoundationKey {
     /// The manifest is rendered again from the same dependency selection Cargo will be handed, with every checked-in
     /// patch path spelled under a virtual root, so the hashed text is the publisher's exact input minus the checkout
     /// location. The lock is the staged foundation lock, pruned from the compiler's; patch sources are hashed as
-    /// authored trees. Target, profile and the rustc identity are the receipt intent; the Cargo version string is the
-    /// publisher's, because Cargo's own release feeds the metadata hash it hands rustc.
+    /// authored trees. Target, profile and the rustc identity are the receipt intent; the host is the publisher's,
+    /// because the foundation also carries proc-macro and build-script units compiled for it, and the rustc identity
+    /// line names a release, not a host. The Cargo version string is the publisher's, because Cargo's own release
+    /// feeds the metadata hash it hands rustc.
     pub(crate) fn derive(inputs: &OvenCompilerSuiteFoundationKeyInputs<'_>) -> Result<Self, OvenLegacyCargoError> {
         let compiler_root = canonical_directory(inputs.compiler_root, "compiler root")?;
         let mut hasher = Sha256::new();
@@ -79,6 +82,7 @@ impl OvenCompilerSuiteFoundationKey {
 
         // ---- Build intent and publisher identity ----
         fold_section(&mut hasher, "target", inputs.target.as_bytes());
+        fold_section(&mut hasher, "host", inputs.host.as_bytes());
         fold_section(&mut hasher, "profile", inputs.profile.as_bytes());
         fold_section(&mut hasher, "toolchain", inputs.toolchain.as_bytes());
         fold_section(&mut hasher, "cargo", inputs.cargo_version.as_bytes());
@@ -132,6 +136,9 @@ pub(crate) struct OvenCompilerSuiteFoundationKeyInputs<'a> {
     pub lock: &'a [u8],
     /// Receipt target triple.
     pub target: &'a str,
+    /// The publisher's host triple (`rustc -vV` `host:`), which the foundation's proc-macro and build-script units
+    /// are compiled for.
+    pub host: &'a str,
     /// Receipt profile.
     pub profile: &'a str,
     /// Receipt toolchain identity (`rustc -vV`).
@@ -601,11 +608,13 @@ mod tests {
     }
 
     /// Derive the fixture key with one input overridden by the caller.
+    #[allow(clippy::too_many_arguments)]
     fn derive_key(
         root: &Path,
         dependencies: &[CompilerSuiteFoundationDependency],
         lock: &[u8],
         target: &str,
+        host: &str,
         profile: &str,
         toolchain: &str,
         cargo_version: &str,
@@ -615,6 +624,7 @@ mod tests {
             dependencies,
             lock,
             target,
+            host,
             profile,
             toolchain,
             cargo_version,
@@ -632,6 +642,7 @@ mod tests {
             &selection,
             b"lock",
             TARGET,
+            TARGET,
             "oven-test",
             "rustc 1.98.0",
             "cargo 1.98.0",
@@ -643,6 +654,7 @@ mod tests {
                 root,
                 &selection,
                 b"lock",
+                TARGET,
                 TARGET,
                 "oven-test",
                 "rustc 1.98.0",
@@ -665,6 +677,7 @@ mod tests {
                 &selection,
                 b"lock",
                 TARGET,
+                TARGET,
                 "oven-test",
                 "rustc 1.98.0",
                 "cargo 1.98.0"
@@ -679,6 +692,7 @@ mod tests {
                 root,
                 &selection,
                 b"lock2",
+                TARGET,
                 TARGET,
                 "oven-test",
                 "rustc 1.98.0",
@@ -695,6 +709,7 @@ mod tests {
                 &refeatured,
                 b"lock",
                 TARGET,
+                TARGET,
                 "oven-test",
                 "rustc 1.98.0",
                 "cargo 1.98.0"
@@ -710,6 +725,7 @@ mod tests {
                 &reversioned,
                 b"lock",
                 TARGET,
+                TARGET,
                 "oven-test",
                 "rustc 1.98.0",
                 "cargo 1.98.0"
@@ -723,6 +739,7 @@ mod tests {
                 &selection,
                 b"lock",
                 "x86_64-unknown-linux-gnu",
+                TARGET,
                 "oven-test",
                 "rustc 1.98.0",
                 "cargo 1.98.0"
@@ -735,6 +752,21 @@ mod tests {
                 root,
                 &selection,
                 b"lock",
+                TARGET,
+                "x86_64-unknown-linux-gnu",
+                "oven-test",
+                "rustc 1.98.0",
+                "cargo 1.98.0"
+            )?,
+            "host"
+        );
+        assert_ne!(
+            baseline,
+            derive_key(
+                root,
+                &selection,
+                b"lock",
+                TARGET,
                 TARGET,
                 "release",
                 "rustc 1.98.0",
@@ -749,6 +781,7 @@ mod tests {
                 &selection,
                 b"lock",
                 TARGET,
+                TARGET,
                 "oven-test",
                 "rustc 1.99.0",
                 "cargo 1.98.0"
@@ -761,6 +794,7 @@ mod tests {
                 root,
                 &selection,
                 b"lock",
+                TARGET,
                 TARGET,
                 "oven-test",
                 "rustc 1.98.0",
@@ -779,6 +813,7 @@ mod tests {
                 &selection,
                 b"lock",
                 TARGET,
+                TARGET,
                 "oven-test",
                 "rustc 1.98.0",
                 "cargo 1.98.0"
@@ -795,6 +830,7 @@ mod tests {
                 &selection,
                 b"lock",
                 TARGET,
+                TARGET,
                 "oven-test",
                 "rustc 1.98.0",
                 "cargo 1.98.0"
@@ -808,6 +844,7 @@ mod tests {
                     elsewhere.path(),
                     &dependencies(elsewhere.path())?,
                     b"lock",
+                    TARGET,
                     TARGET,
                     "oven-test",
                     "rustc 1.98.0",
@@ -914,6 +951,7 @@ mod tests {
                 checkout.path(),
                 &dependencies,
                 b"lock",
+                TARGET,
                 TARGET,
                 "oven-test",
                 "rustc 1.98.0",
@@ -1117,6 +1155,7 @@ mod tests {
             fixture.root(),
             &dependencies(fixture.root())?,
             b"lock",
+            TARGET,
             TARGET,
             "oven-test",
             "rustc 1.98.0",
