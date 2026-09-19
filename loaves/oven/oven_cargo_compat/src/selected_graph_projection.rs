@@ -295,9 +295,31 @@ pub fn runtime_foundation_inventories_from_policy_response(
         || response.get("status").and_then(serde_json::Value::as_str) != Some("selected")
         || response.get("graph_digest").and_then(serde_json::Value::as_str) != Some(selected.digest())
     {
+        // A refusal names a structural kind and the exchange path it applies to; neither is prose, and both are
+        // what a producer needs to act on.
+        let status = response
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("absent");
+        let error = response.get("error");
+        let kind = error
+            .and_then(|error| error.get("kind"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("-");
+        let fields = error
+            .and_then(|error| error.get("fields"))
+            .and_then(serde_json::Value::as_array)
+            .map(|fields| {
+                fields
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(".")
+            })
+            .unwrap_or_default();
         return Err(projection_error(
             "Rust policy response",
-            "does not select the exact requested graph",
+            &format!("does not select the exact requested graph (status `{status}`, error `{kind}` at `{fields}`)"),
         ));
     }
     let encoded = response
