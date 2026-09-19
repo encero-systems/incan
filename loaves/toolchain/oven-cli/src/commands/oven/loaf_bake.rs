@@ -732,7 +732,6 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 finalized,
                 &loaf,
                 &foundation_member.compiler_closure_identity,
-                &finalized.capture_receipt.identity,
             )
             .map_err(oven_error)?;
             let candidate_asset = OvenRuntimeFoundationAsset::sealed(candidate_foundation, inventories.clone())
@@ -795,7 +794,6 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 finalized,
                 &loaf,
                 &compiler_closure_identity,
-                &finalized.capture_receipt.identity,
             )
             .map_err(oven_error)?;
             let asset = OvenRuntimeFoundationAsset::sealed(foundation, inventories).map_err(oven_error)?;

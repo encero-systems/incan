@@ -162,13 +162,29 @@ pub struct OvenFinalizedCompilerSupportSelectedGraph {
 }
 
 /// Bind every selected immutable registry unit to the exact artifact in its compiled Loaf.
+///
+/// The foundation's artifact owner is the graph's one Constituent owner: the identity every registry source in the
+/// graph is rooted under, which the asset later maps to the foundation root. It is read from the graph rather than
+/// recomputed by the caller because the projection labels sources with the receipt it was given, and the finalized
+/// capture receipt is derived from the pruned capture, so the two identities need not agree.
 pub fn runtime_foundation_from_compiled_loaf(
     finalized: &OvenFinalizedCompilerSupportSelectedGraph,
     loaf: &OvenLoaf,
     compiled_plan_identity: &str,
-    artifact_owner: &str,
 ) -> Result<OvenRuntimeFoundation, OvenLegacyCargoError> {
     let graph = finalized.graph.graph();
+    let constituents = graph
+        .owners
+        .iter()
+        .filter(|owner| owner.kind == OvenSelectedRustFacetOwnerKind::Constituent)
+        .collect::<Vec<_>>();
+    let [artifact_owner] = constituents.as_slice() else {
+        return Err(projection_error(
+            "runtime foundation artifact owner",
+            "the selected graph does not name exactly one Constituent owner",
+        ));
+    };
+    let artifact_owner = artifact_owner.identity.as_str();
     if loaf.plan.intent.target != graph.selection.intent.target
         || loaf.plan.intent.toolchain != graph.selection.intent.toolchain
         || loaf.plan.intent.profile != graph.selection.intent.profile
@@ -2670,6 +2686,98 @@ mod tests {
         );
         assert_eq!(graph.units[0].source.identity, "registry:serde@1.0.0");
         assert_eq!(graph.exposed_roots["serde"].unit, graph.units[0].identity);
+        Ok(())
+    }
+
+    /// The finalized capture receipt is derived from the pruned capture, so it is not the identity the projection
+    /// rooted the registry sources under; the foundation must take its artifact owner from the graph's Constituent
+    /// owner, or the asset later finds it absent from the owner table.
+    #[test]
+    fn runtime_foundation_artifact_owner_is_the_graph_constituent() -> Result<(), Box<dyn std::error::Error>> {
+        use oven_rustc::loaf::{
+            OVEN_LOAF_SCHEMA_VERSION, OvenLoafAccounting, OvenLoafCompatibility, OvenLoafProvenance,
+        };
+        use oven_rustc::rustc::{
+            OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OvenRustcArtifactExtern, OvenRustcArtifactManifest,
+            OvenRustcRegistryLeaf,
+        };
+        let (capture, sources) = release_shaped_capture("serde-checksum", BTreeMap::new())?;
+        let finalized = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
+        let graph = finalized.graph.graph();
+        let constituent = graph
+            .owners
+            .iter()
+            .find(|owner| owner.kind == OvenSelectedRustFacetOwnerKind::Constituent)
+            .ok_or("the finalized graph names a Constituent owner")?;
+        assert_ne!(
+            constituent.identity, finalized.capture_receipt.identity,
+            "pruning renumbers the build-script closure, so the finalized capture receipt is a different identity"
+        );
+        let [unit] = graph.units.as_slice() else {
+            return Err("the release-shaped graph has one unit".into());
+        };
+        let intent = oven_store::OvenBuildIntent {
+            target: graph.selection.intent.target.clone(),
+            toolchain: graph.selection.intent.toolchain.clone(),
+            profile: graph.selection.intent.profile.clone(),
+            features: Vec::new(),
+        };
+        let plan = OvenRustcArtifactManifest {
+            schema_version: OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
+            intent: intent.clone(),
+            dependency_search_paths: Vec::new(),
+            native_search_paths: Vec::new(),
+            externs: Vec::new(),
+            entrypoint_dependency_search_paths: Default::default(),
+            entrypoint_externs: BTreeMap::new(),
+            registry_leaves: vec![OvenRustcRegistryLeaf {
+                domain: Default::default(),
+                crate_kind: Default::default(),
+                selected_unit_identity: Some(unit.identity.clone()),
+                package: unit.package.clone(),
+                version: unit.package_version.clone(),
+                crate_name: unit.crate_name.clone(),
+                features: unit.features.clone(),
+                source: OvenRustcRegistrySource {
+                    registry: "registry+https://example.invalid/index".to_string(),
+                    checksum: "serde-checksum".to_string(),
+                    relative_root: unit.source.root.clone(),
+                    digest: unit.source.digest.clone(),
+                },
+                artifact: OvenRustcArtifactExtern {
+                    crate_name: unit.crate_name.clone(),
+                    relative_path: "deps/libserde.rlib".to_string(),
+                    digest: "sha256:serde-artifact".to_string(),
+                },
+            }],
+            registry_sources: Vec::new(),
+            compile_environment: BTreeMap::new(),
+            vocab_auxiliary_targets: Vec::new(),
+            supporting_artifacts: Vec::new(),
+        };
+        let loaf = OvenLoaf {
+            schema_version: OVEN_LOAF_SCHEMA_VERSION,
+            build_unit_identity: finalized.final_receipt.build_unit_identity.clone(),
+            provenance: OvenLoafProvenance {
+                compiler_version: "fixture".to_string(),
+                rust_toolchain: intent.toolchain.clone(),
+                sdk_provider_codegen_revision: "fixture".to_string(),
+                baker: "legacy_cargo".to_string(),
+            },
+            accounting: OvenLoafAccounting {
+                payload_logical_bytes: 0,
+                payload_physical_bytes: 0,
+            },
+            compatibility: OvenLoafCompatibility {
+                runtime_inputs: BTreeMap::new(),
+                providers: Vec::new(),
+            },
+            registry_leaves: plan.registry_leaves.clone(),
+            plan,
+        };
+        let foundation = runtime_foundation_from_compiled_loaf(&finalized, &loaf, "sha256:compiled-plan")?;
+        assert_eq!(foundation.artifact_owner, constituent.identity);
+        assert_eq!(foundation.units.len(), 1);
         Ok(())
     }
 
