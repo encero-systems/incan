@@ -69,7 +69,9 @@ pub fn stdlib_import_not_exported(name: &str, module: &str, span: Span) -> Compi
 /// A module-qualified type annotation (`mod.Type`) named a member the module does not declare as a type.
 ///
 /// The root resolved to a module binding, so the spelling was a real module walk; it is the tail that fails. Naming
-/// the module keeps the message about the declaration the author was after rather than about the syntax.
+/// the module keeps the message about the declaration the author was after rather than about the syntax. `module`
+/// is the import spelling of the module the root is bound to (`beta`, `std.toml`, `pub::widgets.catalog`), not the
+/// local alias, so the hint's `from ... import` line is one the author can paste.
 pub fn qualified_type_not_declared(spelling: &str, module: &str, member: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("`{spelling}` is not a type: module `{module}` declares no type or trait named `{member}`"),

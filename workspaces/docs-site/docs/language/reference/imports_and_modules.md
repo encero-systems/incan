@@ -60,7 +60,7 @@ def load(path: str) -> Result[models.Config, toml.TomlError]:
     return models.parse(path)
 ```
 
-A plain `import module` binds the module itself, and its public members are reached with dot syntax. That applies to types in annotations as well as to calls: `models.Config` in any annotation position (a parameter, a return type, a local binding, a field, or a generic argument) denotes the same declaration as `from models import Config` followed by `Config`, and values checked against either spelling are interchangeable. The root must be a module binding and the member must be a type or trait the module declares; any other qualified spelling in type position is a compile-time error at the annotation.
+A plain `import module` binds the module itself. Its public functions are called through the binding (`models.parse(path)`), and its public types are named through it in annotations: `models.Config` in any annotation position (a parameter, a return type, a local binding, a field, or a generic argument) denotes the same declaration as `from models import Config` followed by `Config`, and values checked against either spelling are interchangeable. The root must be a module binding and the member must be a type or trait the module declares; any other qualified spelling in type position is a compile-time error at the annotation. The C interop namespace bound by `from std.interop import c` is not a module binding; its carrier spellings such as `c.i32` belong to checked C bindings and are not refused by this rule.
 
 ### Imported names and core builtin functions
 

@@ -102,6 +102,7 @@ use incan_lang::interop::{
     split_top_level_rust_args, strip_rust_borrow_lifetimes,
 };
 use incan_lang::lang::builtins::{self, BuiltinFnId};
+use incan_lang::lang::c_abi;
 use incan_lang::lang::conventions;
 use incan_lang::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_lang::lang::errors as runtime_errors;
@@ -4722,9 +4723,9 @@ impl TypeChecker {
     /// declares a type or trait. Three registries can own that member, and each is consulted the way the matching
     /// direct import would be: a public library through its checked manifest, a source dependency through the module
     /// member registry, and a stdlib module through its cache. The resolved type is the one that direct import would
-    /// have bound -- the declaration's own name, or the provider-qualified spelling for a public library -- so values
-    /// checked against either spelling of the same declaration are compatible. `None` means no type was proven; it
-    /// never means "assume the written path".
+    /// have bound -- the declaration's own name, the target of a non-generic source type alias, or the
+    /// provider-qualified spelling for a public library -- so values checked against either spelling of the same
+    /// declaration are compatible. `None` means no type was proven; it never means "assume the written path".
     fn qualified_type_declaration(&mut self, segments: &[String]) -> Option<QualifiedTypeReferenceInfo> {
         let (root, remainder) = segments.split_first()?;
         let (name, nested_module) = remainder.split_last()?;
@@ -4756,8 +4757,9 @@ impl TypeChecker {
 
         // ---- Source dependency or stdlib module: the member registry proves the kind, the caches the identity ----
         let import = ImportPath::simple(module_path.clone());
-        let type_like = self
-            .dependency_member_symbol_for_path(&import, name)
+        let member_kind = self.dependency_member_symbol_for_path(&import, name);
+        let type_like = member_kind
+            .as_ref()
             .is_some_and(|kind| matches!(kind, SymbolKind::Type(_) | SymbolKind::Trait(_)));
         let identity = if type_like {
             self.dependency_member_identity(&import, name)
@@ -4778,10 +4780,20 @@ impl TypeChecker {
                     )
                 })
         }?;
+        // A direct import of a type alias registers its target and lets alias expansion replace the name; the
+        // qualified spelling registers nothing local, so the target is the resolved type here. A generic alias
+        // needs its arguments substituted, which only the local alias registry does, so it keeps the nominal name.
+        let resolved = match member_kind {
+            Some(SymbolKind::Type(TypeInfo::TypeAlias)) => self
+                .dependency_member_type_alias_for_path(&import, name)
+                .filter(|alias| alias.type_params.is_empty())
+                .map_or_else(|| ResolvedType::Named(name.clone()), |alias| alias.target),
+            _ => ResolvedType::Named(name.clone()),
+        };
         Some(QualifiedTypeReferenceInfo {
             identity,
             module_path,
-            resolved: ResolvedType::Named(name.clone()),
+            resolved,
         })
     }
 
@@ -5485,6 +5497,11 @@ impl TypeChecker {
     /// declares no such type, is refused with its own message: the spelling would otherwise resolve to `Unknown`
     /// and reach lowering as a dotted name, which the Rust emitter cannot spell (#1437). A spelling that resolved
     /// has its proof recorded under [`DeclarationArtifacts::qualified_type_references`] and needs nothing here.
+    ///
+    /// The C interop namespace is the one dotted root that is not a module: `c.i32` or `c.Owned[T]` names a
+    /// vocabulary carrier that the checked-binding facet interprets, and `from std.interop import c` binds `c` as
+    /// that namespace's marker type. Those spellings are accepted here exactly as they were before qualified module
+    /// types resolved, so a safe facade over a binding keeps checking.
     fn validate_source_dotted_type_annotation(&mut self, segments: &[String], span: Span) {
         let Some((root, remainder)) = segments.split_first() else {
             return;
@@ -5497,24 +5514,48 @@ impl TypeChecker {
         if self.type_info.qualified_type_reference(&spelling).is_some() {
             return;
         }
+        if self
+            .import_binding_path(root)
+            .is_some_and(|path| c_abi::is_interop_namespace_path(path.iter().map(String::as_str)))
+        {
+            return;
+        }
         let key = (spelling.clone(), span.start, span.end);
         if !self.unknown_source_type_names_emitted.insert(key) {
             return;
         }
-        let root_is_module = self
-            .lookup_symbol(root)
-            .is_some_and(|symbol| matches!(&symbol.kind, SymbolKind::Module(info) if !info.is_python));
-        let error = match (root_is_module, remainder.split_last()) {
-            (true, Some((member, nested))) => {
-                let module = std::iter::once(root.as_str())
-                    .chain(nested.iter().map(String::as_str))
-                    .collect::<Vec<_>>()
-                    .join(".");
+        let module_path = self.lookup_symbol(root).and_then(|symbol| match &symbol.kind {
+            SymbolKind::Module(info) if !info.is_python => Some(info.path.clone()),
+            _ => None,
+        });
+        let error = match (module_path, remainder.split_last()) {
+            (Some(mut module_path), Some((member, nested))) => {
+                module_path.extend(nested.iter().cloned());
+                let module = Self::module_import_spelling(&module_path);
                 errors::qualified_type_not_declared(&spelling, &module, member, span)
             }
             _ => errors::qualified_type_root_not_a_module(&spelling, root, span),
         };
         self.errors.push(error);
+    }
+
+    /// Render a checked module path the way an import statement spells it, for a diagnostic.
+    ///
+    /// The path is the binding's resolved one rather than the alias the author wrote, so the message names the
+    /// module that was actually searched (`beta`, not `m`) and its hint is a spelling that imports from it. A
+    /// public library carries its `pub::` marker and dots below the library name, as the import reference documents.
+    fn module_import_spelling(module_path: &[String]) -> String {
+        match module_path {
+            [root, library, rest @ ..] if root == PUBLIC_LIBRARY_NAMESPACE => {
+                let mut spelling = format!("{root}::{library}");
+                if !rest.is_empty() {
+                    spelling.push('.');
+                    spelling.push_str(&rest.join("."));
+                }
+                spelling
+            }
+            _ => module_path.join("."),
+        }
     }
 
     /// Emit one diagnostic when a simple source annotation name has no declaration in the active scope.
