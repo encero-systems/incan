@@ -14,8 +14,7 @@ use std::time::Instant;
 use incan_driver::build::publication::stored_project_output_from_parts;
 use incan_driver::build::{OvenProjectOutputPayload, OvenStoredProjectOutput};
 use oven_cargo_compat::loaf_bake::{
-    prepare_loaf_from_generated_project_with_selected_unit_bindings,
-    prepare_loaf_from_generated_project_with_selected_units,
+    prepare_loaf_from_generated_project_with_selected_units, republish_loaf_under_final_receipt,
 };
 use oven_cargo_compat::{
     LoafRegistryAuthority, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, encode_selected_graph_policy_request,
@@ -600,7 +599,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     };
     if let (
         Some(finalized),
-        Some((_, expected_capture, sources, _, capture_loaf_identity, generated_project, inspection_packages)),
+        Some((_, expected_capture, _sources, _, capture_loaf_identity, _generated_project, _inspection_packages)),
     ) = (finalized_release_graph.as_ref(), release_foundation_capture.as_ref())
     {
         // Bind each compiled physical unit to the selected identity projected from it. Run-custom-build units are
@@ -648,64 +647,28 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 "final selected graph does not correspond one-to-one with its compiled physical units".to_string(),
             ));
         }
-        let final_prepared = prepare_loaf_from_generated_project_with_selected_unit_bindings(
-            &staged_root,
-            &OvenLoafBakerContext {
-                compiler: &incan_oven_facet::compiler_identity(),
-                provider_hooks: incan_oven_facet::provider_hooks(),
-                compiler_root: &options.compiler_root,
-                compiler_support_target: &compiler_support_target,
-                capacity_roots: [&options.output, scratch.path()],
-                transient_limit: max_physical_bytes,
-                cargo: &options.cargo,
-                rustc: &options.rustc,
-                inspection_packages,
-                inspection_sources: sources,
-                retain_complete_registry_leaves: true,
-                retain_checked_direct_dependencies: true,
-                limits,
-            },
-            finalized.final_receipt.clone(),
-            generated_project,
-            Some(&selected_unit_bindings),
-        )
-        .map_err(oven_error)?;
-        // The final bake observes the closure again under fresh staging; it must be the same closure by every
-        // portable fact, not the same bytes.
-        let final_capture = final_prepared
-            .selected_units
-            .as_ref()
-            .ok_or_else(|| CliError::failure("final receipt produced no exact selected-unit capture".to_string()))?;
-        let mut expected_identities =
-            oven_cargo_compat::legacy_cargo_selected_unit_capture_identities(expected_capture).map_err(oven_error)?;
-        let mut final_identities =
-            oven_cargo_compat::legacy_cargo_selected_unit_capture_identities(final_capture).map_err(oven_error)?;
-        expected_identities.sort();
-        final_identities.sort();
-        if expected_identities != final_identities {
-            return Err(CliError::failure(
-                "final receipt changed the captured physical Rust selection".to_string(),
-            ));
-        }
-        let final_entry = pending
-            .iter_mut()
-            .find(|entry| entry.label == "stdlib" && entry.profile == "release")
-            .ok_or_else(|| CliError::failure("release stdlib result is absent"))?;
-        let capture_loaf = staged_root.join(format!(
+        // The final receipt changes the authority, not the bytes. Republish the provisional Loaf's artifacts under
+        // it rather than compiling the closure a second time: the graph then describes exactly what ships, the
+        // registry leaves bind through the capture that produced them, and no build-script output has to be
+        // byte-reproducible across two stagings.
+        let provisional_loaf = staged_root.join(format!(
             "{}.loaf",
             capture_loaf_identity
                 .strip_prefix("sha256:")
                 .unwrap_or(capture_loaf_identity)
         ));
-        final_entry.result = final_prepared.preparation;
-        if capture_loaf.is_dir() {
-            fs::remove_dir_all(&capture_loaf).map_err(|error| {
-                CliError::failure(format!(
-                    "could not retire capture-only Loaf {}: {error}",
-                    capture_loaf.display()
-                ))
-            })?;
-        }
+        let republished = republish_loaf_under_final_receipt(
+            &provisional_loaf,
+            &finalized.final_receipt,
+            expected_capture,
+            &selected_unit_bindings,
+        )
+        .map_err(oven_error)?;
+        let final_entry = pending
+            .iter_mut()
+            .find(|entry| entry.label == "stdlib" && entry.profile == "release")
+            .ok_or_else(|| CliError::failure("release stdlib result is absent"))?;
+        final_entry.result = republished;
     }
     let release_policy_inventories =
         if let (Some(finalized), Some(policy), Some((_, capture, sources, _, _, _, _)), Some(toolchain)) = (

@@ -335,6 +335,88 @@ fn bind_registry_leaf_selected_unit_identities(
     Ok(())
 }
 
+/// Publish the artifacts of an already exported Loaf under a distinct final receipt, without compiling again.
+///
+/// The provisional bake compiled the closure under its base receipt and exported it as `provisional_loaf`. The
+/// finalizer then derived a final receipt from that exact capture, binding the build-script closure and the
+/// authored root intent. The final receipt changes the authority a consumer sees, not the bytes: rebuilding under
+/// it would only offer a second observation of the same closure to disagree with the first, and a build script's
+/// output need not be byte-reproducible across two stagings. So the provisional Loaf is rewritten in place — its
+/// registry leaves bound to their selected units through the capture that produced them, its manifest sealed under
+/// the final receipt — and renamed to its new content identity. Every artifact file stays exactly as compiled.
+pub fn republish_loaf_under_final_receipt(
+    provisional_loaf: &Path,
+    final_receipt: &OvenReceipt,
+    selected_units: &OvenLegacyCargoSelectedUnitCapture,
+    selected_unit_bindings: &BTreeMap<String, String>,
+) -> Result<OvenLoafPreparation, OvenLoafError> {
+    let loaf_path = provisional_loaf.join("loaf.json");
+    let mut loaf: OvenLoaf = serde_json::from_slice(&fs::read(&loaf_path).map_err(|source| OvenLoafError::Io {
+        path: loaf_path.clone(),
+        source,
+    })?)
+    .map_err(|error| OvenLoafError::Preparation {
+        message: format!("provisional Loaf manifest is invalid: {error}"),
+    })?;
+    if loaf.plan.intent != final_receipt.intent {
+        return Err(OvenLoafError::Preparation {
+            message: "final receipt intent differs from the provisional Loaf's compiled intent".to_string(),
+        });
+    }
+    if loaf.build_unit_identity == final_receipt.build_unit_identity {
+        return Err(OvenLoafError::Preparation {
+            message: "final receipt is not distinct from the provisional Loaf's base receipt".to_string(),
+        });
+    }
+    let mut registry_leaves = loaf.registry_leaves.clone();
+    bind_registry_leaf_selected_unit_identities(&mut registry_leaves, selected_units, selected_unit_bindings)?;
+    loaf.plan.registry_leaves = registry_leaves.clone();
+    loaf.registry_leaves = registry_leaves;
+    loaf.build_unit_identity = final_receipt.build_unit_identity.clone();
+    loaf.compatibility = OvenLoafCompatibility::from_receipt(final_receipt)?;
+    let plan_identity = digest_bytes(
+        &serde_json::to_vec(&loaf.plan).map_err(|error| OvenLoafError::Preparation {
+            message: format!("could not encode sealed Loaf plan identity: {error}"),
+        })?,
+    );
+    let loaf_bytes = serde_json::to_vec_pretty(&loaf).map_err(|error| OvenLoafError::Preparation {
+        message: format!("could not encode Loaf: {error}"),
+    })?;
+    let loaf_identity = digest_bytes(&loaf_bytes);
+    let parent = provisional_loaf.parent().ok_or_else(|| OvenLoafError::Preparation {
+        message: format!("provisional Loaf has no parent: {}", provisional_loaf.display()),
+    })?;
+    let output_directory = parent.join(format!(
+        "{}.loaf",
+        loaf_identity.strip_prefix("sha256:").unwrap_or(&loaf_identity)
+    ));
+    if output_directory.exists() {
+        return Err(OvenLoafError::Preparation {
+            message: format!(
+                "content-addressed Loaf destination already exists: {}",
+                output_directory.display()
+            ),
+        });
+    }
+    fs::write(&loaf_path, loaf_bytes).map_err(|source| OvenLoafError::Io {
+        path: loaf_path,
+        source,
+    })?;
+    fs::rename(provisional_loaf, &output_directory).map_err(|source| OvenLoafError::Io {
+        path: output_directory.clone(),
+        source,
+    })?;
+    let (logical_bytes, physical_bytes) = loaf_directory_byte_counts(&output_directory)?;
+    Ok(OvenLoafPreparation {
+        build_unit_identity: final_receipt.build_unit_identity.clone(),
+        loaf_identity,
+        plan_identity,
+        logical_bytes,
+        physical_bytes,
+        transient_peak_physical_bytes: 0,
+    })
+}
+
 /// Copy a fully verified temporary store entry into the compiler-owned loaf layout and report its accounting.
 fn export_loaf(
     store: &OvenStore,
@@ -929,6 +1011,100 @@ mod tests {
             request = request.with_build_unit_input("providers", providers);
         }
         Ok(receipt_generated_project(&request)?)
+    }
+
+    /// The final receipt changes the authority a consumer sees, not the bytes: republishing rewrites the manifest
+    /// and renames the Loaf, binds its leaves through the capture that produced them, and leaves every artifact
+    /// exactly as the provisional bake compiled it.
+    #[test]
+    fn republishing_under_the_final_receipt_reseals_the_provisional_artifacts_unchanged()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let base = runtime_receipt_for_plan()?;
+        let final_receipt = oven_store::receipt_with_build_unit_input(
+            &base,
+            crate::OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT,
+            digest_bytes(b"closure"),
+        )?;
+        assert_ne!(final_receipt.build_unit_identity, base.build_unit_identity);
+
+        let unit = selected_registry_unit(&["target_has_atomic=\"64\""]);
+        let capture = OvenLegacyCargoSelectedUnitCapture {
+            roots: vec![0],
+            units: vec![unit],
+            rustc_invocations_observed: true,
+            build_script_tool_probes: Vec::new(),
+            compiler: None,
+        };
+        let capture_identity = legacy_cargo_selected_unit_capture_identity(&capture, 0)?;
+        let mut leaf = registry_leaf();
+        leaf.selected_unit_identity = Some(capture_identity.clone());
+        let mut plan = empty_manifest(&base);
+        plan.registry_leaves = vec![leaf.clone()];
+        let provisional = OvenLoaf {
+            schema_version: OVEN_LOAF_SCHEMA_VERSION,
+            build_unit_identity: base.build_unit_identity.clone(),
+            provenance: OvenLoafProvenance {
+                compiler_version: "fixture".to_string(),
+                rust_toolchain: base.intent.toolchain.clone(),
+                sdk_provider_codegen_revision: "fixture".to_string(),
+                baker: "legacy_cargo".to_string(),
+            },
+            accounting: OvenLoafAccounting {
+                payload_logical_bytes: 0,
+                payload_physical_bytes: 0,
+            },
+            compatibility: OvenLoafCompatibility::from_receipt(&base)?,
+            registry_leaves: vec![leaf.clone()],
+            plan,
+        };
+        let root = tempfile::tempdir()?;
+        let provisional_dir = root.path().join("provisional.loaf");
+        let artifact = provisional_dir.join(&leaf.artifact.relative_path);
+        fs::create_dir_all(artifact.parent().ok_or("artifact parent")?)?;
+        fs::write(&artifact, b"exact compiled bytes")?;
+        fs::write(
+            provisional_dir.join("loaf.json"),
+            serde_json::to_vec_pretty(&provisional)?,
+        )?;
+        let bindings = BTreeMap::from([(capture_identity, "sha256:selected-unit".to_string())]);
+
+        let republished = republish_loaf_under_final_receipt(&provisional_dir, &final_receipt, &capture, &bindings)?;
+        assert!(!provisional_dir.exists(), "the provisional Loaf is renamed, not copied");
+        let published_dir = root.path().join(format!(
+            "{}.loaf",
+            republished.loaf_identity.trim_start_matches("sha256:")
+        ));
+        assert!(published_dir.is_dir());
+        assert_eq!(
+            fs::read(published_dir.join(&leaf.artifact.relative_path))?,
+            b"exact compiled bytes",
+            "artifacts are untouched"
+        );
+        let published: OvenLoaf = serde_json::from_slice(&fs::read(published_dir.join("loaf.json"))?)?;
+        assert_eq!(published.build_unit_identity, final_receipt.build_unit_identity);
+        assert_eq!(
+            published.registry_leaves[0].selected_unit_identity.as_deref(),
+            Some("sha256:selected-unit")
+        );
+        assert_eq!(published.plan.registry_leaves, published.registry_leaves);
+        assert_eq!(republished.build_unit_identity, final_receipt.build_unit_identity);
+        assert_eq!(
+            republished.loaf_identity,
+            digest_bytes(&fs::read(published_dir.join("loaf.json"))?),
+            "the Loaf is named by its sealed manifest"
+        );
+
+        // The same receipt is not a republication, and a different intent is a different compilation.
+        fs::create_dir_all(&provisional_dir)?;
+        fs::write(
+            provisional_dir.join("loaf.json"),
+            serde_json::to_vec_pretty(&provisional)?,
+        )?;
+        assert!(republish_loaf_under_final_receipt(&provisional_dir, &base, &capture, &bindings).is_err());
+        let mut other_intent = final_receipt.clone();
+        other_intent.intent.profile = "debug".to_string();
+        assert!(republish_loaf_under_final_receipt(&provisional_dir, &other_intent, &capture, &bindings).is_err());
+        Ok(())
     }
 
     fn runtime_receipt_for_plan() -> Result<oven_store::OvenReceipt, Box<dyn std::error::Error>> {
