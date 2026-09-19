@@ -474,9 +474,15 @@ mod tests {
         if symbolic {
             fs::write(git_dir.join("HEAD"), "ref: refs/heads/index\n")?;
             if packed {
+                // An annotated tag packs as its own line plus a `^` peeled line; both must be passed over on the way
+                // to the branch.
+                let tag = "a".repeat(40);
+                let peeled = "b".repeat(40);
                 fs::write(
                     git_dir.join("packed-refs"),
-                    format!("# pack-refs with: peeled fully-peeled sorted\n{commit} refs/heads/index\n"),
+                    format!(
+                        "# pack-refs with: peeled fully-peeled sorted\n{tag} refs/tags/v1\n^{peeled}\n{commit} refs/heads/index\n"
+                    ),
                 )?;
             } else {
                 fs::write(git_dir.join("refs/heads/index"), format!("{commit}\n"))?;
