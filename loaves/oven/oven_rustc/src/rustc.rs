@@ -903,6 +903,8 @@ fn same_registry_leaf_semantics(left: &OvenRustcRegistryLeaf, right: &OvenRustcR
     left.package == right.package
         && left.version == right.version
         && left.crate_name == right.crate_name
+        && left.domain == right.domain
+        && left.crate_kind == right.crate_kind
         && left.source == right.source
         && left.features == right.features
 }
@@ -1749,11 +1751,18 @@ impl OvenRustcArtifactManifest {
                     ),
                 });
             }
-            if !package_versions.insert((leaf.package.as_str(), leaf.version.as_str())) {
+            // One package version compiles once per domain and kind: a target library, and a host library or
+            // procedural macro when a macro depends on it. Each is a distinct selected unit with its own leaf.
+            if !package_versions.insert((
+                leaf.package.as_str(),
+                leaf.version.as_str(),
+                leaf.domain,
+                leaf.crate_kind,
+            )) {
                 return Err(OvenRustcError::InvalidInput {
                     field: "artifact manifest registry catalog",
                     message: format!(
-                        "declares package `{}` version `{}` more than once",
+                        "declares package `{}` version `{}` more than once for one domain and kind",
                         leaf.package, leaf.version
                     ),
                 });
@@ -1770,15 +1779,15 @@ impl OvenRustcArtifactManifest {
                     });
                 }
             }
-            if Path::new(&leaf.artifact.relative_path)
-                .extension()
-                .and_then(|extension| extension.to_str())
-                != Some("rlib")
-            {
+            if !leaf.crate_kind.admits_artifact_extension(
+                Path::new(&leaf.artifact.relative_path)
+                    .extension()
+                    .and_then(|extension| extension.to_str()),
+            ) {
                 return Err(OvenRustcError::InvalidInput {
                     field: "artifact manifest registry catalog",
                     message: format!(
-                        "registry leaf `{}` `{}` must reference an rlib",
+                        "registry leaf `{}` `{}` must reference an artifact of its declared kind",
                         leaf.package, leaf.version
                     ),
                 });
@@ -5454,6 +5463,9 @@ fi
             source: registry_source.clone(),
         }];
         artifacts.registry_leaves = vec![OvenRustcRegistryLeaf {
+            domain: Default::default(),
+            crate_kind: Default::default(),
+            selected_unit_identity: None,
             package: "serde_fixture".to_string(),
             version: "1.2.3".to_string(),
             crate_name: "serde_fixture".to_string(),
@@ -5506,6 +5518,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&artifacts)?,
             materialized_files: materialized,
+            materialized_directories: Vec::new(),
         })?;
         let owner = store
             .select_payloads_for_execution(&[published.identity])?
@@ -6190,6 +6203,9 @@ fi
         let authority = OvenRegistryLeafAuthority::new_with_trusted_dependency_search_paths(
             registry.clone(),
             vec![OvenRustcRegistryLeaf {
+                domain: Default::default(),
+                crate_kind: Default::default(),
+                selected_unit_identity: None,
                 package: "registry_helper".to_string(),
                 version: "1.0.0".to_string(),
                 crate_name: "registry_helper".to_string(),
@@ -6266,6 +6282,9 @@ fi
             let bytes = format!("sealed itoa {version}").into_bytes();
             fs::write(&artifact, &bytes)?;
             leaves.push(OvenRustcRegistryLeaf {
+                domain: Default::default(),
+                crate_kind: Default::default(),
+                selected_unit_identity: None,
                 package: "itoa".to_string(),
                 version: version.to_string(),
                 crate_name: "itoa".to_string(),
@@ -6315,6 +6334,76 @@ fi
         Ok(())
     }
 
+    /// A package compiled for the host beside its target build, and a procedural macro, are sealed as distinct
+    /// leaves; a consumer's registry dependency still selects the target library and nothing else.
+    #[test]
+    fn host_and_proc_macro_leaves_sit_beside_target_leaves_without_being_selected()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let registry = tempfile::tempdir()?;
+        let mut leaves = Vec::new();
+        for (relative_path, domain, crate_kind, crate_name) in [
+            (
+                "target/x/debug/deps/libshared-target.rlib",
+                super::OvenRustcRegistryLeafDomain::Target,
+                super::OvenRustcRegistryLeafKind::Rlib,
+                "shared",
+            ),
+            (
+                "target/debug/deps/libshared-host.rlib",
+                super::OvenRustcRegistryLeafDomain::Host,
+                super::OvenRustcRegistryLeafKind::Rlib,
+                "shared",
+            ),
+            (
+                "target/debug/deps/libshared_derive.dylib",
+                super::OvenRustcRegistryLeafDomain::Host,
+                super::OvenRustcRegistryLeafKind::ProcMacro,
+                "shared_derive",
+            ),
+        ] {
+            let artifact = registry.path().join(relative_path);
+            fs::create_dir_all(artifact.parent().ok_or("artifact parent")?)?;
+            fs::write(&artifact, relative_path.as_bytes())?;
+            leaves.push(OvenRustcRegistryLeaf {
+                domain,
+                crate_kind,
+                selected_unit_identity: None,
+                package: if crate_kind == super::OvenRustcRegistryLeafKind::ProcMacro {
+                    "shared_derive"
+                } else {
+                    "shared"
+                }
+                .to_string(),
+                version: "1.0.0".to_string(),
+                crate_name: crate_name.to_string(),
+                features: vec!["default".to_string()],
+                source: fixture_registry_source(),
+                artifact: OvenRustcArtifactExtern {
+                    crate_name: crate_name.to_string(),
+                    relative_path: relative_path.to_string(),
+                    digest: digest_bytes(relative_path.as_bytes()),
+                },
+            });
+        }
+        let authority = OvenRegistryLeafAuthority::new(registry.path().to_path_buf(), leaves);
+        let dependency = DependencySpec {
+            crate_name: "shared".to_string(),
+            version: Some("1".to_string()),
+            features: vec!["default".to_string()],
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: None,
+        };
+        let selected = super::select_sealed_registry_leaf(&dependency, Some(&authority), "debug")?;
+        assert_eq!(selected.leaf.domain, super::OvenRustcRegistryLeafDomain::Target);
+        assert_eq!(
+            selected.leaf.artifact.relative_path,
+            "target/x/debug/deps/libshared-target.rlib"
+        );
+        Ok(())
+    }
+
     #[test]
     fn validates_the_exact_selected_registry_extern_instead_of_reselecting_highest_semver()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -6330,6 +6419,9 @@ fi
             fs::write(&artifact, &bytes)?;
             artifacts.insert(version, fs::canonicalize(&artifact)?);
             leaves.push(OvenRustcRegistryLeaf {
+                domain: Default::default(),
+                crate_kind: Default::default(),
+                selected_unit_identity: None,
                 package: "shared".to_string(),
                 version: version.to_string(),
                 crate_name: "shared".to_string(),
@@ -6391,6 +6483,9 @@ fi
             OvenRegistryLeafAuthority::new(
                 narrow.path().to_path_buf(),
                 vec![OvenRustcRegistryLeaf {
+                    domain: Default::default(),
+                    crate_kind: Default::default(),
+                    selected_unit_identity: None,
                     package: "bitflags".to_string(),
                     version: "2.13.1".to_string(),
                     crate_name: "bitflags".to_string(),
@@ -6406,6 +6501,9 @@ fi
             OvenRegistryLeafAuthority::new(
                 broad.path().to_path_buf(),
                 vec![OvenRustcRegistryLeaf {
+                    domain: Default::default(),
+                    crate_kind: Default::default(),
+                    selected_unit_identity: None,
                     package: "bitflags".to_string(),
                     version: "1.3.2".to_string(),
                     crate_name: "bitflags".to_string(),
@@ -6447,6 +6545,9 @@ fi
         let provider_authority = OvenRegistryLeafAuthority::new(
             provider_root.path().to_path_buf(),
             vec![OvenRustcRegistryLeaf {
+                domain: Default::default(),
+                crate_kind: Default::default(),
+                selected_unit_identity: None,
                 package: "datafusion".to_string(),
                 version: "53.1.0".to_string(),
                 crate_name: "datafusion".to_string(),
@@ -6493,6 +6594,9 @@ fi
         let provider_datafusion = provider_root.path().join("libdatafusion.rlib");
         fs::write(&provider_datafusion, provider_datafusion_bytes)?;
         let memchr_leaf = |bytes: &[u8]| OvenRustcRegistryLeaf {
+            domain: Default::default(),
+            crate_kind: Default::default(),
+            selected_unit_identity: None,
             package: "memchr".to_string(),
             version: "2.8.0".to_string(),
             crate_name: "memchr".to_string(),
@@ -6511,6 +6615,9 @@ fi
             vec![
                 memchr_leaf(provider_memchr_bytes),
                 OvenRustcRegistryLeaf {
+                    domain: Default::default(),
+                    crate_kind: Default::default(),
+                    selected_unit_identity: None,
                     package: "datafusion".to_string(),
                     version: "53.1.0".to_string(),
                     crate_name: "datafusion".to_string(),
@@ -6555,6 +6662,9 @@ fi
         fs::write(consumer_root.path().join("libtokio-consumer1234.rlib"), consumer_bytes)?;
         fs::write(provider_root.path().join("libtokio-provider5678.rlib"), provider_bytes)?;
         let leaf = |features: &[&str], bytes: &[u8], relative_path: &str| OvenRustcRegistryLeaf {
+            domain: Default::default(),
+            crate_kind: Default::default(),
+            selected_unit_identity: None,
             package: "tokio".to_string(),
             version: "1.52.3".to_string(),
             crate_name: "tokio".to_string(),
@@ -6622,6 +6732,9 @@ fi
         let provider_authority = OvenRegistryLeafAuthority::new(
             provider_root.path().to_path_buf(),
             vec![OvenRustcRegistryLeaf {
+                domain: Default::default(),
+                crate_kind: Default::default(),
+                selected_unit_identity: None,
                 package: "tokio".to_string(),
                 version: "1.52.3".to_string(),
                 crate_name: "tokio".to_string(),
@@ -6662,6 +6775,9 @@ fi
         let provider_authority = OvenRegistryLeafAuthority::new(
             provider_root.path().to_path_buf(),
             vec![OvenRustcRegistryLeaf {
+                domain: Default::default(),
+                crate_kind: Default::default(),
+                selected_unit_identity: None,
                 package: "tokio".to_string(),
                 version: "1.52.3".to_string(),
                 crate_name: "tokio".to_string(),
@@ -6703,6 +6819,9 @@ fi
         let provider_authority = OvenRegistryLeafAuthority::new(
             provider_root.path().to_path_buf(),
             vec![OvenRustcRegistryLeaf {
+                domain: Default::default(),
+                crate_kind: Default::default(),
+                selected_unit_identity: None,
                 package: "datafusion".to_string(),
                 version: "53.1.0".to_string(),
                 crate_name: "datafusion".to_string(),
@@ -6913,6 +7032,9 @@ fi
     #[test]
     fn first_diverging_shared_package_reports_a_same_version_byte_distinct_overlap() {
         let leaf = |package: &str, version: &str, digest: &str| OvenRustcRegistryLeaf {
+            domain: Default::default(),
+            crate_kind: Default::default(),
+            selected_unit_identity: None,
             package: package.to_string(),
             version: version.to_string(),
             crate_name: package.replace('-', "_"),
@@ -6981,6 +7103,9 @@ fi
         fs::write(&first_artifact, first_bytes)?;
         fs::write(&second_artifact, second_bytes)?;
         let leaf = |digest| OvenRustcRegistryLeaf {
+            domain: Default::default(),
+            crate_kind: Default::default(),
+            selected_unit_identity: None,
             package: "fixture-registry".to_string(),
             version: "1.0.0".to_string(),
             crate_name: "fixture_registry".to_string(),
@@ -7175,6 +7300,9 @@ fi
         // witness: a base prebuilt on another machine publishes the same filename with a different strict version
         // hash, so the conservative regime additionally demands bit-identical content.
         let leaf = |relative_path: &str, digest_input: &str| OvenRustcRegistryLeaf {
+            domain: Default::default(),
+            crate_kind: Default::default(),
+            selected_unit_identity: None,
             package: "rand_core".to_string(),
             version: "0.6.4".to_string(),
             crate_name: "rand_core".to_string(),
@@ -7232,6 +7360,9 @@ fi
             source: source.clone(),
         };
         let leaf = |crate_name: &str, artifact| OvenRustcRegistryLeaf {
+            domain: Default::default(),
+            crate_kind: Default::default(),
+            selected_unit_identity: None,
             package: crate_name.to_string(),
             version: "1.0.0".to_string(),
             crate_name: crate_name.to_string(),
@@ -7575,6 +7706,9 @@ fi
             source: source.clone(),
         };
         let leaf = |crate_name: &str, artifact| OvenRustcRegistryLeaf {
+            domain: Default::default(),
+            crate_kind: Default::default(),
+            selected_unit_identity: None,
             package: crate_name.replace('_', "-"),
             version: "1.0.0".to_string(),
             crate_name: crate_name.to_string(),
@@ -7956,6 +8090,9 @@ fi
             ..release_serde.clone()
         };
         let leaf = |features: &[&str], artifact| OvenRustcRegistryLeaf {
+            domain: Default::default(),
+            crate_kind: Default::default(),
+            selected_unit_identity: None,
             package: "serde".to_string(),
             version: "1.0.228".to_string(),
             crate_name: "serde".to_string(),
@@ -8150,6 +8287,9 @@ fi
             ..release_libc.clone()
         };
         let leaf = |artifact| OvenRustcRegistryLeaf {
+            domain: Default::default(),
+            crate_kind: Default::default(),
+            selected_unit_identity: None,
             package: "libc".to_string(),
             version: "0.2.155".to_string(),
             crate_name: "libc".to_string(),
@@ -8497,6 +8637,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&empty_manifest(&first_receipt))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         assert_eq!(
             select_direct_rustc_plan_identity(&store, &second_receipt)?,
@@ -8549,6 +8690,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&empty_manifest(&second_receipt))?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let project_identity = "sha256:project";
         let source_authority_digest = "sha256:source";
@@ -8577,6 +8719,7 @@ fi
             kind: OvenArtifactKind::ProjectInspectionAuthority,
             payload: serde_json::to_vec(&authority_payload)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
 
         let (selected_manifest, _, _, _) = store.select_payload_for_execution(&direct_plan.identity)?;
@@ -8655,6 +8798,7 @@ fi
                 source_path: evidence,
                 relative_path: "authority/future-evidence.txt".to_string(),
             }],
+            materialized_directories: Vec::new(),
         })?;
         let (entry, lease) = store.select(&authority.identity)?;
         drop(lease);
@@ -8716,6 +8860,7 @@ fi
                 kind: OvenArtifactKind::ProjectInspectionAuthority,
                 payload: encoded_payload.clone(),
                 materialized_files: Vec::new(),
+                materialized_directories: Vec::new(),
             })
         };
         let requested = publish("requested-project-inspection-authority")?;
@@ -8797,6 +8942,7 @@ fi
                 source_path: evidence,
                 relative_path: "authority/evidence.txt".to_string(),
             }],
+            materialized_directories: Vec::new(),
         })?;
         let authority_ref = OvenProjectInspectionAuthorityRef {
             identity: authority.identity.clone(),
@@ -8853,6 +8999,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&legacy)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let replacement = store.publish(&OvenArtifactPublishRequest {
             receipt: receipt.clone(),
@@ -8860,6 +9007,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&current)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
 
         assert_eq!(
@@ -9849,6 +9997,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         assert_eq!(select_direct_rustc_plan_identity(&store, &receipt)?, stored.identity);
 
@@ -9881,6 +10030,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&plan)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         };
         assert!(matches!(
             bounded.publish(&replacement),
@@ -9911,6 +10061,7 @@ fi
                 kind: OvenArtifactKind::DirectRustcPlan,
                 payload: serde_json::to_vec(&plan)?,
                 materialized_files: Vec::new(),
+                materialized_directories: Vec::new(),
             })?;
         }
 
@@ -9957,6 +10108,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&plan)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
 
         let bake = bake_stored_direct_rustc_run(&OvenStoredDirectRustcRunRequest {
@@ -9982,6 +10134,7 @@ fi
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&plan)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         };
         assert!(matches!(
             bounded.publish(&replacement),

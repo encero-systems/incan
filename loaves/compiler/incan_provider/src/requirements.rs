@@ -580,8 +580,12 @@ fn dependency_spec_from_stdlib_extra_crate(crate_name: &str) -> ProviderResult<D
     Ok(dependency_spec_from_stdlib_dep(dep))
 }
 
-/// Build a dependency specification from a stdlib dependency requirement.
-fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep) -> DependencySpec {
+/// Build the exact dependency specification one stdlib dependency requirement contributes to a generated root.
+///
+/// Checked publisher manifests that declare the same crate must agree with this specification byte for byte: the
+/// requirement merge compares specifications structurally, so a semantically equal but differently spelled
+/// version requirement is a refusal, not a unification.
+pub fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep) -> DependencySpec {
     match dep.source {
         StdlibExtraCrateSource::Version(version) => DependencySpec {
             crate_name: dep.crate_name.to_string(),
@@ -649,6 +653,9 @@ pub fn dependency_specs_match(left: &DependencySpec, right: &DependencySpec) -> 
     if left == right {
         return true;
     }
+    if !left.same_version_requirement(right) {
+        return false;
+    }
     let mut left = left.clone();
     let mut right = right.clone();
     for spec in [&mut left, &mut right] {
@@ -656,7 +663,23 @@ pub fn dependency_specs_match(left: &DependencySpec, right: &DependencySpec) -> 
             *path = fs::canonicalize(&*path).unwrap_or_else(|_| path.clone());
         }
     }
-    left == right
+    // The version already agreed by meaning; every other identity field must agree exactly. Destructuring keeps a
+    // new field from silently escaping this comparison.
+    let DependencySpec {
+        crate_name,
+        version: _,
+        features,
+        default_features,
+        source,
+        optional,
+        package,
+    } = &left;
+    *crate_name == right.crate_name
+        && *features == right.features
+        && *default_features == right.default_features
+        && *source == right.source
+        && *optional == right.optional
+        && *package == right.package
 }
 
 /// Merge collected requirement dependencies into resolved dependency sets.

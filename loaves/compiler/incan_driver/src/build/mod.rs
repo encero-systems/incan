@@ -107,6 +107,10 @@ pub struct OvenPreparedProject {
     pub provider_plan: Arc<ProviderPlan>,
     pub receipt: oven_store::OvenReceipt,
     pub plan_selection: OvenDirectRustcPlanSelection,
+    /// Same-generation policy foundation and rebuilt closure for a release ToolchainLoaf selection, held only when
+    /// the selected Loaf is the one the foundation was compiled against; the generation's other profile shares the
+    /// retained compiler without composing the closure.
+    pub runtime_foundation: Option<oven_rustc::loaf::OvenHeldReleaseRuntimeFoundation>,
     pub materialization: OvenToolchainMaterialization,
     pub cargo_process_started: bool,
     pub rustc: PathBuf,
@@ -303,6 +307,37 @@ pub struct OvenProjectBakeProfileReport {
     pub action: &'static str,
 }
 
+/// Exact completed ProjectOutput selected or published by one explicit bake.
+#[derive(Debug, Clone, Serialize)]
+pub struct OvenProjectBakeOutputReport {
+    /// Immutable generic-store artifact identity passed to downstream release publication.
+    pub artifact_identity: String,
+    /// Portable target identity distinguishing declared scripts from conventional targets.
+    pub project_target: String,
+    /// Build profile of this completed output.
+    pub profile: String,
+    /// Exact Rust compilation target authorized by the output receipt.
+    pub target: String,
+    /// Receipt authorizing the completed output.
+    pub receipt_identity: String,
+    /// Receipt-bound compilation identity of the completed output.
+    pub build_unit_identity: String,
+}
+
+impl From<&OvenStoredProjectOutput> for OvenProjectBakeOutputReport {
+    /// Project the exact store and payload authorities while their execution lease is still held.
+    fn from(output: &OvenStoredProjectOutput) -> Self {
+        Self {
+            artifact_identity: output.identity.clone(),
+            project_target: output.payload.target_identity.clone(),
+            profile: output.profile.clone(),
+            target: output.intent.target.clone(),
+            receipt_identity: output.payload.receipt_identity.clone(),
+            build_unit_identity: output.payload.build_unit_identity.clone(),
+        }
+    }
+}
+
 /// Evidence emitted by explicit `incan oven bake` for one Incan project.
 #[derive(Debug, Clone, Serialize)]
 pub struct OvenProjectBakeReport {
@@ -315,6 +350,8 @@ pub struct OvenProjectBakeReport {
     pub store: PathBuf,
     /// One receipt and selection outcome for each discovered project target/profile.
     pub profiles: Vec<OvenProjectBakeProfileReport>,
+    /// Exact completed outputs retained under leases through report construction.
+    pub outputs: Vec<OvenProjectBakeOutputReport>,
 }
 
 /// Immutable package-owned Loaf evidence written beside a baked public library.
@@ -416,6 +453,8 @@ pub struct OvenProjectBakeAuthorityContext {
     pub source_digester: ProjectSourceAuthorityDigester,
     pub providers: HashMap<PathBuf, MemoizedPackagedProviderAuthority>,
     pub initial_project_source_authority: Option<String>,
+    /// Caller-owned target override accepted only by explicit project bake.
+    pub requested_target: Option<String>,
 }
 
 /// One manifest-backed Incan entrypoint admitted by `incan oven bake`.

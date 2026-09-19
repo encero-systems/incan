@@ -23,6 +23,8 @@ INCAN_TEST_OVEN_HOME ?= $(TARGET_DIR)/incan_test_oven_home
 INCAN_TEST_OVEN_LOAF_ROOT ?= $(TARGET_DIR)/share/incan/oven/loafs
 INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT ?= $(TARGET_DIR)/oven-alpha-release-toolchain
 INCAN_TEST_OVEN_RELEASE_COMPILER_BIN ?= $(TARGET_DIR)/debug/incan
+INCAN_TEST_OVEN_RELEASE_POLICY_HOME ?= $(TARGET_DIR)/oven-alpha-release-policy-home
+INCAN_TEST_OVEN_RELEASE_POLICY_REPORT ?= $(TARGET_DIR)/oven-alpha-release-policy.json
 INCAN_TEST_OVEN_COMPILER_SUITE_STORE ?= $(TARGET_DIR)/oven-compiler-suite-store
 # Caller-owned compiler-suite outputs are one-use. `test-oven` creates a fresh directory below this root and removes
 # it after reporting its physical disk use, so repeated local runs cannot reuse a stale test binary or accumulate it.
@@ -47,6 +49,9 @@ INCAN_TEST_PREWARM_TOOLCHAIN ?= 1.98.0
 INCAN_TEST_PUBLISHER_TOOLCHAIN ?= nightly-2026-03-24
 INCAN_TEST_FIXTURE_CARGO_TOOLCHAIN ?= $(INCAN_TEST_PUBLISHER_TOOLCHAIN)
 INCAN_TEST_LOAF_TOOLCHAIN ?= 1.98.0
+# Registered Loaf registry checkout (incan.pub) whose adoption manifests govern captured registry units in the
+# release bake; unset, the release publisher keeps every unit observation-governed.
+INCAN_TEST_LOAF_REGISTRY ?=
 INCAN_TEST_SUITE_TOOLCHAIN ?= 1.98.0
 TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS) \
 	INCAN_TEST_TMP_ROOT="$(abspath $(INCAN_TEST_TMP_ROOT))" \
@@ -511,7 +516,37 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 	@if [ "$$(uname -s)" = "Darwin" ] && command -v codesign >/dev/null 2>&1; then \
 		codesign --force --sign - "$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan"; \
 	fi
-	@$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
+	@set -eu; \
+		command -v jq >/dev/null 2>&1; \
+		cargo_bin="$$(rustup which --toolchain "$(INCAN_TEST_PUBLISHER_TOOLCHAIN)" cargo)"; \
+		rustc_bin="$$(rustup which --toolchain "$(INCAN_TEST_LOAF_TOOLCHAIN)" rustc)"; \
+		target="$$("$$rustc_bin" -vV | sed -n 's/^host: //p')"; \
+		test -n "$$target"; \
+		mkdir -p "$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)"; \
+		policy_home="$$(mktemp -d "$(INCAN_TEST_OVEN_RELEASE_POLICY_HOME)/invocation.XXXXXX")"; \
+		trap 'rm -rf "$$policy_home"' EXIT HUP INT TERM; \
+		policy_toolchain_root="$$policy_home/toolchain"; \
+		mkdir -p "$$policy_toolchain_root/bin"; \
+		cp "$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" "$$policy_toolchain_root/bin/incan"; \
+		test ! -e "$$policy_toolchain_root/share/incan/oven/loafs/envelope.json"; \
+		$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
+			INCAN_HOME="$$policy_home" \
+			INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
+			INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
+			INCAN_SDK_INVENTORY="$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json" \
+			INCAN_INTERNAL_OVEN_LOAF_EXECUTION= INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT= \
+			CARGO="$$cargo_bin" RUSTC="$$rustc_bin" \
+			"$$policy_toolchain_root/bin/incan" oven bake \
+				--project "$(CURDIR)/workspaces/oven" --target "$$target" --format json \
+				> "$(INCAN_TEST_OVEN_RELEASE_POLICY_REPORT)"; \
+		policy_output="$$(workspaces/release/toolchain/select_release_policy_output.sh \
+			"$(INCAN_TEST_OVEN_RELEASE_POLICY_REPORT)" "$$target")"; \
+		policy_engine_store="$${policy_output%%	*}"; \
+		policy_engine_identity="$${policy_output#*	}"; \
+		test -n "$$policy_engine_store"; \
+		test -n "$$policy_engine_identity"; \
+		test "$$policy_engine_store" != "$$policy_engine_identity"; \
+		$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_LOAF_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
 		INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
 		INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
 		"$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/bin/incan" oven legacy-cargo bake-loafs \
@@ -519,8 +554,12 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 			--output "$(INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT)/share/incan/oven/loafs" \
 			--envelope release \
 			--sdk-inventory "$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json" \
-			--cargo "$$(rustup which --toolchain "$(INCAN_TEST_PUBLISHER_TOOLCHAIN)" cargo)" \
-			--rustc "$$(rustup which --toolchain "$(INCAN_TEST_LOAF_TOOLCHAIN)" rustc)"
+			--cargo "$$cargo_bin" \
+			--rustc "$$rustc_bin" \
+			--policy-engine-store "$$policy_engine_store" \
+			--policy-engine-identity "$$policy_engine_identity" \
+			--policy-engine-target "$$target" \
+			$(if $(INCAN_TEST_LOAF_REGISTRY),--loaf-registry "$(INCAN_TEST_LOAF_REGISTRY)",)
 
 .PHONY: test-oven-focused
 test-oven-focused:

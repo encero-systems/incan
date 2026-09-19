@@ -15,8 +15,10 @@ use serde::{Deserialize, Serialize};
 use super::{
     CliError, CliResult, INCAN_VERSION, Instant, LoafEnvelopeExpectation, LoafMemberExpectation, LoafMirrorMiss,
     OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLegacyCargoCompilerSuiteResult, OvenLoafEnvelope,
-    OvenLoafEnvelopeManifest, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation, OvenStoreInspection,
-    OvenStoreLimits, announce_oven_progress, configured_mirrors, digest_bytes, digest_runtime_crate_source,
+    OvenLoafEnvelopeManifest, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation,
+    OvenReleaseRuntimeClosureMember, OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember, OvenStore,
+    OvenStoreInspection, OvenStoreLimits, announce_oven_progress, bind_release_runtime_closure_evidence,
+    bind_release_runtime_foundation_evidence, configured_mirrors, digest_bytes, digest_runtime_crate_source,
     elapsed_detail, env, import_loaf_envelope_from_mirrors, loaf_directory_byte_counts,
     loaf_envelope_inspection_packages, loaf_envelope_specifications, loaf_raw_disk_bytes, oven_error,
     retire_unreferenced_loaf_generations, rustc_identity, validate_stored_loaf_for_reuse,
@@ -133,15 +135,63 @@ pub(crate) fn loaf_envelope_compatibility_map(evidence: &OvenLoafEnvelopeEvidenc
     ])
 }
 
-/// Return the content identity of the generation one envelope name and evidence map would commit.
-pub(crate) fn loaf_generation_identity(
+/// Add the exact optional release asset to the evidence map that mirrors and reuse compare.
+pub(crate) fn loaf_envelope_compatibility_map_with_release_member(
+    evidence: &OvenLoafEnvelopeEvidence,
+    release_store_member: Option<&OvenReleaseStoreMember>,
+) -> CliResult<BTreeMap<String, String>> {
+    let mut compatibility = loaf_envelope_compatibility_map(evidence);
+    if let Some(member) = release_store_member {
+        compatibility.insert(
+            "release_store_member_artifact_identity".to_string(),
+            member.artifact_identity.clone(),
+        );
+        compatibility.insert(
+            "release_store_member_descriptor_digest".to_string(),
+            digest_bytes(&serde_json::to_vec(member).map_err(|error| {
+                CliError::failure(format!("could not encode release store member evidence: {error}"))
+            })?),
+        );
+    }
+    Ok(compatibility)
+}
+
+/// Return a generation identity that also binds any exact generic release-store member descriptor.
+///
+/// Release packaging must call this form when it publishes a member; otherwise a swapped descriptor could retain
+/// the identity of a generation computed only from compatibility evidence.
+pub(crate) fn loaf_generation_identity_with_release_member(
     envelope: OvenLoafEnvelope,
     evidence: &BTreeMap<String, String>,
+    release_store_member: Option<&OvenReleaseStoreMember>,
 ) -> CliResult<String> {
-    Ok(digest_bytes(
-        &serde_json::to_vec(&(loaf_envelope_name(envelope), evidence))
-            .map_err(|error| CliError::failure(format!("could not encode Loaf generation identity: {error}")))?,
-    ))
+    let encoded = match release_store_member {
+        Some(member) => serde_json::to_vec(&(loaf_envelope_name(envelope), evidence, member)),
+        None => serde_json::to_vec(&(loaf_envelope_name(envelope), evidence)),
+    };
+    Ok(digest_bytes(&encoded.map_err(|error| {
+        CliError::failure(format!("could not encode Loaf generation identity: {error}"))
+    })?))
+}
+
+/// Measure the one exact embedded generic store entry included in envelope payload totals.
+pub(crate) fn release_store_member_byte_counts(
+    generation_root: &Path,
+    member: Option<&OvenReleaseStoreMember>,
+    limits: OvenStoreLimits,
+) -> CliResult<(u64, u64)> {
+    let Some(member) = member else {
+        return Ok((0, 0));
+    };
+    let inspection = OvenStore::new(generation_root.join(&member.store_relative_path), limits)
+        .inspect_for_exact_reuse()
+        .map_err(oven_error)?;
+    if inspection.entries.len() != 1 || inspection.entries[0].manifest.identity != member.artifact_identity {
+        return Err(CliError::failure(
+            "release policy store accounting did not find its one exact artifact",
+        ));
+    }
+    Ok((inspection.logical_bytes, inspection.physical_bytes))
 }
 
 /// Return the wire spelling of one checked fixture action.
@@ -162,6 +212,9 @@ pub(crate) fn import_loaf_envelope_from_configured_mirrors(
     scratch: &Path,
     envelope: OvenLoafEnvelope,
     evidence: &OvenLoafEnvelopeEvidence,
+    release_store_member: Option<&OvenReleaseStoreMember>,
+    runtime_foundation: Option<&OvenReleaseRuntimeFoundationMember>,
+    runtime_closure: Option<&OvenReleaseRuntimeClosureMember>,
 ) -> CliResult<()> {
     if output.join("envelope.json").is_file() {
         return Ok(());
@@ -170,19 +223,43 @@ pub(crate) fn import_loaf_envelope_from_configured_mirrors(
     if mirrors.is_empty() {
         return Ok(());
     }
-    import_loaf_envelope_from_mirror_roots(output, scratch, envelope, evidence, &mirrors)
+    import_loaf_envelope_from_mirror_roots(
+        output,
+        scratch,
+        envelope,
+        evidence,
+        release_store_member,
+        runtime_foundation,
+        runtime_closure,
+        &mirrors,
+    )
 }
 
 /// Commit the expected generation from the first of `mirrors` that proves in full; see the configured wrapper.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Adds explicit mirror roots to the configured envelope import boundary"
+)]
 pub(crate) fn import_loaf_envelope_from_mirror_roots(
     output: &Path,
     scratch: &Path,
     envelope: OvenLoafEnvelope,
     evidence: &OvenLoafEnvelopeEvidence,
+    release_store_member: Option<&OvenReleaseStoreMember>,
+    runtime_foundation: Option<&OvenReleaseRuntimeFoundationMember>,
+    runtime_closure: Option<&OvenReleaseRuntimeClosureMember>,
     mirrors: &[PathBuf],
 ) -> CliResult<()> {
-    let compatibility_evidence = loaf_envelope_compatibility_map(evidence);
-    let generation_identity = loaf_generation_identity(envelope, &compatibility_evidence)?;
+    let mut compatibility_evidence =
+        loaf_envelope_compatibility_map_with_release_member(evidence, release_store_member)?;
+    if let Some(member) = runtime_foundation {
+        bind_release_runtime_foundation_evidence(&mut compatibility_evidence, member).map_err(oven_error)?;
+    }
+    if let Some(member) = runtime_closure {
+        bind_release_runtime_closure_evidence(&mut compatibility_evidence, member).map_err(oven_error)?;
+    }
+    let generation_identity =
+        loaf_generation_identity_with_release_member(envelope, &compatibility_evidence, release_store_member)?;
     let members = loaf_envelope_specifications(envelope)
         .iter()
         .map(|specification| LoafMemberExpectation {
@@ -198,6 +275,9 @@ pub(crate) fn import_loaf_envelope_from_mirror_roots(
         generation_identity: &generation_identity,
         evidence: &compatibility_evidence,
         members: &members,
+        release_store_member,
+        runtime_foundation,
+        runtime_closure,
     };
     let started = Instant::now();
     match import_loaf_envelope_from_mirrors(output, scratch, &expectation, mirrors) {
@@ -315,15 +395,34 @@ pub(crate) fn loaf_compiler_lock_path(compiler_root: &Path) -> CliResult<PathBuf
     .ok_or_else(|| CliError::failure("Loaf compiler root has no canonical Cargo.lock input".to_string()))
 }
 
+/// Inputs that bind exact committed-envelope reuse to its expected evidence and active store limits.
+pub(crate) struct CompleteLoafEnvelopeReuseInput<'a> {
+    pub(crate) output: &'a Path,
+    pub(crate) scratch: &'a Path,
+    pub(crate) envelope: OvenLoafEnvelope,
+    pub(crate) evidence: &'a OvenLoafEnvelopeEvidence,
+    pub(crate) release_store_member: Option<&'a OvenReleaseStoreMember>,
+    pub(crate) runtime_foundation: Option<&'a OvenReleaseRuntimeFoundationMember>,
+    pub(crate) runtime_closure: Option<&'a OvenReleaseRuntimeClosureMember>,
+    pub(crate) limits: OvenStoreLimits,
+    pub(crate) started: Instant,
+}
+
 /// Validate and reuse one exact committed envelope without fixture probes or a Cargo process.
 pub(crate) fn reuse_complete_loaf_envelope(
-    output: &Path,
-    scratch: &Path,
-    envelope: OvenLoafEnvelope,
-    evidence: &OvenLoafEnvelopeEvidence,
-    limits: OvenStoreLimits,
-    started: Instant,
+    input: CompleteLoafEnvelopeReuseInput<'_>,
 ) -> CliResult<Option<OvenLoafBakeReport>> {
+    let CompleteLoafEnvelopeReuseInput {
+        output,
+        scratch,
+        envelope,
+        evidence,
+        release_store_member,
+        runtime_foundation,
+        runtime_closure,
+        limits,
+        started,
+    } = input;
     let manifest_path = output.join("envelope.json");
     if !manifest_path.is_file() {
         return Ok(None);
@@ -340,10 +439,19 @@ pub(crate) fn reuse_complete_loaf_envelope(
             manifest_path.display()
         ))
     })?;
-    let expected_evidence = loaf_envelope_compatibility_map(evidence);
+    let mut expected_evidence = loaf_envelope_compatibility_map_with_release_member(evidence, release_store_member)?;
+    if let Some(member) = runtime_foundation {
+        bind_release_runtime_foundation_evidence(&mut expected_evidence, member).map_err(oven_error)?;
+    }
+    if let Some(member) = runtime_closure {
+        bind_release_runtime_closure_evidence(&mut expected_evidence, member).map_err(oven_error)?;
+    }
     if manifest.schema_version != OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION
         || manifest.envelope != loaf_envelope_name(envelope)
         || manifest.evidence != expected_evidence
+        || manifest.release_store_member.as_ref() != release_store_member
+        || manifest.runtime_foundation.as_ref() != runtime_foundation
+        || manifest.runtime_closure.as_ref() != runtime_closure
     {
         return Ok(None);
     }
@@ -381,8 +489,64 @@ pub(crate) fn reuse_complete_loaf_envelope(
             result,
         });
     }
-    let logical_bytes = reports.iter().map(|entry| entry.result.logical_bytes).sum::<u64>();
-    let physical_bytes = reports.iter().map(|entry| entry.result.physical_bytes).sum::<u64>();
+    let member_generation = output.join("generations").join(
+        manifest
+            .generation_identity
+            .strip_prefix("sha256:")
+            .unwrap_or(&manifest.generation_identity),
+    );
+    let (member_logical_bytes, member_physical_bytes) =
+        release_store_member_byte_counts(&member_generation, release_store_member, limits)?;
+    let (foundation_logical_bytes, foundation_physical_bytes) = if let Some(member) = runtime_foundation {
+        oven_rustc::loaf::prove_release_runtime_foundation_member(output, &manifest, member).map_err(oven_error)?;
+        let foundation = member_generation.join(&member.foundation_relative_path);
+        let toolchain = member_generation.join(&member.toolchain_root_relative_path);
+        let (foundation_logical, foundation_physical) = loaf_directory_byte_counts(&foundation).map_err(oven_error)?;
+        let (toolchain_logical, toolchain_physical) = loaf_directory_byte_counts(&toolchain).map_err(oven_error)?;
+        if foundation_logical > limits.max_domain_logical_bytes
+            || foundation_physical > limits.max_domain_physical_bytes
+            || toolchain_logical > limits.max_domain_logical_bytes
+            || toolchain_physical > limits.max_domain_physical_bytes
+        {
+            return Err(CliError::failure(
+                "stored runtime foundation exceeds the active compatibility-domain allowance".to_string(),
+            ));
+        }
+        (
+            foundation_logical.saturating_add(toolchain_logical),
+            foundation_physical.saturating_add(toolchain_physical),
+        )
+    } else {
+        (0, 0)
+    };
+    let (closure_logical_bytes, closure_physical_bytes) = if let Some(member) = runtime_closure {
+        oven_rustc::loaf::prove_release_runtime_closure_member(&member_generation, &manifest, member)
+            .map_err(oven_error)?;
+        let closure = member_generation.join(&member.store_relative_path);
+        let (logical, physical) = loaf_directory_byte_counts(&closure).map_err(oven_error)?;
+        if logical > limits.max_domain_logical_bytes || physical > limits.max_domain_physical_bytes {
+            return Err(CliError::failure(
+                "stored runtime closure exceeds the active compatibility-domain allowance".to_string(),
+            ));
+        }
+        (logical, physical)
+    } else {
+        (0, 0)
+    };
+    let logical_bytes = reports
+        .iter()
+        .map(|entry| entry.result.logical_bytes)
+        .sum::<u64>()
+        .saturating_add(member_logical_bytes)
+        .saturating_add(foundation_logical_bytes)
+        .saturating_add(closure_logical_bytes);
+    let physical_bytes = reports
+        .iter()
+        .map(|entry| entry.result.physical_bytes)
+        .sum::<u64>()
+        .saturating_add(member_physical_bytes)
+        .saturating_add(foundation_physical_bytes)
+        .saturating_add(closure_physical_bytes);
     if physical_bytes > limits.max_physical_bytes {
         return Err(CliError::failure(format!(
             "stored Loaf envelope uses {physical_bytes} physical bytes, exceeding its {}-byte allowance",

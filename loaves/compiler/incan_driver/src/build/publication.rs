@@ -362,6 +362,7 @@ pub fn publish_project_inspection_authority(
         kind: OvenArtifactKind::ProjectInspectionAuthority,
         payload,
         materialized_files,
+        materialized_directories: Vec::new(),
     };
     let deadline = Instant::now() + OVEN_PROJECT_OUTPUT_PUBLICATION_WAIT;
     let manifest = loop {
@@ -469,6 +470,7 @@ pub fn publish_project_output_loaf(
                 relative_path: file.output_relative_path.clone(),
             })
             .collect(),
+        materialized_directories: Vec::new(),
     };
     let deadline = Instant::now() + OVEN_PROJECT_OUTPUT_PUBLICATION_WAIT;
     let manifest = loop {

@@ -230,6 +230,7 @@ pub(crate) fn validate_runtime_unit_policy(
     unit: &OvenSelectedRustFacetUnit,
     policy: &OvenRuntimeFoundationUnit,
     artifact_owner: &str,
+    generated_owners: &BTreeSet<&str>,
     artifacts: &OvenRustcArtifactManifest,
     declared_artifacts: &BTreeMap<String, String>,
 ) -> Result<(), OvenRustcError> {
@@ -250,11 +251,19 @@ pub(crate) fn validate_runtime_unit_policy(
                     ),
                 ));
             }
-            if !artifacts.externs.iter().any(|declared| declared == artifact) {
+            // A prebuilt unit is linked from its own artifact path, so the plan need not expose it as a direct
+            // extern: a root's direct dependencies are externs, and the rest of the sealed closure is carried as
+            // supporting artifacts under the plan's dependency search paths. Either way the artifact must be one
+            // the plan declares and digests.
+            let exposed = artifacts.externs.iter().any(|declared| declared == artifact)
+                || artifacts.supporting_artifacts.iter().any(|declared| {
+                    declared.relative_path == artifact.relative_path && declared.digest == artifact.digest
+                });
+            if !exposed {
                 return Err(runtime_foundation_invalid(
                     "runtime foundation prebuilt artifact",
                     format!(
-                        "unit {} artifact {} is not exposed as a sealed direct extern",
+                        "unit {} artifact {} is neither a sealed direct extern nor a sealed supporting artifact",
                         unit.crate_name, artifact.relative_path
                     ),
                 ));
@@ -274,6 +283,10 @@ pub(crate) fn validate_runtime_unit_policy(
                     ));
                 }
             }
+            // A source record carries the publisher's unified feature set for the package, which is what Cargo
+            // resolved across every activation of it; a unit's effective features are one activation and must lie
+            // within it. The exact per-unit feature binding is the registry leaf's, checked when the leaf is bound.
+            let unit_features = unit.features.iter().collect::<BTreeSet<_>>();
             let source_matches = artifacts
                 .registry_sources
                 .iter()
@@ -281,15 +294,16 @@ pub(crate) fn validate_runtime_unit_policy(
                     source.package == unit.package
                         && source.version == unit.package_version
                         && source.source.digest == unit.source.digest
+                        && unit_features.is_subset(&source.features.iter().collect())
                 })
                 .collect::<Vec<_>>();
             let [source] = source_matches.as_slice() else {
                 return Err(runtime_foundation_invalid(
                     "runtime foundation prebuilt source",
                     format!(
-                        "unit {} must match exactly one sealed registry-source record, found {}",
-                        source_matches.len(),
-                        unit.crate_name
+                        "unit {} must match exactly one sealed registry-source record whose unified features cover its effective features, found {}",
+                        unit.crate_name,
+                        source_matches.len()
                     ),
                 ));
             };
@@ -303,7 +317,9 @@ pub(crate) fn validate_runtime_unit_policy(
                 ));
             }
             for input in &unit.generated_inputs {
-                if input.source.owner != artifact_owner {
+                // A build script's output is sealed inside the asset under its own GeneratedOutput owner, which the
+                // asset maps to the foundation root beside the artifact constituent itself.
+                if input.source.owner != artifact_owner && !generated_owners.contains(input.source.owner.as_str()) {
                     return Err(runtime_foundation_invalid(
                         "runtime foundation generated input",
                         format!(
@@ -312,11 +328,26 @@ pub(crate) fn validate_runtime_unit_policy(
                         ),
                     ));
                 }
-                if declared_artifacts.get(&input.source.path) != Some(&input.digest) {
+                let prefix = if input.source.path == "." {
+                    String::new()
+                } else {
+                    format!("{}/", input.source.path)
+                };
+                let expected = input
+                    .members
+                    .iter()
+                    .map(|member| (format!("{prefix}{}", member.path), member.digest.clone()))
+                    .collect::<BTreeMap<_, _>>();
+                let actual = declared_artifacts
+                    .iter()
+                    .filter(|(path, _)| path.starts_with(&prefix))
+                    .map(|(path, digest)| (path.clone(), digest.clone()))
+                    .collect::<BTreeMap<_, _>>();
+                if actual != expected {
                     return Err(runtime_foundation_invalid(
                         "runtime foundation generated input",
                         format!(
-                            "unit {} names generated input {} absent from the sealed artifact manifest",
+                            "unit {} names generated input {} whose complete member catalog differs from the sealed artifact manifest",
                             unit.crate_name, input.name
                         ),
                     ));

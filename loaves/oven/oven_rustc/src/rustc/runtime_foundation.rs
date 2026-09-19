@@ -263,7 +263,6 @@ impl OvenRuntimeFoundation {
         if artifacts.intent.target != expected_intent.target
             || artifacts.intent.toolchain != expected_intent.toolchain
             || artifacts.intent.profile != expected_intent.profile
-            || artifacts.intent.features != expected_intent.features
         {
             return Err(runtime_foundation_invalid(
                 "runtime foundation artifact intent",
@@ -272,6 +271,13 @@ impl OvenRuntimeFoundation {
         }
         artifacts.validate_shape(&artifacts.intent)?;
         let declared_artifacts = artifacts.declared_artifact_digests()?;
+        let generated_owners = selected_graph
+            .graph()
+            .owners
+            .iter()
+            .filter(|owner| owner.kind == OvenSelectedRustFacetOwnerKind::GeneratedOutput)
+            .map(|owner| owner.identity.as_str())
+            .collect::<BTreeSet<_>>();
         let graph_units = selected_graph
             .graph()
             .units
@@ -297,7 +303,14 @@ impl OvenRuntimeFoundation {
                     ),
                 ));
             }
-            validate_runtime_unit_policy(unit, &policy, &artifact_owner, &artifacts, &declared_artifacts)?;
+            validate_runtime_unit_policy(
+                unit,
+                &policy,
+                &artifact_owner,
+                &generated_owners,
+                &artifacts,
+                &declared_artifacts,
+            )?;
             if policies.insert(policy.selected_identity.clone(), policy).is_some() {
                 return Err(runtime_foundation_invalid(
                     "runtime foundation units",
@@ -673,17 +686,27 @@ mod tests {
     use crate::rustc::{
         OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION,
         OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact,
-        OvenSelectedRustFacetDependency, OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetIntent,
-        OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath,
-        OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource,
-        OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec, selected_graph_sha256,
-        selected_graph_source_digest, selected_graph_unit_identity,
+        OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetDependency, OvenSelectedRustFacetGeneratedInput,
+        OvenSelectedRustFacetIntent, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
+        OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection,
+        OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec,
+        selected_graph_sha256, selected_graph_source_digest, selected_graph_unit_identity,
     };
     use crate::rustc::{
         OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetUnit,
         OvenSelectedRustFacetUnitRole,
     };
-    use oven_store::OvenBuildIntent;
+    use oven_store::{OvenBuildIntent, digest_bytes, digest_source_tree};
+
+    use crate::loaf::{
+        OVEN_LOAF_ENVELOPE_LOCK_FILE, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION,
+        OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL, OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION, OvenLoaf,
+        OvenLoafAccounting, OvenLoafCompatibility, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember,
+        OvenLoafMemberRole, OvenLoafProvenance, OvenReleaseRuntimeFoundationMember,
+        acquire_committed_release_runtime_foundation, acquire_exclusive_loaf_generation_lock,
+        bind_release_runtime_foundation_evidence, validate_stored_loaf,
+    };
+    use crate::loaf_mirror::{LoafEnvelopeExpectation, LoafMemberExpectation, import_loaf_envelope_from_mirrors};
 
     const DIRECT_COMPILER: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -752,24 +775,34 @@ mod tests {
     }
 
     /// Construct the selected build context shared by every fixture unit.
+    fn cfg_snapshot(architecture: &str, operating_system: &str) -> OvenSelectedRustFacetCfgSnapshot {
+        OvenSelectedRustFacetCfgSnapshot {
+            flags: vec!["unix".to_string()],
+            values: BTreeMap::from([
+                ("target_arch".to_string(), vec![architecture.to_string()]),
+                ("target_os".to_string(), vec![operating_system.to_string()]),
+            ]),
+        }
+    }
+
     fn selection() -> OvenSelectedRustFacetSelection {
         OvenSelectedRustFacetSelection {
             intent: OvenSelectedRustFacetIntent {
                 target: "x86_64-unknown-linux-gnu".to_string(),
                 toolchain: "rustc 1.85.0 (fixture)".to_string(),
                 profile: "debug".to_string(),
-                features: vec!["async".to_string(), "json".to_string(), "ordinal".to_string()],
             },
             host: "aarch64-apple-darwin".to_string(),
+            host_cfg: cfg_snapshot("aarch64", "macos"),
+            target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
-            default_features: true,
             toolchain_version: "1.85.0".to_string(),
-            target_spec: OvenSelectedRustFacetTargetSpec {
+            target_spec: OvenSelectedRustFacetTargetSpec::Custom {
                 source: OvenSelectedRustFacetPath {
                     owner: toolchain_owner(),
                     path: "target-spec.json".to_string(),
                 },
-                digest: selected_graph_sha256(b"target spec"),
+                digest: selected_graph_sha256(br#"{"arch":"x86_64","os":"linux","llvm-target":"x86_64-unknown-linux-gnu","target-pointer-width":"64"}"#),
             },
         }
     }
@@ -804,6 +837,7 @@ mod tests {
             }
         };
         let mut unit = OvenSelectedRustFacetUnit {
+            sysroot_externs: Vec::new(),
             identity: String::new(),
             package: package.to_string(),
             package_version: "1.0.0".to_string(),
@@ -822,7 +856,6 @@ mod tests {
             root_module: "src/lib.rs".to_string(),
             source_members: members,
             features: Vec::new(),
-            default_features: false,
             cfg: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
@@ -832,6 +865,7 @@ mod tests {
             exclude_dirs: Vec::new(),
             dependencies,
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         unit.identity = selected_graph_unit_identity(selection, &unit)?;
         Ok(unit)
@@ -884,7 +918,7 @@ mod tests {
                 target: selection.intent.target.clone(),
                 toolchain: selection.intent.toolchain.clone(),
                 profile: selection.intent.profile.clone(),
-                features: selection.intent.features.clone(),
+                features: Vec::new(),
             },
             dependency_search_paths: vec!["deps".to_string()],
             native_search_paths: Vec::new(),
@@ -898,6 +932,9 @@ mod tests {
             ],
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: vec![OvenRustcRegistryLeaf {
+                domain: Default::default(),
+                crate_kind: Default::default(),
+                selected_unit_identity: None,
                 package: "serde".to_string(),
                 version: "1.0.0".to_string(),
                 crate_name: "serde".to_string(),
@@ -953,6 +990,8 @@ mod tests {
             OvenSelectedRustFacetCrateKind::Rlib,
             Vec::new(),
         )?;
+        let generated_members = vec![source_member("private.rs", b"serde private.rs")];
+        let generated_digest = selected_graph_source_digest(&generated_members)?;
         bind_source_root(
             &selection,
             &mut serde,
@@ -961,9 +1000,10 @@ mod tests {
                 name: "serde-private".to_string(),
                 source: OvenSelectedRustFacetPath {
                     owner: foundation_owner(),
-                    path: "generated/serde/private.rs".to_string(),
+                    path: "generated/serde".to_string(),
                 },
-                digest: selected_graph_sha256(b"serde private.rs"),
+                digest: generated_digest,
+                members: generated_members,
             }],
         )?;
         let mut serde_derive = unit(
@@ -1066,10 +1106,44 @@ mod tests {
                     },
                 ],
                 units: vec![serde, serde_derive, core, stdlib.clone()],
-                exposed_roots: BTreeMap::from([("incan_std_core".to_string(), stdlib.identity)]),
+                exposed_roots: BTreeMap::from([(
+                    "incan_std_core".to_string(),
+                    crate::rustc::OvenSelectedRustFacetRoot {
+                        unit: stdlib.identity,
+                        requested_features: Vec::new(),
+                        default_features: true,
+                        intent_owner: toolchain_owner(),
+                    },
+                )]),
             },
             units,
         })
+    }
+
+    #[test]
+    fn foundation_refuses_registry_features_that_disagree_with_selected_unit() -> Result<(), Box<dyn std::error::Error>>
+    {
+        // The source record is the publisher's unified feature set; a unit may use fewer, never more.
+        let mut wider = foundation()?;
+        let source = wider
+            .artifacts
+            .registry_sources
+            .iter_mut()
+            .find(|source| source.package == "serde")
+            .ok_or("fixture lost serde registry source")?;
+        source.features = vec!["derive".to_string()];
+        wider.validated()?;
+
+        let mut narrower = foundation()?;
+        edit_serde_unit(&mut narrower, |unit| unit.features = vec!["derive".to_string()])?;
+        match narrower.validated() {
+            Err(OvenRustcError::InvalidInput { field, .. }) => {
+                assert_eq!(field, "runtime foundation prebuilt source");
+            }
+            Err(error) => return Err(format!("unexpected refusal: {error}").into()),
+            Ok(_) => return Err("a unit feature outside the unified set must refuse".into()),
+        }
+        Ok(())
     }
 
     /// Build exhaustive package source inventories; build.rs remains warning-only source evidence.
@@ -1149,7 +1223,11 @@ mod tests {
         write_fixture_file(foundation_root, "generated/serde/private.rs", b"serde private.rs")?;
         write_fixture_file(foundation_root, "deps/libserde.rlib", b"serde rlib")?;
         write_fixture_file(foundation_root, "deps/libserde_derive.dylib", b"serde derive dylib")?;
-        write_fixture_file(toolchain_root, "target-spec.json", b"target spec")?;
+        write_fixture_file(
+            toolchain_root,
+            "target-spec.json",
+            br#"{"arch":"x86_64","os":"linux","llvm-target":"x86_64-unknown-linux-gnu","target-pointer-width":"64"}"#,
+        )?;
         write_fixture_file(
             toolchain_root,
             "compiler/incan_lang/Cargo.toml",
@@ -1305,6 +1383,103 @@ mod tests {
         Ok(())
     }
 
+    /// A transitive prebuilt unit is not one of the root's direct externs; the plan carries its artifact as a
+    /// sealed supporting artifact under the dependency search path, and that is enough to link it.
+    #[test]
+    fn runtime_foundation_admits_a_prebuilt_artifact_sealed_as_supporting() -> Result<(), Box<dyn std::error::Error>> {
+        let mut foundation = foundation()?;
+        let serde = foundation
+            .artifacts
+            .externs
+            .iter()
+            .position(|artifact| artifact.crate_name == "serde")
+            .ok_or("fixture exposes serde as a direct extern")?;
+        let artifact = foundation.artifacts.externs.remove(serde);
+        foundation
+            .artifacts
+            .supporting_artifacts
+            .push(OvenRustcSupportingArtifact {
+                relative_path: artifact.relative_path.clone(),
+                digest: artifact.digest.clone(),
+            });
+        foundation.validated()?;
+        Ok(())
+    }
+
+    /// Apply `edit` to the fixture's serde unit and re-derive every identity that depends on the changed unit.
+    fn edit_serde_unit(
+        foundation: &mut OvenRuntimeFoundation,
+        edit: impl FnOnce(&mut OvenSelectedRustFacetUnit),
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let graph = &mut foundation.selected_graph;
+        let index = graph
+            .units
+            .iter()
+            .position(|unit| unit.crate_name == "serde")
+            .ok_or("fixture lost its serde unit")?;
+        edit(&mut graph.units[index]);
+        // A unit's identity covers its edges, so dependents change too; settle them in as many passes as it takes.
+        loop {
+            let mut renamed = Vec::new();
+            for index in 0..graph.units.len() {
+                let identity = selected_graph_unit_identity(&graph.selection, &graph.units[index])?;
+                if graph.units[index].identity != identity {
+                    renamed.push((graph.units[index].identity.clone(), identity.clone()));
+                    graph.units[index].identity = identity;
+                }
+            }
+            if renamed.is_empty() {
+                break;
+            }
+            for (previous, identity) in renamed {
+                for unit in &mut graph.units {
+                    for dependency in &mut unit.dependencies {
+                        if dependency.unit == previous {
+                            dependency.unit = identity.clone();
+                        }
+                    }
+                }
+                for root in graph.exposed_roots.values_mut() {
+                    if root.unit == previous {
+                        root.unit = identity.clone();
+                    }
+                }
+                for policy in &mut foundation.units {
+                    if policy.selected_identity == previous {
+                        policy.selected_identity = identity.clone();
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A build script's output is sealed under its own GeneratedOutput owner, which the asset maps to the
+    /// foundation root; an owner the graph does not name is still refused.
+    #[test]
+    fn runtime_foundation_admits_generated_inputs_under_a_generated_output_owner()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut foundation = foundation()?;
+        let generated_owner = selected_graph_sha256(b"generated-output\0generated/serde\0digest");
+        edit_serde_unit(&mut foundation, |unit| {
+            for input in &mut unit.generated_inputs {
+                input.source.owner = generated_owner.clone();
+            }
+        })?;
+        // The graph itself refuses a path whose owner its table does not name.
+        assert!(foundation.clone().validated().is_err());
+        foundation.selected_graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: generated_owner,
+            kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+        });
+        foundation
+            .selected_graph
+            .owners
+            .sort_by(|left, right| left.identity.cmp(&right.identity));
+        foundation.validated()?;
+        Ok(())
+    }
+
     /// Build-script output used by a prebuilt crate must remain a digest-verified member of the sealed foundation.
     #[test]
     fn runtime_foundation_refuses_unsealed_generated_input() -> Result<(), Box<dyn std::error::Error>> {
@@ -1320,6 +1495,36 @@ mod tests {
                 ..
             })
         ));
+        Ok(())
+    }
+
+    /// A generated tree must match the sealed manifest in both membership and per-file bytes.
+    #[test]
+    fn runtime_foundation_refuses_extra_or_changed_generated_members() -> Result<(), Box<dyn std::error::Error>> {
+        let baseline = foundation()?;
+        baseline.clone().validated()?;
+        let mut extra = baseline.clone();
+        extra.artifacts.supporting_artifacts.push(OvenRustcSupportingArtifact {
+            relative_path: "generated/serde/undeclared.rs".to_string(),
+            digest: selected_graph_sha256(b"undeclared"),
+        });
+        let mut changed = baseline;
+        let member = changed
+            .artifacts
+            .supporting_artifacts
+            .iter_mut()
+            .find(|artifact| artifact.relative_path == "generated/serde/private.rs")
+            .ok_or("fixture lost its generated member")?;
+        member.digest = selected_graph_sha256(b"changed");
+        for candidate in [extra, changed] {
+            assert!(matches!(
+                candidate.validated(),
+                Err(OvenRustcError::InvalidInput {
+                    field: "runtime foundation generated input",
+                    ..
+                })
+            ));
+        }
         Ok(())
     }
 
@@ -1453,6 +1658,251 @@ mod tests {
             fs::read_dir(install_root.path())?.collect::<Result<Vec<_>, _>>()?.len(),
             1,
             "a completed asset leaves no visible staging sibling"
+        );
+        Ok(())
+    }
+
+    /// A generated input sealed under its own GeneratedOutput owner is published into the asset like one the
+    /// constituent owns directly, so the asset can materialize it again after mirroring.
+    #[test]
+    fn runtime_foundation_asset_publisher_carries_generated_output_owned_inputs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut foundation = foundation()?;
+        let generated_owner = selected_graph_sha256(b"generated-output\0generated/serde\0digest");
+        edit_serde_unit(&mut foundation, |unit| {
+            for input in &mut unit.generated_inputs {
+                input.source.owner = generated_owner.clone();
+            }
+        })?;
+        foundation.selected_graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: generated_owner,
+            kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+        });
+        foundation
+            .selected_graph
+            .owners
+            .sort_by(|left, right| left.identity.cmp(&right.identity));
+        let asset = OvenRuntimeFoundationAsset::sealed(foundation.clone(), source_inventories(&foundation)?)?;
+        let source_root = tempfile::tempdir()?;
+        let toolchain_root = tempfile::tempdir()?;
+        let install_root = tempfile::tempdir()?;
+        write_materialization_fixture(source_root.path(), toolchain_root.path())?;
+        let destination = install_root.path().join("runtime-foundation");
+
+        let admitted =
+            publish_runtime_foundation_asset(asset.clone(), source_root.path(), toolchain_root.path(), &destination)?;
+        assert_eq!(admitted.foundation_identity(), asset.foundation_identity);
+        assert!(destination.join("generated/serde/private.rs").is_file());
+        let _ = admitted.materialize_asset_for_publication()?;
+        Ok(())
+    }
+
+    /// The release carrier survives mirror admission and keeps the selected generation locked for its held lifetime.
+    #[test]
+    fn release_carrier_mirrors_and_acquires_a_real_runtime_foundation() -> Result<(), Box<dyn std::error::Error>> {
+        let mirror = tempfile::tempdir()?;
+        let generation_identity = digest_bytes(b"runtime foundation generation");
+        let generation_relative = Path::new("generations").join(
+            generation_identity
+                .strip_prefix("sha256:")
+                .ok_or("fixture generation identity is not canonical")?,
+        );
+        let generation = mirror.path().join(&generation_relative);
+        let staged_compiled_root = generation.join(".compiled-loaf-staging");
+        let foundation_source = tempfile::tempdir()?;
+        let compiled_toolchain = tempfile::tempdir()?;
+        let toolchain_root = generation.join("toolchain");
+        fs::create_dir_all(&staged_compiled_root)?;
+        fs::create_dir_all(&toolchain_root)?;
+        write_materialization_fixture(foundation_source.path(), &toolchain_root)?;
+        fs::create_dir_all(toolchain_root.join("bin"))?;
+        fs::write(toolchain_root.join("bin/rustc"), b"rustc")?;
+        write_foundation_materialization_fixture(&staged_compiled_root, compiled_toolchain.path())?;
+
+        let mut foundation = foundation()?;
+        for (relative_path, bytes) in [
+            ("registry-sources/serde-1.0.0/src/lib.rs", fixture_source_bytes("serde")),
+            (
+                "registry-sources/serde_derive-1.0.0/src/lib.rs",
+                fixture_source_bytes("serde_derive"),
+            ),
+        ] {
+            foundation
+                .artifacts
+                .supporting_artifacts
+                .push(OvenRustcSupportingArtifact {
+                    relative_path: relative_path.to_string(),
+                    digest: selected_graph_sha256(bytes.as_bytes()),
+                });
+        }
+        foundation
+            .artifacts
+            .supporting_artifacts
+            .sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+        let asset = OvenRuntimeFoundationAsset::sealed(foundation.clone(), source_inventories(&foundation)?)?;
+        let plan = asset.foundation.artifacts.clone();
+        let (payload_logical_bytes, payload_physical_bytes) =
+            crate::loaf::loaf_directory_byte_counts(&staged_compiled_root)?;
+        let loaf = OvenLoaf {
+            schema_version: OVEN_LOAF_SCHEMA_VERSION,
+            build_unit_identity: digest_bytes(b"runtime foundation build unit"),
+            provenance: OvenLoafProvenance {
+                compiler_version: "fixture".to_string(),
+                rust_toolchain: "fixture".to_string(),
+                sdk_provider_codegen_revision: "fixture".to_string(),
+                baker: "fixture".to_string(),
+            },
+            accounting: OvenLoafAccounting {
+                payload_logical_bytes,
+                payload_physical_bytes,
+            },
+            compatibility: OvenLoafCompatibility::default(),
+            registry_leaves: plan.registry_leaves.clone(),
+            plan: plan.clone(),
+        };
+        let loaf_path = staged_compiled_root.join("loaf.json");
+        let loaf_bytes = serde_json::to_vec(&loaf)?;
+        fs::write(&loaf_path, &loaf_bytes)?;
+        let loaf_identity = digest_bytes(&loaf_bytes);
+        let plan_identity = digest_bytes(&serde_json::to_vec(&plan)?);
+        let compiled_relative = format!(
+            "{}.loaf",
+            loaf_identity
+                .strip_prefix("sha256:")
+                .ok_or("fixture Loaf identity is not canonical")?
+        );
+        let compiled_root = generation.join(&compiled_relative);
+        fs::rename(&staged_compiled_root, &compiled_root)?;
+        let (compiled_logical_bytes, compiled_physical_bytes) =
+            crate::loaf::loaf_directory_byte_counts(&compiled_root)?;
+        let validated = validate_stored_loaf(&compiled_root.join("loaf.json"), &loaf.build_unit_identity)?;
+        assert_eq!(validated.loaf_identity, loaf_identity);
+        assert_eq!(validated.plan_identity, plan_identity);
+        for source in &plan.registry_sources {
+            assert_eq!(
+                digest_source_tree(&compiled_root.join(&source.source.relative_root))?,
+                source.source.digest,
+                "compiled Loaf must carry the complete selected source tree for {}",
+                source.package
+            );
+        }
+        let foundation_path = generation.join("runtime-foundation");
+        let admitted = publish_runtime_foundation_asset(
+            asset.clone(),
+            foundation_source.path(),
+            &toolchain_root,
+            &foundation_path,
+        )?;
+        assert_eq!(admitted.foundation_identity(), asset.foundation_identity);
+
+        let envelope_member = OvenLoafEnvelopeMember {
+            label: "runtime-foundation-fixture".to_string(),
+            profile: "release".to_string(),
+            action: "build".to_string(),
+            role: OvenLoafMemberRole::CompiledClosure,
+            build_unit_identity: loaf.build_unit_identity.clone(),
+            loaf_identity: loaf_identity.clone(),
+            plan_identity: plan_identity.clone(),
+            logical_bytes: compiled_logical_bytes,
+            physical_bytes: compiled_physical_bytes,
+            path: generation_relative.join(compiled_relative).join("loaf.json"),
+        };
+        let mut toolchain_paths = Vec::new();
+        crate::loaf::collect_regular_member_paths(&toolchain_root, &toolchain_root, &mut toolchain_paths)?;
+        let toolchain_members = toolchain_paths
+            .into_iter()
+            .map(|relative_path| {
+                let digest = digest_bytes(&fs::read(toolchain_root.join(&relative_path))?);
+                Ok(crate::loaf::OvenReleaseToolchainMember { relative_path, digest })
+            })
+            .collect::<Result<Vec<_>, std::io::Error>>()?;
+        let runtime_member = OvenReleaseRuntimeFoundationMember {
+            schema_version: OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION,
+            label: OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL.to_string(),
+            foundation_relative_path: "runtime-foundation".into(),
+            foundation_identity: asset.foundation_identity.clone(),
+            compiled_loaf_identity: loaf_identity,
+            compiled_plan_identity: plan_identity,
+            toolchain_owner_identity: toolchain_owner(),
+            compiler_closure_identity: asset.foundation.compiler_closure_digest.clone(),
+            toolchain_root_relative_path: "toolchain".into(),
+            toolchain_members,
+        };
+        let mut evidence = BTreeMap::new();
+        bind_release_runtime_foundation_evidence(&mut evidence, &runtime_member)?;
+        let manifest = OvenLoafEnvelopeManifest {
+            schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
+            envelope: "release".to_string(),
+            generation_identity: generation_identity.clone(),
+            evidence: evidence.clone(),
+            loafs: vec![envelope_member],
+            release_store_member: None,
+            runtime_foundation: Some(runtime_member.clone()),
+            runtime_closure: None,
+        };
+        fs::write(mirror.path().join("envelope.json"), serde_json::to_vec(&manifest)?)?;
+        drop(acquire_exclusive_loaf_generation_lock(mirror.path())?);
+
+        let output = tempfile::tempdir()?;
+        let scratch = tempfile::tempdir_in(output.path())?;
+        let expected_members = [LoafMemberExpectation {
+            label: "runtime-foundation-fixture".to_string(),
+            profile: "release".to_string(),
+            action: "build".to_string(),
+            role: OvenLoafMemberRole::CompiledClosure,
+        }];
+        let publication_lock = acquire_exclusive_loaf_generation_lock(output.path())?;
+        import_loaf_envelope_from_mirrors(
+            output.path(),
+            scratch.path(),
+            &LoafEnvelopeExpectation {
+                schema_version: OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION,
+                envelope: "release",
+                generation_identity: &generation_identity,
+                evidence: &evidence,
+                members: &expected_members,
+                release_store_member: None,
+                runtime_foundation: Some(&runtime_member),
+                runtime_closure: None,
+            },
+            &[mirror.path().to_path_buf()],
+        )
+        .map_err(|error| format!("mirror import failed: {error}"))?;
+        drop(publication_lock);
+        let held =
+            acquire_committed_release_runtime_foundation(output.path(), OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL)?
+                .ok_or("runtime foundation was not acquired")?;
+        assert_eq!(held.asset.foundation_identity(), asset.foundation_identity);
+        assert_eq!(
+            held.compiler.identity(),
+            held.asset.foundation().compiler_closure_digest()
+        );
+        let exclusive = fs::File::open(output.path().join(OVEN_LOAF_ENVELOPE_LOCK_FILE))?;
+        assert!(matches!(exclusive.try_lock(), Err(fs::TryLockError::WouldBlock)));
+        drop(held);
+        exclusive.try_lock()?;
+        drop(exclusive);
+
+        fs::write(
+            output.path().join(&generation_relative).join("toolchain/bin/rustc"),
+            b"tampered",
+        )?;
+        assert!(
+            acquire_committed_release_runtime_foundation(output.path(), OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL)
+                .is_err()
+        );
+
+        let descriptor_path = output
+            .path()
+            .join(&generation_relative)
+            .join("runtime-foundation")
+            .join(OVEN_RUNTIME_FOUNDATION_ASSET_FILENAME);
+        let mut tampered: OvenRuntimeFoundationAsset = serde_json::from_slice(&fs::read(&descriptor_path)?)?;
+        tampered.foundation_identity = digest_bytes(b"tampered foundation identity");
+        fs::write(&descriptor_path, serde_json::to_vec(&tampered)?)?;
+        assert!(
+            acquire_committed_release_runtime_foundation(output.path(), OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL,)
+                .is_err()
         );
         Ok(())
     }

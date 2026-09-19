@@ -343,7 +343,12 @@ pub fn select_sealed_registry_leaf<'a>(
         .iter()
         .filter_map(|entry| {
             let leaf = &entry.leaf;
-            if leaf.package != package_name {
+            // A consumer's `--extern` names a target library. Host libraries and procedural macros are sealed
+            // beside it for the runtime foundation; they are not what a registry dependency edge selects here.
+            if leaf.package != package_name
+                || leaf.domain != super::OvenRustcRegistryLeafDomain::Target
+                || leaf.crate_kind != super::OvenRustcRegistryLeafKind::Rlib
+            {
                 return None;
             }
             let version = Version::parse(&leaf.version).ok()?;

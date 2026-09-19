@@ -199,6 +199,12 @@ impl OvenProviderHooks for NoProviderHooks {
 
 /// Current wire format for persisted Oven receipts.
 pub const OVEN_RECEIPT_SCHEMA_VERSION: u32 = 3;
+
+/// Build-unit input key that binds one compiler-release root-intent authority to its final receipt.
+pub const OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT: &str = "compiler-support-root-intent";
+/// Build-unit input key that binds the compatibility publisher's selected build-script closure to its capture
+/// receipt, from which the final receipt above is derived.
+pub const OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_BUILD_UNIT_INPUT: &str = "legacy-cargo-build-script-closure";
 /// Compiler-owned, project-relative destination for a default Oven receipt.
 pub const DEFAULT_RECEIPT_RELATIVE_PATH: &str = ".incan/oven/receipt.json";
 
@@ -601,6 +607,9 @@ pub enum OvenError {
     /// A requested receipt transformation named a build-unit input that was not present.
     #[error("Oven receipt has no build-unit input `{input}`")]
     MissingBuildUnitInput { input: String },
+    /// A typed receipt transition would replace an identity input it must add exactly once.
+    #[error("Oven receipt already has build-unit input `{input}`")]
+    ExistingBuildUnitInput { input: String },
     /// A generated source input could not be read or did not satisfy the Alpha regular-file closure rules.
     #[error("invalid Oven generated source {path}: {message}")]
     InvalidGeneratedSource { path: PathBuf, message: String },
@@ -778,6 +787,47 @@ pub fn receipt_with_build_unit_input(
         &selected.sources.build_unit_inputs,
     )?;
     Ok(selected)
+}
+
+/// Derive the final authority receipt after one capture-only compiler-release transaction.
+///
+/// The capture receipt must already verify and must not yet carry compiler-release root intent. This method preserves
+/// its complete project, source, intent, and compatibility evidence, adds exactly the canonical root-intent digest,
+/// then recomputes and verifies both identities. It does not authorize any artifact produced by the capture-only
+/// transaction under the returned receipt; the caller must publish final artifacts only after this transition.
+pub fn receipt_with_compiler_support_root_intent(
+    capture_receipt: &OvenReceipt,
+    root_intent_digest: impl AsRef<str>,
+) -> Result<OvenReceipt, OvenError> {
+    capture_receipt.verify_identity()?;
+    let digest = normalized_value(root_intent_digest.as_ref(), "compiler support root-intent digest")?;
+    if capture_receipt
+        .sources
+        .build_unit_inputs
+        .contains_key(OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT)
+    {
+        return Err(OvenError::ExistingBuildUnitInput {
+            input: OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT.to_string(),
+        });
+    }
+    let mut final_receipt = capture_receipt.clone();
+    final_receipt
+        .sources
+        .build_unit_inputs
+        .insert(OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT.to_string(), digest);
+    final_receipt.identity = receipt_identity(
+        &final_receipt.project,
+        &final_receipt.sources,
+        &final_receipt.intent,
+        &final_receipt.compatibility,
+    )?;
+    final_receipt.build_unit_identity = build_unit_identity(
+        &final_receipt.intent,
+        &final_receipt.compatibility,
+        &final_receipt.sources.build_unit_inputs,
+    )?;
+    final_receipt.verify_identity()?;
+    Ok(final_receipt)
 }
 
 /// Derive a new complete receipt with one selected build-unit input removed.
@@ -1690,10 +1740,12 @@ mod tests {
     use oven_model::manifest::{DependencySource, DependencySpec};
 
     use super::{
-        OvenCompilerSuiteRequest, OvenGeneratedProjectRequest, OvenImportRequest, OvenProviderHookError,
-        OvenProviderHooks, OvenReceipt, default_receipt_path, digest_bytes, generated_project_source_evidence,
-        import_frozen_project, receipt_generated_project, receipt_generated_project_with_source_evidence,
-        receipt_native_compiler_suite, receipt_with_build_unit_input, receipt_without_build_unit_input, write_receipt,
+        OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT, OvenCompilerSuiteRequest, OvenError,
+        OvenGeneratedProjectRequest, OvenImportRequest, OvenProviderHookError, OvenProviderHooks, OvenReceipt,
+        default_receipt_path, digest_bytes, generated_project_source_evidence, import_frozen_project,
+        receipt_generated_project, receipt_generated_project_with_source_evidence, receipt_native_compiler_suite,
+        receipt_with_build_unit_input, receipt_with_compiler_support_root_intent, receipt_without_build_unit_input,
+        write_receipt,
     };
 
     /// A hook that fails the way a compiler would, with its own typed error behind the hook error.
@@ -2037,6 +2089,59 @@ mod tests {
             Some("sha256:reselected")
         );
         reselected.verify_identity()?;
+        Ok(())
+    }
+
+    #[test]
+    fn compiler_support_final_receipt_adds_only_its_sealed_root_intent() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        write_generated_source_closure(project.path(), "fn main() {}\n")?;
+        let capture = receipt_generated_project(
+            &generated_request(project.path()).with_build_unit_input("runtime-lock", "sha256:runtime"),
+        )?;
+        let final_receipt = receipt_with_compiler_support_root_intent(&capture, "sha256:compiler-root-intent")?;
+
+        assert_ne!(final_receipt.identity, capture.identity);
+        assert_ne!(final_receipt.build_unit_identity, capture.build_unit_identity);
+        assert_eq!(final_receipt.project, capture.project);
+        assert_eq!(final_receipt.intent, capture.intent);
+        assert_eq!(final_receipt.compatibility, capture.compatibility);
+        let mut expected_sources = capture.sources.clone();
+        expected_sources.build_unit_inputs.insert(
+            OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT.to_string(),
+            "sha256:compiler-root-intent".to_string(),
+        );
+        assert_eq!(final_receipt.sources, expected_sources);
+        assert_eq!(
+            final_receipt.sources.supplemental_digests,
+            capture.sources.supplemental_digests
+        );
+        assert_eq!(
+            final_receipt.sources.build_unit_inputs.get("runtime-lock"),
+            Some(&"sha256:runtime".to_string())
+        );
+        assert_eq!(
+            final_receipt
+                .sources
+                .build_unit_inputs
+                .get(OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT),
+            Some(&"sha256:compiler-root-intent".to_string())
+        );
+        final_receipt.verify_identity()?;
+        assert!(matches!(
+            receipt_with_compiler_support_root_intent(&final_receipt, "sha256:other"),
+            Err(OvenError::ExistingBuildUnitInput { .. })
+        ));
+
+        let mut tampered_capture = capture;
+        tampered_capture
+            .sources
+            .build_unit_inputs
+            .insert("unsealed-change".to_string(), "sha256:changed".to_string());
+        assert!(matches!(
+            receipt_with_compiler_support_root_intent(&tampered_capture, "sha256:other"),
+            Err(OvenError::ReceiptIdentityMismatch { .. }) | Err(OvenError::BuildUnitIdentityMismatch { .. })
+        ));
         Ok(())
     }
 

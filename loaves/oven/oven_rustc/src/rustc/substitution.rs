@@ -38,6 +38,8 @@ const SUBSTITUTABLE_CRATE_TYPES: &[&str] = &["lib", "rlib"];
 /// One `rustc` invocation as Cargo issues it, reduced to the facts that identify the unit it compiles.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RustcUnitRequest {
+    /// The single positional Rust source input passed to rustc.
+    pub source: PathBuf,
     /// `--crate-name`, the identifier rustc will embed in the artifact.
     pub crate_name: String,
     /// `CARGO_PKG_NAME`, the package the unit belongs to.
@@ -75,6 +77,8 @@ pub enum RustcUnitRequestError {
     DanglingOption(String),
     /// A value was not valid UTF-8 where the request needs to read it.
     NotUtf8(String),
+    /// More than one positional Rust source input was present.
+    MultipleSources,
 }
 
 impl std::fmt::Display for RustcUnitRequestError {
@@ -83,6 +87,7 @@ impl std::fmt::Display for RustcUnitRequestError {
             Self::Missing(what) => write!(f, "rustc invocation carries no {what}"),
             Self::DanglingOption(option) => write!(f, "rustc option `{option}` has no value"),
             Self::NotUtf8(option) => write!(f, "rustc option `{option}` has a value that is not valid UTF-8"),
+            Self::MultipleSources => write!(f, "rustc invocation carries multiple Rust source inputs"),
         }
     }
 }
@@ -102,6 +107,7 @@ impl RustcUnitRequest {
         E: Fn(&str) -> Option<OsString>,
     {
         let mut crate_name = None;
+        let mut source = None;
         let mut features = BTreeSet::new();
         let mut edition = None;
         let mut crate_types = BTreeSet::new();
@@ -185,6 +191,11 @@ impl RustcUnitRequest {
                             "extra-filename" => extra_filename = Some(setting.to_string()),
                             _ => {}
                         }
+                    } else if !arg.starts_with('-') && arg.ends_with(".rs") {
+                        if source.is_some() {
+                            return Err(RustcUnitRequestError::MultipleSources);
+                        }
+                        source = Some(PathBuf::from(arg));
                     }
                 }
             }
@@ -197,10 +208,15 @@ impl RustcUnitRequest {
                 .map_err(|_| RustcUnitRequestError::NotUtf8(name.to_string()))
         };
 
+        let crate_name = crate_name.ok_or(RustcUnitRequestError::Missing("--crate-name"))?;
+        let package = env_string("CARGO_PKG_NAME")?;
+        let version = env_string("CARGO_PKG_VERSION")?;
+        let source = source.ok_or(RustcUnitRequestError::Missing("Rust source input"))?;
         Ok(Self {
-            crate_name: crate_name.ok_or(RustcUnitRequestError::Missing("--crate-name"))?,
-            package: env_string("CARGO_PKG_NAME")?,
-            version: env_string("CARGO_PKG_VERSION")?,
+            source,
+            crate_name,
+            package,
+            version,
             features,
             edition,
             crate_types,
@@ -466,6 +482,7 @@ mod tests {
     fn parses_a_cargo_issued_invocation_in_both_option_spellings() -> TestResult {
         let request = syn_request()?;
         assert_eq!(request.crate_name, "syn");
+        assert_eq!(request.source, PathBuf::from("/registry/syn-2.0.117/src/lib.rs"));
         assert_eq!(request.package, "syn");
         assert_eq!(request.version, "2.0.117");
         assert_eq!(request.edition.as_deref(), Some("2021"));
@@ -512,6 +529,16 @@ mod tests {
             dangling,
             Err(RustcUnitRequestError::DanglingOption("--crate-name".to_string()))
         );
+        let multiple_sources = RustcUnitRequest::parse(
+            &[
+                "--crate-name",
+                "syn",
+                "/registry/syn/src/lib.rs",
+                "/registry/syn/src/other.rs",
+            ],
+            env_with(&[("CARGO_PKG_NAME", "syn"), ("CARGO_PKG_VERSION", "2.0.117")]),
+        );
+        assert_eq!(multiple_sources, Err(RustcUnitRequestError::MultipleSources));
     }
 
     #[test]
@@ -605,6 +632,7 @@ mod tests {
             &[
                 "--crate-name",
                 "unicode_ident",
+                "/registry/unicode-ident-1.0.18/src/lib.rs",
                 "--crate-type",
                 "lib",
                 "-C",

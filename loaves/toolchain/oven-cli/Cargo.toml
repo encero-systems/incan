@@ -39,6 +39,7 @@ rust_inspect = { workspace = true, optional = true }
 clap = { version = "4.4", features = ["derive"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+rustix = { version = "1.1.4", features = ["fs"] }
 tempfile = "3"
 toml = "0.9"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

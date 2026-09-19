@@ -316,6 +316,9 @@ pub fn copy_regular_directory_tree(
 }
 
 /// Enumerate one publisher-owned directory as immutable files below a safe artifact prefix.
+///
+/// The returned files are ordered by their complete portable relative path. Sorting each directory before recursion
+/// is insufficient: a root file such as `src.rs` sorts before `src/lib.rs` even though traversal enters `src/` first.
 pub fn materialized_files_from_directory(
     root: &Path,
     prefix: &str,
@@ -333,6 +336,7 @@ pub fn materialized_files_from_directory(
     }
     let mut files = Vec::new();
     collect_materialized_directory_files(root, root, prefix, field, &mut files)?;
+    files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     Ok(files)
 }
 

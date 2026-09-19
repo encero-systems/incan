@@ -2300,6 +2300,7 @@ dependencies = [
  "oven_rustc",
  "oven_store",
  "rust_inspect",
+ "rustix 1.1.4",
  "serde",
  "serde_json",
  "tempfile",

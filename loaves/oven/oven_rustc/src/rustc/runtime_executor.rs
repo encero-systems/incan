@@ -22,8 +22,9 @@ use std::process::Command;
 
 use super::{
     OvenCompiledRustUnitIdentity, OvenMaterializedRuntimeFoundation, OvenMaterializedRustFacetEnvironmentValue,
-    OvenRuntimeFoundationUnitExecution, OvenRustcError, OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDomain,
-    OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole, ValidatedOvenRuntimeFoundation, apply_oven_profile,
+    OvenMaterializedRustFacetLinkedLibrary, OvenRuntimeFoundationUnitExecution, OvenRustcError,
+    OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDomain, OvenSelectedRustFacetUnit,
+    OvenSelectedRustFacetUnitRole, ValidatedOvenRuntimeFoundation, apply_oven_profile,
     clear_inherited_cargo_environment, digest_regular_file, parse_rustc_diagnostics, verified_regular_file,
 };
 
@@ -111,6 +112,15 @@ pub struct OvenRuntimeFoundationBuild {
 }
 
 impl OvenRuntimeFoundationBuild {
+    /// A build that produced nothing, for tests of what a closure may claim about one.
+    #[cfg(test)]
+    pub(crate) fn empty() -> Self {
+        Self {
+            outputs: Vec::new(),
+            compiler_launches: 0,
+        }
+    }
+
     /// Iterate produced outputs in the foundation's declared rebuild order.
     pub fn outputs(&self) -> &[OvenRuntimeRebuildOutput] {
         &self.outputs
@@ -283,6 +293,7 @@ pub fn execute_runtime_foundation_rebuild(
             unit,
             source,
             selection,
+            materialized.sources().compiler_target(),
             materialized.artifact_plan(),
             &search_paths,
             &externs,
@@ -419,6 +430,7 @@ fn compile_rebuild_unit(
     unit: &OvenSelectedRustFacetUnit,
     source: &super::OvenMaterializedRustFacetUnit,
     selection: &super::OvenSelectedRustFacetSelection,
+    compiler_target: &std::ffi::OsStr,
     plan: &super::OvenRustcArtifactPlan,
     search_paths: &BTreeSet<PathBuf>,
     externs: &[(String, PathBuf)],
@@ -426,10 +438,9 @@ fn compile_rebuild_unit(
     artifact: &Path,
 ) -> Result<(), OvenRustcError> {
     let mut command = Command::new(closure.rustc());
+    command.args(["--crate-type", "lib"]);
+    append_compiler_target(&mut command, compiler_target);
     command
-        .args(["--crate-type", "lib"])
-        .arg("--target")
-        .arg(&selection.intent.target)
         .arg(format!("--edition={}", unit.edition))
         .arg("--crate-name")
         .arg(&unit.crate_name)
@@ -491,6 +502,8 @@ fn compile_rebuild_unit(
     for (alias, path) in externs {
         command.arg("--extern").arg(format!("{alias}={}", path.display()));
     }
+    append_materialized_sysroot_extern_arguments(&mut command, &source.sysroot_externs);
+    append_materialized_link_arguments(&mut command, &source.linked_libraries)?;
     let result = command.output().map_err(|source_error| OvenRustcError::Io {
         path: closure.rustc().to_path_buf(),
         source: source_error,
@@ -501,6 +514,60 @@ fn compile_rebuild_unit(
         });
     }
     verified_regular_file(artifact, "runtime rebuild output")?;
+    Ok(())
+}
+
+/// Append compiler-owned bare externs already admitted by the selected graph's verified toolchain contract.
+fn append_materialized_sysroot_extern_arguments(command: &mut Command, sysroot_externs: &[String]) {
+    for sysroot_extern in sysroot_externs {
+        command.arg("--extern").arg(sysroot_extern);
+    }
+}
+
+/// Append the exact already-materialized built-in triple or verified custom JSON path.
+fn append_compiler_target(command: &mut Command, compiler_target: &std::ffi::OsStr) {
+    command.arg("--target").arg(compiler_target);
+}
+
+/// Append ordered physically admitted linked-library inputs to one rustc invocation.
+///
+/// Exact archives are passed directly to the linker instead of becoming `-L`/`-l` discovery inputs. Repeated
+/// archives remain repeated and their order is unchanged. Provider inputs have already been checked against held
+/// target-specific provenance and exact member bytes; frameworks use only their admitted search root, while system
+/// inputs pass their exact selected artifact directly to the linker.
+fn append_materialized_link_arguments(
+    command: &mut Command,
+    libraries: &[OvenMaterializedRustFacetLinkedLibrary],
+) -> Result<(), OvenRustcError> {
+    for library in libraries {
+        match library {
+            OvenMaterializedRustFacetLinkedLibrary::Archive { artifact, .. } => {
+                command.arg("-C").arg(format!("link-arg={}", artifact.display()));
+            }
+            OvenMaterializedRustFacetLinkedLibrary::Provider {
+                name,
+                kind,
+                search_root,
+                artifact,
+                ..
+            } => match kind {
+                crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Framework => {
+                    command.arg("-L").arg(format!("framework={}", search_root.display()));
+                    command.arg("-l").arg(format!("framework={name}"));
+                }
+                crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::System => {
+                    command.arg("-C").arg(format!("link-arg={}", artifact.display()));
+                }
+                crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static
+                | crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Dynamic => {
+                    return Err(runtime_executor_invalid(
+                        "runtime executor linked provider",
+                        format!("provider `{name}` has archive linkage kind {kind:?}"),
+                    ));
+                }
+            },
+        }
+    }
     Ok(())
 }
 
@@ -521,14 +588,124 @@ pub(crate) mod tests {
         OVEN_RUNTIME_FOUNDATION_SCHEMA_VERSION, OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION,
         OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION, OvenRuntimeFoundation, OvenRuntimeFoundationUnit,
         OvenRustcArtifactExtern, OvenRustcArtifactManifest, OvenRustcRegistryLeaf, OvenRustcRegistrySource,
-        OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact, OvenSelectedRustFacetDependency,
-        OvenSelectedRustFacetGraph, OvenSelectedRustFacetIntent, OvenSelectedRustFacetOwner,
-        OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetOwnerRoot, OvenSelectedRustFacetPath,
-        OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection, OvenSelectedRustFacetSource,
-        OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetTargetSpec,
-        resolve_active_rustc, rustc_host_target, rustc_identity, selected_graph_sha256, selected_graph_source_digest,
-        selected_graph_unit_identity,
+        OvenRustcRegistrySourcePackage, OvenRustcSupportingArtifact, OvenSelectedRustFacetCfgSnapshot,
+        OvenSelectedRustFacetDependency, OvenSelectedRustFacetGraph, OvenSelectedRustFacetIntent,
+        OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetOwnerRoot,
+        OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection,
+        OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember,
+        OvenSelectedRustFacetTargetSpec, resolve_active_rustc, rustc_host_target, rustc_identity,
+        selected_graph_sha256, selected_graph_source_digest, selected_graph_unit_identity,
     };
+
+    /// Exact archive paths, including repeats, reach the linker in declared order.
+    #[test]
+    fn linked_archive_arguments_preserve_exact_order_and_multiplicity() -> Result<(), Box<dyn std::error::Error>> {
+        let first = PathBuf::from("admitted/libfirst.a");
+        let second = PathBuf::from("admitted/libsecond.a");
+        let archive = |name: &str, artifact: &Path| OvenMaterializedRustFacetLinkedLibrary::Archive {
+            name: name.to_string(),
+            kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Static,
+            artifact: artifact.to_path_buf(),
+            digest: selected_graph_sha256(name.as_bytes()),
+        };
+        let libraries = vec![
+            archive("first", &first),
+            archive("second", &second),
+            archive("first", &first),
+        ];
+        let mut command = Command::new("rustc");
+        append_materialized_link_arguments(&mut command, &libraries)?;
+        assert_eq!(
+            command
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            [
+                "-C",
+                "link-arg=admitted/libfirst.a",
+                "-C",
+                "link-arg=admitted/libsecond.a",
+                "-C",
+                "link-arg=admitted/libfirst.a",
+            ]
+        );
+        Ok(())
+    }
+
+    /// A custom target reaches rustc through its admitted JSON path rather than a substituted target triple.
+    #[test]
+    fn custom_target_uses_the_exact_admitted_json_path() -> Result<(), Box<dyn std::error::Error>> {
+        let target = PathBuf::from("/sealed/toolchain/targets/custom.json");
+        let mut command = Command::new("rustc");
+        append_compiler_target(&mut command, target.as_os_str());
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [std::ffi::OsStr::new("--target"), target.as_os_str()]
+        );
+        Ok(())
+    }
+
+    /// Framework and system arguments retain admitted paths and declared ordering.
+    #[test]
+    fn linked_provider_arguments_use_only_verified_paths_and_preserve_order() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let provider = |name: &str, kind: crate::rustc::OvenSelectedRustFacetLinkedLibraryKind, artifact: &str| {
+            OvenMaterializedRustFacetLinkedLibrary::Provider {
+                name: name.to_string(),
+                kind,
+                target: "aarch64-apple-darwin".to_string(),
+                capability: format!("fixture.{name}"),
+                receipt_identity: selected_graph_sha256(name.as_bytes()),
+                search_root: PathBuf::from("admitted/provider"),
+                artifact: PathBuf::from(artifact),
+                digest: selected_graph_sha256(artifact.as_bytes()),
+            }
+        };
+        let libraries = [
+            provider(
+                "Security",
+                crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::Framework,
+                "admitted/provider/Security.framework/Security",
+            ),
+            provider(
+                "sqlite3",
+                crate::rustc::OvenSelectedRustFacetLinkedLibraryKind::System,
+                "admitted/provider/libsqlite3.tbd",
+            ),
+        ];
+        let mut command = Command::new("rustc");
+        append_materialized_link_arguments(&mut command, &libraries)?;
+        assert_eq!(
+            command
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            [
+                "-L",
+                "framework=admitted/provider",
+                "-l",
+                "framework=Security",
+                "-C",
+                "link-arg=admitted/provider/libsqlite3.tbd",
+            ]
+        );
+        Ok(())
+    }
+
+    /// A verified sysroot input stays pathless so rustc resolves it from its own toolchain.
+    #[test]
+    fn sysroot_extern_arguments_preserve_exact_bare_form() {
+        let mut command = Command::new("rustc");
+        append_materialized_sysroot_extern_arguments(&mut command, &["proc_macro".to_string()]);
+        assert_eq!(
+            command
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            ["--extern", "proc_macro"]
+        );
+    }
+
     use oven_store::OvenBuildIntent;
 
     /// Compiler closure identity the fixture binds to the retained host compiler.
@@ -605,6 +782,7 @@ pub(crate) mod tests {
             _ => selected_graph_sha256(crate_name.as_bytes()),
         };
         let mut unit = OvenSelectedRustFacetUnit {
+            sysroot_externs: Vec::new(),
             identity: String::new(),
             package: crate_name.to_string(),
             package_version: package_version.to_string(),
@@ -623,7 +801,6 @@ pub(crate) mod tests {
             root_module: "src/lib.rs".to_string(),
             source_members: members,
             features: Vec::new(),
-            default_features: false,
             cfg: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
@@ -633,6 +810,7 @@ pub(crate) mod tests {
             exclude_dirs: Vec::new(),
             dependencies,
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         unit.identity = selected_graph_unit_identity(selection, &unit)?;
         Ok(unit)
@@ -689,6 +867,17 @@ pub(crate) mod tests {
         Ok(selected_graph_sha256(&fs::read(&artifact)?))
     }
 
+    /// Declare the minimal Unix cfg evidence used by the sealed executor fixture.
+    fn cfg_snapshot(architecture: &str, operating_system: &str) -> OvenSelectedRustFacetCfgSnapshot {
+        OvenSelectedRustFacetCfgSnapshot {
+            flags: vec!["unix".to_string()],
+            values: BTreeMap::from([
+                ("target_arch".to_string(), vec![architecture.to_string()]),
+                ("target_os".to_string(), vec![operating_system.to_string()]),
+            ]),
+        }
+    }
+
     /// Assemble the host-native foundation this connector's first proof compiles.
     fn host_native_foundation(
         host: &str,
@@ -696,23 +885,23 @@ pub(crate) mod tests {
         dep_artifact_digest: &str,
         package_version: &str,
     ) -> Result<OvenRuntimeFoundation, Box<dyn std::error::Error>> {
+        let target_cfg = cfg_snapshot("fixture-target", "fixture");
         let selection = OvenSelectedRustFacetSelection {
             intent: OvenSelectedRustFacetIntent {
                 target: host.to_string(),
                 toolchain: toolchain.to_string(),
                 profile: "debug".to_string(),
-                features: Vec::new(),
             },
             host: host.to_string(),
+            host_cfg: cfg_snapshot("fixture-host", "fixture"),
+            target_cfg: target_cfg.clone(),
             purpose: OvenSelectedRustFacetPurpose::Normal,
-            default_features: true,
             toolchain_version: "1.85.0".to_string(),
-            target_spec: OvenSelectedRustFacetTargetSpec {
-                source: OvenSelectedRustFacetPath {
-                    owner: toolchain_owner(),
-                    path: "target-spec.json".to_string(),
-                },
-                digest: selected_graph_sha256(b"{}"),
+            target_spec: OvenSelectedRustFacetTargetSpec::BuiltIn {
+                toolchain_owner: toolchain_owner(),
+                target: host.to_string(),
+                rustc_identity: toolchain.to_string(),
+                target_cfg_digest: selected_graph_sha256(&serde_json::to_vec(&target_cfg)?),
             },
         };
         let dep = library_unit(
@@ -724,7 +913,7 @@ pub(crate) mod tests {
             DEP_SOURCE_ROOT,
             Vec::new(),
         )?;
-        let core = library_unit(
+        let mut core = library_unit(
             &selection,
             "incan_lang",
             package_version,
@@ -736,6 +925,8 @@ pub(crate) mod tests {
                 unit: dep.identity.clone(),
             }],
         )?;
+        core.sysroot_externs = vec!["proc_macro".to_string()];
+        core.identity = selected_graph_unit_identity(&selection, &core)?;
         let stdlib = library_unit(
             &selection,
             "incan_std_core",
@@ -765,13 +956,16 @@ pub(crate) mod tests {
                 target: selection.intent.target.clone(),
                 toolchain: selection.intent.toolchain.clone(),
                 profile: selection.intent.profile.clone(),
-                features: selection.intent.features.clone(),
+                features: Vec::new(),
             },
             dependency_search_paths: vec!["deps".to_string()],
             native_search_paths: Vec::new(),
             externs: vec![dep_extern.clone()],
             entrypoint_externs: BTreeMap::new(),
             registry_leaves: vec![OvenRustcRegistryLeaf {
+                domain: Default::default(),
+                crate_kind: Default::default(),
+                selected_unit_identity: None,
                 package: "fixture_dep".to_string(),
                 version: package_version.to_string(),
                 crate_name: "fixture_dep".to_string(),
@@ -829,7 +1023,15 @@ pub(crate) mod tests {
                     },
                 ],
                 units: vec![dep, core, stdlib.clone()],
-                exposed_roots: BTreeMap::from([("incan_std_core".to_string(), stdlib.identity)]),
+                exposed_roots: BTreeMap::from([(
+                    "incan_std_core".to_string(),
+                    crate::rustc::OvenSelectedRustFacetRoot {
+                        unit: stdlib.identity,
+                        requested_features: Vec::new(),
+                        default_features: true,
+                        intent_owner: toolchain_owner(),
+                    },
+                )]),
             },
             units,
         })

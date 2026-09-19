@@ -1,4 +1,4 @@
-"""Graph-wide feature propagation contracts; single-unit activation remains `rust_activation`'s own coverage."""
+"""Graph activation uses resolved physical bindings and refuses incomplete selected evidence."""
 
 from rust_source import read_dependency_catalog, RustDependencyCatalog
 from rust_activation import (
@@ -6,155 +6,848 @@ from rust_activation import (
     ActivationPurpose,
     CfgSnapshot,
     DependencyDomain,
+    SlotActivation,
     TargetConfiguration,
 )
-from rust_graph import GraphNode, NodeDemand, propagate_features
+from rust_graph import (
+    package_key,
+    AdmittedSelectedUnit,
+    GraphActivation,
+    GraphNode,
+    GraphRoot,
+    AdmittedSelectedEdge,
+    SelectedPackageIdentity,
+    SelectedCrateKind,
+    SelectedUnitClosure,
+    SelectedUnitRole,
+    propagate_features,
+)
 from manifest_errors import IntakeError
+from std.json import JsonValue
 from std.testing import fail, fail_t
 
 
 def require_ok[T](result: Result[T, IntakeError]) -> T:
-    """Keep fixture setup shallow while reporting the original intake diagnostic on failure."""
+    """Unwrap fixture setup while preserving a policy diagnostic as a test failure."""
     match result:
         Ok(value) => return value
         Err(error) => return fail_t[T](error.message())
 
 
 def linux() -> TargetConfiguration:
-    """One explicit test-owned cfg snapshot; nothing here discovers a sysroot."""
-    snapshot = CfgSnapshot(
-        flags=["unix"],
-        values={"target_arch": ["x86_64"], "target_family": ["unix"], "target_os": ["linux"]},
-    )
+    """Return the stable host and target configuration used by graph fixtures."""
+    snapshot = CfgSnapshot(flags=["unix"], values={"target_arch": ["x86_64"], "target_os": ["linux"]})
     return TargetConfiguration(triple="x86_64-unknown-linux-gnu", cfg=Some(snapshot))
 
 
-def target_node(package: str) -> GraphNode:
-    """A node in the target domain, which is where an ordinary dependency lands."""
-    return GraphNode(package=package, domain=DependencyDomain.Target)
+def node(package: str, domain: DependencyDomain = DependencyDomain.Target) -> GraphNode:
+    """Build one selected package/domain fixture with an ordinary path source identity."""
+    identity = SelectedPackageIdentity(package=package, version="1.0.0", source=f"path:{package}")
+    return GraphNode(package=identity, domain=domain)
+
+
+def exact_node(package: str, version: str, source: str) -> GraphNode:
+    """Build a fixture with an explicit package version and source for manifest-identity checks."""
+    return GraphNode(
+        package=SelectedPackageIdentity(package=package, version=version, source=source),
+        domain=DependencyDomain.Target,
+    )
+
+
+def unit_id(value: GraphNode) -> str:
+    """Derive the fixture physical-unit identifier from the selected package and domain."""
+    return f"unit::{package_key(value.package)}::{str(value.domain)}"
+
+
+def empty_closure() -> SelectedUnitClosure:
+    """Build the empty non-feature physical closure used by graph-only fixtures."""
+    return SelectedUnitClosure(
+        environment=JsonValue.object({}),
+        generated_inputs=JsonValue.array([]),
+        linked_libraries=JsonValue.array([]),
+        sysroot_externs=[],
+    )
+
+
+def selected(value: GraphNode, role: SelectedUnitRole = SelectedUnitRole.Library) -> AdmittedSelectedUnit:
+    """Build a selected physical unit whose role determines its authenticated crate kind."""
+    mut kind = SelectedCrateKind.Rlib
+    if role == SelectedUnitRole.ProcMacro:
+        kind = SelectedCrateKind.ProcMacro
+    elif role in [SelectedUnitRole.Binary, SelectedUnitRole.UnitTest, SelectedUnitRole.IntegrationTest, SelectedUnitRole.Example, SelectedUnitRole.Doctest, SelectedUnitRole.Benchmark]:
+        kind = SelectedCrateKind.Binary
+    return AdmittedSelectedUnit(
+        identity=unit_id(value),
+        node=value,
+        role=role,
+        crate_kind=kind,
+        closure=empty_closure(),
+        features=[],
+    )
+
+
+def selected_as(
+    identity: str,
+    value: GraphNode,
+    role: SelectedUnitRole = SelectedUnitRole.Library,
+) -> AdmittedSelectedUnit:
+    """Build a selected unit with a caller-chosen physical ID for same-package reachability cases."""
+    mut kind = SelectedCrateKind.Rlib
+    if role == SelectedUnitRole.ProcMacro:
+        kind = SelectedCrateKind.ProcMacro
+    elif role in [SelectedUnitRole.Binary, SelectedUnitRole.UnitTest, SelectedUnitRole.IntegrationTest, SelectedUnitRole.Example, SelectedUnitRole.Doctest, SelectedUnitRole.Benchmark]:
+        kind = SelectedCrateKind.Binary
+    return AdmittedSelectedUnit(
+        identity=identity,
+        node=value,
+        role=role,
+        crate_kind=kind,
+        closure=empty_closure(),
+        features=[],
+    )
+
+
+def selected_with_facts(
+    identity: str,
+    value: GraphNode,
+    features: list[str],
+    role: SelectedUnitRole = SelectedUnitRole.Library,
+) -> AdmittedSelectedUnit:
+    """Build a selected unit carrying host-authenticated feature facts for fixed-point reconciliation."""
+    unit = selected_as(identity, value, role)
+    return AdmittedSelectedUnit(
+        identity=unit.identity,
+        node=unit.node,
+        role=unit.role,
+        crate_kind=unit.crate_kind,
+        closure=unit.closure,
+        features=features,
+    )
+
+
+def root(value: GraphNode) -> GraphRoot:
+    """Build one fixture root with explicit authority-owned default intent."""
+    return root_for_unit(unit_id(value))
+
+
+def root_for_unit(
+    identity: str,
+    requested_features: list[str] = [],
+    default_features: bool = true,
+) -> GraphRoot:
+    """Build one physical root paired with fixture-owned authored feature intent."""
+    return GraphRoot(
+        unit=identity,
+        requested_features=requested_features,
+        default_features=default_features,
+        intent_owner="fixture-inspection-authority",
+    )
+
+
+def edge(parent: GraphNode, alias: str, child: GraphNode) -> AdmittedSelectedEdge:
+    """Build a raw edge fixture; aliases, not synthetic slot numbers, bind manifest declarations."""
+    return AdmittedSelectedEdge(parent_unit=unit_id(parent), alias=alias, child_unit=unit_id(child))
+
+
+def physical_edge(parent: str, alias: str, child: str) -> AdmittedSelectedEdge:
+    """Build a raw edge from explicit physical IDs to distinguish unit reachability from package coalescing."""
+    return AdmittedSelectedEdge(parent_unit=parent, alias=alias, child_unit=child)
 
 
 def catalogs_from(sources: Dict[str, str]) -> Dict[str, RustDependencyCatalog]:
-    """Parse each fixture manifest once; nothing here reads from disk."""
+    """Parse fixture manifests into the package catalog keyed by selected package identity."""
     mut parsed: Dict[str, RustDependencyCatalog] = {}
-    for name in sources.keys():
-        parsed[name] = require_ok(read_dependency_catalog(sources[name], "Cargo.toml"))
+    for identity in sources.keys():
+        key = package_key(node(identity).package)
+        parsed[key] = require_ok(read_dependency_catalog(sources[identity], "Cargo.toml"))
     return parsed
 
 
 def base_context() -> ActivationContext:
-    """The host/target identities every node in these fixtures shares."""
+    """Return a normal target-domain activation context for ordinary dependency propagation."""
     return ActivationContext(
         host=linux(),
         target=linux(),
         purpose=ActivationPurpose.Normal,
+        domain=DependencyDomain.Target,
         requested_features=[],
         default_features=true,
         build_unit_present=false,
     )
 
 
-pub def test_two_dependents_union_their_demands_on_one_package() -> None:
-    """The union across dependents is the whole reason this is a fixed point and not a single pass."""
-    sources = {
-        "root": "\n    [dependencies]\n    left='1'\n    right='1'\n    ",
-        "left": "\n    [dependencies]\n    shared={version='1', features=['alpha'], default-features=false}\n    ",
-        "right": "\n    [dependencies]\n    shared={version='1', features=['beta'], default-features=false}\n    ",
-        "shared": "\n    [features]\n    alpha=[]\n    beta=[]\n    ",
-    }
+def testing_context() -> ActivationContext:
+    """Return the explicit test-root context without changing transitive dependency purpose."""
+    value = base_context()
+    return ActivationContext(
+        host=value.host,
+        target=value.target,
+        purpose=ActivationPurpose.Test,
+        domain=value.domain,
+        requested_features=value.requested_features,
+        default_features=value.default_features,
+        build_unit_present=value.build_unit_present,
+    )
+
+
+def features_for(result: GraphActivation, wanted: GraphNode) -> list[str]:
+    """Return settled features for one reached policy node or fail the fixture clearly."""
+    for index in range(len(result.nodes)):
+        if result.nodes[index] == wanted:
+            return result.activations[index].effective_features
+    return fail_t[list[str]]("selected policy node was never reached")
+
+
+pub def test_resolved_identity_and_transitive_feature_union() -> None:
+    """Manifest package spelling never substitutes for the host-validated selected package identity."""
+    sources = {"root": "[dependencies]\nleft='1'\nright='1'\n", "left": "[dependencies]\nshared={package='shared-package',version='1',features=['alpha']}\n", "right": "[dependencies]\nshared={package='shared-package',version='1',features=['beta']}\n"}
+    root_node = node("root")
+    left = node("left")
+    right = node("right")
+    shared = exact_node("shared-package", "1.2.3", "registry:shared-package@1.2.3")
+    catalogs = catalogs_from(sources)
+    catalogs[package_key(shared.package)] = require_ok(
+        read_dependency_catalog("[features]\nalpha=[]\nbeta=[]\n", "Cargo.toml"),
+    )
+    bindings = [edge(root_node, "left", left), edge(root_node, "right", right), edge(left, "shared", shared), edge(right, "shared",
+        shared,
+    )]
     result = require_ok(
         propagate_features(
-            catalogs_from(sources),
+            catalogs,
             base_context(),
             "Cargo.toml",
-            [target_node("root")],
-            NodeDemand(features=[], default_features=true),
+            [selected(root_node), selected(left), selected(right), selected_with_facts(
+                unit_id(shared),
+                shared,
+                ["alpha", "beta"],
+            )],
+            [root(root_node)],
+            bindings,
             64,
         ),
     )
     mut seen = false
     for index in range(len(result.nodes)):
-        if result.nodes[index].package == "shared":
+        if result.nodes[index] == shared:
             seen = true
-            features = result.activations[index].effective_features
-            assert "alpha" in features
-            assert "beta" in features
+            assert "alpha" in result.activations[index].effective_features
+            assert "beta" in result.activations[index].effective_features
     if not seen:
-        fail("the shared package was never reached")
+        fail("the resolved shared package identity was never reached")
 
 
-pub def test_host_and_target_demands_do_not_merge() -> None:
-    """A build dependency's features must not reach the unit shipped to the user."""
-    sources = {
-        "root": "\n    [dependencies]\n    shared={version='1', features=['target-only'], default-features=false}\n    [build-dependencies]\n    shared={version='1', features=['host-only'], default-features=false}\n    ",
-        "shared": "\n    [features]\n    target-only=[]\n    host-only=[]\n    ",
-    }
+pub def test_host_parent_propagates_normal_dependencies_in_host_domain() -> None:
+    """Protects ordinary host-domain dependency reachability."""
+    sources = {"macro": "[dependencies]\nhelper='1'\n", "helper": ""}
+    parent = node("macro", DependencyDomain.Host)
+    child = node("helper", DependencyDomain.Host)
     result = require_ok(
         propagate_features(
             catalogs_from(sources),
             base_context(),
             "Cargo.toml",
-            [target_node("root")],
-            NodeDemand(features=[], default_features=true),
-            64,
+            [selected(parent), selected(child)],
+            [root(parent)],
+            [edge(parent, "helper", child)],
+            16,
         ),
     )
-    for index in range(len(result.nodes)):
-        node = result.nodes[index]
-        if node.package == "shared" and node.domain == DependencyDomain.Target:
-            assert "host-only" not in result.activations[index].effective_features
+    assert child in result.nodes
 
 
-pub def test_a_package_with_no_catalog_is_a_leaf() -> None:
-    """A package this walk cannot see into contributes no edges rather than pruning a needed unit."""
-    sources = {"root": "\n    [dependencies]\n    opaque='1'\n    "}
+pub def test_proc_macro_binding_moves_target_edge_to_host_domain() -> None:
+    """Protects the proc-macro host-domain transition selected by the raw unit role."""
+    sources = {"root": "[dependencies]\nderive='1'\n", "derive": ""}
+    parent = node("root")
+    child = node("derive", DependencyDomain.Host)
     result = require_ok(
         propagate_features(
             catalogs_from(sources),
             base_context(),
             "Cargo.toml",
-            [target_node("root")],
-            NodeDemand(features=[], default_features=true),
-            64,
+            [selected(parent), selected(child, SelectedUnitRole.ProcMacro)],
+            [root(parent)],
+            [edge(parent, "derive", child)],
+            16,
         ),
     )
-    for node in result.nodes:
-        assert node.package != "opaque"
+    assert child in result.nodes
 
 
-pub def test_a_cycle_terminates_instead_of_spinning() -> None:
-    """Demands only grow, so a cyclic graph still settles; this pins that rather than trusting it."""
-    sources = {
-        "a": "\n    [dependencies]\n    b='1'\n    ",
-        "b": "\n    [dependencies]\n    a='1'\n    ",
-    }
-    result = require_ok(
+pub def test_late_feature_activation_uses_final_fixed_point_in_any_root_order() -> None:
+    """A selected optional edge may be inactive on its first visit and active after a later demand widens it."""
+    sources = {"plain-root": "[dependencies]\nmid='1'\n", "feature-root": "[dependencies]\nbridge='1'\n", "bridge": "[dependencies]\nmid={version='1',features=['use-leaf']}\n", "mid": "[dependencies]\nleaf={version='1',optional=true}\n[features]\nuse-leaf=['dep:leaf']\n", "leaf": ""}
+    plain_root = node("plain-root")
+    feature_root = node("feature-root")
+    bridge = node("bridge")
+    mid = node("mid")
+    leaf = node("leaf")
+    units = [selected(plain_root), selected(feature_root), selected(bridge), selected_with_facts(
+        unit_id(mid),
+        mid,
+        ["use-leaf"],
+    ), selected(leaf)]
+    bindings = [edge(plain_root, "mid", mid), edge(feature_root, "bridge", bridge), edge(bridge, "mid", mid), edge(mid, "leaf",
+        leaf,
+    )]
+    first = require_ok(
         propagate_features(
             catalogs_from(sources),
             base_context(),
             "Cargo.toml",
-            [target_node("a")],
-            NodeDemand(features=[], default_features=true),
-            64,
+            units,
+            [root(plain_root), root(feature_root)],
+            bindings,
+            32,
         ),
     )
-    assert len(result.nodes) == 2
-    assert result.rounds <= 64
+    reversed = require_ok(
+        propagate_features(
+            catalogs_from(sources),
+            base_context(),
+            "Cargo.toml",
+            units,
+            [root(feature_root), root(plain_root)],
+            bindings,
+            32,
+        ),
+    )
+    assert features_for(first, mid) == ["use-leaf"]
+    assert features_for(reversed, mid) == ["use-leaf"]
+    assert leaf in first.nodes
+    assert leaf in reversed.nodes
 
 
-pub def test_an_unsettled_graph_refuses_within_its_bound() -> None:
-    """The round bound reports a refusal rather than looping when a catalog cannot settle."""
-    sources = {
-        "a": "\n    [dependencies]\n    b='1'\n    ",
-        "b": "\n    [dependencies]\n    a='1'\n    ",
-    }
+pub def test_missing_catalog_refuses_instead_of_becoming_a_leaf() -> None:
+    """Protects fail-closed refusal when a selected package lacks catalog evidence."""
+    root_node = node("root")
+    missing = node("missing")
+    match propagate_features(
+        catalogs_from({"root": "[dependencies]\nmissing='1'\n"}),
+        base_context(),
+        "Cargo.toml",
+        [selected(root_node), selected(missing)],
+        [root(root_node)],
+        [edge(root_node, "missing", missing)],
+        16,
+    ):
+        Ok(_) => fail("a selected package without its exact catalog must refuse")
+        Err(error) =>
+            assert "selected package catalog" in error.message()
+
+
+def extern_name_catalogs(core: GraphNode, webpki: GraphNode, errno: GraphNode) -> Dict[str, RustDependencyCatalog]:
+    """Catalogs for a root declaring a hyphenated key, a child with its own `[lib] name`, and a renamed package."""
+    mut catalogs = catalogs_from(
+        {"root": "[dependencies]\naxum-core='0.5'\nrustls-webpki='0.102'\nlibc_errno={package='errno', version='0.3'}\n"},
+    )
+    catalogs[package_key(core.package)] = require_ok(read_dependency_catalog("", "Cargo.toml"))
+    catalogs[package_key(webpki.package)] = require_ok(
+        read_dependency_catalog("[lib]\nname='webpki'\n", "Cargo.toml"),
+    )
+    catalogs[package_key(errno.package)] = require_ok(read_dependency_catalog("", "Cargo.toml"))
+    return catalogs
+
+
+pub def test_raw_edge_aliases_are_extern_crate_names() -> None:
+    """A hyphenated key binds under its identifier, a child's `[lib] name` under that name, and a rename under its key."""
+    root_node = node("root")
+    core = exact_node("axum-core", "0.5.6", "registry:axum-core@0.5.6")
+    webpki = exact_node("rustls-webpki", "0.102.0", "registry:rustls-webpki@0.102.0")
+    errno = exact_node("errno", "0.3.0", "registry:errno@0.3.0")
+    result = require_ok(
+        propagate_features(
+            extern_name_catalogs(core, webpki, errno),
+            base_context(),
+            "Cargo.toml",
+            [selected(root_node), selected(core), selected(webpki), selected(errno)],
+            [root(root_node)],
+            [edge(root_node, "axum_core", core), edge(root_node, "webpki", webpki), edge(root_node, "libc_errno", errno)],
+            16,
+        ),
+    )
+    assert len(result.nodes) == 4
+
+    match propagate_features(
+        extern_name_catalogs(core, webpki, errno),
+        base_context(),
+        "Cargo.toml",
+        [selected(root_node), selected(core), selected(webpki), selected(errno)],
+        [root(root_node)],
+        [edge(root_node, "axum-core", core), edge(root_node, "webpki", webpki), edge(root_node, "libc_errno", errno)],
+        16,
+    ):
+        Ok(_) => fail("a manifest key is not the crate name rustc links under")
+        Err(error) =>
+            assert "resolved selected-unit binding" in error.message()
+
+
+pub def test_sibling_edges_do_not_satisfy_another_declaration() -> None:
+    """A sibling whose alias is its own library name is not a second binding for a hyphenated declaration."""
+    root_node = node("root")
+    core = exact_node("axum-core", "0.5.6", "registry:axum-core@0.5.6")
+    bytes_node = exact_node("bytes", "1.0.0", "registry:bytes@1.0.0")
+    mut catalogs = catalogs_from({"root": "[dependencies]\naxum-core='0.5'\nbytes='1'\n"})
+    catalogs[package_key(core.package)] = require_ok(read_dependency_catalog("[lib]\nname='axum_core'\n", "Cargo.toml"))
+    catalogs[package_key(bytes_node.package)] = require_ok(read_dependency_catalog("[lib]\nname='bytes'\n", "Cargo.toml"))
+    result = require_ok(
+        propagate_features(
+            catalogs,
+            base_context(),
+            "Cargo.toml",
+            [selected(root_node), selected(core), selected(bytes_node)],
+            [root(root_node)],
+            [edge(root_node, "axum_core", core), edge(root_node, "bytes", bytes_node)],
+            16,
+        ),
+    )
+    assert len(result.nodes) == 3
+
+
+pub def test_missing_resolved_slot_binding_refuses() -> None:
+    """Protects refusal when an active manifest declaration lacks a physical child binding."""
+    root_node = node("root")
+    match propagate_features(
+        catalogs_from({"root": "[dependencies]\nchild='1'\n"}),
+        base_context(),
+        "Cargo.toml",
+        [selected(root_node)],
+        [root(root_node)],
+        [],
+        16,
+    ):
+        Ok(_) => fail("an active declaration without a selected child binding must refuse")
+        Err(error) =>
+            assert "resolved selected-unit binding" in error.message()
+
+
+pub def test_build_script_dependencies_remain_inventory_only() -> None:
+    """Protects the invariant that build dependencies stay inert inventory."""
+    root_node = node("root")
+    source = "[target.'cfg(feature = \"provider\")'.build-dependencies]\ncodegen='1'\n"
+    result = require_ok(
+        propagate_features(
+            catalogs_from({"root": source}),
+            base_context(),
+            "Cargo.toml",
+            [selected(root_node)],
+            [root(root_node)],
+            [],
+            16,
+        ),
+    )
+    assert len(result.nodes) == 1
+
+
+pub def test_build_script_dependency_rejects_a_physical_child_binding() -> None:
+    """Protects refusal when an inert build declaration is presented as a compiled edge."""
+    root_node = node("root")
+    codegen = node("codegen", DependencyDomain.Host)
+    sources = {"root": "[build-dependencies]\ncodegen='1'\n", "codegen": ""}
     match propagate_features(
         catalogs_from(sources),
         base_context(),
         "Cargo.toml",
-        [target_node("a")],
-        NodeDemand(features=[], default_features=true),
-        1,
+        [selected(root_node), selected(codegen)],
+        [root(root_node)],
+        [edge(root_node, "codegen", codegen)],
+        16,
     ):
-        Ok(_) => fail("a one-round bound cannot settle a two-node graph")
-        Err(error) => assert "did not settle" in error.message()
+        Ok(_) => fail("an inert build dependency cannot bind a compiled child")
+        Err(error) =>
+            assert "manifest declaration for raw selected edge alias" in error.message()
+
+
+pub def test_non_proc_macro_child_cannot_change_domain() -> None:
+    """Protects the selected child domain from ordinary manifest-edge reinterpretation."""
+    parent = node("root")
+    child = node("child", DependencyDomain.Host)
+    sources = {"root": "[dependencies]\nchild='1'\n", "child": ""}
+    match propagate_features(
+        catalogs_from(sources),
+        base_context(),
+        "Cargo.toml",
+        [selected(parent), selected(child)],
+        [root(parent)],
+        [edge(parent, "child", child)],
+        16,
+    ):
+        Ok(_) => fail("an ordinary target dependency cannot become a host unit")
+        Err(error) =>
+            assert "child domain disagrees" in error.message()
+
+
+pub def test_test_purpose_stays_on_explicit_root() -> None:
+    """Protects the rule that test purpose does not activate transitive development edges."""
+    sources = {"root": "[dependencies]\nchild='1'\n[dev-dependencies]\nroot-test='1'\n", "child": "[dev-dependencies]\ntransitive-test='1'\n", "root-test": "", "transitive-test": ""}
+    root_node = node("root")
+    child = node("child")
+    root_test = node("root-test")
+    transitive_test = node("transitive-test")
+    units = [selected(root_node, SelectedUnitRole.UnitTest), selected(child), selected(root_test)]
+    bindings = [edge(root_node, "child", child), edge(root_node, "root_test", root_test)]
+    result = require_ok(
+        propagate_features(
+            catalogs_from(sources),
+            testing_context(),
+            "Cargo.toml",
+            units,
+            [root(root_node)],
+            bindings,
+            32,
+        ),
+    )
+    assert root_test in result.nodes
+    assert transitive_test not in result.nodes
+
+
+pub def test_normal_and_test_roots_of_same_package_remain_distinct() -> None:
+    """Protects separate normal and explicit-test policy nodes for one package."""
+    package = node("suite")
+    helper = node("test-helper")
+    normal_id = "sha256:suite-normal"
+    test_id = "sha256:suite-test"
+    helper_id = "sha256:test-helper"
+    units = [selected_as(normal_id, package), selected_as(test_id, package, SelectedUnitRole.UnitTest), selected_as(
+        helper_id,
+        helper,
+    )]
+    roots = [root_for_unit(normal_id), root_for_unit(test_id)]
+    result = require_ok(
+        propagate_features(
+            catalogs_from({"suite": "[dev-dependencies]\ntest-helper='1'\n", "test-helper": ""}),
+            testing_context(),
+            "Cargo.toml",
+            units,
+            roots,
+            [physical_edge(test_id, "test_helper", helper_id)],
+            16,
+        ),
+    )
+    mut normal_slots = -1
+    mut test_slots = -1
+    for index in range(len(result.nodes)):
+        if result.nodes[index] == package:
+            if result.purposes[index] == ActivationPurpose.Normal:
+                normal_slots = len(result.activations[index].slots)
+                match result.activations[index].slots[0].activation:
+                    SlotActivation.Inactive(_) => pass
+                    _ => fail("normal package activation used test-only dependency")
+            else:
+                test_slots = len(result.activations[index].slots)
+                match result.activations[index].slots[0].activation:
+                    SlotActivation.Active(_, _, _) => pass
+                    _ => fail("explicit test root did not activate its dev dependency")
+    assert normal_slots == 1
+    assert test_slots == 1
+    assert helper in result.nodes
+
+
+pub def test_selected_package_name_and_version_must_match_manifest_slot() -> None:
+    """Protects manifest slot identity checks against selected name and version drift."""
+    parent = node("root")
+    wrong = exact_node("different", "2.0.0", "registry:different@2.0.0")
+    catalogs = catalogs_from({"root": "[dependencies]\nchild={version='1'}\n"})
+    catalogs[package_key(wrong.package)] = require_ok(read_dependency_catalog("", "Cargo.toml"))
+    match propagate_features(
+        catalogs,
+        base_context(),
+        "Cargo.toml",
+        [selected(parent), selected(wrong)],
+        [root(parent)],
+        [edge(parent, "child", wrong)],
+        16,
+    ):
+        Ok(_) => fail("a manifest slot cannot bind a differently named selected package")
+        Err(error) =>
+            assert "package name disagrees" in error.message()
+
+    wrong_version = exact_node("child", "2.0.0", "registry:child@2.0.0")
+    version_catalogs = catalogs_from({"root": "[dependencies]\nchild={version='1'}\n"})
+    version_catalogs[package_key(wrong_version.package)] = require_ok(read_dependency_catalog("", "Cargo.toml"))
+    match propagate_features(
+        version_catalogs,
+        base_context(),
+        "Cargo.toml",
+        [selected(parent), selected(wrong_version)],
+        [root(parent)],
+        [edge(parent, "child", wrong_version)],
+        16,
+    ):
+        Ok(_) => fail("a selected version outside the manifest requirement cannot bind")
+        Err(error) =>
+            assert "does not satisfy" in error.message()
+
+
+pub def test_consistent_library_and_binary_edges_coalesce_by_policy_node() -> None:
+    """Protects package/domain coalescing after physical library and binary reachability."""
+    parent = node("app")
+    child = node("shared")
+    lib_id = "sha256:library-unit"
+    bin_id = "sha256:binary-unit"
+    child_id = "sha256:shared-unit"
+    units = [selected_as(lib_id, parent), selected_as(bin_id, parent, SelectedUnitRole.Binary), selected_as(
+        child_id,
+        child,
+    )]
+    bindings = [physical_edge(lib_id, "shared", child_id), physical_edge(bin_id, "shared", child_id)]
+    result = require_ok(
+        propagate_features(
+            catalogs_from({"app": "[dependencies]\nshared='1'\n", "shared": ""}),
+            base_context(),
+            "Cargo.toml",
+            units,
+            [root_for_unit(lib_id), root_for_unit(bin_id)],
+            bindings,
+            16,
+        ),
+    )
+    assert child in result.nodes
+
+
+pub def test_binary_reaches_own_library_without_a_manifest_dependency_slot() -> None:
+    """Protects internal same-package library reachability without inventing a Cargo slot."""
+    package = node("app")
+    binary_id = "sha256:app-binary"
+    library_id = "sha256:app-library"
+    result = require_ok(
+        propagate_features(
+            catalogs_from({"app": ""}),
+            base_context(),
+            "Cargo.toml",
+            [selected_as(binary_id, package, SelectedUnitRole.Binary), selected_as(
+                library_id,
+                package,
+                SelectedUnitRole.Library,
+            )],
+            [root_for_unit(binary_id)],
+            [physical_edge(binary_id, "app", library_id)],
+            16,
+        ),
+    )
+    assert library_id in result.unit_purposes
+    assert result.unit_purposes[library_id] == ActivationPurpose.Normal
+
+
+pub def test_compiler_support_physical_closure_refuses_without_a_source_catalog() -> None:
+    """Protects refusal when compiler release units lack the source catalog that owns their authored intent."""
+    root_node = node("root")
+    support_one = node("core", DependencyDomain.Target)
+    support_two = node("alloc", DependencyDomain.Target)
+    match propagate_features(
+        catalogs_from({"root": ""}),
+        base_context(),
+        "Cargo.toml",
+        [selected(root_node), selected(support_one, SelectedUnitRole.CompilerSupport), selected(
+            support_two,
+            SelectedUnitRole.CompilerSupport,
+        )],
+        [root(root_node)],
+        [edge(root_node, "core", support_one), edge(support_one, "alloc", support_two)],
+        16,
+    ):
+        Ok(_) => fail("raw compiler release edges require a matching source declaration")
+        Err(error) =>
+            assert "manifest declaration" in error.message()
+
+
+pub def test_compiler_support_root_refuses_without_a_source_catalog() -> None:
+    """Protects a compiler release root from treating physical features as a substitute for source policy."""
+    support = node("core")
+    leaf = node("alloc")
+    match propagate_features(
+        {},
+        base_context(),
+        "Cargo.toml",
+        [selected(support, SelectedUnitRole.CompilerSupport), selected(leaf, SelectedUnitRole.CompilerSupport)],
+        [root(support)],
+        [edge(support, "alloc", leaf)],
+        16,
+    ):
+        Ok(_) => fail("compiler release roots require their source catalog")
+        Err(error) =>
+            assert "selected package catalog" in error.message()
+
+
+pub def test_compiler_support_edge_refuses_without_a_source_catalog() -> None:
+    """Protects an ordinary child from inheriting demand before compiler release source policy is admitted."""
+    support = node("core")
+    ordinary = node("ordinary")
+    selected_ordinary = AdmittedSelectedUnit(
+        identity=unit_id(ordinary),
+        node=ordinary,
+        role=SelectedUnitRole.Library,
+        crate_kind=SelectedCrateKind.Rlib,
+        closure=empty_closure(),
+        features=["enabled"],
+    )
+    match propagate_features(
+        catalogs_from({"ordinary": "[features]\nenabled=[]\n"}),
+        base_context(),
+        "Cargo.toml",
+        [selected(support, SelectedUnitRole.CompilerSupport), selected_ordinary],
+        [root(support)],
+        [edge(support, "ordinary", ordinary)],
+        16,
+    ):
+        Ok(_) => fail("compiler release edges require source policy before propagation")
+        Err(error) =>
+            assert "selected package catalog" in error.message()
+
+
+pub def test_compiler_support_catalog_propagates_its_declared_child() -> None:
+    """Uses the same source-owned manifest activation for compiler release support as for ordinary Rust units."""
+    support = node("core")
+    child = node("alloc")
+    result = require_ok(
+        propagate_features(
+            catalogs_from({"core": "[dependencies]\nalloc='1'\n", "alloc": ""}),
+            base_context(),
+            "Cargo.toml",
+            [selected(support, SelectedUnitRole.CompilerSupport), selected(child, SelectedUnitRole.CompilerSupport)],
+            [root(support)],
+            [edge(support, "alloc", child)],
+            16,
+        ),
+    )
+    assert child in result.nodes
+
+
+pub def test_compiler_support_raw_features_cannot_seed_policy() -> None:
+    """Refuses an observed compiler-release feature absent from its authority-owned root intent."""
+    support = node("core")
+    support_id = unit_id(support)
+    match propagate_features(
+        catalogs_from({"core": "[features]\nobserved=[]\n"}),
+        base_context(),
+        "Cargo.toml",
+        [selected_with_facts(support_id, support, ["observed"], SelectedUnitRole.CompilerSupport)],
+        [root_for_unit(support_id, default_features=false)],
+        [],
+        16,
+    ):
+        Ok(_) => fail("raw compiler-release features must not become authored policy demand")
+        Err(error) =>
+            assert "authenticated selected-unit features disagree with settled feature policy" in error.message()
+
+
+def require_feature_fact_refusal(child_features: list[str], declaration: str) -> str:
+    """Return the final reconciliation diagnostic for one deliberately inconsistent child unit."""
+    parent = node("root")
+    child = node("child")
+    catalogs = catalogs_from({"root": declaration, "child": "[features]\nalpha=[]\nbeta=[]\n"})
+    match propagate_features(
+        catalogs,
+        base_context(),
+        "Cargo.toml",
+        [selected(parent), selected_with_facts(unit_id(child), child, child_features)],
+        [root(parent)],
+        [edge(parent, "child", child)],
+        16,
+    ):
+        Ok(_) => return fail_t[str]("inconsistent selected-unit activation facts must refuse")
+        Err(error) => return error.message()
+
+
+pub def test_selected_unit_feature_omission_refuses_after_fixed_point() -> None:
+    """Protects refusal when selected feature facts omit settled demands."""
+    error = require_feature_fact_refusal([], "[dependencies]\nchild={version='1',features=['alpha']}\n")
+    assert "features disagree" in error
+
+
+pub def test_selected_unit_feature_extra_refuses_after_fixed_point() -> None:
+    """Protects refusal when selected feature facts add unsettled demands."""
+    error = require_feature_fact_refusal(
+        ["alpha", "beta"],
+        "[dependencies]\nchild={version='1',features=['alpha']}\n",
+    )
+    assert "features disagree" in error
+
+
+pub def test_root_default_intent_is_not_read_from_selected_unit() -> None:
+    """Protects two roots with equal physical features but distinct authored default intent."""
+    root_node = node("root")
+    result = require_ok(
+        propagate_features(
+            catalogs_from({"root": "[features]\ndefault=[]\n"}),
+            base_context(),
+            "Cargo.toml",
+            [selected(root_node)],
+            [root_for_unit(unit_id(root_node), [], false)],
+            [],
+            8,
+        ),
+    )
+    assert result.default_features == [false]
+
+
+pub def test_explicit_default_request_stays_distinct_from_default_enabled_intent() -> None:
+    """Protects authored `default` feature requests from being rewritten as a default-enabled root."""
+    root_node = node("root")
+    result = require_ok(
+        propagate_features(
+            catalogs_from({"root": "[features]\ndefault=[]\n"}),
+            base_context(),
+            "Cargo.toml",
+            [selected_with_facts(unit_id(root_node), root_node, ["default"])],
+            [root_for_unit(unit_id(root_node), ["default"], false)],
+            [],
+            8,
+        ),
+    )
+    assert result.activations[0].effective_features == ["default"]
+    assert result.default_features == [false]
+
+
+pub def test_coalesced_physical_units_must_all_match_settled_features() -> None:
+    """Protects reconciliation for every physical unit coalesced into one policy node."""
+    parent = node("root")
+    child = node("child")
+    first_parent = "sha256:first-parent"
+    second_parent = "sha256:second-parent"
+    first_child = "sha256:first-child"
+    second_child = "sha256:second-child"
+    match propagate_features(
+        catalogs_from(
+            {"root": "[dependencies]\nchild={version='1',features=['alpha']}\n", "child": "[features]\nalpha=[]\nbeta=[]\n"},
+        ),
+        base_context(),
+        "Cargo.toml",
+        [selected_as(first_parent, parent), selected_as(second_parent, parent, SelectedUnitRole.Binary), selected_with_facts(
+            first_child,
+            child,
+            ["alpha"],
+        ), selected_with_facts(second_child, child, ["alpha", "beta"])],
+        [root_for_unit(first_parent), root_for_unit(second_parent)],
+        [physical_edge(first_parent, "child", first_child), physical_edge(second_parent, "child", second_child)],
+        16,
+    ):
+        Ok(_) => fail("every coalesced physical unit must agree with the settled activation")
+        Err(error) =>
+            assert "features disagree" in error.message()
+
+
+pub def test_role_kind_mismatch_is_refused() -> None:
+    """Protects the authenticated role, crate-kind, and domain relationship."""
+    script = node("macro", DependencyDomain.Host)
+    invalid = AdmittedSelectedUnit(
+        identity=unit_id(script),
+        node=script,
+        role=SelectedUnitRole.ProcMacro,
+        crate_kind=SelectedCrateKind.Rlib,
+        closure=empty_closure(),
+        features=[],
+    )
+    match propagate_features(
+        catalogs_from({"macro": ""}),
+        base_context(),
+        "Cargo.toml",
+        [invalid],
+        [root(script)],
+        [],
+        8,
+    ):
+        Ok(_) => fail("a selected unit cannot change its authenticated target classification")
+        Err(error) =>
+            assert "role, crate kind and dependency domain disagree" in error.message()

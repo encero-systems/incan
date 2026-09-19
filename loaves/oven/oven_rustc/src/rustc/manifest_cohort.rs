@@ -196,6 +196,8 @@ impl OvenRustcArtifactManifest {
                 .filter(|candidate| {
                     candidate.package == project_leaf.package
                         && candidate.source.registry == project_leaf.source.registry
+                        && candidate.domain == project_leaf.domain
+                        && candidate.crate_kind == project_leaf.crate_kind
                 })
                 .collect::<Vec<_>>();
             if candidates.is_empty() {

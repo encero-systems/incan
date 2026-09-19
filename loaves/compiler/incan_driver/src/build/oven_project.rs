@@ -65,7 +65,9 @@ use incan_frontend::{ParsedModule, diagnostics};
 use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
 use incan_provider::compiled_sdk::CompiledSdkModules;
-use incan_provider::dependency_resolver::resolve_reachable_dependencies;
+use incan_provider::dependency_resolver::{
+    DependencyError, InlineRustImport, ResolvedDependencies, resolve_dependencies, resolve_reachable_dependencies,
+};
 use incan_provider::inventory::extend_requirements_with_provider_plan;
 use incan_provider::requirements::{collect_project_requirements, merge_project_requirement_dependencies};
 use oven_cargo_compat::cargo_process::resolved_cargo_executable;
@@ -75,10 +77,11 @@ use oven_cargo_compat::{
     prepare_direct_rustc_plan, provider_compilation_requirements_digest,
 };
 use oven_model::lock::CargoFeatureSelection;
-use oven_model::manifest::DependencySpec;
+use oven_model::manifest::{DependencySpec, ProjectManifest};
 use oven_rustc::loaf::{
     OVEN_DEPENDENCY_MISS_SUMMARY, OVEN_LOAF_ENV, OVEN_LOAF_MISS_GUIDANCE, OVEN_NESTED_DEPENDENCY_MISS_SUMMARY,
-    OVEN_NO_IMPLICIT_DEPENDENCY_BUILD, OvenToolchainLoaf, resolve_compiler_owned_loaf_for_registry_dependencies,
+    OVEN_NO_IMPLICIT_DEPENDENCY_BUILD, OvenToolchainLoaf, acquire_active_release_runtime_foundation,
+    acquire_committed_release_runtime_foundation, resolve_compiler_owned_loaf_for_registry_dependencies,
 };
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
 use oven_rustc::plan::composition::compose_selected_packaged_provider_plan;
@@ -89,6 +92,16 @@ use oven_rustc::rustc::{
 };
 use oven_store::store::OvenStore;
 use oven_store::{OvenGeneratedProjectRequest, receipt_generated_project, write_receipt};
+
+/// Compare one already held release authority with the actually selected ToolchainLoaf root.
+///
+/// Both paths must identify the same canonical envelope. Compiler identity alone is insufficient because two
+/// releases can use the same rustc while carrying different compiled Loafs or policy closures.
+fn held_release_matches_selected_root(held_root: &Path, selected_root: &Path) -> CliResult<bool> {
+    let selected = fs::canonicalize(selected_root)
+        .map_err(|error| CliError::failure(format!("selected release envelope root is unreadable: {error}")))?;
+    Ok(held_root == selected)
+}
 
 /// Analyze, generate, receipt, and select the direct-Rustc plan for one normal Oven executable command.
 #[allow(clippy::too_many_arguments)]
@@ -267,8 +280,9 @@ pub fn prepare_oven_project(
         cargo_all_features,
     }
     .normalized();
-    let mut resolved = resolve_reachable_dependencies(manifest.as_ref(), &inline_imports, true, &cargo_features)
-        .map_err(|errors| {
+    let mut resolved =
+        resolve_generated_root_dependencies(manifest.as_ref(), &inline_imports, &cargo_features, loaf_codegen_mode())
+            .map_err(|errors| {
             let sources = build_source_map(&modules);
             let message = errors
                 .iter()
@@ -294,9 +308,58 @@ pub fn prepare_oven_project(
     record_timing(&mut prepare_timings, "prepare_lock_policy", lap);
     lap = Instant::now();
     let mut oven_build_inputs = oven_build_unit_inputs(&provider_plan, &project_requirements, &resolved)?;
-    let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
-    let rustc_target = rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
-    let rustc_toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
+    let mut active_runtime_foundation = if loaf_codegen_mode() {
+        None
+    } else {
+        acquire_active_release_runtime_foundation("rust-policy-foundation")
+            .map_err(|error| CliError::failure(error.to_string()))?
+    };
+    let mut rustc = if let Some(held) = active_runtime_foundation.as_ref() {
+        held.compiler.rustc().to_path_buf()
+    } else {
+        resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?
+    };
+    let rustc_target = authority_context
+        .as_ref()
+        .and_then(|context| context.requested_target.clone())
+        .map_or_else(
+            || {
+                active_runtime_foundation.as_ref().map_or_else(
+                    || rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string())),
+                    |held| {
+                        Ok(held
+                            .asset
+                            .foundation()
+                            .selected_graph()
+                            .graph()
+                            .selection
+                            .intent
+                            .target
+                            .clone())
+                    },
+                )
+            },
+            Ok,
+        )?;
+    let rustc_toolchain = active_runtime_foundation.as_ref().map_or_else(
+        || rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string())),
+        |held| {
+            Ok(held
+                .asset
+                .foundation()
+                .selected_graph()
+                .graph()
+                .selection
+                .intent
+                .toolchain
+                .clone())
+        },
+    )?;
+    if active_runtime_foundation.is_some() && rustc_identity(&rustc).map_err(oven_rustc_error)? != rustc_toolchain {
+        return Err(CliError::failure(
+            "active runtime dependency closure retained a compiler with the wrong toolchain identity".to_string(),
+        ));
+    }
     if oven_plan_mode != OvenProjectPlanMode::InteropBootstrap {
         append_oven_interop_execution_build_inputs(&mut oven_build_inputs, manifest.as_ref(), &rustc_target)?;
     }
@@ -461,7 +524,7 @@ pub fn prepare_oven_project(
         &project_name,
         &project_version,
         rustc_target,
-        rustc_toolchain,
+        &rustc_toolchain,
         profile,
         cargo_features.cargo_features.clone(),
     )
@@ -618,6 +681,89 @@ pub fn prepare_oven_project(
         ],
         backend: Some(backend_receipt),
     };
+    let runtime_foundation = match &plan_selection {
+        OvenDirectRustcPlanSelection::ToolchainLoaf(native) => {
+            let Some(root) = native
+                .release_envelope_root()
+                .map_err(|error| CliError::failure(error.to_string()))?
+            else {
+                return Ok(OvenPreparedProject {
+                    generator,
+                    project_root,
+                    entrypoint: normalized_file_path,
+                    provider_plan,
+                    receipt,
+                    plan_selection,
+                    runtime_foundation: None,
+                    materialization: plan_preparation.materialization,
+                    cargo_process_started: plan_preparation.cargo_process_started,
+                    rustc,
+                    crate_name: ProjectGenerator::rust_target_name(&project_name),
+                    rust_edition,
+                    caller_owned_libraries,
+                    report,
+                    prepare_timings,
+                    #[cfg(feature = "rust_inspect")]
+                    rust_inspect_manifest_dir: rust_inspect_manifest_dir
+                        .as_ref()
+                        .map(|workspace| workspace.manifest_dir().to_path_buf()),
+                });
+            };
+            let held = if let Some(held) = active_runtime_foundation.take()
+                && held_release_matches_selected_root(&held.release_root, &root)?
+            {
+                held
+            } else {
+                acquire_committed_release_runtime_foundation(&root, "rust-policy-foundation")
+                    .map_err(|error| CliError::failure(error.to_string()))?
+                    .ok_or_else(|| {
+                        CliError::failure(
+                            "selected ToolchainLoaf release has no admitted runtime dependency foundation".to_string(),
+                        )
+                    })?
+            };
+            let held_intent = &held.asset.foundation().selected_graph().graph().selection.intent;
+            if held_intent.target != receipt.intent.target || held_intent.toolchain != receipt.intent.toolchain {
+                return Err(CliError::failure(
+                    "selected ToolchainLoaf does not match its runtime foundation authority".to_string(),
+                ));
+            }
+            if held.closure.is_none() {
+                return Err(CliError::failure(
+                    "selected ToolchainLoaf release has no admitted runtime dependency closure".to_string(),
+                ));
+            }
+            let retained_identity = rustc_identity(held.compiler.rustc()).map_err(oven_rustc_error)?;
+            if retained_identity != rustc_toolchain {
+                return Err(CliError::failure(
+                    "selected runtime dependency closure uses a different retained compiler".to_string(),
+                ));
+            }
+            rustc = held.compiler.rustc().to_path_buf();
+            // The foundation and its closure describe exactly one compiled Loaf of the generation. A consumer of
+            // that Loaf composes the closure into its plan; a consumer of the generation's other profile shares the
+            // retained compiler and the generation lock its own selection holds, but links nothing rebuilt above
+            // a different profile's artifacts.
+            if held.compiled_loaf_identity == native.loaf_identity && held_intent.profile == receipt.intent.profile {
+                Some(held)
+            } else {
+                None
+            }
+        }
+        _ => {
+            if active_runtime_foundation.is_some() {
+                let ambient = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
+                let ambient_identity = rustc_identity(&ambient).map_err(oven_rustc_error)?;
+                if ambient_identity != rustc_toolchain {
+                    return Err(CliError::failure(
+                        "selected non-release plan requires the ambient compiler matching its build intent".to_string(),
+                    ));
+                }
+                rustc = ambient;
+            }
+            None
+        }
+    };
     Ok(OvenPreparedProject {
         generator,
         project_root,
@@ -625,6 +771,7 @@ pub fn prepare_oven_project(
         provider_plan,
         receipt,
         plan_selection,
+        runtime_foundation,
         materialization: plan_preparation.materialization,
         cargo_process_started: plan_preparation.cargo_process_started,
         rustc,
@@ -731,6 +878,26 @@ fn sole_oven_interop_executable_target(
 /// select that immutable plan and execute direct `rustc`.
 fn loaf_codegen_mode() -> bool {
     std::env::var_os(OVEN_LOAF_ENV).is_some_and(|value| value == "1")
+}
+
+/// Resolve the manifest dependencies one generated root declares to Cargo.
+///
+/// An ordinary root declares only the manifest dependencies its source reaches. The explicit Loaf publisher declares
+/// every checked `[rust-dependencies]` entry instead: a compiler-owned standard-library closure is sealed once per
+/// profile rather than shaped by its small fixture root, and the runtime-foundation finalizer later binds each checked
+/// alias to exactly one direct `rustc --extern` edge of this root (`retain_checked_direct_dependencies`). Declaring
+/// the complete surface here is what gives Cargo that edge to trace; it never widens a normal command's closure.
+fn resolve_generated_root_dependencies(
+    manifest: Option<&ProjectManifest>,
+    inline_imports: &[InlineRustImport],
+    cargo_features: &CargoFeatureSelection,
+    retain_checked_declared: bool,
+) -> Result<ResolvedDependencies, Vec<DependencyError>> {
+    if retain_checked_declared {
+        resolve_dependencies(manifest, inline_imports, true, cargo_features)
+    } else {
+        resolve_reachable_dependencies(manifest, inline_imports, true, cargo_features)
+    }
 }
 
 /// Preserve public implementation items whenever the Oven projection emits dependency source.
@@ -1019,6 +1186,17 @@ mod tests {
     use oven_store::{OvenGeneratedProjectRequest, receipt_generated_project};
 
     #[test]
+    fn retained_runtime_authority_matches_only_the_selected_release_root() -> Result<(), Box<dyn std::error::Error>> {
+        let installed = tempfile::tempdir()?;
+        let selected = tempfile::tempdir()?;
+        let installed_root = installed.path().canonicalize()?;
+
+        assert!(held_release_matches_selected_root(&installed_root, installed.path())?);
+        assert!(!held_release_matches_selected_root(&installed_root, selected.path())?);
+        Ok(())
+    }
+
+    #[test]
     fn loaf_enables_the_complete_stdlib_runtime_envelope() {
         let mut seeded = vec!["incan_std_data".to_string()];
         ensure_loaf_stdlib_facets(&mut seeded, true);
@@ -1106,6 +1284,42 @@ mod tests {
             }
         };
         assert!(error.to_string().contains("provide an explicit base receipt"));
+        Ok(())
+    }
+
+    #[test]
+    fn loaf_publisher_root_declares_every_checked_rust_dependency() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let manifest = ProjectManifest::from_str(
+            "[project]\nname = \"checked_closure\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\nitoa = \"1\"\nryu = \"1\"\n",
+            &project.path().join("loaf.toml"),
+        )?;
+        let cargo_features = CargoFeatureSelection::default();
+        let declared = |resolved: &ResolvedDependencies| {
+            let mut names = resolved
+                .dependencies
+                .iter()
+                .map(|dependency| dependency.crate_name.clone())
+                .collect::<Vec<_>>();
+            names.sort();
+            names
+        };
+
+        let ordinary = resolve_generated_root_dependencies(Some(&manifest), &[], &cargo_features, false)
+            .map_err(|errors| format!("{errors:?}"))?;
+        assert!(
+            declared(&ordinary).is_empty(),
+            "an ordinary root must not declare unreachable manifest crates, but declared {:?}",
+            declared(&ordinary)
+        );
+
+        let publisher = resolve_generated_root_dependencies(Some(&manifest), &[], &cargo_features, true)
+            .map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(
+            declared(&publisher),
+            vec!["itoa".to_string(), "ryu".to_string()],
+            "the explicit Loaf publisher must declare every checked rust dependency as a direct root edge"
+        );
         Ok(())
     }
 }

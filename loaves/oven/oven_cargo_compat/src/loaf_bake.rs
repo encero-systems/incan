@@ -3,6 +3,7 @@
 //! into the envelope. This is the half of Oven's Loaf handling that runs Cargo, and it sits here, over
 //! `oven_rustc::loaf`'s model, so that the Loaf model, selection and validation never do.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -22,8 +23,9 @@ use oven_store::{OvenProviderHooks, OvenReceipt, digest_bytes};
 use crate::{
     OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoError, OvenLegacyCargoInspectionPackage,
     OvenLegacyCargoInspectionSource, OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind,
-    canonicalize_supporting_artifacts, copy_regular_directory_tree, direct_rustc_compile_environment,
-    materialized_files_from_directory, prepare_direct_rustc_plan,
+    OvenLegacyCargoSelectedUnitCapture, canonicalize_supporting_artifacts, copy_regular_directory_tree,
+    direct_rustc_compile_environment, legacy_cargo_selected_unit_capture_identity, materialized_files_from_directory,
+    prepare_direct_rustc_plan,
 };
 
 pub mod vocab_support;
@@ -58,6 +60,12 @@ pub struct OvenLoafBakerContext<'a> {
     pub limits: oven_store::store::OvenStoreLimits,
 }
 
+/// One exported Loaf and the physical Cargo unit selection captured by the same publisher transaction.
+pub struct OvenPreparedLoafWithSelectedUnits {
+    pub preparation: OvenLoafPreparation,
+    pub selected_units: Option<super::OvenLegacyCargoSelectedUnitCapture>,
+}
+
 /// Export one compiler-owned Loaf from an already receipted generated Incan project.
 ///
 /// Release packaging first drives the compiler's ordinary Oven analysis for a small in-package Incan program. That
@@ -70,6 +78,34 @@ pub fn prepare_loaf_from_generated_project(
     receipt: OvenReceipt,
     generated_project: &Path,
 ) -> Result<OvenLoafPreparation, OvenLoafError> {
+    prepare_loaf_from_generated_project_with_selected_units(loaf_root, context, receipt, generated_project)
+        .map(|prepared| prepared.preparation)
+}
+
+/// Export one Loaf and retain its actual Cargo-selected physical unit capture for foundation publication.
+pub fn prepare_loaf_from_generated_project_with_selected_units(
+    loaf_root: &Path,
+    context: &OvenLoafBakerContext<'_>,
+    receipt: OvenReceipt,
+    generated_project: &Path,
+) -> Result<OvenPreparedLoafWithSelectedUnits, OvenLoafError> {
+    prepare_loaf_from_generated_project_with_selected_unit_bindings(
+        loaf_root,
+        context,
+        receipt,
+        generated_project,
+        None,
+    )
+}
+
+/// Export one Loaf while binding exact physical capture identities to finalized selected units.
+pub fn prepare_loaf_from_generated_project_with_selected_unit_bindings(
+    loaf_root: &Path,
+    context: &OvenLoafBakerContext<'_>,
+    receipt: OvenReceipt,
+    generated_project: &Path,
+    selected_unit_bindings: Option<&BTreeMap<String, String>>,
+) -> Result<OvenPreparedLoafWithSelectedUnits, OvenLoafError> {
     if loaf_root.exists() && !loaf_root.is_dir() {
         return Err(OvenLoafError::Preparation {
             message: format!("loaf root is not a directory: {}", loaf_root.display()),
@@ -87,7 +123,7 @@ pub fn prepare_loaf_from_generated_project(
     let store = OvenStore::new(store_root.path(), context.limits);
     let generated_source = generated_project.join("src/main.rs");
     let compile_environment = direct_rustc_compile_environment(generated_project, &generated_source)?;
-    let publication = prepare_direct_rustc_plan(&OvenLegacyCargoPrepareRequest {
+    let mut publication = prepare_direct_rustc_plan(&OvenLegacyCargoPrepareRequest {
         compiler: context.compiler.clone(),
         provider_hooks: context.provider_hooks.clone(),
         store: &store,
@@ -122,6 +158,20 @@ pub fn prepare_loaf_from_generated_project(
             message: format!("loaf destination already exists: {}", output_directory.display()),
         });
     }
+    let mut selected_units = publication.selected_units.take();
+    if let Some(selected_units) = selected_units.as_mut() {
+        super::bind_legacy_cargo_selected_registry_sources(selected_units, context.inspection_sources).map_err(
+            |error| OvenLoafError::Preparation {
+                message: error.to_string(),
+            },
+        )?;
+    }
+    if let Some(bindings) = selected_unit_bindings {
+        let selected_units = selected_units.as_ref().ok_or_else(|| OvenLoafError::Preparation {
+            message: "selected-unit bindings require an exact physical capture".to_string(),
+        })?;
+        bind_registry_leaf_selected_unit_identities(&mut publication.registry_leaves, selected_units, bindings)?;
+    }
     let result = export_loaf(
         &store,
         &publication.plan_identity,
@@ -148,7 +198,223 @@ pub fn prepare_loaf_from_generated_project(
         path: content_directory,
         source,
     })?;
-    Ok(result)
+    Ok(OvenPreparedLoafWithSelectedUnits {
+        preparation: result,
+        selected_units,
+    })
+}
+
+/// Bind every exported registry artifact to exactly one authenticated selected physical unit.
+fn bind_registry_leaf_selected_unit_identities(
+    leaves: &mut Vec<OvenRustcRegistryLeaf>,
+    selected_units: &OvenLegacyCargoSelectedUnitCapture,
+    bindings: &BTreeMap<String, String>,
+) -> Result<(), OvenLoafError> {
+    // The units a consumer's compilation can reach: from the captured roots, stopping at run-custom-build units.
+    // A package Cargo compiled only to run a build script sits beyond that boundary; RFC 119 never selects it, so
+    // its artifact is not retained and needs no selected-unit binding.
+    let mut linked = BTreeSet::new();
+    let mut pending = selected_units.roots.clone();
+    while let Some(index) = pending.pop() {
+        if !linked.insert(index) {
+            continue;
+        }
+        let Some(unit) = selected_units.units.get(index) else {
+            return Err(OvenLoafError::Preparation {
+                message: "physical capture names an absent root or dependency".to_string(),
+            });
+        };
+        if unit.mode == "run-custom-build" {
+            continue;
+        }
+        pending.extend(unit.dependencies.iter().map(|dependency| dependency.unit_index));
+    }
+    let mut linked_identities = BTreeSet::new();
+    for index in &linked {
+        let identity = legacy_cargo_selected_unit_capture_identity(selected_units, *index).map_err(|error| {
+            OvenLoafError::Preparation {
+                message: error.to_string(),
+            }
+        })?;
+        linked_identities.insert(identity);
+    }
+    let mut used = BTreeSet::new();
+    let mut retained = Vec::with_capacity(leaves.len());
+    let mut undeclared = Vec::new();
+    let emitted = leaves
+        .iter()
+        .map(|leaf| {
+            format!(
+                "{}@{} {:?} {:?} {}",
+                leaf.package,
+                leaf.version,
+                leaf.domain,
+                leaf.crate_kind,
+                leaf.selected_unit_identity
+                    .as_deref()
+                    .map(|identity| &identity[..23])
+                    .unwrap_or("-")
+            )
+        })
+        .collect::<Vec<_>>();
+    for mut leaf in leaves.drain(..) {
+        let capture_identity = leaf
+            .selected_unit_identity
+            .clone()
+            .ok_or_else(|| OvenLoafError::Preparation {
+                message: "registry artifact lacks its traced physical-unit identity".to_string(),
+            })?;
+        if !linked_identities.contains(&capture_identity) {
+            continue;
+        }
+        let Some(selected_identity) = bindings.get(&capture_identity) else {
+            // Linked by the captured closure but outside the declared compiler-support surface: report every such
+            // package together, since each is a declaration the checked manifest still lacks.
+            undeclared.push(format!(
+                "{}@{} ({:?} {:?})",
+                leaf.package, leaf.version, leaf.domain, leaf.crate_kind
+            ));
+            continue;
+        };
+        if !used.insert(selected_identity.clone()) {
+            return Err(OvenLoafError::Preparation {
+                message: "selected unit is bound to more than one registry artifact".to_string(),
+            });
+        }
+        leaf.selected_unit_identity = Some(selected_identity.clone());
+        retained.push(leaf);
+    }
+    if !undeclared.is_empty() {
+        return Err(OvenLoafError::Preparation {
+            message: format!(
+                "{} registry artifact(s) are linked by the captured closure but lie outside the declared compiler-support surface; declare them in the checked manifest or remove the edge: {}",
+                undeclared.len(),
+                undeclared.join("; ")
+            ),
+        });
+    }
+    if used.len() != bindings.len() {
+        // Name the compiled units that no sealed artifact carries, so the catalog gap is visible rather than counted.
+        let mut identities_by_capture = BTreeMap::new();
+        for index in &linked {
+            let unit = &selected_units.units[*index];
+            let identity = legacy_cargo_selected_unit_capture_identity(selected_units, *index).map_err(|error| {
+                OvenLoafError::Preparation {
+                    message: error.to_string(),
+                }
+            })?;
+            identities_by_capture.insert(
+                identity,
+                format!(
+                    "{}@{} {:?} {:?} explicit_target={:?}",
+                    unit.package, unit.package_version, unit.target_kinds, unit.crate_types, unit.target_is_explicit
+                ),
+            );
+        }
+        let unbound = bindings
+            .iter()
+            .filter(|(_, selected)| !used.contains(*selected))
+            .map(|(capture, _)| {
+                identities_by_capture
+                    .get(capture)
+                    .cloned()
+                    .unwrap_or_else(|| format!("unlinked capture {capture}"))
+            })
+            .collect::<Vec<_>>();
+        return Err(OvenLoafError::Preparation {
+            message: format!(
+                "selected-unit bindings contain {} compiled physical unit(s) with no sealed registry artifact: {} | emitted leaves ({}): {}",
+                unbound.len(),
+                unbound.join("; "),
+                emitted.len(),
+                emitted.join("; ")
+            ),
+        });
+    }
+    *leaves = retained;
+    Ok(())
+}
+
+/// Publish the artifacts of an already exported Loaf under a distinct final receipt, without compiling again.
+///
+/// The provisional bake compiled the closure under its base receipt and exported it as `provisional_loaf`. The
+/// finalizer then derived a final receipt from that exact capture, binding the build-script closure and the
+/// authored root intent. The final receipt changes the authority a consumer sees, not the bytes: rebuilding under
+/// it would only offer a second observation of the same closure to disagree with the first, and a build script's
+/// output need not be byte-reproducible across two stagings. So the provisional Loaf is rewritten in place — its
+/// registry leaves bound to their selected units through the capture that produced them, its manifest sealed under
+/// the final receipt — and renamed to its new content identity. Every artifact file stays exactly as compiled.
+pub fn republish_loaf_under_final_receipt(
+    provisional_loaf: &Path,
+    final_receipt: &OvenReceipt,
+    selected_units: &OvenLegacyCargoSelectedUnitCapture,
+    selected_unit_bindings: &BTreeMap<String, String>,
+) -> Result<OvenLoafPreparation, OvenLoafError> {
+    let loaf_path = provisional_loaf.join("loaf.json");
+    let mut loaf: OvenLoaf = serde_json::from_slice(&fs::read(&loaf_path).map_err(|source| OvenLoafError::Io {
+        path: loaf_path.clone(),
+        source,
+    })?)
+    .map_err(|error| OvenLoafError::Preparation {
+        message: format!("provisional Loaf manifest is invalid: {error}"),
+    })?;
+    if loaf.plan.intent != final_receipt.intent {
+        return Err(OvenLoafError::Preparation {
+            message: "final receipt intent differs from the provisional Loaf's compiled intent".to_string(),
+        });
+    }
+    if loaf.build_unit_identity == final_receipt.build_unit_identity {
+        return Err(OvenLoafError::Preparation {
+            message: "final receipt is not distinct from the provisional Loaf's base receipt".to_string(),
+        });
+    }
+    let mut registry_leaves = loaf.registry_leaves.clone();
+    bind_registry_leaf_selected_unit_identities(&mut registry_leaves, selected_units, selected_unit_bindings)?;
+    loaf.plan.registry_leaves = registry_leaves.clone();
+    loaf.registry_leaves = registry_leaves;
+    loaf.build_unit_identity = final_receipt.build_unit_identity.clone();
+    loaf.compatibility = OvenLoafCompatibility::from_receipt(final_receipt)?;
+    let plan_identity = digest_bytes(
+        &serde_json::to_vec(&loaf.plan).map_err(|error| OvenLoafError::Preparation {
+            message: format!("could not encode sealed Loaf plan identity: {error}"),
+        })?,
+    );
+    let loaf_bytes = serde_json::to_vec_pretty(&loaf).map_err(|error| OvenLoafError::Preparation {
+        message: format!("could not encode Loaf: {error}"),
+    })?;
+    let loaf_identity = digest_bytes(&loaf_bytes);
+    let parent = provisional_loaf.parent().ok_or_else(|| OvenLoafError::Preparation {
+        message: format!("provisional Loaf has no parent: {}", provisional_loaf.display()),
+    })?;
+    let output_directory = parent.join(format!(
+        "{}.loaf",
+        loaf_identity.strip_prefix("sha256:").unwrap_or(&loaf_identity)
+    ));
+    if output_directory.exists() {
+        return Err(OvenLoafError::Preparation {
+            message: format!(
+                "content-addressed Loaf destination already exists: {}",
+                output_directory.display()
+            ),
+        });
+    }
+    fs::write(&loaf_path, loaf_bytes).map_err(|source| OvenLoafError::Io {
+        path: loaf_path,
+        source,
+    })?;
+    fs::rename(provisional_loaf, &output_directory).map_err(|source| OvenLoafError::Io {
+        path: output_directory.clone(),
+        source,
+    })?;
+    let (logical_bytes, physical_bytes) = loaf_directory_byte_counts(&output_directory)?;
+    Ok(OvenLoafPreparation {
+        build_unit_identity: final_receipt.build_unit_identity.clone(),
+        loaf_identity,
+        plan_identity,
+        logical_bytes,
+        physical_bytes,
+        transient_peak_physical_bytes: 0,
+    })
 }
 
 /// Copy a fully verified temporary store entry into the compiler-owned loaf layout and report its accounting.
@@ -204,6 +470,15 @@ fn export_loaf(
         })?;
         fs::copy(&file.source_path, &destination).map_err(|source_error| OvenLoafError::Io {
             path: file.source_path,
+            source: source_error,
+        })?;
+    }
+    // An empty build-script OUT_DIR has no file to carry it, but the selected graph declares the directory and
+    // digests its empty inventory; the store entry names it, and the Loaf must reproduce it for the same reason.
+    for directory in &entry.manifest.materialized_directories {
+        let destination = staging.path().join(&directory.relative_path);
+        fs::create_dir_all(&destination).map_err(|source_error| OvenLoafError::Io {
+            path: destination,
             source: source_error,
         })?;
     }
@@ -362,6 +637,37 @@ fn merge_loaf_inspection_sources(
         } else {
             copy_regular_directory_tree(&source.source_root, &destination, "registry inspection source")?;
         }
+        let actual_members = materialized_files_from_directory(&destination, "", "registry inspection source")?
+            .into_iter()
+            .map(|file| {
+                let path = file
+                    .relative_path
+                    .strip_prefix('/')
+                    .ok_or_else(|| OvenLoafError::Preparation {
+                        message: "sealed registry source member lost its package-relative prefix".to_string(),
+                    })?;
+                Ok((
+                    path.to_string(),
+                    digest_bytes(&fs::read(&file.source_path).map_err(|source| OvenLoafError::Io {
+                        path: file.source_path,
+                        source,
+                    })?),
+                ))
+            })
+            .collect::<Result<Vec<_>, OvenLoafError>>()?;
+        let expected_members = source
+            .members
+            .iter()
+            .map(|member| (member.path.clone(), member.digest.clone()))
+            .collect::<Vec<_>>();
+        if actual_members != expected_members {
+            return Err(OvenLoafError::Preparation {
+                message: format!(
+                    "sealed registry source for `{}` {} does not match its staged member inventory",
+                    source.package, source.version
+                ),
+            });
+        }
         for file in materialized_files_from_directory(&destination, &relative_root, "registry inspection source")? {
             let bytes = fs::read(&file.source_path).map_err(|source_error| OvenLoafError::Io {
                 path: file.source_path.clone(),
@@ -519,16 +825,176 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use oven_rustc::rustc::{
         OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH, OvenRustcArtifactExtern,
         OvenRustcArtifactManifest, OvenRustcRegistryLeaf, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage,
         OvenRustcSupportingArtifact,
     };
-    use oven_store::{OvenGeneratedProjectRequest, digest_bytes, digest_source_tree, receipt_generated_project};
+    use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project};
 
-    use crate::OvenLegacyCargoInspectionSource;
+    use crate::{
+        OvenLegacyCargoInspectionSource, OvenLegacyCargoInspectionSourceMember, OvenLegacyCargoSelectedUnit,
+        OvenLegacyCargoSelectedUnitCapture, legacy_cargo_selected_unit_capture_identity,
+        stage_registry_source_directory,
+    };
+
+    fn selected_registry_unit(cfg: &[&str]) -> OvenLegacyCargoSelectedUnit {
+        OvenLegacyCargoSelectedUnit {
+            package_id: "registry+https://example.invalid/index#blake2@0.10.6".to_string(),
+            package: "blake2".to_string(),
+            package_version: "0.10.6".to_string(),
+            package_source: Some("registry+https://example.invalid/index".to_string()),
+            target_name: "blake2".to_string(),
+            target_kinds: vec!["lib".to_string()],
+            crate_types: vec!["lib".to_string()],
+            source_path: PathBuf::from("/sealed/blake2/src/lib.rs"),
+            artifact_paths: Vec::new(),
+            root_module: "src/lib.rs".to_string(),
+            edition: "2021".to_string(),
+            mode: "build".to_string(),
+            platform: Some("aarch64-apple-darwin".to_string()),
+            target_is_explicit: Some(true),
+            cfg: cfg.iter().map(|value| (*value).to_string()).collect(),
+            effective_features: vec!["std".to_string()],
+            dependencies: Vec::new(),
+            sysroot_externs: Vec::new(),
+            build_script: None,
+            registry_source: None,
+        }
+    }
+
+    fn registry_leaf() -> OvenRustcRegistryLeaf {
+        OvenRustcRegistryLeaf {
+            domain: Default::default(),
+            crate_kind: Default::default(),
+            selected_unit_identity: None,
+            package: "blake2".to_string(),
+            version: "0.10.6".to_string(),
+            crate_name: "blake2".to_string(),
+            features: vec!["std".to_string()],
+            source: OvenRustcRegistrySource {
+                registry: "registry+https://example.invalid/index".to_string(),
+                checksum: "blake2-checksum".to_string(),
+                relative_root: "registry-sources/blake2-0.10.6".to_string(),
+                digest: "sha256:blake2-source".to_string(),
+            },
+            artifact: OvenRustcArtifactExtern {
+                crate_name: "blake2".to_string(),
+                relative_path: "deps/libblake2.rlib".to_string(),
+                digest: "sha256:blake2-artifact".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn registry_leaf_binding_requires_exact_unambiguous_physical_capture() -> Result<(), Box<dyn std::error::Error>> {
+        let unit = selected_registry_unit(&["target_has_atomic=\"64\""]);
+        let capture = OvenLegacyCargoSelectedUnitCapture {
+            roots: vec![0],
+            units: vec![unit.clone()],
+            rustc_invocations_observed: true,
+            build_script_tool_probes: Vec::new(),
+            compiler: None,
+        };
+        let capture_identity = legacy_cargo_selected_unit_capture_identity(&capture, 0)?;
+        let mut bindings = BTreeMap::from([(capture_identity.clone(), "sha256:selected-unit".to_string())]);
+        let mut leaf = registry_leaf();
+        leaf.selected_unit_identity = Some(capture_identity.clone());
+        let mut leaves = vec![leaf.clone()];
+
+        bind_registry_leaf_selected_unit_identities(&mut leaves, &capture, &bindings)?;
+        assert_eq!(
+            leaves[0].selected_unit_identity.as_deref(),
+            Some("sha256:selected-unit")
+        );
+
+        let mut missing = vec![leaf.clone()];
+        assert!(bind_registry_leaf_selected_unit_identities(&mut missing, &capture, &BTreeMap::new()).is_err());
+
+        let mut variant = unit;
+        variant.cfg.push("target_feature=\"neon\"".to_string());
+        let variants = OvenLegacyCargoSelectedUnitCapture {
+            units: vec![capture.units[0].clone(), variant],
+            ..capture
+        };
+        let variant_identity = legacy_cargo_selected_unit_capture_identity(&variants, 1)?;
+        assert_ne!(
+            variant_identity, capture_identity,
+            "a cfg change is a different physical unit"
+        );
+        let mut variant_only = vec![leaf.clone()];
+        let variant_bindings = BTreeMap::from([(variant_identity, "sha256:wrong-variant".to_string())]);
+        assert!(bind_registry_leaf_selected_unit_identities(&mut variant_only, &variants, &variant_bindings).is_err());
+
+        bindings.insert(
+            "sha256:uncompiled-capture".to_string(),
+            "sha256:uncompiled-unit".to_string(),
+        );
+        let mut extra = vec![leaf.clone()];
+        assert!(bind_registry_leaf_selected_unit_identities(&mut extra, &variants, &bindings).is_err());
+
+        // A package compiled only to run a build script lies beyond the linked closure: its artifact is dropped
+        // from the publication rather than demanding a selected-unit binding it can never have.
+        let mut script = capture.units[0].clone();
+        script.target_name = "build-script-build".to_string();
+        script.target_kinds = vec!["custom-build".to_string()];
+        script.mode = "run-custom-build".to_string();
+        let mut script_only = capture.units[0].clone();
+        script_only.package = "cc".to_string();
+        script_only.target_name = "cc".to_string();
+        let mut linked = capture.units[0].clone();
+        linked.dependencies = vec![crate::OvenLegacyCargoSelectedDependency {
+            unit_index: 1,
+            extern_crate_name: None,
+            build_script: None,
+        }];
+        script.dependencies = vec![crate::OvenLegacyCargoSelectedDependency {
+            unit_index: 2,
+            extern_crate_name: Some("cc".to_string()),
+            build_script: None,
+        }];
+        let with_script = OvenLegacyCargoSelectedUnitCapture {
+            roots: vec![0],
+            units: vec![linked, script, script_only],
+            rustc_invocations_observed: true,
+            build_script_tool_probes: Vec::new(),
+            compiler: None,
+        };
+        let linked_identity = legacy_cargo_selected_unit_capture_identity(&with_script, 0)?;
+        let script_only_identity = legacy_cargo_selected_unit_capture_identity(&with_script, 2)?;
+        // The identity is portable: reordering the capture or renumbering its edges changes nothing.
+        let reordered = OvenLegacyCargoSelectedUnitCapture {
+            roots: vec![2],
+            units: {
+                let mut linked = with_script.units[0].clone();
+                linked.dependencies[0].unit_index = 0;
+                let mut script = with_script.units[1].clone();
+                script.dependencies[0].unit_index = 1;
+                vec![script, with_script.units[2].clone(), linked]
+            },
+            ..with_script.clone()
+        };
+        assert_eq!(
+            legacy_cargo_selected_unit_capture_identity(&reordered, 2)?,
+            linked_identity
+        );
+        let mut linked_leaf = registry_leaf();
+        linked_leaf.selected_unit_identity = Some(linked_identity.clone());
+        let mut script_leaf = registry_leaf();
+        script_leaf.package = "cc".to_string();
+        script_leaf.selected_unit_identity = Some(script_only_identity);
+        let mut leaves = vec![linked_leaf, script_leaf];
+        let bindings = BTreeMap::from([(linked_identity, "sha256:selected-unit".to_string())]);
+        bind_registry_leaf_selected_unit_identities(&mut leaves, &with_script, &bindings)?;
+        assert_eq!(leaves.len(), 1, "the script-only artifact is not retained");
+        assert_eq!(
+            leaves[0].selected_unit_identity.as_deref(),
+            Some("sha256:selected-unit")
+        );
+        Ok(())
+    }
     fn runtime_receipt(
         source: &Path,
         providers: &str,
@@ -556,6 +1022,100 @@ mod tests {
         Ok(receipt_generated_project(&request)?)
     }
 
+    /// The final receipt changes the authority a consumer sees, not the bytes: republishing rewrites the manifest
+    /// and renames the Loaf, binds its leaves through the capture that produced them, and leaves every artifact
+    /// exactly as the provisional bake compiled it.
+    #[test]
+    fn republishing_under_the_final_receipt_reseals_the_provisional_artifacts_unchanged()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let base = runtime_receipt_for_plan()?;
+        let final_receipt = oven_store::receipt_with_build_unit_input(
+            &base,
+            crate::OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT,
+            digest_bytes(b"closure"),
+        )?;
+        assert_ne!(final_receipt.build_unit_identity, base.build_unit_identity);
+
+        let unit = selected_registry_unit(&["target_has_atomic=\"64\""]);
+        let capture = OvenLegacyCargoSelectedUnitCapture {
+            roots: vec![0],
+            units: vec![unit],
+            rustc_invocations_observed: true,
+            build_script_tool_probes: Vec::new(),
+            compiler: None,
+        };
+        let capture_identity = legacy_cargo_selected_unit_capture_identity(&capture, 0)?;
+        let mut leaf = registry_leaf();
+        leaf.selected_unit_identity = Some(capture_identity.clone());
+        let mut plan = empty_manifest(&base);
+        plan.registry_leaves = vec![leaf.clone()];
+        let provisional = OvenLoaf {
+            schema_version: OVEN_LOAF_SCHEMA_VERSION,
+            build_unit_identity: base.build_unit_identity.clone(),
+            provenance: OvenLoafProvenance {
+                compiler_version: "fixture".to_string(),
+                rust_toolchain: base.intent.toolchain.clone(),
+                sdk_provider_codegen_revision: "fixture".to_string(),
+                baker: "legacy_cargo".to_string(),
+            },
+            accounting: OvenLoafAccounting {
+                payload_logical_bytes: 0,
+                payload_physical_bytes: 0,
+            },
+            compatibility: OvenLoafCompatibility::from_receipt(&base)?,
+            registry_leaves: vec![leaf.clone()],
+            plan,
+        };
+        let root = tempfile::tempdir()?;
+        let provisional_dir = root.path().join("provisional.loaf");
+        let artifact = provisional_dir.join(&leaf.artifact.relative_path);
+        fs::create_dir_all(artifact.parent().ok_or("artifact parent")?)?;
+        fs::write(&artifact, b"exact compiled bytes")?;
+        fs::write(
+            provisional_dir.join("loaf.json"),
+            serde_json::to_vec_pretty(&provisional)?,
+        )?;
+        let bindings = BTreeMap::from([(capture_identity, "sha256:selected-unit".to_string())]);
+
+        let republished = republish_loaf_under_final_receipt(&provisional_dir, &final_receipt, &capture, &bindings)?;
+        assert!(!provisional_dir.exists(), "the provisional Loaf is renamed, not copied");
+        let published_dir = root.path().join(format!(
+            "{}.loaf",
+            republished.loaf_identity.trim_start_matches("sha256:")
+        ));
+        assert!(published_dir.is_dir());
+        assert_eq!(
+            fs::read(published_dir.join(&leaf.artifact.relative_path))?,
+            b"exact compiled bytes",
+            "artifacts are untouched"
+        );
+        let published: OvenLoaf = serde_json::from_slice(&fs::read(published_dir.join("loaf.json"))?)?;
+        assert_eq!(published.build_unit_identity, final_receipt.build_unit_identity);
+        assert_eq!(
+            published.registry_leaves[0].selected_unit_identity.as_deref(),
+            Some("sha256:selected-unit")
+        );
+        assert_eq!(published.plan.registry_leaves, published.registry_leaves);
+        assert_eq!(republished.build_unit_identity, final_receipt.build_unit_identity);
+        assert_eq!(
+            republished.loaf_identity,
+            digest_bytes(&fs::read(published_dir.join("loaf.json"))?),
+            "the Loaf is named by its sealed manifest"
+        );
+
+        // The same receipt is not a republication, and a different intent is a different compilation.
+        fs::create_dir_all(&provisional_dir)?;
+        fs::write(
+            provisional_dir.join("loaf.json"),
+            serde_json::to_vec_pretty(&provisional)?,
+        )?;
+        assert!(republish_loaf_under_final_receipt(&provisional_dir, &base, &capture, &bindings).is_err());
+        let mut other_intent = final_receipt.clone();
+        other_intent.intent.profile = "debug".to_string();
+        assert!(republish_loaf_under_final_receipt(&provisional_dir, &other_intent, &capture, &bindings).is_err());
+        Ok(())
+    }
+
     fn runtime_receipt_for_plan() -> Result<oven_store::OvenReceipt, Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
         let source = root.path().join("main.rs");
@@ -580,6 +1140,75 @@ mod tests {
             vocab_auxiliary_targets: Vec::new(),
             supporting_artifacts: Vec::new(),
         }
+    }
+
+    /// One package version compiles once per domain and kind; the catalog keeps the target library, the host
+    /// library a macro depends on, and the macro itself apart, and still refuses two leaves of one domain and kind.
+    #[test]
+    fn a_catalog_seals_host_and_target_compilations_of_one_package_as_distinct_leaves()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use oven_rustc::rustc::{OvenRustcRegistryLeafDomain, OvenRustcRegistryLeafKind};
+        let receipt = runtime_receipt_for_plan()?;
+        let mut plan = empty_manifest(&receipt);
+        plan.registry_sources.push(OvenRustcRegistrySourcePackage {
+            package: "blake2".to_string(),
+            version: "0.10.6".to_string(),
+            features: vec!["std".to_string()],
+            source: OvenRustcRegistrySource {
+                registry: "registry+https://example.invalid/index".to_string(),
+                checksum: "blake2-checksum".to_string(),
+                relative_root: "registry-sources/blake2-0.10.6".to_string(),
+                digest: "sha256:blake2-source".to_string(),
+            },
+        });
+        // The plan must declare the retained source manifest and every leaf artifact it names.
+        plan.supporting_artifacts
+            .push(oven_rustc::rustc::OvenRustcSupportingArtifact {
+                relative_path: "registry-sources/blake2-0.10.6/Cargo.toml".to_string(),
+                digest: "sha256:blake2-manifest".to_string(),
+            });
+        let leaf = |relative_path: &str, domain, crate_kind| {
+            let mut leaf = registry_leaf();
+            leaf.domain = domain;
+            leaf.crate_kind = crate_kind;
+            leaf.artifact.relative_path = relative_path.to_string();
+            leaf.artifact.digest = format!("sha256:{relative_path}");
+            leaf
+        };
+        for relative_path in [
+            "target/x/release/deps/libblake2-t.rlib",
+            "target/release/deps/libblake2-h.rlib",
+            "target/x/release/deps/libblake2-t2.rlib",
+        ] {
+            plan.supporting_artifacts
+                .push(oven_rustc::rustc::OvenRustcSupportingArtifact {
+                    relative_path: relative_path.to_string(),
+                    digest: format!("sha256:{relative_path}"),
+                });
+        }
+        plan.registry_leaves = vec![
+            leaf(
+                "target/x/release/deps/libblake2-t.rlib",
+                OvenRustcRegistryLeafDomain::Target,
+                OvenRustcRegistryLeafKind::Rlib,
+            ),
+            leaf(
+                "target/release/deps/libblake2-h.rlib",
+                OvenRustcRegistryLeafDomain::Host,
+                OvenRustcRegistryLeafKind::Rlib,
+            ),
+        ];
+        plan.validate_shape(&receipt.intent)?;
+        plan.registry_leaves.push(leaf(
+            "target/x/release/deps/libblake2-t2.rlib",
+            OvenRustcRegistryLeafDomain::Target,
+            OvenRustcRegistryLeafKind::Rlib,
+        ));
+        assert!(
+            plan.validate_shape(&receipt.intent).is_err(),
+            "two target libraries of one package version remain a refusal"
+        );
+        Ok(())
     }
 
     #[test]
@@ -630,15 +1259,25 @@ mod tests {
             "[package]\nname = \"blake2\"\nversion = \"0.10.6\"\n",
         )?;
         fs::write(source.path().join("src/lib.rs"), "pub fn sealed() {}\n")?;
-        let source_digest = digest_source_tree(source.path())?;
+        fs::write(source.path().join("src.rs"), "// sorts before src/lib.rs\n")?;
+        let staged_sources = tempfile::tempdir()?;
+        let (source_root, source_digest, members) = stage_registry_source_directory(
+            staged_sources.path(),
+            "blake2",
+            "0.10.6",
+            "registry+https://example.invalid/index",
+            "blake2-checksum",
+            source.path(),
+        )?;
         let authority = OvenLegacyCargoInspectionSource {
             package: "blake2".to_string(),
             version: "0.10.6".to_string(),
             registry: "registry+https://example.invalid/index".to_string(),
             checksum: "blake2-checksum".to_string(),
             features: vec!["derive".to_string(), "std".to_string()],
-            source_root: source.path().to_path_buf(),
+            source_root,
             source_digest,
+            members,
         };
         let staging = tempfile::tempdir()?;
         let receipt = runtime_receipt_for_plan()?;
@@ -660,6 +1299,9 @@ mod tests {
             digest: digest_bytes(artifact),
         });
         plan.registry_leaves.push(OvenRustcRegistryLeaf {
+            domain: Default::default(),
+            crate_kind: Default::default(),
+            selected_unit_identity: None,
             package: authority.package.clone(),
             version: authority.version.clone(),
             crate_name: "blake2".to_string(),
@@ -685,6 +1327,70 @@ mod tests {
                 .to_string()
                 .contains("disagrees with the generated-project authority")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn envelope_source_authority_refuses_incomplete_or_changed_member_inventory()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = tempfile::tempdir()?;
+        fs::create_dir_all(source.path().join("src"))?;
+        fs::write(
+            source.path().join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"1.0.0\"\n",
+        )?;
+        fs::write(source.path().join("src/lib.rs"), "pub fn sealed() {}\n")?;
+        fs::write(source.path().join("src.rs"), "// sorts before src/lib.rs\n")?;
+        let staged_sources = tempfile::tempdir()?;
+        let (source_root, source_digest, members) = stage_registry_source_directory(
+            staged_sources.path(),
+            "fixture",
+            "1.0.0",
+            "registry+https://example.invalid/index",
+            "fixture-checksum",
+            source.path(),
+        )?;
+        let authority = OvenLegacyCargoInspectionSource {
+            package: "fixture".to_string(),
+            version: "1.0.0".to_string(),
+            registry: "registry+https://example.invalid/index".to_string(),
+            checksum: "fixture-checksum".to_string(),
+            features: Vec::new(),
+            source_root,
+            source_digest,
+            members,
+        };
+
+        let assert_refused = |candidate: OvenLegacyCargoInspectionSource| -> Result<(), Box<dyn std::error::Error>> {
+            let staging = tempfile::tempdir()?;
+            let receipt = runtime_receipt_for_plan()?;
+            let mut plan = empty_manifest(&receipt);
+            let error = merge_loaf_inspection_sources(&mut plan, staging.path(), &[candidate])
+                .expect_err("changed source inventory must be refused");
+            assert!(error.to_string().contains("does not match its staged member inventory"));
+            Ok(())
+        };
+
+        let mut missing = authority.clone();
+        missing.members.pop();
+        assert_refused(missing)?;
+
+        let mut extra = authority.clone();
+        extra.members.push(OvenLegacyCargoInspectionSourceMember {
+            path: "src/not-staged.rs".to_string(),
+            digest: digest_bytes(b"not staged"),
+        });
+        assert_refused(extra)?;
+
+        let mut tampered = authority.clone();
+        tampered.members[0].digest = digest_bytes(b"different bytes");
+        assert_refused(tampered)?;
+
+        let staging = tempfile::tempdir()?;
+        let receipt = runtime_receipt_for_plan()?;
+        let mut plan = empty_manifest(&receipt);
+        merge_loaf_inspection_sources(&mut plan, staging.path(), &[authority])?;
+        assert_eq!(plan.registry_sources.len(), 1);
         Ok(())
     }
 

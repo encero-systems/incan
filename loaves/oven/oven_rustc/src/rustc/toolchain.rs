@@ -14,7 +14,8 @@ use std::sync::{Mutex, OnceLock};
 
 use super::{
     BTreeMap, BTreeSet, OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcError,
-    clear_inherited_cargo_environment, normalized_relative_path, rustup_reported_tool, verified_regular_file,
+    OvenSelectedRustFacetCfgSnapshot, clear_inherited_cargo_environment, normalized_relative_path,
+    rustup_reported_tool, validate_selected_graph_cfg_snapshot, verified_regular_file,
 };
 
 /// Return the Rustup home Incan provisions for itself, when an installed toolchain has one.
@@ -279,6 +280,108 @@ pub fn rustc_host_target(rustc: &Path) -> Result<String, OvenRustcError> {
         })
 }
 
+/// Capture the complete cfg facts the exact verified compiler reports for one explicit target.
+///
+/// This is a publisher-side physical probe. It never resolves a compiler through Cargo or the consumer environment,
+/// and it clears inherited Cargo variables before asking the supplied compiler for `--print cfg`. `None` asks for the
+/// compiler's host facts; `Some(target)` asks for exactly that target's facts.
+pub fn rustc_cfg_snapshot(
+    rustc: &Path,
+    target: Option<&str>,
+) -> Result<OvenSelectedRustFacetCfgSnapshot, OvenRustcError> {
+    let rustc = verified_regular_file(rustc, "rustc")?;
+    let mut command = rustc_cfg_snapshot_command(&rustc, target)?;
+    let output = command.output().map_err(|source| OvenRustcError::Io {
+        path: rustc.clone(),
+        source,
+    })?;
+    if !output.status.success() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "rustc cfg snapshot",
+            message: "must report a successful `--print cfg` snapshot".to_string(),
+        });
+    }
+    let stdout = String::from_utf8(output.stdout).map_err(|error| OvenRustcError::InvalidInput {
+        field: "rustc cfg snapshot",
+        message: format!("reported non-UTF-8 `--print cfg` output: {error}"),
+    })?;
+    parse_rustc_cfg_snapshot(&stdout)
+}
+
+/// Capture host and selected-target cfg facts once each from the same verified compiler.
+///
+/// The pair is the only cfg acquisition a sealed selected-graph publisher needs. Consumers receive the retained
+/// snapshots through the graph and must not invoke this probe themselves.
+pub fn rustc_host_and_target_cfg_snapshots(
+    rustc: &Path,
+    target: &str,
+) -> Result<(OvenSelectedRustFacetCfgSnapshot, OvenSelectedRustFacetCfgSnapshot), OvenRustcError> {
+    let host = rustc_cfg_snapshot(rustc, None)?;
+    let target = rustc_cfg_snapshot(rustc, Some(target))?;
+    Ok((host, target))
+}
+
+/// Build the Cargo-clean compiler command that yields one cfg snapshot.
+fn rustc_cfg_snapshot_command(rustc: &Path, target: Option<&str>) -> Result<Command, OvenRustcError> {
+    let mut command = Command::new(rustc);
+    command.args(["--print", "cfg"]);
+    if let Some(target) = target {
+        if target.is_empty() || target.trim() != target {
+            return Err(OvenRustcError::InvalidInput {
+                field: "rustc cfg snapshot target",
+                message: "must be a nonempty trimmed target triple".to_string(),
+            });
+        }
+        command.args(["--target", target]);
+    }
+    clear_inherited_cargo_environment(&mut command);
+    Ok(command)
+}
+
+/// Parse one complete `rustc --print cfg` stdout stream into the graph's canonical wire representation.
+///
+/// Rustc emits one bare flag or one JSON-quoted key/value fact per line. The probe normalizes the compiler's order
+/// before graph admission, while duplicate output remains a refusal rather than being silently removed.
+fn parse_rustc_cfg_snapshot(stdout: &str) -> Result<OvenSelectedRustFacetCfgSnapshot, OvenRustcError> {
+    let mut flags = Vec::new();
+    let mut values = BTreeMap::<String, Vec<String>>::new();
+    for line in stdout.lines() {
+        if line.is_empty() || line.trim() != line {
+            return Err(OvenRustcError::InvalidInput {
+                field: "rustc cfg snapshot",
+                message: "contains an empty or noncanonical cfg output line".to_string(),
+            });
+        }
+        if let Some((key, encoded)) = line.split_once('=') {
+            let value = serde_json::from_str::<String>(encoded).map_err(|error| OvenRustcError::InvalidInput {
+                field: "rustc cfg snapshot",
+                message: format!("contains a non-JSON cfg value: {error}"),
+            })?;
+            values.entry(key.to_string()).or_default().push(value);
+        } else {
+            flags.push(line.to_string());
+        }
+    }
+    if flags.is_empty() && values.is_empty() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "rustc cfg snapshot",
+            message: "reported no cfg facts".to_string(),
+        });
+    }
+    flags.sort();
+    for entries in values.values_mut() {
+        entries.sort();
+    }
+    let snapshot = OvenSelectedRustFacetCfgSnapshot { flags, values };
+    validate_selected_graph_cfg_snapshot(&snapshot, "rustc cfg snapshot").map_err(|error| {
+        OvenRustcError::InvalidInput {
+            field: "rustc cfg snapshot",
+            message: error.to_string(),
+        }
+    })?;
+    Ok(snapshot)
+}
+
 /// Resolve the selected compiler's sysroot without consulting Cargo.
 pub fn rustc_sysroot(rustc: &Path) -> Result<PathBuf, OvenRustcError> {
     let rustc = verified_regular_file(rustc, "rustc")?;
@@ -445,4 +548,56 @@ pub fn rustc_commit_hash(rustc: &Path) -> Option<String> {
         .lines()
         .find_map(|line| line.strip_prefix("commit-hash: "))
         .map(|hash| hash.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn cfg_snapshot_parser_preserves_complete_canonical_rustc_facts() -> TestResult {
+        let snapshot = parse_rustc_cfg_snapshot(
+            "debug_assertions\ntarget_abi=\"\"\ntarget_arch=\"x86_64\"\ntarget_feature=\"fxsr,sse\"\nunix\n",
+        )?;
+        assert_eq!(snapshot.flags, ["debug_assertions", "unix"]);
+        assert_eq!(snapshot.values["target_abi"], [""]);
+        assert_eq!(snapshot.values["target_arch"], ["x86_64"]);
+        assert_eq!(snapshot.values["target_feature"], ["fxsr,sse"]);
+        Ok(())
+    }
+
+    #[test]
+    fn cfg_snapshot_parser_refuses_incomplete_or_ambiguous_output() {
+        assert!(parse_rustc_cfg_snapshot("").is_err());
+        assert!(parse_rustc_cfg_snapshot("target_arch=x86_64\n").is_err());
+        assert!(parse_rustc_cfg_snapshot("unix\nunix\n").is_err());
+        assert!(parse_rustc_cfg_snapshot(" target_arch=\"x86_64\"\n").is_err());
+    }
+
+    #[test]
+    fn cfg_snapshot_probe_keeps_host_and_cross_target_facts_distinct() -> TestResult {
+        let rustc = resolve_active_rustc()?;
+        let (host, target) = rustc_host_and_target_cfg_snapshots(&rustc, "wasm32-unknown-unknown")?;
+        assert_eq!(host.values["target_arch"], [std::env::consts::ARCH]);
+        assert_eq!(target.values["target_arch"], ["wasm32"]);
+        assert_eq!(target.values["target_os"], ["unknown"]);
+        assert!(rustc_cfg_snapshot(&rustc, Some("not-an-oven-target")).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn cfg_snapshot_command_uses_only_the_verified_compiler_and_explicit_target() -> TestResult {
+        let command = rustc_cfg_snapshot_command(Path::new("/sealed/rustc"), Some("x86_64-unknown-linux-gnu"))?;
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(arguments, ["--print", "cfg", "--target", "x86_64-unknown-linux-gnu"]);
+        assert!(rustc_cfg_snapshot_command(Path::new("/sealed/rustc"), Some(" ")).is_err());
+        Ok(())
+    }
 }

@@ -178,6 +178,12 @@ pub struct OvenLoafBakeCommandOptions {
     pub output: PathBuf,
     /// Bounded compiler-suite store baked beside a compiler-suite Loaf envelope.
     pub suite_store: Option<PathBuf>,
+    /// Optional existing ProjectOutput store, accepted only by the release publisher.
+    pub policy_engine_store: Option<PathBuf>,
+    /// Exact policy-engine ProjectOutput identity paired with `policy_engine_store`.
+    pub policy_engine_identity: Option<String>,
+    /// Exact Rust target required of the embedded policy engine.
+    pub policy_engine_target: Option<String>,
     /// Built-in release or compiler-suite envelope.
     pub envelope: OvenLoafEnvelopeArgument,
     /// Exact SDK provider inventory used to derive compatibility identities.
@@ -194,6 +200,8 @@ pub struct OvenLoafBakeCommandOptions {
     pub max_domain_logical_bytes: Option<u64>,
     /// Requested rendering format.
     pub format: OvenOutputFormat,
+    /// Registered Loaf registry checkout whose adoption manifests govern captured registry units (release only).
+    pub loaf_registry: Option<PathBuf>,
 }
 
 /// Inputs for the direct-rustc compiler workspace-test consumer.

@@ -37,7 +37,7 @@ use crate::{CliError, CliResult, ExitCode, OvenInteropAdapterArgument, OvenLoafE
 use incan_driver::interop_plan::locked_interop_plan_target;
 use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
-use oven_cargo_compat::loaf_bake::{OvenLoafBakerContext, prepare_loaf_from_generated_project};
+use oven_cargo_compat::loaf_bake::OvenLoafBakerContext;
 use oven_cargo_compat::{
     OVEN_COMPILER_TEST_SUITE_FOUNDATION_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION,
     OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION, OVEN_COMPILER_TEST_SUITE_SHARD_SCHEMA_VERSION_V1,
@@ -60,10 +60,11 @@ use oven_model::oven_interop::{LockedInteropTarget, ToolchainRequirement};
 use oven_rustc::loaf::{
     LoafTemporaryDirectory, OVEN_LOAF_ENV, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLoafEnvelope,
     OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenLoafMemberRole, OvenLoafPreparation,
-    acquire_committed_loaf_generation, acquire_exclusive_loaf_generation_lock, commit_loaf_generation,
-    digest_runtime_crate_source, loaf_directory_byte_counts, loaf_envelope_inspection_packages,
-    loaf_envelope_specifications, loaf_raw_disk_bytes, retire_unreferenced_loaf_generations,
-    validate_stored_loaf_for_reuse,
+    OvenReleaseRuntimeClosureMember, OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember,
+    acquire_committed_loaf_generation, acquire_exclusive_loaf_generation_lock, bind_release_runtime_closure_evidence,
+    bind_release_runtime_foundation_evidence, commit_loaf_generation, digest_runtime_crate_source,
+    loaf_directory_byte_counts, loaf_envelope_inspection_packages, loaf_envelope_specifications, loaf_raw_disk_bytes,
+    retire_unreferenced_loaf_generations, validate_stored_loaf_for_reuse,
 };
 use oven_rustc::loaf_mirror::{
     LoafEnvelopeExpectation, LoafMemberExpectation, LoafMirrorMiss, import_loaf_envelope_from_mirrors,
@@ -135,11 +136,12 @@ const COMPILER_LIBTEST_RECEIPT_RELATIVE_PATH: &str = ".incan/oven/compiler-libte
 /// discover nor launch Cargo.
 pub fn oven_bake_project(
     project: PathBuf,
+    target: Option<String>,
     package_features: FeatureSelection,
     format: OvenOutputFormat,
 ) -> CliResult<ExitCode> {
     incan_driver::project::warn_once_about_ignored_cargo_manifest(&project);
-    let report = incan_driver::build::bake::bake_oven_project_targets(&project, &package_features)?;
+    let report = incan_driver::build::bake::bake_oven_project_targets(&project, &package_features, target.as_deref())?;
     match format {
         OvenOutputFormat::Text => {
             for profile in &report.profiles {
@@ -230,6 +232,7 @@ pub fn oven_publish_direct_rustc_plan(options: OvenPlanPublishCommandOptions) ->
             kind: OvenArtifactKind::DirectRustcPlan,
             payload,
             materialized_files,
+            materialized_directories: Vec::new(),
         })
         .map_err(oven_error)?;
     match options.format {
@@ -3296,6 +3299,11 @@ pub fn oven_run(options: OvenRunCommandOptions) -> CliResult<ExitCode> {
 
 #[cfg(test)]
 mod tests {
+    use super::CompleteLoafEnvelopeReuseInput;
+    use super::loaf_bake::{
+        import_release_policy_output, release_policy_publisher_input, validate_release_policy_project_output,
+        verify_committed_release_policy_output,
+    };
     use super::{
         CompilerSuiteChildrenReport, CompilerSuiteFixtureCargoProxy, CompilerSuiteNativeTestRootReport,
         CompilerSuiteRustdocTestRootReport, CompilerSuiteTimingReport,
@@ -3313,8 +3321,9 @@ mod tests {
         compiler_suite_selection_context, compiler_suite_selection_report, compiler_suite_temporary_directory,
         compiler_suite_uses_indexed_foundations, compiler_suite_workspace_library_dependency_closure,
         default_rustup_home, import_loaf_envelope_from_mirror_roots, interop_bake_terminal_message,
-        loaf_envelope_compatibility_map, loaf_envelope_default_limits, loaf_envelope_evidence,
-        loaf_fixture_action_name, loaf_generation_identity, native_test_failure_summary, oven_import,
+        loaf_envelope_compatibility_map, loaf_envelope_compatibility_map_with_release_member,
+        loaf_envelope_default_limits, loaf_envelope_evidence, loaf_fixture_action_name,
+        loaf_generation_identity_with_release_member, native_test_failure_summary, oven_import,
         oven_publish_direct_rustc_plan, oven_run, oven_test, parse_named_path, prepare_compiler_suite_child,
         reuse_complete_loaf_envelope, run_compiler_suite_children_with_leases_retained,
         run_prepared_compiler_suite_children, select_compiler_suite_shards, write_compiler_suite_report,
@@ -3330,11 +3339,211 @@ mod tests {
         OvenCompilerWorkspaceLibrary, OvenCompilerWorkspaceLibraryKey,
     };
     use oven_rustc::loaf::{
-        OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION, OvenLoaf, OvenLoafEnvelope,
-        OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafMemberRole, acquire_exclusive_loaf_generation_lock,
-        loaf_envelope_specifications,
+        OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OVEN_LOAF_SCHEMA_VERSION, OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION,
+        OvenLoaf, OvenLoafEnvelope, OvenLoafEnvelopeManifest, OvenLoafEnvelopeMember, OvenLoafMemberRole,
+        OvenReleaseStoreMember, acquire_exclusive_loaf_generation_lock, loaf_envelope_specifications,
     };
     use oven_rustc::loaf::{commit_loaf_generation, retire_unreferenced_loaf_generations};
+
+    #[test]
+    fn release_store_member_changes_the_generation_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let evidence = BTreeMap::from([("compiler".to_string(), "sha256:compiler".to_string())]);
+        let member = OvenReleaseStoreMember {
+            schema_version: OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION,
+            label: "rust-policy-engine".to_string(),
+            store_relative_path: PathBuf::from("project-outputs/rust-policy-engine/oven/store/v2"),
+            artifact_identity: "sha256:engine".to_string(),
+        };
+        let ordinary = digest_bytes(&serde_json::to_vec(&("release", &evidence))?);
+        assert_eq!(
+            ordinary,
+            loaf_generation_identity_with_release_member(OvenLoafEnvelope::Release, &evidence, None)?
+        );
+        let embedded =
+            loaf_generation_identity_with_release_member(OvenLoafEnvelope::Release, &evidence, Some(&member))?;
+        assert_ne!(ordinary, embedded);
+        let mut swapped = member;
+        swapped.artifact_identity = "sha256:other".to_string();
+        assert_ne!(
+            embedded,
+            loaf_generation_identity_with_release_member(OvenLoafEnvelope::Release, &evidence, Some(&swapped))?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn policy_publisher_inputs_are_paired_and_release_only() {
+        let store = Path::new("policy-store");
+        assert!(release_policy_publisher_input(OvenLoafEnvelope::Release, None, None, None).is_ok());
+        assert!(release_policy_publisher_input(OvenLoafEnvelope::Release, Some(store), None, None).is_err());
+        assert!(release_policy_publisher_input(OvenLoafEnvelope::Release, None, Some("sha256:output"), None).is_err());
+        assert!(
+            release_policy_publisher_input(
+                OvenLoafEnvelope::CompilerSuite,
+                Some(store),
+                Some("sha256:output"),
+                Some("aarch64-apple-darwin"),
+            )
+            .is_err()
+        );
+        assert_eq!(
+            release_policy_publisher_input(
+                OvenLoafEnvelope::Release,
+                Some(store),
+                Some("sha256:output"),
+                Some("aarch64-apple-darwin"),
+            )
+            .ok()
+            .flatten(),
+            Some((store, "sha256:output", "aarch64-apple-darwin")),
+        );
+    }
+
+    #[test]
+    fn release_publisher_imports_the_exact_existing_project_output() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir_all(project.path().join("src"))?;
+        fs::write(
+            project.path().join("loaf.toml"),
+            "[project]\nname = \"oven_local_intake\"\nversion = \"0.1.0\"\n",
+        )?;
+        assert_eq!(
+            incan_driver::build::output_selection::baked_project_owner_identity(project.path())?,
+            incan_driver::build::output_selection::baked_project_owner_identity_for_name("oven_local_intake"),
+            "the publisher must use the canonical ProjectOutput owner derivation",
+        );
+        fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+        let (receipt, mut payload, files) = incan_driver::build::test_support::fixture_project_output_publication(
+            project.path(),
+            "release",
+            "policy-engine",
+        )?;
+        payload.target_identity = "executable:src/plan_json_main.incn".to_string();
+        payload.entrypoint_relative_path = "src/plan_json_main.incn".to_string();
+        let source = tempfile::tempdir()?;
+        let limits = OvenStoreLimits::new(16 * 1024 * 1024, 16 * 1024 * 1024, 16 * 1024 * 1024);
+        let source_store = OvenStore::new(source.path(), limits);
+        let stored =
+            incan_driver::build::publication::publish_project_output_loaf(&source_store, &receipt, &payload, &files)?;
+        let identity = stored.identity.clone();
+        drop(stored);
+        let selected = source_store.select_payload_for_execution(&identity)?;
+        let mut wrong_entrypoint = payload.clone();
+        wrong_entrypoint.entrypoint_relative_path = "src/main.incn".to_string();
+        assert!(
+            validate_release_policy_project_output(&selected.0, &wrong_entrypoint, &receipt, &receipt.intent.target,)
+                .is_err()
+        );
+        assert!(
+            validate_release_policy_project_output(&selected.0, &payload, &receipt, "wrong-target").is_err(),
+            "the archive target is part of the release policy input authority"
+        );
+        drop(selected);
+
+        let staged = tempfile::tempdir()?;
+        let wrong_source = tempfile::tempdir()?;
+        let wrong_store = OvenStore::new(wrong_source.path(), limits);
+        let mut wrong_target = payload.clone();
+        wrong_target.target_identity = "executable:src/acceptance.incn".to_string();
+        wrong_target.entrypoint_relative_path = "src/acceptance.incn".to_string();
+        let wrong = incan_driver::build::publication::publish_project_output_loaf(
+            &wrong_store,
+            &receipt,
+            &wrong_target,
+            &files,
+        )?;
+        let wrong_member = OvenReleaseStoreMember {
+            schema_version: OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION,
+            label: "rust-policy-engine".to_string(),
+            store_relative_path: PathBuf::from("project-outputs/rust-policy-engine/oven/store/v2"),
+            artifact_identity: wrong.identity.clone(),
+        };
+        drop(wrong);
+        assert!(
+            import_release_policy_output(
+                wrong_source.path(),
+                staged.path(),
+                &wrong_member,
+                &receipt.intent.target,
+                limits,
+            )
+            .is_err()
+        );
+        let member = OvenReleaseStoreMember {
+            schema_version: OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION,
+            label: "rust-policy-engine".to_string(),
+            store_relative_path: PathBuf::from("project-outputs/rust-policy-engine/oven/store/v2"),
+            artifact_identity: identity.clone(),
+        };
+        assert!(
+            import_release_policy_output(source.path(), staged.path(), &member, "wrong-target", limits).is_err(),
+            "cold import must refuse a ProjectOutput for another archive target"
+        );
+        import_release_policy_output(source.path(), staged.path(), &member, &receipt.intent.target, limits)?;
+
+        let embedded = OvenStore::new(staged.path().join(&member.store_relative_path), limits)
+            .select_payload_for_execution(&identity)?;
+        assert_eq!(embedded.0.identity, identity);
+        assert_eq!(embedded.2, serde_json::to_vec(&payload)?);
+        let embedded_native = embedded.1.join("output/native");
+        drop(embedded);
+
+        let evidence = super::OvenLoafEnvelopeEvidence {
+            incan_release_version: "fixture-release".to_string(),
+            compiler_executable_digest: digest_bytes(b"compiler"),
+            sdk_inventory_digest: digest_bytes(b"sdk"),
+            rustc_identity: "rustc fixture".to_string(),
+            lock_digest: digest_bytes(b"lock"),
+            runtime_source_digest: digest_bytes(b"runtime"),
+            fixture_digest: digest_bytes(b"fixture"),
+        };
+        let compatibility = loaf_envelope_compatibility_map_with_release_member(&evidence, Some(&member))?;
+        let generation_identity =
+            loaf_generation_identity_with_release_member(OvenLoafEnvelope::Release, &compatibility, Some(&member))?;
+        let output = tempfile::tempdir()?;
+        let generation_root = output.path().join("generations").join(
+            generation_identity
+                .strip_prefix("sha256:")
+                .unwrap_or(&generation_identity),
+        );
+        fs::create_dir_all(generation_root.join(member.store_relative_path.parent().ok_or("member has no parent")?))?;
+        fs::rename(
+            staged.path().join(&member.store_relative_path),
+            generation_root.join(&member.store_relative_path),
+        )?;
+        write_synthetic_release_envelope(
+            output.path(),
+            &generation_identity,
+            &compatibility,
+            Some(member.clone()),
+        )?;
+        let scratch = tempfile::tempdir()?;
+        assert!(
+            reuse_complete_loaf_envelope(CompleteLoafEnvelopeReuseInput {
+                output: output.path(),
+                scratch: scratch.path(),
+                envelope: OvenLoafEnvelope::Release,
+                evidence: &evidence,
+                release_store_member: Some(&member),
+                runtime_foundation: None,
+                runtime_closure: None,
+                limits,
+                started: Instant::now(),
+            })?
+            .is_some()
+        );
+        assert!(
+            verify_committed_release_policy_output(output.path(), Some(&member), Some("wrong-target")).is_err(),
+            "committed reuse must re-prove the archive target"
+        );
+        let committed_native = generation_root.join(embedded_native.strip_prefix(staged.path())?);
+        fs::remove_file(&committed_native)?;
+        fs::write(&committed_native, "tampered")?;
+        assert!(
+            verify_committed_release_policy_output(output.path(), Some(&member), Some(&receipt.intent.target)).is_err()
+        );
+        Ok(())
+    }
     use oven_rustc::native_test::{OvenNativeTestCaseCounts, OvenNativeTestCaseTiming};
     use oven_rustc::rustc::{
         OVEN_RUSTC_ARTIFACT_MANIFEST_SCHEMA_VERSION, OvenRustcArtifactManifest, OvenRustcArtifactPlan,
@@ -3449,6 +3658,7 @@ mod tests {
         root: &Path,
         generation_identity: &str,
         evidence: &BTreeMap<String, String>,
+        release_store_member: Option<OvenReleaseStoreMember>,
     ) -> Result<OvenLoafEnvelopeManifest, Box<dyn std::error::Error>> {
         let generation = Path::new("generations").join(
             generation_identity
@@ -3514,6 +3724,9 @@ mod tests {
             generation_identity: generation_identity.to_string(),
             evidence: evidence.clone(),
             loafs: members,
+            release_store_member,
+            runtime_foundation: None,
+            runtime_closure: None,
         };
         fs::write(root.join("envelope.json"), serde_json::to_vec(&manifest)?)?;
         Ok(manifest)
@@ -3554,18 +3767,22 @@ mod tests {
             &rustc,
         )?;
         let compatibility = loaf_envelope_compatibility_map(&evidence);
-        let generation_identity = loaf_generation_identity(OvenLoafEnvelope::Release, &compatibility)?;
-        let manifest = write_synthetic_release_envelope(mirror.path(), &generation_identity, &compatibility)?;
+        let generation_identity =
+            loaf_generation_identity_with_release_member(OvenLoafEnvelope::Release, &compatibility, None)?;
+        let manifest = write_synthetic_release_envelope(mirror.path(), &generation_identity, &compatibility, None)?;
 
         // A mirror that names a different generation for the same evidence is refused: the identity is derived,
         // never taken from the mirror.
         let stale = tempfile::tempdir()?;
-        write_synthetic_release_envelope(stale.path(), &digest_bytes(b"other generation"), &compatibility)?;
+        write_synthetic_release_envelope(stale.path(), &digest_bytes(b"other generation"), &compatibility, None)?;
         import_loaf_envelope_from_mirror_roots(
             output.path(),
             scratch.path(),
             OvenLoafEnvelope::Release,
             &evidence,
+            None,
+            None,
+            None,
             &[stale.path().to_path_buf()],
         )?;
         assert!(
@@ -3578,6 +3795,9 @@ mod tests {
             scratch.path(),
             OvenLoafEnvelope::Release,
             &evidence,
+            None,
+            None,
+            None,
             &[stale.path().to_path_buf(), mirror.path().to_path_buf()],
         )?;
         let committed: OvenLoafEnvelopeManifest =
@@ -3588,14 +3808,17 @@ mod tests {
             "nothing is left in scratch after a commit"
         );
 
-        let report = reuse_complete_loaf_envelope(
-            output.path(),
-            scratch.path(),
-            OvenLoafEnvelope::Release,
-            &evidence,
-            OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
-            Instant::now(),
-        )?
+        let report = reuse_complete_loaf_envelope(CompleteLoafEnvelopeReuseInput {
+            output: output.path(),
+            scratch: scratch.path(),
+            envelope: OvenLoafEnvelope::Release,
+            evidence: &evidence,
+            release_store_member: None,
+            runtime_foundation: None,
+            runtime_closure: None,
+            limits: OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+            started: Instant::now(),
+        })?
         .ok_or("the mirrored generation must be reused by the ordinary path")?;
         assert_eq!(report.action, "reused");
         assert_eq!(report.reused_count, manifest.loafs.len());
@@ -3677,16 +3900,20 @@ mod tests {
             output.path(),
             &generation_identity,
             &loaf_envelope_compatibility_map(&first_evidence),
+            None,
         )?;
 
-        let report = reuse_complete_loaf_envelope(
-            output.path(),
-            scratch.path(),
-            OvenLoafEnvelope::Release,
-            &output_churn_evidence,
-            OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
-            Instant::now(),
-        )?
+        let report = reuse_complete_loaf_envelope(CompleteLoafEnvelopeReuseInput {
+            output: output.path(),
+            scratch: scratch.path(),
+            envelope: OvenLoafEnvelope::Release,
+            evidence: &output_churn_evidence,
+            release_store_member: None,
+            runtime_foundation: None,
+            runtime_closure: None,
+            limits: OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+            started: Instant::now(),
+        })?
         .ok_or("matching release compatibility must reuse the committed envelope")?;
 
         assert_eq!(
@@ -3730,14 +3957,17 @@ mod tests {
             "a changed runtime source must not reuse stale compiled standard-library artifacts"
         );
         assert!(
-            reuse_complete_loaf_envelope(
-                output.path(),
-                scratch.path(),
-                OvenLoafEnvelope::Release,
-                &changed_runtime_evidence,
-                OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
-                Instant::now(),
-            )?
+            reuse_complete_loaf_envelope(CompleteLoafEnvelopeReuseInput {
+                output: output.path(),
+                scratch: scratch.path(),
+                envelope: OvenLoafEnvelope::Release,
+                evidence: &changed_runtime_evidence,
+                release_store_member: None,
+                runtime_foundation: None,
+                runtime_closure: None,
+                limits: OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+                started: Instant::now(),
+            })?
             .is_none(),
             "runtime-source drift must force the explicit baker path"
         );
@@ -3782,6 +4012,9 @@ mod tests {
                 generation_identity: digest_bytes(b"fixture compiler-suite generation"),
                 evidence: BTreeMap::new(),
                 loafs: Vec::new(),
+                release_store_member: None,
+                runtime_foundation: None,
+                runtime_closure: None,
             })?,
         )?;
         let (receipt, _) = super::compiler_libtests_receipt(compiler_root.path(), &rustc, &[], Some(output.path()))?;
@@ -3857,6 +4090,7 @@ mod tests {
             kind: OvenArtifactKind::CompilerTestSuite,
             payload: serde_json::to_vec(&superseded_suite)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let current_manifest = store.publish(&OvenArtifactPublishRequest {
             receipt: receipt.clone(),
@@ -3864,6 +4098,7 @@ mod tests {
             kind: OvenArtifactKind::CompilerTestSuite,
             payload: serde_json::to_vec(&suite)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let selected = super::select_compiler_test_suite(&store, &receipt, compiler_root.path(), &rustc)?;
         assert_eq!(selected.manifest.identity, current_manifest.identity);
@@ -3914,6 +4149,9 @@ mod tests {
                 compiler_root: compiler_root.path().to_path_buf(),
                 output: output.path().to_path_buf(),
                 suite_store: Some(suite_store.path().to_path_buf()),
+                policy_engine_store: None,
+                policy_engine_identity: None,
+                policy_engine_target: None,
                 envelope: OvenLoafEnvelopeArgument::CompilerSuite,
                 sdk_inventory,
                 cargo,
@@ -3922,6 +4160,7 @@ mod tests {
                 max_domain_physical_bytes: Some(10_000_000),
                 max_domain_logical_bytes: Some(10_000_000),
                 format: OvenOutputFormat::Json,
+                loaf_registry: None,
             },
             OvenLoafEnvelope::CompilerSuite,
             report,
@@ -3981,6 +4220,9 @@ mod tests {
                         digest_bytes(compiler_evidence.as_bytes()),
                     )]),
                     loafs: vec![member],
+                    release_store_member: None,
+                    runtime_foundation: None,
+                    runtime_closure: None,
                 })?,
             )?;
             Ok(())
@@ -4027,6 +4269,9 @@ mod tests {
             generation_identity: "sha256:new-generation".to_string(),
             evidence: BTreeMap::new(),
             loafs: Vec::new(),
+            release_store_member: None,
+            runtime_foundation: None,
+            runtime_closure: None,
         };
 
         let result = commit_loaf_generation(
@@ -4068,6 +4313,9 @@ mod tests {
                     generation_identity: generation_identity.clone(),
                     evidence: BTreeMap::new(),
                     loafs: Vec::new(),
+                    release_store_member: None,
+                    runtime_foundation: None,
+                    runtime_closure: None,
                 };
                 barrier.wait();
                 let _lock = acquire_exclusive_loaf_generation_lock(&output).map_err(|error| error.to_string())?;
@@ -5176,6 +5424,7 @@ mod tests {
             kind: OvenArtifactKind::CompilerTestSuiteShard,
             payload: serde_json::to_vec(&shard)?,
             materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
         })?;
         let selected = select_compiler_suite_shards(
             &store,

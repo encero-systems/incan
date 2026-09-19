@@ -23,8 +23,8 @@ use std::path::PathBuf;
 
 use super::OvenReceipt;
 use super::store::{
-    OvenArtifactKind, OvenArtifactManifest, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore,
-    OvenStoreError, PublishedOvenStore,
+    OvenArtifactKind, OvenArtifactManifest, OvenArtifactMaterializedDirectory, OvenArtifactMaterializedFile,
+    OvenArtifactPublishRequest, OvenStore, OvenStoreError, PublishedOvenStore,
 };
 
 /// Environment variable listing mirror roots, separated the way `PATH` is on the host.
@@ -98,7 +98,8 @@ where
                 // left to the local bake. Not an error: a mirror may hold such entries beside importable ones.
                 continue;
             };
-            let admitted = candidate.admitted_materialized_files().to_vec();
+            let admitted_files = candidate.admitted_materialized_files().to_vec();
+            let admitted_directories = candidate.admitted_materialized_directories().to_vec();
             let (manifest, artifact_root, payload, _lease) = candidate.into_parts();
             let materialized_files = manifest
                 .materialized_files
@@ -108,6 +109,14 @@ where
                     relative_path: file.relative_path.clone(),
                 })
                 .collect();
+            let materialized_directories = manifest
+                .materialized_directories
+                .iter()
+                .map(|directory| OvenArtifactMaterializedDirectory {
+                    source_path: artifact_root.join(&directory.relative_path),
+                    relative_path: directory.relative_path.clone(),
+                })
+                .collect();
             let published = store.publish_verified_import(
                 &OvenArtifactPublishRequest {
                     receipt,
@@ -115,8 +124,10 @@ where
                     kind: manifest.kind,
                     payload,
                     materialized_files,
+                    materialized_directories,
                 },
-                &admitted,
+                &admitted_files,
+                &admitted_directories,
             )?;
             imported.push(MirrorImport {
                 mirror: mirror.clone(),

@@ -21,8 +21,8 @@ use crate::build::source_authority::{
 use crate::build::{
     MemoizedPackagedProviderAuthority, OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION, OVEN_PROJECT_OUTPUT_ARTIFACT_PATH,
     OvenBakeProjectTarget, OvenPackagedLibraryLoafManifest, OvenPackagedLibraryLoafProfile,
-    OvenProjectBakeAuthorityContext, OvenProjectBakeProfileReport, OvenProjectBakeReport, OvenStoredProjectOutput,
-    ProjectSourceAuthorityDigester, library_publication,
+    OvenProjectBakeAuthorityContext, OvenProjectBakeOutputReport, OvenProjectBakeProfileReport, OvenProjectBakeReport,
+    OvenStoredProjectOutput, ProjectSourceAuthorityDigester, library_publication,
 };
 use crate::error::{CliError, CliResult};
 use incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path;
@@ -209,6 +209,7 @@ pub fn try_reuse_baked_project(
     targets: &[(OvenBakeProjectTarget, PathBuf)],
     store: &OvenStore,
     package_features: &FeatureSelection,
+    requested_target: Option<&str>,
     authority_context: &mut OvenProjectBakeAuthorityContext,
 ) -> CliResult<Option<OvenProjectBakeReport>> {
     // A completed project-output payload is selected only for the default command projection. Feature-qualified project
@@ -218,7 +219,10 @@ pub fn try_reuse_baked_project(
         return Ok(None);
     }
     let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
-    let target = rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
+    let target = requested_target.map(str::to_owned).map_or_else(
+        || rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string())),
+        Ok,
+    )?;
     let toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
     let lock_dependencies_fingerprint = baked_project_lock_dependencies_fingerprint(project_root)?;
     let mut expected_outputs = Vec::new();
@@ -364,11 +368,16 @@ pub fn try_reuse_baked_project(
             action: "reused",
         });
     }
+    let outputs = selected_outputs
+        .iter()
+        .map(|(_, output, _, _)| OvenProjectBakeOutputReport::from(output))
+        .collect();
     let report = OvenProjectBakeReport {
         project: project_root.to_path_buf(),
         generated_sources,
         store: store.root().to_path_buf(),
         profiles,
+        outputs,
     };
     let library_outputs = selected_outputs
         .iter()

@@ -7,12 +7,18 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::artifact::OvenRustcRegistrySourcePackage;
-use oven_store::OvenReceipt;
+use super::{OvenRustcError, validate_project_inspection_authority_payload};
 use oven_store::store::{OvenArtifactKind, OvenStoreExecutionPayload, OvenStoreLease};
+use oven_store::{OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT, OvenReceipt};
 use serde::{Deserialize, Serialize};
 
 /// Wire schema for one project-level Rust inspection authority.
 pub const OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION: u32 = 2;
+
+/// Wire schema for compiler-support root intent retained with one explicit publisher receipt.
+pub const OVEN_COMPILER_SUPPORT_ROOT_INTENT_SCHEMA_VERSION: u32 = 1;
+
+const OVEN_COMPILER_SUPPORT_ROOT_INTENT_DIGEST_DOMAIN: &str = "incan.oven.compiler-support-root-intent/1";
 
 mod selected_rust_facet_graph;
 
@@ -141,6 +147,48 @@ pub struct OvenProjectInspectionAuthorityRef {
     pub build_unit_identity: String,
 }
 
+/// Authored compiler-release roots bound to one explicit publisher receipt.
+///
+/// This is deliberately separate from project inspection authority: compiler-support units are owned by the
+/// selected toolchain closure, whereas a project authority owns project dependency declarations. The publisher
+/// records this payload from its authored compiler-support input before Cargo exposes only effective features.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenCompilerSupportRootIntentAuthority {
+    /// Exact schema consumed by the physical selected-graph producer.
+    pub schema_version: u32,
+    /// Exact verified receipt that authorized the capture-only publisher transaction.
+    ///
+    /// The final authority receipt is deliberately distinct: it adds this payload's digest after Cargo capture has
+    /// produced physical unit identities. Capture artifacts are evidence for the final publisher, never artifacts
+    /// claimed by the final receipt.
+    pub capture_receipt_identity: String,
+    /// Complete compiler-support roots in their authored declaration form.
+    pub roots: Vec<OvenCompilerSupportRootIntent>,
+}
+
+/// One compiler-release declaration bound to its selected physical unit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OvenCompilerSupportRootIntent {
+    /// Rust-facing alias from the explicit compiler-support declaration.
+    pub alias: String,
+    /// Exact selected physical unit identity; it is never derived from the alias or crate name.
+    pub unit: String,
+    /// Sorted explicitly requested feature names from the declaration.
+    pub requested_features: Vec<String>,
+    /// Whether the declaration enabled Cargo default features.
+    pub default_features: bool,
+    /// Exact Toolchain owner identity that supplied this authored declaration.
+    pub intent_owner: String,
+    /// Exact physical owner that supplies the selected unit's source tree.
+    ///
+    /// A compiler declaration can select an immutable registry or staged third-party source, so this can differ
+    /// from `intent_owner`. The binder checks both identities rather than treating a declaration alias as source
+    /// provenance.
+    pub source_owner: String,
+}
+
 /// Source-current singular project authority with every bounded-store constituent leased in one batch.
 pub struct OvenLoadedProjectInspectionAuthority {
     source_owner: OvenStoreExecutionPayload,
@@ -180,12 +228,437 @@ impl OvenLoadedProjectInspectionAuthority {
     }
 }
 
+/// Bind selected physical root units to the exact registry-edge intent held by one admitted inspection authority.
+///
+/// The raw physical producer supplies Cargo edge aliases and already selected unit identities. An alias can differ
+/// from the physical crate target name, so this function verifies its package/source record separately. It obtains
+/// requested features and the default-feature choice exclusively from the sealed authority payload for the graph's
+/// Normal or Test purpose, then records the held Store identity as the root intent owner. It deliberately refuses a
+/// pre-populated root map: accepting values beside the admitted publisher record would recreate a second authority
+/// for authored intent.
+pub fn bind_loaded_project_inspection_root_intents(
+    graph: OvenSelectedRustFacetGraph,
+    root_units: BTreeMap<String, String>,
+    authority: &OvenLoadedProjectInspectionAuthority,
+) -> Result<ValidatedOvenSelectedRustFacetGraph, OvenRustcError> {
+    bind_project_inspection_root_intents(graph, root_units, authority.identity(), &authority.payload)
+}
+
+/// Join raw aliases to the exact purpose-scoped project authority records before graph admission.
+///
+/// The caller has already retained the authority owner; this helper validates the payload, rejects any competing
+/// root map, and writes only its sealed requested/default feature values into the physical graph.
+fn bind_project_inspection_root_intents(
+    mut graph: OvenSelectedRustFacetGraph,
+    root_units: BTreeMap<String, String>,
+    authority_identity: &str,
+    authority: &OvenProjectInspectionAuthorityPayload,
+) -> Result<ValidatedOvenSelectedRustFacetGraph, OvenRustcError> {
+    validate_project_inspection_authority_payload(authority)?;
+    if authority_identity.trim().is_empty() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "project inspection root authority",
+            message: "must retain an exact Store identity".to_string(),
+        });
+    }
+    if !graph.exposed_roots.is_empty() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust facet roots",
+            message: "must be empty before sealed inspection authority intent is bound".to_string(),
+        });
+    }
+    if root_units.is_empty() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust facet roots",
+            message: "must name at least one selected physical root".to_string(),
+        });
+    }
+    if !graph.owners.iter().any(|owner| {
+        owner.identity == authority_identity && owner.kind == OvenSelectedRustFacetOwnerKind::ProjectAuthority
+    }) {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust facet root authority",
+            message: "is not a declared ProjectAuthority owner in the selected physical graph".to_string(),
+        });
+    }
+
+    for (alias, unit_identity) in root_units {
+        let dependency = exact_project_inspection_root_dependency(authority, graph.selection.purpose, &alias)?;
+        let unit = graph
+            .units
+            .iter()
+            .find(|unit| unit.identity == unit_identity)
+            .ok_or_else(|| OvenRustcError::InvalidInput {
+                field: "selected Rust facet roots",
+                message: format!("alias `{alias}` names absent selected unit `{unit_identity}`"),
+            })?;
+        validate_project_inspection_root_unit(unit, dependency, authority, authority_identity, &alias)?;
+        graph.exposed_roots.insert(
+            alias,
+            OvenSelectedRustFacetRoot {
+                unit: unit_identity,
+                requested_features: dependency.requested_features.clone(),
+                default_features: dependency.default_features,
+                intent_owner: authority_identity.to_string(),
+            },
+        );
+    }
+    graph.validated().map_err(|error| OvenRustcError::InvalidInput {
+        field: "selected Rust facet graph",
+        message: format!("does not validate after sealed root intent binding: {error}"),
+    })
+}
+
+/// Bind compiler-release roots across their verified capture and final authority receipts.
+///
+/// Cargo capture first runs under `capture_receipt` to learn exact physical unit identities. The publisher then
+/// constructs a fresh `final_receipt` from the same source and intent inputs plus this authority's digest, and only
+/// that final receipt may publish or consume the selected graph. This function never treats capture artifacts as
+/// final-receipt artifacts. It accepts no pre-populated roots and never derives feature intent from a unit's
+/// effective feature set.
+pub fn bind_compiler_support_root_intents(
+    graph: OvenSelectedRustFacetGraph,
+    authority: &OvenCompilerSupportRootIntentAuthority,
+    capture_receipt: &OvenReceipt,
+    final_receipt: &OvenReceipt,
+) -> Result<ValidatedOvenSelectedRustFacetGraph, OvenRustcError> {
+    bind_compiler_support_root_intents_for_receipts(graph, authority, capture_receipt, final_receipt)
+}
+
+/// Bind authored roots after verifying both receipts and their exact capture-to-final relationship.
+fn bind_compiler_support_root_intents_for_receipts(
+    mut graph: OvenSelectedRustFacetGraph,
+    authority: &OvenCompilerSupportRootIntentAuthority,
+    capture_receipt: &OvenReceipt,
+    final_receipt: &OvenReceipt,
+) -> Result<ValidatedOvenSelectedRustFacetGraph, OvenRustcError> {
+    capture_receipt
+        .verify_identity()
+        .map_err(|error| OvenRustcError::InvalidInput {
+            field: "compiler release root intent capture receipt",
+            message: error.to_string(),
+        })?;
+    final_receipt
+        .verify_identity()
+        .map_err(|error| OvenRustcError::InvalidInput {
+            field: "compiler release root intent final receipt",
+            message: error.to_string(),
+        })?;
+    let digest = compiler_support_root_intent_digest(authority)?;
+    validate_compiler_support_root_intent_receipts(authority, capture_receipt, final_receipt, &digest)?;
+    if final_receipt
+        .sources
+        .build_unit_inputs
+        .get(OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT)
+        != Some(&digest)
+    {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler release root intent final receipt",
+            message: "does not retain the exact canonical compiler-support root-intent digest".to_string(),
+        });
+    }
+    if !graph.exposed_roots.is_empty() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust facet roots",
+            message: "must be empty before compiler-support intent is bound".to_string(),
+        });
+    }
+    if authority.roots.is_empty() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler support root intent authority",
+            message: "must retain at least one authored compiler-support root".to_string(),
+        });
+    }
+
+    for root in &authority.roots {
+        if graph.exposed_roots.contains_key(&root.alias) {
+            return Err(OvenRustcError::InvalidInput {
+                field: "compiler support root intent authority",
+                message: format!("declares duplicate alias `{}`", root.alias),
+            });
+        }
+        let unit = graph
+            .units
+            .iter()
+            .find(|unit| unit.identity == root.unit)
+            .ok_or_else(|| OvenRustcError::InvalidInput {
+                field: "compiler support root intent authority",
+                message: format!("alias `{}` names absent selected unit `{}`", root.alias, root.unit),
+            })?;
+        if unit.source.owner != root.source_owner {
+            return Err(OvenRustcError::InvalidInput {
+                field: "compiler release root intent source",
+                message: format!(
+                    "alias `{}` does not name source owned by its declared immutable source owner",
+                    root.alias
+                ),
+            });
+        }
+        if !graph
+            .owners
+            .iter()
+            .any(|owner| owner.identity == root.intent_owner && owner.kind == OvenSelectedRustFacetOwnerKind::Toolchain)
+        {
+            return Err(OvenRustcError::InvalidInput {
+                field: "compiler release root intent owner",
+                message: format!("alias `{}` names no selected Toolchain owner", root.alias),
+            });
+        }
+        if !graph.owners.iter().any(|owner| owner.identity == root.source_owner) {
+            return Err(OvenRustcError::InvalidInput {
+                field: "compiler release root intent source",
+                message: format!("alias `{}` names no selected source owner", root.alias),
+            });
+        }
+        graph.exposed_roots.insert(
+            root.alias.clone(),
+            OvenSelectedRustFacetRoot {
+                unit: root.unit.clone(),
+                requested_features: root.requested_features.clone(),
+                default_features: root.default_features,
+                intent_owner: root.intent_owner.clone(),
+            },
+        );
+    }
+    graph.validated().map_err(|error| OvenRustcError::InvalidInput {
+        field: "selected Rust facet graph",
+        message: format!("does not validate after compiler-support root intent binding: {error}"),
+    })
+}
+
+/// Require the final receipt to preserve capture evidence and add only the canonical root-intent input.
+fn validate_compiler_support_root_intent_receipts(
+    authority: &OvenCompilerSupportRootIntentAuthority,
+    capture_receipt: &OvenReceipt,
+    final_receipt: &OvenReceipt,
+    digest: &str,
+) -> Result<(), OvenRustcError> {
+    if authority.capture_receipt_identity != capture_receipt.identity {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler release root intent capture receipt",
+            message: "does not match the authority's exact capture receipt identity".to_string(),
+        });
+    }
+    if capture_receipt.identity == final_receipt.identity {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler release root intent final receipt",
+            message: "must be distinct from the capture-only receipt".to_string(),
+        });
+    }
+    if capture_receipt.project != final_receipt.project
+        || capture_receipt.intent != final_receipt.intent
+        || capture_receipt.compatibility != final_receipt.compatibility
+        || capture_receipt.sources.cargo_manifest_digest != final_receipt.sources.cargo_manifest_digest
+        || capture_receipt.sources.cargo_lock_digest != final_receipt.sources.cargo_lock_digest
+        || capture_receipt.sources.incan_manifest_digest != final_receipt.sources.incan_manifest_digest
+        || capture_receipt.sources.supplemental_digests != final_receipt.sources.supplemental_digests
+    {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler release root intent final receipt",
+            message: "must retain the capture receipt's exact project, source, intent, and compatibility evidence"
+                .to_string(),
+        });
+    }
+    let mut expected_inputs = capture_receipt.sources.build_unit_inputs.clone();
+    if expected_inputs
+        .insert(
+            OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT.to_string(),
+            digest.to_string(),
+        )
+        .is_some()
+        || expected_inputs != final_receipt.sources.build_unit_inputs
+    {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler release root intent final receipt",
+            message: "must add only the canonical root-intent digest to capture build-unit inputs".to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Return the canonical digest that an explicit publisher must retain in its receipt build-unit inputs.
+///
+/// The digest covers every authored alias, selected unit binding, feature request, default-feature choice, and
+/// declaration owner and physical source owner. A later graph producer may therefore consume the typed record only
+/// with the exact admitted receipt that included it in its build-unit identity.
+pub fn compiler_support_root_intent_digest(
+    authority: &OvenCompilerSupportRootIntentAuthority,
+) -> Result<String, OvenRustcError> {
+    validate_compiler_support_root_intent_authority(authority)?;
+    serde_json::to_vec(&(OVEN_COMPILER_SUPPORT_ROOT_INTENT_DIGEST_DOMAIN, authority))
+        .map(|bytes| selected_graph_sha256(&bytes))
+        .map_err(|error| OvenRustcError::InvalidInput {
+            field: "compiler support root intent authority",
+            message: format!("cannot encode canonical digest input: {error}"),
+        })
+}
+
+/// Validate the authority schema, capture identity, nonempty coordinates, and canonical root and feature ordering.
+fn validate_compiler_support_root_intent_authority(
+    authority: &OvenCompilerSupportRootIntentAuthority,
+) -> Result<(), OvenRustcError> {
+    if authority.schema_version != OVEN_COMPILER_SUPPORT_ROOT_INTENT_SCHEMA_VERSION {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler support root intent authority",
+            message: format!(
+                "uses schema {}; expected {}",
+                authority.schema_version, OVEN_COMPILER_SUPPORT_ROOT_INTENT_SCHEMA_VERSION
+            ),
+        });
+    }
+    if authority.roots.is_empty() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler support root intent authority",
+            message: "must retain at least one authored compiler-support root".to_string(),
+        });
+    }
+    if authority.capture_receipt_identity.trim().is_empty() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "compiler support root intent authority",
+            message: "must retain its exact capture receipt identity".to_string(),
+        });
+    }
+    let mut prior_alias: Option<&str> = None;
+    for root in &authority.roots {
+        if root.alias.trim().is_empty()
+            || root.unit.trim().is_empty()
+            || root.intent_owner.trim().is_empty()
+            || root.source_owner.trim().is_empty()
+        {
+            return Err(OvenRustcError::InvalidInput {
+                field: "compiler support root intent authority",
+                message: "must retain nonempty aliases, selected units, declaration owners, and source owners"
+                    .to_string(),
+            });
+        }
+        if prior_alias.is_some_and(|prior| prior >= root.alias.as_str()) {
+            return Err(OvenRustcError::InvalidInput {
+                field: "compiler support root intent authority",
+                message: "roots must be strictly sorted by alias".to_string(),
+            });
+        }
+        if root
+            .requested_features
+            .windows(2)
+            .any(|features| features[0] >= features[1])
+        {
+            return Err(OvenRustcError::InvalidInput {
+                field: "compiler support root intent authority",
+                message: format!("alias `{}` has noncanonical requested features", root.alias),
+            });
+        }
+        prior_alias = Some(root.alias.as_str());
+    }
+    Ok(())
+}
+
+/// Return the only sealed registry record that may author one alias for the graph's selected purpose.
+///
+/// Test graphs consume their explicit envelope and never silently reuse a normal edge; path and Git test roots are
+/// not represented by this registry-only physical join.
+fn exact_project_inspection_root_dependency<'a>(
+    authority: &'a OvenProjectInspectionAuthorityPayload,
+    purpose: OvenSelectedRustFacetPurpose,
+    alias: &str,
+) -> Result<&'a OvenProjectInspectionRootDependency, OvenRustcError> {
+    match purpose {
+        OvenSelectedRustFacetPurpose::Normal => authority
+            .registry_source_dependencies
+            .iter()
+            .find(|dependency| dependency.alias == alias)
+            .ok_or_else(|| OvenRustcError::InvalidInput {
+                field: "selected Rust facet roots",
+                message: format!("normal alias `{alias}` has no sealed registry root dependency"),
+            }),
+        OvenSelectedRustFacetPurpose::Test => authority
+            .test_dependency_envelope
+            .as_ref()
+            .and_then(|envelope| envelope.dependency_roots.get(alias))
+            .and_then(|root| match root {
+                OvenProjectInspectionTestDependencyRoot::Registry { locked, .. } => Some(locked),
+                OvenProjectInspectionTestDependencyRoot::Path { .. }
+                | OvenProjectInspectionTestDependencyRoot::Git { .. } => None,
+            })
+            .ok_or_else(|| OvenRustcError::InvalidInput {
+                field: "selected Rust facet roots",
+                message: format!("test alias `{alias}` has no sealed registry root in the test dependency envelope"),
+            }),
+    }
+}
+
+/// Check that one raw selected unit names the complete source and owner sealed for its project registry root.
+///
+/// Cargo aliases are deliberately excluded from crate-target comparison: a renamed dependency retains its alias in
+/// the root map while package/version/source identity establishes the physical unit it selects.
+fn validate_project_inspection_root_unit(
+    unit: &OvenSelectedRustFacetUnit,
+    dependency: &OvenProjectInspectionRootDependency,
+    authority: &OvenProjectInspectionAuthorityPayload,
+    authority_identity: &str,
+    alias: &str,
+) -> Result<(), OvenRustcError> {
+    let exact_sources = authority
+        .registry_sources
+        .iter()
+        .filter(|source| {
+            source.package.package == dependency.package
+                && source.package.version == dependency.version
+                && source.package.source.registry == dependency.registry
+                && source.package.source.checksum == dependency.checksum
+        })
+        .collect::<Vec<_>>();
+    let [source] = exact_sources.as_slice() else {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust facet root source",
+            message: format!(
+                "alias `{alias}` has {} exact sealed source records for {} {}",
+                exact_sources.len(),
+                dependency.package,
+                dependency.version
+            ),
+        });
+    };
+    let source_owner = match &source.owner {
+        OvenProjectInspectionSourceOwner::Authority => authority_identity,
+        OvenProjectInspectionSourceOwner::Constituent { index } => match authority.constituents.get(*index) {
+            Some(OvenProjectInspectionConstituent::ReleaseLoaf { loaf_identity, .. }) => loaf_identity,
+            Some(OvenProjectInspectionConstituent::Stored { identity, .. }) => identity,
+            None => {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "selected Rust facet root source",
+                    message: format!("alias `{alias}` names absent source constituent {index}"),
+                });
+            }
+        },
+    };
+    let expected_identity = format!("registry:{}@{}", dependency.package, dependency.version);
+    if unit.package != dependency.package
+        || unit.package_version != dependency.version
+        || unit.source.kind != OvenSelectedRustFacetSourceKind::Registry
+        || unit.source.identity != expected_identity
+        || unit.source.root != "."
+        || unit.source.digest != source.package.source.digest
+        || unit.source.owner.as_str() != source_owner
+    {
+        return Err(OvenRustcError::InvalidInput {
+            field: "selected Rust facet root source",
+            message: format!(
+                "alias `{alias}` does not match its sealed package, version, registry source owner, or complete source digest"
+            ),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod selected_rust_facet_graph_tests {
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::Path;
 
+    use super::super::{OvenRustcError, OvenRustcRegistrySource, OvenRustcRegistrySourcePackage};
     use super::*;
+    use oven_store::{OvenGeneratedProjectRequest, receipt_generated_project};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -199,6 +672,26 @@ mod selected_rust_facet_graph_tests {
 
     fn toolchain_owner_identity() -> String {
         selected_graph_sha256(b"toolchain inspection closure")
+    }
+
+    fn compiler_release_receipt(
+        root: &Path,
+        root_intent_digest: Option<String>,
+    ) -> Result<OvenReceipt, Box<dyn std::error::Error>> {
+        let mut request = OvenGeneratedProjectRequest::new(
+            root,
+            "compiler-release-fixture",
+            "0.1.0",
+            "x86_64-unknown-linux-gnu",
+            "rustc 1.85.0 (fixture)",
+            "dev",
+            Vec::new(),
+        )
+        .with_generated_source("generated-root", root.join("generated.rs"));
+        if let Some(digest) = root_intent_digest {
+            request = request.with_build_unit_input(OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT, digest);
+        }
+        Ok(receipt_generated_project(&request)?)
     }
 
     fn member(path: &str, bytes: &[u8]) -> OvenSelectedRustFacetSourceMember {
@@ -223,19 +716,29 @@ mod selected_rust_facet_graph_tests {
         })
     }
 
+    fn cfg_snapshot(architecture: &str, operating_system: &str) -> OvenSelectedRustFacetCfgSnapshot {
+        OvenSelectedRustFacetCfgSnapshot {
+            flags: vec!["unix".to_string()],
+            values: BTreeMap::from([
+                ("target_arch".to_string(), vec![architecture.to_string()]),
+                ("target_os".to_string(), vec![operating_system.to_string()]),
+            ]),
+        }
+    }
+
     fn selection() -> OvenSelectedRustFacetSelection {
         OvenSelectedRustFacetSelection {
             intent: OvenSelectedRustFacetIntent {
                 target: "x86_64-unknown-linux-gnu".to_string(),
                 toolchain: "rustc 1.85.0 (fixture)".to_string(),
                 profile: "dev".to_string(),
-                features: vec!["root-feature".to_string()],
             },
             host: "aarch64-apple-darwin".to_string(),
+            host_cfg: cfg_snapshot("aarch64", "macos"),
+            target_cfg: cfg_snapshot("x86_64", "linux"),
             purpose: OvenSelectedRustFacetPurpose::Normal,
-            default_features: true,
             toolchain_version: "1.85.0".to_string(),
-            target_spec: OvenSelectedRustFacetTargetSpec {
+            target_spec: OvenSelectedRustFacetTargetSpec::Custom {
                 source: OvenSelectedRustFacetPath {
                     owner: toolchain_owner_identity(),
                     path: "target-specs/x86_64-unknown-linux-gnu.json".to_string(),
@@ -267,8 +770,8 @@ mod selected_rust_facet_graph_tests {
             root_module: "src/lib.rs".to_string(),
             source_members,
             features: Vec::new(),
-            default_features: false,
             cfg: Vec::new(),
+            sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner: dependency_owner_identity(),
@@ -277,6 +780,7 @@ mod selected_rust_facet_graph_tests {
             exclude_dirs: Vec::new(),
             dependencies: Vec::new(),
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         unit.identity = selected_graph_unit_identity(selection, &unit)?;
         Ok(unit)
@@ -313,8 +817,8 @@ mod selected_rust_facet_graph_tests {
             root_module: "src/lib.rs".to_string(),
             source_members,
             features: vec!["root-feature".to_string()],
-            default_features: true,
             cfg: vec!["feature=\"root-feature\"".to_string()],
+            sysroot_externs: Vec::new(),
             environment: BTreeMap::new(),
             include_dirs: vec![OvenSelectedRustFacetPath {
                 owner,
@@ -323,6 +827,7 @@ mod selected_rust_facet_graph_tests {
             exclude_dirs: Vec::new(),
             dependencies,
             generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
         };
         unit.identity = selected_graph_unit_identity(selection, &unit)?;
         Ok(unit)
@@ -351,8 +856,395 @@ mod selected_rust_facet_graph_tests {
                 },
             ],
             units: vec![root, leaf],
-            exposed_roots: BTreeMap::from([("fixture".to_string(), exposed_root)]),
+            exposed_roots: BTreeMap::from([(
+                "fixture".to_string(),
+                crate::rustc::OvenSelectedRustFacetRoot {
+                    unit: exposed_root,
+                    requested_features: Vec::new(),
+                    default_features: true,
+                    intent_owner: toolchain_owner_identity(),
+                },
+            )]),
         })
+    }
+
+    fn compiler_support_graph() -> Result<OvenSelectedRustFacetGraph, OvenSelectedRustFacetGraphError> {
+        let selection = selection();
+        let source_members = vec![member("library/core/src/lib.rs", b"#![no_std]\n")];
+        let mut unit = OvenSelectedRustFacetUnit {
+            identity: String::new(),
+            package: "rust-core".to_string(),
+            package_version: "1.85.0".to_string(),
+            crate_name: "core".to_string(),
+            crate_kind: OvenSelectedRustFacetCrateKind::Rlib,
+            role: OvenSelectedRustFacetUnitRole::CompilerSupport,
+            domain: OvenSelectedRustFacetDomain::Target,
+            edition: "2021".to_string(),
+            source: source(
+                OvenSelectedRustFacetSourceKind::Compiler,
+                &selected_graph_sha256(b"rust-src:library/core"),
+                &toolchain_owner_identity(),
+                &source_members,
+            )?,
+            root_module: "library/core/src/lib.rs".to_string(),
+            source_members,
+            features: Vec::new(),
+            cfg: Vec::new(),
+            sysroot_externs: Vec::new(),
+            environment: BTreeMap::new(),
+            include_dirs: vec![OvenSelectedRustFacetPath {
+                owner: toolchain_owner_identity(),
+                path: ".".to_string(),
+            }],
+            exclude_dirs: Vec::new(),
+            dependencies: Vec::new(),
+            generated_inputs: Vec::new(),
+            linked_libraries: Vec::new(),
+        };
+        unit.identity = selected_graph_unit_identity(&selection, &unit)?;
+        Ok(OvenSelectedRustFacetGraph {
+            schema_version: OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION,
+            selection,
+            owners: vec![OvenSelectedRustFacetOwner {
+                identity: toolchain_owner_identity(),
+                kind: OvenSelectedRustFacetOwnerKind::Toolchain,
+            }],
+            units: vec![unit],
+            exposed_roots: BTreeMap::new(),
+        })
+    }
+
+    fn authority_for_registry_root(
+        alias: &str,
+        unit: &OvenSelectedRustFacetUnit,
+        requested_features: Vec<String>,
+        default_features: bool,
+    ) -> OvenProjectInspectionAuthorityPayload {
+        let registry = "registry+https://example.invalid/index".to_string();
+        let checksum = "fixture-registry-checksum".to_string();
+        let source = OvenRustcRegistrySourcePackage {
+            package: unit.package.clone(),
+            version: unit.package_version.clone(),
+            features: requested_features.clone(),
+            source: OvenRustcRegistrySource {
+                registry: registry.clone(),
+                checksum: checksum.clone(),
+                relative_root: format!("registry-sources/{}-{}", unit.package, unit.package_version),
+                digest: unit.source.digest.clone(),
+            },
+        };
+        OvenProjectInspectionAuthorityPayload {
+            schema_version: OVEN_PROJECT_INSPECTION_AUTHORITY_SCHEMA_VERSION,
+            project_identity: selected_graph_sha256(b"fixture project"),
+            source_authority_digest: selected_graph_sha256(b"fixture source authority"),
+            compiler_version: "0.6.0-dev.6".to_string(),
+            registry_lock_digest: selected_graph_sha256(b"fixture Cargo.lock"),
+            registry_source_dependencies: vec![OvenProjectInspectionRootDependency {
+                alias: alias.to_string(),
+                package: unit.package.clone(),
+                version: unit.package_version.clone(),
+                registry,
+                checksum,
+                requested_features,
+                default_features,
+            }],
+            dev_registry_source_dependencies: Vec::new(),
+            test_dependency_envelope: None,
+            constituents: Vec::new(),
+            registry_sources: vec![OvenProjectInspectionSource {
+                package: source,
+                owner: OvenProjectInspectionSourceOwner::Authority,
+            }],
+            generated_out_dirs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn selected_graph_binds_root_intent_from_its_exact_inspection_authority() -> TestResult {
+        let baseline = graph(b"pub fn use_dependency() {}\n")?;
+        let selection = baseline.selection.clone();
+        let mut dependency = baseline
+            .units
+            .iter()
+            .find(|unit| unit.package == "dependency-package")
+            .cloned()
+            .ok_or("fixture graph lost registry dependency")?;
+        let authority_identity = selected_graph_sha256(b"fixture inspection authority");
+        dependency.package = "serde".to_string();
+        dependency.crate_name = "serde".to_string();
+        dependency.source.identity = "registry:serde@1.2.3".to_string();
+        dependency.source.owner = authority_identity.clone();
+        for include_dir in &mut dependency.include_dirs {
+            include_dir.owner = authority_identity.clone();
+        }
+        dependency.identity = selected_graph_unit_identity(&selection, &dependency)?;
+        let physical = OvenSelectedRustFacetGraph {
+            schema_version: OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION,
+            selection,
+            owners: vec![
+                OvenSelectedRustFacetOwner {
+                    identity: authority_identity.clone(),
+                    kind: OvenSelectedRustFacetOwnerKind::ProjectAuthority,
+                },
+                OvenSelectedRustFacetOwner {
+                    identity: toolchain_owner_identity(),
+                    kind: OvenSelectedRustFacetOwnerKind::Toolchain,
+                },
+            ],
+            units: vec![dependency.clone()],
+            exposed_roots: BTreeMap::new(),
+        };
+        let authority = authority_for_registry_root("serde_alias", &dependency, vec!["alloc".to_string()], false);
+        let bound = bind_project_inspection_root_intents(
+            physical,
+            BTreeMap::from([("serde_alias".to_string(), dependency.identity.clone())]),
+            &authority_identity,
+            &authority,
+        )?;
+        let root = bound
+            .graph()
+            .exposed_roots
+            .get("serde_alias")
+            .ok_or("bound graph lost renamed root")?;
+        assert_eq!(root.requested_features, ["alloc"]);
+        assert!(!root.default_features);
+        assert_eq!(
+            root.intent_owner,
+            selected_graph_sha256(b"fixture inspection authority")
+        );
+
+        let wrong_owner_identity = selected_graph_sha256(b"wrong source owner");
+        let mut wrong_owner_unit = bound.graph().units[0].clone();
+        wrong_owner_unit.source.owner = wrong_owner_identity.clone();
+        for include_dir in &mut wrong_owner_unit.include_dirs {
+            include_dir.owner = wrong_owner_identity.clone();
+        }
+        wrong_owner_unit.identity = selected_graph_unit_identity(&bound.graph().selection, &wrong_owner_unit)?;
+        let mut wrong_owner_graph = bound.graph().clone();
+        wrong_owner_graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: wrong_owner_identity,
+            kind: OvenSelectedRustFacetOwnerKind::Constituent,
+        });
+        wrong_owner_graph.units = vec![wrong_owner_unit.clone()];
+        wrong_owner_graph.exposed_roots.clear();
+        assert!(matches!(
+            bind_project_inspection_root_intents(
+                wrong_owner_graph,
+                BTreeMap::from([("serde_alias".to_string(), wrong_owner_unit.identity)]),
+                &authority_identity,
+                &authority,
+            ),
+            Err(OvenRustcError::InvalidInput {
+                field: "selected Rust facet root source",
+                ..
+            })
+        ));
+
+        let mut wrong_source = authority;
+        wrong_source.registry_sources[0].package.source.digest = selected_graph_sha256(b"wrong source");
+        assert!(matches!(
+            bind_project_inspection_root_intents(
+                OvenSelectedRustFacetGraph {
+                    schema_version: OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION,
+                    selection: bound.graph().selection.clone(),
+                    owners: bound.graph().owners.clone(),
+                    units: bound.graph().units.clone(),
+                    exposed_roots: BTreeMap::new(),
+                },
+                BTreeMap::from([("serde_alias".to_string(), dependency.identity)]),
+                &selected_graph_sha256(b"fixture inspection authority"),
+                &wrong_source,
+            ),
+            Err(OvenRustcError::InvalidInput {
+                field: "selected Rust facet root source",
+                ..
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn selected_graph_binds_compiler_support_intent_to_its_exact_receipt_and_toolchain() -> TestResult {
+        let receipt_root = tempfile::tempdir()?;
+        fs::write(receipt_root.path().join("generated.rs"), "pub fn fixture() {}\n")?;
+        let capture_receipt = compiler_release_receipt(receipt_root.path(), None)?;
+        let physical = compiler_support_graph()?;
+        let unit = physical.units.first().ok_or("fixture lost compiler support unit")?;
+        let authority = OvenCompilerSupportRootIntentAuthority {
+            schema_version: OVEN_COMPILER_SUPPORT_ROOT_INTENT_SCHEMA_VERSION,
+            capture_receipt_identity: capture_receipt.identity.clone(),
+            roots: vec![OvenCompilerSupportRootIntent {
+                alias: "core_support".to_string(),
+                unit: unit.identity.clone(),
+                requested_features: vec!["compiler-intrinsics".to_string()],
+                default_features: false,
+                intent_owner: toolchain_owner_identity(),
+                source_owner: toolchain_owner_identity(),
+            }],
+        };
+        let final_receipt = compiler_release_receipt(
+            receipt_root.path(),
+            Some(compiler_support_root_intent_digest(&authority)?),
+        )?;
+
+        let bound = bind_compiler_support_root_intents(physical.clone(), &authority, &capture_receipt, &final_receipt)?;
+        assert_eq!(
+            bound.graph().exposed_roots.get("core_support"),
+            Some(&OvenSelectedRustFacetRoot {
+                unit: unit.identity.clone(),
+                requested_features: vec!["compiler-intrinsics".to_string()],
+                default_features: false,
+                intent_owner: toolchain_owner_identity(),
+            })
+        );
+
+        let mut tampered_final_receipt = final_receipt.clone();
+        tampered_final_receipt.sources.build_unit_inputs.insert(
+            OVEN_COMPILER_SUPPORT_ROOT_INTENT_BUILD_UNIT_INPUT.to_string(),
+            selected_graph_sha256(b"tampered"),
+        );
+        assert!(matches!(
+            bind_compiler_support_root_intents(physical.clone(), &authority, &capture_receipt, &tampered_final_receipt,),
+            Err(OvenRustcError::InvalidInput {
+                field: "compiler release root intent final receipt",
+                ..
+            })
+        ));
+
+        let mut tampered_capture_receipt = capture_receipt.clone();
+        tampered_capture_receipt.sources.build_unit_inputs.insert(
+            "unsealed-capture-change".to_string(),
+            selected_graph_sha256(b"tampered capture"),
+        );
+        assert!(matches!(
+            bind_compiler_support_root_intents(physical.clone(), &authority, &tampered_capture_receipt, &final_receipt,),
+            Err(OvenRustcError::InvalidInput {
+                field: "compiler release root intent capture receipt",
+                ..
+            })
+        ));
+
+        let mut changed_default = authority.clone();
+        changed_default.roots[0].default_features = true;
+        assert!(matches!(
+            bind_compiler_support_root_intents(physical.clone(), &changed_default, &capture_receipt, &final_receipt,),
+            Err(OvenRustcError::InvalidInput {
+                field: "compiler release root intent final receipt",
+                ..
+            })
+        ));
+
+        let mut wrong_owner = authority;
+        wrong_owner.roots[0].source_owner = selected_graph_sha256(b"other source owner");
+        let wrong_owner_final_receipt = compiler_release_receipt(
+            receipt_root.path(),
+            Some(compiler_support_root_intent_digest(&wrong_owner)?),
+        )?;
+        assert!(matches!(
+            bind_compiler_support_root_intents(physical, &wrong_owner, &capture_receipt, &wrong_owner_final_receipt,),
+            Err(OvenRustcError::InvalidInput {
+                field: "compiler release root intent source",
+                ..
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn compiler_release_root_keeps_declaration_and_registry_source_owners_distinct() -> TestResult {
+        let receipt_root = tempfile::tempdir()?;
+        fs::write(receipt_root.path().join("generated.rs"), "pub fn fixture() {}\n")?;
+        let capture_receipt = compiler_release_receipt(receipt_root.path(), None)?;
+        let mut physical = compiler_support_graph()?;
+        let source_owner = dependency_owner_identity();
+        physical.owners.push(OvenSelectedRustFacetOwner {
+            identity: source_owner.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::Constituent,
+        });
+        let selection = physical.selection.clone();
+        let unit_identity = {
+            let unit = physical.units.first_mut().ok_or("fixture lost compiler release root")?;
+            unit.role = OvenSelectedRustFacetUnitRole::Library;
+            unit.source.kind = OvenSelectedRustFacetSourceKind::Registry;
+            unit.source.identity = "registry:compiler-release-support@1.2.3".to_string();
+            unit.source.owner = source_owner.clone();
+            unit.include_dirs[0].owner = source_owner.clone();
+            unit.identity = selected_graph_unit_identity(&selection, unit)?;
+            unit.identity.clone()
+        };
+        let authority = OvenCompilerSupportRootIntentAuthority {
+            schema_version: OVEN_COMPILER_SUPPORT_ROOT_INTENT_SCHEMA_VERSION,
+            capture_receipt_identity: capture_receipt.identity.clone(),
+            roots: vec![OvenCompilerSupportRootIntent {
+                alias: "release_support".to_string(),
+                unit: unit_identity,
+                requested_features: Vec::new(),
+                default_features: true,
+                intent_owner: toolchain_owner_identity(),
+                source_owner,
+            }],
+        };
+        let final_receipt = compiler_release_receipt(
+            receipt_root.path(),
+            Some(compiler_support_root_intent_digest(&authority)?),
+        )?;
+        let bound = bind_compiler_support_root_intents(physical, &authority, &capture_receipt, &final_receipt)?;
+        assert_eq!(
+            bound.graph().exposed_roots["release_support"].intent_owner,
+            toolchain_owner_identity()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn selected_graph_uses_purpose_specific_sealed_root_intent() -> TestResult {
+        let selected = graph(b"pub fn use_dependency() {}\n")?;
+        let dependency = selected
+            .units
+            .iter()
+            .find(|unit| unit.package == "dependency-package")
+            .ok_or("fixture graph lost registry dependency")?;
+        let alias = "renamed_dependency";
+        let mut authority = authority_for_registry_root(alias, dependency, vec!["normal".to_string()], true);
+        assert!(matches!(
+            exact_project_inspection_root_dependency(&authority, OvenSelectedRustFacetPurpose::Test, alias),
+            Err(OvenRustcError::InvalidInput {
+                field: "selected Rust facet roots",
+                ..
+            })
+        ));
+
+        // The sealed test envelope must itself retain one exact normal/dev edge. It determines whether a Test
+        // graph has this root; the raw graph must never fall back to the normal list when it is absent.
+        let test_locked = OvenProjectInspectionRootDependency {
+            alias: alias.to_string(),
+            package: dependency.package.clone(),
+            version: dependency.package_version.clone(),
+            registry: "registry+https://example.invalid/index".to_string(),
+            checksum: "fixture-registry-checksum".to_string(),
+            requested_features: vec!["normal".to_string()],
+            default_features: true,
+        };
+        authority.test_dependency_envelope = Some(OvenProjectInspectionTestDependencyEnvelope {
+            constituent_index: 0,
+            dependency_surface_digest: selected_graph_sha256(b"fixture test dependency surface"),
+            dependency_roots: BTreeMap::from([(
+                alias.to_string(),
+                OvenProjectInspectionTestDependencyRoot::Registry {
+                    dependency_digest: selected_graph_sha256(b"fixture test dependency"),
+                    locked: test_locked,
+                },
+            )]),
+        });
+
+        let normal = exact_project_inspection_root_dependency(&authority, OvenSelectedRustFacetPurpose::Normal, alias)?;
+        assert_eq!(normal.requested_features, ["normal"]);
+        assert!(normal.default_features);
+
+        let test = exact_project_inspection_root_dependency(&authority, OvenSelectedRustFacetPurpose::Test, alias)?;
+        assert_eq!(test.requested_features, ["normal"]);
+        assert!(test.default_features);
+        Ok(())
     }
 
     fn single_unit_graph(
@@ -382,7 +1274,15 @@ mod selected_rust_facet_graph_tests {
                 },
             ],
             units: vec![unit],
-            exposed_roots: BTreeMap::from([("fixture".to_string(), identity)]),
+            exposed_roots: BTreeMap::from([(
+                "fixture".to_string(),
+                crate::rustc::OvenSelectedRustFacetRoot {
+                    unit: identity,
+                    requested_features: Vec::new(),
+                    default_features: true,
+                    intent_owner: toolchain_owner_identity(),
+                },
+            )]),
         })
     }
 
@@ -408,9 +1308,9 @@ mod selected_rust_facet_graph_tests {
                 }
             }
         }
-        for identity in graph.exposed_roots.values_mut() {
-            if *identity == old {
-                *identity = new.clone();
+        for root in graph.exposed_roots.values_mut() {
+            if root.unit == old {
+                root.unit = new.clone();
             }
         }
         Ok(())
@@ -480,7 +1380,15 @@ mod selected_rust_facet_graph_tests {
                 },
             ],
             units: vec![unit],
-            exposed_roots: BTreeMap::from([("fixture".to_string(), identity)]),
+            exposed_roots: BTreeMap::from([(
+                "fixture".to_string(),
+                crate::rustc::OvenSelectedRustFacetRoot {
+                    unit: identity,
+                    requested_features: Vec::new(),
+                    default_features: true,
+                    intent_owner: toolchain_owner_identity(),
+                },
+            )]),
         })
     }
 
@@ -543,7 +1451,14 @@ mod selected_rust_facet_graph_tests {
             .iter()
             .find(|unit| unit["package"].as_str() == Some("dependency-package"))
             .ok_or("serialized graph lost its leaf unit")?;
-        for field in ["dependencies", "features", "cfg", "exclude_dirs", "generated_inputs"] {
+        for field in [
+            "dependencies",
+            "features",
+            "cfg",
+            "exclude_dirs",
+            "generated_inputs",
+            "linked_libraries",
+        ] {
             assert_eq!(leaf[field].as_array().map(Vec::len), Some(0));
         }
         assert_eq!(leaf["environment"].as_object().map(serde_json::Map::len), Some(0));
@@ -572,9 +1487,15 @@ mod selected_rust_facet_graph_tests {
         host.domain = OvenSelectedRustFacetDomain::Host;
         host.dependencies.clear();
         host.identity = selected_graph_unit_identity(&graph.selection, &host)?;
-        graph
-            .exposed_roots
-            .insert("fixture_host".to_string(), host.identity.clone());
+        graph.exposed_roots.insert(
+            "fixture_host".to_string(),
+            OvenSelectedRustFacetRoot {
+                unit: host.identity.clone(),
+                requested_features: Vec::new(),
+                default_features: true,
+                intent_owner: toolchain_owner_identity(),
+            },
+        );
         graph.units.push(host);
 
         let selected = graph.validated()?;
@@ -676,17 +1597,22 @@ mod selected_rust_facet_graph_tests {
     #[test]
     fn selected_graph_binds_target_spec_to_a_toolchain_owner() -> TestResult {
         let selected = graph(b"pub fn use_dependency() {}\n")?.validated()?;
-        let target_owner = &selected.graph().selection.target_spec.source.owner;
+        let target_owner = selected.graph().selection.target_spec.toolchain_owner();
         let owner = selected
             .graph()
             .owners
             .iter()
-            .find(|owner| &owner.identity == target_owner)
+            .find(|owner| owner.identity == target_owner)
             .ok_or("validated graph lost target-spec owner")?;
         assert_eq!(owner.kind, OvenSelectedRustFacetOwnerKind::Toolchain);
 
         let mut wrong_target_spec_owner = graph(b"pub fn use_dependency() {}\n")?;
-        wrong_target_spec_owner.selection.target_spec.source.owner = dependency_owner_identity();
+        wrong_target_spec_owner
+            .selection
+            .target_spec
+            .custom_source_mut()
+            .ok_or("fixture target spec is not custom")?
+            .owner = dependency_owner_identity();
         assert!(matches!(
             wrong_target_spec_owner.validated(),
             Err(OvenSelectedRustFacetGraphError::Invalid { field, .. })
@@ -717,7 +1643,12 @@ mod selected_rust_facet_graph_tests {
         ));
 
         let mut missing_owner = graph(b"pub fn use_dependency() {}\n")?;
-        missing_owner.selection.target_spec.source.owner = selected_graph_sha256(b"absent toolchain owner");
+        missing_owner
+            .selection
+            .target_spec
+            .custom_source_mut()
+            .ok_or("fixture target spec is not custom")?
+            .owner = selected_graph_sha256(b"absent toolchain owner");
         assert!(matches!(
             missing_owner.validated(),
             Err(OvenSelectedRustFacetGraphError::Missing { .. })
@@ -748,6 +1679,36 @@ mod selected_rust_facet_graph_tests {
             registry_from_toolchain.validated(),
             Err(OvenSelectedRustFacetGraphError::Invalid { field, .. }) if field.ends_with(".source.owner")
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn selected_graph_binds_a_builtin_target_to_the_verified_compiler_and_cfg() -> TestResult {
+        let mut selected = graph(b"pub fn use_dependency() {}\n")?;
+        let cfg_digest = selected_graph_sha256(&serde_json::to_vec(&selected.selection.target_cfg)?);
+        selected.selection.target_spec = OvenSelectedRustFacetTargetSpec::BuiltIn {
+            toolchain_owner: toolchain_owner_identity(),
+            target: selected.selection.intent.target.clone(),
+            rustc_identity: selected.selection.intent.toolchain.clone(),
+            target_cfg_digest: cfg_digest,
+        };
+        let dependency = unit_index(&selected, "dependency-package")?;
+        reidentify_unit(&mut selected, dependency)?;
+        let root = unit_index(&selected, "fixture")?;
+        reidentify_unit(&mut selected, root)?;
+        selected.clone().validated()?;
+
+        let mut changed_cfg = selected;
+        changed_cfg.selection.target_spec = OvenSelectedRustFacetTargetSpec::BuiltIn {
+            toolchain_owner: toolchain_owner_identity(),
+            target: changed_cfg.selection.intent.target.clone(),
+            rustc_identity: changed_cfg.selection.intent.toolchain.clone(),
+            target_cfg_digest: selected_graph_sha256(b"unrelated cfg"),
+        };
+        assert!(
+            matches!(changed_cfg.validated(), Err(OvenSelectedRustFacetGraphError::Invalid { field, .. })
+            if field == "selection.target_spec.target_cfg_digest")
+        );
         Ok(())
     }
 
@@ -787,6 +1748,14 @@ mod selected_rust_facet_graph_tests {
             Err(OvenSelectedRustFacetGraphError::Invalid { .. })
         ));
 
+        let mut prior = serde_json::from_slice::<serde_json::Value>(&selected.to_json_bytes()?)?;
+        prior["schema_version"] = serde_json::json!(2);
+        let prior_bytes = serde_json::to_vec(&prior)?;
+        assert!(matches!(
+            OvenSelectedRustFacetGraph::decode_validated(&prior_bytes),
+            Err(OvenSelectedRustFacetGraphError::UnsupportedSchema { found: 2, .. })
+        ));
+
         let future = serde_json::to_vec(&serde_json::json!({
             "schema_version": OVEN_SELECTED_RUST_FACET_GRAPH_SCHEMA_VERSION + 1,
             "selection": { "intent": { "future_field": true } },
@@ -800,12 +1769,126 @@ mod selected_rust_facet_graph_tests {
     }
 
     #[test]
+    fn selected_graph_requires_complete_canonical_cfg_snapshots() -> TestResult {
+        let selected = graph(b"pub fn use_dependency() {}\n")?.validated()?;
+        let mut missing = serde_json::from_slice::<serde_json::Value>(&selected.to_json_bytes()?)?;
+        let selection = missing["selection"]
+            .as_object_mut()
+            .ok_or("serialized graph lost selection")?;
+        selection.remove("host_cfg");
+        assert!(matches!(
+            OvenSelectedRustFacetGraph::decode_validated(&serde_json::to_vec(&missing)?),
+            Err(OvenSelectedRustFacetGraphError::Invalid { .. })
+        ));
+
+        let mut empty = graph(b"pub fn use_dependency() {}\n")?;
+        empty.selection.host_cfg = OvenSelectedRustFacetCfgSnapshot {
+            flags: Vec::new(),
+            values: BTreeMap::new(),
+        };
+        assert!(matches!(
+            empty.validated(),
+            Err(OvenSelectedRustFacetGraphError::Missing { field }) if field == "selection.host_cfg"
+        ));
+
+        let mut empty_values = serde_json::from_slice::<serde_json::Value>(&selected.to_json_bytes()?)?;
+        empty_values["selection"]["target_cfg"]["values"]["target_arch"] = serde_json::json!([]);
+        assert!(matches!(
+            OvenSelectedRustFacetGraph::decode_validated(&serde_json::to_vec(&empty_values)?),
+            Err(OvenSelectedRustFacetGraphError::Missing { field })
+                if field == "selection.target_cfg.values.target_arch"
+        ));
+
+        let mut empty_abi = serde_json::from_slice::<serde_json::Value>(&selected.to_json_bytes()?)?;
+        empty_abi["selection"]["target_cfg"]["values"]["target_abi"] = serde_json::json!([""]);
+        OvenSelectedRustFacetGraph::decode_validated(&serde_json::to_vec(&empty_abi)?)?;
+
+        let mut unordered_flags = graph(b"pub fn use_dependency() {}\n")?;
+        unordered_flags
+            .selection
+            .host_cfg
+            .flags
+            .push("debug_assertions".to_string());
+        assert!(matches!(
+            unordered_flags.validated(),
+            Err(OvenSelectedRustFacetGraphError::Invalid { field, .. }) if field == "selection.host_cfg.flags"
+        ));
+
+        let mut unordered_values = graph(b"pub fn use_dependency() {}\n")?;
+        let target_arch = unordered_values
+            .selection
+            .target_cfg
+            .values
+            .get_mut("target_arch")
+            .ok_or("fixture snapshot lost target architecture")?;
+        target_arch.push("aarch64".to_string());
+        assert!(matches!(
+            unordered_values.validated(),
+            Err(OvenSelectedRustFacetGraphError::Invalid { field, .. }) if field == "selection.target_cfg.values.target_arch"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn selected_graph_digest_binds_host_and_target_cfg_snapshots() -> TestResult {
+        let first = graph(b"pub fn use_dependency() {}\n")?.validated()?;
+        let mut changed = graph(b"pub fn use_dependency() {}\n")?;
+        let target_os = changed
+            .selection
+            .target_cfg
+            .values
+            .get_mut("target_os")
+            .ok_or("fixture snapshot lost target operating system")?;
+        target_os.clear();
+        target_os.push("macos".to_string());
+        let changed = changed.validated()?;
+        assert_ne!(first.digest(), changed.digest());
+        Ok(())
+    }
+
+    /// A build script that emits only cfgs leaves a checked empty `OUT_DIR`; the graph admits that inventory under
+    /// the generated-input digest rule rather than refusing it as source with no members.
+    #[test]
+    fn selected_graph_admits_a_checked_empty_generated_input() -> TestResult {
+        let mut graph = graph(b"pub fn use_dependency() {}\n")?;
+        let generated_owner = selected_graph_sha256(b"generated output owner");
+        graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: generated_owner.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+        });
+        let leaf = unit_index(&graph, "dependency-package")?;
+        graph.units[leaf]
+            .generated_inputs
+            .push(OvenSelectedRustFacetGeneratedInput {
+                name: "dependency-out-dir".to_string(),
+                source: OvenSelectedRustFacetPath {
+                    owner: generated_owner,
+                    path: "generated-outputs/dependency".to_string(),
+                },
+                digest: selected_graph_generated_input_digest(&[])?,
+                members: Vec::new(),
+            });
+        reidentify_unit(&mut graph, leaf)?;
+        let root = unit_index(&graph, "fixture")?;
+        reidentify_unit(&mut graph, root)?;
+        let validated = graph.validated()?;
+        let leaf = validated
+            .graph()
+            .units
+            .iter()
+            .find(|unit| unit.package == "dependency-package")
+            .ok_or("validated graph lost its leaf")?;
+        assert_eq!(leaf.generated_inputs.len(), 1);
+        assert!(leaf.generated_inputs[0].members.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn selected_graph_eliminates_alpha_labels_and_normalizes_insertion_order() -> TestResult {
         let first = graph(b"pub fn use_dependency() {}\n")?.validated()?;
         let mut reordered = graph(b"pub fn use_dependency() {}\n")?;
         reordered.owners.reverse();
         reordered.units.reverse();
-        reordered.selection.intent.features.reverse();
         for unit in &mut reordered.units {
             unit.features.reverse();
             unit.cfg.reverse();
@@ -851,11 +1934,11 @@ mod selected_rust_facet_graph_tests {
         ));
 
         let mut duplicate_feature = graph(b"pub fn use_dependency() {}\n")?;
-        duplicate_feature
-            .selection
-            .intent
-            .features
-            .push("root-feature".to_string());
+        let root = duplicate_feature
+            .exposed_roots
+            .get_mut("fixture")
+            .ok_or("fixture graph lost root intent")?;
+        root.requested_features = vec!["root-feature".to_string(), "root-feature".to_string()];
         assert!(matches!(
             duplicate_feature.validated(),
             Err(OvenSelectedRustFacetGraphError::Invalid { .. })
@@ -905,7 +1988,12 @@ mod selected_rust_facet_graph_tests {
         ));
 
         let mut owner_root_target_spec = graph(b"pub fn use_dependency() {}\n")?;
-        owner_root_target_spec.selection.target_spec.source.path = ".".to_string();
+        owner_root_target_spec
+            .selection
+            .target_spec
+            .custom_source_mut()
+            .ok_or("fixture target spec is not custom")?
+            .path = ".".to_string();
         assert!(matches!(
             owner_root_target_spec.validated(),
             Err(OvenSelectedRustFacetGraphError::Invalid { .. })
@@ -1004,6 +2092,118 @@ mod selected_rust_facet_graph_tests {
         changed.exposed_roots.insert("fixture_alias".to_string(), root);
         let changed = changed.validated()?;
         assert_ne!(first.digest(), changed.digest());
+
+        let mut changed_intent = graph(b"pub fn use_dependency() {}\n")?;
+        changed_intent
+            .exposed_roots
+            .get_mut("fixture")
+            .ok_or("fixture graph lost exposed root")?
+            .requested_features = vec!["root-feature".to_string()];
+        let changed_intent = changed_intent.validated()?;
+        assert_ne!(first.digest(), changed_intent.digest());
+        Ok(())
+    }
+
+    #[test]
+    fn selected_graph_identity_binds_linked_archive_bytes() -> TestResult {
+        let first = graph(b"pub fn use_dependency() {}\n")?.validated()?;
+        let mut changed = graph(b"pub fn use_dependency() {}\n")?;
+        let root = unit_index(&changed, "fixture")?;
+        let source_owner = changed.units[root].source.owner.clone();
+        changed.units[root].linked_libraries = vec![OvenSelectedRustFacetLinkedLibrary::Archive {
+            name: "fixture_link".to_string(),
+            kind: OvenSelectedRustFacetLinkedLibraryKind::Static,
+            artifact: OvenSelectedRustFacetPath {
+                owner: source_owner,
+                path: "linked/libfixture_link.a".to_string(),
+            },
+            digest: selected_graph_sha256(b"fixture link bytes"),
+        }];
+        reidentify_unit(&mut changed, root)?;
+        let changed = changed.validated()?;
+        assert_ne!(first.digest(), changed.digest());
+        Ok(())
+    }
+
+    #[test]
+    fn selected_graph_identity_binds_and_restricts_compiler_sysroot_externs() -> TestResult {
+        let first = graph(b"pub fn use_dependency() {}\n")?.validated()?;
+        let mut changed = graph(b"pub fn use_dependency() {}\n")?;
+        let root = unit_index(&changed, "fixture")?;
+        changed.units[root].sysroot_externs = vec!["proc_macro".to_string()];
+        reidentify_unit(&mut changed, root)?;
+        let changed = changed.validated()?;
+        assert_ne!(first.digest(), changed.digest());
+
+        let mut unsupported = graph(b"pub fn use_dependency() {}\n")?;
+        let root = unit_index(&unsupported, "fixture")?;
+        unsupported.units[root].sysroot_externs = vec!["std".to_string()];
+        reidentify_unit(&mut unsupported, root)?;
+        assert!(matches!(
+            unsupported.validated(),
+            Err(OvenSelectedRustFacetGraphError::Invalid { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn selected_graph_requires_receipt_bound_provider_facts_for_the_unit_domain() -> TestResult {
+        let mut graph = graph(b"pub fn use_dependency() {}\n")?;
+        let root = unit_index(&graph, "fixture")?;
+        let provider = selected_graph_sha256(b"fixture provider");
+        graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: provider.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::LinkedLibraryProvider,
+        });
+        let members = vec![member("libfixture.tbd", b"fixture system library")];
+        graph.units[root].linked_libraries = vec![OvenSelectedRustFacetLinkedLibrary::Provider {
+            details: Box::new(OvenSelectedRustFacetLinkedLibraryProvider {
+                name: "Fixture".to_string(),
+                kind: OvenSelectedRustFacetLinkedLibraryKind::System,
+                provider: provider.clone(),
+                target: graph.selection.intent.target.clone(),
+                capability: "fixture.system.Fixture".to_string(),
+                receipt_identity: selected_graph_sha256(b"fixture receipt"),
+                provenance: OvenSelectedRustFacetPath {
+                    owner: provider.clone(),
+                    path: "provenance/interop-execution.json".to_string(),
+                },
+                provenance_digest: selected_graph_sha256(b"fixture provenance"),
+                search_root: OvenSelectedRustFacetPath {
+                    owner: provider.clone(),
+                    path: "providers".to_string(),
+                },
+                artifact: OvenSelectedRustFacetPath {
+                    owner: provider,
+                    path: "providers/libfixture.tbd".to_string(),
+                },
+                digest: selected_graph_sha256(b"fixture system library"),
+                members,
+            }),
+        }];
+        reidentify_unit(&mut graph, root)?;
+        graph.clone().validated()?;
+
+        let encoded = serde_json::to_value(&graph.units[root].linked_libraries[0])?;
+        assert_eq!(
+            encoded.get("input").and_then(serde_json::Value::as_str),
+            Some("provider")
+        );
+        assert_eq!(encoded.get("name").and_then(serde_json::Value::as_str), Some("Fixture"));
+        assert!(encoded.get("details").is_none());
+        let decoded: OvenSelectedRustFacetLinkedLibrary = serde_json::from_value(encoded)?;
+        assert_eq!(decoded, graph.units[root].linked_libraries[0]);
+
+        let OvenSelectedRustFacetLinkedLibrary::Provider { details } = &mut graph.units[root].linked_libraries[0]
+        else {
+            return Err("fixture lost its provider link".into());
+        };
+        details.target = graph.selection.host.clone();
+        reidentify_unit(&mut graph, root)?;
+        assert_eq!(
+            refusal_field(graph, "provider target")?,
+            "units[0].linked_libraries[0].target"
+        );
         Ok(())
     }
 
@@ -1039,12 +2239,40 @@ mod selected_rust_facet_graph_tests {
         ));
 
         let mut missing_root = baseline;
-        missing_root
-            .exposed_roots
-            .insert("fixture".to_string(), selected_graph_sha256(b"absent root"));
+        missing_root.exposed_roots.insert(
+            "fixture".to_string(),
+            OvenSelectedRustFacetRoot {
+                unit: selected_graph_sha256(b"absent root"),
+                requested_features: Vec::new(),
+                default_features: true,
+                intent_owner: toolchain_owner_identity(),
+            },
+        );
         assert!(matches!(
             missing_root.validated(),
             Err(OvenSelectedRustFacetGraphError::Missing { .. })
+        ));
+
+        let mut missing_root_intent_owner = graph(b"pub fn use_dependency() {}\n")?;
+        missing_root_intent_owner
+            .exposed_roots
+            .get_mut("fixture")
+            .ok_or("fixture graph lost exposed root")?
+            .intent_owner = selected_graph_sha256(b"absent root intent owner");
+        assert!(matches!(
+            missing_root_intent_owner.validated(),
+            Err(OvenSelectedRustFacetGraphError::Missing { .. })
+        ));
+
+        let mut noncanonical_root_intent = graph(b"pub fn use_dependency() {}\n")?;
+        noncanonical_root_intent
+            .exposed_roots
+            .get_mut("fixture")
+            .ok_or("fixture graph lost exposed root")?
+            .requested_features = vec!["zeta".to_string(), "alpha".to_string()];
+        assert!(matches!(
+            noncanonical_root_intent.validated(),
+            Err(OvenSelectedRustFacetGraphError::Invalid { .. })
         ));
         Ok(())
     }
@@ -1273,7 +2501,12 @@ mod selected_rust_facet_graph_tests {
         let mut graph = path_source_graph("path:fixture", b"pub fn fixture() {}\n")?;
         graph.selection.host = "x86_64-pc-windows-msvc".to_string();
         graph.selection.intent.target = "x86_64-pc-windows-msvc".to_string();
-        graph.selection.target_spec.source.path = "target-specs/x86_64-pc-windows-msvc.json".to_string();
+        graph
+            .selection
+            .target_spec
+            .custom_source_mut()
+            .expect("fixture target spec is custom")
+            .path = "target-specs/x86_64-pc-windows-msvc.json".to_string();
         for (name, value) in environment {
             graph.units[0].environment.insert((*name).to_string(), value.clone());
         }
