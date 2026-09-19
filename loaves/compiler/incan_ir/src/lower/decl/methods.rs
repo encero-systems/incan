@@ -19,6 +19,7 @@ use incan_lang::lang::callables;
 use incan_lang::lang::decorators::{self, DecoratorId};
 use incan_lang::lang::keywords::{self, KeywordId};
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
+use incan_lang::lang::stdlib::StdlibJsonTraitId;
 use incan_lang::lang::traits as core_traits;
 use incan_lang::lang::traits::TraitId;
 
@@ -1103,7 +1104,12 @@ impl AstLowering {
 
     /// Return source-level method names for compiler-known imported traits whose declaration may be unavailable in
     /// this lowering unit.
-    fn known_imported_trait_method_names(trait_name: &str) -> &'static [&'static str] {
+    ///
+    /// The stdlib JSON protocol methods are attributed by the trait's canonical identity, never by its spelling.
+    fn known_imported_trait_method_names(
+        trait_name: &str,
+        stdlib_json_protocol: Option<StdlibJsonTraitId>,
+    ) -> &'static [&'static str] {
         if let Some(trait_id) = core_traits::from_str(trait_name) {
             return core_traits::method_names(trait_id);
         }
@@ -1117,9 +1123,7 @@ impl AstLowering {
         if callables::from_str(short_name).is_some() {
             callables::METHOD_NAMES
         } else {
-            match incan_lang::lang::stdlib::stdlib_json_trait_id(trait_name)
-                .or_else(|| incan_lang::lang::stdlib::stdlib_json_trait_id(short_name))
-            {
+            match stdlib_json_protocol {
                 Some(id) => incan_lang::lang::stdlib::stdlib_json_trait_method_names(id),
                 None => &[],
             }
@@ -1130,23 +1134,24 @@ impl AstLowering {
     ///
     /// Serde JSON derives implement the Rust-side conversion hooks during codegen. Imported stdlib trait declarations
     /// still make those hooks visible to lowering, so this keeps the trait impl obligation aligned with the backend
-    /// expansion without making all missing stdlib trait methods optional.
-    fn backend_default_trait_method(trait_name: &str, method_name: &str) -> bool {
-        let short_name = trait_name
-            .rsplit(['.', ':'])
-            .find(|segment| !segment.is_empty())
-            .unwrap_or(trait_name);
-        incan_lang::lang::stdlib::stdlib_json_trait_id(trait_name)
-            .or_else(|| incan_lang::lang::stdlib::stdlib_json_trait_id(short_name))
+    /// expansion without making all missing stdlib trait methods optional. Only the canonical `std.serde.json` traits
+    /// qualify; a same-spelled trait from any other module keeps its ordinary missing-method obligation (#1431).
+    fn backend_default_trait_method(stdlib_json_protocol: Option<StdlibJsonTraitId>, method_name: &str) -> bool {
+        stdlib_json_protocol
             .is_some_and(|id| incan_lang::lang::stdlib::stdlib_json_trait_method_names(id).contains(&method_name))
     }
 
     /// Return whether a method is safe to emit into an imported trait impl when the trait declaration is missing.
-    fn method_matches_imported_trait_without_decl(&self, method: &ast::MethodDecl, trait_name: &str) -> bool {
+    fn method_matches_imported_trait_without_decl(
+        &self,
+        method: &ast::MethodDecl,
+        trait_name: &str,
+        stdlib_json_protocol: Option<StdlibJsonTraitId>,
+    ) -> bool {
         if method.trait_target.is_some() {
             return true;
         }
-        let known_methods = Self::known_imported_trait_method_names(trait_name);
+        let known_methods = Self::known_imported_trait_method_names(trait_name, stdlib_json_protocol);
         known_methods.iter().any(|name| *name == method.name)
     }
 
@@ -1309,6 +1314,7 @@ impl AstLowering {
             impl_associated_types,
         } = input;
         let (trait_module_path, trait_source_name) = self.canonical_trait_identity(trait_name);
+        let stdlib_json_protocol = self.stdlib_json_protocol_for_adopted_trait(trait_name);
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
         let prev = self.current_impl_type.replace(type_name.to_string());
         let lowered_result = (|| {
@@ -1333,7 +1339,8 @@ impl AstLowering {
             let Some(trait_decl) = self.trait_decls.get(trait_name).cloned() else {
                 let mut methods: Vec<IrFunction> = Vec::new();
                 for method in impl_methods {
-                    if !self.method_matches_imported_trait_without_decl(&method.node, trait_name) {
+                    if !self.method_matches_imported_trait_without_decl(&method.node, trait_name, stdlib_json_protocol)
+                    {
                         continue;
                     }
                     if self.method_trait_target_matches_impl(
@@ -1498,7 +1505,7 @@ impl AstLowering {
 
                 // Some stdlib traits expose source-level obligations that are intentionally satisfied by backend
                 // derive expansion. Keep collecting ordinary missing-method errors for all other traits.
-                if Self::backend_default_trait_method(trait_name, method_name) {
+                if Self::backend_default_trait_method(stdlib_json_protocol, method_name) {
                     continue;
                 }
 

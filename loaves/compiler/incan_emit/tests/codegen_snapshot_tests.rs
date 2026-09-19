@@ -5637,6 +5637,25 @@ fn test_std_serde_with_serialize_trait_codegen() {
     assert_codegen_snapshot!("std_serde_with_serialize_trait", rust_code);
 }
 
+/// #1431: a source trait that only shares the spelling of `std.serde.json.Serialize` / `Deserialize` carries no
+/// JSON protocol. Its adoption must not inject serde derives or the `to_json` / `from_json` backend defaults; the
+/// stdlib JSON behavior keys on the canonical trait identity, never on the basename.
+#[test]
+fn test_newtype_local_serde_named_traits_codegen() {
+    let source = load_test_file("newtype_local_serde_named_traits");
+    let rust_code = generate_rust(&source);
+    let compact = compact_rust(&rust_code);
+    assert!(
+        compact.contains("implSerializeforNumber{}") && compact.contains("implDeserializeforNumber{}"),
+        "expected empty impls for the local traits; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("serde::") && !compact.contains("to_json") && !compact.contains("from_json"),
+        "local traits spelled like the stdlib JSON traits must not receive serde derives or JSON methods; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("newtype_local_serde_named_traits", rust_code);
+}
+
 #[test]
 fn test_newtype_with_serialize_trait_forwards_rust_derive() {
     let source = r#"

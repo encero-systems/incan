@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use incan_lang::lang::conventions;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::magic_methods;
+use incan_lang::lang::stdlib::{self, StdlibJsonTraitId};
 use incan_lang::lang::trait_capabilities;
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_semantics_core::encode_incan_symbol_identity;
@@ -222,7 +223,8 @@ impl<'a> IrEmitter<'a> {
                 })
                 .map(|m| self.emit_trait_method(m))
                 .collect::<Result<_, _>>()?;
-            if incan_lang::lang::stdlib::is_stdlib_json_serialize_trait_name(trait_name)
+            let stdlib_json_protocol = Self::stdlib_json_protocol_for_impl(impl_block);
+            if stdlib_json_protocol == Some(StdlibJsonTraitId::Serialize)
                 && !impl_block.methods.iter().any(|method| method.name == "to_json")
             {
                 trait_methods.push(quote! {
@@ -231,7 +233,7 @@ impl<'a> IrEmitter<'a> {
                     }
                 });
             }
-            if incan_lang::lang::stdlib::is_stdlib_json_deserialize_trait_name(trait_name)
+            if stdlib_json_protocol == Some(StdlibJsonTraitId::Deserialize)
                 && !impl_block.methods.iter().any(|method| method.name == "from_json")
             {
                 trait_methods.push(quote! {
@@ -486,6 +488,22 @@ impl<'a> IrEmitter<'a> {
                 #invocation #await_suffix
             }
         })
+    }
+
+    /// Return which `std.serde.json` protocol an impl block implements, by the trait identity lowering recorded.
+    ///
+    /// Compatibility issue: #1431. A trait that merely shares the spelling `Serialize` / `Deserialize` received the
+    /// stdlib `to_json` / `from_json` backend defaults, producing Rust that names methods the trait never declared.
+    /// Behavior evidence: `newtype_local_serde_named_traits` and `std_serde_with_serialize_trait` codegen snapshots.
+    /// Semantic owner: the canonical trait identity (`IrImpl::trait_module_path` + `trait_source_name`) that lowering
+    /// resolves from the checked import bindings; this function only reads it back through the stdlib registry.
+    /// Retirement condition: the Body IR backend records the protocol on the impl fact itself and this emitter path is
+    /// deleted with #654.
+    fn stdlib_json_protocol_for_impl(impl_block: &incan_ir::decl::IrImpl) -> Option<StdlibJsonTraitId> {
+        stdlib::stdlib_json_trait_id_for_identity(
+            impl_block.trait_module_path.as_deref()?,
+            impl_block.trait_source_name.as_deref()?,
+        )
     }
 
     /// Return whether an impl targets one canonical `std.traits.convert` trait.
