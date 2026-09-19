@@ -6098,6 +6098,26 @@ fn test_trait_bound_explicit_codegen() {
     assert_codegen_snapshot!("trait_bound_explicit", rust_code);
 }
 
+/// #1374: a `Default` bound must name the Rust `Default` trait that `@derive(Default)` implements.
+///
+/// The bound comes from the trait-bound registry, so the generic function compiles against the derived
+/// implementation instead of a source-owned `__incan_std` trait that no generated program implements.
+#[test]
+fn test_trait_bound_default_codegen() {
+    let source = load_test_file("trait_bound_default");
+    let rust_code = generate_rust(&source);
+    let default_bound = incan_lang::lang::trait_bounds::rust::DEFAULT;
+    assert!(
+        rust_code.contains(&format!("fn make<T: {default_bound}>() -> T")),
+        "expected the registry's Rust `Default` bound in the generated signature:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("__incan_std::derives::copying::Default"),
+        "a `Default` bound must not point at the source-owned trait:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("trait_bound_default", rust_code);
+}
+
 #[test]
 fn test_ordinal_key_builtin_impls_codegen() -> TestResult {
     let source = load_test_file("ordinal_key_builtin_impls");
