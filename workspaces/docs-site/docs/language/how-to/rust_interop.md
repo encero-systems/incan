@@ -122,11 +122,14 @@ from rust::sha3::digest import Update
 class Hasher:
     handle: Sha256
 
+    def absorb(mut self, chunk: bytes) -> None:
+        Update.update(self.handle, chunk.as_slice())
+
     def update(mut self, chunk: bytes) -> None:
         Digest.update(self.handle, chunk.as_slice())
 ```
 
-The trait's declaration decides how that first argument is passed: a `&mut self` method borrows it exclusively, a `&self` method borrows it shared, and a `self` method moves it. Incan reads that receiver from the trait's inspected metadata and generates the matching borrow. The compiler does not guess: when no signature metadata is available for the trait method, the trait-qualified call is an error naming the trait and method, and `value.method(...)` remains available when the method is unambiguous on the receiver. A method the trait does not declare is also rejected, since Rust resolves `Trait::method` only against the trait's own items.
+The trait's declaration decides how that first argument is passed: a `&mut self` method borrows it exclusively, a `&self` method borrows it shared, and a `self` method moves it. Incan reads that receiver from the trait's inspected metadata and generates the matching borrow. The compiler does not guess for a trait it recognizes: when the import is known to be a trait but no signature is available for the method, the trait-qualified call is an error naming the trait and method, and `value.method(...)` remains available when the method is unambiguous on the receiver. A method the trait does not declare is also rejected, since Rust resolves `Trait::method` only against the trait's own items. An import the compiler has no metadata for at all is treated as an ordinary associated call, and native compilation remains the authority for it.
 
 ### Extension traits stay in scope for the methods they provide
 
