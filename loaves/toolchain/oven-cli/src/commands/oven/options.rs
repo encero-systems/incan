@@ -202,6 +202,9 @@ pub struct OvenLoafBakeCommandOptions {
     pub format: OvenOutputFormat,
     /// Registered Loaf registry checkout whose adoption manifests govern captured registry units (release only).
     pub loaf_registry: Option<PathBuf>,
+    /// Directory that receives one harvest proposal per captured registry unit with a build-script edge (release
+    /// only).
+    pub harvest_dir: Option<PathBuf>,
 }
 
 /// Inputs for the direct-rustc compiler workspace-test consumer.

@@ -52,6 +52,8 @@ INCAN_TEST_LOAF_TOOLCHAIN ?= 1.98.0
 # Registered Loaf registry checkout (incan.pub) whose adoption manifests govern captured registry units in the
 # release bake; unset, the release publisher keeps every unit observation-governed.
 INCAN_TEST_LOAF_REGISTRY ?=
+# Directory that receives harvest proposals (one per registry build script the release capture observed); empty skips.
+INCAN_TEST_HARVEST_DIR ?=
 INCAN_TEST_SUITE_TOOLCHAIN ?= 1.98.0
 TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS) \
 	INCAN_TEST_TMP_ROOT="$(abspath $(INCAN_TEST_TMP_ROOT))" \
@@ -559,7 +561,8 @@ test-prewarm-oven-release-loafs: test-prewarm-sdk
 			--policy-engine-store "$$policy_engine_store" \
 			--policy-engine-identity "$$policy_engine_identity" \
 			--policy-engine-target "$$target" \
-			$(if $(INCAN_TEST_LOAF_REGISTRY),--loaf-registry "$(INCAN_TEST_LOAF_REGISTRY)",)
+			$(if $(INCAN_TEST_LOAF_REGISTRY),--loaf-registry "$(INCAN_TEST_LOAF_REGISTRY)",) \
+			$(if $(INCAN_TEST_HARVEST_DIR),--harvest-dir "$(INCAN_TEST_HARVEST_DIR)",)
 
 .PHONY: test-oven-focused
 test-oven-focused:
