@@ -3041,6 +3041,60 @@ pub root = math.sqrt
         }
     }
 
+    /// #1434: a module import used only by a module derive is still a use of that module, because the emitted
+    /// `impl module::Trait for T` names its binding. An aliased import must therefore survive generated-use pruning
+    /// under the binding the source chose; an unaliased root module needs no `use` because the project declares it.
+    #[test]
+    fn module_derive_retains_its_trait_module_import() -> Result<(), Box<dyn std::error::Error>> {
+        let codec = parse_program("__derives__ = [Encode]\n\n@rust.derive(\"Debug\")\npub trait Encode:\n  pass\n");
+        for (import, binding, expected_import) in [
+            ("import codec", "codec", None),
+            ("import codec as formats", "formats", Some("usecrate::codecasformats;")),
+        ] {
+            let main = parse_program(&format!(
+                "{import}\n\n@derive({binding})\nmodel Item:\n  value: int\n\ndef main() -> None:\n  item = Item(value=1)\n  println(item.value)\n"
+            ));
+            let mut codegen = IrCodegen::new();
+            codegen.add_module("codec", &codec);
+            let (main_code, _modules) = codegen.try_generate_multi_file(&main, &["codec"])?;
+            let compact = compact_rust(&main_code);
+            match expected_import {
+                Some(expected_import) => assert!(compact.contains(expected_import), "{import}: {main_code}"),
+                None => assert!(!compact.contains("usecrate::codec"), "{import}: {main_code}"),
+            }
+            assert!(
+                compact.contains(&format!("impl{binding}::EncodeforItem{{}}")),
+                "{import}: {main_code}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #1434: a compiled-SDK derive bundle reached through a root `std` import keeps the provider-qualified import
+    /// projection, so `impl toml::TomlSerialize` resolves the SDK namespace rather than the external `toml` crate.
+    #[test]
+    fn std_root_module_derive_retains_sdk_facade_import() {
+        for (import, binding) in [("toml", "toml"), ("toml as manifest", "manifest")] {
+            let source = format!(
+                "from std import {import}\n\n@derive({binding})\nmodel Project:\n  name: str\n\ndef main() -> None:\n  project = Project(name=\"demo\")\n  println(project.name)\n"
+            );
+            let code = generate_with_sdk_provider_modules(&source, vec![vec!["toml".to_string()]]);
+            let compact = compact_rust(&code);
+            let expected_import = if binding == "toml" {
+                "usecrate::__incan_std::toml;".to_string()
+            } else {
+                format!("usecrate::__incan_std::tomlas{binding};")
+            };
+            assert!(compact.contains(&expected_import), "{import}: {code}");
+            assert!(
+                compact.contains(&format!("impl{binding}::TomlSerializeforProject{{}}"))
+                    && compact.contains(&format!("impl{binding}::TomlDeserializeforProject{{}}")),
+                "{import}: {code}"
+            );
+            assert!(!compact.contains("usetoml"), "{import}: {code}");
+        }
+    }
+
     #[test]
     fn rust_std_root_module_import_keeps_rust_namespace() {
         let code =
