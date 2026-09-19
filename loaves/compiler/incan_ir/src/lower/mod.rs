@@ -3965,7 +3965,7 @@ impl Default for AstLowering {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::expr::{CollectionMethodKind, IrExprKind, MethodKind, StringMethodKind, UnaryOp};
+    use crate::expr::{BytesMethodKind, CollectionMethodKind, IrExprKind, MethodKind, StringMethodKind, UnaryOp};
     use crate::stmt::IrStmtKind;
     use incan_frontend::{lexer, parser, typechecker::TypeChecker};
 
@@ -4821,6 +4821,46 @@ type UserId = newtype int
             MethodKind::for_receiver(&IrType::List(Box::new(IrType::Int)), "index"),
             Some(MethodKind::Collection(CollectionMethodKind::Index))
         );
+    }
+
+    /// The #1668 surfaces classify against their registries, seeing through a `mut` parameter's reference wrapper.
+    #[test]
+    fn method_kind_for_receiver_issue1668_surfaces() {
+        let dict = IrType::Dict(Box::new(IrType::String), Box::new(IrType::Int));
+        let borrowed_dict = IrType::RefMut(Box::new(dict.clone()));
+        assert_eq!(
+            MethodKind::for_receiver(&dict, "contains_key"),
+            Some(MethodKind::Collection(CollectionMethodKind::Contains))
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&borrowed_dict, "contains_key"),
+            Some(MethodKind::Collection(CollectionMethodKind::Contains))
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&dict, "keys"),
+            Some(MethodKind::Collection(CollectionMethodKind::Keys))
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&borrowed_dict, "values"),
+            Some(MethodKind::Collection(CollectionMethodKind::Values))
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&IrType::String, "encode"),
+            Some(MethodKind::String(StringMethodKind::Encode))
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&IrType::FrozenStr, "encode"),
+            Some(MethodKind::String(StringMethodKind::Encode))
+        );
+        for receiver in [IrType::Bytes, IrType::StaticBytes, IrType::FrozenBytes] {
+            assert_eq!(
+                MethodKind::for_receiver(&receiver, "decode"),
+                Some(MethodKind::Bytes(BytesMethodKind::Decode)),
+                "{receiver:?} must classify decode"
+            );
+        }
+        assert_eq!(MethodKind::for_receiver(&IrType::String, "decode"), None);
+        assert_eq!(MethodKind::for_receiver(&IrType::Bytes, "encode"), None);
     }
 
     #[test]

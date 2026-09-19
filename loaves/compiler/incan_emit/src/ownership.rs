@@ -30,6 +30,20 @@ pub fn list_index_assignment_element_type(object_ty: &IrType) -> Option<&IrType>
     }
 }
 
+/// Return the owned key and value types behind a dict receiver, including explicit reference wrappers.
+///
+/// A `mut Dict` parameter reaches emission as `RefMut(Dict)`. Every dict-shaped decision (index assignment, key
+/// lookup shaping, membership) must see through that wrapper, because `HashMap` offers no `IndexMut` and no
+/// `contains`: the borrowed receiver has to take the same `.insert` / `.get` / `.contains_key` route a local dict
+/// takes (#1668).
+pub fn dict_entry_types(object_ty: &IrType) -> Option<(&IrType, &IrType)> {
+    match object_ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => dict_entry_types(inner),
+        IrType::Dict(key_ty, value_ty) => Some((key_ty.as_ref(), value_ty.as_ref())),
+        _ => None,
+    }
+}
+
 /// A typed sink/source boundary that needs an ownership/coercion decision.
 #[derive(Debug, Clone, Copy)]
 pub enum ValueUseSite<'a> {
@@ -668,19 +682,14 @@ impl DictLookupKeyPlan {
 }
 
 /// Plan the borrow shape for a dictionary lookup key probe.
+///
+/// The receiver may be a borrowed dict (a `mut Dict` parameter); the key family behind the wrapper decides the plan.
 pub fn plan_dict_lookup_key(receiver_ty: &IrType, arg_ty: &IrType) -> DictLookupKeyPlan {
-    match receiver_ty {
-        IrType::Dict(key_ty, _)
-            if matches!(
-                key_ty.as_ref(),
-                IrType::String | IrType::StrRef | IrType::StaticStr | IrType::FrozenStr
-            ) =>
-        {
-            match arg_ty {
-                IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::StaticStr => DictLookupKeyPlan::AsIs,
-                _ => DictLookupKeyPlan::BorrowAsRefStr,
-            }
-        }
+    match dict_entry_types(receiver_ty) {
+        Some((IrType::String | IrType::StrRef | IrType::StaticStr | IrType::FrozenStr, _)) => match arg_ty {
+            IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::StaticStr => DictLookupKeyPlan::AsIs,
+            _ => DictLookupKeyPlan::BorrowAsRefStr,
+        },
         _ => match arg_ty {
             IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::StaticStr => DictLookupKeyPlan::AsIs,
             _ => DictLookupKeyPlan::BorrowShared,
@@ -932,6 +941,31 @@ mod tests {
 
     fn render(tokens: TokenStream) -> String {
         tokens.to_string().replace(' ', "")
+    }
+
+    /// A `mut Dict` parameter (`RefMut(Dict)`) plans its key probe exactly like the owned dict it borrows (#1668).
+    #[test]
+    fn dict_lookup_key_plan_sees_through_borrowed_receivers() {
+        let dict = IrType::Dict(Box::new(IrType::String), Box::new(IrType::Int));
+        let borrowed = IrType::RefMut(Box::new(dict.clone()));
+        assert_eq!(
+            dict_entry_types(&borrowed).map(|(key, value)| (key.clone(), value.clone())),
+            Some((IrType::String, IrType::Int))
+        );
+        assert_eq!(dict_entry_types(&IrType::List(Box::new(IrType::Int))), None);
+        assert_eq!(
+            plan_dict_lookup_key(&dict, &IrType::String),
+            DictLookupKeyPlan::BorrowAsRefStr
+        );
+        assert_eq!(
+            plan_dict_lookup_key(&borrowed, &IrType::String),
+            DictLookupKeyPlan::BorrowAsRefStr
+        );
+        let int_keys = IrType::RefMut(Box::new(IrType::Dict(Box::new(IrType::Int), Box::new(IrType::Int))));
+        assert_eq!(
+            plan_dict_lookup_key(&int_keys, &IrType::Int),
+            DictLookupKeyPlan::BorrowShared
+        );
     }
 
     #[test]

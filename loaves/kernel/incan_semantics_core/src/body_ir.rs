@@ -2883,7 +2883,8 @@ impl HelperOp {
             | StringMethodId::SplitWhitespace
             | StringMethodId::StartsWith
             | StringMethodId::EndsWith
-            | StringMethodId::IsEmpty => None,
+            | StringMethodId::IsEmpty
+            | StringMethodId::Encode => None,
         }
     }
 
