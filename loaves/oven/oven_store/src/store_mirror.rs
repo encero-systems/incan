@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use super::OvenReceipt;
 use super::store::{
     OvenArtifactKind, OvenArtifactManifest, OvenArtifactMaterializedDirectory, OvenArtifactMaterializedFile,
-    OvenArtifactPublishRequest, OvenStore, OvenStoreError, PublishedOvenStore,
+    OvenArtifactPublishRequest, OvenStore, OvenStoreError, OvenStoreExecutionPayload, PublishedOvenStore,
 };
 
 /// Environment variable listing mirror roots, separated the way `PATH` is on the host.
@@ -134,7 +134,8 @@ where
 /// [`import_matching_from_mirrors`]: mirrors are consulted in order, only the first with a match is used, an
 /// unreadable mirror is an error, the candidate's admitted record is revalidated under the mirror's lock and lease,
 /// and it enters the local store only through the verifying publication that reads and proves every file. The
-/// payload predicate sees verified bytes; it decides reuse, never trust.
+/// payload predicate sees verified bytes; it decides reuse, never trust. Matching entries that carry the same payload
+/// and the same materialized record — one family the mirror re-published under several receipts — are imported once.
 pub fn import_keyed_from_mirrors<F>(
     store: &OvenStore,
     mirrors: &[PathBuf],
@@ -149,7 +150,7 @@ where
         if !mirror.join("entries").is_dir() {
             continue;
         }
-        let candidates = PublishedOvenStore::new(mirror)
+        let mut candidates = PublishedOvenStore::new(mirror)
             .select_payloads_matching_for_execution(|manifest| {
                 manifest.kind == kind && manifest.intent == receipt.intent
             })?
@@ -159,8 +160,27 @@ where
         if candidates.is_empty() {
             continue;
         }
-        let mut imported = Vec::with_capacity(candidates.len());
+
+        // ---- One import per distinct content ----
+        // A keyed entry the mirror re-published under later receipts is the same payload and the same files under
+        // several identities. Each of them would be read and re-digested in full only to resolve to the local entry
+        // the first one created, so the duplicates are dropped here, keeping the smallest identity for a stable
+        // choice.
+        candidates.sort_by(|left, right| left.manifest.identity.cmp(&right.manifest.identity));
+        let mut distinct = Vec::<OvenStoreExecutionPayload>::with_capacity(candidates.len());
         for candidate in candidates {
+            let duplicate = distinct.iter().any(|kept| {
+                kept.manifest.payload == candidate.manifest.payload
+                    && kept.manifest.materialized_files == candidate.manifest.materialized_files
+                    && kept.manifest.materialized_directories == candidate.manifest.materialized_directories
+            });
+            if !duplicate {
+                distinct.push(candidate);
+            }
+        }
+
+        let mut imported = Vec::with_capacity(distinct.len());
+        for candidate in distinct {
             candidate.verify_admitted_record()?;
             let admitted_files = candidate.admitted_materialized_files().to_vec();
             let admitted_directories = candidate.admitted_materialized_directories().to_vec();
@@ -484,6 +504,54 @@ mod tests {
             |_, _| true,
         )?;
         assert!(none.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_keyed_entry_republished_under_several_receipts_imports_once() -> TestResult {
+        let mirror_root = tempfile::tempdir()?;
+        let local_root = tempfile::tempdir()?;
+        // Two producers with different sources publish the same keyed content: the same payload, the same file.
+        let first_producer = tempfile::tempdir()?;
+        write_project(first_producer.path())?;
+        let second_producer = tempfile::tempdir()?;
+        write_project(second_producer.path())?;
+        fs::write(
+            second_producer.path().join("Cargo.toml"),
+            "[package]\nname = \"store_fixture\"\nversion = \"0.1.1\"\n",
+        )?;
+        let first =
+            publish_keyed_foundation_into_mirror(mirror_root.path(), first_producer.path(), br#"{"key":"k1"}"#)?;
+        let second =
+            publish_keyed_foundation_into_mirror(mirror_root.path(), second_producer.path(), br#"{"key":"k1"}"#)?;
+        assert_ne!(first.receipt_identity, second.receipt_identity);
+        assert_ne!(first.identity, second.identity, "two receipts are two mirror entries");
+        assert_eq!(first.payload, second.payload);
+        assert_eq!(first.materialized_files, second.materialized_files);
+
+        let consumer = tempfile::tempdir()?;
+        write_project(consumer.path())?;
+        fs::write(
+            consumer.path().join("Cargo.toml"),
+            "[package]\nname = \"consumer_fixture\"\nversion = \"0.2.0\"\n",
+        )?;
+        let receipt = request(consumer.path(), "compiler-suite", b"unused")?.receipt;
+        let local = OvenStore::new(local_root.path(), limits());
+        let imported = import_keyed_from_mirrors(
+            &local,
+            &[mirror_root.path().to_path_buf()],
+            &receipt,
+            OvenArtifactKind::CompilerTestSuiteFoundation,
+            |_, payload| payload == br#"{"key":"k1"}"#,
+        )?;
+        assert_eq!(
+            imported.len(),
+            1,
+            "one content is imported once, whatever it was republished as"
+        );
+        assert_eq!(imported[0].manifest.receipt_identity, receipt.identity);
+        let held = local.select_payloads_matching_for_execution(|_| true)?;
+        assert_eq!(held.len(), 1);
         Ok(())
     }
 
