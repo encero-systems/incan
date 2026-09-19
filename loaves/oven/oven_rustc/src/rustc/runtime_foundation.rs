@@ -271,6 +271,13 @@ impl OvenRuntimeFoundation {
         }
         artifacts.validate_shape(&artifacts.intent)?;
         let declared_artifacts = artifacts.declared_artifact_digests()?;
+        let generated_owners = selected_graph
+            .graph()
+            .owners
+            .iter()
+            .filter(|owner| owner.kind == OvenSelectedRustFacetOwnerKind::GeneratedOutput)
+            .map(|owner| owner.identity.as_str())
+            .collect::<BTreeSet<_>>();
         let graph_units = selected_graph
             .graph()
             .units
@@ -296,7 +303,14 @@ impl OvenRuntimeFoundation {
                     ),
                 ));
             }
-            validate_runtime_unit_policy(unit, &policy, &artifact_owner, &artifacts, &declared_artifacts)?;
+            validate_runtime_unit_policy(
+                unit,
+                &policy,
+                &artifact_owner,
+                &generated_owners,
+                &artifacts,
+                &declared_artifacts,
+            )?;
             if policies.insert(policy.selected_identity.clone(), policy).is_some() {
                 return Err(runtime_foundation_invalid(
                     "runtime foundation units",
@@ -1361,6 +1375,101 @@ mod tests {
                 ..
             })
         ));
+        Ok(())
+    }
+
+    /// A transitive prebuilt unit is not one of the root's direct externs; the plan carries its artifact as a
+    /// sealed supporting artifact under the dependency search path, and that is enough to link it.
+    #[test]
+    fn runtime_foundation_admits_a_prebuilt_artifact_sealed_as_supporting() -> Result<(), Box<dyn std::error::Error>> {
+        let mut foundation = foundation()?;
+        let serde = foundation
+            .artifacts
+            .externs
+            .iter()
+            .position(|artifact| artifact.crate_name == "serde")
+            .ok_or("fixture exposes serde as a direct extern")?;
+        let artifact = foundation.artifacts.externs.remove(serde);
+        foundation
+            .artifacts
+            .supporting_artifacts
+            .push(OvenRustcSupportingArtifact {
+                relative_path: artifact.relative_path.clone(),
+                digest: artifact.digest.clone(),
+            });
+        foundation.validated()?;
+        Ok(())
+    }
+
+    /// Re-own the fixture's generated input and re-derive every identity that depends on the changed unit.
+    fn reown_generated_input(
+        foundation: &mut OvenRuntimeFoundation,
+        owner: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let graph = &mut foundation.selected_graph;
+        let index = graph
+            .units
+            .iter()
+            .position(|unit| unit.crate_name == "serde")
+            .ok_or("fixture lost its serde unit")?;
+        for input in &mut graph.units[index].generated_inputs {
+            input.source.owner = owner.to_string();
+        }
+        // A unit's identity covers its edges, so dependents change too; settle them in as many passes as it takes.
+        loop {
+            let mut renamed = Vec::new();
+            for index in 0..graph.units.len() {
+                let identity = selected_graph_unit_identity(&graph.selection, &graph.units[index])?;
+                if graph.units[index].identity != identity {
+                    renamed.push((graph.units[index].identity.clone(), identity.clone()));
+                    graph.units[index].identity = identity;
+                }
+            }
+            if renamed.is_empty() {
+                break;
+            }
+            for (previous, identity) in renamed {
+                for unit in &mut graph.units {
+                    for dependency in &mut unit.dependencies {
+                        if dependency.unit == previous {
+                            dependency.unit = identity.clone();
+                        }
+                    }
+                }
+                for root in graph.exposed_roots.values_mut() {
+                    if root.unit == previous {
+                        root.unit = identity.clone();
+                    }
+                }
+                for policy in &mut foundation.units {
+                    if policy.selected_identity == previous {
+                        policy.selected_identity = identity.clone();
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A build script's output is sealed under its own GeneratedOutput owner, which the asset maps to the
+    /// foundation root; an owner the graph does not name is still refused.
+    #[test]
+    fn runtime_foundation_admits_generated_inputs_under_a_generated_output_owner()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut foundation = foundation()?;
+        let generated_owner = selected_graph_sha256(b"generated-output\0generated/serde\0digest");
+        reown_generated_input(&mut foundation, &generated_owner)?;
+        // The graph itself refuses a path whose owner its table does not name.
+        assert!(foundation.clone().validated().is_err());
+        foundation.selected_graph.owners.push(OvenSelectedRustFacetOwner {
+            identity: generated_owner,
+            kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+        });
+        foundation
+            .selected_graph
+            .owners
+            .sort_by(|left, right| left.identity.cmp(&right.identity));
+        foundation.validated()?;
         Ok(())
     }
 

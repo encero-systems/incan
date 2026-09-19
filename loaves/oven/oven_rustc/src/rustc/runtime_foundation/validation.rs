@@ -230,6 +230,7 @@ pub(crate) fn validate_runtime_unit_policy(
     unit: &OvenSelectedRustFacetUnit,
     policy: &OvenRuntimeFoundationUnit,
     artifact_owner: &str,
+    generated_owners: &BTreeSet<&str>,
     artifacts: &OvenRustcArtifactManifest,
     declared_artifacts: &BTreeMap<String, String>,
 ) -> Result<(), OvenRustcError> {
@@ -250,11 +251,19 @@ pub(crate) fn validate_runtime_unit_policy(
                     ),
                 ));
             }
-            if !artifacts.externs.iter().any(|declared| declared == artifact) {
+            // A prebuilt unit is linked from its own artifact path, so the plan need not expose it as a direct
+            // extern: a root's direct dependencies are externs, and the rest of the sealed closure is carried as
+            // supporting artifacts under the plan's dependency search paths. Either way the artifact must be one
+            // the plan declares and digests.
+            let exposed = artifacts.externs.iter().any(|declared| declared == artifact)
+                || artifacts.supporting_artifacts.iter().any(|declared| {
+                    declared.relative_path == artifact.relative_path && declared.digest == artifact.digest
+                });
+            if !exposed {
                 return Err(runtime_foundation_invalid(
                     "runtime foundation prebuilt artifact",
                     format!(
-                        "unit {} artifact {} is not exposed as a sealed direct extern",
+                        "unit {} artifact {} is neither a sealed direct extern nor a sealed supporting artifact",
                         unit.crate_name, artifact.relative_path
                     ),
                 ));
@@ -304,7 +313,9 @@ pub(crate) fn validate_runtime_unit_policy(
                 ));
             }
             for input in &unit.generated_inputs {
-                if input.source.owner != artifact_owner {
+                // A build script's output is sealed inside the asset under its own GeneratedOutput owner, which the
+                // asset maps to the foundation root beside the artifact constituent itself.
+                if input.source.owner != artifact_owner && !generated_owners.contains(input.source.owner.as_str()) {
                     return Err(runtime_foundation_invalid(
                         "runtime foundation generated input",
                         format!(
