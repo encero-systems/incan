@@ -684,8 +684,20 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 &toolchain.compiler_closure_identity,
             )
             .map_err(oven_error)?;
-            let response = run_release_rust_policy(policy, &scratch.path().join("rust-policy-exchange"), &request)?;
-            Some(runtime_foundation_inventories_from_policy_response(&finalized.graph, &response).map_err(oven_error)?)
+            let exchange_root = scratch.path().join("rust-policy-exchange");
+            let response = run_release_rust_policy(policy, &exchange_root, &request)?;
+            match runtime_foundation_inventories_from_policy_response(&finalized.graph, &response) {
+                Ok(inventories) => Some(inventories),
+                Err(error) => {
+                    // The scratch exchange is discarded with the publisher; retain the refused exchange where an
+                    // investigation can replay it against the policy engine and its tests.
+                    let retained = retain_refused_policy_exchange(&exchange_root).map_err(oven_error)?;
+                    return Err(CliError::failure(format!(
+                        "{error}; the refused exchange is retained at {}",
+                        retained.display()
+                    )));
+                }
+            }
         } else {
             None
         };
@@ -1133,6 +1145,27 @@ pub(crate) fn import_release_policy_output(
 }
 
 /// Execute the exact admitted policy engine with one bounded file exchange.
+/// Copy a refused Rust policy exchange out of publisher scratch so it can be inspected and replayed.
+fn retain_refused_policy_exchange(exchange_root: &Path) -> Result<PathBuf, oven_rustc::loaf::OvenLoafError> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or_default();
+    let destination = std::env::temp_dir().join(format!("incan-oven-rust-policy-refusal-{stamp}"));
+    fs::create_dir_all(&destination).map_err(|source| oven_rustc::loaf::OvenLoafError::Io {
+        path: destination.clone(),
+        source,
+    })?;
+    for name in ["request.json", "response.json"] {
+        let from = exchange_root.join(name);
+        if from.is_file() {
+            fs::copy(&from, destination.join(name))
+                .map_err(|source| oven_rustc::loaf::OvenLoafError::Io { path: from, source })?;
+        }
+    }
+    Ok(destination)
+}
+
 fn run_release_rust_policy(
     policy: &OvenStoredProjectOutput,
     exchange_root: &Path,
