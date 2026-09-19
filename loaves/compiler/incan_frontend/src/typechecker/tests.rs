@@ -14269,6 +14269,97 @@ def foo() -> bool:
     assert!(check_str(source).is_ok());
 }
 
+/// #1488: a `const` annotated with a mutable container type is rejected at the annotation, naming the frozen
+/// representation the const actually has, instead of being silently retyped and failing at its first use site.
+#[test]
+fn const_mutable_collection_annotation_is_rejected_at_the_annotation_issue1488() {
+    let source = r#"
+const SECTIONS: list[str] = ["x"]
+
+def read_only(names: list[str]) -> int:
+  return len(names)
+
+def main() -> None:
+  println(f"{read_only(SECTIONS)}")
+"#;
+    let errs = check_str_err(source, "a `list[str]` const annotation must be rejected");
+    let annotation_start = source.find("list[str]").unwrap_or_default();
+    let annotation = Span::new(annotation_start, annotation_start + "list[str]".len());
+    let rejection = errs
+        .iter()
+        .find(|err| err.message.contains("const 'SECTIONS'"))
+        .unwrap_or_else(|| panic!("expected a const-annotation diagnostic, got: {errs:?}"));
+    assert_eq!(
+        rejection.span, annotation,
+        "the diagnostic must point at the annotation the author wrote: {rejection:?}"
+    );
+    assert!(
+        rejection.message.contains("'list[str]'") && rejection.message.contains("'FrozenList[str]'"),
+        "the diagnostic must name both the written and the frozen spelling: {}",
+        rejection.message
+    );
+    assert!(
+        rejection.hints.iter().any(|hint| hint.contains("FrozenList[str]")),
+        "the hint must say what to write instead: {:?}",
+        rejection.hints
+    );
+    // The use-site mismatch is real -- a frozen const cannot feed a mutable `list[str]` parameter -- and it stays.
+    // What changes is where the author learns about it: the declaration reports first, naming the spelling they
+    // wrote, so the later message about `FrozenList[str]` no longer reads as a contradiction.
+    let use_site = errs
+        .iter()
+        .position(|err| err.message.contains("Argument 'names'"))
+        .unwrap_or_else(|| panic!("the use-site mismatch must still be reported: {errs:?}"));
+    let declaration = errs
+        .iter()
+        .position(|err| err.span == annotation)
+        .unwrap_or_else(|| panic!("the annotation diagnostic must be present: {errs:?}"));
+    assert!(
+        declaration < use_site,
+        "the annotation must be reported before the use site: {errs:?}"
+    );
+}
+
+#[test]
+fn const_dict_and_set_annotations_name_their_frozen_forms_issue1488() {
+    let source = r#"
+const TABLE: dict[str, int] = {"a": 1}
+const ALLOWED: set[int] = {1, 2}
+"#;
+    let errs = check_str_err(source, "mutable `dict`/`set` const annotations must be rejected");
+    for (written, frozen) in [
+        ("dict[str, int]", "FrozenDict[str, int]"),
+        ("set[int]", "FrozenSet[int]"),
+    ] {
+        assert!(
+            errs.iter().any(
+                |err| err.message.contains(&format!("'{written}'")) && err.message.contains(&format!("'{frozen}'"))
+            ),
+            "expected a diagnostic naming '{written}' and '{frozen}', got: {errs:?}"
+        );
+    }
+}
+
+#[test]
+fn const_frozen_and_scalar_annotations_stay_accepted_issue1488() {
+    // `str`/`bytes` are also frozen in const context, but a `FrozenStr`/`FrozenBytes` reads wherever `str`/`bytes`
+    // is expected, so the written annotation is honoured at every use site and there is nothing to reject.
+    let source = r#"
+const NAMES: FrozenList[str] = ["x"]
+const INFERRED = ["y"]
+const LABEL: str = "z"
+const RAW: bytes = b"\x00"
+const LIMIT: int = 3
+
+def take(label: str, raw: bytes) -> int:
+  return len(label) + len(raw)
+
+def main() -> int:
+  return take(LABEL, RAW) + LIMIT
+"#;
+    assert!(check_str(source).is_ok(), "{:?}", check_str(source));
+}
+
 #[test]
 fn test_const_reference_other_const() {
     let source = r#"

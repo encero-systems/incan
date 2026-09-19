@@ -1724,7 +1724,7 @@ mod tests {
         )?;
         std::fs::write(
             tests.join("conftest.incn"),
-            "const TEST_MARKERS: List[str] = [\"shared\"]\n",
+            "const TEST_MARKERS: FrozenList[str] = [\"shared\"]\n",
         )?;
         std::fs::write(
             tests.join("test_first.incn"),
