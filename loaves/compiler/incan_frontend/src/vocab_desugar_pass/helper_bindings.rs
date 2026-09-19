@@ -55,19 +55,50 @@ impl HelperImportAccumulator {
     }
 }
 
+/// Prefix shared by every hidden helper import alias.
+const HELPER_ALIAS_PREFIX: &str = "__incan_vocab_helper_";
+
 /// Build the hidden import alias used when a desugarer references a provider helper symbol.
+///
+/// The alias is spliced into the desugared program as an ordinary identifier, so it has to be one, and it names the
+/// exact `(dependency, export)` pair, so it has to be injective: two distinct pairs must never share an alias, or
+/// the hidden imports for both bind one name and one helper silently shadows the other (#1380). The earlier
+/// spelling collapsed every non-alphanumeric character to `_`, which lost both the boundary between the two
+/// components and the difference between `-` and `_`, so `("a-b", "c")`, `("a", "b_c")` and `("a_b", "c")` all
+/// became `__incan_vocab_helper_a_b_c`.
+///
+/// The shape is `__incan_vocab_helper_<n>_<dependency>_<export>`. The export is a checked public export name and
+/// therefore already an identifier, so it is spelled verbatim. The dependency key is an open alphabet — Cargo-style
+/// package names carry `-`, compiler-owned keys carry `.` — so it is escaped by [`escape_dependency_key`] into the
+/// identifier alphabet, and `<n>` is the length of that escaped spelling. The length is what makes the pair
+/// recoverable: an export may itself start with or contain `_`, so no separator character could mark where the
+/// dependency ends, but a length can. Nothing here hashes, so the alias is reproducible across builds and readable
+/// in desugared output.
 fn helper_import_alias(dependency_key: &str, exported_name: &str) -> String {
-    let sanitize = |value: &str| {
-        value
-            .chars()
-            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
-            .collect::<String>()
-    };
-    format!(
-        "__incan_vocab_helper_{}_{}",
-        sanitize(dependency_key),
-        sanitize(exported_name)
-    )
+    let dependency = escape_dependency_key(dependency_key);
+    format!("{HELPER_ALIAS_PREFIX}{}_{dependency}_{exported_name}", dependency.len())
+}
+
+/// Spell a dependency key in the identifier alphabet without losing information.
+///
+/// ASCII alphanumerics pass through. `_` is doubled, and every other character becomes `_<hex code point>_`, so a
+/// single `_` followed by a hex digit can only ever open an escape and a doubled `_` can only ever be a literal one.
+/// Without the doubling, a key literally spelled `a_2d_b` would coincide with the escaped `a-b`, and the alias would
+/// be injective in practice but not by construction.
+fn escape_dependency_key(dependency_key: &str) -> String {
+    let mut escaped = String::with_capacity(dependency_key.len());
+    for ch in dependency_key.chars() {
+        match ch {
+            ch if ch.is_ascii_alphanumeric() => escaped.push(ch),
+            '_' => escaped.push_str("__"),
+            other => {
+                escaped.push('_');
+                escaped.push_str(&format!("{:x}", u32::from(other)));
+                escaped.push('_');
+            }
+        }
+    }
+    escaped
 }
 
 /// Inject hidden `pub::` imports for every helper symbol referenced by desugared output.
@@ -420,6 +451,107 @@ mod tests {
             },
             is_async: false,
         }
+    }
+
+    /// The three pairs from #1380 all collapsed to `__incan_vocab_helper_a_b_c`; each must now get its own alias,
+    /// and every alias must still be an identifier the desugared program can bind.
+    #[test]
+    fn helper_import_aliases_keep_distinct_pairs_distinct_issue1380() {
+        let aliases = [
+            helper_import_alias("a-b", "c"),
+            helper_import_alias("a", "b_c"),
+            helper_import_alias("a_b", "c"),
+        ];
+        assert_ne!(
+            aliases[0], aliases[1],
+            "`-` and the component boundary both collapsed to `_`"
+        );
+        assert_ne!(aliases[1], aliases[2], "the component boundary collapsed to `_`");
+        assert_ne!(aliases[0], aliases[2], "`-` collapsed to `_`");
+        for alias in &aliases {
+            assert!(
+                alias.starts_with(HELPER_ALIAS_PREFIX)
+                    && alias.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_'),
+                "an alias must be an identifier the hidden import can bind: {alias}"
+            );
+        }
+        assert_eq!(
+            helper_import_alias("union_provider", "add"),
+            "__incan_vocab_helper_15_union__provider_add",
+            "the spelling is part of the desugared program and must be reproducible"
+        );
+    }
+
+    /// An export may start with `_`, so a separator alone cannot mark where the dependency ends: `("a_x", "y")` and
+    /// `("a", "_x_y")` would otherwise read identically. The length prefix is what separates them.
+    #[test]
+    fn helper_import_aliases_do_not_depend_on_a_separator_the_export_can_contain() {
+        assert_ne!(helper_import_alias("a_x", "y"), helper_import_alias("a", "_x_y"));
+        assert_ne!(helper_import_alias("a", "x_y"), helper_import_alias("a_x", "y"));
+    }
+
+    /// A key that literally spells an escape sequence must not coincide with the key that escape stands for.
+    #[test]
+    fn helper_import_aliases_separate_a_literal_escape_spelling_from_the_escaped_character() {
+        assert_ne!(helper_import_alias("a-b", "c"), helper_import_alias("a_2d_b", "c"));
+        assert_ne!(
+            helper_import_alias("std.async", "spawn"),
+            helper_import_alias("std_2e_async", "spawn")
+        );
+        assert_ne!(helper_import_alias("a-_2d_", "c"), helper_import_alias("a_2d_-", "c"));
+    }
+
+    /// Injectivity is a property of the construction, not of the handful of pairs above: over every dependency key
+    /// of up to three characters drawn from an alphabet that mixes identifier characters, the escape lead, hex digits
+    /// and a package-name dash, paired with every short export, no two pairs may share an alias.
+    #[test]
+    fn helper_import_aliases_are_injective_over_a_small_exhaustive_alphabet() {
+        let dependency_alphabet = ['a', '_', '-', '2', 'd', '.'];
+        let export_alphabet = ['a', '_', 'd'];
+        let words = |alphabet: &[char], max_len: usize| -> Vec<String> {
+            let mut words = vec![String::new()];
+            let mut frontier = vec![String::new()];
+            for _ in 0..max_len {
+                let mut next = Vec::new();
+                for word in &frontier {
+                    for ch in alphabet {
+                        let mut extended = word.clone();
+                        extended.push(*ch);
+                        next.push(extended);
+                    }
+                }
+                words.extend(next.iter().cloned());
+                frontier = next;
+            }
+            words
+        };
+        let dependencies = words(&dependency_alphabet, 3);
+        let exports: Vec<String> = words(&export_alphabet, 3)
+            .into_iter()
+            .filter(|export| !export.is_empty() && !export.starts_with(|ch: char| ch.is_ascii_digit()))
+            .collect();
+
+        let mut seen: HashMap<String, (String, String)> = HashMap::new();
+        let mut collisions = Vec::new();
+        for dependency in &dependencies {
+            for export in &exports {
+                let alias = helper_import_alias(dependency, export);
+                if let Some((other_dependency, other_export)) =
+                    seen.insert(alias.clone(), (dependency.clone(), export.clone()))
+                {
+                    collisions.push(format!(
+                        "`{alias}` is shared by ({dependency:?}, {export:?}) and ({other_dependency:?}, {other_export:?})"
+                    ));
+                }
+            }
+        }
+        assert!(
+            collisions.is_empty(),
+            "{} of {} pairs collide:\n{}",
+            collisions.len(),
+            dependencies.len() * exports.len(),
+            collisions.join("\n")
+        );
     }
 
     #[test]
