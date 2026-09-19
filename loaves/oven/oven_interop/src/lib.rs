@@ -24,6 +24,7 @@ use oven_model::oven_interop::{
 };
 pub use oven_model::oven_interop::{OVEN_INTEROP_EXECUTION_RECEIPT_INPUT, OVEN_INTEROP_PLAN_SCHEMA_INPUT};
 use oven_rustc::loaf::LoafTemporaryDirectory;
+use oven_rustc::plan::selection::select_receipt_project_extension_execution_plan;
 use oven_rustc::rustc::{
     OvenRustcArtifactManifest, OvenRustcSupportingArtifact, select_direct_rustc_plan_for_execution,
 };
@@ -534,8 +535,8 @@ pub fn bind_interop_native_archives(
 ///
 /// The returned plan is deliberately complete: its verified materializations begin with the selected base runtime
 /// closure and then add package-owned static archives, compiled C/C++ shims, and the selected-execution provenance.
-/// The base selection lease remains held until publication completes, which prevents policy pruning from replacing a
-/// trusted runtime input between validation and final immutable publication.
+/// The base may be a self-contained plan or an exact installed Loaf plus its project extension. Both constituent
+/// leases remain held until publication completes, preventing pruning between validation and immutable publication.
 pub fn bake_interop_native_plan(request: OvenInteropNativeBakeRequest<'_>) -> Result<OvenInteropNativeBake, String> {
     validate_interop_bake_request(&request)?;
     let final_receipt = final_interop_plan_receipt(request.base_receipt, request.execution_receipt)?;
@@ -568,24 +569,39 @@ pub fn bake_interop_native_plan(request: OvenInteropNativeBakeRequest<'_>) -> Re
             reused: true,
         });
     }
-    let selected = select_direct_rustc_plan_for_execution(request.store, request.base_receipt)
-        .map_err(|error| format!("could not select base Oven runtime plan: {error}"))?
-        .ok_or_else(|| {
+    let extension = select_receipt_project_extension_execution_plan(request.store, request.base_receipt, None)
+        .map_err(|error| format!("could not select base Oven runtime extension: {error}"))?;
+    let selected = if extension.is_none() {
+        select_direct_rustc_plan_for_execution(request.store, request.base_receipt)
+            .map_err(|error| format!("could not select base Oven runtime plan: {error}"))?
+    } else {
+        None
+    };
+    let (base_plan, base_files) = if let Some(extension) = &extension {
+        let files = extension
+            .materialized_artifacts()
+            .map_err(|error| format!("selected base Oven runtime extension is invalid: {error}"))?;
+        (extension.artifacts.clone(), files)
+    } else {
+        let selected = selected.as_ref().ok_or_else(|| {
             "Oven interop bake has no compatible base direct-Rustc runtime plan; prepare the sealed runtime Loaf before baking native interop"
                 .to_string()
         })?;
-    let base_manifest = selected.manifest;
-    if base_manifest.kind != OvenArtifactKind::DirectRustcPlan
-        || base_manifest.build_unit_identity != request.base_receipt.build_unit_identity
-        || base_manifest.intent != request.base_receipt.intent
-    {
-        return Err("selected base Oven entry is not authorized by the runtime receipt".to_string());
-    }
-    let base_plan = serde_json::from_slice::<OvenRustcArtifactManifest>(&selected.payload)
-        .map_err(|error| format!("selected base Oven runtime payload is not a direct-Rustc plan: {error}"))?;
-    let mut materialized_files = base_plan
-        .materialized_artifacts(&selected.artifact_root, &request.base_receipt.intent)
-        .map_err(|error| format!("selected base Oven runtime plan is invalid: {error}"))?
+        let base_manifest = &selected.manifest;
+        if base_manifest.kind != OvenArtifactKind::DirectRustcPlan
+            || base_manifest.build_unit_identity != request.base_receipt.build_unit_identity
+            || base_manifest.intent != request.base_receipt.intent
+        {
+            return Err("selected base Oven entry is not authorized by the runtime receipt".to_string());
+        }
+        let plan = serde_json::from_slice::<OvenRustcArtifactManifest>(&selected.payload)
+            .map_err(|error| format!("selected base Oven runtime payload is not a direct-Rustc plan: {error}"))?;
+        let files = plan
+            .materialized_artifacts(&selected.artifact_root, &request.base_receipt.intent)
+            .map_err(|error| format!("selected base Oven runtime plan is invalid: {error}"))?;
+        (plan, files)
+    };
+    let mut materialized_files = base_files
         .into_iter()
         .map(|artifact| OvenArtifactMaterializedFile {
             source_path: artifact.source_path,

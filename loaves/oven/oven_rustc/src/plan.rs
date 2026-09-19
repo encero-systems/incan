@@ -16,7 +16,8 @@ use crate::loaf::OvenToolchainLoaf;
 use crate::native_contract::OvenProjectExtensionPayload;
 use crate::rustc::{
     OvenRegistryLeafAuthority, OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcError,
-    OvenRustcSupportingArtifact, trusted_artifact_plan_for_source_evidence,
+    OvenRustcMaterializedArtifact, OvenRustcSupportingArtifact, trusted_artifact_plan_for_source_evidence,
+    validate_project_extension_payload_against_base,
 };
 use composition::retain_packaged_provider_fragment_dependency_search_paths;
 use oven_store::OvenReceipt;
@@ -247,6 +248,34 @@ pub struct OvenProjectExtensionExecutionPlan {
     pub registry_leaf_authority: Option<OvenRegistryLeafAuthority>,
     pub vocab_artifact_root: Option<PathBuf>,
     pub source_payload: OvenProjectExtensionPayload,
+}
+
+impl OvenProjectExtensionExecutionPlan {
+    /// Verify the physical files a publisher copies from this exact base-plus-extension closure.
+    ///
+    /// Each file is resolved under its declared partition root and hashed before publication. The caller must retain
+    /// this selection until copying finishes so both the installed base lock and the extension lease remain held.
+    pub fn materialized_artifacts(&self) -> Result<Vec<OvenRustcMaterializedArtifact>, OvenRustcError> {
+        let partition = validate_project_extension_payload_against_base(
+            &self.source_payload,
+            &self.base.loaf_identity,
+            &self.base.loaf_build_unit_identity,
+            &self.base.artifacts,
+        )?;
+        let mut files = Vec::new();
+        for (paths, root) in [
+            (&partition.base_paths, &self.base.artifact_root),
+            (&partition.extension_paths, &self.extension.artifact_root),
+        ] {
+            files.extend(
+                self.source_payload
+                    .complete_plan
+                    .artifact_fragment(paths)?
+                    .materialized_artifacts(root, &self.source_payload.complete_plan.intent)?,
+            );
+        }
+        Ok(files)
+    }
 }
 
 /// One package-owned project-extension fragment retained while a consumer uses the composed closure.
