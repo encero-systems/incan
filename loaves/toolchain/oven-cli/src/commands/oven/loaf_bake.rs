@@ -728,12 +728,9 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         .map_err(|error| CliError::failure(format!("final release Loaf is invalid: {error}")))?;
         let committed = committed_release_runtime_members(&options.output).map_err(oven_error)?;
         let reusable = if let Some((foundation_member, closure_member)) = committed {
-            let candidate_foundation = runtime_foundation_from_compiled_loaf(
-                finalized,
-                &loaf,
-                &foundation_member.compiler_closure_identity,
-            )
-            .map_err(oven_error)?;
+            let candidate_foundation =
+                runtime_foundation_from_compiled_loaf(finalized, &loaf, &foundation_member.compiler_closure_identity)
+                    .map_err(oven_error)?;
             let candidate_asset = OvenRuntimeFoundationAsset::sealed(candidate_foundation, inventories.clone())
                 .map_err(oven_error)?
                 .validated()
@@ -790,12 +787,8 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 digest: oven_store::digest_bytes(&selection_bytes),
             });
             toolchain_members.sort();
-            let foundation = runtime_foundation_from_compiled_loaf(
-                finalized,
-                &loaf,
-                &compiler_closure_identity,
-            )
-            .map_err(oven_error)?;
+            let foundation = runtime_foundation_from_compiled_loaf(finalized, &loaf, &compiler_closure_identity)
+                .map_err(oven_error)?;
             let asset = OvenRuntimeFoundationAsset::sealed(foundation, inventories).map_err(oven_error)?;
             let foundation_relative = PathBuf::from("runtime-foundations/rust-policy-foundation");
             let admitted = publish_runtime_foundation_asset(
