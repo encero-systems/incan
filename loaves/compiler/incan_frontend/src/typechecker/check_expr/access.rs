@@ -2351,6 +2351,9 @@ impl TypeChecker {
                 self.preserve_unresolved_rust_call_argument_returns(args);
                 return Some(ResolvedType::Unknown);
             }
+            if claimed_import.is_none() {
+                self.record_rust_method_trait_import_candidates(rust_path, receiver_binding, span);
+            }
             self.preserve_unresolved_rust_call_argument_returns(args);
             return None;
         };
@@ -2409,6 +2412,9 @@ impl TypeChecker {
                         return Some(ret);
                     }
                     // Stay permissive when no unambiguous imported trait or trait method signature can be selected.
+                    if claimed_import.is_none() {
+                        self.record_rust_method_trait_import_candidates(rust_path, receiver_binding, span);
+                    }
                     self.preserve_unresolved_rust_call_argument_returns(args);
                     return Some(ResolvedType::Unknown);
                 };
@@ -2952,6 +2958,40 @@ impl TypeChecker {
         self.type_info
             .record_rust_method_trait_import_use(span, import_use.clone());
         Some(import_use.clone())
+    }
+
+    /// Attribute a method call that no inspected surface resolved to the imported Rust items whose method surface is
+    /// unknown, so generated-use analysis keeps their `use` declarations while the call is reachable (#1450).
+    ///
+    /// Only imports with neither inspected metadata nor a fallback vocabulary qualify: an import with a declared
+    /// surface that does not list the method cannot provide it. The import the receiver itself names is already in
+    /// use as a path, and the import that is the receiver's own type is a type, not a trait; both are left out.
+    /// Without metadata the compiler cannot narrow further, so every remaining candidate is kept; a spurious retained
+    /// import is a warning, while a dropped one is an E0599 against code the author never wrote.
+    fn record_rust_method_trait_import_candidates(
+        &mut self,
+        receiver_rust_path: &str,
+        receiver_binding: Option<&str>,
+        span: Span,
+    ) {
+        let mut candidates = self
+            .type_info
+            .rust
+            .trait_imports
+            .iter()
+            .filter(|(binding, import)| {
+                !import.methods_known
+                    && Some(binding.as_str()) != receiver_binding
+                    && import.trait_path != receiver_rust_path
+            })
+            .map(|(binding, _)| binding.clone())
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            return;
+        }
+        candidates.sort();
+        self.type_info
+            .record_rust_method_trait_import_candidates(span, candidates);
     }
 
     /// Return the trait method signature when `import` is implemented by `type_info` and declares `method`.

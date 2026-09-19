@@ -3344,6 +3344,7 @@ def main() -> None:
                         trait_path: String::from("rand::Rng"),
                         definition_path: None,
                         methods: vec![String::from("gen_range")],
+                        methods_known: true,
                     }),
                 },
                 IrImportItem {
@@ -3465,6 +3466,7 @@ def main() -> None:
                         trait_path: String::from("demo::AlphaRender"),
                         definition_path: None,
                         methods: vec![String::from("render")],
+                        methods_known: true,
                     }),
                 },
                 IrImportItem {
@@ -3477,6 +3479,7 @@ def main() -> None:
                         trait_path: String::from("demo::BetaRender"),
                         definition_path: None,
                         methods: vec![String::from("render")],
+                        methods_known: true,
                     }),
                 },
             ],
@@ -3525,7 +3528,7 @@ def main() -> None:
                         )),
                         method: String::from("render"),
                         dispatch: Some(IrMethodDispatch::RustExtensionTraitImport {
-                            binding: String::from("AlphaRender"),
+                            bindings: vec![String::from("AlphaRender")],
                         }),
                         type_args: Vec::new(),
                         args: Vec::new(),
@@ -3693,6 +3696,7 @@ def main() -> None:
                         trait_path: String::from("sha2::Digest"),
                         definition_path: Some(String::from("digest::digest::Digest")),
                         methods: vec![String::from("digest")],
+                        methods_known: true,
                     }),
                 },
                 IrImportItem {

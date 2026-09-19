@@ -749,8 +749,12 @@ pub enum IrMethodDispatch {
     /// Emit a compiler-proved inherent source projection while retaining the selected trait evidence for bound
     /// propagation and receiver mutability.
     SourceProjection(Box<IrTraitDispatch>),
-    /// Keep the emitted call as regular Rust method lookup while retaining this extension-trait import binding.
-    RustExtensionTraitImport { binding: String },
+    /// Keep the emitted call as regular Rust method lookup while retaining these extension-trait import bindings.
+    ///
+    /// One binding is the import the typechecker proved provides the method. Several are the imports with an unknown
+    /// method surface that the call may reach when no inspected surface resolved it; the compiler cannot narrow
+    /// further without metadata, so every listed `use` is retained while the call is reachable (#1450).
+    RustExtensionTraitImport { bindings: Vec<String> },
 }
 
 /// Compiler-owned semantics and emission data for one selected trait dispatch.

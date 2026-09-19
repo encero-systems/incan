@@ -6110,6 +6110,43 @@ fn test_rust_supertrait_imported_codegen() {
     assert_codegen_snapshot!("rust_supertrait_imported", rust_code);
 }
 
+/// #1450: a metadata-free extension-trait import survives pruning when a method call may reach it.
+#[test]
+fn test_rust_trait_import_without_metadata_codegen() {
+    let source = load_test_file("rust_trait_import_without_metadata");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("use ::std::borrow::Borrow;"),
+        "the trait providing `.borrow()` must stay in scope:\n{rust_code}"
+    );
+    assert!(rust_code.contains("value.borrow()"), "{rust_code}");
+    assert_codegen_snapshot!("rust_trait_import_without_metadata", rust_code);
+}
+
+/// #1450: the retained metadata-free trait import keeps its alias.
+#[test]
+fn test_rust_trait_import_without_metadata_alias_codegen() {
+    let source = load_test_file("rust_trait_import_without_metadata_alias");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("use ::std::borrow::Borrow as Borrowed;"),
+        "the aliased trait import must stay in scope under its alias:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("rust_trait_import_without_metadata_alias", rust_code);
+}
+
+/// #1450 control: without an unresolved method call the metadata-free import is still pruned.
+#[test]
+fn test_rust_trait_import_without_metadata_unused_codegen() {
+    let source = load_test_file("rust_trait_import_without_metadata_unused");
+    let rust_code = generate_rust(&source);
+    assert!(
+        !rust_code.contains("std::borrow::Borrow"),
+        "an import no method call can reach must not be retained:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("rust_trait_import_without_metadata_unused", rust_code);
+}
+
 /// #1374: a `Default` bound must name the Rust `Default` trait that `@derive(Default)` implements.
 ///
 /// The bound comes from the trait-bound registry, so the generic function compiles against the derived

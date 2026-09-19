@@ -128,6 +128,20 @@ class Hasher:
 
 The trait's declaration decides how that first argument is passed: a `&mut self` method borrows it exclusively, a `&self` method borrows it shared, and a `self` method moves it. Incan reads that receiver from the trait's inspected metadata and generates the matching borrow. The compiler does not guess: when no signature metadata is available for the trait method, the trait-qualified call is an error naming the trait and method, and `value.method(...)` remains available when the method is unambiguous on the receiver. A method the trait does not declare is also rejected, since Rust resolves `Trait::method` only against the trait's own items.
 
+### Extension traits stay in scope for the methods they provide
+
+Rust finds a trait method on a value only when the trait is imported. Generated code keeps only the imports it uses, and a trait used through method syntax never appears in the emitted call, so the compiler attributes each method call to the imported trait that provides it and retains that `use`:
+
+```incan
+from rust::std::borrow import Borrow
+from rust::std::path import PathBuf
+
+pub def borrowed(value: &PathBuf) -> &PathBuf:
+    return value.borrow()
+```
+
+With inspected metadata the attribution is exact. Without it the compiler cannot tell which imported item declares `borrow`, so a method call that no inspected surface resolves keeps every imported Rust item whose method surface is unknown, aliases included. A metadata-free import in a module with no such call is still pruned as unused, and an import whose metadata names a non-trait item is never retained on a method call's behalf.
+
 ### Passing callbacks that borrow Rust slices
 
 When an inspected Rust callback bound accepts a borrowed slice, write the corresponding named Incan callback with a borrowed `list[T]`. Incan keeps the inspected Rust spelling for emission, so `&mut list[f32]` becomes `&mut [f32]` at this call boundary rather than changing the representation of ordinary Incan lists:
