@@ -863,6 +863,12 @@ pub enum CollectionMethodKind {
     Reserve,
     /// `list.reserve_exact(n)` → `list.reserve_exact(n as usize)`
     ReserveExact,
+    /// `dict.keys()` → `dict.keys().cloned().collect::<Vec<_>>()` in value position; `for` loops and
+    /// comprehensions iterate `dict.keys().cloned()` directly (#1668).
+    Keys,
+    /// `dict.values()` → `dict.values().cloned().collect::<Vec<_>>()` in value position; `for` loops and
+    /// comprehensions iterate `dict.values().cloned()` directly (#1668).
+    Values,
 }
 
 /// Known iterator-method variants handled by the compiler.
@@ -999,8 +1005,10 @@ impl MethodKind {
                 Some(Self::Collection(match id {
                     D::Get => CollectionMethodKind::Get,
                     D::Insert => CollectionMethodKind::Insert,
-                    // keys/values are emitted as normal method calls.
-                    D::Keys | D::Values => return None,
+                    // A dict receiver spells membership `contains_key`, the same emission `key in dict` takes.
+                    D::ContainsKey => CollectionMethodKind::Contains,
+                    D::Keys => CollectionMethodKind::Keys,
+                    D::Values => CollectionMethodKind::Values,
                 }))
             }
             IrType::Set(_) => {

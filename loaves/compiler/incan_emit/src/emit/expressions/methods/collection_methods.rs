@@ -3,7 +3,7 @@ use quote::quote;
 
 use crate::emit::expressions::methods::ReceiverInfo;
 use crate::emit::{EmitError, IrEmitter};
-use crate::ownership::{ValueUseSite, plan_collection_receiver, plan_dict_lookup_key};
+use crate::ownership::{ValueUseSite, dict_entry_types, plan_collection_receiver, plan_dict_lookup_key};
 use incan_ir::expr::{CollectionMethodKind, TypedExpr};
 use incan_ir::types::IrType;
 
@@ -57,16 +57,16 @@ pub fn emit_collection_method(
         CollectionMethodKind::Get => {
             if let Some(arg) = args.first() {
                 let a = emitter.emit_expr(arg)?;
-                return match &receiver.ty {
-                    IrType::Dict(_, _) => {
-                        let key = emit_dict_lookup_key(receiver, arg, a);
-                        Ok(quote! { #r.get(#key) })
-                    }
-                    _ => Ok(quote! { #r.get(#a) }),
-                };
+                if dict_entry_types(&receiver.ty).is_some() {
+                    let key = emit_dict_lookup_key(receiver, arg, a);
+                    return Ok(quote! { #r.get(#key) });
+                }
+                return Ok(quote! { #r.get(#a) });
             }
             Ok(quote! { None })
         }
+        CollectionMethodKind::Keys => Ok(quote! { #r.keys().cloned().collect::<Vec<_>>() }),
+        CollectionMethodKind::Values => Ok(quote! { #r.values().cloned().collect::<Vec<_>>() }),
         CollectionMethodKind::Insert => {
             if args.len() >= 2 {
                 let (key_target_ty, value_target_ty) = match &receiver.ty {
@@ -173,6 +173,13 @@ pub fn emit_collection_method(
         }
         CollectionMethodKind::Contains => {
             if let Some(arg) = args.first() {
+                // A dict receiver (owned or a `mut Dict` parameter) answers membership with `contains_key`; the
+                // reference arms below would otherwise turn a borrowed dict into a `.contains` call (#1668).
+                if dict_entry_types(&receiver.ty).is_some() {
+                    let a = emitter.emit_expr(arg)?;
+                    let key = emit_dict_lookup_key(receiver, arg, a);
+                    return Ok(quote! { #r.contains_key(#key) });
+                }
                 match &receiver.ty {
                     IrType::List(_) | IrType::Ref(_) | IrType::RefMut(_)
                         if collection_element_type(&receiver.ty).is_some_and(is_string_storage_type) =>
@@ -195,11 +202,6 @@ pub fn emit_collection_method(
                     IrType::List(_) | IrType::Set(_) | IrType::Ref(_) | IrType::RefMut(_) => {
                         let a = emitter.emit_expr(arg)?;
                         return Ok(quote! { #r.contains(&#a) });
-                    }
-                    IrType::Dict(_, _) => {
-                        let a = emitter.emit_expr(arg)?;
-                        let key = emit_dict_lookup_key(receiver, arg, a);
-                        return Ok(quote! { #r.contains_key(#key) });
                     }
                     _ => {}
                 }

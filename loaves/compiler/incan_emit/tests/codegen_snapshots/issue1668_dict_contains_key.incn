@@ -1,0 +1,15 @@
+def has_manifest(files: Dict[str, str]) -> bool:
+    return files.contains_key("loaf.toml")
+
+def has_id(mut counts: Dict[int, int], id: int) -> bool:
+    return counts.contains_key(id)
+
+def main() -> None:
+    mut files: Dict[str, str] = {}
+    files["loaf.toml"] = "[project]"
+    key = "README.md"
+    println(has_manifest(files))
+    println(files.contains_key(key))
+    mut counts: Dict[int, int] = {}
+    counts[7] = 1
+    println(has_id(counts, 7))

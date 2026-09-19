@@ -1,0 +1,27 @@
+enum Verdict:
+    Admitted
+    Rejected(str)
+
+def describe(verdict: Verdict) -> str:
+    mut label = "pending"
+    match verdict:
+        Verdict.Admitted => label = "admitted"
+        Verdict.Rejected(reason) => label = reason
+    return label
+
+def classify(code: str, strict: bool) -> str:
+    mut kind: str = "other"
+    match code:
+        "a" => kind = "alpha"
+        "b" =>
+            if strict:
+                kind = "beta-strict"
+            else:
+                kind = "beta"
+        _ => pass
+    return kind
+
+def main() -> None:
+    println(describe(Verdict.Admitted))
+    println(describe(Verdict.Rejected("no manifest")))
+    println(classify("b", true))

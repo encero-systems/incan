@@ -2951,6 +2951,76 @@ fn test_issue1668_str_encode_bytes_decode_codegen() {
 }
 
 #[test]
+fn test_issue1668_dict_contains_key_codegen() {
+    let source = load_test_file("issue1668_dict_contains_key");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("files.contains_key(") && rust_code.contains("counts.contains_key(&id)"),
+        "mutable Dict.contains_key should emit HashMap::contains_key on owned and borrowed receivers; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1668_dict_contains_key", rust_code);
+}
+
+/// Indexed assignment, `in`, and `.get()` on a `mut Dict` parameter take the same route a local dict takes.
+#[test]
+fn test_issue1668_mut_dict_param_codegen() {
+    let source = load_test_file("issue1668_mut_dict_param");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("files.insert(key, value);"),
+        "indexed assignment into a mut Dict parameter must insert; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("files[key]") && !rust_code.contains(".contains(&key)"),
+        "a mut Dict parameter must never be indexed or probed with `.contains`; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("files.get(<_ as AsRef<str>>::as_ref(&key))"),
+        "`.get()` on a mut Dict[str, _] parameter must borrow its key; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1668_mut_dict_param", rust_code);
+}
+
+/// Guard for the 0.5.1 report that a `mut str` local reassigned inside a `match` arm emitted a bare `&str`; the
+/// shape does not reproduce on the 0.6 line and the snapshot keeps it that way.
+#[test]
+fn test_issue1668_mut_str_match_arm_codegen() {
+    let source = load_test_file("issue1668_mut_str_match_arm");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("label = \"admitted\".to_string();") && rust_code.contains("kind = \"alpha\".to_string();"),
+        "a mut str local reassigned inside a match arm must own its literal; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("label = \"admitted\";") && !rust_code.contains("kind = \"alpha\";"),
+        "a bare &str assignment into a String local would not compile; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1668_mut_str_match_arm", rust_code);
+}
+
+/// `dict.keys()` / `dict.values()` materialize a list in value position and stay direct iterators in loops.
+#[test]
+fn test_issue1668_dict_keys_outside_comprehension_codegen() {
+    let source = load_test_file("issue1668_dict_keys_outside_comprehension");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("d.keys().cloned().collect::<Vec<_>>()")
+            && rust_code.contains("d.values().cloned().collect::<Vec<_>>()"),
+        "value-position keys()/values() must materialize the list the typechecker reports; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("for value in (d).values().cloned()")
+            && rust_code.contains("for key in (d).keys().cloned()"),
+        "loops over keys()/values() must iterate owned items directly; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("(d.keys()).clone()") && !rust_code.contains("d.keys().iter()"),
+        "the Keys iterator must never be cloned for sorting or re-iterated; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1668_dict_keys_outside_comprehension", rust_code);
+}
+
+#[test]
 fn test_std_tempfile_import_codegen() {
     let source = load_test_file("std_tempfile_import");
     let rust_code = generate_rust(&source);

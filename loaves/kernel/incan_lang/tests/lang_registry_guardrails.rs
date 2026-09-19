@@ -10,7 +10,8 @@ use incan_lang::lang::punctuation;
 use incan_lang::lang::registry::{RFC, Since};
 use incan_lang::lang::surface::types::{SurfaceTypeCategory, SurfaceTypeId, SurfaceTypeOwner};
 use incan_lang::lang::surface::{
-    bytes_methods, constructors, functions, iterator_methods, result_methods, string_methods, types as surface_types,
+    bytes_methods, constructors, dict_methods, functions, iterator_methods, result_methods, string_methods,
+    types as surface_types,
 };
 use incan_lang::lang::testing;
 use incan_lang::lang::traits;
@@ -366,6 +367,25 @@ fn bytes_methods_spellings_unique_and_resolvable() {
         bytes_methods::from_str("decode"),
         Some(bytes_methods::BytesMethodId::Decode),
         "the #1668 text return trip ends at bytes.decode"
+    );
+}
+
+#[test]
+fn dict_methods_spellings_unique_and_resolvable() {
+    assert_registry_round_trip(RegistryRoundTrip {
+        label: "dict method",
+        expected_len: 5,
+        items: dict_methods::DICT_METHODS,
+        id_of: |info| info.id,
+        canonical_of: |info| info.canonical,
+        aliases_of: |info| info.aliases,
+        from_str: dict_methods::from_str,
+        as_str: dict_methods::as_str,
+    });
+    assert_eq!(
+        dict_methods::from_str("contains_key"),
+        Some(dict_methods::DictMethodId::ContainsKey),
+        "mutable Dict answers contains_key like FrozenDict (#1668)"
     );
 }
 

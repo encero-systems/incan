@@ -523,6 +523,8 @@ pub mod dict_methods {
         Values,
         Get,
         Insert,
+        /// `d.contains_key(key)` answers membership like `FrozenDict.contains_key` (#1668).
+        ContainsKey,
     }
 
     pub type DictMethodInfo = LangItemInfo<DictMethodId>;
@@ -560,6 +562,14 @@ pub mod dict_methods {
             "Insert or overwrite a key/value pair.",
             RFC::_009,
             Since(0, 1),
+        ),
+        info(
+            DictMethodId::ContainsKey,
+            "contains_key",
+            &[],
+            "Return true if the dict contains a key.",
+            RFC::_009,
+            Since(0, 6),
         ),
     ];
 

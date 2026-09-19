@@ -14475,6 +14475,57 @@ def payload(text: str) -> bytes:
 }
 
 #[test]
+fn test_dict_contains_key_typechecks_on_mutable_dict_issue1668() {
+    let source = r#"
+def has_manifest(files: Dict[str, str]) -> bool:
+    return files.contains_key("loaf.toml")
+
+def has_id(mut counts: Dict[int, int], id: int) -> bool:
+    return counts.contains_key(id)
+
+def keys_outside_comprehension(d: Dict[str, int]) -> int:
+    names: list[str] = sorted(d.keys())
+    present: bool = "a" in d.keys()
+    values: list[int] = d.values()
+    return len(names) + len(values)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_dict_contains_key_rejects_arity_and_key_type_issue1668() {
+    let arity_errors = check_str_err(
+        r#"
+def has_manifest(files: Dict[str, str]) -> bool:
+    return files.contains_key()
+"#,
+        "Dict.contains_key requires exactly one key argument",
+    );
+    assert!(
+        arity_errors.iter().any(|error| error
+            .message
+            .contains("Dict.contains_key() expects 1 argument(s), got 0")),
+        "expected an arity diagnostic, got: {:?}",
+        arity_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let type_errors = check_str_err(
+        r#"
+def has_manifest(files: Dict[str, str]) -> bool:
+    return files.contains_key(7)
+"#,
+        "Dict.contains_key rejects a probe outside the key type",
+    );
+    assert!(
+        type_errors.iter().any(|error| error
+            .message
+            .contains("Argument to 'Dict.contains_key' has type mismatch")),
+        "expected a key type diagnostic, got: {:?}",
+        type_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_frozen_unknown_method_errors() {
     let source = r#"
 const NUMS: FrozenList[int] = [1, 2]

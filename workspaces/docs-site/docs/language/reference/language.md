@@ -674,6 +674,7 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 | Values | `values` |  | Return an iterable/list of values. | RFC 009 | 0.1 | Stable |
 | Get | `get` |  | Get a value by key, optionally with a default. | RFC 009 | 0.1 | Stable |
 | Insert | `insert` |  | Insert or overwrite a key/value pair. | RFC 009 | 0.1 | Stable |
+| ContainsKey | `contains_key` |  | Return true if the dict contains a key. | RFC 009 | 0.6 | Stable |
 
 
 ### Set methods
