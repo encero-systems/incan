@@ -209,21 +209,7 @@ def main() -> None:
 
     let out_dir = tmp.path().join("out");
     let oven_home = tmp.path().join("incan-home");
-    let mut bake_command = incan_command();
-    bake_command
-        .args(["oven", "bake", "--project", "."])
-        .current_dir(tmp.path())
-        .env("CARGO_NET_OFFLINE", "true")
-        .env("INCAN_HOME", &oven_home);
-    support::configure_explicit_oven_bake_command(&mut bake_command)?;
-    let bake_output = bake_command.output()?;
-    assert!(
-        bake_output.status.success(),
-        "expected explicit Oven bake to prepare the builtin-shadowing contract project.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&bake_output.stdout),
-        String::from_utf8_lossy(&bake_output.stderr)
-    );
-
+    // The installed stdlib Loaf already supplies this source-only program; no project inspection bake is needed.
     let build_output = incan_command()
         .args([
             "build",
@@ -2553,19 +2539,17 @@ def main() -> None:
     fs::write(&main_path, source)?;
 
     let oven_home = tmp.path().join("incan-home");
-    let mut bake_command = incan_command();
-    bake_command
-        .args(["oven", "bake", "--project", "."])
+    // Keep the locked consumer path while avoiding a bake: this program needs no Rust-import inspection.
+    let lock_output = incan_command()
+        .args(["lock", "src/main.incn"])
         .current_dir(tmp.path())
-        .env("CARGO_NET_OFFLINE", "true")
-        .env("INCAN_HOME", &oven_home);
-    support::configure_explicit_oven_bake_command(&mut bake_command)?;
-    let bake_output = bake_command.output()?;
+        .env("INCAN_HOME", &oven_home)
+        .output()?;
     assert!(
-        bake_output.status.success(),
-        "expected explicit Oven bake to prepare exact-float arithmetic.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&bake_output.stdout),
-        String::from_utf8_lossy(&bake_output.stderr)
+        lock_output.status.success(),
+        "expected exact-float arithmetic inputs to lock.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&lock_output.stdout),
+        String::from_utf8_lossy(&lock_output.stderr)
     );
 
     let out_dir = tmp.path().join("out");
