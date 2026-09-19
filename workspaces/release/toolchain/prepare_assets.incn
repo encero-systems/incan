@@ -6,6 +6,7 @@ from std.json import JsonValue
 const RUST_POLICY: str = "The toolchain installer provisions this exact Rust release into an Incan-owned rustup home, leaving your own default toolchain untouched, and ensures the wasm32-wasip1 target for packages that ship vocab companions."
 const PINNED_RUST_RELEASE: str = "1.98.0"
 const PINNED_MIN_RUST: str = "1.98"
+const DEFAULT_LOAF_REGISTRY_REPOSITORY: str = "https://github.com/encero-systems/incan.pub"
 
 
 model HostAsset:
@@ -142,6 +143,38 @@ def resolve_rust_channel(dist_dir: str) -> Result[str, str]:
     return Ok(resolved)
 
 
+def is_commit_id(value: str) -> bool:
+    """Accept only a full lowercase hex git object id, which names exactly one index revision."""
+    if len(value) != 40:
+        return false
+    for character in value:
+        digit = character >= "0" and character <= "9"
+        letter = character >= "a" and character <= "f"
+        if not digit and not letter:
+            return false
+    return true
+
+
+def resolve_loaf_registry_pin(dist_dir: str) -> Result[Option[JsonValue], str]:
+    """The incan.pub `index` commit this release was settled against, when packaging recorded one.
+
+    The release gate bakes the runtime foundation under `--loaf-registry-commit`, and packaging records that commit
+    as `INCAN_LOAF_REGISTRY_INDEX_COMMIT` or in `loaf-registry-index-commit.txt` beside the archives. The compiler
+    opens the registry only at this revision, so a consumer with the same manifest resolves the same records. A
+    release that was not settled against a registry pins nothing, and the manifest omits the field rather than
+    inventing one.
+    """
+    mut commit = env_or("INCAN_LOAF_REGISTRY_INDEX_COMMIT", "")
+    if len(commit) == 0:
+        match read_first_line(f"{dist_dir}/loaf-registry-index-commit.txt"):
+            Ok(recorded) => commit = recorded
+            Err(_) => return Ok(None)
+    if not is_commit_id(commit):
+        return Err(f"loaf registry index commit `{commit}` is not a full lowercase git object id")
+    repository = env_or("INCAN_LOAF_REGISTRY_REPOSITORY", DEFAULT_LOAF_REGISTRY_REPOSITORY)
+    return Ok(Some(JsonValue.object({"repository": JsonValue.str(repository), "index_commit": JsonValue.str(commit)})))
+
+
 def command_paths_json() -> JsonValue:
     return JsonValue.object({"incan": JsonValue.str("bin/incan"), "incan-lsp": JsonValue.str("bin/incan-lsp")})
 
@@ -167,18 +200,27 @@ def manifest_json(
     generated_at: str,
     rust_channel: str,
     assets: list[HostAsset],
+    loaf_registry: Option[JsonValue],
 ) -> JsonValue:
-    return JsonValue.object(
-        {"schema_version": JsonValue.int(1), "toolchain_version": JsonValue.str(version), "release": JsonValue.str(
-            release,
-        ), "channel": JsonValue.str("stable"), "generated_at": JsonValue.str(generated_at), "manifest_url": JsonValue.str(
-            f"https://github.com/encero-systems/incan/releases/download/{release}/manifest.json",
-        ), "rust_toolchain": JsonValue.object(
+    mut fields: Dict[str, JsonValue] = {
+        "schema_version": JsonValue.int(1),
+        "toolchain_version": JsonValue.str(version),
+        "release": JsonValue.str(release),
+        "channel": JsonValue.str("stable"),
+        "generated_at": JsonValue.str(generated_at),
+        "manifest_url": JsonValue.str(f"https://github.com/encero-systems/incan/releases/download/{release}/manifest.json"),
+        "rust_toolchain": JsonValue.object(
             {"channel": JsonValue.str(rust_channel), "min_rust": JsonValue.str(PINNED_MIN_RUST), "targets": JsonValue.array(
                 [JsonValue.str("wasm32-wasip1")],
             ), "policy": JsonValue.str(RUST_POLICY)},
-        ), "commands": JsonValue.array([JsonValue.str("incan"), JsonValue.str("incan-lsp")]), "hosts": hosts_json(assets)},
-    )
+        ),
+        "commands": JsonValue.array([JsonValue.str("incan"), JsonValue.str("incan-lsp")]),
+        "hosts": hosts_json(assets),
+    }
+    match loaf_registry:
+        Some(pin) => fields["loaf_registry"] = pin
+        None => pass
+    return JsonValue.object(fields)
 
 
 def ruby_string(value: str) -> str:
@@ -303,8 +345,9 @@ def prepare_assets() -> Result[None, str]:
     release = read_first_line(f"{dist_dir}/toolchain-release.txt")?
     assets = collect_assets(dist_dir, release)?
     rust_channel = resolve_rust_channel(dist_dir)?
+    loaf_registry = resolve_loaf_registry_pin(dist_dir)?
 
-    manifest = manifest_json(version, release, generated_at, rust_channel, assets)
+    manifest = manifest_json(version, release, generated_at, rust_channel, assets, loaf_registry)
     manifest_text = manifest.to_pretty_json().map_err((err) => err.message())?
     write_text(f"{dist_dir}/manifest.json", manifest_text + "\n")?
     copy_text(f"{repo_root}/workspaces/release/install-incan.sh", f"{dist_dir}/install.sh")?

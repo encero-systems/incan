@@ -2834,6 +2834,19 @@ mod tests {
             "the registry library is adopted for the captured selection"
         );
         assert!(authority.adoption(0).is_none() && authority.adoption(2).is_none());
+        let records = authority.registry_records();
+        assert_eq!(records.len(), 1, "one lock record per governed registry unit");
+        assert_eq!(
+            (
+                records[0].package.as_str(),
+                records[0].version.as_str(),
+                records[0].checksum.as_str(),
+                records[0].status.as_str(),
+            ),
+            ("serde", "1.0.0", checksum.as_str(), "harvested"),
+            "a fixture index line lists no binding status, so the adoption is harvested"
+        );
+        assert!(oven_model::manifest::is_sha256_identity(&records[0].index_line_digest));
         let finalized = finalize_release_shaped(&capture, &sources, &authority)?;
         let unit = &finalized.graph.graph().units[0];
         assert!(

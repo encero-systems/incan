@@ -1884,6 +1884,48 @@ fn toolchain_release_assets_can_be_prepared_for_single_host_smoke_without_homebr
     assert!(dist.join("install.sh").exists());
     assert!(dist.join("toolchain-manifest.schema.v1.json").exists());
     assert!(!dist.join("incan.rb").exists());
+    assert!(
+        manifest.get("loaf_registry").is_none(),
+        "a release that packaging did not settle against a registry pins nothing"
+    );
+    Ok(())
+}
+
+/// The manifest pins the incan.pub `index` commit packaging recorded beside the archives, and refuses a value that
+/// is not one full git object id: the compiler opens the registry only at that revision, so a sloppy pin would pin
+/// nothing.
+#[test]
+fn toolchain_release_manifest_pins_the_recorded_loaf_registry_index_commit() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = ToolchainTestStaging::new()?;
+    let dist = tmp.path().join("toolchain");
+    let (incan, incan_lsp) = write_fixture_toolchain_commands(tmp.path())?;
+    package_fixture_archive(&dist, "aarch64-apple-darwin", &incan, &incan_lsp)?;
+    let commit = "8d40e1d3e5c43139a11b406dd0ba6e092efac492";
+    fs::write(dist.join("loaf-registry-index-commit.txt"), format!("{commit}\n"))?;
+
+    let output = prepare_toolchain_assets(&dist, "2026-06-06T00:00:00Z", true)?;
+    assert!(
+        output.status.success(),
+        "pinned toolchain asset preparation failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let manifest: serde_json::Value = serde_json::from_str(&fs::read_to_string(dist.join("manifest.json"))?)?;
+    assert_eq!(manifest["loaf_registry"]["index_commit"], commit);
+    assert_eq!(
+        manifest["loaf_registry"]["repository"],
+        "https://github.com/encero-systems/incan.pub"
+    );
+
+    fs::write(dist.join("loaf-registry-index-commit.txt"), "8d40e1d\n")?;
+    let refused = prepare_toolchain_assets(&dist, "2026-06-06T00:00:00Z", true)?;
+    assert!(
+        !refused.status.success()
+            && String::from_utf8_lossy(&refused.stdout).contains("not a full lowercase git object id"),
+        "an abbreviated pin must be refused\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&refused.stdout),
+        String::from_utf8_lossy(&refused.stderr)
+    );
     Ok(())
 }
 

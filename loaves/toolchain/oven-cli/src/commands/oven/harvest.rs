@@ -14,9 +14,11 @@ use std::path::{Path, PathBuf};
 use oven_cargo_compat::{
     HarvestEvidenceInputs, HarvestPublisherIdentity, HarvestReport, OvenLegacyCargoDirectDependencyClosure,
     OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind, ambient_harvest_hazards,
-    bind_legacy_cargo_selected_registry_sources, harvest_registry_units, legacy_cargo_resolved_registry_sources,
-    prepare_direct_rustc_plan, proposal_directory_names, stage_locked_loaf_fixture, write_harvest_report,
+    bind_legacy_cargo_selected_registry_sources, harvest_notes_for_checkout, harvest_registry_units,
+    legacy_cargo_resolved_registry_sources, prepare_direct_rustc_plan, proposal_directory_names,
+    stage_locked_loaf_fixture, write_harvest_report,
 };
+use oven_model::loaf_registry::enclosing_checkout_head_commit;
 use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
 use oven_rustc::loaf::{OvenLoafEnvelope, direct_rustc_compiler_closure_identity};
 use oven_rustc::rustc::rustc_identity;
@@ -45,8 +47,11 @@ pub(crate) struct OvenHarvestSummary {
     pub(crate) receipt: String,
     /// `sha256:` identity of the bounded compiler/sysroot closure (`evidence.rustc_identity`).
     pub(crate) rustc_identity: String,
-    /// Ambient hazard variables the publisher ran under; a non-empty list makes every proposal inadmissible.
+    /// Hazard tokens recorded on every proposal; a non-empty list makes every proposal inadmissible.
     pub(crate) hazards: Vec<String>,
+    /// The publish note every proposal carries, when the manifest sits inside a git checkout.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) notes: Option<String>,
     /// Directory the report was written under.
     pub(crate) output: PathBuf,
     /// `<name>-<version>` directory of every proposal, in report order.
@@ -77,7 +82,11 @@ pub fn oven_harvest(options: OvenHarvestCommandOptions) -> CliResult<ExitCode> {
     let toolchain = rustc_identity(&options.rustc).map_err(oven_error)?;
     let compiler_closure =
         direct_rustc_compiler_closure_identity(&options.rustc, &options.target).map_err(oven_error)?;
-    let hazards = ambient_harvest_hazards();
+    let ambient_hazards = ambient_harvest_hazards();
+    let notes = manifest_path
+        .parent()
+        .and_then(enclosing_checkout_head_commit)
+        .map(|head| harvest_notes_for_checkout(&head));
     fs::create_dir_all(&options.output).map_err(|error| {
         CliError::failure(format!(
             "could not create harvest output {}: {error}",
@@ -153,13 +162,10 @@ pub fn oven_harvest(options: OvenHarvestCommandOptions) -> CliResult<ExitCode> {
     // ---- Harvest and write, copying OUT_DIR members from the published plan before the store is discarded ----
     let evidence = HarvestEvidenceInputs::from_prepare_result(
         &prepared,
-        HarvestPublisherIdentity {
-            receipt: receipt.identity.clone(),
-            rustc_identity: compiler_closure.clone(),
-            hazards: hazards.clone(),
-        },
+        HarvestPublisherIdentity::new(&receipt.identity, &compiler_closure, ambient_hazards, notes.clone()),
     );
     let report = harvest_registry_units(&capture, &evidence, &options.profile).map_err(oven_error)?;
+    let hazards = report.hazards.clone();
     let (entry, _lease) = store.select(&prepared.plan_identity).map_err(oven_error)?;
     write_harvest_report(&report, &options.output, &entry.materialized_root()).map_err(oven_error)?;
     let summary = OvenHarvestSummary {
@@ -170,6 +176,7 @@ pub fn oven_harvest(options: OvenHarvestCommandOptions) -> CliResult<ExitCode> {
         receipt: receipt.identity,
         rustc_identity: compiler_closure,
         hazards,
+        notes,
         output: options.output,
         proposals: proposal_directory_names(&report).map_err(oven_error)?,
         refusals: report.refusals.clone(),

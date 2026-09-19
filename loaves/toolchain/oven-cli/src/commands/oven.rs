@@ -4144,6 +4144,7 @@ mod tests {
             loafs: Vec::new(),
             compiler_suite: None,
             harvest: None,
+            registry_records: Vec::new(),
         };
         let publication_lock = acquire_exclusive_loaf_generation_lock(output.path())?;
         let report = super::finish_loaf_bake_after_publication(
