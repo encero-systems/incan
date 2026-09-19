@@ -111,6 +111,23 @@ stream = device.build_output_stream[f32, _, _](
 
 Writing `build_output_stream[f32](...)` is an error because the method declares three type parameters. Incan reports the required and supplied arity during typechecking instead of emitting an incomplete Rust turbofish. The `_` entries are deliberate inference slots, not optional trailing arguments.
 
+### Calling a Rust trait method through the trait
+
+When two imported traits both provide a method with the same name, `value.method(...)` is ambiguous for Rust. Spell the call through the trait instead and pass the receiver as the first argument:
+
+```incan
+from rust::sha2 import Digest, Sha256
+from rust::sha3::digest import Update
+
+class Hasher:
+    handle: Sha256
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+```
+
+The trait's declaration decides how that first argument is passed: a `&mut self` method borrows it exclusively, a `&self` method borrows it shared, and a `self` method moves it. Incan reads that receiver from the trait's inspected metadata and generates the matching borrow. The compiler does not guess: when no signature metadata is available for the trait method, the trait-qualified call is an error naming the trait and method, and `value.method(...)` remains available when the method is unambiguous on the receiver. A method the trait does not declare is also rejected, since Rust resolves `Trait::method` only against the trait's own items.
+
 ### Passing callbacks that borrow Rust slices
 
 When an inspected Rust callback bound accepts a borrowed slice, write the corresponding named Incan callback with a borrowed `list[T]`. Incan keeps the inspected Rust spelling for emission, so `&mut list[f32]` becomes `&mut [f32]` at this call boundary rather than changing the representation of ordinary Incan lists:

@@ -479,9 +479,6 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     None
                 };
-                let direct_mut_trait_receiver = external_method_shape
-                    && idx == 0
-                    && Self::external_trait_first_arg_needs_mut_borrow(receiver, method);
                 let target_arg_plan = ArgumentPassingPlan::for_use_site(arg, arg_use_site);
                 let metadata_free_policy = if (external_method_shape || !has_incan_receiver_signature)
                     && !target_arg_plan.has_external_value_adapter()
@@ -502,22 +499,15 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     target_arg_plan
                 };
-                let emitted = if direct_mut_trait_receiver {
-                    self.emit_expr(arg)
-                } else {
-                    self.emit_expr_for_use_with_union_qualifier(
-                        arg,
-                        effective_arg_use_site,
-                        receiver_union_qualifier.as_deref(),
-                    )
-                };
+                let emitted = self.emit_expr_for_use_with_union_qualifier(
+                    arg,
+                    effective_arg_use_site,
+                    receiver_union_qualifier.as_deref(),
+                );
                 if let Some(previous) = previous_qualify {
                     self.qualify_internal_canonical_paths.replace(previous);
                 }
                 let mut emitted = emitted?;
-                if direct_mut_trait_receiver {
-                    return Ok(quote! { &mut #emitted });
-                }
                 if Self::is_std_path_new_call(receiver, method)
                     && matches!(arg.ty, IrType::String)
                     && !Self::static_string_source_shape(arg)
@@ -644,21 +634,6 @@ impl<'a> IrEmitter<'a> {
     /// Return whether a metadata-free receiver is eligible for std::io-style compatibility borrowing.
     fn receiver_allows_io_method_fallback(receiver: &TypedExpr) -> bool {
         !Self::expr_is_type_like(receiver) && !Self::receiver_type_matches_any(receiver, &["BytesIO", "_BytesIO"])
-    }
-
-    /// Return whether an external Rust trait-style associated call needs `&mut` for its first argument.
-    fn external_trait_first_arg_needs_mut_borrow(receiver: &TypedExpr, method: &str) -> bool {
-        if !matches!(method, "update" | "finalize_xof_reset") {
-            return false;
-        }
-        matches!(
-            &receiver.kind,
-            IrExprKind::Var {
-                name,
-                ref_kind: VarRefKind::ExternalRustName,
-                ..
-            } if matches!(name.as_str(), "Digest" | "Update" | "ExtendableOutputReset")
-        )
     }
 
     /// Return whether a metadata-free method receiver is an external Rust associated-call target.
