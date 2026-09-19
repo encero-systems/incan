@@ -296,7 +296,7 @@ pub fn runtime_foundation_inventories_from_policy_response(
         || response.get("graph_digest").and_then(serde_json::Value::as_str) != Some(selected.digest())
     {
         // A refusal names a structural kind and the exchange path it applies to; neither is prose, and both are
-        // what a producer needs to act on.
+        // what a producer needs to act on. The engine may add the rule that refused, in words, for the operator.
         let status = response
             .get("status")
             .and_then(serde_json::Value::as_str)
@@ -317,9 +317,16 @@ pub fn runtime_foundation_inventories_from_policy_response(
                     .join(".")
             })
             .unwrap_or_default();
+        let detail = error
+            .and_then(|error| error.get("detail"))
+            .and_then(serde_json::Value::as_str)
+            .map(|detail| format!(": {detail}"))
+            .unwrap_or_default();
         return Err(projection_error(
             "Rust policy response",
-            &format!("does not select the exact requested graph (status `{status}`, error `{kind}` at `{fields}`)"),
+            &format!(
+                "does not select the exact requested graph (status `{status}`, error `{kind}` at `{fields}`{detail})"
+            ),
         ));
     }
     let encoded = response
@@ -480,6 +487,8 @@ pub fn encode_selected_graph_policy_request(
             })
         })
         .collect::<Vec<_>>();
+    // The engine keys catalogs by package identity and refuses a repeated key, so a package compiled in both
+    // domains (a host rlib feeding a proc-macro and a target rlib) contributes its manifest once.
     let mut catalogs = Vec::new();
     let mut seen = BTreeSet::new();
     for unit in &graph.units {
@@ -487,7 +496,6 @@ pub fn encode_selected_graph_policy_request(
             unit.package.clone(),
             unit.package_version.clone(),
             unit.source.identity.clone(),
-            selected_domain_key(unit.domain),
         );
         if !seen.insert(key) {
             continue;

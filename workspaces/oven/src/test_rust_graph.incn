@@ -337,6 +337,74 @@ pub def test_missing_catalog_refuses_instead_of_becoming_a_leaf() -> None:
             assert "selected package catalog" in error.message()
 
 
+def extern_name_catalogs(core: GraphNode, webpki: GraphNode, errno: GraphNode) -> Dict[str, RustDependencyCatalog]:
+    """Catalogs for a root declaring a hyphenated key, a child with its own `[lib] name`, and a renamed package."""
+    mut catalogs = catalogs_from(
+        {"root": "[dependencies]\naxum-core='0.5'\nrustls-webpki='0.102'\nlibc_errno={package='errno', version='0.3'}\n"},
+    )
+    catalogs[package_key(core.package)] = require_ok(read_dependency_catalog("", "Cargo.toml"))
+    catalogs[package_key(webpki.package)] = require_ok(
+        read_dependency_catalog("[lib]\nname='webpki'\n", "Cargo.toml"),
+    )
+    catalogs[package_key(errno.package)] = require_ok(read_dependency_catalog("", "Cargo.toml"))
+    return catalogs
+
+
+pub def test_raw_edge_aliases_are_extern_crate_names() -> None:
+    """A hyphenated key binds under its identifier, a child's `[lib] name` under that name, and a rename under its key."""
+    root_node = node("root")
+    core = exact_node("axum-core", "0.5.6", "registry:axum-core@0.5.6")
+    webpki = exact_node("rustls-webpki", "0.102.0", "registry:rustls-webpki@0.102.0")
+    errno = exact_node("errno", "0.3.0", "registry:errno@0.3.0")
+    result = require_ok(
+        propagate_features(
+            extern_name_catalogs(core, webpki, errno),
+            base_context(),
+            "Cargo.toml",
+            [selected(root_node), selected(core), selected(webpki), selected(errno)],
+            [root(root_node)],
+            [edge(root_node, "axum_core", core), edge(root_node, "webpki", webpki), edge(root_node, "libc_errno", errno)],
+            16,
+        ),
+    )
+    assert len(result.nodes) == 4
+
+    match propagate_features(
+        extern_name_catalogs(core, webpki, errno),
+        base_context(),
+        "Cargo.toml",
+        [selected(root_node), selected(core), selected(webpki), selected(errno)],
+        [root(root_node)],
+        [edge(root_node, "axum-core", core), edge(root_node, "webpki", webpki), edge(root_node, "libc_errno", errno)],
+        16,
+    ):
+        Ok(_) => fail("a manifest key is not the crate name rustc links under")
+        Err(error) =>
+            assert "resolved selected-unit binding" in error.message()
+
+
+pub def test_sibling_edges_do_not_satisfy_another_declaration() -> None:
+    """A sibling whose alias is its own library name is not a second binding for a hyphenated declaration."""
+    root_node = node("root")
+    core = exact_node("axum-core", "0.5.6", "registry:axum-core@0.5.6")
+    bytes_node = exact_node("bytes", "1.0.0", "registry:bytes@1.0.0")
+    mut catalogs = catalogs_from({"root": "[dependencies]\naxum-core='0.5'\nbytes='1'\n"})
+    catalogs[package_key(core.package)] = require_ok(read_dependency_catalog("[lib]\nname='axum_core'\n", "Cargo.toml"))
+    catalogs[package_key(bytes_node.package)] = require_ok(read_dependency_catalog("[lib]\nname='bytes'\n", "Cargo.toml"))
+    result = require_ok(
+        propagate_features(
+            catalogs,
+            base_context(),
+            "Cargo.toml",
+            [selected(root_node), selected(core), selected(bytes_node)],
+            [root(root_node)],
+            [edge(root_node, "axum_core", core), edge(root_node, "bytes", bytes_node)],
+            16,
+        ),
+    )
+    assert len(result.nodes) == 3
+
+
 pub def test_missing_resolved_slot_binding_refuses() -> None:
     """Protects refusal when an active manifest declaration lacks a physical child binding."""
     root_node = node("root")
@@ -418,7 +486,7 @@ pub def test_test_purpose_stays_on_explicit_root() -> None:
     root_test = node("root-test")
     transitive_test = node("transitive-test")
     units = [selected(root_node, SelectedUnitRole.UnitTest), selected(child), selected(root_test)]
-    bindings = [edge(root_node, "child", child), edge(root_node, "root-test", root_test)]
+    bindings = [edge(root_node, "child", child), edge(root_node, "root_test", root_test)]
     result = require_ok(
         propagate_features(
             catalogs_from(sources),
@@ -453,7 +521,7 @@ pub def test_normal_and_test_roots_of_same_package_remain_distinct() -> None:
             "Cargo.toml",
             units,
             roots,
-            [physical_edge(test_id, "test-helper", helper_id)],
+            [physical_edge(test_id, "test_helper", helper_id)],
             16,
         ),
     )

@@ -29,7 +29,7 @@ from rust_activation import (
     RustActivation,
     SlotActivation,
 )
-from rust_source import RustDependencyCatalog, RustDependencyDeclaration
+from rust_source import RustDependencyCatalog, RustDependencyDeclaration, crate_identifier, extern_crate_name
 
 
 @derive(Eq, Clone)
@@ -270,12 +270,36 @@ def admit_bindings(
     return Ok(checked)
 
 
+def edge_names_declaration(
+    binding: CheckedSlotBinding,
+    declaration: RustDependencyDeclaration,
+    catalogs: Dict[str, RustDependencyCatalog],
+) -> bool:
+    """
+    Whether a raw selected edge is the link Cargo made for one manifest declaration.
+
+    The edge carries the `--extern` crate name rustc saw, not the manifest key: `axum-core` is linked as `axum_core`,
+    `rustls-webpki` as `webpki`, and a renamed declaration under its key. Only the declared package's own catalog
+    says which library name it links under, so a binding to any other package is compared under the key's
+    spelling and left to the package-name check to refuse; a declared child without a catalog is refused later
+    and reads as its package name here.
+    """
+    if binding.child.package.package != declaration.package:
+        return binding.alias == crate_identifier(declaration.alias)
+    key = package_key(binding.child.package)
+    mut library_name: Option[str] = None
+    if key in catalogs:
+        library_name = catalogs[key].library_name
+    return binding.alias == extern_crate_name(declaration, library_name)
+
+
 def binding_for(
     bindings: list[CheckedSlotBinding],
     parent: GraphNode,
     purpose: ActivationPurpose,
     unit_purposes: Dict[str, ActivationPurpose],
     declaration: RustDependencyDeclaration,
+    catalogs: Dict[str, RustDependencyCatalog],
     manifest: str,
 ) -> Result[CheckedSlotBinding, IntakeError]:
     """Require one exhaustive host-validated selected-unit binding for an active declaration slot."""
@@ -283,7 +307,7 @@ def binding_for(
     for binding in bindings:
         if (
             binding.parent == parent
-            and binding.alias == declaration.alias
+            and edge_names_declaration(binding, declaration, catalogs)
             and not binding.internal
             and binding.parent_unit in unit_purposes
             and unit_purposes[binding.parent_unit] == purpose
@@ -567,6 +591,7 @@ pub def propagate_features(
                         policy_node.purpose,
                         unit_purposes,
                         declaration,
+                        catalogs,
                         manifest,
                     )?
                     if declaration.package != binding.child.package.package:
@@ -609,7 +634,7 @@ pub def propagate_features(
                     for physical in checked_bindings:
                         if (
                             has_active_physical_parent(physical, node, policy_node.purpose, unit_purposes)
-                            and physical.alias == declaration.alias
+                            and edge_names_declaration(physical, declaration, catalogs)
                             and not physical.internal
                         ):
                             if (
@@ -715,7 +740,7 @@ pub def propagate_features(
         mut matched = false
         for slot in parent_activation.slots:
             declaration = parent_catalog.dependencies[slot.index]
-            if declaration.alias == binding.alias:
+            if edge_names_declaration(binding, declaration, catalogs):
                 match slot.activation:
                     SlotActivation.Inactive(_) => pass
                     SlotActivation.Active(_, _, _) =>

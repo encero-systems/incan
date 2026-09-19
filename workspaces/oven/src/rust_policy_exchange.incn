@@ -659,21 +659,27 @@ def encode_package(identity: SelectedPackageIdentity) -> JsonValue:
 
 
 def refused(error: SelectionError) -> JsonValue:
-    """Encode a fail-closed response without leaking unstable diagnostic prose."""
+    """
+    Encode a fail-closed response.
+
+    The kind and field path are the stable, machine-facing refusal. The detail names the rule that refused so
+    the operator holding a retained exchange can see which check fired; it is prose and nothing may branch on it.
+    """
+    mut encoded: Dict[str, JsonValue] = {"kind": JsonValue.string(error.kind.value()), "fields": JsonValue.array(
+        [JsonValue.string(part) for part in error.fields],
+    )}
+    if error.detail != "":
+        encoded["detail"] = JsonValue.string(error.detail)
     return JsonValue.object(
         {"schema": JsonValue.string(SCHEMA), "operation": JsonValue.string(OPERATION), "status": JsonValue.string(
             "refused",
-        ), "error": JsonValue.object(
-            {"kind": JsonValue.string(error.kind.value()), "fields": JsonValue.array(
-                [JsonValue.string(part) for part in error.fields],
-            )},
-        )},
+        ), "error": JsonValue.object(encoded)},
     )
 
 
 def intake_refusal(path: list[str], error: IntakeError) -> SelectionError:
-    """Attach exchange location to a source-intake refusal."""
-    return SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + error.field)
+    """Attach exchange location to a source-intake refusal, keeping the rule it names."""
+    return SelectionError(kind=SelectionErrorKind.InvalidInput, fields=path + error.field, detail=error.detail)
 
 
 def invalid(path: list[str]) -> SelectionError:

@@ -83,6 +83,9 @@ pub model RustDependencyCatalog:
     pub document: TomlValue
     pub dependencies: list[RustDependencyDeclaration]
     pub features: Dict[str, list[str]]
+    # The explicit `[lib] name`, when the package declares one. It is the crate name rustc links this package
+    # under, so a parent's raw edge alias follows it rather than the package name.
+    pub library_name: Option[str]
 
 
 def refusal(manifest: str, field: list[str], kind: IntakeErrorKind, detail: str) -> IntakeError:
@@ -339,7 +342,41 @@ def read_catalog(source: str, manifest: str) -> Result[RustDependencyCatalog, In
             if name == "":
                 return Err(refusal(manifest, ["features", name], IntakeErrorKind.Invalid, "empty feature name"))
             features[name] = strings(declarations[name], manifest, ["features", name])?
-    return Ok(RustDependencyCatalog(document=document, dependencies=dependencies, features=features))
+    mut library_name: Option[str] = None
+    if "lib" in root:
+        library = table(root["lib"], manifest, ["lib"])?
+        if "name" in library:
+            library_name = Some(text(library["name"], manifest, ["lib", "name"])?)
+    return Ok(
+        RustDependencyCatalog(
+            document=document,
+            dependencies=dependencies,
+            features=features,
+            library_name=library_name,
+        ),
+    )
+
+
+pub def crate_identifier(name: str) -> str:
+    """Spell a package name or dependency key the way rustc names the crate: hyphens become underscores."""
+    return name.replace("-", "_")
+
+
+pub def extern_crate_name(declaration: RustDependencyDeclaration, child_library_name: Option[str]) -> str:
+    """
+    The `--extern` name Cargo hands rustc for one declaration, which is what a raw selected edge alias records.
+
+    A renamed declaration (`alias = { package = "..." }`) is linked under its key. Any other declaration is linked
+    under the child's library target name: its explicit `[lib] name` when it declares one, else its package name.
+    Both spellings are crate identifiers, so hyphens read as underscores. The one Cargo distinction this cannot
+    make is a rename to the package's own name, which a declaration does not record; Cargo would link that under
+    the key while this follows the child's library name, and the two differ only when that library is renamed.
+    """
+    if declaration.package != declaration.alias:
+        return crate_identifier(declaration.alias)
+    match child_library_name:
+        Some(name) => return crate_identifier(name)
+        None => return crate_identifier(declaration.package)
 
 
 pub def read_dependency_catalog(source: str, manifest: str) -> Result[RustDependencyCatalog, IntakeError]:

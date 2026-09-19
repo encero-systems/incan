@@ -23,7 +23,7 @@ The host and this project exchange JSON documents. The schemas this source curre
 | `incan.oven.native-compilation/2` | `native_compilation.incn` | one direct-`rustc` invocation to validate |
 | `incan.oven.rust-policy-exchange/5` | `rust_policy_exchange.incn` | validate one authenticated selected-Rust-graph projection, including authority-bound root intent and toolchain-bound sysroot externs, typed environment, generated-member and linked-library closure evidence; return exhaustive activations, derived default-feature demands, source inventories and inert-script warnings |
 
-Every wire field is required; an unknown or absent field is a refusal, not a default.
+Every wire field is required; an unknown or absent field is a refusal, not a default. A refusal carries a stable `kind` and `fields` path, and may add a `detail` naming the rule that refused; the detail is prose for the operator holding a retained exchange, never something a host branches on.
 
 ## Layout
 
