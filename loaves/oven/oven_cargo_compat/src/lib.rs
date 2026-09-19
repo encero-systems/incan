@@ -15,7 +15,6 @@ use cargo_json::*;
 
 mod compiler_suite_catalog;
 mod compiler_suite_targets;
-mod harvest;
 mod inspection_sources;
 mod loaf_registry_authority;
 mod lock;
@@ -28,7 +27,6 @@ mod workspace_authority;
 
 pub use compiler_suite_catalog::*;
 pub use compiler_suite_targets::*;
-pub use harvest::*;
 pub use inspection_sources::*;
 pub use loaf_registry_authority::*;
 pub use lock::*;

@@ -17,12 +17,11 @@ use oven_cargo_compat::loaf_bake::{
     prepare_loaf_from_generated_project_with_selected_units, republish_loaf_under_final_receipt,
 };
 use oven_cargo_compat::{
-    LoafRegistryAuthority, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, ambient_harvest_hazards,
-    encode_selected_graph_policy_request, finalize_compiler_support_selected_graph,
-    harvest_registry_build_script_facts, legacy_cargo_build_script_closure_digest, legacy_cargo_foundation_projection,
-    legacy_cargo_generated_archive_bindings, legacy_cargo_generated_output_bindings,
-    runtime_foundation_from_compiled_loaf, runtime_foundation_inventories_from_policy_response,
-    write_harvest_proposals,
+    LoafRegistryAuthority, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, encode_selected_graph_policy_request,
+    finalize_compiler_support_selected_graph, legacy_cargo_build_script_closure_digest,
+    legacy_cargo_foundation_projection, legacy_cargo_generated_archive_bindings,
+    legacy_cargo_generated_output_bindings, runtime_foundation_from_compiled_loaf,
+    runtime_foundation_inventories_from_policy_response,
 };
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::loaf::{
@@ -443,33 +442,6 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             &generated_project,
         )
         .map_err(oven_error)?;
-        // A harvest reads the publisher's observation of every registry build script under this exact profile and
-        // writes it as registry proposals. It is observation only: admitting a proposal is the registry's step, and it
-        // happens whether or not the foundation below accepts the capture, so a refused gate still yields records.
-        if let (Some(harvest_dir), Some(selected_units)) =
-            (options.harvest_dir.as_deref(), prepared.selected_units.as_ref())
-            && envelope == OvenLoafEnvelope::Release
-            && specification.label == "stdlib"
-        {
-            let records = harvest_registry_build_script_facts(
-                selected_units,
-                specification.profile,
-                &receipt.identity,
-                ambient_harvest_hazards(),
-            )
-            .map_err(oven_error)?;
-            let written = write_harvest_proposals(harvest_dir, &records).map_err(oven_error)?;
-            let note = format!(
-                "Harvested {} registry build-script record(s) for the {} profile into {}.",
-                written.len(),
-                specification.profile,
-                harvest_dir.display()
-            );
-            match options.format {
-                OvenOutputFormat::Text => println!("{note}"),
-                _ => eprintln!("{note}"),
-            }
-        }
         if envelope == OvenLoafEnvelope::Release
             && specification.label == "stdlib"
             && specification.profile == "release"

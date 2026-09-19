@@ -465,9 +465,6 @@ pub enum OvenLegacyCargoCommand {
         /// Registered Loaf registry checkout whose adoption manifests govern captured registry units
         #[arg(long = "loaf-registry", value_name = "PATH")]
         loaf_registry: Option<PathBuf>,
-        /// Write one harvest proposal per captured registry unit with a build-script edge into this directory
-        #[arg(long = "harvest-dir", value_name = "PATH")]
-        harvest_dir: Option<PathBuf>,
     },
 }
 
