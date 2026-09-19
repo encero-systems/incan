@@ -1,21 +1,24 @@
 """
-Read current-process environment variables at runtime.
+Read current-process environment variables and the argument vector at runtime.
 
 Use `get()` for required Unicode text, `get_optional()` or `get_or()` for deliberately lossy string reads, and
 `get_as[T]()` for optional or defaulted values converted through `TryFrom[str]`. Typed reads support the built-in
 primitive and exact numeric conversions, explicit `TryFrom[str]` adopters, and newtype instantiations whose underlying
-value can be converted from text. The module is read-only, and errors never include observed environment values.
+value can be converted from text. `args()` returns the process argument vector. The module is read-only, and errors
+never include observed environment values.
 
 Example:
-    Read a required token and use a typed default for an optional port:
+    Read a required token, use a typed default for an optional port, and inspect the arguments:
 
     ```incan
     token = get("API_TOKEN")?
     port = get_as[int]("PORT", default=8080)?
+    for argument in args()[1:]:
+        println(argument)
     ```
 """
 
-from rust::std::env import VarError, var as env_var
+from rust::std::env import VarError, args as env_args, var as env_var
 from std.traits.error import Error
 from std.traits.convert import TryFrom
 
@@ -228,6 +231,35 @@ pub def get_as[T with TryFrom[str]](key: str, default: T) -> Result[T, EnvironEr
         Invalid keys, non-Unicode values, and conversion failures remain errors and never fall back to `default`.
     """
     return Ok(get_as[T](key)?.unwrap_or(default))
+
+
+pub def args() -> list[str]:
+    """
+    Return the current process argument vector.
+
+    The program name comes first, exactly as the host supplied it, followed by each argument in order. Slice from
+    index 1 to skip the program name.
+
+    Every entry is Unicode text. Like `get()`, this module never converts a non-Unicode host value silently: an
+    argument that is not valid Unicode is refused rather than replaced or dropped. Because the argument vector is read
+    as a whole, that refusal ends the process with a panic instead of returning an `EnvironError`.
+
+    Returns:
+        The program name followed by the process arguments, each as a `str`.
+
+    Example:
+        Treat the first argument as a subcommand:
+
+        ```incan
+        arguments = args()
+        if len(arguments) < 2:
+            println("usage: tool <command>")
+        ```
+    """
+    mut out: list[str] = []
+    for argument in env_args():
+        out.append(argument)
+    return out
 
 
 def _error_from_raw_kind(key: str, kind: EnvironErrorKind) -> EnvironError:

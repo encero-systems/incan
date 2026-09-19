@@ -2917,6 +2917,21 @@ fn test_std_fs_import_codegen() {
 }
 
 #[test]
+fn test_issue1668_std_environ_args_codegen() {
+    let source = load_test_file("issue1668_std_environ_args");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("pub use crate::__incan_std::environ::args;"),
+        "std.environ args import should emit through the compiled stdlib artifact; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("crate::__incan_std::environ::args()"),
+        "the argument vector read should call the source-defined std.environ.args; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1668_std_environ_args", rust_code);
+}
+
+#[test]
 fn test_std_tempfile_import_codegen() {
     let source = load_test_file("std_tempfile_import");
     let rust_code = generate_rust(&source);

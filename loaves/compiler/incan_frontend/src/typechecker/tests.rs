@@ -19662,6 +19662,58 @@ def accept_user_id(value: UserId) -> UserId:
 }
 
 #[test]
+fn test_std_environ_args_returns_list_of_str_issue1668() {
+    let source = r#"
+from std.environ import args
+
+def subcommand() -> str:
+    arguments: list[str] = args()
+    if len(arguments) < 2:
+        return "help"
+    return arguments[1]
+
+def main() -> None:
+    for argument in args()[1:]:
+        println(argument)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_environ_args_rejects_arguments_and_non_list_bindings_issue1668() {
+    let arity_errors = check_str_err(
+        r#"
+from std.environ import args
+
+def main() -> None:
+    arguments = args("extra")
+"#,
+        "args() takes no arguments",
+    );
+    assert!(
+        !arity_errors.is_empty(),
+        "expected an arity diagnostic for args(\"extra\"), got none"
+    );
+
+    let type_errors = check_str_err(
+        r#"
+from std.environ import args
+
+def main() -> None:
+    first: str = args()
+"#,
+        "args() returns list[str], not str",
+    );
+    assert!(
+        type_errors
+            .iter()
+            .any(|error| error.message.contains("expected 'str', found 'List[str]'")),
+        "expected a list[str] mismatch diagnostic, got: {:?}",
+        type_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_std_environ_get_as_accepts_required_primitive_targets() {
     let source = r#"
 from std.environ import EnvironError, get_as
