@@ -20501,6 +20501,77 @@ def main() -> str:
 }
 
 #[test]
+fn test_user_module_derive_bound_survives_exported_enum_variant_spelled_like_the_trait() -> Result<(), String> {
+    // #1429: a dependency's exported enum variant with the same spelling as its derivable trait must not steal the
+    // trait's lookup binding while the dependency interface is collected. The variant is a member convenience binding
+    // in the enum's namespace; the trait bound and the module derive resolve the trait declaration whichever of the
+    // two is declared first.
+    for codec_source in [
+        r#"
+__derives__ = [Ready]
+
+@rust.derive("Debug")
+pub trait Ready:
+  pass
+
+pub enum Kind(str):
+  Ready = "ready"
+
+pub def encode[T with Ready](value: T) -> None:
+  pass
+"#,
+        r#"
+__derives__ = [Ready]
+
+pub enum Kind(str):
+  Ready = "ready"
+
+@rust.derive("Debug")
+pub trait Ready:
+  pass
+
+pub def encode[T with Ready](value: T) -> None:
+  pass
+"#,
+    ] {
+        // The module derive and the directly imported trait derive both resolve the trait declaration; the second
+        // form reported the derive as unknown when the variant had taken the binding.
+        for source in [
+            r#"
+import codec
+
+@derive(codec)
+model Item:
+  value: int
+
+def main() -> None:
+  codec.encode(Item(value=1))
+"#,
+            r#"
+from codec import Ready, encode
+
+@derive(Ready)
+model Item:
+  value: int
+
+def main() -> None:
+  encode(Item(value=1))
+"#,
+        ] {
+            let codec_ast = parse_program(codec_source, "codec module");
+            let ast = parse_program(source, "consumer");
+            let mut checker = TypeChecker::new();
+            checker
+                .check_with_imports(&ast, &[("codec", &codec_ast)])
+                .map_err(|errs| {
+                    format!("the derive should satisfy the bound despite the same-spelled variant: {errs:?}\n{source}")
+                })?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn test_aliased_partial_serde_derive_adopts_trait_for_methods_and_bounds() {
     let source = r#"
 from std.serde.json import Serialize as JsonSerialize

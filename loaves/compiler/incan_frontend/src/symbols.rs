@@ -812,7 +812,15 @@ impl SymbolTable {
             return id;
         }
         if let Some(bindings) = &mut self.dependency_interface_bindings {
-            bindings.insert(name, id);
+            // The dependency view has no collision keys, so it must apply the member-binding rule by mode: a variant's
+            // bare spelling defers to a lexical binding of the same name exactly as it does in a consumer scope.
+            // Letting the variant overwrite the binding hid a dependency's derivable trait behind its own exported
+            // enum variant, so the trait bound and the module derive resolved to nothing (#1429).
+            if mode == BindingDefinitionMode::PreserveExistingLookup {
+                bindings.entry(name).or_insert(id);
+            } else {
+                bindings.insert(name, id);
+            }
             self.dependency_interface_symbol_ids.insert(id);
             return id;
         }
