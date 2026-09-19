@@ -35,11 +35,11 @@ pub const HARVEST_EVIDENCE_METHOD: &str = "compatibility publisher observation";
 pub const HARVEST_HAZARD_RUSTC_BOOTSTRAP: &str = "RUSTC_BOOTSTRAP";
 
 /// Hazard token: the compiler identity the facts bind names a nightly build.
+///
+/// The Cargo that drove the observation is not a hazard: it compiles nothing, and the compatibility publisher
+/// needs a nightly Cargo for `--unit-graph` by design. Its version is provenance and travels verbatim in
+/// `cargo_version`.
 pub const HARVEST_HAZARD_NIGHTLY_RUSTC: &str = "nightly-rustc";
-
-/// Hazard token: the Cargo that drove the observation names a nightly build (the publisher Cargo may be nightly
-/// while rustc is a stable release; the harvest records it and the registry decides).
-pub const HARVEST_HAZARD_NIGHTLY_CARGO: &str = "nightly-cargo";
 
 /// Ambient variables whose presence in the publisher environment is a hazard, with the token each records.
 const HARVEST_HAZARD_VARIABLES: &[(&str, &str)] = &[("RUSTC_BOOTSTRAP", HARVEST_HAZARD_RUSTC_BOOTSTRAP)];
@@ -129,9 +129,9 @@ pub struct HarvestEvidence {
     /// Publisher-environment facts that make the harvest untrustworthy, sorted and unique; empty when clean.
     ///
     /// Exactly these tokens: [`HARVEST_HAZARD_RUSTC_BOOTSTRAP`] when that variable was set,
-    /// [`HARVEST_HAZARD_NIGHTLY_RUSTC`] when the compiler identity names a nightly, [`HARVEST_HAZARD_NIGHTLY_CARGO`]
-    /// when `cargo_version` does. Admission refuses a proposal that names any; the harvest records and never
-    /// refuses on them.
+    /// [`HARVEST_HAZARD_NIGHTLY_RUSTC`] when the compiler identity names a nightly. Admission refuses a proposal
+    /// that names any; the harvest records and never refuses on them. The publisher Cargo's own version is
+    /// provenance in `cargo_version`, not a hazard.
     pub hazards: Vec<String>,
     /// `cargo --version` as the publisher observed it.
     pub cargo_version: String,
@@ -321,14 +321,11 @@ fn names_nightly(identity: &str) -> bool {
     identity.contains("nightly")
 }
 
-/// The complete hazard list for one harvest: the ambient tokens plus what the capture and Cargo say of themselves.
+/// The complete hazard list for one harvest: the ambient tokens plus what the capture says of its compiler.
 fn harvest_hazards(compiler: &OvenLegacyCargoSelectedCompilerContext, evidence: &HarvestEvidenceInputs) -> Vec<String> {
     let mut hazards = evidence.ambient_hazards.clone();
     if names_nightly(&compiler.toolchain) || names_nightly(&compiler.rustc_identity) {
         hazards.push(HARVEST_HAZARD_NIGHTLY_RUSTC.to_string());
-    }
-    if names_nightly(&evidence.cargo_version) {
-        hazards.push(HARVEST_HAZARD_NIGHTLY_CARGO.to_string());
     }
     hazards.sort();
     hazards.dedup();
@@ -1321,14 +1318,17 @@ mod tests {
         assert_eq!(report.hazards, report.proposals[0].evidence.hazards);
         assert_eq!(
             report.proposals[0].evidence.hazards,
-            ["RUSTC_BOOTSTRAP", "nightly-cargo", "nightly-rustc"],
+            ["RUSTC_BOOTSTRAP", "nightly-rustc"],
             "sorted, unique, and spelled as admission expects"
         );
+        // The publisher Cargo is nightly by design (`--unit-graph`); it compiles nothing, so it is provenance in
+        // `cargo_version`, not a hazard.
         let mut stable_rustc_nightly_cargo = evidence();
         stable_rustc_nightly_cargo.cargo_version = "cargo 1.99.0-nightly (123abc 2026-03-24)".to_string();
         let capture = capture(vec![(library("serde", "1.0.228", &[]), None)]);
         let report = harvest_registry_units(&capture, &stable_rustc_nightly_cargo, "release")?;
-        assert_eq!(report.proposals[0].evidence.hazards, ["nightly-cargo"]);
+        assert!(report.proposals[0].evidence.hazards.is_empty());
+        assert!(report.proposals[0].evidence.cargo_version.contains("nightly"));
         assert_eq!(
             ambient_harvest_hazards().len(),
             usize::from(std::env::var_os("RUSTC_BOOTSTRAP").is_some())
