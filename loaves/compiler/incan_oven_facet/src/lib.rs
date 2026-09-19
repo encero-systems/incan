@@ -377,6 +377,9 @@ mod tests {
             "semver".to_string(),
             "serde".to_string(),
             "serde_json".to_string(),
+            // Declared root intent rather than a registry extra: the stdlib facet crates request tokio features,
+            // and the Rust policy engine settles the closure's features only from what the Loaf declares.
+            "tokio".to_string(),
             "uuid".to_string(),
         ]);
         assert_eq!(

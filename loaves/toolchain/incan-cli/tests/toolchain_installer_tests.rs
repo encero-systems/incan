@@ -157,6 +157,10 @@ fn release_policy_output_selector() -> PathBuf {
     repo_root().join("workspaces/release/toolchain/select_release_policy_output.sh")
 }
 
+fn release_cargo_resolver() -> PathBuf {
+    repo_root().join("workspaces/release/toolchain/resolve_release_cargo.sh")
+}
+
 fn release_cargo_selector() -> PathBuf {
     repo_root().join("workspaces/release/toolchain/resolve_release_cargo.sh")
 }
@@ -312,9 +316,13 @@ fn production_archive_binds_the_exact_reported_release_policy_output() -> Result
     assert!(script.contains("INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="));
     assert!(script.contains("\"$policy_toolchain_root/bin/incan\" oven bake"));
     assert!(script.contains("explicit_cargo_bin=\"${CARGO_BIN:-}\""));
-    assert!(script.contains("if [ -z \"$explicit_cargo_bin\" ]; then"));
     assert!(script.contains("resolve_release_cargo.sh \"$explicit_cargo_bin\""));
     assert!(!script.contains("cargo_bin=\"$(command -v cargo)\""));
+    // The explicit-versus-`PATH` decision lives in the resolver the packaging script delegates to.
+    let resolver = fs::read_to_string(release_cargo_resolver())?;
+    assert!(resolver.contains("if [ -n \"$explicit_cargo\" ]; then"));
+    assert!(resolver.contains("*/target/*) continue ;;"));
+    assert!(!resolver.contains("command -v cargo"));
     assert!(script.contains("--policy-engine-store \"$policy_engine_store\""));
     assert!(script.contains("--policy-engine-identity \"$policy_engine_identity\""));
     assert!(script.contains("--policy-engine-target \"$target\""));

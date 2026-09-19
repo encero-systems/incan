@@ -3425,12 +3425,18 @@ fn write_caller_output_record(output: &Path, record: &OvenDirectRustcOutputRecor
 ///
 /// Anything Cargo sets, plus the wrapper and flag variables, changes what the compiler does without appearing in
 /// the recorded invocation. Leaving one set would make an identity describe a compilation that did not happen.
+///
+/// `RUSTC_BOOTSTRAP` belongs here too: the compiler-suite scheduler sets it for every libtest child so libtest
+/// accepts `-Z unstable-options`, and a stable compiler that inherits it reports nightly-only facts. One such fact
+/// is the bare `target_has_atomic` flag beside the valued `target_has_atomic="8"` entries, which the cfg snapshot
+/// validator refuses as a key recorded both ways, so every publisher-side `--print cfg` probe under the suite
+/// failed until the variable was cleared.
 fn direct_rustc_excludes_inherited_environment(name: &OsStr) -> bool {
     name == "CARGO"
         || name.to_string_lossy().starts_with("CARGO_")
         || matches!(
             name.to_str(),
-            Some("RUSTC_WRAPPER" | "RUSTC_WORKSPACE_WRAPPER" | "RUSTFLAGS")
+            Some("RUSTC_WRAPPER" | "RUSTC_WORKSPACE_WRAPPER" | "RUSTFLAGS" | "RUSTC_BOOTSTRAP")
         )
 }
 
@@ -4925,6 +4931,30 @@ mod tests {
         OVEN_COMPILER_TEST_PROFILE, OvenGeneratedProjectRequest, OvenImportRequest, digest_bytes,
         import_frozen_project, receipt_generated_project,
     };
+
+    #[test]
+    fn inherited_compiler_controls_are_cleared_before_every_direct_rustc_launch() {
+        for ambient in [
+            "CARGO",
+            "CARGO_HOME",
+            "CARGO_ENCODED_RUSTFLAGS",
+            "RUSTC_WRAPPER",
+            "RUSTC_WORKSPACE_WRAPPER",
+            "RUSTFLAGS",
+            "RUSTC_BOOTSTRAP",
+        ] {
+            assert!(
+                super::direct_rustc_excludes_inherited_environment(std::ffi::OsStr::new(ambient)),
+                "`{ambient}` changes what the compiler does without appearing in the recorded invocation"
+            );
+        }
+        for kept in ["RUSTC", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN", "PATH", "HOME", "INCAN_HOME"] {
+            assert!(
+                !super::direct_rustc_excludes_inherited_environment(std::ffi::OsStr::new(kept)),
+                "`{kept}` selects or locates the compiler and must survive the scrub"
+            );
+        }
+    }
 
     #[test]
     fn jec_frozen_environment_contains_only_admitted_plan_values() -> Result<(), Box<dyn std::error::Error>> {
