@@ -84,8 +84,7 @@ fn stdlib_gaps_argv_text_codecs_and_dict_surfaces_issue1668() -> Result<(), Box<
     write_minimal_project(tmp.path(), project_name, "")?;
     fs::write(tmp.path().join("src/main.incn"), MAIN_SOURCE)?;
 
-    let bake = run_explicit_oven_bake(tmp.path())?;
-    assert_success(&bake, "prepare the #1668 stdlib-gaps fixture");
+    // A stdlib-only program builds through the scheduler's Loaf family; it has no dependency delta to bake.
     let build = run_incan(tmp.path(), &["build", "src/main.incn"])?;
     assert_success(&build, "build the #1668 stdlib-gaps program");
 
