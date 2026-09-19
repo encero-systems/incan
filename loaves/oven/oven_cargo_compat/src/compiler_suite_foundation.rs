@@ -1305,35 +1305,89 @@ mod tests {
         // ---- An incomplete family is a miss, not an error ----
         let incomplete = tempfile::tempdir()?;
         let incomplete_store = OvenStore::new(incomplete.path(), limits());
-        let held = store.select_payloads_for_execution(&published)?;
-        let partition_one = held
+        republish_one_partition(&store, &published, 1, &incomplete_store, &first)?;
+        assert!(
+            select_or_import_compiler_suite_foundation_family(&incomplete_store, &first, &fixture.key, &[])?.is_none(),
+            "one partition of two is not a family"
+        );
+        Ok(())
+    }
+
+    /// Copy the partition with `partition_index` of the family published as `identities` in `from` into `into`
+    /// under `receipt`, the way a store that lost or never received the family's other partitions would hold it.
+    fn republish_one_partition(
+        from: &OvenStore,
+        identities: &[String],
+        partition_index: u32,
+        into: &OvenStore,
+        receipt: &OvenReceipt,
+    ) -> TestResult {
+        let held = from.select_payloads_for_execution(identities)?;
+        let partition = held
             .iter()
             .find(|entry| {
                 serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(&entry.payload)
                     .ok()
                     .and_then(|payload| payload.family)
-                    .is_some_and(|family| family.partition_index == 1)
+                    .is_some_and(|family| family.partition_index == partition_index)
             })
-            .ok_or("partition 1 missing")?;
-        incomplete_store.publish(&OvenArtifactPublishRequest {
-            receipt: first.clone(),
+            .ok_or("partition missing")?;
+        into.publish(&OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
             domain: "compiler-suite".to_string(),
             kind: OvenArtifactKind::CompilerTestSuiteFoundation,
-            payload: partition_one.payload.clone(),
-            materialized_files: partition_one
+            payload: partition.payload.clone(),
+            materialized_files: partition
                 .manifest
                 .materialized_files
                 .iter()
                 .map(|file| OvenArtifactMaterializedFile {
-                    source_path: partition_one.artifact_root.join(&file.relative_path),
+                    source_path: partition.artifact_root.join(&file.relative_path),
                     relative_path: file.relative_path.clone(),
                 })
                 .collect(),
             materialized_directories: Vec::new(),
         })?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_partial_family_on_a_mirror_is_never_selected_so_cargo_builds() -> TestResult {
+        let fixture = Fixture::new()?;
+        let producer = receipt(fixture.root())?;
+        let complete_root = tempfile::tempdir()?;
+        let complete = OvenStore::new(complete_root.path(), limits());
+        let identities = fixture.publish_family(&complete, &producer, &fixture.key)?;
+        // The mirror holds partition 1 of two: the other was reclaimed there, or its batch never finished.
+        let mirror_root = tempfile::tempdir()?;
+        let mirror = OvenStore::new(mirror_root.path(), limits());
+        republish_one_partition(&complete, &identities, 1, &mirror, &producer)?;
+
+        fs::write(fixture.root().join("src/lib.rs"), "pub fn fixture_edited() {}\n")?;
+        let consumer = receipt(fixture.root())?;
+        let local_root = tempfile::tempdir()?;
+        let local = OvenStore::new(local_root.path(), limits());
+        let selected = select_or_import_compiler_suite_foundation_family(
+            &local,
+            &consumer,
+            &fixture.key,
+            &[mirror_root.path().to_path_buf()],
+        )?;
         assert!(
-            select_or_import_compiler_suite_foundation_family(&incomplete_store, &first, &fixture.key, &[])?.is_none(),
-            "one partition of two is not a family"
+            selected.is_none(),
+            "one partition of two on a mirror is not a family; Cargo builds the foundation"
+        );
+        // What the import admitted is verified and served locally, but it never stands in for the family alone.
+        let admitted = local.select_payloads_matching_for_execution(|_| true)?;
+        assert_eq!(
+            admitted.len(),
+            1,
+            "the mirror's one partition was imported through verification"
+        );
+        drop(admitted);
+        assert!(
+            select_compiler_suite_foundation_family(&local, &consumer, &fixture.key)?.is_none(),
+            "the stray partition never forms a family on a later lookup either"
         );
         Ok(())
     }
